@@ -35,7 +35,7 @@ import numpy as np
 
 from kohakuaccel.compiler.machine import STAGE_BYTES
 from kohakuaccel.driver.node.boot import BootArgs, NodeBoot
-from kohakuaccel.driver.node.queue import NodeQueue
+from kohakuaccel.driver.node.queue import NodeError, NodeQueue
 from kohakuaccel.driver.transport.jtag import JtagTransport
 from kohakuaccel.driver.transport.rebase import UnitGlobal
 from kohakuaccel.driver.transport.simdram import SimDram
@@ -122,6 +122,9 @@ class NodeCard:
         fw = pathlib.Path(fw or FIRMWARE)
         #: node -> its queue, in its own staging store
         self.queues = {}
+        #: node -> (its loader, its boot block), for :meth:`restart`
+        self.boots = {}
+        self.fw = fw
         for mesh in card.meshes:
             i = mesh.index
             sim = t if boot == "burn" else None
@@ -142,6 +145,7 @@ class NodeCard:
             )
             loader.load(fw, args, boot)
             self.queues[i] = q
+            self.boots[i] = (loader, args)
         for q in self.queues.values():
             q.wait_ready()
         self.q = self.queues[self.nodes[0]]
@@ -156,6 +160,21 @@ class NodeCard:
         }
         self.runs = 0
         #: Each node's vector cores' instruction memory and descriptors.
+        self.residents = {i: imem.Cores(imem.IMEM_WORDS) for i in self.queues}
+        self.resident = self.residents[self.nodes[0]]
+
+    def restart(self) -> None:
+        """Every node's firmware started again from the image its instruction
+        memory still holds, after a reset that kept the arrays (a wizard
+        relock resets every sysnode and mesh; DRAM, staging and the placed
+        buffers survive). Queues re-initialised; the vector cores' resident
+        images are forgotten, so the next run installs them again."""
+        for i, (loader, args) in self.boots.items():
+            loader.win.stop()
+            self.queues[i].init()
+            loader.restart(self.fw, args)
+        for q in self.queues.values():
+            q.wait_ready()
         self.residents = {i: imem.Cores(imem.IMEM_WORDS) for i in self.queues}
         self.resident = self.residents[self.nodes[0]]
 
@@ -217,11 +236,13 @@ class NodeCard:
         return self.mem.read_block(at, nbytes)
 
     # ------------------------------------------------------------- run
-    def run(self, program) -> dict:
+    def run(self, program, faults: bool = False) -> dict:
         """Run `program` once: ``{"cycles", "steps", "phases", "pkg"}``. Given
         ``{node: Program}`` (None for this card's first node), every node's
         package is submitted before any is waited on; the result is per node
-        under ``"nodes"`` and ``"cycles"`` is the longest."""
+        under ``"nodes"`` and ``"cycles"`` is the longest. With `faults`, a
+        node that times out or faults reports ``{"fault": text}`` and the
+        other nodes are still waited for."""
         single = not isinstance(program, dict)
         progs = {self.nodes[0]: program} if single else program
         progs = {self.nodes[0] if n is None else n: p for n, p in progs.items()}
@@ -237,10 +258,23 @@ class NodeCard:
             tags[n] = (self.queues[n].submit(pkg.to_bytes(), bindings), pkg)
         out = {}
         for n, (tag, pkg) in tags.items():
-            done = self.queues[n].wait(tag, timeout=self.timeout)
-            out[n] = self._result(self.queues[n], done, pkg)
+            try:
+                done = self.queues[n].wait(tag, timeout=self.timeout)
+            except (TimeoutError, NodeError) as e:
+                if not faults:
+                    raise
+                out[n] = {"fault": str(e)}
+                continue
+            try:
+                out[n] = self._result(self.queues[n], done, pkg)
+            except ValueError as e:
+                # The node's own report is unreadable: its processor misbehaved.
+                if not faults:
+                    raise
+                out[n] = {"fault": f"garbled node report: {e}"}
         self.runs += 1
-        return {"cycles": max(r["cycles"] for r in out.values()), "nodes": out}
+        cycles = [r["cycles"] for r in out.values() if "cycles" in r]
+        return {"cycles": max(cycles, default=0), "nodes": out}
 
     def verify(self, progs: dict) -> list:
         """The checker's findings for `progs` (``{node: Program}``), once per

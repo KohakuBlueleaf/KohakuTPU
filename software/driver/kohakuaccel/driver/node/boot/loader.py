@@ -69,6 +69,20 @@ class NodeBoot:
         self.info = {**info, "mode": mode, "load_seconds": t_load}
         return self.info
 
+    def restart(self, elf: pathlib.Path | str, args: BootArgs) -> dict:
+        """Start the image already in the instruction memory again: stop the
+        core, re-place the scratchpad's file bytes and the boot block, boot.
+        For a node whose arrays outlived a reset (a wizard relock); a node that
+        lost power or a reprogram needs :meth:`load`."""
+        t0 = time.monotonic()
+        self.win.stop()
+        info = self.win.reload_spad(elf)
+        self.win.write_spad(SPAD_OFFSET, args.pack())
+        t_load = time.monotonic() - t0
+        self.win.boot()
+        self.info = {**info, "mode": "restart", "load_seconds": t_load}
+        return self.info
+
     def status(self) -> dict:
         """HR_STATUS decoded, plus the exit word once the core has stopped."""
         st = self.win.status()

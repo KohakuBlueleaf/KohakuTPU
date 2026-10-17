@@ -44,6 +44,15 @@ class LoadWindow:
         self._stream(REGION_SPAD, SPAD_BASE, info["spad"], 8)
         return info
 
+    def reload_spad(self, path) -> dict:
+        """Re-stream only the scratchpad bytes the image's file holds (boot
+        block, read-only data, initialised data); the instruction memory and
+        everything crt0 clears or leaves uninitialised stay as they are. A warm
+        restart after a reset that kept the arrays (a wizard relock)."""
+        info = self._parse(path)
+        self._stream(REGION_SPAD, SPAD_BASE, info["spad_file"], 8)
+        return info
+
     def burn_elf(self, path, sim, cpu_scope: str) -> dict:
         """Write the image straight into a simulated node's imem and spad
         arrays (`sim.poke`); `cpu_scope` is its rv64_syscore scope."""
@@ -64,6 +73,7 @@ class LoadWindow:
         phoff = struct.unpack_from("<Q", b, 32)[0]
         phentsize, phnum = struct.unpack_from("<HH", b, 54)
         self.image = {}
+        spad_file = 0
         for i in range(phnum):
             p = phoff + i * phentsize
             ptype = struct.unpack_from("<I", b, p)[0]
@@ -76,6 +86,8 @@ class LoadWindow:
                 self.image[va + k] = b[off + k]
             for k in range(fsz, msz):
                 self.image[va + k] = 0
+            if SPAD_BASE <= va < NODE_BASE and fsz:
+                spad_file = max(spad_file, va + fsz - SPAD_BASE)
         text = max((a + 1 for a in self.image if a < SPAD_BASE), default=0)
         spad = max(
             (a + 1 - SPAD_BASE for a in self.image if SPAD_BASE <= a < NODE_BASE),
@@ -86,6 +98,7 @@ class LoadWindow:
             "entry": self.entry,
             "text": text,
             "spad": spad,
+            "spad_file": spad_file,
             "dram_bytes": len(dram),
         }
 

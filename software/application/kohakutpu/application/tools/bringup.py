@@ -11,12 +11,17 @@ Steps, in session order (docs/workflow/bringup.md):
     cpu         cpuprobe on each node through its load window (sysnode CPU)
     boot        the dispatcher on each node, its queue ready, one NOP
     rung NAME   one workload (WORKLOADS) on node --nodes[0], scored
-    ladder DOM  one clock domain of one node stepped --start..--stop by --inc,
-                the others held at the idle profile; each step re-boots the node
-                (a wizard LOAD resets every sysnode), runs the domain's workload
-                three times, scores it, and the idle profile is restored after
-                every step. Stops at the first hang or transport fault: the link
-                is then wedged and only a reprogram clears it.
+    ladder DOM  one clock domain of every --nodes node stepped together by --inc
+                from --start until every unit has failed once, then by --fine
+                inside each unit's last-pass..first-fail gap, every unit at each
+                step; the other domains held at the idle profile. The nodes boot
+                and the domain's workload is placed once at the idle profile; a
+                step (a wizard LOAD resets every sysnode, the arrays survive)
+                restarts the firmware already in each instruction memory, runs
+                once on every node and scores each matmul cluster / vector core
+                against its idle-profile digest; the idle profile is restored
+                after every step. A transport fault stops it: the link is then
+                wedged and only a reprogram clears it.
 
 `--build MODEL` runs any step on a Verilated card instead of JTAG (the same
 load-window path), so every step is rehearsed before silicon. Results go to
@@ -112,15 +117,40 @@ def _mm_ref(i):
     return {"y": value_fp16(i["x"]) @ value_fp16(i["w"]).T}
 
 
+def _twin_ref(i):
+    y = _mm_ref(i)["y"]
+    return {"y": np.concatenate([y, y])}
+
+
 WORKLOADS = {
     "copy": ("transpose", _copy, _copy_ref, True),
     "vec": ("silu", _silu, _silu_ref, False),
     "noc": ("push", _push, _push_ref, True),
     "mat": ("splitk", _mm, _mm_ref, False),
+    "twin": ("twin", _mm, _twin_ref, False),
 }
 #: The workload that drives each clock domain (a ladder on a domain whose unit
-#: sits idle measures nothing). `sys` runs cpuprobe and a dispatch-bound copy.
-DOMAIN = {"mat2x": "mat", "vec": "vec", "noc": "noc", "sys": "copy"}
+#: sits idle measures nothing): one result per matmul cluster / vector core.
+DOMAIN = {"mat2x": "twin", "vec": "vec", "noc": "noc", "sys": "copy"}
+
+
+def _halves(kind: str):
+    def split(out: dict) -> dict:
+        y = np.asarray(out["y"]).ravel()
+        n = y.size // 2
+        return {f"{kind}{u}": {"y": y[u * n : (u + 1) * n]} for u in range(2)}
+
+    return split
+
+
+#: How a workload's outputs divide among the units that wrote them, so each
+#: unit is scored on its own part; one entry for a workload with one owner.
+UNITS = {
+    "twin": _halves("mg"),
+    "vec": _halves("vc"),
+    "noc": lambda out: {"noc": out},
+    "copy": lambda out: {"mover": out},
+}
 
 
 def example_in(space: str, name: str) -> str:
@@ -194,6 +224,10 @@ BITSTREAMS = {
     r"\multimesh_v9t4.runs\impl_1\multimesh_v9t4_wrapper.bit",
     "multimesh_v9t5": r"C:\Users\apoll\Desktop\vivado\multimesh_v9t5"
     r"\multimesh_v9t5.runs\impl_1\multimesh_v9t5_wrapper.bit",
+    "multimesh_v9t6": r"C:\Users\apoll\Desktop\vivado\multimesh_v9t6"
+    r"\multimesh_v9t6.runs\impl_1\multimesh_v9t6_wrapper.bit",
+    "multimesh_v9t7": r"C:\Users\apoll\Desktop\vivado\multimesh_v9t7"
+    r"\multimesh_v9t7.runs\impl_1\multimesh_v9t7_wrapper.bit",
 }
 
 
@@ -527,41 +561,93 @@ def step_boot(a) -> int:
 POISON = 0xA5
 
 
-def rung(card, name: str, seed: int, reps: int = 1, space: str = "dram") -> dict:
-    """Workload `name` `reps` times on `card` with its buffers in `space`:
-    scores, digests, cycles. The inputs cross the host link once; each run
-    paints the outputs with POISON, runs, and reads back the outputs only."""
+def rung_setup(
+    card, name: str, seed: int, space: str = "dram", node: int | None = None
+) -> dict:
+    """Workload `name` placed on `card` for `node` (the card's first by
+    default) with its buffers in `space`: inputs uploaded, program built. The
+    buffers stay until `card.release(s["held"])`, so any number of runs (and
+    node restarts) reuse them."""
     example, inputs, ref, exact = WORKLOADS[name]
+    node = card.nodes[0] if node is None else node
     rng = np.random.default_rng(seed)
     ins = inputs(rng)
     want = ref(ins)
     m = examples.load(examples.example(example_in(space, example)))
     fn = m.names()[0]
     held = card.mark()
+    binds, layout = {}, bufs(m, fn)
+    for p, b in layout:
+        at = b.layout.get("node", node)
+        if p in want:
+            binds[p] = card.place(b.nbytes, b.space, at)
+            continue
+        data = raw(b, ins[p]) if p in ins else bytes(b.nbytes)
+        binds[p] = card.put(np.frombuffer(data, np.uint8), b.space, at)
+    # A body with no node block compiles against the machine's default mesh:
+    # seen from the node it runs on, its units are that node's.
+    progs = build.programs(m, fn, binds, card.machine.for_mesh(node))
+    return {
+        "name": name,
+        "node": node,
+        "example": example,
+        "exact": exact,
+        "want": want,
+        "binds": binds,
+        "outs": [(p, b) for p, b in layout if p in want],
+        "prog": progs[None] if list(progs) == [None] else progs,
+        "held": held,
+    }
+
+
+def run_units(card, ss: dict) -> dict:
+    """One run of placed workloads `ss` ({node: rung_setup}) on every node at
+    once; each unit's part of the outputs scored on its own, keyed
+    ``n<node>.<unit>``."""
+    for s in ss.values():
+        for p, b in s["outs"]:
+            card.write(s["binds"][p], bytes([POISON]) * b.nbytes)
+    res = card.run({n: s["prog"] for n, s in ss.items()}, faults=True)
+    got = {}
+    for n, s in ss.items():
+        split = UNITS[s["name"]]
+        want = split(s["want"])
+        r = res["nodes"][n]
+        if "fault" in r:
+            for u in want:
+                got[f"n{n}.{u}"] = {"ok": False, "hang": r["fault"][:300]}
+            continue
+        out = {p: b.unpack(card.get(s["binds"][p], b.nbytes)) for p, b in s["outs"]}
+        cycles = r["cycles"]
+        for u, o in split(out).items():
+            got[f"n{n}.{u}"] = {
+                "cycles": cycles,
+                "digest": digest(o),
+                **score(o, want[u]),
+            }
+    return got
+
+
+def rung_run(card, s: dict) -> dict:
+    """One run of a placed workload: outputs painted with POISON, run, outputs
+    read back and scored."""
+    for p, b in s["outs"]:
+        card.write(s["binds"][p], bytes([POISON]) * b.nbytes)
+    res = card.run(s["prog"])
+    out = {p: b.unpack(card.get(s["binds"][p], b.nbytes)) for p, b in s["outs"]}
+    return {"cycles": res["cycles"], "digest": digest(out), **score(out, s["want"])}
+
+
+def rung(card, name: str, seed: int, reps: int = 1, space: str = "dram") -> dict:
+    """Workload `name` `reps` times on `card` with its buffers in `space`:
+    scores, digests, cycles. The inputs cross the host link once; each run
+    paints the outputs with POISON, runs, and reads back the outputs only."""
+    example, _, _, exact = WORKLOADS[name]
+    s = rung_setup(card, name, seed, space)
     try:
-        binds, layout = {}, bufs(m, fn)
-        for p, b in layout:
-            node = b.layout.get("node")
-            if p in want:
-                binds[p] = card.place(b.nbytes, b.space, node)
-                continue
-            data = raw(b, ins[p]) if p in ins else bytes(b.nbytes)
-            binds[p] = card.put(np.frombuffer(data, np.uint8), b.space, node)
-        # A body with no node block compiles against the machine's default mesh:
-        # seen from the node it runs on, its units are that node's.
-        progs = build.programs(m, fn, binds, card.machine.for_mesh(card.nodes[0]))
-        prog = progs[None] if list(progs) == [None] else progs
-        outs = [(p, b) for p, b in layout if p in want]
-        runs = []
-        for _ in range(reps):
-            for p, b in outs:
-                card.write(binds[p], bytes([POISON]) * b.nbytes)
-            res = card.run(prog)
-            out = {p: b.unpack(card.get(binds[p], b.nbytes)) for p, b in outs}
-            s = score(out, want)
-            runs.append({"cycles": res["cycles"], "digest": digest(out), **s})
+        runs = [rung_run(card, s) for _ in range(reps)]
     finally:
-        card.release(held)
+        card.release(s["held"])
     same = len({r["digest"] for r in runs}) == 1
     ok = same and (all(r["max"] == 0.0 for r in runs) if exact else True)
     return {
@@ -594,52 +680,114 @@ def step_ladder(a) -> int:
     dom = a.what
     if dom not in DOMAIN:
         raise SystemExit(f"ladder: domain {dom!r} is one of {sorted(DOMAIN)}")
-    node = nodes_of(a)[0]
+    nodes = nodes_of(a)
     b = load_board(a.board)
     low = b["profiles"][b.get("idle_profile", "low")]
     others = {k: v for k, v in low.items() if k != dom}
     t = transport(a)
-    clocks = CardClocks(t, b).mesh(node)
-    rows = []
-    mhz = a.start
-    try:
-        while mhz <= a.stop + 1e-9:
-            rates = clocks.set_isolated(dom, mhz, others)
-            row = {"mhz": mhz, "rates": rates}
+    cc = CardClocks(t, b)
+    clocks = {n: cc.mesh(n) for n in nodes}
+
+    # Boot and place once at the idle profile: the firmware image and the
+    # workload's buffers outlive every wizard relock, so a step only restarts
+    # the firmware and runs once against each unit's idle-profile digest.
+    card = open_card(a, t, nodes)
+    card.timeout = a.wait
+    ss = {n: rung_setup(card, DOMAIN[dom], a.seed, a.space, node=n) for n in nodes}
+    base = run_units(card, ss)
+    for r in base.values():
+        r["ok"] = True
+    rows = [{"mhz": low[dom], "base": True, "units": base}]
+    _ladder_print(dom, rows[0])
+
+    def step(mhz: float) -> dict:
+        rates = {n: c.set_isolated(dom, mhz, others) for n, c in clocks.items()}
+        try:
             try:
-                card = open_card(a, t, [node], profile=None)
-                row.update(rung(card, DOMAIN[dom], a.seed, reps=3, space=a.space))
-                card.stop()
-                if dom == "sys" and a.space == "dram":
-                    bad = cpu(a, t, [node])
-                    row["cpuprobe"] = not bad
-                    row["ok"] = row["ok"] and not bad
+                card.restart()
+                units = run_units(card, ss)
+                for u, r in units.items():
+                    r["ok"] = "hang" not in r and r["digest"] == base[u]["digest"]
             except (TimeoutError, NodeError) as e:
-                row.update({"ok": False, "hang": str(e)[:300]})
+                units = {u: {"ok": False, "hang": str(e)[:300]} for u in base}
+            row = {"mhz": mhz, "rates": rates, "units": units}
             rows.append(row)
-            best = row.get("runs", [{}])[-1]
-            print(
-                f"{dom} {mhz:7.2f} MHz: {'ok' if row['ok'] else 'FAIL'} "
-                f"p50 {best.get('p50', '-')} p99 {best.get('p99', '-')} "
-                f"max {best.get('max', '-')} same {row.get('same', '-')}"
-                + (f" HANG {row['hang']}" if "hang" in row else ""),
-                flush=True,
-            )
-            if "hang" in row:
+            _ladder_print(dom, row)
+        finally:
+            for c in clocks.values():
+                c.set_profile(low)
+        return row
+
+    done = False
+    try:
+        # Coarse until every unit has failed (a hung node's units fail) once,
+        # then each fine rate inside any unit's last-pass..first-fail gap.
+        mhz = a.start
+        while mhz <= a.stop + 1e-9:
+            step(mhz)
+            if all(_bounds(rows, u)[1] is not None for u in base):
                 break
-            clocks.set_profile(low)
             mhz += a.inc
+        fine = set()
+        for u in base:
+            ok, bad = _bounds(rows, u)
+            # A unit failing at the first coarse step searches only the step below it.
+            f = max(ok, a.start - a.inc) + a.fine
+            while a.fine and bad is not None and f < bad - 1e-9:
+                fine.add(f)
+                f += a.fine
+        for mhz in sorted(fine):
+            step(mhz)
+        done = True
     finally:
-        save(a, f"ladder_{dom}_n{node}", rows)
-        if not rows or "hang" not in rows[-1]:
-            clocks.set_profile(low)
-            print(f"node {node} back at {clocks.read_all()}")
+        for s in ss.values():
+            card.release(s["held"])
+        save(a, f"ladder_{dom}_n{'_'.join(map(str, nodes))}", rows)
+        if done:
+            for n, c in clocks.items():
+                print(f"node {n} back at {c.read_all()}")
+            for u in base:
+                ok, bad = _bounds(rows, u)
+                print(f"{dom} {u}: highest pass {ok} MHz, lowest fail {bad} MHz")
         else:
             print(
-                "stopped on a hang: the link may be wedged -- reprogram, then "
-                "`bringup clocks` before anything else"
+                "stopped on a transport fault: the link may be wedged -- "
+                "reprogram, then `bringup clocks` before anything else"
             )
     return 0
+
+
+def _bounds(rows: list, unit: str) -> tuple:
+    """`unit`'s lowest failing rate (None if none) and its highest passing
+    rate below that."""
+    bad = [r["mhz"] for r in rows if not r["units"][unit]["ok"]]
+    low = min(bad) if bad else None
+    ok = [
+        r["mhz"]
+        for r in rows
+        if r["units"][unit]["ok"] and (low is None or r["mhz"] < low)
+    ]
+    return max(ok), low
+
+
+def _ladder_print(dom: str, row: dict) -> None:
+    def one(u: str, r: dict) -> str:
+        if "hang" in r:
+            return f"{u} HANG"
+        return f"{u} {'ok' if r['ok'] else 'FAIL'}(max {r['max']:.3g})"
+
+    units = row["units"]
+    cyc = sorted({r["cycles"] for r in units.values() if "cycles" in r})
+    hang = next((r["hang"] for r in units.values() if "hang" in r), "")
+    print(
+        f"{dom} {row['mhz']:7.2f} MHz"
+        + (" (idle profile)" if row.get("base") else "")
+        + ": "
+        + " ".join(one(u, r) for u, r in units.items())
+        + f" cycles {cyc}"
+        + (f" | {hang}" if hang else ""),
+        flush=True,
+    )
 
 
 STEPS = {
@@ -722,7 +870,13 @@ def main() -> int:
     )
     ap.add_argument("--start", type=float, default=100.0)
     ap.add_argument("--stop", type=float, default=300.0)
-    ap.add_argument("--inc", type=float, default=25.0, help="ladder: MHz a step")
+    ap.add_argument("--inc", type=float, default=50.0, help="ladder: MHz a step")
+    ap.add_argument(
+        "--fine",
+        type=float,
+        default=12.5,
+        help="ladder: MHz a step between the last coarse pass and the first fail",
+    )
     a = ap.parse_args()
     if a.seed_cpu is None:
         a.seed_cpu = cpuprobe.SEED

@@ -1,0 +1,14 @@
+# The same 256 x 256 tile of x w^T with K = 1024 on each cluster alone: cluster
+# u sums all of K and drains into its own half of y, so each cluster's result
+# is checked on its own (the per-cluster clock check).
+target ktpu.v9
+
+fn twin.l1(x: mx7a[256, 1024] @dram(gm=64, nk=2), w: mx7b[256, 1024] @dram(gn=64, nk=2), y: f16[512, 256] @dram(tile=64x64))
+    for u in 0..2
+        send mg[u]
+            for k in 0..16
+                fill A{k % 2} <- x + k*16K n=128
+                fill B{k % 2} <- w + k*16K n=128
+                gemm 64x64x2 a=A{k % 2} b=B{k % 2} acc=(k > 0)
+            drain y + u*128K n=4096
+    barrier
