@@ -2235,6 +2235,35 @@ BENCHES["v2_gt4"] = (
 )
 for _b in ("vec2_replay", "v2_flow"):
     DEFINES[_b] = VECTOR2_DEFINES
+# Unit benches: each module against its own reference model.
+BENCHES["v2_fifo"] = (
+    "v2_fifo_tb",
+    ["src/kohakutpu/vector2/v2_fifo.v", "tests/vector2/v2_fifo_tb.v"],
+)
+BENCHES["v2_agu"] = (
+    "v2_agu_tb",
+    ["src/kohakutpu/vector2/v2_agu.v", "tests/vector2/v2_agu_tb.v"],
+)
+BENCHES["mx_tdesc"] = (
+    "mx_tdesc_tb",
+    ["src/kohakuaccel/sysnode/mover/mx_tdesc.v", "tests/matmul/mx_tdesc_tb.v"],
+)
+BENCHES["noc_inport"] = (
+    "noc_inport_tb",
+    [
+        "src/kohakuaccel/common/sync_fifo.v",
+        "src/kohakuaccel/noc/router/noc_inport.v",
+        "tests/noc/noc_inport_tb.v",
+    ],
+)
+BENCHES["noc_orchestrator"] = (
+    "noc_orchestrator_tb",
+    COMMON + NOC + ["tests/noc/noc_orchestrator_tb.v"],
+)
+BENCHES["acu_pump_oreg"] = (
+    "mx_acu_pump_oreg_tb",
+    COMMON + MATMUL + ["tests/matmul/mx_acu_pump_oreg_tb.v"],
+)
 
 # The 2-node card model (gen_card.py --compute 0,1; harness card_main.cpp).
 BENCHES["card_v8t8_2n"] = (
@@ -2280,6 +2309,12 @@ for _n in (1, 2, 4):
         gen_card.image_sources("v9t6") + [f"tests/system/card_v9t6_{_n}n.v"],
     )
     DEFINES[f"card_v9t6_{_n}n"] = gen_card.image_defines("v9t6")
+# The v9t7 card (gen_card.py --ver v9t7): v9t6 at 4+2 a die.
+BENCHES["card_v9t7_4n"] = (
+    "card_v9t7_4n",
+    gen_card.image_sources("v9t7") + ["tests/system/card_v9t7_4n.v"],
+)
+DEFINES["card_v9t7_4n"] = gen_card.image_defines("v9t7")
 # Diagnostic: the 4-node v9t4 card with the die 3 -> die 2 trunk's slot bit 523
 # held at 1 (tests/system/diag/kx_trunk_stuck.v), the card's observed fault.
 BENCHES["card_v9t4_4n_stuck523"] = (
