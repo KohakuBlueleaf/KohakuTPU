@@ -61,7 +61,11 @@ module mx_acu_fp_pump #(
     // Storage for the resident tile, named rather than inferred. "block" is
     // 5 BRAM36 for any depth up to 512 and 0 LUT; "distributed" is ~4,000 LUT
     // at depth 512 and misses 300 MHz by depth 64.
-    parameter         TILE_PRIM = "block"
+    parameter         TILE_PRIM = "block",
+    // 1: the tile is read a stage earlier into a fabric register, so the align
+    // stage starts at a flip-flop rather than the RAM (URAM -> s3_sh, 8
+    // levels, 2 ns of route); read-to-write timing is unchanged.
+    parameter integer TILE_OREG = 1
 )(
     input  wire         clk,
     input  wire         rst,
@@ -669,9 +673,36 @@ module mx_acu_fp_pump #(
     //
     // addr_a, not addr_r: READ_LAT=2 means the address must be presented two
     // stages ahead of the align cycle, and stage 2a2 put one more stage between.
-    kohaku_sdpram #(.WIDTH(TW), .DEPTH(DEPTH), .MEM_PRIM(TILE_PRIM), .READ_LAT(2))
-    u_tile (.clk(clk), .wr_en(wr_bank_en), .wr_addr(wr_addr), .wr_data(wr_data),
-            .rd_en(en), .rd_addr(addr_a), .rd_data(t0));
+    wire [TW-1:0] t0_ram;
+    generate if (TILE_OREG == 0) begin : g_t0
+        kohaku_sdpram #(.WIDTH(TW), .DEPTH(DEPTH), .MEM_PRIM(TILE_PRIM), .READ_LAT(2))
+        u_tile (.clk(clk), .wr_en(wr_bank_en), .wr_addr(wr_addr), .wr_data(wr_data),
+                .rd_en(en), .rd_addr(addr_a), .rd_data(t0_ram));
+        assign t0 = t0_ram;
+    end else begin : g_t0q
+        // Read at addr_s, one stage before addr_a. Read-first, so the one write
+        // the addr_a read saw and this one does not is a write to the same
+        // address in this read's own cycle: it is forwarded into t0_q.
+        kohaku_sdpram #(.WIDTH(TW), .DEPTH(DEPTH), .MEM_PRIM(TILE_PRIM), .READ_LAT(2))
+        u_tile (.clk(clk), .wr_en(wr_bank_en), .wr_addr(wr_addr), .wr_data(wr_data),
+                .rd_en(en), .rd_addr(addr_s), .rd_data(t0_ram));
+        reg          byp1, byp2;
+        reg [TW-1:0] byd1, byd2, t0_q;
+        always @(posedge clk) begin
+            if (rst) begin
+                byp1 <= 1'b0; byp2 <= 1'b0;
+            end else if (en) begin
+                byp1 <= wr_bank_en && (wr_addr == addr_s);
+                byp2 <= byp1;
+            end
+            if (en) begin
+                byd1 <= wr_data;
+                byd2 <= byd1;
+                t0_q <= byp2 ? byd2 : t0_ram;
+            end
+        end
+        assign t0 = t0_q;
+    end endgenerate
 
     // `le` beside `op`, through the same eight stages (op_q .. op_r2).
     reg [7:0] le_p;
