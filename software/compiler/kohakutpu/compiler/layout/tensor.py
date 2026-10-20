@@ -88,13 +88,19 @@ def fp16_values(bits) -> np.ndarray:
     return np.where(b & 0x8000, -v, v)
 
 
-def unpack_tiles(raw: bytes, m: int, n: int, gm: int, gn: int) -> np.ndarray:
+def unpack_tiles(
+    raw: bytes, m: int, n: int, gm: int, gn: int, ieee: bool = False
+) -> np.ndarray:
     """A drained ``[m][n]`` from tiles of ``gm x gn`` 4x4 sub-tiles: tiles
     row-major, sub-tiles row-major in a tile, element (i, j) of a sub-tile at
-    fp16 ``4*i + j`` of its 32-byte word."""
+    fp16 ``4*i + j`` of its 32-byte word. The values are the clusters' fp16
+    (`fp16_values`), or with `ieee` IEEE fp16."""
     h = np.frombuffer(raw, "<u2")[: m * n]
     h = h.reshape(m // (4 * gm), n // (4 * gn), gm, gn, 4, 4)
-    return fp16_values(h.transpose(0, 2, 4, 1, 3, 5).reshape(m, n))
+    h = h.transpose(0, 2, 4, 1, 3, 5).reshape(m, n)
+    if ieee:
+        return h.view(np.float16).astype(np.float64)
+    return fp16_values(h)
 
 
 __all__ = ["KBLOCK", "LANES", "fp16_values", "pack", "pack_a", "pack_b", "unpack_tiles"]

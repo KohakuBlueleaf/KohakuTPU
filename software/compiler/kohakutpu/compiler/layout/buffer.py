@@ -7,7 +7,11 @@ input and how it reads an output back.
     mx7b[1024, 1024] @dram(gn=64, nk=2)     MXFP7, B packing (`tensor.pack_b`)
     f16[1024, 1024] @dram(tile=64x64)       drained sub-tiles: tiles of 64x64
                                             sub-tiles (256x256), row-major
-                                            tiles, row-major sub-tiles in one
+                                            tiles, row-major sub-tiles in one;
+                                            the clusters' fp16 (no subnormals,
+                                            exponent 31 an ordinary one)
+    f16[256, 128] @dram(tile=1x32, ieee=1)  the same tiling, IEEE fp16 values
+                                            (what a row unit reads and writes)
     mx7b[64, 1024] @dram(gn=16, nk=2, t=1)  any of these holding the transpose
                                             of the host's [1024, 64] value
 
@@ -65,10 +69,12 @@ class Buffer:
             raise ValueError(f"{self.dtype} wants @dram({', '.join(sorted(want))}=...)")
         if self.dtype not in ("mx7a", "mx7b", *DTYPES):
             raise ValueError(f"no buffer dtype {self.dtype}")
-        if set(self.layout) - {"gm", "gn", "nk", "tile", "t", "node"}:
+        if set(self.layout) - {"gm", "gn", "nk", "tile", "ieee", "t", "node"}:
             raise ValueError(
-                f"layout keys: gm gn nk tile t node; got {sorted(self.layout)}"
+                f"layout keys: gm gn nk tile ieee t node; got {sorted(self.layout)}"
             )
+        if "ieee" in self.layout and "tile" not in self.layout:
+            raise ValueError("ieee= reads a tile= layout's values as IEEE fp16")
         if "node" in self.layout and self.space != "stage":
             raise ValueError("node= places a buffer in that node's staging: @stage")
         if set(self.layout) - {"node"} and len(self.shape) < 2:
@@ -124,8 +130,9 @@ class Buffer:
             gm, gn = self.layout["tile"]
             m, n = self.shape[-2:]
             slab = m * n * 2
+            ieee = bool(self.layout.get("ieee"))
             slabs = [
-                T.unpack_tiles(raw[i : i + slab], m, n, gm, gn)
+                T.unpack_tiles(raw[i : i + slab], m, n, gm, gn, ieee)
                 for i in range(0, len(raw), slab)
             ]
             return np.stack(slabs).reshape(self.shape)
