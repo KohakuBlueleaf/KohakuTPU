@@ -12,6 +12,7 @@ A shader must end in `ecall`; lane 0 of `a0` is the halt word.
 """
 
 import argparse
+import os
 import pathlib
 import subprocess
 import sys
@@ -23,7 +24,9 @@ from rv_asm import AsmError, assemble, to_hex
 from rv_simt_model import DRAM_BASE, MASK, GpuMachine
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-BUILD = ROOT / "tests" / "pe" / "build"
+# KOHAKU_PE_DIR moves the image files, and xsim.py reads the same variable, so
+# runs with their own directory can go side by side.
+BUILD = pathlib.Path(os.environ.get("KOHAKU_PE_DIR", ROOT / "tests" / "pe" / "build"))
 XSIM = ROOT / "scripts" / "py" / "xsim.py"
 
 DRAM_WORDS = 4096
@@ -34,6 +37,21 @@ def dram_ramp(n=DRAM_WORDS):
     return [(0x1234_0000 + 7 * i) & MASK for i in range(n)]
 
 
+def dram_hash(n=DRAM_WORDS):
+    """Pseudo-random words: gather indices and reduction data with no order."""
+    out = []
+    for i in range(n):
+        z = (i * 0x9E3779B1 + 0x7F4A7C15) & MASK
+        z ^= z >> 15
+        z = (z * 0x2C1B3C6D) & MASK
+        z ^= z >> 12
+        out.append(z)
+    return out
+
+
+DRAM_FILLS = {"zero": lambda: [0] * DRAM_WORDS, "ramp": dram_ramp, "hash": dram_hash}
+
+
 def checksum(words):
     """The bench's own DRAM checksum: sum of word * (index + 1)."""
     s = 0
@@ -42,10 +60,17 @@ def checksum(words):
     return s
 
 
-def write_user(src, arg, dram_init, lanes, waves, ctl, launch=1):
+def write_user(src, arg, dram_init, lanes, waves, ctl, launch=1, has_fsfu=False):
     words, _ = assemble(src, base=0)
 
-    m = GpuMachine(lanes=lanes, waves=waves, imem_words=4096, ctl=ctl, nlive=launch)
+    m = GpuMachine(
+        lanes=lanes,
+        waves=waves,
+        imem_words=4096,
+        ctl=ctl,
+        nlive=launch,
+        has_fsfu=has_fsfu,
+    )
     m.imem[: len(words)] = words
     for i, v in enumerate(dram_init):
         if v:
@@ -88,10 +113,15 @@ def main():
         default=1,
         help="wave contexts this kick starts (the kick's op field)",
     )
-    ap.add_argument("--dram", choices=("zero", "ramp"), default="ramp")
+    ap.add_argument("--dram", choices=sorted(DRAM_FILLS), default="ramp")
     ap.add_argument("--wall", type=float, default=600.0)
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--define", "-d", action="append", default=[])
+    # Passed to xsim.py as they are; the mutation witnesses build a broken copy.
+    ap.add_argument("--swap", action="append", default=[])
+    ap.add_argument("--build-root")
+    ap.add_argument("--incdir", action="append", default=[])
+    ap.add_argument("--reuse", action="store_true", help="xsim.py --reuse")
     a = ap.parse_args()
 
     src = pathlib.Path(a.source)
@@ -102,15 +132,19 @@ def main():
     # Slot 0 is the kick argument, as the control table says; the shader reads
     # its base pointers from here rather than building them from immediates.
     ctl = [a.arg] + [0] * 31
+    # The model's seed gate follows the build's: KHT_FSFU defaults to 0 in the bench.
+    fsfu = [d.split("=", 1)[1] for d in a.define if d.startswith("KHT_FSFU=")]
+    has_fsfu = bool(fsfu) and int(fsfu[-1], 0) > 0
     try:
         write_user(
             src.read_text(),
             a.arg,
-            dram_ramp() if a.dram == "ramp" else [0] * DRAM_WORDS,
+            DRAM_FILLS[a.dram](),
             a.lanes,
             a.waves,
             ctl,
             a.launch,
+            has_fsfu,
         )
     except AsmError as e:
         print("  assembly failed: %s" % e)
@@ -128,6 +162,14 @@ def main():
     cmd = [sys.executable, str(XSIM), "kht_sys", "--wall", str(a.wall)] + defines
     if a.keep:
         cmd.append("--keep")
+    if a.reuse:
+        cmd.append("--reuse")
+    for s in a.swap:
+        cmd += ["--swap", s]
+    for i in a.incdir:
+        cmd += ["--incdir", i]
+    if a.build_root:
+        cmd += ["--build-root", a.build_root]
     print("  $ " + " ".join(str(x) for x in cmd))
     return subprocess.run(cmd, cwd=ROOT, check=False).returncode
 

@@ -15,7 +15,9 @@ witness when its 1-wave and 2-wave runs are compared.
 """
 
 import argparse
+import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import time
@@ -56,6 +58,19 @@ CASES = [
     ("chain", "zero", 1, []),
     ("chain", "zero", 2, []),
     ("fault", "zero", 1, []),
+    # compute-unit.md s5.1, which only the queued LSU implements. A `!` define
+    # is PINNED: it goes after the command line's, so it is never overridden.
+    # Load returns and pipe writes contending for the register file's port.
+    ("ldmix", "ramp", 1, []),
+    ("ldmix", "ramp", 16, []),
+    ("misalign", "zero", 1, ["!KHT_LSUD=4"]),
+    ("mixed", "zero", 1, ["!KHT_LSUD=4"]),
+    # The address stage (MEM_AU): LDS and DRAM returns sharing one port, and the
+    # entries behind a fault dropped. Both hold at any setting.
+    ("aumix", "ramp", 1, []),
+    ("aumix", "ramp", 16, []),
+    ("aulds", "zero", 16, []),
+    ("aufault", "zero", 1, ["!KHT_LSUD=4"]),
     # G9. One wave is the WORST case for the float tier, not the easy one: with
     # nothing else runnable the tier's latency is exposed rather than hidden, so
     # a dependent chain that is right here is right at any occupancy.
@@ -76,6 +91,9 @@ CASES = [
     ("fwalk", "zero", 16, ["KHT_FLANES=2"]),
     ("f32", "zero", 16, ["KHT_FLANES=4"]),
     ("f32", "zero", 16, ["KHT_FLANES=2"]),
+    # Long results landing while the pipe holds on memory, from every wave: the
+    # direct write port's collision with a held pipe write.
+    ("fmix", "ramp", 16, ["KHT_FLANES=2"]),
     # THE MULTIPLY IS NOT A WIDTH. A thread's ALU is an IM unit, so the multiply
     # count is LANES and there is no `KHT_MUL`. What still needs saying is that
     # `mul` does not depend on the float tier: this row runs it with no floats.
@@ -102,7 +120,7 @@ def label(name, launch, defines):
     return s
 
 
-def run_case(name, dram, launch, defines, arg, wall):
+def run_case(name, dram, launch, defines, arg, wall, env=None):
     src = PROG / ("simt_%s.s" % name)
     if not src.is_file():
         return None, "no such shader: %s" % src
@@ -118,10 +136,13 @@ def run_case(name, dram, launch, defines, arg, wall):
         str(launch),
         "--wall",
         str(wall),
+        "--reuse",
     ]
     for d in defines:
         cmd += ["-d", d]
-    p = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, check=False)
+    p = subprocess.run(
+        cmd, cwd=str(ROOT), capture_output=True, text=True, check=False, env=env
+    )
     out = p.stdout + p.stderr
     # The bench prints its own verdict; trust the return code and quote the
     # bench's line so a failure names itself instead of needing the log opened.
@@ -147,7 +168,31 @@ def main():
         action="store_true",
         help="also run the ISA, model and header-drift gates",
     )
+    # Every case again at another setting of a knob (compute-unit.md s10):
+    # the same images and golden memory, a different machine.
+    ap.add_argument(
+        "--define",
+        "-d",
+        action="append",
+        default=[],
+        help="NAME=V added to every case, e.g. -d KHT_SCORE=1",
+    )
+    # Its own image and build directories, so suites at different settings can
+    # run at the same time (SERIAL above holds within one root, not across).
+    ap.add_argument("--root", help="private directory for images and builds")
     a = ap.parse_args()
+
+    env = None
+    builds = pathlib.Path(os.environ.get("KOHAKU_XSIM_BUILD", ROOT / "build"))
+    if a.root:
+        r = pathlib.Path(a.root).resolve()
+        env = dict(
+            os.environ, KOHAKU_PE_DIR=str(r / "pe"), KOHAKU_XSIM_BUILD=str(r / "xsim")
+        )
+        builds = r / "xsim"
+    # Cases share a snapshot per knob setting (xsim.py --reuse); the ones this
+    # run built are removed when it ends.
+    before = set(builds.glob("xsim_kht_sys_*"))
 
     cases = CASES
     if a.only:
@@ -179,7 +224,12 @@ def main():
 
     for name, dram, launch, defines in cases:
         t0 = time.time()
-        rc, line = run_case(name, dram, launch, defines, a.arg, a.wall)
+        defines = (
+            [d for d in defines if not d.startswith("!")]
+            + a.define
+            + [d[1:] for d in defines if d.startswith("!")]
+        )
+        rc, line = run_case(name, dram, launch, defines, a.arg, a.wall, env)
         dt = time.time() - t0
         if rc is None:
             print("%-28s %-5s %s" % (label(name, launch, defines), "MISS", line))
@@ -192,6 +242,8 @@ def main():
             % (label(name, launch, defines), "PASS" if ok else "FAIL", dt, line)
         )
 
+    for d in set(builds.glob("xsim_kht_sys_*")) - before:
+        shutil.rmtree(d, ignore_errors=True)
     print("---- %d case(s), %d failed" % (len(cases), bad))
     return 1 if bad else 0
 

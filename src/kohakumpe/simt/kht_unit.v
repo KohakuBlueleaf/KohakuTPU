@@ -54,7 +54,15 @@ module kht_unit #(
     // tier: khs_fp32_sfu is 10 cycles and rv_fpu is 6.
     parameter integer FSFU_UNITS = 0,
     parameter integer IPDOM_D   = 8,
-    parameter         VREG_PRIM = "block"
+    parameter         VREG_PRIM = "block",
+    // compute-unit.md s4. SCORE: a long result is tracked by the core's
+    // scoreboard, so no `fpend`. WB_BUF: long results queue and write on a slot
+    // the pipe leaves free, so no bubble per float; it needs SCORE.
+    parameter integer SCORE     = 0,
+    parameter integer WB_BUF    = 0,
+    // 1: a long result is registered after it is placed and written a cycle
+    // later, so the lane's last stage does not reach the file or the queue.
+    parameter integer FRES_REG  = 0
 )(
     input  wire                clk,
     input  wire                resetn,
@@ -92,6 +100,19 @@ module kht_unit #(
     // `x_hold`: that is what the launch reads, and feeding it back closes a
     // combinational loop -- khs_unit's `f_pass_hold` carries the same warning.
     output wire                fpass_hold,
+    // A long result's LAST pass reached the register file: the scoreboard bit
+    // for {wave, rd} clears.
+    output wire                sb_clr_v,
+    output wire [WID-1:0]      sb_clr_wave,
+    output wire [4:0]          sb_clr_rd,
+    // A queued load's words (kht_lsu, SCORE): written on a cycle neither a long
+    // result nor the pipe takes the port, and `f_soon` makes one if it waits.
+    input  wire                ld_v,
+    input  wire [WID-1:0]      ld_wave,
+    input  wire [4:0]          ld_rd,
+    input  wire [LANES-1:0]    ld_mask,
+    input  wire [32*LANES-1:0] ld_data,
+    output wire                ld_take,
 
     // ---- the decoded per-thread operation ----
     input  wire [3:0]          x_alu,
@@ -206,6 +227,20 @@ module kht_unit #(
     wire             fwb_v;
     wire [AW-1:0]    fwb_wa;
     wire [LANES-1:0] fwb_mask;
+    // The long result as the file gets it: placed per lane, and the write that
+    // carries it -- straight from the shadow pipe, or from the queue (WB_BUF).
+    wire [VW-1:0]    fres, fres0;
+    wire             fwb_last;
+    wire [WID-1:0]   fwb_wave;
+    wire             lr_v;
+    wire [AW-1:0]    lr_wa;
+    wire [LANES-1:0] lr_mask;
+    wire [VW-1:0]    lr_data;
+    wire             lr_clr_v;
+    wire [WID-1:0]   lr_clr_wave;
+    wire [4:0]       lr_clr_rd;
+    wire             f_soon_l;
+    wire             lw_v;
     wire [LANES-1:0] mask;
     wire             ip_fault;
     wire             hz_raw;
@@ -213,7 +248,10 @@ module kht_unit #(
     // exactly the same registers, so they share the output rather than the core
     // learning about a second one.
     wire             f_pass_hold_i;
-    assign fpass_hold = f_pass_hold_i || shfl_hold;
+    // `f_soon` counts cycles and a frozen pipe does not advance, so a direct long
+    // result can still land under a pipe write: WB holds that cycle and retries.
+    wire             wb_col;
+    assign fpass_hold = f_pass_hold_i || shfl_hold || wb_col;
     // `x_hold` MUST be the rest of the machine's stall and never this unit's
     // own, or the stall becomes an input to itself: the MEM register freezes,
     // its destination stays live, the hazard against it never clears, and the
@@ -402,6 +440,24 @@ module kht_unit #(
     reg  [VW-1:0]    w_ld_data;
     reg  [LANES-1:0] w_mask;
 
+    // A queued load writes after the long result and only into a pipe bubble.
+    reg              ld_wait_q;
+    wire [AW-1:0]    ld_wa = (WAVES > 1) ? {ld_wave, ld_rd} : {{(AW-5){1'b0}}, ld_rd};
+    wire             pw_v  = w_valid && w_wen;
+    assign ld_take     = ld_v && !lr_v && !pw_v;
+    assign lw_v        = lr_v || ld_take;
+    assign f_soon      = f_soon_l || ld_wait_q;
+    assign sb_clr_v    = lr_clr_v || ld_take;
+    assign sb_clr_wave = lr_clr_v ? lr_clr_wave : ld_wave;
+    assign sb_clr_rd   = lr_clr_v ? lr_clr_rd : ld_rd;
+    always @(posedge clk) begin
+        ld_wait_q <= resetn && ld_v && !ld_take;
+    end
+    wire             rf_we    = lw_v || pw_v;
+    wire [AW-1:0]    rf_wa    = lr_v ? lr_wa : ld_take ? ld_wa : w_wa;
+    wire [LANES-1:0] rf_wlane = lr_v ? lr_mask : ld_take ? ld_mask
+                                                         : (w_mask & shfl_pass_en);
+
     // The third read port is `vfma`'s addend, so it follows the FLOAT count and
     // not the multiplier's -- `mul` has two sources like every integer op.
     kht_vregfile #(.LANES(LANES), .WAVES(WAVES), .PRIM(VREG_PRIM),
@@ -409,14 +465,15 @@ module kht_unit #(
         .clk(clk),
         .ra_en(!hold_all), .ra1(ra1), .ra2(ra2), .ra3(ra3),
         .rd1(v1_rd), .rd2(v2_rd), .rd3(v3_rd),
-        // THE FLOAT RESULT WINS THE PORT, and it can because the core was told
-        // two cycles ago to put a bubble here. `w_valid` is zero on that cycle
-        // by construction, so this is a mux and never an arbitration.
-        .we(fwb_v ? 1'b1 : (w_valid && w_wen)),
-        .wa(fwb_v ? fwb_wa : w_wa),
+        // THE LONG RESULT WINS THE PORT, and it can: without WB_BUF the core
+        // was told two cycles ago to put a bubble here, and with it the queue
+        // only writes when the pipe does not. Either way a mux, never an
+        // arbitration.
+        .we(rf_we),
+        .wa(rf_wa),
         // A SHUFFLE PASS WRITES ONLY THE LANES IT PRODUCED. Same per-lane write
         // enable the float walk uses; constant `{LANES{1'b1}}` at full width.
-        .wlane(fwb_v ? fwb_mask : (w_mask & shfl_pass_en)),
+        .wlane(rf_wlane),
         .wd(wr_data)
     );
 
@@ -551,10 +608,12 @@ module kht_unit #(
         localparam integer UF = WI % FLANES_W;
         localparam integer US = WI % SEED_U;
         localparam integer UM = WI % MUL_W;
-        assign wr_data[32*WI +: 32] = !fwb_v   ? vwdata[32*WI +: 32]
-                                    : fwb_mul  ? imul_y[32*UM +: 32]
+        assign fres0[32*WI +: 32]   = fwb_mul  ? imul_y[32*UM +: 32]
                                     : fwb_seed ? fpu_y[32*US +: 32]
                                                : fpu_y[32*UF +: 32];
+        assign wr_data[32*WI +: 32] = !lw_v ? vwdata[32*WI +: 32]
+                                    : lr_v  ? lr_data[32*WI +: 32]
+                                            : ld_data[32*WI +: 32];
     end
     endgenerate
 
@@ -599,7 +658,8 @@ module kht_unit #(
             if (!resetn) begin
                 sp_q <= {SPSW{1'b0}};
             end
-            else if (s_live) begin
+            // A pass that lost the port to a long result is written again.
+            else if (s_live && !wb_col) begin
                 sp_q <= s_last ? {SPSW{1'b0}} : (sp_q + 1'b1);
             end
         end
@@ -659,11 +719,15 @@ module kht_unit #(
         assign fwb_mul   = 1'b0;
         assign fwb_seed  = 1'b0;
         assign fwb_v     = 1'b0;
+        assign fres      = fres0;
+        assign fwb_last  = 1'b0;
+        assign fwb_wave  = {WID{1'b0}};
         assign fwb_wa    = {AW{1'b0}};
         assign fwb_mask  = {LANES{1'b0}};
         assign fpend     = {WAVES{1'b0}};
-        assign f_soon    = 1'b0;
+        assign f_soon_l  = 1'b0;
         assign f_pass_hold_i = 1'b0;
+        assign wb_col    = 1'b0;
     end else begin : g_flt
         // kht_fpu's own depth, which it checks against this. The shadow pipe
         // below MUST match it: it carries the destination and the mask that the
@@ -752,6 +816,8 @@ module kht_unit #(
         reg [WID-1:0]     fsh_wave [1:FLAT];
         reg [PSW-1:0]     fsh_pass [1:FLAT];
         reg [WAVES-1:0]   fpend_q;
+        // The write's own stage: FLAT, or one past it with the result register.
+        localparam integer FWS = FLAT + ((FRES_REG != 0) ? 1 : 0);
 
         integer fi;
         always @(posedge clk) begin
@@ -785,10 +851,10 @@ module kht_unit #(
                 if (go && (x_flt || x_imul)) begin
                     fpend_q[x_wave] <= 1'b1;
                 end
-                // ON THE LAST PASS ONLY. Clearing on the first would release the
-                // wave while later passes are still writing its destination.
-                if (fsh_v[FLAT] && fsh_last[FLAT]) begin
-                    fpend_q[fsh_wave[FLAT]] <= 1'b0;
+                // On the last pass, three cycles before its write: the release shows
+                // a cycle on, then the pick register, F1 and F2 put the read after it.
+                if (fsh_v[FWS-3] && fsh_last[FWS-3]) begin
+                    fpend_q[fsh_wave[FWS-3]] <= 1'b0;
                 end
             end
         end
@@ -828,16 +894,139 @@ module kht_unit #(
             end
         end
 `endif
-        assign fwb_v    = fsh_v[FLAT];
-        assign fwb_wa   = fsh_wa[FLAT];
-        assign fwb_mask = fsh_mask[FLAT] & pass_en;
         assign fwb_mul  = fsh_mul[FLAT];
         assign fwb_seed = fsh_seed[FLAT];
-        assign fpend    = fpend_q;
-        // Two cycles of warning: the core drops `go`, which becomes an empty
-        // MEM next cycle and an empty WB the cycle after -- exactly when the
-        // float needs the port.
-        assign f_soon   = fsh_v[FLAT-2];
+        if (FRES_REG != 0) begin : g_fres_q
+            reg             r_v, r_last;
+            reg [AW-1:0]    r_wa;
+            reg [LANES-1:0] r_mask;
+            reg [WID-1:0]   r_wave;
+            reg [VW-1:0]    r_d;
+            always @(posedge clk) begin
+                r_v    <= resetn && fsh_v[FLAT];
+                r_wa   <= fsh_wa[FLAT];
+                r_mask <= fsh_mask[FLAT] & pass_en;
+                r_last <= fsh_last[FLAT];
+                r_wave <= fsh_wave[FLAT];
+                r_d    <= fres0;
+            end
+            assign fwb_v    = r_v;
+            assign fwb_wa   = r_wa;
+            assign fwb_mask = r_mask;
+            assign fwb_last = r_last;
+            assign fwb_wave = r_wave;
+            assign fres     = r_d;
+        end else begin : g_fres_d
+            assign fwb_v    = fsh_v[FLAT];
+            assign fwb_wa   = fsh_wa[FLAT];
+            assign fwb_mask = fsh_mask[FLAT] & pass_en;
+            assign fwb_last = fsh_last[FLAT];
+            assign fwb_wave = fsh_wave[FLAT];
+            assign fres     = fres0;
+        end
+        // Under SCORE the core's scoreboard holds a wave's dependents back, so
+        // a wave with a float in flight keeps issuing its independent work.
+        assign fpend    = (SCORE != 0) ? {WAVES{1'b0}} : fpend_q;
+
+        if (WB_BUF == 0) begin : g_direct
+            assign lr_v    = fwb_v;
+            assign lr_wa   = fwb_wa;
+            assign lr_mask = fwb_mask;
+            assign lr_data = fres;
+            assign lr_clr_v    = fwb_v && fwb_last;
+            assign lr_clr_wave = fwb_wave;
+            assign lr_clr_rd   = fwb_wa[4:0];
+            // Two cycles of warning: the core drops `go`, which becomes an empty
+            // MEM next cycle and an empty WB the cycle after -- exactly when the
+            // float needs the port.
+            assign f_soon_l = fsh_v[FWS-2];
+            assign wb_col   = fwb_v && pw_v;
+        end else begin : g_wbq
+            // THE QUEUE. Every long result lands here and writes the file on a
+            // cycle the pipe does not -- and every float or multiply instruction
+            // leaves exactly such a cycle behind it, since its own writeback slot
+            // is empty, so in steady state the queue drains as fast as it fills.
+            //
+            // BOUNDED BY COUNTING, not by a margin: what can still arrive is the
+            // shadow pipe's occupancy plus the passes of whatever long
+            // instruction sits in MEM or WB. `f_soon` stops issue before that
+            // could exceed the depth, which is the only overflow there is.
+            localparam integer PMAX = LANES / FMINU;
+            localparam integer QD   = (FWS + 2 * PMAX + 4 <= 16) ? 16 : 32;
+            localparam integer QW   = $clog2(QD);
+            localparam integer EW   = AW + LANES + 1 + WID;
+
+            reg  [QW:0]    q_cnt;
+            reg  [QW-1:0]  q_wr, q_rd;
+            wire           q_pop = (q_cnt != 0) && !(w_valid && w_wen);
+            wire [EW-1:0]  q_head;
+            wire [VW-1:0]  q_dhead;
+
+            kohaku_sdpram #(.WIDTH(EW), .DEPTH(QD), .MEM_PRIM("distributed"),
+                            .READ_LAT(0)) u_qc (
+                .clk(clk),
+                .wr_en(fwb_v), .wr_addr(q_wr),
+                .wr_data({fwb_wa, fwb_mask, fwb_last, fwb_wave}),
+                .rd_en(1'b1), .rd_addr(q_rd), .rd_data(q_head)
+            );
+            kohaku_sdpram #(.WIDTH(VW), .DEPTH(QD), .MEM_PRIM("distributed"),
+                            .READ_LAT(0)) u_qd (
+                .clk(clk),
+                .wr_en(fwb_v), .wr_addr(q_wr), .wr_data(fres),
+                .rd_en(1'b1), .rd_addr(q_rd), .rd_data(q_dhead)
+            );
+
+            always @(posedge clk) begin
+                if (!resetn) begin
+                    q_cnt <= {(QW+1){1'b0}};
+                    q_wr  <= {QW{1'b0}};
+                    q_rd  <= {QW{1'b0}};
+                end else begin
+                    if (fwb_v) q_wr <= q_wr + 1'b1;
+                    if (q_pop) q_rd <= q_rd + 1'b1;
+                    q_cnt <= q_cnt + {{QW{1'b0}}, fwb_v} - {{QW{1'b0}}, q_pop};
+                end
+            end
+
+            assign lr_v    = q_pop;
+            assign lr_wa   = q_head[EW-1 -: AW];
+            assign lr_mask = q_head[EW-AW-1 -: LANES];
+            assign lr_data = q_dhead;
+            assign lr_clr_v    = q_pop && q_head[WID];
+            assign lr_clr_wave = q_head[WID-1:0];
+            assign lr_clr_rd   = lr_wa[4:0];
+
+            // Passes still to come from the instructions in MEM and WB.
+            wire m_long = m_valid && (m_flt || m_imul);
+            wire w_long = w_valid && (w_flt || w_imul);
+            integer pc;
+            reg [QW+1:0] infl;
+            always @(*) begin
+                infl = {(QW+2){1'b0}};
+                for (pc = 1; pc <= FLAT; pc = pc + 1) begin
+                    infl = infl + fsh_v[pc];
+                end
+                if (FRES_REG != 0) infl = infl + fwb_v;
+            end
+            wire [QW+2:0] owed = q_cnt + infl
+                               + (m_long ? PMAX : 0) + (w_long ? PMAX : 0);
+            assign f_soon_l = (owed >= (QD - 1));
+            // The queue writes only on a cycle the pipe does not.
+            assign wb_col   = 1'b0;
+
+`ifndef SYNTHESIS
+            always @(posedge clk) begin
+                if (resetn && fwb_v && (q_cnt == QD)) begin
+                    $display("%0t ERROR kht_unit: write-back queue overflow -- a long result is lost",
+                             $time);
+                end
+            end
+`endif
+        end
+
+        if ((WB_BUF != 0) && (SCORE == 0)) begin : g_bad_wbq
+            kht_unit_WB_BUF_requires_SCORE u_bad ();
+        end
     end
     endgenerate
 
@@ -881,9 +1070,10 @@ module kht_unit #(
     // makes those writes invisible -- and the core snoops this to find a0, so a
     // shader whose halt word came from a multiply reported whatever a0 held
     // before it. khs_unit's probe is the write port for the same reason.
-    assign dbg_wr_valid = fwb_v ? 1'b1 : (w_valid && w_wen);
-    assign dbg_wr_rd    = fwb_v ? fwb_wa[4:0] : w_rd;
-    assign dbg_wr_mask  = fwb_v ? fwb_mask : w_mask;
+    // The port as written, whichever source holds it.
+    assign dbg_wr_valid = rf_we;
+    assign dbg_wr_rd    = rf_wa[4:0];
+    assign dbg_wr_mask  = rf_wlane;
     assign dbg_wr_data  = wr_data[31:0];
 
 `ifndef SYNTHESIS

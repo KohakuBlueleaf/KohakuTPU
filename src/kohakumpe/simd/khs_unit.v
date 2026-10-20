@@ -536,7 +536,7 @@ module khs_unit #(
     // The permute's walk holds MEM the same way the float fold does, and it is
     // declared here because `hz_fold` reads it long before the block below.
     wire                 prm_hold, shf_hold, il_hold, cvt_hold;
-    wire                 el_soon, el_wr, el_hold, el_inflight;
+    wire                 el_soon, el_wr, el_next, el_hold, el_inflight;
     wire [4:0]           el_wa;
     wire [VW-1:0]        el_wdata;
     wire [VREGS-1:0]     el_busy;
@@ -571,8 +571,12 @@ module khs_unit #(
     // STAGE; `stall` only holds EX, so a multi-pass elementwise instruction left
     // MEM after its first pass, the walk never reached `iss_last`, the result
     // never retired and the bench waited forever for a write that was not coming.
+    // `el_soon` empties MEM only if MEM advances: one a stretch or walk holds
+    // would write on the float's cycle, so it waits one more (a register term).
+    wire el_col = m_valid && !m_left && m_wr_vreg_d
+               && ((WB_STAGE != 0) ? el_next : el_wr);
     assign hz_fold = f_rd_hold || f_sw_hold || f_pass_hold || el_hold
-                  || prm_hold || shf_hold || il_hold || cvt_hold;
+                  || prm_hold || shf_hold || il_hold || cvt_hold || el_col;
 
     // A FLOAT ACCUMULATE IS STILL IN FLIGHT FIFTEEN CYCLES AFTER IT RETIRES.
     // Folding before it lands drops it AND captures it as a fold step, because
@@ -1107,6 +1111,7 @@ module khs_unit #(
         end
 
         assign el_wr    = wr_r;
+        assign el_next  = ret_v && sh_last[FLOAT_ALAT];
         assign el_wa    = wa_r;
         assign el_wdata = stage_r;
         // ONE CYCLE OF WARNING AT WB_STAGE 0, TWO AT 1. Raising `stall` clears
@@ -1140,6 +1145,7 @@ module khs_unit #(
         assign el_hold  = 1'b0;
         assign el_soon  = 1'b0;
         assign el_wr    = 1'b0;
+        assign el_next  = 1'b0;
         assign el_wa    = 5'd0;
         assign el_wdata = {VW{1'b0}};
         assign el_busy  = {VREGS{1'b0}};

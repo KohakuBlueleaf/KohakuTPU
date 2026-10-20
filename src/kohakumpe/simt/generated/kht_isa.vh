@@ -19,8 +19,8 @@ localparam [2:0] KHT_F3_DIV    = 3'd2;
 localparam [2:0] KHT_F3_SUB    = 3'd3;
 localparam [2:0] KHT_F3_VMEM   = 3'd4;
 localparam [2:0] KHT_F3_FLT    = 3'd5;
-localparam [2:0] KHT_F3_RSVD6  = 3'd6;
-localparam [2:0] KHT_F3_RSVD7  = 3'd7;
+localparam [2:0] KHT_F3_VX     = 3'd6;
+localparam [2:0] KHT_F3_STRM   = 3'd7;
 
 // funct3 on custom-3: one instruction each
 localparam [2:0] KHGI_F3_ADDI  = 3'd0;
@@ -47,6 +47,7 @@ localparam [6:0] KHT_SALU_SAND      = 7'd9;
 // custom-2 funct3 = KHT_F3_SMOV: funct7 is the operation
 localparam [6:0] KHT_SMOV_S2V       = 7'd0;
 localparam [6:0] KHT_SMOV_RDCTL     = 7'd1;
+localparam [6:0] KHT_SMOV_SLD       = 7'd2;
 
 // custom-2 funct3 = KHT_F3_DIV: funct7 is the operation
 localparam [6:0] KHT_DIV_SPLIT     = 7'd0;
@@ -76,6 +77,23 @@ localparam [6:0] KHT_FLT_VFLOG2    = 7'd5;
 localparam [6:0] KHT_FLT_VFRCP     = 7'd6;
 localparam [6:0] KHT_FLT_VFRSQRT   = 7'd7;
 
+// custom-2 funct3 = KHT_F3_VX: funct7 is the operation
+localparam [6:0] KHT_VX_VFMIN     = 7'd0;
+localparam [6:0] KHT_VX_VFMAX     = 7'd1;
+localparam [6:0] KHT_VX_VFLT      = 7'd2;
+localparam [6:0] KHT_VX_VFLE      = 7'd3;
+localparam [6:0] KHT_VX_VFEQ      = 7'd4;
+localparam [6:0] KHT_VX_VCVTFH    = 7'd5;
+localparam [6:0] KHT_VX_VCVTHF    = 7'd6;
+
+// custom-2 funct3 = KHT_F3_STRM: funct7 is the operation
+localparam [6:0] KHT_STRM_LDSFILL   = 7'd0;
+localparam [6:0] KHT_STRM_LDSDRAIN  = 7'd1;
+localparam [6:0] KHT_STRM_LDSSEND   = 7'd2;
+localparam [6:0] KHT_STRM_CREDIT    = 7'd3;
+localparam [6:0] KHT_STRM_WAIT      = 7'd4;
+localparam [6:0] KHT_STRM_CNTSET    = 7'd5;
+
 // The vmem group packs three things into funct7, so the datapath slices
 // it rather than comparing against one constant per encoding:
 //     funct7 = op<<4 | scale<<2 | width
@@ -88,6 +106,12 @@ localparam [2:0] KHT_MEM_OP_S    = 3'd2;   // store
 localparam [2:0] KHT_MEM_OP_LIN  = 3'd3;   // lane-linear load, signed
 localparam [2:0] KHT_MEM_OP_LINU = 3'd4;   // lane-linear load, unsigned
 localparam [2:0] KHT_MEM_OP_SIN  = 3'd5;   // lane-linear store
+localparam [2:0] KHT_MEM_OP_AMO  = 3'd6;   // LDS atomic; funct7[1:0] is the op
+localparam [1:0] KHT_AMO_ADD  = 2'd0;
+localparam [1:0] KHT_AMO_MAX  = 2'd1;
+localparam [1:0] KHT_AMO_MIN  = 2'd2;
+localparam [1:0] KHT_AMO_SWAP = 2'd3;
+localparam integer KHT_COUNTERS = 4;
 localparam [1:0] KHT_MW_B = 2'd0;
 localparam [1:0] KHT_MW_H = 2'd1;
 localparam [1:0] KHT_MW_W = 2'd2;
@@ -102,5 +126,5 @@ localparam integer KHT_SREGS = 32;
 // permits D/2 nested divergent levels. Overflow is a fault.
 localparam integer KHT_IPDOM_DEPTH = 8;
 
-// 106 instructions: 98 on custom-2, 8 on custom-3.
+// 136 instructions: 128 on custom-2, 8 on custom-3.
 

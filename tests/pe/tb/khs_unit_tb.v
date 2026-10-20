@@ -243,6 +243,9 @@ module khs_unit_tb;
     // state dump after four hundred instructions.
     reg [WW-1:0] wtrace [0:MAXC*MAXW-1];
     reg [31:0]   wcount [0:MAXC-1];
+    // 0: the case retires independent instructions out of program order, so
+    // only its write count and final state are compared.
+    reg [31:0]   worder [0:MAXC-1];
     integer      nwr, wbase, wbad;
     reg          warmed;
 
@@ -254,7 +257,7 @@ module khs_unit_tb;
             end
             wbad = wbad + 1;
         end else begin
-            if ({wr_vd, wr_data} !== wtrace[wbase + nwr][VW+7:0]) begin
+            if ((worder[c] != 0) && ({wr_vd, wr_data} !== wtrace[wbase + nwr][VW+7:0])) begin
                 if (wbad == 0) begin
                     $display("  FAIL case%0d write %0d (instruction %0d): v%0d = %h",
                              c, nwr, wtrace[wbase + nwr][WW-1 -: 32],
@@ -481,6 +484,7 @@ module khs_unit_tb;
         $readmemh({`PE_DIR, "/khd/cur/scounts.hex"}, scount);
         $readmemh({`PE_DIR, "/khd/cur/wtrace.hex"},  wtrace);
         $readmemh({`PE_DIR, "/khd/cur/wcounts.hex"}, wcount);
+        $readmemh({`PE_DIR, "/khd/cur/worder.hex"},  worder);
 
         $display("--- %0d cases, SIMD %0d, ilanes %0d, shiftu %0d, permu %0d, red %0d, float %0d, flanes %0d, vregs %0d ---",
                  ncase, SIMD, `KHS_ILANES, `KHS_SHIFTU, `KHS_PERMU, `KHS_RED,

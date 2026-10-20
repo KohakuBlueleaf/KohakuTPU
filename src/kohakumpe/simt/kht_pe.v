@@ -65,7 +65,24 @@ module kht_pe #(
     parameter integer INST_DEPTH = 16,
     // A 288-bit FIFO is 4 RAMB36 at any depth to 512, so the deep receive queue
     // is +34 LUT and the shallow one buys nothing.
-    parameter integer RECV_DEPTH = 512
+    parameter integer RECV_DEPTH = 512,
+    // compute-unit.md s9; 0 is today's machine.
+    parameter integer SCORE      = 0,
+    parameter integer WB_BUF     = 0,
+    parameter integer LSU_DEPTH  = 0,
+    parameter integer COALESCE   = 1,
+    parameter integer MSHRS      = 4,
+    parameter integer L1_WB      = 1,
+    // kht_req's un-acknowledged writes (LSU_DEPTH > 0); 1 is one at a time.
+    parameter integer WR_OUT     = 1,
+    // kht_lsu's scanner: entries it walks, line skipping, and holding a candidate.
+    parameter integer LSU_SCAN   = 2,
+    parameter integer LSU_SKIP   = 0,
+    parameter integer LSU_HOLD   = 1,
+    // kht_core's address stage depth; 0 keeps memory instructions in EX.
+    parameter integer MEM_AU     = 0,
+    // kht_unit's long-result register: one cycle on every float and multiply.
+    parameter integer FRES_REG   = 0
 )(
     input  wire                   clk,
     input  wire                   resetn,
@@ -388,6 +405,11 @@ module kht_pe #(
     wire [LANES*32-1:0]     lds_wdata, lds_rdata;
     wire [31:0]             lds_passes;
 
+    wire          m_rd_v, m_rd_ready, m_rsp_v, m_wr_v, m_wr_ready;
+    wire [25:0]   m_rd_line, m_wr_line;
+    wire [7:0]    m_rd_tag, m_rsp_tag;
+    wire [255:0]  m_rsp_data, m_wr_data;
+
     kht_core #(
         .LANES(LANES), .WAVES(WAVES), .HAS_MASK(HAS_MASK),
         .HAS_IPDOM(HAS_IPDOM), .LDS_BANKS(LDS_BANKS),
@@ -395,7 +417,13 @@ module kht_pe #(
         .FLANES(FLANES), .FSFU_UNITS(FSFU_UNITS),
         .IPDOM_D(IPDOM_D),
         .IMEM_WORDS(IMEM_WORDS), .SPAD_WORDS(SPAD_WORDS),
-        .VREG_PRIM(VREG_PRIM)
+        .VREG_PRIM(VREG_PRIM),
+        .SCORE(SCORE), .WB_BUF(WB_BUF),
+        .LSU_DEPTH(LSU_DEPTH), .COALESCE(COALESCE), .MSHRS(MSHRS),
+        .L1_LINES(L1_LINES), .L1_WB(L1_WB),
+        .LSU_SCAN(LSU_SCAN), .LSU_SKIP(LSU_SKIP), .LSU_HOLD(LSU_HOLD),
+        .MEM_AU(MEM_AU), .FRES_REG(FRES_REG),
+        .MEM_PRIM(MEM_PRIM)
     ) u_core (
         .clk(clk), .resetn(resetn),
         .boot_v(boot_v), .boot_pc(k_pc), .boot_n(k_op),
@@ -412,6 +440,11 @@ module kht_pe #(
         .l1_addr(l1_addr), .l1_wdata(l1_wdata), .l1_rdata(l1_rdata),
         .l1_stall(l1_stall), .l1_flush(l1_flush), .l1_inval(l1_inval),
         .l1_flush_busy(l1_flush_busy),
+        .m_rd_v(m_rd_v), .m_rd_ready(m_rd_ready), .m_rd_line(m_rd_line),
+        .m_rd_tag(m_rd_tag), .m_rsp_v(m_rsp_v), .m_rsp_tag(m_rsp_tag),
+        .m_rsp_data(m_rsp_data),
+        .m_wr_v(m_wr_v), .m_wr_ready(m_wr_ready), .m_wr_line(m_wr_line),
+        .m_wr_data(m_wr_data),
         .dbg_retire_pc(dbg_retire_pc), .dbg_retire_valid(dbg_retire_valid),
         .dbg_mask(dbg_mask),
         .cycle_ctr(cyc_ctr), .instret_ctr(ret_ctr),
@@ -473,49 +506,81 @@ module kht_pe #(
     end
     endgenerate
 
-    wire         fill_valid, fill_ready, resp_valid;
-    wire [30:0]  fill_addr;
-    wire [255:0] resp_data;
-    wire         wb_valid, wb_ready;
-    wire [30:0]  wb_addr;
-    wire [255:0] wb_data;
+    generate
+    if (LSU_DEPTH == 0) begin : g_l1w
+        wire         fill_valid, fill_ready, resp_valid;
+        wire [30:0]  fill_addr;
+        wire [255:0] resp_data;
+        wire         wb_valid, wb_ready;
+        wire [30:0]  wb_addr;
+        wire [255:0] wb_data;
 
-    rv_l1 #(.LINES(L1_LINES), .MEM_PRIM(MEM_PRIM)) u_l1 (
-        .clk(clk), .resetn(resetn),
-        .probe_addr(l1_probe), .req(l1_req), .we(l1_we), .be(l1_be),
-        .addr(l1_addr), .wdata(l1_wdata), .rdata(l1_rdata), .stall(l1_stall),
-        .flush(l1_flush), .inval(l1_inval), .flush_busy(l1_flush_busy),
-        .fill_valid(fill_valid), .fill_ready(fill_ready), .fill_addr(fill_addr),
-        .resp_valid(resp_valid), .resp_data(resp_data),
-        .wb_valid(wb_valid), .wb_ready(wb_ready), .wb_addr(wb_addr),
-        .wb_data(wb_data),
-        .wr_idle(wr_out == 16'd0)
-    );
+        assign m_rd_ready = 1'b0;
+        assign m_rsp_v    = 1'b0;
+        assign m_rsp_tag  = 8'd0;
+        assign m_rsp_data = 256'd0;
+        assign m_wr_ready = 1'b0;
 
-    // The peer-push path is tied off: a GPU wave reaches another unit through
-    // memory, not through a per-lane push, and an unused port is better tied
-    // than half-built.
-    rv_noc_req #(
-        .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
-        .POS_X(POS_X), .POS_Y(POS_Y), .MEM_X(MEM_X), .MEM_Y(MEM_Y),
-        .DRAM_BASE(DRAM_BASE),
-        .BUF_SPAD(BUF_SPAD), .BUF_IMEM(BUF_IMEM),
-        .BUF_SPAD_W(BUF_SPAD_W), .BUF_IMEM_W(BUF_IMEM_W)
-    ) u_req (
-        .clk(clk), .resetn(resetn),
-        .fill_valid(fill_valid), .fill_ready(fill_ready), .fill_addr(fill_addr),
-        .resp_valid(resp_valid), .resp_data(resp_data),
-        .wb_valid(wb_valid), .wb_ready(wb_ready), .wb_addr(wb_addr),
-        .wb_data(wb_data),
-        .push_valid(1'b0), .push_ready(),
-        .push_dx({POS_WIDTH{1'b0}}), .push_dy({POS_WIDTH{1'b0}}),
-        .push_win(1'b0), .push_gran(14'd0), .push_sel(3'd0), .push_be(4'd0),
-        .push_data(32'd0),
-        .send_flit(send_flit), .send_valid(send_valid), .send_ready(send_ready),
-        .rx_rd_resp(rx_take && rx_is_resp), .rx_txn(rx_id),
-        .rx_data(rx_pl[255:0]), .rx_wr_ack(rx_take && rx_is_ack),
-        .wr_out(wr_out), .idle(req_idle)
-    );
+        rv_l1 #(.LINES(L1_LINES), .MEM_PRIM(MEM_PRIM)) u_l1 (
+            .clk(clk), .resetn(resetn),
+            .probe_addr(l1_probe), .req(l1_req), .we(l1_we), .be(l1_be),
+            .addr(l1_addr), .wdata(l1_wdata), .rdata(l1_rdata), .stall(l1_stall),
+            .flush(l1_flush), .inval(l1_inval), .flush_busy(l1_flush_busy),
+            .fill_valid(fill_valid), .fill_ready(fill_ready), .fill_addr(fill_addr),
+            .resp_valid(resp_valid), .resp_data(resp_data),
+            .wb_valid(wb_valid), .wb_ready(wb_ready), .wb_addr(wb_addr),
+            .wb_data(wb_data),
+            .wr_idle(wr_out == 16'd0)
+        );
+
+        // The peer-push path is tied off: a GPU wave reaches another unit
+        // through memory, not through a per-lane push, and an unused port is
+        // better tied than half-built.
+        rv_noc_req #(
+            .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
+            .POS_X(POS_X), .POS_Y(POS_Y), .MEM_X(MEM_X), .MEM_Y(MEM_Y),
+            .DRAM_BASE(DRAM_BASE),
+            .BUF_SPAD(BUF_SPAD), .BUF_IMEM(BUF_IMEM),
+            .BUF_SPAD_W(BUF_SPAD_W), .BUF_IMEM_W(BUF_IMEM_W)
+        ) u_req (
+            .clk(clk), .resetn(resetn),
+            .fill_valid(fill_valid), .fill_ready(fill_ready), .fill_addr(fill_addr),
+            .resp_valid(resp_valid), .resp_data(resp_data),
+            .wb_valid(wb_valid), .wb_ready(wb_ready), .wb_addr(wb_addr),
+            .wb_data(wb_data),
+            .push_valid(1'b0), .push_ready(),
+            .push_dx({POS_WIDTH{1'b0}}), .push_dy({POS_WIDTH{1'b0}}),
+            .push_win(1'b0), .push_gran(14'd0), .push_sel(3'd0), .push_be(4'd0),
+            .push_data(32'd0),
+            .send_flit(send_flit), .send_valid(send_valid), .send_ready(send_ready),
+            .rx_rd_resp(rx_take && rx_is_resp), .rx_txn(rx_id),
+            .rx_data(rx_pl[255:0]), .rx_wr_ack(rx_take && rx_is_ack),
+            .wr_out(wr_out), .idle(req_idle)
+        );
+    end else begin : g_l1q
+        // kht_lsu lives in the core; only its requestor is here.
+        assign l1_rdata      = 32'd0;
+        assign l1_stall      = 1'b0;
+        assign l1_flush_busy = 1'b0;
+
+        kht_req #(
+            .FLIT_WIDTH(FLIT_WIDTH), .POS_WIDTH(POS_WIDTH),
+            .POS_X(POS_X), .POS_Y(POS_Y), .MEM_X(MEM_X), .MEM_Y(MEM_Y),
+            .DRAM_BASE(DRAM_BASE), .WR_OUT(WR_OUT)
+        ) u_req (
+            .clk(clk), .resetn(resetn),
+            .rd_v(m_rd_v), .rd_ready(m_rd_ready), .rd_line(m_rd_line),
+            .rd_tag(m_rd_tag), .rsp_v(m_rsp_v), .rsp_tag(m_rsp_tag),
+            .rsp_data(m_rsp_data),
+            .wr_v(m_wr_v), .wr_ready(m_wr_ready), .wr_line(m_wr_line),
+            .wr_data(m_wr_data),
+            .send_flit(send_flit), .send_valid(send_valid), .send_ready(send_ready),
+            .rx_rd_resp(rx_take && rx_is_resp), .rx_txn(rx_id),
+            .rx_data(rx_pl[255:0]), .rx_wr_ack(rx_take && rx_is_ack),
+            .wr_out(wr_out), .idle(req_idle)
+        );
+    end
+    endgenerate
 
 `ifndef SYNTHESIS
     always @(posedge clk) if (resetn) begin

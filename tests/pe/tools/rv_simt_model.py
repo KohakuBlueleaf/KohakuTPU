@@ -66,10 +66,104 @@ OPC_KHG, OPC_KHGI = 0x5B, 0x7B
 #: the unit the coalescer groups by.
 LINE_BYTES = 32
 
+#: LAUNCH policy bits (compute-unit.md s2.4). The model's memory is coherent, so
+#: only the two that change architectural state act here.
+POL_I_INV, POL_D_INV, POL_D_WB, POL_LDS_CLEAR, POL_CNT_RESET = 1, 2, 4, 8, 16
+
+#: LDS granules: 8 words, one row across the eight banks.
+GRAN_WORDS = 8
+
+F32_QNAN = 0x7FC0_0000
+F16_QNAN = 0x7E00
+
 
 def sx(v, bits):
     v &= (1 << bits) - 1
     return v - (1 << bits) if v & (1 << (bits - 1)) else v
+
+
+def f32_is_nan(a):
+    return (a & 0x7F80_0000) == 0x7F80_0000 and (a & 0x007F_FFFF) != 0
+
+
+def f32_key(a):
+    """An integer that orders binary32 values as reals; +0 and -0 tie."""
+    mag = a & 0x7FFF_FFFF
+    return -mag if a >> 31 else mag
+
+
+def f32_minmax(a, b, want_max):
+    """IEEE minNum/maxNum: a NaN loses to a number, two NaNs give the canonical
+    quiet NaN, and -0 orders below +0 (RISC-V FMIN/FMAX)."""
+    if f32_is_nan(a) and f32_is_nan(b):
+        return F32_QNAN
+    if f32_is_nan(a):
+        return b
+    if f32_is_nan(b):
+        return a
+    ka, kb = f32_key(a), f32_key(b)
+    if ka == kb:
+        # Equal as reals; only the zeros differ in bits, and the sign decides.
+        neg = (a | b) >> 31 if not want_max else (a & b) >> 31
+        return (neg << 31) | (a & 0x7FFF_FFFF)
+    pick_a = (ka > kb) if want_max else (ka < kb)
+    return a if pick_a else b
+
+
+def f32_cmp(a, b, how):
+    """vflt/vfle/vfeq: 1 or 0. Any NaN compares false; +0 == -0."""
+    if f32_is_nan(a) or f32_is_nan(b):
+        return 0
+    ka, kb = f32_key(a), f32_key(b)
+    return int({"lt": ka < kb, "le": ka <= kb, "eq": ka == kb}[how])
+
+
+def f16_to_f32(h):
+    """binary16 -> binary32, exact. A NaN keeps its payload and becomes quiet."""
+    s, e, m = (h >> 15) & 1, (h >> 10) & 0x1F, h & 0x3FF
+    if e == 0x1F:
+        return (s << 31) | 0x7F80_0000 | ((0x40_0000 | (m << 13)) if m else 0)
+    if e == 0:
+        if m == 0:
+            return s << 31
+        # A binary16 subnormal is m x 2^-24; normalise it.
+        sh = 0
+        while not (m & 0x400):
+            m <<= 1
+            sh += 1
+        return (s << 31) | ((127 - 15 + 1 - sh) << 23) | ((m & 0x3FF) << 13)
+    return (s << 31) | ((e - 15 + 127) << 23) | (m << 13)
+
+
+def f32_to_f16(a):
+    """binary32 -> binary16, round to nearest even, overflow to infinity, a NaN to
+    the signed canonical quiet NaN."""
+    s, e, m = (a >> 31) & 1, (a >> 23) & 0xFF, a & 0x7F_FFFF
+    if e == 0xFF:
+        return (s << 15) | (F16_QNAN if m else 0x7C00)
+    if e == 0:
+        return s << 15  # a binary32 subnormal is far below binary16's range
+    sig = m | 0x80_0000  # 24 bits, value sig x 2^(e - 150)
+    # Units of the result's last place: 2^-24 for subnormals, 2^(E-10) else.
+    ex = e - 127
+    ulp = -24 if ex < -14 else ex - 10
+    sh = ulp - (e - 150)  # bits of sig below the result's last place
+    if sh >= 32:
+        q = 0
+    else:
+        q, rem = sig >> sh, sig & ((1 << sh) - 1)
+        half = 1 << (sh - 1)
+        if rem > half or (rem == half and (q & 1)):
+            q += 1
+    if ex < -14:
+        # q is the subnormal mantissa; 0x400 is exactly the smallest normal.
+        return (s << 15) | q
+    if q == 0x800:  # rounding carried into the next binade
+        q >>= 1
+        ex += 1
+    if ex > 15:
+        return (s << 15) | 0x7C00
+    return (s << 15) | ((ex + 15) << 10) | (q & 0x3FF)
 
 
 def region(a):
@@ -99,6 +193,13 @@ class Wave:
         self.depth = depth
         self.done = False
         self.hi_water = 0
+        # Which workgroup this context runs, its index inside it, and the slot
+        # (group of wave contexts and LDS share) it occupies.
+        self.wg = 0
+        self.wiw = wid
+        self.slot = 0
+        # None, ("bar",) or ("wait", counter, target): why the wave cannot issue.
+        self.sleep = None
 
     def active(self):
         return [i for i in range(self.lanes) if (self.mask >> i) & 1]
@@ -148,6 +249,7 @@ class GpuMachine:
         ctl=None,
         nlive=1,
         has_fsfu=False,
+        counters=4,
     ):
         self.lanes = lanes
         # THE SEEDS ARE A UNIT COUNT ON THE PE and 0 is the shipping value, so
@@ -169,6 +271,84 @@ class GpuMachine:
         self.instret = 0
         self.cause = 0
         self.halt_word = 0
+        self.counters = [0] * counters
+        # What the stream engine sent to other units, in issue order: the bench
+        # compares these, since they never reach this core's memory.
+        self.sent = []
+        self.credits = []
+        # A KICK is a one-workgroup launch of `nlive` waves (compute-unit.md s2.1).
+        self.launch_id = 1
+        self.wg_base, self.wg_count = 0, 1
+        self.wg_waves = max(1, min(nlive, waves))
+        self.wg_lds = 0
+        self.wg_next = 1
+        self.nslots = 1
+        self.launch_pc = 0
+
+    # ---- launches and workgroups (compute-unit.md s2) ---------------------
+    def launch(self, pc, arg, wg_base=0, wg_count=1, wg_waves=1, wg_lds=0, policy=0):
+        """Start a LAUNCH: the slice's workgroups run in as many slots as fit."""
+        self.ctl[0] = arg & MASK
+        self.launch_id = (self.launch_id + 1) & MASK
+        self.launch_pc = pc & MASK
+        self.wg_base = wg_base & 0xFFFF
+        self.wg_count = (wg_count & 0xFFFF) or 1
+        self.wg_waves = (wg_waves & 0x1F) or 1
+        self.wg_lds = wg_lds & 0x7FF
+        if self.wg_waves > len(self.waves):
+            raise Halt(CAUSE_FAULT, pc)
+        nslots = len(self.waves) // self.wg_waves
+        if self.wg_lds:
+            nslots = min(nslots, len(self.lds) // (self.wg_lds * GRAN_WORDS))
+        if nslots == 0:
+            raise Halt(CAUSE_FAULT, pc)
+        self.nslots = nslots
+        if policy & POL_LDS_CLEAR:
+            self.lds = [0] * len(self.lds)
+        if policy & POL_CNT_RESET:
+            self.counters = [0] * len(self.counters)
+        for w in self.waves:
+            w.done = True
+            w.sleep = None
+        self.wg_next = 0
+        self._fill_slots()
+
+    def _fill_slots(self):
+        """Start the next workgroup in every slot whose waves have all ended."""
+        for s in range(self.nslots):
+            if self.wg_next >= self.wg_count:
+                return
+            ws = self.waves[s * self.wg_waves : (s + 1) * self.wg_waves]
+            if not all(w.done for w in ws):
+                continue
+            # Registers are NOT cleared: the hardware's register file keeps what
+            # the slot's previous wave left, so a shader initialises what it reads.
+            for j, w in enumerate(ws):
+                w.pc = self.launch_pc
+                w.mask = (1 << self.lanes) - 1
+                w.stack = []
+                w.done = False
+                w.sleep = None
+                w.wg = (self.wg_base + self.wg_next) & 0xFFFF
+                w.wiw = j
+                w.slot = s
+            self.wg_next += 1
+
+    def receive(self, buf_id, offset, words, count=True):
+        """A CU_DATA burst from another unit landing in LDS (compute-unit.md s6.2)."""
+        if len(words) % GRAN_WORDS:
+            raise ValueError("a burst is whole 32-byte granules")
+        if not (buf_id == 0 or 8 <= buf_id <= 11):
+            raise ValueError("buf_id %d is not an LDS granule buffer" % buf_id)
+        for i, v in enumerate(words):
+            self.lds[(offset * GRAN_WORDS + i) % len(self.lds)] = v & MASK
+        if count:
+            k = 0 if buf_id == 0 else buf_id - 8
+            self.counters[k] = (self.counters[k] + len(words) // GRAN_WORDS) & MASK
+
+    def receive_credit(self, amount):
+        """A CREDIT signal: its amount advances counter 3."""
+        self.counters[3] = (self.counters[3] + (amount & 0xFFFF)) & MASK
 
     # ---- memory ---------------------------------------------------------
     def _word(self, a, pc):
@@ -200,6 +380,15 @@ class GpuMachine:
             src = val if (be >> b) & 1 else old
             new |= ((src >> (8 * b)) & 0xFF) << (8 * b)
         arr[i] = new & MASK
+
+    def _check_access(self, addrs, nby, pc):
+        """compute-unit.md s5.1: one per-lane access is all DRAM or all LDS, every
+        lane aligned for its width; anything else faults before any lane acts."""
+        regions = {region(a) for a in addrs}
+        if (regions - {R_DRAM}) and (regions - {R_LDS}):
+            raise Halt(CAUSE_FAULT, pc)
+        if any(a & (nby - 1) for a in addrs):
+            raise Halt(CAUSE_FAULT, pc)
 
     def load(self, a, width, signed, pc):
         if width == 2 and (a & 1):
@@ -280,6 +469,13 @@ class GpuMachine:
             return (pc, 0, {})
         if opc == 0x0F:
             return None
+        if opc in (0x03, 0x23):
+            if (opc == 0x03 and f3 in (3, 6, 7)) or (opc == 0x23 and f3 > 2):
+                raise Halt(CAUSE_FAULT, pc)
+            imm = imm_i if opc == 0x03 else imm_s
+            self._check_access(
+                [(w.x[rs1][ln] + imm) & MASK for ln in w.active()], 1 << (f3 & 3), pc
+            )
 
         vals = {}
         for ln in w.active():
@@ -399,7 +595,14 @@ class GpuMachine:
                 # control table -- it is the only way a wave learns which of the
                 # dispatch it is, and every per-wave address derives from it.
                 if rd:
-                    w.s[rd] = (w.wid if rs2 == 5 else self.ctl[rs2]) & MASK
+                    w.s[rd] = self._rdctl(w, rs2) & MASK
+                return (pc, -rd, w.s[rd] if rd else 0)
+            if f7 == 2:
+                a = w.s[rs1]
+                if region(a) != R_DRAM or (a & 3):
+                    raise Halt(CAUSE_FAULT, pc)
+                if rd:
+                    w.s[rd] = self.dram.get(a, 0) & MASK
                 return (pc, -rd, w.s[rd] if rd else 0)
             raise Halt(CAUSE_FAULT, pc)
 
@@ -420,6 +623,9 @@ class GpuMachine:
                     w.done = True
                 return (pc, 0, {})
             if f7 == 3:
+                # The barrier EXECUTES: the wave sleeps until every live wave of
+                # its workgroup has arrived (compute-unit.md s7.2).
+                w.sleep = ("bar",)
                 return (pc, 0, {})
             raise Halt(CAUSE_FAULT, pc)
 
@@ -479,6 +685,8 @@ class GpuMachine:
 
         if f3 == 4:  # VMEM
             op, scale, width = (f7 >> 4) & 7, (f7 >> 2) & 3, f7 & 3
+            if op == 6:
+                return self._amo(w, rd, rs1, rs2, scale, width, pc)
             if width > 2 or op > 5:
                 raise Halt(CAUSE_FAULT, pc)
             nby = 1 << width
@@ -492,6 +700,7 @@ class GpuMachine:
             }
             if addrs:
                 self.reqs.append(((w.wid, pc), list(addrs.values())))
+            self._check_access(list(addrs.values()), nby, pc)
             if store:
                 for ln, ad in addrs.items():
                     self.store(ad, w.x[rd][ln], nby, pc)
@@ -535,6 +744,139 @@ class GpuMachine:
                 w.x[rd][ln] = v
             return (pc, rd, out)
 
+        if f3 == 6:  # VX
+            out = {}
+            for ln in w.active():
+                a, b = w.x[rs1][ln] & MASK, w.x[rs2][ln] & MASK
+                if f7 == 0:
+                    v = f32_minmax(a, b, want_max=False)
+                elif f7 == 1:
+                    v = f32_minmax(a, b, want_max=True)
+                elif f7 in (2, 3, 4):
+                    v = f32_cmp(a, b, ("lt", "le", "eq")[f7 - 2])
+                elif f7 == 5:
+                    if rs2 > 1:
+                        raise Halt(CAUSE_FAULT, pc)
+                    v = f16_to_f32((a >> (16 * rs2)) & 0xFFFF)
+                elif f7 == 6:
+                    v = (f32_to_f16(b) << 16) | f32_to_f16(a)
+                else:
+                    raise Halt(CAUSE_FAULT, pc)
+                out[ln] = v & MASK
+            if rd:
+                for ln, v in out.items():
+                    w.x[rd][ln] = v
+                return (pc, rd, out)
+            return (pc, 0, {})
+
+        if f3 == 7:  # STRM
+            return self._strm(w, f7, rs1, rs2, pc)
+
+        raise Halt(CAUSE_FAULT, pc)
+
+    # ---- control slots (compute-unit.md s2.2) -----------------------------
+    def _rdctl(self, w, idx):
+        if idx == 5:
+            return w.wid
+        if idx == 6:
+            return w.wg
+        if idx == 7:
+            return w.wiw
+        if idx == 8:
+            return self.wg_count
+        if idx == 9:
+            return self.wg_waves
+        if idx == 10:
+            return LDS_BASE + w.slot * self.wg_lds * LINE_BYTES
+        if idx == 11:
+            return self.launch_id
+        if 16 <= idx < 16 + len(self.counters):
+            return self.counters[idx - 16]
+        return self.ctl[idx]
+
+    # ---- LDS atomics (compute-unit.md s7.1) -------------------------------
+    def _amo(self, w, rd, rs1, rs2, scale, amo, pc):
+        """Lanes in ascending order: the resolver serves the lowest lane first, so
+        lanes on one address see each other's results in lane order."""
+        out = {}
+        for ln in w.active():
+            a = (w.s[rs1] + (sx(w.x[rs2][ln], 32) << scale)) & MASK
+            if region(a) != R_LDS or (a & 3):
+                raise Halt(CAUSE_FAULT, pc)
+            i = ((a & 0x0FFF_FFFF) >> 2) % len(self.lds)
+            old, v = self.lds[i], w.x[rd][ln] & MASK
+            if amo == 0:
+                new = (old + v) & MASK
+            elif amo == 1:
+                new = old if sx(old, 32) >= sx(v, 32) else v
+            elif amo == 2:
+                new = old if sx(old, 32) <= sx(v, 32) else v
+            else:
+                new = v
+            self.lds[i] = new
+            out[ln] = old
+        if rd:
+            for ln, v in out.items():
+                w.x[rd][ln] = v
+            return (pc, rd, out)
+        return (pc, 0, {})
+
+    # ---- the stream engine (compute-unit.md s6) ---------------------------
+    def _desc(self, d, pc):
+        off, n, k = d & 0xFFFF, ((d >> 16) & 0xFF) + 1, (d >> 24) & 3
+        if d >> 26:
+            raise Halt(CAUSE_FAULT, pc)
+        if (off + n) * GRAN_WORDS > len(self.lds):
+            raise Halt(CAUSE_FAULT, pc)
+        return off, n, k
+
+    def _strm(self, w, f7, rs1, rs2, pc):
+        """Streams complete at issue here. The hardware completes them later, and a
+        shader that reads streamed data without `wait`ing for its counter is wrong
+        on the hardware and right here -- so every stream test waits."""
+        s1 = w.s[rs1]
+        if f7 in (0, 1):
+            off, n, k = self._desc(w.s[rs2], pc)
+            if region(s1) != R_DRAM or (s1 & (LINE_BYTES - 1)):
+                raise Halt(CAUSE_FAULT, pc)
+            for g in range(n):
+                for i in range(GRAN_WORDS):
+                    li = (off + g) * GRAN_WORDS + i
+                    da = (s1 + g * LINE_BYTES + 4 * i) & MASK
+                    if f7 == 0:
+                        self.lds[li] = self.dram.get(da, 0)
+                    else:
+                        self.dram[da] = self.lds[li]
+            self.counters[k] = (self.counters[k] + n) & MASK
+            return (pc, 0, {})
+        if f7 == 2:
+            off, n, k = self._desc(w.s[rs2], pc)
+            words = self.lds[off * GRAN_WORDS : (off + n) * GRAN_WORDS]
+            self.sent.append(
+                {
+                    "y": (s1 >> 28) & 0xF,
+                    "x": (s1 >> 24) & 0xF,
+                    "buf_id": (s1 >> 16) & 0xFF,
+                    "offset": s1 & 0xFFFF,
+                    "words": list(words),
+                }
+            )
+            self.counters[k] = (self.counters[k] + n) & MASK
+            return (pc, 0, {})
+        if f7 == 3:
+            self.credits.append((s1 & 0xFF, w.s[rs2] & 0xFFFF))
+            return (pc, 0, {})
+        if f7 == 4:
+            if rs2 >= len(self.counters):
+                raise Halt(CAUSE_FAULT, pc)
+            if self.counters[rs2] < s1:
+                w.sleep = ("wait", rs2, s1)
+            return (pc, 0, {})
+        if f7 == 5:
+            if rs2 >= len(self.counters):
+                raise Halt(CAUSE_FAULT, pc)
+            self.counters[rs2] = s1 & MASK
+            return (pc, 0, {})
         raise Halt(CAUSE_FAULT, pc)
 
     def _khgi(self, w, ins, pc):
@@ -574,16 +916,42 @@ class GpuMachine:
         trace = []
         try:
             for _ in range(limit):
+                self._fill_slots()
                 live = [w for w in self.waves if not w.done]
                 if not live:
                     return trace, self.cause or CAUSE_ECALL, self.halt_word
+                self._wake(live)
+                ran = False
                 for w in live:
+                    if w.done or w.sleep:
+                        continue
                     trace.append((w.wid,) + self.step(w))
+                    ran = True
+                if not ran:
+                    why = sorted({w.sleep for w in live})
+                    raise RuntimeError("deadlock: every live wave sleeps on %s" % why)
             raise RuntimeError("model did not halt within %d steps" % limit)
         except Halt as h:
             self.cause = h.cause
             self.halt_word = h.word
             return trace, h.cause, h.word
+
+    def _wake(self, live):
+        """Clear every sleep whose reason has gone (compute-unit.md s4.2)."""
+        for w in live:
+            if (
+                w.sleep
+                and w.sleep[0] == "wait"
+                and self.counters[w.sleep[1]] >= w.sleep[2]
+            ):
+                w.sleep = None
+        # A barrier releases when every live wave of the workgroup has arrived; a
+        # wave that has ended counts as arrived because it is no longer live.
+        for s in {w.slot for w in live}:
+            group = [w for w in live if w.slot == s]
+            if group and all(w.sleep == ("bar",) for w in group):
+                for w in group:
+                    w.sleep = None
 
     def fills_issued(self):
         """Distinct 32-byte lines the recorded accesses would have requested."""

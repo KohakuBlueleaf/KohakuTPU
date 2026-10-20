@@ -96,6 +96,15 @@ if {$l1ln eq ""} { set l1ln 128 }
 # survives only in the tag and in the kht_imul read-list condition below.
 set mun $lns
 set ::ooc_period $per
+# OOC_GEN "NAME=V ...": any further generic on any top, joined into the tag.
+set xgen {}
+set xtag ""
+if {[info exists ::env(OOC_GEN)]} {
+    foreach g $::env(OOC_GEN) {
+        lappend xgen -generic $g
+        append xtag "-[string map {= {}} $g]"
+    }
+}
 
 set_param general.maxThreads 4
 source [file join $root scripts tcl ooc_class.tcl]
@@ -116,6 +125,11 @@ read_verilog [list \
     [file join $root src kohakumpe simt kht_vregfile.v] \
     [file join $root src kohakumpe simt kht_lds.v] \
     [file join $root src kohakumpe simt kht_predec.v] \
+    [file join $root src kohakumpe simt kht_score.v] \
+    [file join $root src kohakumpe simt kht_icache.v] \
+    [file join $root src kohakumpe simt kht_kcache.v] \
+    [file join $root src kohakumpe simt kht_lsu.v] \
+    [file join $root src kohakumpe simt kht_req.v] \
     [file join $root src kohakumpe simt kht_unit.v] \
     [file join $root src kohakumpe simt kht_core.v]]
 
@@ -138,7 +152,7 @@ read_xdc [file join $root scripts xdc ooc_khg.xdc]
 set tag "gpu-$top-l$lns-w$wvs-m$msk-i$ipd-s$shf-$prm-f$flt-fp$fpu.$fln-sf$sfu"
 append tag "-lb$lds-id$ipdd-mp$mprm-idep$idep-rd$rdep"
 append tag "-iw$iwds-sw$swds-l1$l1ln-mu$mun"
-append tag "-su${shflu}-lb${ldsb}-t$per"
+append tag "-su${shflu}-lb${ldsb}-t$per$xtag"
 puts "@@@ top $top lanes $lns waves $wvs has_mask $msk has_ipdom $ipd has_shfl $shf vreg $prm period $per"
 
 # Only kht_unit carries the ladder generics; a leaf takes what it has.
@@ -152,7 +166,7 @@ if {$top eq "kht_unit"} {
                  -generic HAS_MASK=$msk -generic HAS_IPDOM=$ipd \
                  -generic SHFL_UNITS=$shflu -generic VREG_PRIM=$prm \
                  -generic FLANES=$fln \
-                 -generic FSFU_UNITS=$sfu
+                 -generic FSFU_UNITS=$sfu {*}$xgen
 } elseif {$top eq "kht_pe"} {
     # THE WHOLE UNIT: core, windows, L1, requestor, fabric port. The gate ladder
     # answers "what does this cost"; only this answers "does the machine close",
@@ -170,7 +184,7 @@ if {$top eq "kht_unit"} {
                  -generic IPDOM_D=$ipdd \
                  -generic MEM_PRIM=$mprm -generic INST_DEPTH=$idep \
                  -generic RECV_DEPTH=$rdep -generic IMEM_WORDS=$iwds \
-                 -generic SPAD_WORDS=$swds -generic L1_LINES=$l1ln
+                 -generic SPAD_WORDS=$swds -generic L1_LINES=$l1ln {*}$xgen
 } elseif {$top eq "kht_core"} {
     # G7 lives in the FRONT END, which kht_unit's top cannot see. Sweeping WAVES
     # here against the same sweep on kht_unit separates scheduling from storage:
@@ -182,7 +196,7 @@ if {$top eq "kht_unit"} {
                  -generic HAS_MASK=$msk -generic HAS_IPDOM=$ipd \
                  -generic SHFL_UNITS=$shflu -generic VREG_PRIM=$prm \
                  -generic FLANES=$fln \
-                 -generic FSFU_UNITS=$sfu
+                 -generic FSFU_UNITS=$sfu {*}$xgen
 } elseif {$top eq "kht_lds"} {
     # G4 lives here, not in kht_unit: the resolver is LANES x LANES and the
     # return crossbar is per lane, so this is the block the gate is measured on.
@@ -191,17 +205,23 @@ if {$top eq "kht_unit"} {
     synth_design -top $top -part $part -mode out_of_context \
                  -flatten_hierarchy $flt -directive default \
                  -include_dirs [file join $root src kohakumpe simt generated] \
-                 -generic LANES=$lns -generic MEM_PRIM=$prm
+                 -generic LANES=$lns -generic MEM_PRIM=$prm {*}$xgen
 } elseif {$top eq "kht_vregfile"} {
     synth_design -top $top -part $part -mode out_of_context \
                  -flatten_hierarchy $flt -directive default \
                  -include_dirs [file join $root src kohakumpe simt generated] \
-                 -generic LANES=$lns -generic WAVES=$wvs -generic PRIM=$prm
+                 -generic LANES=$lns -generic WAVES=$wvs -generic PRIM=$prm {*}$xgen
+} elseif {$top eq "kht_req"} {
+    # No thread count: the requestor's widths are the fabric's.
+    synth_design -top $top -part $part -mode out_of_context \
+                 -flatten_hierarchy $flt -directive default \
+                 -include_dirs [file join $root src kohakumpe simt generated] \
+                 {*}$xgen
 } else {
     synth_design -top $top -part $part -mode out_of_context \
                  -flatten_hierarchy $flt -directive default \
                  -include_dirs [file join $root src kohakumpe simt generated] \
-                 -generic LANES=$lns
+                 -generic LANES=$lns {*}$xgen
 }
 
 # ASSERT BEFORE TRUSTING. A Vivado timing query returns EMPTY on failure rather

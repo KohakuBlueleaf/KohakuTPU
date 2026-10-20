@@ -2,6 +2,11 @@ kohakumpe/simt/generated/kht_isa.vh
 kohakumpe/simt/kht_core.v
 kohakumpe/simt/kht_ctrl.vh
 kohakumpe/simt/kht_fpu.v
+kohakumpe/simt/kht_icache.v
+kohakumpe/simt/kht_kcache.v
+kohakumpe/simt/kht_score.v
+kohakumpe/simt/kht_lsu.v
+kohakumpe/simt/kht_req.v
 kohakumpe/simt/kht_imul.v
 kohakumpe/simt/kht_lds.v
 kohakumpe/simt/kht_pe.v

@@ -17,22 +17,26 @@ tags:
 > Generating four consumers from one field table is this project's tooling
 > convention, and a good one, but it is not framework machinery.
 
-**106 instructions in the custom space: 98 on custom-2, 8 on custom-3** — plus
+**136 instructions in the custom space: 128 on custom-2, 8 on custom-3** — plus
 the RV32I base, which is the per-thread half, and the four RV32M multiplies,
 which ride RV32I's own encoding rather than the custom space.
 
 | Group | funct3 | Count | What |
 |---|---:|---:|---|
 | `SALU` | custom-2, 0 | 10 | scalar ALU, register-register |
-| `SMOV` | custom-2, 1 | 2 | `s2v`, `rdctl` |
+| `SMOV` | custom-2, 1 | 3 | `s2v`, `rdctl`, and the scalar load `sld` |
 | `DIV` | custom-2, 2 | 4 | `split`, `join`, `tmc`, `bar` |
 | `SUB` | custom-2, 3 | 10 | subgroup: shuffle, broadcast, ballot, five reductions, `vreadfirst`, `vlaneid` |
-| `VMEM` | custom-2, 4 | 64 | scalar base + vector offset, six op stems × widths × four scales |
+| `VMEM` | custom-2, 4 | 80 | scalar base + vector offset, six op stems × widths × four scales, and the LDS atomics `vamo{add,max,min,swap}` × four scales |
 | **`FLT`** | **custom-2, 5** | **8** | **`vfma`, `vfmul`, `vfadd`, `vfsub`, and the four seeds `vfexp2`, `vflog2`, `vfrcp`, `vfrsqrt`** |
+| `VX` | custom-2, 6 | 7 | one-cycle lane operations: `vfmin`, `vfmax`, `vflt`, `vfle`, `vfeq`, and binary16 conversion `vcvtfh`, `vcvthf` |
+| `STRM` | custom-2, 7 | 6 | the stream engine and its counters: `ldsfill`, `ldsdrain`, `ldssend`, `credit`, `wait`, `cntset` |
 | — | custom-3, 0–7 | 8 | scalar ALU immediate, and the two uniform branches |
 | *(RV32M)* | *OP major, `funct7 = 0000001`* | *4* | *`mul`, `mulh`, `mulhsu`, `mulhu` — **not** in the custom table or its count* |
 
-funct3 6 and 7 on custom-2 are reserved and fault.
+`VX`, `STRM`, `vamo` and `sld` are specified in [compute-unit](compute-unit.md) §8;
+the golden model runs all three, and the RTL faults on them until
+[status](status.md) lists them as built.
 
 ## The register-class rule, which is the whole design
 
@@ -335,14 +339,14 @@ it or checked against it:
 `python tests/pe/tools/rv_simt_emit.py --check` **regenerates and compares**, so a
 hand edit to `kht_isa.vh` fails a test instead of silently disagreeing with the
 assembler and the model. `rv_simt_isa_test.py` round-trips the whole table
-(**427 checks**) and `rv_simt_check.py` exercises the model's behaviour (32
+(**546 checks**) and `rv_simt_check.py` exercises the model's behaviour (53
 checks) — and its expectations are **computed, never typed**, because typed
 expectations were wrong twice while the model was right both times.
 
 **RV32M is not in this table, and that is correct.** `mul` and its three high
 halves are ordinary RISC-V, so they live in the base assembler (`rv_asm.py`)
 beside every other RV32I opcode rather than in the GPU field table — which is
-exactly what "no new opcode major was spent" means in practice. The 106-instruction
+exactly what "no new opcode major was spent" means in practice. The 136-instruction
 count above is the custom space only.
 
 > **An encoding test proves nothing about execution.** An instruction can

@@ -173,8 +173,8 @@ rather than as a collision.
 
 | file | what it is | state |
 |---|---|---|
-| `rv_simt_isa.py` | **the field table** — the single source for every consumer | **106 instructions**: 98 on custom-2, 8 on custom-3 |
-| `rv_simt_model.py` | the golden model: waves, masks, divergence, coalescing, float, RV32M | built |
+| `rv_simt_isa.py` | **the field table** — the single source for every consumer | **136 instructions**: 128 on custom-2, 8 on custom-3 |
+| `rv_simt_model.py` | the golden model: waves, masks, divergence, coalescing, float, RV32M, and the [compute-unit](compute-unit.md) design: launches and workgroups, the barrier, stream counters and `wait`, LDS atomics, the VX group | built |
 | `rv_simt_emit.py` | renders the RTL decode header; `--check` fails on drift | built |
 | `rv_simt_asm.py` | the assembler extension and the disassembler | built |
 | `rv_simt_isa_test.py` | encode/decode round-trip over the whole table | built |
@@ -185,12 +185,43 @@ rather than as a collision.
 RV32M is **not** in the field table and should not be: `mul` and its three high
 halves are ordinary RISC-V, so they live in the base assembler alongside every
 other RV32I opcode. That is what "no new opcode major was spent" looks like in
-the toolchain, and it is why the 106 above is the custom space only.
+the toolchain, and it is why the 136 above is the custom space only.
 
 ## Not built
 
 Nothing below has been built or measured. It is listed so the gap between the
 plan and the machine is visible rather than implied.
+
+**The compute-unit design** ([compute-unit](compute-unit.md)): the LAUNCH word
+and workgroups, the stream engine, LDS atomics, the executed barrier and the
+VX and STRM instruction groups. Each moves to *built* below when its unit bench
+and mutation witness pass.
+
+### Compute-unit design: built
+
+| block | knobs | state |
+|---|---|---|
+| instruction cache, scalar cache (`kht_icache`, `kht_kcache`) | `ICACHE_LINES`, `KCACHE_LINES` | unit benches, 9 mutants caught; not yet wired into the PE |
+| scoreboard issue, replay and sleep (`kht_score`, `kht_core`) | `SCORE` | unit bench, 6 mutants; machine witnesses for replay, float scoring and the warm-up |
+| long-result write-back queue (`kht_unit`) | `WB_BUF` | machine witness for the queue's scoreboard clear |
+| queued LSU: coalescer, L1 with fill buffers, scanner, write-back or write-through (`kht_lsu`) and the tagged requestor (`kht_req`) | `LSU_DEPTH`, `COALESCE`, `MSHRS`, `L1_WB` | unit bench at nine knob settings, 12 mutants; machine witnesses for the load write port, the access-rule faults and the full-queue sleep |
+
+Every shader runs at eight settings, today's machine through the shipping one
+(`LSU_DEPTH 4`, `SCORE`, `WB_BUF`) and each LSU knob at its zero, 38 cases
+each, all passing (`rv_simt_suite.py -d ... --root DIR`). `simt_misalign.s`,
+`simt_mixed.s` and `simt_ldmix.s` were added for the access rule and the
+register file's write port.
+
+| kernel, record config, 16 waves | today | `SCORE WB_BUF` | + queued LSU |
+|---|---|---|---|
+| stream | 32,908 | 32,828 | 16,232 |
+| fma | 19,530 | 15,434 | 11,098 |
+| gather | 125,737 | 125,818 | 32,400 |
+| argmax | 31,382 | 31,382 | 10,099 |
+| diverge | 23,018 | 22,762 | 12,097 |
+| exp2 | 21,974 | 21,758 | 12,036 |
+
+Cycles, kick to done, `kht_sys`.
 
 **The coalescer.** One gather should become one request when the lanes agree.
 The model, the ISA and the bench witness all define coalescing at **32-byte

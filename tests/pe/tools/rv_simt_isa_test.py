@@ -43,6 +43,8 @@ def sample(op):
             out[o.name] = 2
         elif o is G.CIDX:
             out[o.name] = 7
+        elif o is G.CNT:
+            out[o.name] = G.COUNTERS - 1
         else:
             out[o.name] = 1
     return out
@@ -102,6 +104,16 @@ try:
     chk(False, "a lane index at LANES is refused")
 except Exception:
     chk(True, "a lane index at LANES is refused")
+for name, args, what in (
+    ("vcvtfh", {"vd": 1, "vs1": 2, "h": 2}, "a half index of 2"),
+    ("wait", {"k": G.COUNTERS, "ss1": 1}, "a counter index at COUNTERS"),
+    ("cntset", {"k": -1, "ss1": 1}, "a negative counter index"),
+):
+    try:
+        G.encode(name, **args)
+        chk(False, "%s is refused" % what)
+    except Exception:
+        chk(True, "%s is refused" % what)
 
 print("--- the generated RTL header has not drifted ---")
 rc = subprocess.run(

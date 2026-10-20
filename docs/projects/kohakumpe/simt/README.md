@@ -176,6 +176,7 @@ divide-by-a-constant strength-reduces to `mulhu`.
 | [status](status.md) | **what exists and what is measured, as of a stated date** — the ground truth for progress |
 | [isa](isa.md) | the instruction set: the two custom opcode majors, the six groups, the float tier and RV32M, divergence, subgroup operations, the three memory tiers — and the one field table all consumers are generated from |
 | [microarchitecture](microarchitecture.md) | how it is built: the pipeline, the mask and its stack, the lane-serialising LSU, the shared shadow pipe both multi-cycle units retire through, the halt-and-flush, and a symptom-to-cause reference |
+| [compute-unit](compute-unit.md) | the design being built: the LAUNCH word, workgroups, state that survives launches, scoreboard issue, the coalescing L1, the stream engine, LDS atomics and barrier, and their knobs |
 | [ladder](ladder.md) | the method — why the design is parameters rather than branches, and what each gate measured |
 | [comparison](comparison.md) | what the arithmetic width is worth against shipped mobile GPUs, and the fixed function that decides a frame rather than the arithmetic |
 

@@ -40,6 +40,8 @@ GROUP = {
     I.F3_SUB: "SUB",
     I.F3_VMEM: "VMEM",
     I.F3_FLT: "FLT",
+    I.F3_VX: "VX",
+    I.F3_STRM: "STRM",
 }
 
 
@@ -111,6 +113,12 @@ def verilog():
         "localparam [2:0] KHT_MEM_OP_LIN  = 3'd3;   // lane-linear load, signed",
         "localparam [2:0] KHT_MEM_OP_LINU = 3'd4;   // lane-linear load, unsigned",
         "localparam [2:0] KHT_MEM_OP_SIN  = 3'd5;   // lane-linear store",
+        "localparam [2:0] KHT_MEM_OP_AMO  = 3'd6;   // LDS atomic; funct7[1:0] is the op",
+        "localparam [1:0] KHT_AMO_ADD  = 2'd%d;" % I.AMO_ADD,
+        "localparam [1:0] KHT_AMO_MAX  = 2'd%d;" % I.AMO_MAX,
+        "localparam [1:0] KHT_AMO_MIN  = 2'd%d;" % I.AMO_MIN,
+        "localparam [1:0] KHT_AMO_SWAP = 2'd%d;" % I.AMO_SWAP,
+        "localparam integer KHT_COUNTERS = %d;" % I.COUNTERS,
         "localparam [1:0] KHT_MW_B = 2'd%d;" % I.MW_B,
         "localparam [1:0] KHT_MW_H = 2'd%d;" % I.MW_H,
         "localparam [1:0] KHT_MW_W = 2'd%d;" % I.MW_W,

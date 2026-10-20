@@ -41,7 +41,19 @@ module kht_mesh #(
     parameter integer LDS_BANKS  = -1,
     parameter integer IPDOM_D    = 8,
     parameter         VREG_PRIM  = "block",
-    parameter integer RAM_DEPTH  = 4096
+    parameter integer RAM_DEPTH  = 4096,
+    parameter integer SCORE      = 0,
+    parameter integer WB_BUF     = 0,
+    parameter integer LSU_DEPTH  = 0,
+    parameter integer COALESCE   = 1,
+    parameter integer MSHRS      = 4,
+    parameter integer L1_WB      = 1,
+    parameter integer WR_OUT     = 1,
+    parameter integer LSU_SCAN   = 2,
+    parameter integer LSU_SKIP   = 0,
+    parameter integer LSU_HOLD   = 1,
+    parameter integer MEM_AU     = 0,
+    parameter integer FRES_REG   = 0
 )(
     input  wire clk,
     input  wire rstn,
@@ -97,7 +109,12 @@ module kht_mesh #(
              .SHFL_UNITS(SHFL_UNITS), .LDS_BANKS(LDS_BANKS),
              .IPDOM_D(IPDOM_D),
              .MEM_PRIM("block"), .VREG_PRIM(VREG_PRIM),
-             .INST_DEPTH(16), .RECV_DEPTH(512)) u_pe (
+             .INST_DEPTH(16), .RECV_DEPTH(512),
+             .SCORE(SCORE), .WB_BUF(WB_BUF),
+             .LSU_DEPTH(LSU_DEPTH), .COALESCE(COALESCE), .MSHRS(MSHRS),
+             .L1_WB(L1_WB), .WR_OUT(WR_OUT),
+             .LSU_SCAN(LSU_SCAN), .LSU_SKIP(LSU_SKIP), .LSU_HOLD(LSU_HOLD),
+             .MEM_AU(MEM_AU), .FRES_REG(FRES_REG)) u_pe (
         .clk(clk), .resetn(rstn),
         .noc_in_data(lo_i), .noc_in_valid(lo_iv), .noc_in_busy(lo_ib),
         .noc_out_data(lo_o), .noc_out_valid(lo_ov), .noc_out_busy(lo_ob),

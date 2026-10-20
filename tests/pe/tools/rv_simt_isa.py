@@ -128,7 +128,14 @@ OPC_KHG = 0x5B  # custom-2: the R-type groups
 OPC_KHGI = 0x7B  # custom-3: the I-type groups
 
 # custom-2 funct3: the group
-F3_SALU, F3_SMOV, F3_DIV, F3_SUB, F3_VMEM, F3_FLT = range(6)
+F3_SALU, F3_SMOV, F3_DIV, F3_SUB, F3_VMEM, F3_FLT, F3_VX, F3_STRM = range(8)
+
+#: Stream counters the STRM group and `rdctl 16..19` name (compute-unit.md s6.3).
+COUNTERS = 4
+
+#: LDS atomic operations, the low two bits of a `vamo` funct7.
+AMO_ADD, AMO_MAX, AMO_MIN, AMO_SWAP = range(4)
+AMO_NAME = {AMO_ADD: "add", AMO_MAX: "max", AMO_MIN: "min", AMO_SWAP: "swap"}
 
 # custom-3 funct3: one instruction each
 F3I_ADDI, F3I_ANDI, F3I_ORI, F3I_SLLI, F3I_SRLI, F3I_SRAI, F3I_BEQZ, F3I_BNEZ = range(8)
@@ -175,6 +182,8 @@ IMM = Operand("imm", "imm", "imm", "signed 12-bit immediate")
 SH = Operand("sh", "rs2", "imm", "shift amount, 0..31")
 CIDX = Operand("cidx", "rs2", "imm", "control/launch slot index, 0..31")
 LANE = Operand("lane", "rs2", "imm", "lane index, 0..LANES-1")
+HALF = Operand("h", "rs2", "imm", "binary16 half of the source word, 0 low, 1 high")
+CNT = Operand("k", "rs2", "imm", "stream counter, 0..COUNTERS-1")
 
 
 @dataclass(frozen=True)
@@ -270,6 +279,15 @@ _add(
     "its launch constants -- workgroup id, grid dimensions, base pointers, the "
     "kick argument. The only path by which a scalar register acquires a value "
     "that is not an immediate or a reduction.",
+)
+
+_add(
+    "sld",
+    F3_SMOV,
+    2,
+    (SD, SS1),
+    "sd <- the word at DRAM address s[ss1], through the scalar cache. Kernel "
+    "arguments and table constants: one value, uniform by construction.",
 )
 
 # ------------------------------------------------------------------ divergence
@@ -496,6 +514,91 @@ for _n, _op, _d in (
 # of memory, which is where a shader's floats come from anyway. The SIMD PE
 # carries `vfcvt` for the cases that need it.
 
+# --------------------------------------------------- lane operations (VX)
+# binary16 is what clusters and the SRU produce; compares and conversion are bit
+# work, so one cycle in the integer pipe. compute-unit.md s8.1.
+for _n, _f7, _d in (
+    ("vfmin", 0, "IEEE minNum of binary32: a NaN loses to a number"),
+    ("vfmax", 1, "IEEE maxNum of binary32"),
+    ("vflt", 2, "1 if vs1 < vs2 as binary32, else 0; NaN compares false"),
+    ("vfle", 3, "1 if vs1 <= vs2 as binary32, else 0"),
+    ("vfeq", 4, "1 if vs1 == vs2 as binary32 (+0 == -0), else 0"),
+):
+    _add(_n, F3_VX, _f7, (VD, VS1, VS2), "vd <- %s, per lane." % _d)
+_add(
+    "vcvtfh",
+    F3_VX,
+    5,
+    (VD, VS1, HALF),
+    "vd <- binary32 of the binary16 in half `h` of vs1, per lane. Exact: every "
+    "binary16 value, subnormals included, is a binary32 value.",
+)
+_add(
+    "vcvthf",
+    F3_VX,
+    6,
+    (VD, VS1, VS2),
+    "vd <- {f16(vs2), f16(vs1)}: two binary32 to two binary16, round to nearest "
+    "even, overflow to infinity, per lane.",
+)
+
+# ------------------------------------------------------- LDS atomics (VMEM)
+# vmem op 6: the low two funct7 bits are the operation (atomics are word-only);
+# `rd` is both the value and the destination.
+for _a in range(4):
+    for _s in range(4):
+        _add(
+            "vamo%s%d" % (AMO_NAME[_a], _s),
+            F3_VMEM,
+            (6 << 4) | (_s << 2) | _a,
+            (VD, SS1, VS2),
+            "per active lane: old = LDS[s[ss1] + (v[vs2] << %d)]; the word "
+            "becomes %s(old, vd); vd <- old. R_LDS only." % (_s, AMO_NAME[_a]),
+        )
+
+# --------------------------------------------------- stream and sync (STRM)
+# compute-unit.md s6 and s8.2. A descriptor is a scalar: [15:0] LDS granule
+# offset, [23:16] length - 1 in granules, [25:24] counter.
+_add(
+    "ldsfill",
+    F3_STRM,
+    0,
+    (SS1, SS2),
+    "queue DRAM[s[ss1]] -> LDS, s[ss2] the descriptor; its counter advances by "
+    "one per 32-byte granule landed.",
+)
+_add(
+    "ldsdrain",
+    F3_STRM,
+    1,
+    (SS1, SS2),
+    "queue LDS -> DRAM[s[ss1]]; its counter advances per granule acknowledged.",
+)
+_add(
+    "ldssend",
+    F3_STRM,
+    2,
+    (SS1, SS2),
+    "queue LDS -> another unit as one CU_DATA burst with COUNT set; s[ss1] is "
+    "{y[3:0], x[3:0], buf_id, offset}. Its counter advances when the burst has "
+    "left.",
+)
+_add(
+    "credit",
+    F3_STRM,
+    3,
+    (SS1, SS2),
+    "post one CREDIT of s[ss2][15:0] to {y, x} = s[ss1][7:0].",
+)
+_add(
+    "wait",
+    F3_STRM,
+    4,
+    (CNT, SS1),
+    "sleep until counter k >= s[ss1], unsigned. Retires at once if it already is.",
+)
+_add("cntset", F3_STRM, 5, (CNT, SS1), "counter k <- s[ss1].")
+
 # ------------------------------------------------------- scalar ALU, immediate
 # custom-3. One instruction per funct3 because an I-type has no funct7.
 _add("saddi", F3I_ADDI, None, (SD, SS1, IMM), "sd <- ss1 + imm", OPC_KHGI)
@@ -566,6 +669,10 @@ def encode(name, **operands) -> int:
             )
         if o is CIDX and not 0 <= v < 32:
             raise ISAError("%s: control slot %d, but there are 32" % (name, v))
+        if o is HALF and v not in (0, 1):
+            raise ISAError("%s: half %d, but a word has halves 0 and 1" % (name, v))
+        if o is CNT and not 0 <= v < COUNTERS:
+            raise ISAError("%s: counter %d, but there are %d" % (name, v, COUNTERS))
         fields[o.field] = v
     for f in op.fmt.settable():
         fields.setdefault(f, 0)
@@ -598,7 +705,7 @@ def is_khg(word: int) -> bool:
 
 def groups():
     """Group name per funct3 on custom-2, for the generated headers."""
-    return ["SALU", "SMOV", "DIV", "SUB", "VMEM", "FLT", "RSVD6", "RSVD7"]
+    return ["SALU", "SMOV", "DIV", "SUB", "VMEM", "FLT", "VX", "STRM"]
 
 
 def igroups():

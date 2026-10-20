@@ -43,7 +43,28 @@ module kht_core #(
     parameter integer IPDOM_D   = 8,
     parameter integer IMEM_WORDS = 2048,
     parameter integer SPAD_WORDS = 2048,
-    parameter         VREG_PRIM = "block"
+    parameter         VREG_PRIM = "block",
+    // compute-unit.md s4: SCORE replaces one-in-flight issue with a scoreboard
+    // and replay; WB_BUF queues long results (needs SCORE). 0 is today's core.
+    parameter integer SCORE      = 0,
+    parameter integer WB_BUF     = 0,
+    // compute-unit.md s5: LSU_DEPTH > 0 replaces the serial walk and rv_l1 with
+    // kht_lsu (queue, coalescer, fill buffers); it needs the banked LDS.
+    parameter integer LSU_DEPTH  = 0,
+    parameter integer COALESCE   = 1,
+    parameter integer MSHRS      = 4,
+    parameter integer L1_LINES   = 128,
+    parameter integer L1_WB      = 1,
+    parameter integer LSU_SCAN   = 2,
+    parameter integer LSU_SKIP   = 0,
+    parameter integer LSU_HOLD   = 1,
+    // The address stage's depth: a memory instruction leaves EX once its
+    // operands are read, and the stage resolves, checks and issues it behind.
+    // 0 is the in-EX path. Built only with LSU_DEPTH > 0 and SCORE.
+    parameter integer MEM_AU     = 0,
+    // kht_unit's long-result register.
+    parameter integer FRES_REG   = 0,
+    parameter         MEM_PRIM   = "block"
 )(
     input  wire        clk,
     input  wire        resetn,
@@ -95,6 +116,19 @@ module kht_core #(
     output wire        l1_inval,
     input  wire        l1_flush_busy,
 
+    // kht_lsu's memory side (LSU_DEPTH > 0), to kht_req.
+    output wire          m_rd_v,
+    input  wire          m_rd_ready,
+    output wire [25:0]   m_rd_line,
+    output wire [7:0]    m_rd_tag,
+    input  wire          m_rsp_v,
+    input  wire [7:0]    m_rsp_tag,
+    input  wire [255:0]  m_rsp_data,
+    output wire          m_wr_v,
+    input  wire          m_wr_ready,
+    output wire [25:0]   m_wr_line,
+    output wire [255:0]  m_wr_data,
+
     output wire [31:0] dbg_retire_pc,
     output wire        dbg_retire_valid,
     output wire [LANES-1:0] dbg_mask,
@@ -112,6 +146,10 @@ module kht_core #(
     // built and how wide it is, and two parameters saying one thing drift.
     localparam integer HAS_SHFL    = (SHFL_UNITS != 0) ? 1 : 0;
     localparam integer HAS_LDSBANK = (LDS_BANKS != 0) ? 1 : 0;
+    localparam integer LSUQ        = (LSU_DEPTH != 0) ? 1 : 0;
+    // The address stage's entries; 0 where its queue or its scoreboard is absent.
+    localparam integer AUD = ((LSUQ != 0) && (SCORE != 0) && (MEM_AU > 0)) ? MEM_AU : 0;
+    localparam integer AU  = (AUD != 0) ? 1 : 0;
 
     localparam integer IAW = $clog2(IMEM_WORDS);
     localparam integer SAW = $clog2(SPAD_WORDS);
@@ -130,6 +168,31 @@ module kht_core #(
     // rejects a use-before-declare that synthesis had accepted silently.
     wire [VW-1:0]    vt_rd1, vt_rd2;
     wire             lsu_busy;
+    // kht_lsu's side of the core (LSU_DEPTH > 0). `lq_hit` replays a memory
+    // instruction while the queue is full; its wave sleeps until an entry leaves.
+    wire             lq_ready, lq_pop, lq_busy, lq_hit, rp_hit;
+    wire             lq_ret_v, lq_ret_ld, lq_ret_ready;
+    wire [WID-1:0]   lq_ret_wave;
+    wire [4:0]       lq_ret_rd;
+    wire [LANES-1:0] lq_ret_mask;
+    wire [32*LANES-1:0] lq_ret_data;
+    wire             ld_take;
+    reg              lq_sent, lsu_done;
+    // The address stage (AU): its credit, its pop, its fault, its load return,
+    // and the head entry it presents to the LDS and to kht_lsu.
+    wire             au_ready, au_pop, au_idle, au_flt, au_gath;
+    wire [31:0]      au_fpc;
+    wire             au_ret_v;
+    wire [WID-1:0]   au_ret_wave;
+    wire [4:0]       au_ret_rd;
+    wire [LANES-1:0] au_ret_mask;
+    wire             au_lq_go, au_lds_go;
+    wire [32*LANES-1:0] au_h_ea, au_h_st;
+    wire [LANES-1:0] au_h_m;
+    wire [WID-1:0]   au_h_wave;
+    wire [4:0]       au_h_rd;
+    wire [1:0]       au_h_w;
+    wire             au_h_sx, au_h_ld;
     wire [31:0]      vs_scalar;
     wire             go;
     wire             vt_wr_v;
@@ -163,7 +226,10 @@ module kht_core #(
     // WAVES >= pipeline depth no two in-flight instructions share a wave, and a
     // multi-cycle float unit breaks that precondition -- this restores it.
     wire [WAVES-1:0] fpend;
-    wire [WAVES-1:0] rdy = live & ~fpend;
+    // SCORE: a wave whose instruction replayed is asleep until a result of its
+    // own reaches the file (compute-unit.md s4.2).
+    wire [WAVES-1:0] sleep;
+    wire [WAVES-1:0] rdy = live & ~fpend & ~sleep;
     wire             f_soon;
     // A feature narrower than the thread array is still issuing. It stays OUT of
     // `base_hold`: that is what kht_unit's launch reads, and routing this into it
@@ -256,6 +322,10 @@ module kht_core #(
     wire        go_nh, rdir_nh, kill_ev;
     wire [WAVES-1:0] nsel, rsel;
     reg  [3:0]  warm_q;
+    // SCORE: the instruction in f2 is owed a result, so it replays rather than
+    // holding the machine. `hold_rp` is the part of `hold` a replay still obeys.
+    wire        sb_hit;
+    wire        hold_rp;
 
     reg  [31:0]    f1_pc, f2_pc;
     // REPLICATED. It addresses every slice of a 512-deep distributed scalar
@@ -355,6 +425,12 @@ module kht_core #(
     // Widening the control word and leaving the ports behind has already cost
     // one synthesis run to an out-of-range part-select. `$bits` is SystemVerilog
     // and this file is Verilog-2001, so the literal is checked instead.
+`ifndef SYNTHESIS
+    // A knob that is parsed and not applied reads like a measurement of it.
+    initial $display("  kht_core: SCORE %0d WB_BUF %0d FLANES %0d WAVES %0d LSU_DEPTH %0d COALESCE %0d MSHRS %0d L1_WB %0d SCAN %0d SKIP %0d HOLD %0d MEM_AU %0d FRES_REG %0d",
+                     SCORE, WB_BUF, FLANES, WAVES, LSU_DEPTH, COALESCE, MSHRS, L1_WB,
+                     LSU_SCAN, LSU_SKIP, LSU_HOLD, AUD, FRES_REG);
+`endif
     initial if (KHT_CW != 60)
         $display("ERROR kht_core: kht_ctrl.vh says KHT_CW=%0d; the ports here, in kht_predec and in kht_pe all carry 60",
                  KHT_CW);
@@ -450,8 +526,11 @@ module kht_core #(
     // LNW + 2: one for the registered vector read, one for the registered tree
     // LEAVES, and LNW for the pipelined levels above them.
     wire w_gered = (warm_q >= (LNW[3:0] + 4'd2));
+    // With the address stage a per-lane access owes only the vector read: the
+    // address, the region bits and their reduction are the stage's own cycles.
     wire warm_ok = is_redux ? w_gered
-                 : ictl[C_PERLANE] ? ((HAS_LDSBANK != 0) ? w_ge4 : w_ge2)
+                 : ictl[C_PERLANE] ? ((AU != 0) ? w_ge1
+                                    : (HAS_LDSBANK != 0) ? w_ge4 : w_ge2)
                                    : w_ge1;
     assign warm_stall = ex_reads_v && f2_valid && !warm_ok;
 
@@ -459,13 +538,20 @@ module kht_core #(
         if (!resetn) begin
             warm_q <= 4'd0;
         end
-        else if (go) begin
+        // A replay empties f2 as surely as a retirement does, so the next
+        // instruction starts its warm-up from zero either way.
+        // ...and on EVERY refused cycle, held or not: while the scoreboard says
+        // an operand is owed, what the port reads is the old value.
+        else if (go || rp_hit) begin
             warm_q <= 4'd0;
         end
         // NOT while the hazard stands: the producer's write lands at the end of
         // the stalled cycle, so a read issued during it still returns the old
         // value and one more cycle is owed.
-        else if (f2_valid && !vt_stall && (warm_q != 4'hF)) begin
+        // Nor while kht_unit's read port is frozen (`hold_all`): a pass walk
+        // keeps the float's operands there, so nothing was read for f2.
+        else if (f2_valid && !vt_stall && !fpass_hold && !base_hold
+                 && (warm_q != 4'hF)) begin
             warm_q <= warm_q + 4'd1;
         end
     end
@@ -477,8 +563,11 @@ module kht_core #(
     // whole group fetched correctly and wrote nothing.
     // The predecode reports the class; `rd != 0` is a raw instruction bit and
     // HAS_SHFL is this core's parameter, so those two stay here.
+    // Under SCORE a queued load's register is written by kht_lsu's return, and
+    // with the address stage every per-lane load's is.
     wire vt_wen    = ictl[C_VTWEN] && (rd != 5'd0)
-                  && ((HAS_SHFL != 0) || !(is_shfl || is_bcast));
+                  && ((HAS_SHFL != 0) || !(is_shfl || is_bcast))
+                  && !((SCORE != 0) && (lq_sent || ((AU != 0) && per_lane)));
     wire vt_op2imm = ictl[C_VTOP2I];
 
     // Without the butterfly, or without the float tier, these ENCODE with no
@@ -622,7 +711,7 @@ module kht_core #(
     wire [31:0] sres = ause_q ? salu_r : afast_q;
 
     wire s_wen = ictl[C_SWEN] && (rd != 5'd0) && f2_valid && !hold
-              && (hst == H_RUN);
+              && (hst == H_RUN) && !rp_hit;
 
     always @(posedge clk) begin
         if (!resetn) begin
@@ -668,13 +757,85 @@ module kht_core #(
                        : is_store ? imm_s
                                   : imm_i;
 
+    // ---- the scoreboard (SCORE) --------------------------------------------
+    // Pure-scalar instructions read no vector register; everything else is
+    // checked on all three fields, which only ever costs a spurious replay.
+    wire        sb_clr_v;
+    wire [WID-1:0] sb_clr_wave;
+    wire [4:0]  sb_clr_rd;
+    wire [WAVES-1:0] sb_woke, sb_wpend;
+    wire        sb_any;
+    generate
+    if (SCORE == 0) begin : g_noscore
+        assign sb_hit   = 1'b0;
+        assign sleep    = {WAVES{1'b0}};
+        assign sb_any   = 1'b0;
+        assign sb_woke  = {WAVES{1'b0}};
+        assign sb_wpend = {WAVES{1'b0}};
+    end else begin : g_score
+        wire sb_scalar = is_salu || is_simm || is_sbr || is_rdctl;
+        wire chk_hit;
+        // A queued load owes its register until kht_lsu returns it; with the
+        // address stage every per-lane load does, LDS or DRAM.
+        wire ld_set = ((AU != 0) ? per_lane : lq_sent) && ictl[C_LDANY] && (rd != 5'd0);
+        kht_score #(.WAVES(WAVES), .WID(WID)) u_sb (
+            .clk(clk), .resetn(resetn && !boot_v),
+            .chk_wave(f2_wave), .chk_rs1(rs1), .chk_rs2(rs2), .chk_rd(rd),
+            .chk_use(sb_scalar ? 3'b000 : 3'b111), .hit(chk_hit),
+            .set_v(go && (is_flt || is_imul || ld_set)), .set_wave(f2_wave), .set_rd(rd),
+            .clr_v(sb_clr_v), .clr_wave(sb_clr_wave), .clr_rd(sb_clr_rd),
+            .woke(sb_woke), .wpend(sb_wpend), .any(sb_any)
+        );
+        // An ecall ends its wave, and a wave must not end owing a result: a0
+        // might be the one still in flight.
+        assign sb_hit = f2_valid && (hst == H_RUN)
+                     && (chk_hit || ((ictl[C_ECALL] || ictl[C_EBRK]) && sb_wpend[f2_wave]));
+
+        // Asleep from the replay until a result of its own lands. A wake in the
+        // replay's own cycle wins, or the wave would sleep past the only event
+        // that could wake it.
+        // A wave refused by a full LSU queue sleeps apart, until an entry leaves.
+        reg [WAVES-1:0] sleep_q, qsleep_q;
+        always @(posedge clk) begin
+            if (!resetn || boot_v) begin
+                sleep_q  <= {WAVES{1'b0}};
+                qsleep_q <= {WAVES{1'b0}};
+            end
+            else begin
+                sleep_q  <= (sleep_q
+                             | ((sb_hit && !hold_rp) ? one_hot : {WAVES{1'b0}}))
+                            & ~sb_woke;
+                qsleep_q <= (qsleep_q
+                             | ((lq_hit && !sb_hit && !hold_rp) ? one_hot : {WAVES{1'b0}}))
+                            & ~{WAVES{(AU != 0) ? au_pop : lq_pop}};
+            end
+        end
+        assign sleep = sleep_q | qsleep_q;
+    end
+    endgenerate
+
+    // With the address stage the refusal is its credit, not the queue's room.
+    assign lq_hit = (AU != 0)
+                  ? (per_lane && (hst == H_RUN) && !au_ready)
+                  : ((LSUQ != 0) && (SCORE != 0) && per_lane && (hst == H_RUN)
+                     && !lsu_done && !lsu_busy && !lq_ready);
+    assign rp_hit = sb_hit || lq_hit;
+
     kht_unit #(.LANES(LANES), .WAVES(WAVES), .WID(WID), .HAS_MASK(HAS_MASK),
                .HAS_IPDOM(HAS_IPDOM),
                .SHFL_UNITS(SHFL_UNITS),
                .FLANES(FLANES),
                .FSFU_UNITS(FSFU_UNITS),
                .IPDOM_D(IPDOM_D),
-               .VREG_PRIM(VREG_PRIM)) u_vt (
+               .VREG_PRIM(VREG_PRIM),
+               .SCORE(SCORE), .WB_BUF(WB_BUF), .FRES_REG(FRES_REG)) u_vt (
+        // The address stage's LDS return goes first: it holds the stage's head.
+        .ld_v((SCORE != 0)
+              && (au_ret_v || (lq_ret_v && lq_ret_ld && (lq_ret_rd != 5'd0)))),
+        .ld_wave(au_ret_v ? au_ret_wave : lq_ret_wave),
+        .ld_rd(au_ret_v ? au_ret_rd : lq_ret_rd),
+        .ld_mask(au_ret_v ? au_ret_mask : lq_ret_mask),
+        .ld_data(au_ret_v ? lds_rdata : lq_ret_data), .ld_take(ld_take),
         .clk(clk), .resetn(resetn),
         // The REST of the machine's stall, never the combined one.
         .x_valid(f2_valid && !lsu_busy), .x_wave(f2_wave), .x_hold(base_hold),
@@ -686,10 +847,11 @@ module kht_core #(
         // cleared, and the whole machine wedged with 16 waves runnable.
         // `s2v` and `shflxor` are the same class one step milder -- they would
         // write from the stale read the stall exists to avoid.
-        .x_defer(lsu_need || s_hz || f_soon), .stall(vt_stall),
+        .x_defer(lsu_need || s_hz || f_soon || rp_hit), .stall(vt_stall),
         .x_flt(is_flt), .x_fop(ictl[C_FOP0+3:C_FOP0]),
         .x_imul(is_imul), .x_mop(ictl[C_MOP0+1:C_MOP0]),
         .fpend(fpend), .f_soon(f_soon), .fpass_hold(fpass_hold),
+        .sb_clr_v(sb_clr_v), .sb_clr_wave(sb_clr_wave), .sb_clr_rd(sb_clr_rd),
         // A vmem STORE's data register rides in the `rd` field -- there is no
         // fourth register field for it -- so read port 1 serves it, exactly as
         // the SIMD tier's `vst` does.
@@ -858,13 +1020,13 @@ module kht_core #(
     // `ln_q` and `mask` are both stable across a lane's three phases.
     reg            lon_r;
     reg  [31:0]    wd_r;
-    reg            lsu_run, lsu_done, lsu_drain, lds_wait;
+    reg            lsu_run, lsu_drain, lds_wait, lq_wait;
     reg  [VW-1:0]  ld_buf;
     // `lsu_done` is what stops the walk restarting. Without it the finished
     // walk drops `hold`, the same instruction is still in f2, `per_lane` is
     // still true, and it starts again -- a load that never retires and a PC
     // that never advances.
-    assign lsu_busy = lsu_run || lsu_drain || lds_wait;
+    assign lsu_busy = lsu_run || lsu_drain || lds_wait || lq_wait;
 
     // EVERY LANE'S ADDRESS AT ONCE, AND REGISTERED. Indexing `vt_rd1`/`vt_rd2`
     // per lane made `ea` start at the VECTOR register file's block RAM -- 0.845
@@ -912,7 +1074,7 @@ module kht_core #(
     assign per_lane = ictl[C_PERLANE] && f2_valid;
     // Split so `hold` can take the shallow half: it ORs `warm_stall` anyway, so
     // `A || (B && !A)` collapses and the walk's own gate stays off that cone.
-    assign lsu_want = per_lane && !lsu_done && !lsu_busy;
+    assign lsu_want = (AU == 0) && per_lane && !lsu_done && !lsu_busy && !rp_hit;
     // `!s_hz` too: the walk latches its base from `sv1`, and starting it during
     // the scalar interlock would latch the value the interlock exists to wait
     // for. `hold` ORs `s_hz` separately, so this stays off that cone.
@@ -937,6 +1099,166 @@ module kht_core #(
     endfunction
 
     wire [2:0] rgn = region_of(ea);
+
+    wire [1:0] q_w   = is_vmem ? mem_width : f3[1:0];
+    wire       q_sx  = is_vmem ? ((f7[6:4] == 3'd0) || (f7[6:4] == 3'd3)) : !f3[2];
+
+    // ---- MEM_AU: the address stage ---------------------------------------
+    // A per-lane access retires from EX once its operands are read; `ea_all_q`
+    // and the S0 registers beside it capture them at that edge. The next cycle
+    // classifies the entry (all-LDS, all-DRAM and aligned, or a fault) and
+    // writes it to an AUD-entry queue; the head issues in order to the LDS or
+    // to kht_lsu. EX takes a credit per access, so S0 never overruns the queue.
+    //
+    // An LDS load, and any load the stage drops, returns through kht_unit's
+    // load port, so every load clears its scoreboard bit; a dropped one writes
+    // no lane. A fault stops the launch with the faulting access's pc and drops
+    // every entry behind it -- precise in memory, not in registers, since
+    // later instructions have already retired.
+    generate
+    if (AU == 0) begin : g_noau
+        assign au_ready    = 1'b1;
+        assign au_pop      = 1'b0;
+        assign au_idle     = 1'b1;
+        assign au_flt      = 1'b0;
+        assign au_fpc      = 32'd0;
+        assign au_gath     = 1'b0;
+        assign au_ret_v    = 1'b0;
+        assign au_ret_wave = {WID{1'b0}};
+        assign au_ret_rd   = 5'd0;
+        assign au_ret_mask = {LANES{1'b0}};
+        assign au_lq_go    = 1'b0;
+        assign au_lds_go   = 1'b0;
+        assign au_h_ea     = {VW{1'b0}};
+        assign au_h_st     = {VW{1'b0}};
+        assign au_h_m      = {LANES{1'b0}};
+        assign au_h_wave   = {WID{1'b0}};
+        assign au_h_rd     = 5'd0;
+        assign au_h_w      = 2'd0;
+        assign au_h_sx     = 1'b0;
+        assign au_h_ld     = 1'b0;
+    end else begin : g_au
+        localparam integer AUW = (AUD > 1) ? $clog2(AUD) : 1;
+        // {pc, lds, dram, ld, sx, w, rd, wave, mask, data, address}
+        localparam integer FW  = 2 * VW + LANES + WID + 43;
+
+        // S0: the operands at the retiring edge, beside `ea_all_q`.
+        reg              s0_v;
+        reg  [VW-1:0]    s0_st;
+        reg  [LANES-1:0] s0_m;
+        reg  [WID-1:0]   s0_wave;
+        reg  [4:0]       s0_rd;
+        reg  [1:0]       s0_w;
+        reg              s0_sx, s0_ld, s0_w3;
+        reg  [31:0]      s0_pc;
+        wire             push = go && per_lane;
+        always @(posedge clk) begin
+            s0_v    <= resetn && !boot_v && push;
+            s0_st   <= st_all;
+            s0_m    <= mask;
+            s0_wave <= f2_wave;
+            s0_rd   <= rd;
+            s0_w    <= q_w;
+            s0_sx   <= q_sx;
+            s0_ld   <= ictl[C_LDANY];
+            s0_w3   <= is_vmem && (mem_width == 2'd3);
+            s0_pc   <= f2_pc;
+        end
+
+        // The classification, from S0 into the queue's write port.
+        wire [LANES-1:0] s0_lok, s0_dok;
+        genvar AG;
+        for (AG = 0; AG < LANES; AG = AG + 1) begin : g_cls
+            wire [31:0] a  = ea_all_q[32*AG +: 32];
+            wire        al = (s0_w == 2'd2) ? (a[1:0] == 2'd0)
+                           : (s0_w == 2'd1) ? !a[0]
+                                            : (s0_w == 2'd0);
+            assign s0_lok[AG] = !s0_m[AG] || (region_of(a) == R_LDS);
+            assign s0_dok[AG] = !s0_m[AG] || (a[31] && al);
+        end
+        wire s0_lds  = (&s0_lok) && (s0_m != {LANES{1'b0}});
+        wire s0_dram = (&s0_dok) && !s0_w3;
+
+        reg  [FW-1:0]  fq [0:AUD-1];
+        reg  [AUW-1:0] wp, rp;
+        reg  [AUW:0]   fn, cnt;
+        wire [FW-1:0]  h = fq[rp];
+        assign au_h_ea   = h[0 +: VW];
+        assign au_h_st   = h[VW +: VW];
+        assign au_h_m    = h[2*VW +: LANES];
+        assign au_h_wave = h[2*VW + LANES +: WID];
+        assign au_h_rd   = h[2*VW + LANES + WID +: 5];
+        assign au_h_w    = h[2*VW + LANES + WID + 5 +: 2];
+        assign au_h_sx   = h[2*VW + LANES + WID + 7];
+        assign au_h_ld   = h[2*VW + LANES + WID + 8];
+        wire   h_dram    = h[2*VW + LANES + WID + 9];
+        wire   h_lds     = h[2*VW + LANES + WID + 10];
+        assign au_fpc    = h[2*VW + LANES + WID + 11 +: 32];
+
+        wire [AUW-1:0] wp_n = (wp == AUD - 1) ? {AUW{1'b0}} : (wp + 1'b1);
+        wire [AUW-1:0] rp_n = (rp == AUD - 1) ? {AUW{1'b0}} : (rp + 1'b1);
+
+        localparam [1:0] A_IDLE = 2'd0, A_LDS = 2'd1, A_RET = 2'd2;
+        reg  [1:0] ast;
+        // A fault was taken: every entry from it on is dropped, and a dropped
+        // load returns writing no lane.
+        reg        kill;
+        wire       h_v    = (fn != {(AUW+1){1'b0}});
+        wire       h_owes = au_h_ld && (au_h_rd != 5'd0);
+        wire       h_live = (ast == A_IDLE) && h_v && !kill;
+        wire       h_drop = (ast == A_IDLE) && h_v && (kill || (!h_dram && !h_lds));
+        assign au_lq_go  = h_live && h_dram && lq_ready;
+        assign au_lds_go = h_live && !h_dram && h_lds;
+        assign au_flt    = h_live && !h_dram && !h_lds;
+        assign au_gath   = au_lq_go || au_lds_go;
+        assign au_ret_v    = (ast == A_RET);
+        assign au_ret_wave = au_h_wave;
+        assign au_ret_rd   = au_h_rd;
+        assign au_ret_mask = kill ? {LANES{1'b0}} : au_h_m;
+        assign au_pop = au_lq_go
+                     || (h_drop && !h_owes)
+                     || ((ast == A_LDS) && lds_done && !h_owes)
+                     || (au_ret_v && ld_take);
+        assign au_ready = (cnt < AUD);
+        assign au_idle  = (cnt == {(AUW+1){1'b0}});
+
+        always @(posedge clk) begin
+            if (s0_v) begin
+                fq[wp] <= {s0_pc, s0_lds, s0_dram, s0_ld, s0_sx, s0_w, s0_rd,
+                           s0_wave, s0_m, s0_st, ea_all_q};
+            end
+            if (!resetn || boot_v) begin
+                wp    <= {AUW{1'b0}};
+                rp    <= {AUW{1'b0}};
+                fn    <= {(AUW+1){1'b0}};
+                cnt   <= {(AUW+1){1'b0}};
+                ast   <= A_IDLE;
+                kill  <= 1'b0;
+            end else begin
+                if (s0_v)   wp <= wp_n;
+                if (au_pop) rp <= rp_n;
+                fn  <= fn  + {{AUW{1'b0}}, s0_v} - {{AUW{1'b0}}, au_pop};
+                cnt <= cnt + {{AUW{1'b0}}, push} - {{AUW{1'b0}}, au_pop};
+                if (au_flt) kill <= 1'b1;
+                case (ast)
+                    A_IDLE: if (au_lds_go) begin
+                                ast <= A_LDS;
+                            end else if (h_drop && h_owes) begin
+                                ast <= A_RET;
+                            end
+                    A_LDS:  if (lds_done) begin
+                                if (h_owes) begin
+                                    ast <= A_RET;
+                                end else begin
+                                    ast <= A_IDLE;
+                                end
+                            end
+                    default: if (ld_take) ast <= A_IDLE;
+                endcase
+            end
+        end
+    end
+    endgenerate
 
     // ---- G4: the banked LDS path -----------------------------------------
     // Every active lane's address at once, which the serial walk never needs
@@ -981,21 +1303,115 @@ module kht_core #(
         always @(posedge clk) begin
             lds_mask_q <= mask;
         end
-        assign lds_mask = lds_mask_q;
+        // With the address stage its head entry drives the LDS.
+        assign lds_mask = (AU != 0) ? au_h_m : lds_mask_q;
 
         genvar G;
         for (G = 0; G < LANES; G = G + 1) begin : g_lane
-            assign lds_addr[SAW*G +: SAW] = ea_all_q[32*G + 2 +: SAW];
-            assign lds_wdata[32*G +: 32]  = st_all[32*G +: 32];
+            assign lds_addr[SAW*G +: SAW] = (AU != 0) ? au_h_ea[32*G + 2 +: SAW]
+                                                      : ea_all_q[32*G + 2 +: SAW];
+            assign lds_wdata[32*G +: 32]  = (AU != 0) ? au_h_st[32*G +: 32]
+                                                      : st_all[32*G +: 32];
             // An inactive lane must not veto the path, so it reads as agreeing.
             assign lds_ok[G] = !mask[G]
                             || (region_of(ea_all_q[32*G +: 32]) == R_LDS);
         end
-        assign lds_we   = mem_store || is_store;
+        assign lds_we   = (AU != 0) ? !au_h_ld : (mem_store || is_store);
         // From the REGISTERED decision. `all_lds` is LANES address adders and
         // LANES region decodes AND-reduced; combinationally into the walk's
         // start it was the assembled PE's binding path.
-        assign lds_req  = lsu_need && all_lds_q && !l1_stall && !vt_stall;
+        assign lds_req  = (AU != 0) ? au_lds_go
+                                    : (lsu_need && all_lds_q && !l1_stall && !vt_stall);
+    end
+    endgenerate
+
+    // ---- kht_lsu: the queued path (LSU_DEPTH > 0) -------------------------
+    // An access is all-LDS (the resolver, as above) or all-DRAM and aligned (the
+    // queue); anything else faults before any lane takes effect. The DRAM test
+    // is staged like `lds_ok`, so it is ready when the warm-up is.
+    reg        all_dram_q;
+    wire       lq_go  = (LSUQ != 0) && lsu_need && !vt_stall && !all_lds_q
+                     && all_dram_q && lq_ready;
+    wire       lq_bad = (LSUQ != 0) && lsu_need && !vt_stall && !all_lds_q
+                     && !all_dram_q;
+    wire [31:0] lq_acc;
+    generate
+    if (LSUQ == 0) begin : g_nolsuq
+        assign lq_ready     = 1'b1;
+        assign lq_pop       = 1'b0;
+        assign lq_busy      = 1'b0;
+        assign lq_ret_v     = 1'b0;
+        assign lq_ret_ready = 1'b0;
+        assign lq_ret_ld    = 1'b0;
+        assign lq_ret_wave  = {WID{1'b0}};
+        assign lq_ret_rd    = 5'd0;
+        assign lq_ret_mask  = {LANES{1'b0}};
+        assign lq_ret_data  = {VW{1'b0}};
+        assign lq_acc       = 32'd0;
+        assign m_rd_v       = 1'b0;
+        assign m_rd_line    = 26'd0;
+        assign m_rd_tag     = 8'd0;
+        assign m_wr_v       = 1'b0;
+        assign m_wr_line    = 26'd0;
+        assign m_wr_data    = 256'd0;
+        always @(posedge clk) all_dram_q <= 1'b0;
+    end else begin : g_lsuq
+        if (HAS_LDSBANK == 0) begin : g_bad_lds
+            kht_core_LSU_DEPTH_requires_LDS_BANKS u_bad ();
+        end
+        reg [LANES-1:0] dok_q;
+        genvar DG;
+        for (DG = 0; DG < LANES; DG = DG + 1) begin : g_dok
+            wire [31:0] a = ea_all_q[32*DG +: 32];
+            wire al = (q_w == 2'd2) ? (a[1:0] == 2'd0)
+                    : (q_w == 2'd1) ? !a[0]
+                                    : (q_w == 2'd0);
+            always @(posedge clk) begin
+                dok_q[DG] <= (warm_q != 4'd0) && (!mask[DG] || (a[31] && al));
+            end
+        end
+        always @(posedge clk) begin
+            if (!resetn) begin
+                all_dram_q <= 1'b0;
+            end else begin
+                all_dram_q <= go ? 1'b0
+                                 : (per_lane && (&dok_q)
+                                    && !(is_vmem && (mem_width == 2'd3)));
+            end
+        end
+
+        // SCORE: the return writes the file through kht_unit when the port
+        // is free. Without it the core is waiting on the return and takes it.
+        assign lq_ret_ready = (SCORE == 0)
+                            ? lq_wait
+                            : (!lq_ret_ld || (lq_ret_rd == 5'd0) || (ld_take && !au_ret_v));
+
+        wire [31:0] fills;
+        kht_lsu #(.LANES(LANES), .WAVES(WAVES), .WID(WID), .DEPTH(LSU_DEPTH),
+                  .LINES(L1_LINES), .MSHRS(MSHRS), .COALESCE(COALESCE),
+                  .WB(L1_WB), .TAG_BASE(8'h40), .MEM_PRIM(MEM_PRIM),
+                  .SCAN(LSU_SCAN), .SKIP(LSU_SKIP), .HOLD(LSU_HOLD)) u_lsu (
+            .clk(clk), .resetn(resetn),
+            .req_v((AU != 0) ? au_lq_go : lq_go), .req_ready(lq_ready),
+            .req_wave((AU != 0) ? au_h_wave : f2_wave),
+            .req_rd((AU != 0) ? au_h_rd : rd),
+            .req_st((AU != 0) ? !au_h_ld : !ictl[C_LDANY]),
+            .req_w((AU != 0) ? au_h_w : q_w),
+            .req_sx((AU != 0) ? au_h_sx : q_sx),
+            .req_mask((AU != 0) ? au_h_m : mask),
+            .req_addr((AU != 0) ? au_h_ea : ea_all_q),
+            .req_data((AU != 0) ? au_h_st : st_all), .pop(lq_pop),
+            .ret_v(lq_ret_v), .ret_ready(lq_ret_ready), .ret_wave(lq_ret_wave),
+            .ret_rd(lq_ret_rd), .ret_ld(lq_ret_ld), .ret_mask(lq_ret_mask),
+            .ret_data(lq_ret_data),
+            .flush((hst == H_FLUSH) && au_idle), .inval(1'b0), .busy(lq_busy),
+            .rd_v(m_rd_v), .rd_ready(m_rd_ready), .rd_line(m_rd_line),
+            .rd_tag(m_rd_tag), .rsp_v(m_rsp_v), .rsp_tag(m_rsp_tag),
+            .rsp_data(m_rsp_data),
+            .wr_v(m_wr_v), .wr_ready(m_wr_ready), .wr_line(m_wr_line),
+            .wr_data(m_wr_data), .wr_idle(wr_out == 16'd0),
+            .acc_ctr(lq_acc), .fill_ctr(fills)
+        );
     end
     endgenerate
 
@@ -1037,12 +1453,21 @@ module kht_core #(
             lsu_done  <= 1'b0;
             ph_q      <= 2'd0;
             lds_wait  <= 1'b0;
+            lq_wait   <= 1'b0;
+            lq_sent   <= 1'b0;
             ln_q      <= {LNW{1'b0}};
             req_q     <= 32'd0;
             gat_q     <= 32'd0;
         end else begin
+            if (au_gath) begin
+                gat_q <= gat_q + 32'd1;
+            end
             if (go) begin
                 lsu_done <= 1'b0;
+                lq_sent  <= 1'b0;
+            end
+            if (lq_go) begin
+                lq_sent <= 1'b1;
             end
 
             if (lsu_drain) begin
@@ -1056,13 +1481,36 @@ module kht_core #(
                         ld_buf <= lds_rdata;
                     end
                 end
+            end else if (lq_wait) begin
+                if (lq_ret_v) begin
+                    lq_wait   <= 1'b0;
+                    lsu_drain <= 1'b1;
+                    if (is_ld_any) begin
+                        ld_buf <= lq_ret_data;
+                    end
+                end
             end else if (lsu_need && !l1_stall && !vt_stall) begin
-                gat_q <= gat_q + 32'd1;
                 // Every active lane at once, as many passes as the banks need.
                 if (all_lds_q) begin
+                    gat_q    <= gat_q + 32'd1;
                     lds_wait <= 1'b1;
                 end
+                // Queued: under SCORE the instruction retires now; without it
+                // the core waits for the return. A refused access faults at go.
+                else if (LSUQ != 0) begin
+                    if (lq_go) begin
+                        gat_q <= gat_q + 32'd1;
+                        if (SCORE != 0) begin
+                            lsu_done <= 1'b1;
+                        end else begin
+                            lq_wait <= 1'b1;
+                        end
+                    end else if (lq_bad) begin
+                        lsu_done <= 1'b1;
+                    end
+                end
                 else begin
+                    gat_q   <= gat_q + 32'd1;
                     lsu_run <= 1'b1;
                     ph_q    <= 2'd0;
                     ln_q    <= {LNW{1'b0}};
@@ -1118,7 +1566,7 @@ module kht_core #(
 
     // Passes and lane-walks are both "one access issued", so the witness stays
     // one number whichever path served the instruction.
-    assign req_ctr    = req_q + lds_passes;
+    assign req_ctr    = ((LSUQ != 0) ? lq_acc : req_q) + lds_passes;
     assign gather_ctr = gat_q;
 
     // ================= halt, PC update, counters ===========================
@@ -1153,7 +1601,7 @@ module kht_core #(
         // still holds the PREVIOUS instruction's operands and decodes as BAD.
         // Sampling that latched a fault on every gather.
         else begin
-            bad_q <= bad_q || (
+            bad_q <= bad_q || lq_bad || (
                 lsu_run
                 && (ph_q == 2'd0)
                 && lane_on
@@ -1167,7 +1615,7 @@ module kht_core #(
     // behind an ecall would otherwise retire too and overwrite the cause and
     // the halt word with its own.
     assign go_nh = f2_valid && (hst == H_RUN);
-    assign go  = go_nh && !hold;
+    assign go  = go_nh && !hold && !rp_hit;
     wire ecall = ictl[C_ECALL];
     wire ebrk  = ictl[C_EBRK];
 
@@ -1189,19 +1637,24 @@ module kht_core #(
     // kills exactly those two and rewinds `nxt` to the float's own pc+4, so the
     // wave resumes there once its result has landed. The machinery is the
     // branch's, unchanged.
-    wire br_take    = is_jal || is_jalr || (is_sbr && sbr_take)
-                   || is_flt || is_imul;
-    assign rdir_nh  = go_nh && br_take;
-    assign kill_ev  = go_nh && (br_take || wave_ends);
+    // Under SCORE a float does not redirect its wave: the scoreboard holds its
+    // dependents back, so the instructions behind it are kept, not killed.
+    wire long_rdir  = (SCORE == 0) && (is_flt || is_imul);
+    wire br_take    = is_jal || is_jalr || (is_sbr && sbr_take) || long_rdir;
+    // A REPLAY IS A REDIRECT TO THE INSTRUCTION'S OWN PC: the branch machinery
+    // kills the two fetches behind it and rewinds its wave's pointer.
+    assign rdir_nh  = go_nh && (rp_hit || br_take);
+    assign kill_ev  = go_nh && (rp_hit || br_take || wave_ends);
     assign redir    = rdir_nh && !hold;
     // A MULTI-CYCLE UNIT REDIRECTS TO THE NEXT INSTRUCTION, not to a branch
     // target. Adding `is_imul` to `br_take` without adding it here sent every
     // multiply to `f2_pc + imm_i` -- an R-type's imm field is funct7|rs2, so
     // `mul x10, x6, x8` jumped forty bytes and skipped nine instructions.
-    assign redir_pc = (is_flt || is_imul) ? (f2_pc + 32'd4)
-                    : is_jal  ? (f2_pc + imm_j)
-                    : is_jalr ? ((vt_rd1[31:0] + imm_i) & ~32'd1)
-                                : (f2_pc + imm_i);
+    assign redir_pc = rp_hit    ? f2_pc
+                    : long_rdir ? (f2_pc + 32'd4)
+                    : is_jal    ? (f2_pc + imm_j)
+                    : is_jalr   ? ((vt_rd1[31:0] + imm_i) & ~32'd1)
+                                  : (f2_pc + imm_i);
 
     // `lsu_busy` is a REGISTER, so on the cycle a walk is decided it is still
     // low. Without `lsu_need` in `hold` the instruction retires in that cycle,
@@ -1213,8 +1666,13 @@ module kht_core #(
     // in two cycles: dropping `go` now empties writeback exactly then, so the
     // float takes the port by mux rather than by arbitration. One cycle per
     // float instruction against the tier's whole latency.
-    assign hold      = base_hold || vt_stall || warm_stall || lsu_want || s_hz
-                    || f_soon || fpass_hold;
+    // A replay obeys only the stalls that freeze the whole machine; its own
+    // instruction's stalls (hazard, warm-up, the walk, the scalar interlock)
+    // are moot, since it is not issuing.
+    assign hold_rp   = base_hold || f_soon || fpass_hold;
+    assign hold      = rp_hit ? hold_rp
+                    : (base_hold || vt_stall || warm_stall || lsu_want || s_hz
+                       || f_soon || fpass_hold);
 
     // A FAULT kills the whole unit; an ecall or ebreak retires ONE WAVE. The
     // difference matters once more than one is live: a shader is finished when
@@ -1224,8 +1682,8 @@ module kht_core #(
 
     // Hold-free, for the same reason the PC update is: `hold` was reaching the
     // halt FSM's reset pin through `go` and then two more levels of next-state.
-    wire fault_nh = go_nh && fault;
-    wire ecl_nh   = go_nh && !fault && (ecall || ebrk);
+    wire fault_nh = go_nh && fault && !rp_hit;
+    wire ecl_nh   = go_nh && !fault && (ecall || ebrk) && !rp_hit;
     wire last_nh  = ((live & ~one_hot) == {WAVES{1'b0}});
 
     always @(posedge clk) begin
@@ -1239,11 +1697,12 @@ module kht_core #(
             ret_q   <= 32'd0;
         end else begin
             case (hst)
-                H_FLUSH: hst <= H_RISE;
-                H_RISE:  if (l1_flush_busy) begin
+                // The address stage drains into kht_lsu before the flush.
+                H_FLUSH: if (au_idle) hst <= H_RISE;
+                H_RISE:  if ((LSUQ != 0) ? lq_busy : l1_flush_busy) begin
                     hst <= H_FALL;
                 end
-                H_FALL:  if (!l1_flush_busy) begin
+                H_FALL:  if (!((LSUQ != 0) ? lq_busy : l1_flush_busy)) begin
                              hst    <= H_DONE;
                              halt_q <= 1'b1;
                          end
@@ -1259,7 +1718,7 @@ module kht_core #(
                 cyc_q  <= 32'd0;
                 ret_q  <= 32'd0;
             end else if (!hold) begin
-                if (go_nh) begin
+                if (go_nh && !rp_hit) begin
                     ret_q <= ret_q + 32'd1;
                 end
                 if (fault_nh) begin
@@ -1274,6 +1733,16 @@ module kht_core #(
                     if (last_nh) begin
                         hst <= H_FLUSH;
                     end
+                end
+            end
+            // The address stage's fault is older than anything EX retired since,
+            // so it overrides an ecall's or an EX fault's cause and word.
+            if (au_flt && !boot_v) begin
+                live    <= {WAVES{1'b0}};
+                cause_q <= 2'd3;
+                hword_q <= au_fpc;
+                if (hst == H_RUN) begin
+                    hst <= H_FLUSH;
                 end
             end
             if (|live) begin
@@ -1292,7 +1761,8 @@ module kht_core #(
     assign halt_word    = (cause_q == 2'd3) ? hword_q : a0_q;
     // f1 TOO: with two fetches in flight, a completion built while f1 still
     // carries one reports a unit that has not finished executing.
-    assign pipe_empty   = !f1_valid && !f2_valid && !lsu_busy;
+    assign pipe_empty   = !f1_valid && !f2_valid && !lsu_busy && !sb_any && !lq_busy
+                       && au_idle;
     assign cycle_ctr    = cyc_q;
     assign instret_ctr  = ret_q;
     assign dbg_retire_pc    = f2_pc;

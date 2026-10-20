@@ -63,6 +63,43 @@
 `ifndef KHT_LDSB
  `define KHT_LDSB -1
 `endif
+// The compute-unit design's knobs (compute-unit.md s9); 0 is today's machine.
+`ifndef KHT_SCORE
+ `define KHT_SCORE 0
+`endif
+`ifndef KHT_WBBUF
+ `define KHT_WBBUF 0
+`endif
+`ifndef KHT_LSUD
+ `define KHT_LSUD 0
+`endif
+`ifndef KHT_COAL
+ `define KHT_COAL 1
+`endif
+`ifndef KHT_MSHR
+ `define KHT_MSHR 4
+`endif
+`ifndef KHT_L1WB
+ `define KHT_L1WB 1
+`endif
+`ifndef KHT_WOUT
+ `define KHT_WOUT 1
+`endif
+`ifndef KHT_SCAN
+ `define KHT_SCAN 2
+`endif
+`ifndef KHT_SKIP
+ `define KHT_SKIP 0
+`endif
+`ifndef KHT_HOLD
+ `define KHT_HOLD 1
+`endif
+`ifndef KHT_MAU
+ `define KHT_MAU 0
+`endif
+`ifndef KHT_FRESQ
+ `define KHT_FRESQ 0
+`endif
 
 module kht_sys_tb;
     localparam integer FW  = 288;
@@ -108,7 +145,12 @@ module kht_sys_tb;
                .FLANES(`KHT_FLANES),
                .FSFU_UNITS(`KHT_FSFU),
                .SHFL_UNITS(`KHT_SHFLU), .LDS_BANKS(`KHT_LDSB),
-               .VREG_PRIM("block"), .RAM_DEPTH(RAM_DEPTH)) dut (
+               .VREG_PRIM("block"), .RAM_DEPTH(RAM_DEPTH),
+               .SCORE(`KHT_SCORE), .WB_BUF(`KHT_WBBUF),
+               .LSU_DEPTH(`KHT_LSUD), .COALESCE(`KHT_COAL), .MSHRS(`KHT_MSHR),
+               .L1_WB(`KHT_L1WB), .WR_OUT(`KHT_WOUT),
+               .LSU_SCAN(`KHT_SCAN), .LSU_SKIP(`KHT_SKIP), .LSU_HOLD(`KHT_HOLD),
+               .MEM_AU(`KHT_MAU), .FRES_REG(`KHT_FRESQ)) dut (
         .clk(clk), .rstn(rstn),
         .ext_in_data(ag_out), .ext_in_valid(ag_out_valid),
         .ext_in_busy(ag_out_busy),
@@ -197,16 +239,54 @@ module kht_sys_tb;
     end
     endgenerate
 
+    generate
+    if (`KHT_LSUD == 0) begin : g_wbtrace
     integer wn = 0;
     always @(posedge clk) if (rstn && (wn < 12)) begin
-        if (dut.u_pe.u_l1.wb_valid && dut.u_pe.u_l1.wb_ready) begin
+        if (dut.u_pe.g_l1w.u_l1.wb_valid && dut.u_pe.g_l1w.u_l1.wb_ready) begin
             $display("  TR %0t L1 WRITEBACK addr %08x word0 %08x",
-                     $time, {dut.u_pe.u_l1.wb_addr, 1'b0},
-                     dut.u_pe.u_l1.wb_data[31:0]);
+                     $time, {dut.u_pe.g_l1w.u_l1.wb_addr, 1'b0},
+                     dut.u_pe.g_l1w.u_l1.wb_data[31:0]);
             wn = wn + 1;
         end
     end
+    end
+    endgenerate
 `endif
+
+    wire [31:0] lq_fills;
+    generate
+    if (`KHT_LSUD != 0) begin : g_fills
+        assign lq_fills = dut.u_pe.u_core.g_lsuq.u_lsu.fill_ctr;
+    end else begin : g_nofills
+        assign lq_fills = 32'd0;
+    end
+    endgenerate
+
+    // Each busy cycle in exactly one class, first match: retire, LSU walk (miss
+    // apart), all waves on a float, float writeback/pass hold, other hold, rest.
+    integer pc_cyc = 0, pc_go = 0, pc_lsu = 0, pc_miss = 0, pc_fwait = 0;
+    integer pc_fhold = 0, pc_haz = 0, pc_rest = 0, pc_flt = 0, pc_mem = 0;
+    always @(posedge clk) if (rstn && pe_busy) begin
+        pc_cyc = pc_cyc + 1;
+        if (dut.u_pe.u_core.go) begin
+            pc_go = pc_go + 1;
+            if (dut.u_pe.u_core.is_flt) pc_flt = pc_flt + 1;
+            if (dut.u_pe.u_core.per_lane) pc_mem = pc_mem + 1;
+        end
+        else if (dut.u_pe.u_core.lsu_busy) begin
+            if (dut.u_pe.u_core.l1_stall) pc_miss = pc_miss + 1;
+            else pc_lsu = pc_lsu + 1;
+        end
+        else if ((dut.u_pe.u_core.live != 0) && (dut.u_pe.u_core.rdy == 0))
+            pc_fwait = pc_fwait + 1;
+        else if (dut.u_pe.u_core.f_soon || dut.u_pe.u_core.fpass_hold)
+            pc_fhold = pc_fhold + 1;
+        else if (dut.u_pe.u_core.hold)
+            pc_haz = pc_haz + 1;
+        else
+            pc_rest = pc_rest + 1;
+    end
 
     reg [31:0] dinit [0:DWORDS-1];
     reg [31:0] dfin  [0:DWORDS-1];
@@ -311,8 +391,11 @@ module kht_sys_tb;
             $display("    kick to done   %0d cycles", u_ag.ws_guard);
             // The coalescer witness. Requests per gather starts at LANES with a
             // serialising LSU and must FALL when a coalescer lands.
-            $display("    memory         %0d request(s) over %0d gather(s)",
-                     pe_reqs, pe_gathers);
+            $display("    memory         %0d request(s) over %0d gather(s), %0d fill(s)",
+                     pe_reqs, pe_gathers, lq_fills);
+            $display("    prof cyc %0d go %0d lsu %0d miss %0d fwait %0d fhold %0d haz %0d rest %0d flt %0d mem %0d",
+                     pc_cyc, pc_go, pc_lsu, pc_miss, pc_fwait, pc_fhold, pc_haz,
+                     pc_rest, pc_flt, pc_mem);
             chk(u_ag.sig_code, (meta[0] == 32'd1) ? 8'h00 : 8'h04,
                 "completion code");
             chk(u_ag.sig_arg, meta[1], "halt word");

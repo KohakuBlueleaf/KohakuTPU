@@ -464,6 +464,26 @@ class Stream:
                     else:
                         self.emit("vst", vs=3, imm=0, xs1=self.base_reg)
 
+    def falu_independent(self, sfx="f32"):
+        """An elementwise float, then k independent integer ops and a `vmul`.
+
+        For k = 0..23 the multiply's stretch ends on a different cycle against the
+        float's retiring write, so one of them shares the write port's cycle. Each
+        product is stored to its own row: a lost write is a stale row, which the
+        order-free compares see. The case is UNORDERED for the reason
+        `falu_directed` gives.
+        """
+        self.load_all()
+        if not (self.has("vfadd.%s" % sfx) and self.has("vmul.s16")):
+            return
+        for k in range(24):
+            self.emit("vfadd.%s" % sfx, vd=1, vs1=2, vs2=3)
+            for _ in range(k):
+                self.emit("vadd.s32", vd=4, vs1=6, vs2=7)
+            self.emit("vmul.s16", vd=5, vs1=6, vs2=7)
+            self.emit("vst", vs=5, imm=k * self.vb, xs1=self.base_reg)
+            self.emit("vadd.s32", vd=6, vs1=6, vs2=7)
+
     def float_random(self, n):
         """The float tier only, on banded data, with the accumulators read out."""
         self.load_all()
@@ -540,7 +560,12 @@ FLOAT_CASES = [
     ("f32edge", lambda s: s.float_corners(), True),
     ("falud", lambda s: s.falu_directed(), True),
     ("faluedge", lambda s: s.falu_corners(), True),
+    ("faluind", lambda s: s.falu_independent(), True),
 ]
+
+#: Cases whose write trace is not in program order; the bench compares only
+#: their write count and final state.
+UNORDERED = {"faluind"}
 
 
 def cases_for(feat, flanes):
@@ -605,6 +630,7 @@ def build(simd, outdir, feat, tag, flanes=0):
         "".join(("%0" + str((ww + 3) // 4) + "x\n") % w for w in flat_w)
     )
     (d / "wcounts.hex").write_text(to_hex([len(w) for w in wtr]))
+    (d / "worder.hex").write_text(to_hex([0 if c[0] in UNORDERED else 1 for c in cases]))
     (d / "wnames.txt").write_text(
         "".join(
             "%d\t%d\t%s\n" % (c, i, n)
