@@ -1,4 +1,6 @@
-// One tensor CU in isolation: 4 x 8 x 4, no cluster chaining.
+// One tensor CU in isolation: 4 x 8 x 4, no cluster chaining; beside it a
+// chained one (FIRST = 0) whose upstream partial, held through each tile,
+// must come out added (the cross-TCU C path of the last stage).
 //
 // Exists so a cluster failure is attributable. If this passes and the cluster
 // bench does not, the fault is in the cross-TCU W path or the operand skew
@@ -38,10 +40,20 @@ module mx_tcu_tb;
         .part_out(part_out)
     );
 
+    reg  [383:0] part_in2;
+    wire [383:0] part_out2;
+    mx_tcu #(.FIRST(0), .MODEL(MODEL)) dut2 (
+        .clk(clk), .rst(rst), .en(en),
+        .a_in(a_in), .b_in(b_in),
+        .part_in(part_in2),
+        .part_out(part_out2)
+    );
+
     integer signed A [0:3][0:7];
     integer signed B [0:7][0:3];
 
     integer errors = 0, checks = 0;
+    integer seed;
 
     task chk(input integer signed got, input integer signed want, input [255:0] what);
         begin
@@ -78,6 +90,9 @@ module mx_tcu_tb;
         reg [47:0] w;
         begin
             pack;
+            for (c = 0; c < 8; c = c + 1) begin
+                part_in2[c*48 +: 48] = {$random(seed), $random(seed)} >> 8;
+            end
             @(negedge clk);
             // hold the operands stable for the whole fill so the skew chain
             // sees a clean tile rather than a one-cycle pulse
@@ -98,6 +113,12 @@ module mx_tcu_tb;
                     got_hi = $signed(w[47:19]) + $signed({1'b0, w[18]});
                     chk(got_lo, dot_lo, what);
                     chk(got_hi, dot_hi, what);
+                    // chained: the partial plus this TCU's packed sum, mod 2^48
+                    w = part_out2[c*48 +: 48] - part_in2[c*48 +: 48];
+                    got_lo = $signed(w[18:0]);
+                    got_hi = $signed(w[47:19]) + $signed({1'b0, w[18]});
+                    chk(got_lo, dot_lo, "chained");
+                    chk(got_hi, dot_hi, "chained");
                 end
             end
         end
@@ -119,7 +140,7 @@ module mx_tcu_tb;
         end
     endtask
 
-    integer i, j, k, t, seed;
+    integer i, j, k, t;
 
     // ------------------------------------------------------------- streaming
     // Push NST tiles back to back and check every one. Expected values are
@@ -187,7 +208,7 @@ module mx_tcu_tb;
 
     initial begin
         seed = 32'h0BAD_F00D;
-        a_in = 0; b_in = 0;
+        a_in = 0; b_in = 0; part_in2 = 0;
         // glbl asserts GSR for the first 100 ns, so every unisim register is
         // held in reset regardless of our own rst. Start well clear of it or
         // the first tile silently produces nothing.

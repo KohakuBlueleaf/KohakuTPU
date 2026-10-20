@@ -105,6 +105,10 @@ module mx_tcu #(
                 localparam integer WS = (k == NK-1 && FIRST == 0) ? 1 : 0;
 
                 wire signed [47:0] p_out, pc_out;
+                // C only where W reads it: a W = 0 stage's C pins tie off, or
+                // the partial fans out to all 8 DSPs of the chain (7 of them
+                // dead loads; v9t7 routed: 33,320 failing endpoints).
+                wire signed [47:0] cin_k = (WS == 1) ? part_in[C_IDX*48 +: 48] : 48'sd0;
 
                 mx_mac #(.S(S), .Z_SEL(ZS), .W_SEL(WS), .MODEL(MODEL)) u_mac (
                     .clk(clk), .rst(rst), .en(en),
@@ -112,7 +116,7 @@ module mx_tcu #(
                     .w_lo(`A_OF(k, 2*p)),       // lower field -> even row
                     .act (`B_OF(k, j)),
                     .pcin(casc[k]),
-                    .cin (part_in[C_IDX*48 +: 48]),
+                    .cin (cin_k),
                     .p(p_out), .pcout(pc_out)
                 );
 
