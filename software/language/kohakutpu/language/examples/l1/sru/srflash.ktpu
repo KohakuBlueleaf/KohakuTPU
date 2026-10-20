@@ -1,0 +1,109 @@
+# Flash attention on 4 mat + 2 SRU: two heads of 1024 queries x 1024 keys,
+# d = 64, base 2 (q arrives scaled by log2(e) / sqrt(d)). Head h runs on
+# mg[2h] (scores), sr[h] (softmax) and mg[2h + 1] (P V).
+#
+# Scores: mg[2h] holds all 1024 keys (B0 keys 0..511, B1 512..1023, nk = 2)
+# and streams each 4-row sub-row of S (4 x 1024 keys, 256 words) to sr[h]
+# with two load-and-emit sweeps (both issued before their drains), under the
+# unit's credits.
+#
+# sr[h], a RUN a 32-row tile (8 sub-rows): the fill pass buffers the whole
+# sub-row and takes its row max (R1); I = round(max) (+ / - 1.5 * 2^15); the
+# replay is P = 2^(S - I) <= 2^0.5, packed MXFP7 A into mg[2h + 1]'s L1 A
+# (tile t in bank t % 2), with l = sum P (R2) and R1 = 1 / l (RCP).
+#
+# mg[2h + 1], a tile: O = P V as two column halves (B0 = v[:, 0:32], B1 =
+# v[:, 32:64], 32 K blocks each), drained to o; the bank goes back to sr[h].
+#
+# y = O x R1 on sr[h] in groups of 8 tiles (256 rows, alternating halves of
+# the row state), sent just before the tile that reuses those rows: its P V
+# finished long before, so the node never waits on it.
+target ktpu.v9
+
+macro scores(t, h)
+    send mg[2*h]
+        for g in 8*t..8*t + 8
+            gemm 1x128x2 a=A{(g/32) % 2} aoff=2*(g % 32) b=B0 emit to=sr[h] l1=0 count credit
+            gemm 1x128x2 a=A{(g/32) % 2} aoff=2*(g % 32) b=B1 emit to=sr[h] l1=0 count credit
+            drain n=128 to=sr[h] l1=0 fused count credit
+            drain n=128 to=sr[h] l1=0 fused count credit
+            when g % 32 == 0
+                when g/32 + 1 < 8
+                    fill A{(g/32 + 1) % 2} <- q + h*64K + (g/32 + 1)*8K n=64
+
+macro soft(t, h)
+    send sr[h]
+        job nw=256 nsr=8 out=mx7a buf r1 row0=32*(t % 16) k0=49152.0
+        pass 0
+            fin add T <- ST1, K0
+            fin sub R0 <- T, K0
+        pass 1 r2 emit
+            op fn a=X k=R0
+            fin rcp R1 <- ST2
+        run a=recv from=mg[2*h] out=mg[1 + 2*h] buf=0 at=1024*(t % 2) count
+
+macro pv(t, h)
+    send mg[1 + 2*h]
+        # 256 entries, taken as two (a FILL counts at most 255)
+        fill A{t % 2} recv n=128
+        fill A{t % 2} recv n=128
+        gemm 8x8x32 a=A{t % 2} b=B0 emit=o + 2*h*64K + t*2K
+        drain o + 2*h*64K + t*2K n=64 fused
+        gemm 8x8x32 a=A{t % 2} b=B1 emit=o + (2*h + 1)*64K + t*2K
+        drain o + (2*h + 1)*64K + t*2K n=64 fused
+        # the bank back for tile t + 2: none past the last, so a rerun starts
+        # with only the two banks' worth
+        when t < 30
+            post n=1024 to=sr[h]
+
+macro norm(G, h)
+    send sr[h]
+        job nw=8 nsr=64 out=f16 row0=256*(G % 2)
+        pass 0 emit
+            op fma a=X b=R1 c=0
+        for c in 0..2
+            run a=o + (2*h + c)*64K + G*16K astride=8 out=y + h*128K + G*32K + c*256 ostride=16
+
+macro normg(G)
+    wait mg[1] upto=pa{8*G + 7}
+    wait mg[3] upto=pb{8*G + 7}
+    for h in 0..2
+        expand norm(G, h)
+
+fn flash.l1(q: mx7a[2048, 64] @dram(gm=32, nk=2), k: mx7b[2048, 64] @dram(gn=128, nk=2), v: mx7b[64, 2048] @dram(gn=8, nk=32, t=1), tab: f32[256, 8] @dram, o: f16[4096, 32] @dram(tile=8x8), y: f16[2048, 64] @dram(tile=1x16))
+    for h in 0..2
+        send sr[h]
+            load table <- tab n=256
+        send mg[1 + 2*h]
+            fill B0 <- v + h*32K n=128
+            fill B0 <- v + h*32K + 16K n=128 at=128
+            fill B1 <- v + (2 + h)*32K n=128
+            fill B1 <- v + (2 + h)*32K + 16K n=128 at=128
+        send mg[2*h]
+            fill B0 <- k + h*64K n=128
+            fill B0 <- k + h*64K + 16K n=128 at=128
+            fill B1 <- k + h*64K + 32K n=128
+            fill B1 <- k + h*64K + 48K n=128 at=128
+            fill A0 <- q + h*64K n=64
+    # P may land only once v's responses are in (one inbound stream a cluster)
+    va = mark mg[1]
+    vb = mark mg[3]
+    wait mg[1] upto=va
+    wait mg[3] upto=vb
+    for h in 0..2
+        send mg[1 + 2*h]
+            post n=2048 to=sr[h]
+    for t in 0..32
+        when t >= 16
+            when t % 8 == 0
+                expand normg(t/8 - 2)
+        for h in 0..2
+            expand scores(t, h)
+            expand soft(t, h)
+            expand pv(t, h)
+        when t % 8 == 7
+            pa{t} = mark mg[1]
+            pb{t} = mark mg[3]
+    expand normg(2)
+    expand normg(3)
+    barrier

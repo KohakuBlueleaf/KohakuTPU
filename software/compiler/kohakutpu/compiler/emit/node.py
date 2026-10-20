@@ -14,6 +14,7 @@ from kohakuaccel.compiler.package import mover as PM
 from kohakuaccel.compiler.package.format import Alu, Cond
 from kohakuaccel.compiler.program import TMP, Patch
 from kohakutpu.compiler.emit import image as vector
+from kohakutpu.compiler.emit.sru import RowReader
 from kohakutpu.compiler.encode import cluster as C
 from kohakutpu.compiler.encode import mover as M
 from kohakutpu.compiler.encode import vector as A
@@ -34,7 +35,7 @@ from kohakutpu.language.text.syntax import (
     View,
 )
 
-UNITS = {"vc": "VC", "mg": "MG"}
+UNITS = {"vc": "VC", "mg": "MG", "sr": "SR"}
 #: The node processor's coordinate, a mesh corner (sn_hub.v PE_X/PE_Y).
 NODE = (0, 0)
 ALU = {
@@ -115,6 +116,8 @@ class NodeReader:
         self.emits: dict = {}
         #: core -> the encoded image its IMEM holds, along straight-line code
         self.resident: dict = {}
+        #: row unit -> the configuration words this program wrote it
+        self.configs: dict = {}
 
     def stmts(self, stmts) -> None:
         for st in stmts:
@@ -164,9 +167,11 @@ class NodeReader:
                 self.p.settle(self.const(st, self.one(st)))
             case "label":
                 self.resident.clear()  # reached from more than one place
+                self.configs.clear()
                 self.p.label(self.name(st, self.one(st)))
             case "goto":
                 self.resident.clear()
+                self.configs.clear()
                 self.goto(st)
             case "push":
                 self.push(st)
@@ -352,6 +357,10 @@ class NodeReader:
             for s, op in zip(st.body, ops, strict=True):
                 self.collect(coord, s, op)
             self.p.send(coord, *ops)
+            return
+        if coord in self.p.units("SR"):
+            held = self.configs.setdefault(coord, {})
+            self.p.send(coord, *RowReader(self, held).ops_of(st.body))
             return
         words: list = []
         fixes: list = []

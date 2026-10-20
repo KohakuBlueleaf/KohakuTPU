@@ -1,0 +1,6 @@
+# 4 mat + 2 SRU: the v9 die (mesh_1x2_4+2.txt) with the two vector cores
+# replaced by Streaming Row Units on the same east ports.
+xxx mat xxx
+sys mat sru
+sys mat sru
+xxx mat xxx

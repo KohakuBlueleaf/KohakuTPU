@@ -1,0 +1,12 @@
+# y = 0.75 x + 0.25 over 256 x 128 f16 on the two row units: unit u owns rows
+# 128u..128u+127, 32 sub-rows of 32 words, one FMA a word.
+target ktpu.v9
+
+fn affine.l1(x: f16[256, 128] @dram(tile=1x32, ieee=1), y: f16[256, 128] @dram(tile=1x32, ieee=1))
+    for u in 0..2
+        send sr[u]
+            job nw=32 nsr=32 out=f16
+            pass 0 emit
+                op fma a=X b=0.75 c=0.25
+            run a=x + u*32K out=y + u*32K
+    barrier

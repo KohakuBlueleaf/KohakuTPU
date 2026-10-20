@@ -1,0 +1,16 @@
+# y = x sigmoid(x) over 256 x 128 f16 on the two row units: unit u owns rows
+# 128u..128u+127. The sigmoid table (1,024 segments over [-16, 16), slope
+# scale 0) loads from `tab`, 4 entries a word; then one FIX function and one
+# FMA a word: h0 = sigmoid(x), y = h0 x + 0.
+target ktpu.v9
+
+fn srsilu.l1(x: f16[256, 128] @dram(tile=1x32, ieee=1), tab: f32[256, 8] @dram, y: f16[256, 128] @dram(tile=1x32, ieee=1))
+    for u in 0..2
+        send sr[u]
+            load table <- tab n=256
+            job nw=32 nsr=32 out=f16
+            pass 0 emit
+                op fn a=X k=0 fix
+                op fma a=H0 b=X c=0
+            run a=x + u*32K out=y + u*32K
+    barrier

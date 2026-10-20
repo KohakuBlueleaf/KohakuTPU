@@ -269,7 +269,9 @@ def main() -> int:
     # rv_core reports "no cases -- run the generator" while the images are there.
     predef = work / "kohaku_predef.vh"
     predef.write_text(
-        f'`define PE_DIR "{(ROOT / "tests/pe/build").as_posix()}"\n', encoding="utf-8"
+        f'`define PE_DIR "{(ROOT / "tests/pe/build").as_posix()}"\n'
+        f'`define SRU_DIR "{(ROOT / "build/sru").as_posix()}"\n',
+        encoding="utf-8",
     )
 
     model_inc = []

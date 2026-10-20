@@ -1,0 +1,10 @@
+kohakutpu/sru/lane/sru_dsp.v
+kohakutpu/sru/lane/sru_plane.v
+kohakutpu/sru/pool/sru_pool.v
+kohakutpu/sru/stream/sru_unpack.v
+kohakutpu/sru/stream/sru_red.v
+kohakutpu/sru/stream/sru_sum2e8.v
+kohakutpu/sru/stream/sru_mx7.v
+kohakutpu/sru/stream/sru_e8f16_acc.v
+kohakutpu/sru/sru_core.v
+kohakutpu/sru/sru_cu.v

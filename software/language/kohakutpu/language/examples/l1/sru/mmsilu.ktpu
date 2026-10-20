@@ -1,0 +1,22 @@
+# y = silu(x w^T), 256 x 256 x 256: cluster 0 sweeps the tile and streams its
+# sub-tiles to row unit 0 as they complete (a COUNT stream on the unit's
+# credits); the row unit runs silu on each sub-row of 64 words and writes y.
+target ktpu.v9
+
+fn mmsilu.l1(x: mx7a[256, 256] @dram(gm=64, nk=2), w: mx7b[256, 256] @dram(gn=64, nk=2), tab: f32[256, 8] @dram, y: f16[256, 256] @dram(tile=1x64, ieee=1))
+    send sr[0]
+        load table <- tab n=256
+        job nw=64 nsr=64 out=f16
+        pass 0 emit
+            op fn a=X k=0 fix
+            op fma a=H0 b=X c=0
+        run a=recv from=mg[0] out=y
+    send mg[0]
+        for k in 0..4
+            fill A{k % 2} <- x + k*16K n=128
+            fill B{k % 2} <- w + k*16K n=128
+            when k < 3
+                gemm 64x64x2 a=A{k % 2} b=B{k % 2} acc=(k > 0)
+        gemm 64x64x2 a=A1 b=B1 acc emit to=sr[0] l1=0 count credit
+        drain n=4096 to=sr[0] l1=0 fused count credit
+    barrier

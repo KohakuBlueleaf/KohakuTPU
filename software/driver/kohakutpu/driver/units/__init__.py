@@ -10,9 +10,11 @@ from kohakuaccel.driver.unit import UnitType, register
 
 MATMUL = "MG"  # mx_cluster_cu
 VECTOR = "VC"  # vec_cu
+ROW = "SR"  # sru_cu
 
 MATMUL_CODE = type_code(MATMUL)
 VECTOR_CODE = type_code(VECTOR)
+ROW_CODE = type_code(ROW)
 
 
 def matmul_dbg(word: int) -> dict:
@@ -42,9 +44,22 @@ def vector_dbg(word: int) -> dict:
     }
 
 
+def row_dbg(word: int) -> dict:
+    """CU_DBG for a Streaming Row Unit: the cycles its core was busy, counted
+    from reset (``sru_cu`` ``cycles``)."""
+    return {
+        "compute_cycles": word & MASK32,
+        "memory_cycles": None,
+        "scope": "cumulative",
+    }
+
+
 MATMUL_UNIT = register(
     UnitType(name=MATMUL, decode_dbg=matmul_dbg, summary="MXFP7 matmul cluster")
 )
 VECTOR_UNIT = register(
     UnitType(name=VECTOR, decode_dbg=vector_dbg, summary="vector core")
+)
+ROW_UNIT = register(
+    UnitType(name=ROW, decode_dbg=row_dbg, summary="Streaming Row Unit")
 )

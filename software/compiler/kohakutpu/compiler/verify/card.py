@@ -10,9 +10,10 @@ receiver in that node's dispatch state (`engine.c` ka_engine_drain).
 
 from kohakutpu.compiler.verify.cluster import Cluster, burst_fields
 from kohakutpu.compiler.verify.model import Clock, Machine
+from kohakutpu.compiler.verify.row import Row
 from kohakutpu.compiler.verify.vector import Vector
 
-KINDS = {"MG": Cluster, "VC": Vector}
+KINDS = {"MG": Cluster, "VC": Vector, "SR": Row}
 
 
 class Card:

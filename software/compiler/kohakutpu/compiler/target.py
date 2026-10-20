@@ -19,13 +19,19 @@ SYS_PORTS = ((0, 1), (0, 2))
 SYS_REPLY = SYS_PORTS[0]
 #: A unit's instruction FIFO: the most words in flight to it.
 INST_DEPTH = 512
-#: Die shapes by name: (MG, VC). Both put the system node's ports at
+#: Die shapes by name: (MG, VC, SR). Each puts the system node's ports at
 #: SYS_PORTS. "6+2" is `ktpu_ship_2x2_6c2v_1m_nol2` (maps/mesh_2x2_6+2.txt):
 #: clusters 0-2 on port (0,1), 3-5 on (0,2), cores at the column-2 edges.
+#: "4+2s" is 4+2 with Streaming Row Units on the cores' ports
+#: (src/kohakutpu/sru/top/mesh_1x2_4+2s.txt).
 DIES = {
-    "4+2": (MG, VC),
-    "6+2": (((1, 0), (1, 1), (2, 1), (1, 2), (2, 2), (1, 3)), ((2, 0), (2, 3))),
+    "4+2": (MG, VC, ()),
+    "6+2": (((1, 0), (1, 1), (2, 1), (1, 2), (2, 2), (1, 3)), ((2, 0), (2, 3)), ()),
+    "4+2s": (MG, (), VC),
 }
+#: A Streaming Row Unit's profile knobs the compiler reads (sru_cu.v
+#: parameters; scripts/py/sru/profiles.py "strong").
+SRU = {"F_LANES": 16, "H_TAPS": 2, "HAS_FN": 1, "TAB": "ram"}
 
 
 #: Vector core builds by name (scripts/tcl/v8t3/00_config.tcl VEC_CORE):
@@ -53,10 +59,13 @@ def machine(
     vregs: int | None = None,
     vcopies: int | None = None,
     mem: dict | None = None,
+    sr=None,
+    sru: dict | None = None,
 ) -> MachineSpec:
     """The units of a `die`-shaped die, seen from mesh `mesh`; with `nodes`, a
-    card of that many identical dies (meshes 0..nodes-1, a chain). `mg`/`vc`
-    override the die's unit lists. The vector cores are build `core`
+    card of that many identical dies (meshes 0..nodes-1, a chain). `mg`/`vc`/
+    `sr` override the die's unit lists; `sru` the row units' profile (`SRU`).
+    The vector cores are build `core`
     (`CORES`); `vregs` / `vcopies` override its register count (`v2_core.v`
     2**RW: 32, 64 or 128) and its register file's read copies a bank
     (RF_COPIES: 2, 3 or 4). `mem` overrides MEM, the fill costs a vector
@@ -64,8 +73,12 @@ def machine(
     regs, copies = CORES[core]
     vregs = regs if vregs is None else vregs
     vcopies = copies if vcopies is None else vcopies
-    shape_mg, shape_vc = DIES[die]
-    units = {"MG": tuple(mg or shape_mg), "VC": tuple(vc or shape_vc)}
+    shape_mg, shape_vc, shape_sr = DIES[die]
+    units = {
+        "MG": tuple(shape_mg if mg is None else mg),
+        "VC": tuple(shape_vc if vc is None else vc),
+        "SR": tuple(shape_sr if sr is None else sr),
+    }
     which = range(nodes) if nodes else (mesh,)
     return MachineSpec(
         name=NAME,
@@ -75,6 +88,7 @@ def machine(
         links=tuple((i, i + 1) for i in range((nodes or 1) - 1)),
         params={
             "VC": {"regs": vregs, "copies": vcopies},
+            "SR": {**SRU, **(sru or {})},
             **({"MEM": dict(mem)} if mem is not None else {}),
         },
     )
@@ -94,8 +108,10 @@ def machine_of(
             f"{board['name']}: system-node ports {ports}, the compiler's {SYS_PORTS}"
         )
     return machine(
-        mg=[tuple(p) for p in units["MG"]],
-        vc=[tuple(p) for p in units["VC"]],
+        mg=[tuple(p) for p in units.get("MG", ())],
+        vc=[tuple(p) for p in units.get("VC", ())],
+        sr=[tuple(p) for p in units.get("SR", ())],
+        sru=board.get("sru"),
         mesh=mesh,
         nodes=nodes,
         **kw,
@@ -126,6 +142,7 @@ __all__ = [
     "MEM",
     "MG",
     "NAME",
+    "SRU",
     "SYS_PORTS",
     "SYS_REPLY",
     "VC",
