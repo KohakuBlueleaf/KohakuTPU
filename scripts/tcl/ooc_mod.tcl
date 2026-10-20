@@ -24,7 +24,13 @@ set generics {}
 if {$gspec ne "-"} {
     foreach kv [split $gspec "+"] {
         set p [split $kv ":"]
-        lappend generics "[lindex $p 0]=[lindex $p 1]"
+        set gv [lindex $p 1]
+        # a non-numeric value is a Verilog string parameter: quoted here, since
+        # quotes do not survive vivado.bat's argument splitting
+        if {![string is integer -strict $gv] && ![string match {*'*} $gv] && [string index $gv 0] ne "\""} {
+            set gv "\"$gv\""
+        }
+        lappend generics "[lindex $p 0]=$gv"
     }
 }
 foreach f $files { read_verilog $f }

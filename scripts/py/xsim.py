@@ -10,6 +10,7 @@ caller.
 """
 
 import argparse
+import hashlib
 import os
 import pathlib
 import shutil
@@ -18,6 +19,7 @@ import sys
 import time
 
 import gen_card
+from sru import profiles as _sru_profiles
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 VIVADO = pathlib.Path(r"D:\Xilinx\Vivado\2024.2\bin")
@@ -802,6 +804,15 @@ BENCHES = {
             "src/kohakuaccel/common/kohaku_mux.v",
             "src/kohakuaccel/sysnode/core/mag_stage.v",
             "tests/sysnode/mag_stage_tb.v",
+        ],
+    ),
+    # One tensor CU, alone and chained (the cross-TCU C path).
+    "mx_tcu": (
+        "mx_tcu_tb",
+        [
+            "src/kohakutpu/matmul/mx_mac.v",
+            "src/kohakutpu/matmul/mx_tcu.v",
+            "tests/matmul/mx_tcu_tb.v",
         ],
     ),
     "cluster_node": (
@@ -1924,6 +1935,9 @@ PE_KHG = (
         "src/kohakumpe/simt/kht_unit.v",
         "src/kohakumpe/simt/kht_lds.v",
         "src/kohakumpe/simt/kht_predec.v",
+        "src/kohakumpe/simt/kht_score.v",
+        "src/kohakumpe/simt/kht_lsu.v",
+        "src/kohakumpe/simt/kht_req.v",
         "src/kohakumpe/simt/kht_core.v",
         "src/kohakumpe/simt/kht_pe.v",
         "tests/pe/tb/kht_mesh.v",
@@ -1932,6 +1946,41 @@ PE_KHG = (
 )
 
 BENCHES["kht_sys"] = ("kht_sys_tb", PE_KHG + ["tests/pe/tb/kht_sys_tb.v"])
+
+# The compute-unit design's blocks, one unit bench each (compute-unit.md s10).
+BENCHES["kht_icache"] = (
+    "kht_icache_tb",
+    [
+        "src/kohakuaccel/common/kohaku_sdpram.v",
+        "src/kohakumpe/simt/kht_predec.v",
+        "src/kohakumpe/simt/kht_icache.v",
+        "tests/pe/tb/simt/kht_icache_tb.v",
+    ],
+)
+BENCHES["kht_kcache"] = (
+    "kht_kcache_tb",
+    [
+        "src/kohakuaccel/common/kohaku_sdpram.v",
+        "src/kohakumpe/simt/kht_kcache.v",
+        "tests/pe/tb/simt/kht_kcache_tb.v",
+    ],
+)
+BENCHES["kht_score"] = (
+    "kht_score_tb",
+    ["src/kohakumpe/simt/kht_score.v", "tests/pe/tb/simt/kht_score_tb.v"],
+)
+BENCHES["kht_lsu"] = (
+    "kht_lsu_tb",
+    [
+        "src/kohakuaccel/common/kohaku_sdpram.v",
+        "src/kohakumpe/simt/kht_lsu.v",
+        "tests/pe/tb/simt/kht_lsu_tb.v",
+    ],
+)
+BENCHES["kht_req"] = (
+    "kht_req_tb",
+    ["src/kohakumpe/simt/kht_req.v", "tests/pe/tb/simt/kht_req_tb.v"],
+)
 
 # Three PE CLASSES on one router and one MAG, with no agent on the NoC: the
 # host is an AXI master on MAG's slaves, which is the only way in on the card.
@@ -2061,6 +2110,9 @@ INCDIRS = [
     "src/kohakumpe/simt/generated",
     "src/kohakuaccel/pe/rv64-sys/core",
     "src/kohakutransmit/packet",
+    "src/kohakutpu/sru",
+    "src/kohakutpu/sru/lane",
+    "src/kohakutpu/sru/stream",
 ]
 
 NEEDS_GLBL.update(
@@ -2073,6 +2125,9 @@ NEEDS_GLBL.update(
         "rv_mc4",
         "rv_dsp",
         "kht_sys",
+        "kht_icache",
+        "kht_kcache",
+        "kht_lsu",
         "kts_cdc",
     }
 )
@@ -2243,6 +2298,82 @@ BENCHES["v2_fifo"] = (
 BENCHES["v2_agu"] = (
     "v2_agu_tb",
     ["src/kohakutpu/vector2/v2_agu.v", "tests/vector2/v2_agu_tb.v"],
+)
+# The Streaming Row Unit. Vectors from scripts/py/sru/*_vectors.py (build/sru).
+SRU_LANE = [
+    "src/kohakutpu/sru/lane/sru_dsp.v",
+    "src/kohakutpu/sru/lane/sru_plane.v",
+]
+BENCHES["sru_plane"] = ("sru_plane_tb", SRU_LANE + ["tests/sru/lane/sru_plane_tb.v"])
+BENCHES["sru_plane_rom"] = BENCHES["sru_plane"]
+DEFINES["sru_plane_rom"] = ["SRU_TB_ROM"]
+BENCHES["sru_plane_nofn"] = BENCHES["sru_plane"]
+DEFINES["sru_plane_nofn"] = ["SRU_TB_NOFN"]
+BENCHES["sru_red"] = (
+    "sru_red_tb",
+    ["src/kohakutpu/sru/stream/sru_red.v", "tests/sru/stream/sru_red_tb.v"],
+)
+BENCHES["sru_red_sum"] = BENCHES["sru_red"]
+DEFINES["sru_red_sum"] = ["SRU_TB_SUM"]
+BENCHES["sru_mx7"] = (
+    "sru_mx7_tb",
+    [
+        "src/kohakuaccel/common/kohaku_sdpram.v",
+        "src/kohakutpu/sru/stream/sru_mx7.v",
+        "tests/sru/stream/sru_mx7_tb.v",
+    ],
+)
+BENCHES["sru_mx7_b"] = BENCHES["sru_mx7"]
+DEFINES["sru_mx7_b"] = ["SRU_TB_BLAYOUT"]
+BENCHES["sru_mx7_dsp"] = BENCHES["sru_mx7"]
+DEFINES["sru_mx7_dsp"] = ["SRU_TB_DSP"]
+SRU_CORE = (
+    ["src/kohakuaccel/common/kohaku_sdpram.v", "src/kohakutpu/vector2/v2_cvt.v"]
+    + SRU_LANE
+    + [
+        "src/kohakutpu/sru/pool/sru_pool.v",
+        "src/kohakutpu/sru/stream/sru_unpack.v",
+        "src/kohakutpu/sru/stream/sru_red.v",
+        "src/kohakutpu/sru/stream/sru_sum2e8.v",
+        "src/kohakutpu/sru/stream/sru_mx7.v",
+        "src/kohakutpu/sru/stream/sru_e8f16_acc.v",
+        "src/kohakutpu/sru/sru_core.v",
+    ]
+)
+# sru_core_<profile>: the profile's knobs from scripts/py/sru/profiles.py
+for _p in _sru_profiles.PROFILES:
+    BENCHES[f"sru_core_{_p}"] = ("sru_core_tb", SRU_CORE + ["tests/sru/sru_core_tb.v"])
+    DEFINES[f"sru_core_{_p}"] = _sru_profiles.defines(_p)
+BENCHES["sru_cu"] = (
+    "sru_cu_tb",
+    [
+        "src/kohakuaccel/common/sync_fifo.v",
+        "src/kohakuaccel/common/kh_rst_sync.v",
+        "src/kohakuaccel/noc/endpoint/noc_cu_base.v",
+    ]
+    + SRU_CORE
+    + ["src/kohakutpu/sru/sru_cu.v", "tests/sru/sru_cu_tb.v"],
+)
+# The 4 mat + 2 SRU card (gen_card.py --ver v9t7 --sim-mesh <the SRU top>, from
+# scripts/py/sru/gen_tops.py): v9t7's node, the vector cores replaced by SRUs.
+SRU_TOP = "src/kohakutpu/sru/top/generated/ktpu_ship_1x2_4c2s_1m_nol2_pump.v"
+for _n in (1, 2):
+    _srcs = gen_card.image_sources("v9t7", SRU_TOP) + BENCHES["sru_cu"][1][:-1]
+    BENCHES[f"card_sru_{_n}n"] = (
+        f"card_sru_{_n}n",
+        list(dict.fromkeys(_srcs)) + [f"tests/sru/system/card_sru_{_n}n.v"],
+    )
+    DEFINES[f"card_sru_{_n}n"] = gen_card.image_defines("v9t7")
+    HARNESS.add(f"card_sru_{_n}n")
+BENCHES["sru_unpack"] = (
+    "sru_unpack_tb",
+    ["src/kohakutpu/sru/stream/sru_unpack.v", "tests/sru/stream/sru_unpack_tb.v"],
+)
+BENCHES["sru_unpack_acc"] = BENCHES["sru_unpack"]
+DEFINES["sru_unpack_acc"] = ["SRU_TB_ACC"]
+BENCHES["sru_e8f16"] = (
+    "sru_e8f16_tb",
+    ["src/kohakutpu/sru/stream/sru_e8f16_acc.v", "tests/sru/stream/sru_e8f16_tb.v"],
 )
 BENCHES["mx_tdesc"] = (
     "mx_tdesc_tb",
@@ -2426,6 +2557,23 @@ for _v8top in (
     )
 
 
+def build_key(bench, opts, files, predef_text, incdirs):
+    """A digest of everything xvlog and xelab read: the options, every source,
+    and every header in a directory a source or an `-i` could include from."""
+    h = hashlib.sha1()
+    for part in [bench, predef_text] + opts:
+        h.update(part.encode() + b"\0")
+    dirs = [ROOT / d for d in INCDIRS] + [pathlib.Path(d).resolve() for d in incdirs]
+    for f in files:
+        p = pathlib.Path(f)
+        h.update(str(p).encode() + b"\0" + p.read_bytes())
+        dirs.append(p.parent)
+    for d in sorted(set(dirs)):
+        for p in sorted(d.glob("*.*h")):
+            h.update(str(p).encode() + b"\0" + p.read_bytes())
+    return h.hexdigest()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("bench", choices=sorted(BENCHES))
@@ -2457,19 +2605,35 @@ def main():
         default=os.environ.get("KOHAKU_XSIM_BUILD"),
         help="where xsim_<bench> is built (default build/, env KOHAKU_XSIM_BUILD)",
     )
+    # A mutation witness builds the bench over a mutated copy of one source.
+    ap.add_argument(
+        "--swap",
+        action="append",
+        default=[],
+        help="SRC=PATH: build with PATH in place of the bench source SRC",
+    )
+    # ...or over a mutated copy of an included header: searched first.
+    ap.add_argument("--incdir", action="append", default=[])
+    ap.add_argument(
+        "--reuse",
+        action="store_true",
+        help="keep the snapshot and run it again when no build input changed",
+    )
     args = ap.parse_args()
     args.define = list(dict.fromkeys(DEFINES.get(args.bench, []) + args.define))
 
     top, srcs = BENCHES[args.bench]
+    swaps = dict(s.split("=", 1) for s in args.swap)
+    unknown = set(swaps) - set(srcs)
+    if unknown:
+        sys.exit(f"--swap names no source of {args.bench}: {sorted(unknown)}")
+    srcs = [swaps.get(s, s) for s in srcs]
     # Resolved against ROOT: xvlog's cwd IS `work`, so a relative --build-root
     # made kohaku_predef.vh unfindable and reported it as a missing header.
     root = pathlib.Path(args.build_root) if args.build_root else ROOT / "build"
     if not root.is_absolute():
         root = ROOT / root
     work = root / f"xsim_{args.bench}"
-    if work.exists():
-        shutil.rmtree(work)
-    work.mkdir(parents=True)
 
     env = dict(os.environ)
     env["PATH"] = str(VIVADO) + ";" + env["PATH"]
@@ -2567,6 +2731,7 @@ def main():
     # batch script and it splits `-d NAME=VALUE` at the `=`, so the value
     # arrives as a stray filename.
     opts = ["-d " + d for d in args.define + [f"MX_MODEL={args.model}"]]
+    opts += ["-i " + str(pathlib.Path(p).resolve()) for p in args.incdir]
     opts += ["-i " + str(ROOT / p) for p in INCDIRS]
 
     # PE_DIR ABSOLUTE, always, and through a FILE rather than `-d`. The nine PE
@@ -2580,16 +2745,14 @@ def main():
     # $readmemh becomes "syntax error near '/'". Macros persist across files in
     # one xvlog invocation, so defining it in the first file reaches every
     # later one, and the benches' own `ifndef` then leaves it alone.
-    predef = work / "kohaku_predef.vh"
-    predef.write_text(
-        f'`define PE_DIR "{(ROOT / "tests/pe/build").as_posix()}"\n',
-        encoding="utf-8",
+    # KOHAKU_PE_DIR: the image directory rv_simt_run.py wrote, when it is not the
+    # shared one.
+    pe_dir = pathlib.Path(os.environ.get("KOHAKU_PE_DIR", ROOT / "tests/pe/build"))
+    predef_text = (
+        f'`define PE_DIR "{pe_dir.resolve().as_posix()}"\n'
+        f'`define SRU_DIR "{(ROOT / "build/sru").as_posix()}"\n'
     )
-    files.insert(0, str(predef))
 
-    (work / "xvlog.f").write_text("\n".join(opts + files) + "\n")
-
-    run(["xvlog.bat", "-sv", "-work", "w", "-f", "xvlog.f"])
     # glbl only where it is needed. Adding it everywhere would hold GSR over
     # every XPM cell for the first 100 ns, which is a behaviour change to benches
     # that pass today -- see the trap in docs/simulation.md s3.
@@ -2599,24 +2762,55 @@ def main():
     # An elaborate-only entry links the primitives too: a shipping top names
     # DSP48E2 directly and elaborates nothing without the library behind it.
     elab_only = ("_lint" in args.bench) or args.bench in HARNESS
-    if args.model == 0 or args.bench in NEEDS_GLBL or has_cdc or elab_only:
-        run(["xvlog.bat", "-work", "w", str(VIVADO / ".." / "data/verilog/src/glbl.v")])
-        tops.append("w.glbl")
-    # The library link is unconditional: an RTL module may name a primitive
-    # (kohaku_mux's LUT6) at MODEL=1, and linking a library resolves nothing
-    # that our own sources already define. Only glbl, above, changes behaviour.
-    libs += ["-L", "unisims_ver"]
-    run(
-        ["xelab.bat", "-debug", "typical", "-timescale", "1ns/1ps"]
-        + libs
-        + tops
-        + ["-s", "tb"]
-    )
+
+    # --reuse: one snapshot per distinct build input. The PE benches read their
+    # images at run time, so a new shader runs on the snapshot already built.
+    stamp = ""
+    if args.reuse:
+        stamp = build_key(args.bench, opts, files, predef_text, args.incdir)
+        work = root / f"xsim_{args.bench}_{stamp[:12]}"
+    stamp_file = work / "stamp.txt"
+    reused = args.reuse and stamp_file.is_file() and stamp_file.read_text() == stamp
+
+    if not reused:
+        if work.exists():
+            shutil.rmtree(work)
+        work.mkdir(parents=True)
+        predef = work / "kohaku_predef.vh"
+        predef.write_text(predef_text, encoding="utf-8")
+        files.insert(0, str(predef))
+
+        (work / "xvlog.f").write_text("\n".join(opts + files) + "\n")
+
+        run(["xvlog.bat", "-sv", "-work", "w", "-f", "xvlog.f"])
+        if args.model == 0 or args.bench in NEEDS_GLBL or has_cdc or elab_only:
+            run(
+                [
+                    "xvlog.bat",
+                    "-work",
+                    "w",
+                    str(VIVADO / ".." / "data/verilog/src/glbl.v"),
+                ]
+            )
+            tops.append("w.glbl")
+        # The library link is unconditional: an RTL module may name a primitive
+        # (kohaku_mux's LUT6) at MODEL=1, and linking a library resolves nothing
+        # that our own sources already define. Only glbl, above, changes behaviour.
+        libs += ["-L", "unisims_ver"]
+        run(
+            ["xelab.bat", "-debug", "typical", "-timescale", "1ns/1ps"]
+            + libs
+            + tops
+            + ["-s", "tb"]
+        )
+        # Written last: a build that died part way leaves no stamp and is redone.
+        if args.reuse:
+            stamp_file.write_text(stamp)
     # No stimulus in a lint-only top: `-runall` printed no verdict and every
     # `*_lint` row was red under check.py by construction.
     if elab_only:
         print(f"PASS -- {args.bench}: {top} elaborated, lint-only entry")
-        if not args.keep:
+        if not args.keep and not args.reuse:
             shutil.rmtree(work, ignore_errors=True)
         sys.exit(0)
     # In an option file: xsim.bat splits a command-line `NAME=VALUE` at the `=`.
@@ -2649,7 +2843,7 @@ def main():
     else:
         out = run(["xsim.bat", "tb", "-runall"] + plus, stream=True)
 
-    if not args.keep and not args.vcd:
+    if not args.keep and not args.vcd and not args.reuse:
         shutil.rmtree(work, ignore_errors=True)
     verdicts = [ln.strip() for ln in out.splitlines()]
     passed = any(v.startswith("PASS") for v in verdicts)

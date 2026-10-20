@@ -70,11 +70,35 @@ proc v8_pin_scope {fh pb scope excl} {
 set KX $top/xache/inst/u_kx
 set NP [expr {[llength $MESHES] / 2}]
 set ncmp 0
+proc v8_dsp_range {reg} {
+    lassign [v8_rsite $reg DSP48E2] n range
+    if {!$n} { error "no DSP48E2 sites in $reg (REGION_SITES)" }
+    return $range
+}
+# The two shaped boxes of die mid: every region of the die in exactly one, the
+# lent regions inside the system one.
+proc v8_check_shape {mid ylo yhi} {
+    global SN_REGIONS SN_CMP_REGIONS SN_DSP_LEND
+    set sys [dict get $SN_REGIONS $mid]
+    if {![dict exists $SN_CMP_REGIONS $mid]} { error "SN_REGIONS names die $mid, SN_CMP_REGIONS does not" }
+    set cmp [dict get $SN_CMP_REGIONS $mid]
+    set lend [expr {[dict exists $SN_DSP_LEND $mid] ? [dict get $SN_DSP_LEND $mid] : {}}]
+    set want {}
+    for {set y [string range $ylo 1 end]} {$y <= [string range $yhi 1 end]} {incr y} {
+        for {set x 0} {$x < 8} {incr x} { lappend want X${x}Y$y }
+    }
+    set got [lsort [concat $sys $cmp]]
+    if {$got ne [lsort -unique $got]} { error "die $mid: a region is in both SN_REGIONS and SN_CMP_REGIONS" }
+    if {$got ne [lsort $want]} { error "die $mid: SN_REGIONS + SN_CMP_REGIONS are {$got}, want the die's 32 regions" }
+    foreach r $lend {
+        if {[lsearch -exact $sys $r] < 0} { error "die $mid: SN_DSP_LEND $r is not a system region" }
+    }
+    return [list $sys $cmp $lend]
+}
 foreach {mid mod} $MESHES {
     lassign [dict get $SLR_ROWS $mid] ylo yhi
     puts $fh "create_pblock pb_slr$mid"
     puts $fh "resize_pblock \[get_pblocks pb_slr$mid\] -add \{CLOCKREGION_X0${ylo}:CLOCKREGION_X7${yhi}\}"
-    puts $fh "set_property IS_SOFT [expr {$DIE_PB_SOFT ? "true" : "false"}] \[get_pblocks pb_slr$mid\]"
     # CMP_COLS: the compute half of the die gets a narrower pblock, and the node,
     # its Xache partition and (CMP_STN) its station go in THAT one instead -- a
     # cell may sit in only one pblock, and 70_analyze fails a cell that sits in
@@ -106,13 +130,34 @@ foreach {mid mod} $MESHES {
         }
         set pbsn pb_sn$mid
         set pbs  $pbsn
-        set boxes [list $pbsn [dict get $SN_COLS $mid]]
-        if {$CMP_PLACE eq "box"} { lappend boxes pb_cmp$mid [dict get $SN_CMP_COLS $mid] }
-        foreach {pb cols} $boxes {
-            lassign $cols xlo xhi
+        # {pb {resize_pblock arguments...}}: column ranges, or the die's shape.
+        if {[dict exists $SN_REGIONS $mid]} {
+            if {$CMP_PLACE ne "box"} { error "SN_REGIONS die $mid needs CMP_PLACE box, not $CMP_PLACE" }
+            lassign [v8_check_shape $mid $ylo $yhi] sys cmp lend
+            set sn_args {} ; set cmp_args {}
+            foreach r $sys { lappend sn_args "-add CLOCKREGION_$r" }
+            foreach r $cmp { lappend cmp_args "-add CLOCKREGION_$r" }
+            foreach r $lend {
+                lappend sn_args "-remove [v8_dsp_range $r]"
+                lappend cmp_args "-add [v8_dsp_range $r]"
+            }
+        } else {
+            lassign [dict get $SN_COLS $mid] xlo xhi
+            set sn_args [list "-add \{CLOCKREGION_${xlo}${ylo}:CLOCKREGION_${xhi}${yhi}\}"]
+            if {[dict exists $SN_EXTRA $mid]} {
+                foreach r [dict get $SN_EXTRA $mid] { lappend sn_args "-add CLOCKREGION_$r" }
+            }
+            set cmp_args {}
+            if {$CMP_PLACE eq "box"} {
+                lassign [dict get $SN_CMP_COLS $mid] xlo xhi
+                set cmp_args [list "-add \{CLOCKREGION_${xlo}${ylo}:CLOCKREGION_${xhi}${yhi}\}"]
+            }
+        }
+        set boxes [list $pbsn $sn_args]
+        if {$CMP_PLACE eq "box"} { lappend boxes pb_cmp$mid $cmp_args }
+        foreach {pb resizes} $boxes {
             puts $fh "create_pblock $pb"
-            puts $fh "resize_pblock \[get_pblocks $pb\] -add\
- \{CLOCKREGION_${xlo}${ylo}:CLOCKREGION_${xhi}${yhi}\}"
+            foreach a $resizes { puts $fh "resize_pblock \[get_pblocks $pb\] $a" }
             puts $fh "set_property PARENT pb_slr$mid \[get_pblocks $pb\]"
             puts $fh "set_property CONTAIN_ROUTING false \[get_pblocks $pb\]"
             # Non-exclusive: cells outside the box may still use its sites.
@@ -152,6 +197,9 @@ foreach {mid mod} $MESHES {
         }
     }
     puts $fh "set_property CONTAIN_ROUTING false \[get_pblocks pb_slr$mid\]"
+    # AFTER CONTAIN_ROUTING: setting it (even false) resets IS_SOFT to 1
+    # (Vivado 2024.2, measured on the v9t7 synthesized design).
+    puts $fh "set_property IS_SOFT [expr {$DIE_PB_SOFT ? "true" : "false"}] \[get_pblocks pb_slr$mid\]"
 }
 # BND_TRUNK: ONE crossing per boundary and direction, not a lane per source.
 # u_tk holds both halves -- rx_*, the landing rings and the return registers
@@ -233,9 +281,23 @@ for {set b 0} {$b < $NP - 1} {incr b} {
                 set par pb_slr$die
                 if {$SN_BOX ne "off"} { set cols [dict get $SN_COLS $die] ; set par pb_sn$die }
                 lassign $cols xlo xhi
+                set ring_args [list "-add \{CLOCKREGION_${xlo}${row}:CLOCKREGION_${xhi}${row}\}"]
+                # A shaped die: the system box's own regions in that row, minus
+                # the DSP it lends, so the ring box stays inside its parent.
+                if {$SN_BOX ne "off" && [dict exists $SN_REGIONS $die]} {
+                    set ring_args {}
+                    foreach r [dict get $SN_REGIONS $die] {
+                        if {[regexp "^X\\d+$row\$" $r]} { lappend ring_args "-add CLOCKREGION_$r" }
+                    }
+                    if {![llength $ring_args]} { error "die $die: no SN_REGIONS region in boundary row $row for the trunk rings" }
+                    set lend [expr {[dict exists $SN_DSP_LEND $die] ? [dict get $SN_DSP_LEND $die] : {}}]
+                    foreach r $lend {
+                        if {[regexp "^X\\d+$row\$" $r]} { lappend ring_args "-remove [v8_dsp_range $r]" }
+                    }
+                }
                 set pbr [expr {$die == $dst ? "pb_ring_b${b}_d$d" : "pb_ringw_b${b}_d$d"}]
                 puts $fh "create_pblock $pbr"
-                puts $fh "resize_pblock \[get_pblocks $pbr\] -add \{CLOCKREGION_${xlo}${row}:CLOCKREGION_${xhi}${row}\}"
+                foreach a $ring_args { puts $fh "resize_pblock \[get_pblocks $pbr\] $a" }
                 puts $fh "set_property PARENT $par \[get_pblocks $pbr\]"
                 puts $fh "set_property CONTAIN_ROUTING false \[get_pblocks $pbr\]"
                 # Soft, as every ring box has been placed (the tool's default).

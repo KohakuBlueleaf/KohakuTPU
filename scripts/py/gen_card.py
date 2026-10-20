@@ -141,10 +141,13 @@ def image_tcl(ver):
 
 def image_sources(ver, sim_mesh=""):
     """The image's RTL as its 10_sources.tcl adds it, headers dropped (they are
-    on xsim.py's INCDIRS), plus the stand-ins and the simulation mesh."""
+    on xsim.py's INCDIRS), plus the stand-ins and the simulation mesh (a
+    module of src/kohakutpu/top/generated, or a repo-relative .v path)."""
     t = image_tcl(ver)
     srcs = [f for f in t.splitlist(t.eval("set V8_SOURCES")) if not f.endswith(".vh")]
-    if sim_mesh:
+    if sim_mesh.endswith(".v"):
+        srcs.append(sim_mesh)
+    elif sim_mesh:
         srcs.append(f"src/kohakutpu/top/generated/{sim_mesh}.v")
     return srcs + STAND_INS
 
@@ -583,7 +586,7 @@ def main():
     text = emit(
         c,
         a.module or f"card_{a.ver}",
-        a.sim_mesh,
+        Path(a.sim_mesh).stem if a.sim_mesh.endswith(".v") else a.sim_mesh,
         compute,
         a.dram_words,
         a.lock_cyc,

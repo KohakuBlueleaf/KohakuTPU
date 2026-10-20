@@ -210,7 +210,35 @@ set CMP_HOME   {0 1 2 3}
 # with CMP_COLS.
 set SN_BOX       off
 set SN_COLS      {}
+# Per die, clock regions pb_sn$i takes beside SN_COLS (e.g. the one region of
+# the MIG's column its controller leaves free): {die {X4Y0 ...} ...}.
+set SN_EXTRA     {}
 set SN_CMP_COLS  {}
+# Per die, the two boxes as clock-region lists ({die {X4Y1 X5Y1 ...} ...}), in
+# place of that die's SN_COLS/SN_EXTRA and SN_CMP_COLS (the die-floorplan
+# solver's partitions). SN_DSP_LEND names system regions whose DSP sites move to
+# pb_cmp, as ranges from REGION_SITES, so the two boxes never share a site.
+set SN_REGIONS     {}
+set SN_CMP_REGIONS {}
+set SN_DSP_LEND    {}
+set REGION_SITES   $root/build/xcvu13p_region_sites.tsv
+# {count range} of one site type in one clock region, e.g. {120 DSP48E2_X20Y24:DSP48E2_X24Y47}.
+proc v8_rsite {reg type} {
+    global REGION_SITES
+    if {![info exists ::V8_RSITE_LOADED]} {
+        if {![file exists $REGION_SITES]} { error "$REGION_SITES missing: run audit/region_sites.tcl on the part" }
+        set fh [open $REGION_SITES r]
+        gets $fh
+        while {[gets $fh ln] >= 0} {
+            lassign [split $ln \t] r t n x0 x1 y0 y1
+            set ::V8_RSITE($r,$t) [list $n "${t}_X${x0}Y${y0}:${t}_X${x1}Y${y1}"]
+        }
+        close $fh
+        set ::V8_RSITE_LOADED 1
+    }
+    if {![info exists ::V8_RSITE($reg,$type)]} { return [list 0 {}] }
+    return $::V8_RSITE($reg,$type)
+}
 set SN_UNITS     {}
 set SN_CMP_UNITS {}
 set SN_PIPES     0

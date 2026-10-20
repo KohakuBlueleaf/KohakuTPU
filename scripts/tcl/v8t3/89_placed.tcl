@@ -63,9 +63,20 @@ close $v8_rp
 set v8_uc [open ${v8_pre}_clusters.rpt w]
 puts $v8_uc "checkpoint $v8_dcp"
 puts $v8_uc [format "%-30s %7s %4s %-9s %-9s %-10s %7s %7s" cluster leaves CRs X Y SLRs "X<4" "X>=4"]
-set v8_all [get_cells -quiet -hierarchical -filter {USER_CLUSTER != "" && IS_PRIMITIVE}]
+# USER_CLUSTER sits on leaves (ignored by the placer, v9t6) or on hierarchical
+# instances (v9t7): a tagged instance stands for every placed leaf under it.
+set v8_all [get_cells -quiet -hierarchical -filter {USER_CLUSTER != ""}]
 set v8_byuc [dict create]
-foreach v8_c $v8_all v8_k [get_property USER_CLUSTER $v8_all] { dict lappend v8_byuc $v8_k $v8_c }
+foreach v8_c $v8_all v8_k [get_property -quiet USER_CLUSTER $v8_all] {
+    if {[get_property IS_PRIMITIVE [get_cells $v8_c]]} {
+        dict lappend v8_byuc $v8_k $v8_c
+    } else {
+        foreach v8_l [get_cells -quiet -hierarchical -filter "IS_PRIMITIVE && NAME =~ \"$v8_c/*\""] {
+            dict lappend v8_byuc $v8_k $v8_l
+        }
+    }
+}
+if {![dict size $v8_byuc]} { puts $v8_uc "no cell carries USER_CLUSTER" }
 foreach v8_k [lsort -dictionary [dict keys $v8_byuc]] {
     set v8_cs [get_cells [dict get $v8_byuc $v8_k]]
     set v8_crs [get_clock_regions -quiet -of_objects [get_sites -quiet -of_objects $v8_cs]]

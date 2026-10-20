@@ -51,12 +51,27 @@ if {[get_property PROGRESS [get_runs synth_1]] != "100%"} {
 }
 set ir [get_runs impl_1]
 if {[get_property PROGRESS $ir] != "100%"} {
-    # A run that failed in a step resumes from that step's input checkpoint;
-    # anything else starts over.
-    set st [get_property STATUS $ir]
+    # A run that failed in a step resumes from that step's input checkpoint; a
+    # run cut off mid-step (the machine went down) resumes after the newest
+    # step checkpoint it wrote; anything else starts over.
+    set st  [get_property STATUS $ir]
+    set dir [get_property DIRECTORY $ir]
+    set top ${design_name}_wrapper
+    set cut ""
+    if {[file exists $dir/${top}_physopt.dcp]} {
+        set cut route_design
+    } elseif {[file exists $dir/${top}_placed.dcp]} {
+        set cut [expr {[string is true [get_property STEPS.PHYS_OPT_DESIGN.IS_ENABLED $ir]]
+                       ? "phys_opt_design" : "route_design"}]
+    } elseif {[file exists $dir/${top}_opt.dcp]} {
+        set cut place_design
+    }
     if {[regexp {^(\S+) ERROR$} $st -> failed] && $failed ne "opt_design"} {
         puts "@@@ impl_1 '$st': reset from $failed"
         reset_run impl_1 -from_step $failed
+    } elseif {![string match "Not started" $st] && ![regexp {ERROR} $st] && $cut ne ""} {
+        puts "@@@ impl_1 '$st' cut off: resume from $cut"
+        reset_run impl_1 -from_step $cut
     } elseif {![string match "Not started" $st]} {
         reset_run impl_1
     }

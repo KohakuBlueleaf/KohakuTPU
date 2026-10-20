@@ -175,6 +175,32 @@ if {$SN_BOX ne "off"} {
         }
         set has_cmp [llength [get_pblocks -quiet pb_cmp$mid]]
         if {$has_cmp != ($CMP_PLACE eq "box")} { v8_bad "pb_cmp$mid exists $has_cmp at CMP_PLACE $CMP_PLACE" }
+        # A shaped die (SN_REGIONS): each box holds exactly its regions' sites,
+        # the lent DSP moved from pb_sn to pb_cmp, and no site sits in both.
+        if {[dict exists $SN_REGIONS $mid] && $has_cmp} {
+            set lend [expr {[dict exists $SN_DSP_LEND $mid] ? [dict get $SN_DSP_LEND $mid] : {}}]
+            foreach {pb regs sign} [list pb_sn$mid [dict get $SN_REGIONS $mid] -1 \
+                                         pb_cmp$mid [dict get $SN_CMP_REGIONS $mid] 1] {
+                foreach t {SLICE DSP48E2 RAMB36 URAM288} {
+                    set want 0
+                    foreach r $regs { incr want [lindex [v8_rsite $r $t] 0] }
+                    if {$t eq "DSP48E2"} {
+                        foreach r $lend { incr want [expr {$sign * [lindex [v8_rsite $r $t] 0]}] }
+                    }
+                    set got [llength [get_sites -quiet -of_objects [get_pblocks $pb] -filter "NAME =~ ${t}_X*"]]
+                    puts [format "  %-8s %-8s sites %6d, want %6d" $pb $t $got $want]
+                    if {$got != $want} { v8_bad "$pb holds $got $t sites, its regions give $want" }
+                }
+            }
+            array unset sn_site
+            foreach s [get_sites -quiet -of_objects [get_pblocks pb_sn$mid]] { set sn_site($s) 1 }
+            set both 0
+            foreach s [get_sites -quiet -of_objects [get_pblocks pb_cmp$mid]] {
+                if {[info exists sn_site($s)]} { incr both }
+            }
+            puts "  pb_sn$mid / pb_cmp$mid shared sites $both"
+            if {$both} { v8_bad "pb_sn$mid and pb_cmp$mid share $both site(s)" }
+        }
     }
 }
 foreach {mid mod} $MESHES {
@@ -197,7 +223,10 @@ foreach ln [split [v8_slurp $out/${design_name}_pblocks.xdc] \n] {
     set tagged [get_cells -quiet -hier -filter "USER_CLUSTER == $tag"]
     set leaf [filter -quiet $tagged {IS_PRIMITIVE}]
     set under 0
-    foreach c $named { incr under [llength [get_cells -quiet -hier -filter {IS_PRIMITIVE} $c/*]] }
+    foreach c $named {
+        set cf [string map {[ ? ] ?} $c]
+        incr under [llength [get_cells -quiet -hier -filter "NAME =~ \"$cf/*\" && IS_PRIMITIVE"]]
+    }
     puts [format "  %-30s hier cells %4d  tagged %4d  leaf-tagged %4d  leaves under %7d" \
         $tag [llength $named] [llength $tagged] [llength $leaf] $under]
     if {![llength $named]} { v8_bad "USER_CLUSTER $tag: its line names no cell" }
