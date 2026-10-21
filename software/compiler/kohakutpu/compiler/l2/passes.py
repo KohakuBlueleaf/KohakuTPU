@@ -8,8 +8,9 @@ left open and prints L2 text with it written in; nothing computed changes.
 | space | `@any` scratch: a cluster -> core transfer where the tiles allow; `@mem` / else: staging when it fits, else DRAM |
 | share | a fill every cluster of a `par` makes on one view, in a body over several nodes: `share=cross` (one read a pair) |
 | split | `gemm ... split` over operands larger than a bank: the K-chunk loop |
+| step | a vector stream loop stepping further a trip than `ainc` reaches: a node-scope loop around its `par` |
 | pipeline | a node-scope `for` whose iterations run pars of different unit kinds: `pipe=2` |
-| retile | a vector stream loop's rows a trip: the multiple the issue model times fastest |
+| retile | a vector stream loop's rows a trip: the tile that lowers the issue model times fastest |
 """
 
 from dataclasses import replace
@@ -25,9 +26,11 @@ from kohakutpu.compiler.l2 import vector as V
 from kohakutpu.compiler.layout.buffer import Buffer
 from kohakutpu.language.text import module as M
 from kohakutpu.language.text.meta import Expander
+from kohakutpu.language.text.reader import Fail, Reader
 from kohakutpu.language.text.syntax import (
     Assign,
     BinOp,
+    Compare,
     Float,
     Int,
     Member,
@@ -65,7 +68,7 @@ def _body(module, name):
     return src, Expander(macros, r.fail).stmts(src.stmts, {}), r
 
 
-def _write(module, name, src, stmts) -> object:
+def _write(module, name, src, stmts) -> M.Module:
     params = ", ".join(f"{p}: {fmt(t)}" for p, t in src.params)
     head = f"{module.target_line()}\n\n" if module.target else ""
     body = emit(stmts, 1)
@@ -123,7 +126,7 @@ def _space(s) -> str | None:
     if s.op != "buffer" or not isinstance(s.annot, Placed):
         return None
     sp = s.annot.space
-    return sp.name if hasattr(sp, "name") else sp.text
+    return getattr(sp, "name", None) or getattr(sp, "text", None)
 
 
 def space(module, name, machine):
@@ -185,7 +188,7 @@ def _direct(module, name, src, stmts, h):
             ),
             None,
         )
-        if ld is None:
+        if loop is None or ld is None:
             return s
         rows = ld.positional()[0].slices[0]
         rel = BinOp("-", rows.lo, _subst(lo1, {var1: Name(var2)}))
@@ -581,7 +584,7 @@ def _subst_stmt(s, names: dict):
     """A statement (and its block) with each name in `names` replaced."""
     args = [
         (
-            Assign(a.name, _subst(a.value, names))
+            Assign(a.lhs, _subst(a.rhs, names))
             if isinstance(a, Assign)
             else _subst(a, names)
         )
@@ -763,40 +766,220 @@ RETILE = (1, 0.25, 0.5, 2, 4)
 
 
 def retile(module, name, machine):
-    """Each vector stream loop `for t in 0..T` of a vector `par` whose views
-    all step `t*R` rows with `R` rows a trip: the multiple m of R (T
-    divisible) whose lowering the issue model times fastest over all its
-    trips, 2% better or the written tile. Rows, views and types scale by m;
-    the loop runs T / m trips. A `par` inside node-scope loops is costed at
-    their first iteration."""
-    src, stmts, _ = _body(module, name)
+    """Each vector stream loop of R rows a trip (views stepping `t*R`): the
+    row tile the issue model times fastest over its trips, 2% better or the
+    written one, of the `RETILE` multiples and the whole bands dividing R
+    that lower (rows, views, types and trips scaled; a `par` in node-scope
+    loops costed at their first iteration). None lowering, a stream whose
+    ops work on each column apart (`_width`) splits into the fewest equal
+    32-column-block pieces one of which lowers, a `par` a piece at the first
+    piece's tile; else the pass refuses with the written tile's error."""
+    src, stmts, r = _body(module, name)
     top = [s for s in stmts if s.op == "buffer"]
+    shapes = {p: _ty(t).slices for p, t in src.params if isinstance(t, Placed)}
+    shapes |= {
+        s.target: _ty(s.annot).slices for s in top if isinstance(s.annot, Placed)
+    }
+
+    def tiled(s, scopes, loop, rows) -> tuple:
+        """``(par, rows a trip)`` at the fastest tile that lowers, else
+        ``(None, the written tile's error)``."""
+        dom = loop.positional()[0].rhs
+        # GT4 rows go in bands of 4; plain rows (a register a row) one by one.
+        q = 4 if any("gt4" in fmt(b.annot) for b in loop.body if b.annot) else 1
+        tiles = [rows * m for m in RETILE]
+        tiles += [n for n in range(rows - q, 0, -q) if rows % n == 0]
+        best, cost, why = None, None, None
+        for new in dict.fromkeys(tiles):
+            if new != int(new) or new % q:
+                continue
+            new = int(new)
+            if not _scales(dom, rows, new):
+                continue
+            cand = _tiled(s, loop, rows, new)
+            got, err = _lowered_cost(module, name, src, [*top, _first(scopes, cand)])
+            why = why if new != rows else err
+            if got is not None and (cost is None or got < cost * 0.98):
+                best, cost = (cand, new), got
+        return best or (None, why)
 
     def f(s, scopes):
         if s.op != "par" or _unit(s) != "vc" or not all(map(_scope, scopes)):
             return s
-        loops = [b for b in s.body if b.op == "for"]
-        if len(loops) != 1:
+        loop = _loop(s)
+        if loop is None:
             return s
-        loop = loops[0]
         rows = _stream_rows(loop)
-        var, dom = loop.positional()[0].lhs.text, loop.positional()[0].rhs
-        if rows is None or not isinstance(dom.hi, Int) or not isinstance(dom.lo, Int):
+        if rows is None:
             return s
-        trips = dom.hi.value - dom.lo.value
-        best, cost = s, None
-        for m in RETILE:
-            new_rows = rows * m
-            if new_rows != int(new_rows) or new_rows % 4 or (trips * rows) % new_rows:
+        best, new = tiled(s, scopes, loop, rows)
+        if best is not None:
+            return best
+        why, width = new, _width(s, shapes)
+        ks = [k for k in range(2, width // 32 + 1) if width % (32 * k) == 0]
+        # A narrower piece holds what a wider one does: bisect for the fewest.
+        lo, hi, found = 0, len(ks), None
+        while lo < hi:
+            mid = (lo + hi) // 2
+            k = ks[mid]
+            pieces = [_piece(s, width, width // k, j, shapes) for j in range(k)]
+            got, new = tiled(pieces[0], scopes, _loop(pieces[0]), rows)
+            if got is None:
+                lo = mid + 1
                 continue
-            new = loop if m == 1 else _scaled(loop, var, rows, int(new_rows), dom)
-            cand = replace(s, body=[new if b is loop else b for b in s.body])
-            got = _vector_cost(module, name, src, [*top, _first(scopes, cand)])
-            if got is not None and (cost is None or got < cost * 0.98):
-                best, cost = cand, got
-        return best
+            hi, found = mid, [got] + [
+                _tiled(p, _loop(p), rows, new) for p in pieces[1:]
+            ]
+        if found is None:
+            r.fail(loop, f"no row tile of the stream lowers: {why}")
+        return found
 
     return _write(module, name, src, _walk(stmts, f))
+
+
+def _loop(par):
+    """`par`'s one stream loop (inside `when`s the step pass wrote), or None."""
+    loops, todo = [], list(par.body)
+    while todo:
+        b = todo.pop()
+        if b.op == "for":
+            loops.append(b)
+        elif b.op == "when":
+            todo += b.body
+    return loops[0] if len(loops) == 1 else None
+
+
+def _tiled(s, loop, rows: int, new: int):
+    """`par` `s` with its stream `loop` at `new` rows a trip."""
+    if new == rows:
+        return s
+    head = loop.positional()[0]
+    nl = _scaled(loop, head.lhs.text, rows, new, head.rhs)
+
+    def put(sts):
+        return [nl if b is loop else replace(b, body=put(b.body)) for b in sts]
+
+    return replace(s, body=put(s.body))
+
+
+#: The ops that work on each 32-column GT4 block apart (`xlane` swaps lanes
+#: of a chunk: 16 columns of one row): a split into whole blocks keeps them.
+_COLUMNWISE = {*V.UNARY, *V.BINARY, *V.TERNARY, *V.CMP, "sel", "xlane"}
+_COLUMNWISE |= {"load", "unpack", "pack", "store"}
+
+
+def _ops_of(par) -> list:
+    """`par`'s ops, its stream loop's (and `when`s') included."""
+    return [x for b in par.body for x in (_ops_of(b) if b.op in _BLOCKS else [b])]
+
+
+#: The statements of a vector `par` holding others (`_ops_of`, `_piece`).
+_BLOCKS = ("for", "when")
+
+
+def _width(par, shapes: dict) -> int:
+    """W: the columns every GT4 value of `par` but its 32-wide band
+    statistics spans, when each op works on each column apart and each view
+    of a W-wide value is a run ``LO : +W`` of its buffer's last axis or
+    leaves that axis (of `shapes`) whole; else 0."""
+    ops = _ops_of(par)
+    types = {b.target: b.annot for b in ops if isinstance(b.annot, Placed)}
+    widths, views = set(), []
+    for b in ops:
+        if b.op not in _COLUMNWISE or b.body:
+            return 0
+        t = b.annot if b.op != "store" else types.get(_stored(b))
+        if not isinstance(t, Placed):
+            return 0
+        w = _ty(t).slices[-1]
+        if not isinstance(w, Int) or w.value == 32:
+            continue
+        if "gt4" not in fmt(t) or _ty(t).name not in ("f16", "f32"):
+            return 0
+        widths.add(w.value)
+        if b.op in ("load", "store"):
+            views.append(b.args[0])
+    if len(widths) != 1:
+        return 0
+    width = widths.pop()
+    for v in map(_view, views):
+        dims = shapes.get(v.name, ())
+        if len(v.slices) == len(dims) - 1:
+            continue
+        last = v.slices[-1] if len(v.slices) == len(dims) else None
+        if not (isinstance(last, Slice) and last.hi == Pos(Int(width))):
+            return 0
+    return width
+
+
+def _view(v) -> View:
+    return v if isinstance(v, View) else View(v.text, ())
+
+
+def _ty(t: Placed) -> View:
+    """A placed type's element type and dimensions (``f16[4, 256]``)."""
+    assert isinstance(t.x, View)
+    return t.x
+
+
+def _stored(st) -> str | None:
+    pos = st.positional()
+    return pos[2].text if len(pos) == 3 and isinstance(pos[2], Name) else None
+
+
+def _piece(par, width: int, w: int, j: int, shapes: dict):
+    """`par` over columns ``j w .. (j + 1) w`` of its W-wide values (`_width`):
+    their runs and types narrowed, its values renamed apart (``NAME_j``)."""
+    made = {b.target for b in _ops_of(par) if b.target is not None}
+    types = {b.target: b.annot for b in _ops_of(par) if isinstance(b.annot, Placed)}
+
+    def ren(x):
+        if isinstance(x, Name):
+            return Name(f"{x.text}_{j}") if x.text in made else x
+        if isinstance(x, View) and x.name in made:
+            return View(f"{x.name}_{j}", tuple(ren(y) for y in x.slices))
+        if isinstance(x, (tuple, list)):
+            return type(x)(ren(y) for y in x)
+        if hasattr(x, "__dataclass_fields__") and not isinstance(x, Placed):
+            return replace(x, **{k: ren(getattr(x, k)) for k in x.__dataclass_fields__})
+        return x
+
+    def run(v):
+        v = _view(v)
+        if len(v.slices) < len(shapes[v.name]):
+            return replace(v, slices=(*v.slices, Slice(Int(j * w), Pos(Int(w)))))
+        *rest, last = v.slices
+        lo = last.lo
+        lo = (
+            Int(lo.value + j * w) if isinstance(lo, Int) else BinOp("+", lo, Int(j * w))
+        )
+        return replace(v, slices=(*rest, Slice(lo, Pos(Int(w)))))
+
+    def wide(t) -> bool:
+        return isinstance(t, Placed) and _ty(t).slices[-1] == Int(width)
+
+    def op(b):
+        if b.op in _BLOCKS:
+            return replace(b, body=[op(x) for x in b.body])
+        args, annot = list(b.args), b.annot
+        if wide(annot if b.op != "store" else types.get(_stored(b))):
+            if b.op in ("load", "store"):
+                args[0] = run(args[0])
+            if b.op != "store":
+                ty = _ty(annot)
+                annot = Placed(View(ty.name, (*ty.slices[:-1], Int(w))), annot.space)
+        target = f"{b.target}_{j}" if b.target is not None else None
+        return replace(
+            b,
+            args=[
+                a if k == 0 and b.op in ("load", "store") else ren(a)
+                for k, a in enumerate(args)
+            ],
+            annot=annot,
+            target=target,
+        )
+
+    return replace(par, body=[op(b) for b in par.body])
 
 
 def _scope(s) -> bool:
@@ -824,15 +1007,32 @@ def _first(scopes, inner):
     return inner
 
 
+def _invariant(loop) -> set:
+    """The targets of `loop`'s ops reading neither its variable nor anything
+    its trips make: one value every trip (a band made before the loop)."""
+    var = loop.positional()[0].lhs.text
+    varying = {var} | {b.target for b in loop.body if b.target is not None}
+    out = set()
+    for b in loop.body:
+        if b.target is not None and not _names(b.args) & varying:
+            out.add(b.target)
+            varying.discard(b.target)
+    return out
+
+
 def _stream_rows(loop) -> int | None:
-    """R when every op of the loop has a leading dimension of R (or a
-    statistic of R rows) and every memory view steps `VAR*R`: else None."""
+    """R when every op of the loop but the invariant ones has a leading
+    dimension of R (or a statistic of R rows) and every memory view steps
+    `VAR*R`: else None."""
     rows = set()
+    fixed = _invariant(loop)
     for st in loop.body:
         if st.body:
             return None
+        if st.target in fixed:
+            continue
         if isinstance(st.annot, Placed):
-            dims = st.annot.x.slices
+            dims = getattr(st.annot.x, "slices", ())
             if dims and isinstance(dims[0], Int):
                 rows.add(dims[0].value)
     rows.discard(1)
@@ -843,7 +1043,8 @@ def _stream_rows(loop) -> int | None:
 
 def _scaled(loop, var: str, rows: int, new: int, dom) -> object:
     """`loop` with R rows a trip made `new`: `VAR*R` -> `VAR*new`, `+R` ->
-    `+new` in row slices, shapes R -> new, the trips scaled to match."""
+    `+new` in row slices, shapes R -> new (not the invariant ops'), the trips
+    scaled to match."""
 
     def term(t):
         if isinstance(t, BinOp) and t.op == "*" and Name(var) in (t.a, t.b):
@@ -861,8 +1062,9 @@ def _scaled(loop, var: str, rows: int, new: int, dom) -> object:
                 term(t.lo) if t.lo is not None else None,
                 term(t.hi) if t.hi is not None else None,
             )
-        if isinstance(t, View):
-            return View(t.name, tuple(term(x) for x in t.slices))
+        if isinstance(t, View) and t.slices:
+            # The rows are the first axis: a column run of R stays.
+            return View(t.name, (term(t.slices[0]), *t.slices[1:]))
         return t
 
     def shape(p):
@@ -873,25 +1075,143 @@ def _scaled(loop, var: str, rows: int, new: int, dom) -> object:
         return Placed(View(x.name, tuple(dims)), p.space)
 
     body = []
+    fixed = _invariant(loop)
     for st in loop.body:
+        if st.target in fixed:
+            body.append(st)
+            continue
         args = [term(a) if not isinstance(a, Assign) else a for a in st.args]
         annot = shape(st.annot) if isinstance(st.annot, Placed) else st.annot
         body.append(replace(st, args=args, annot=annot))
-    trips = (dom.hi.value - dom.lo.value) * rows // new
-    span = Span(dom.lo, Int(dom.lo.value + trips))
-    head = Member(Name(var), span)
+    # Trip t covered rows t R.. : LO and HI scale by R / new (`_scales`).
+    lo, hi = (_times(x, rows, new) for x in (dom.lo, dom.hi))
+    head = Member(Name(var), Span(lo, hi))
     return replace(loop, args=[head, *loop.args[1:]], body=body)
 
 
-def _vector_cost(module, name, src, stmts):
-    """The issue model's cycles over every trip for the first instance of
-    the one vector `par` in `stmts`, or None where it does not lower."""
+def _times(x, rows: int, new: int):
+    """Bound `x` times rows / new: a number, or an expression `new` divides."""
+    if isinstance(x, Int):
+        return Int(x.value * rows // new)
+    return BinOp("*", x, Int(rows // new))
+
+
+def _scales(dom, rows: int, new: int) -> bool:
+    """Whether `_scaled` can take trips `dom` of R rows to `new` rows: R /
+    new whole, or both bounds numbers whose rows `new` divides."""
+    if rows % new == 0:
+        return True
+    ends = (dom.lo, dom.hi)
+    return all(isinstance(x, Int) and x.value * rows % new == 0 for x in ends)
+
+
+def _lowered_cost(module, name, src, stmts) -> tuple:
+    """``(cycles, None)``: the issue model's cycles over every trip for the
+    first instance of the one vector `par` in `stmts`; ``(None, error)``
+    where it does not lower."""
     try:
         body = B.read(_write(module, name, src, stmts), name)
         stage = next(x for k, _, x, _ in B.instances(body) if k == "par")
-        return V.total(body, stage[0].par, stage[0].env, body.reader.fail)
+        reader = body.reader
+        assert isinstance(reader, Reader)
+        return V.total(body, stage[0].par, stage[0].env, reader.fail), None
+    except (TextError, ValueError, StopIteration) as e:
+        return None, str(e).splitlines()[0] if str(e) else type(e).__name__
+
+
+# ------------------------------------------------------------------- step
+def step(module, name, machine):
+    """A vector `par`'s stream loop some memory view of which steps further
+    a trip than a descriptor's increment reaches (`V.STEP`, the 18-bit
+    ``ainc``): its trips moved out of the `par`, a node-scope loop over
+    them each iteration of which runs that one trip on every instance
+    (``for t in T..T + 1``: the views' bases set a run). A loop whose trips
+    carry values to the next is not one the move keeps: refused, naming
+    the step."""
+    src, stmts, r = _body(module, name)
+    top = [s for s in stmts if s.op == "buffer"]
+
+    def f(s, scopes):
+        if s.op != "par" or _unit(s) != "vc" or not all(map(_scope, scopes)):
+            return s
+        loops = [b for b in s.body if b.op == "for"]
+        if len(loops) != 1:
+            return s
+        loop = loops[0]
+        far = _far(module, name, src, [*top, _first(scopes, s)])
+        if not far:
+            return s
+        at = s.body.index(loop)
+        if s.body[at + 1 :] or _carried(loop):
+            r.fail(
+                loop,
+                f"a stream loop stepping {far} bytes a trip (ainc reaches "
+                f"{V.STEP - 1}) carries values from trip to trip",
+            )
+        head = loop.positional()[0]
+        trip = Name(f"{head.lhs.text}_trip")
+        one = Member(head.lhs, Span(trip, BinOp("+", trip, Int(1))))
+        run = replace(loop, args=[one, *loop.args[1:]])
+        span, conds = _over_instances(s, head.rhs, trip, r.fail)
+        for cond in conds:
+            run = replace(
+                loop, op="when", args=[cond], target=None, annot=None, body=[run]
+            )
+        inner = replace(s, body=[*s.body[:at], run])
+        kw = [a for a in loop.args[1:] if not isinstance(a, Assign)]
+        return replace(loop, args=[Member(trip, span), *kw], body=[inner])
+
+    return _write(module, name, src, _walk(stmts, f))
+
+
+def _over_instances(par, dom, trip, fail: Fail) -> tuple:
+    """``(span, conditions)``: the trips `dom` (LO..HI, which may read the
+    `par`'s variable) of every instance, and the `when`s keeping each
+    instance's `trip` to its own."""
+    head = par.positional()[0]
+    var = head.lhs.text
+    if var not in _names(dom):
+        return dom, []
+    ex = Expander({}, fail)
+
+    def at(x, env) -> int:
+        got = ex.term(x, env, par)
+        if not isinstance(got, Int):
+            fail(par, f"the trips of a stream loop moved out of its `par`: {fmt(x)}")
+        return got.value
+
+    lo, hi = at(head.rhs.lo, {}), at(head.rhs.hi, {})
+    ends = [(at(dom.lo, {var: c}), at(dom.hi, {var: c})) for c in range(lo, hi)]
+    span = Span(Int(min(a for a, _ in ends)), Int(max(b for _, b in ends)))
+    conds = [Compare(">=", trip, dom.lo)] if var in _names(dom.lo) else []
+    return span, conds + ([Compare("<", trip, dom.hi)] if var in _names(dom.hi) else [])
+
+
+def _far(module, name, src, stmts) -> int:
+    """The largest byte step a trip of the one vector `par`'s stream loop in
+    `stmts` takes, when past a descriptor's reach (else 0)."""
+    try:
+        body = B.read(_write(module, name, src, stmts), name)
+        stage = next(x for k, _, x, _ in B.instances(body) if k == "par")
+        reader = body.reader
+        assert isinstance(reader, Reader)
+        got = V.max_step(body, stage[0].par, stage[0].env, reader.fail)
     except (TextError, ValueError, StopIteration):
-        return None
+        return 0
+    return got if got >= V.STEP else 0
+
+
+def _carried(loop) -> bool:
+    """A trip of `loop` reads a value of its body before making it (the
+    previous trip's)."""
+    made = {b.target for b in loop.body if b.target is not None}
+    seen: set = set()
+    for b in loop.body:
+        if (_names(b.args) & made) - seen:
+            return True
+        if b.target is not None:
+            seen.add(b.target)
+    return False
 
 
 PASSES = {
@@ -900,6 +1220,7 @@ PASSES = {
     "space": space,
     "share": share,
     "split": split,
+    "step": step,
     "pipeline": pipeline,
     "retile": retile,
 }

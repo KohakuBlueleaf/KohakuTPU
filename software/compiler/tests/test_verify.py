@@ -3,6 +3,8 @@ docs/projects/kohakutpu/verify.md):
 the examples verify clean, and each hazard it claims to catch is caught on a
 program built to have exactly that hazard."""
 
+import gc
+
 import pytest
 
 from kohakutpu.compiler import build, verify
@@ -67,6 +69,51 @@ def test_examples_verify_clean(name):
 def test_multinode_examples_verify_clean(name):
     prog, machine = programs(examples.load(examples.example(name)), nodes=2)
     assert verify.check(prog, machine) == []
+
+
+@pytest.mark.parametrize("name,nodes", [("softmax", 1), ("matmul", 1), ("ring", 2)])
+def test_a_check_leaves_nothing_to_the_cycle_collector(name, nodes):
+    # Uncollected runs held 14 GB of host memory at a batch-64 LeNet step 0.
+    prog, machine = programs(examples.load(examples.example(name)), nodes=nodes)
+    verify._SCHEDULED.clear()
+    verify._BUILT.clear()
+    gc.collect()
+    gc.disable()
+    try:
+        verify.check(prog, machine)
+        assert gc.collect() == 0
+    finally:
+        gc.enable()
+
+
+def test_a_cache_entry_another_process_stored_is_kept(tmp_path, monkeypatch):
+    """Windows refuses a rename onto an entry another process has open: the
+    entry it stored (the same rows: same key) stays, the copy goes."""
+    path = tmp_path / "k.json"
+    path.write_text("[]", encoding="utf-8")
+
+    def refused(src, dst):
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(verify.os, "replace", refused)
+    verify._store(path, "[]")
+    assert path.read_text(encoding="utf-8") == "[]"
+    assert [p.name for p in tmp_path.iterdir()] == ["k.json"]
+    with pytest.raises(PermissionError):
+        verify._store(tmp_path / "new.json", "[]")
+
+
+def test_a_cache_entry_held_open_reads_as_a_miss(tmp_path, monkeypatch):
+    path = tmp_path / "k.json"
+    path.write_text('[["race", "x", "y"]]', encoding="utf-8")
+    assert verify._load(path) == [["race", "x", "y"]]
+    assert verify._load(tmp_path / "none.json") is None
+
+    def held(*a, **k):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(type(path), "read_text", held)
+    assert verify._load(path) is None
 
 
 def _splitk(old: str, new: str) -> list:

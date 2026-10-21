@@ -21,7 +21,9 @@ unpack pointer); `send q -> mg[I] side=A` peer-drains packed MXFP7 rows into
 a cluster's bank (a `recv` there).
 """
 
+import itertools
 import re
+from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 
 from kohakutpu.compiler.emit import image as EI
@@ -30,6 +32,7 @@ from kohakutpu.compiler.l2 import memory as M
 from kohakutpu.compiler.l2 import modulo as MO
 from kohakutpu.compiler.l2.body import For, If, Op, Par, When, const, span, value
 from kohakutpu.language.text import module as TM
+from kohakutpu.language.text.reader import Fail
 from kohakutpu.language.text.syntax import Float, Int, Name, NewAxis, TextError, View
 
 L1_WORDS = 512
@@ -48,6 +51,8 @@ KREG = {0.0: "k0", 1.0: "k1", -1.0: "k2"}
 #: The scalar registers of the loop count and of the sticky flag.
 LOOP_S = 15
 STK_S = 14
+#: Where a constant past the scalar file is set before a read (`_Ctx.constant`).
+STAGE = (f"s{STK_S - 1}", "k3")
 
 
 def _ops(body) -> list:
@@ -171,6 +176,8 @@ class Desc:
     rows_w: int = 0  # rows mode: words an L1 row holds
     bcast: bool = False  # rows mode: one row, read by every row of the value
     shared: object = None  # a store packed over this load's buffers (no room)
+    value: str = ""  # a store: the packed value it drains
+    twin: object = None  # a store reading an earlier store's buffers (one value)
 
     def extent(self) -> int:
         """Bytes one walk spans."""
@@ -189,7 +196,9 @@ class Pressure(Exception):
     """More than the core's registers live at once."""
 
 
-def lower(body, par: Par, env: dict, name: str, fail, links=None, land=None) -> tuple:
+def lower(
+    body, par: Par, env: dict, name: str, fail: Fail, links=None, land=None
+) -> tuple:
     """``(image text, its parameters, accesses)`` for one vector instance of
     `par` (`env` binds its variable): of the shapes whose registers fit -- how
     many row groups run together (`band`), whether a value is re-unpacked
@@ -202,21 +211,27 @@ def lower(body, par: Par, env: dict, name: str, fail, links=None, land=None) -> 
     return best[0], best[1], best[3]
 
 
+def idle(body, par, env) -> bool:
+    """This instance of `par` does nothing: every statement in a dropped `when`."""
+    return not _resolve(body, par, env).body
+
+
 def _resolve(body, par, env):
     """`par` with each `when` kept or dropped for this instance (its
     condition is a constant of the instance; a loop variable is refused)."""
+    fail: Fail = body.reader.fail
+
+    def kept(s):
+        try:
+            return const(body, s.st, s.cond, env)
+        except TextError:
+            return fail(s.st, "a when in a vector instance is constant per instance")
 
     def go(stmts):
         out = []
         for s in stmts:
             if isinstance(s, When):
-                try:
-                    keep = const(body, s.st, s.cond, env)
-                except TextError:
-                    body.reader.fail(
-                        s.st, "a when in a vector instance is constant per instance"
-                    )
-                if keep:
+                if kept(s):
                     out += go(s.body)
             elif isinstance(s, (For, If)):
                 out.append(replace(s, body=go(s.body)))
@@ -227,7 +242,7 @@ def _resolve(body, par, env):
     return replace(par, body=go(par.body))
 
 
-def total(body, par, env, fail) -> int:
+def total(body, par, env, fail: Fail) -> int:
     """The issue model's cycles over every trip of the shape `lower` picks
     (the retile pass compares row tiles by it); transfers land where no
     other unit's code decides."""
@@ -236,6 +251,50 @@ def total(body, par, env, fail) -> int:
     me = _unit(body, par, env)
     land = L1_WORDS - _Alone.POOL if any(x.dst == me for x in plan.values()) else None
     return _best(body, par, env, "k", fail, plan, land)[4]
+
+
+#: A descriptor's step a trip (`ainc`) is an 18-bit signed byte count.
+STEP = 1 << 17
+
+
+def max_step(body, par, env, fail: Fail) -> int:
+    """The largest byte step from one trip to the next of a memory view in
+    the instance's stream loop (0: no loop, or one trip); a step reaches
+    ``-STEP .. STEP - 1`` (the step pass moves a loop that steps further out
+    of its `par`)."""
+    par = _resolve(body, par, env)
+    _, loop = _split(par, fail)
+    if loop is None:
+        return 0
+    trips = span(body, loop, env)
+    if len(trips) < 2:
+        return 0
+    out = 0
+    for op in _ops(loop.body):
+        if not isinstance(op, Op) or op.op not in ("load", "store"):
+            continue
+        view = op.st.positional()[0]
+        if not isinstance(view, (View, Name)):
+            continue
+        a = view_offset(body, op.st, view, {**env, loop.var: trips[0]})
+        b = view_offset(body, op.st, view, {**env, loop.var: trips[1]})
+        out = max(out, abs(b - a))
+    return out
+
+
+def view_offset(body, st, view, env) -> int:
+    """The byte offset a load or store view starts at in its buffer, as the
+    lowering's descriptor takes it (row-major, `tile=`, MXFP7)."""
+    v = value(body, st, view, env)
+    if isinstance(v, Name):
+        v = View(v.text, ())
+    buf = body.buffers[v.name]
+    ax = M.axes(v, buf.shape)
+    if "tile" in buf.layout:
+        return _tiled(buf, ax)[0]
+    if buf.dtype in ("mx7a", "mx7b"):
+        return _mx7(buf, ax)[0]
+    return M.rowmajor_walk(buf, ax)[0]
 
 
 @dataclass
@@ -267,59 +326,134 @@ class _Alone:
 STRATEGY = "auto"
 
 
-def _best(body, par, env, name, fail, plan, land) -> tuple:
+#: The most `_best` choices kept (by one candidate's image, name blanked).
+CHOSEN_KEPT = 4096
+_chosen: OrderedDict = OrderedDict()
+
+
+def _best(body, par, env, name, fail: Fail, plan, land) -> tuple:
+    """`_search`'s choice, remembered by the image one candidate makes: a
+    shape seen before is not searched again (its own parameters and
+    accesses, the image renamed)."""
+    try:
+        probe = _lower(body, par, env, name, fail, 1, False, True, plan, land)
+    except Pressure:
+        return _search(body, par, env, name, fail, plan, land)
+    key = (
+        _renamed(probe[0], "\0"),
+        land,
+        body.vregs,
+        body.vcopies,
+        body.fill,
+        STRATEGY,
+        IMEM_ROOM,
+    )
+    got = _chosen.get(key)
+    if got is not None:
+        _chosen.move_to_end(key)
+        return _renamed(got[0], name), probe[1], got[1], probe[3], got[2]
+    best = _search(body, par, env, name, fail, plan, land)
+    _chosen[key] = (_renamed(best[0], "\0"), best[2], best[4])
+    if len(_chosen) > CHOSEN_KEPT:
+        _chosen.popitem(last=False)
+    return best
+
+
+def _renamed(text: str, name: str) -> str:
+    """An image text with its header's name `name`."""
+    head, _, rest = text.partition("\n")
+    return f"image {name}{head[head.index('('):]}\n{rest}"
+
+
+def _search(body, par, env, name, fail: Fail, plan, land) -> tuple:
     """The candidate image (every band shape, the modulo schedule; `STRATEGY`)
     the core's timing (`timing.cycles`) of the whole image gives the fewest
-    cycles, those cycles its cost."""
-    best = None
+    cycles, those cycles its cost -- of those that encode (a hardware loop's
+    body in VLOOP's field) into `IMEM_ROOM` words."""
+    cands: list = []
+    read: dict = {}  # candidate text -> its module: read once
+    timed: dict = {}  # candidate text -> its cycles
+
+    def parsed(text: str):
+        if text not in read:
+            read[text] = replace(TM.read(text, f"<{name}>"), vregs=body.vregs)
+        return read[text]
 
     def take(got) -> None:
-        nonlocal best
-        c = timing.cycles(got[0], name, body.vregs, body.vcopies, body.fill)
-        if best is None or c < best[2]:
-            best = (got[0], got[1], c, got[3], c)
+        if got[0] not in timed:
+            mod = parsed(got[0])
+            timed[got[0]] = timing.cycles_of(
+                mod, name, body.vregs, body.vcopies, body.fill
+            )
+        c = timed[got[0]]
+        cands.append((got[0], got[1], c, got[3], c))
 
     if STRATEGY != "modulo":
+        pre, loop = _split(par, fail)
+        # Constants past the scalar file: held in registers, or set in the loop.
+        many = len(_numbers([*pre, *_ops(loop.body if loop else ())])) > STK_S
+        # Rows unpacked before the loop: pinned, or unpacked again where read.
+        rows = any(u.op == "unpack" and len(u.type.shape) == 2 for u in pre)
         # On a tie the narrower band with its unpacks ahead wins: the model does
         # not see the lookahead, and on the card it is worth 10% (silu, band 1).
-        for band in (1, 2, 4, 8, 16):
-            for remat in (False, True):
-                for ahead in (True, False):
-                    try:
-                        take(
-                            _lower(
-                                body,
-                                par,
-                                env,
-                                name,
-                                fail,
-                                band,
-                                remat,
-                                ahead,
-                                plan,
-                                land,
-                            )
-                        )
-                    except Pressure:
-                        continue
+        for band, remat, ahead, hold, pin in itertools.product(
+            (1, 2, 4, 8, 16),
+            (False, True),
+            (True, False),
+            (True, False) if many else (True,),
+            (True, False) if rows and loop else (True,),
+        ):
+            try:
+                take(
+                    _lower(
+                        body,
+                        par,
+                        env,
+                        name,
+                        fail,
+                        band,
+                        remat,
+                        ahead,
+                        plan,
+                        land,
+                        hold,
+                        pin,
+                    )
+                )
+            except Pressure:
+                continue
     if STRATEGY != "band":
-        got = _modulo(body, par, env, name, fail, plan, land)
+        got = _modulo(body, par, env, name, fail, plan, land, parsed)
         if got is not None:
             take(got)
-    if best is None:
+    if not cands:
         why = f" (modulo: {MODULO_WHY[0]})" if STRATEGY == "modulo" else ""
         fail(
             par.st,
             f"the stream loop needs more than {body.vregs} vector registers{why}",
         )
-    return best
+    # Fewest cycles first; a tie keeps the order tried.
+    cands.sort(key=lambda x: x[2])
+    whys = []
+    for got in cands:
+        try:
+            words = _words_of(read[got[0]], name, len(got[1]))
+        except TextError as e:
+            whys.append(str(e).splitlines()[0].split(": ", 1)[-1])
+            continue
+        if words <= IMEM_ROOM:
+            return got
+        whys.append(f"{words} IMEM words (an image takes {IMEM_ROOM})")
+    fail(
+        par.st, f"no image of the stream loop encodes: {'; '.join(dict.fromkeys(whys))}"
+    )
 
 
 def _unit(body, par, env) -> str:
     return f"vc[{value(body, par.st, par.index, env).value}]"
 
 
-def _transfers(body, par, env, fail, links) -> dict:
+def _transfers(body, par, env, fail: Fail, links) -> dict:
     """``{id(op): Transfer}`` for each `recv` (the oldest transfer into this
     core from that cluster) and each `send` (its landing, allocated now)."""
     out: dict = {}
@@ -367,7 +501,7 @@ def _transfers(body, par, env, fail, links) -> dict:
             or str(kw.get("side", Name("A")).text) not in ("A", "B")
         ):
             fail(op.st, "send VALUE -> mg[I] side=A|B")
-        if not inloop:
+        if not inloop or loop is None:
             fail(op.st, "send is in the stream loop")
         dst = value(body, op.st, pos[2], env)
         if not (isinstance(dst, View) and dst.name == "mg" and len(dst.slices) == 1):
@@ -419,7 +553,7 @@ class _StreamIn:
     flow: bool = True
 
 
-def _recv_stream(body, op, env, me, trips, fail, links) -> _StreamIn:
+def _recv_stream(body, op, env, me, trips, fail: Fail, links) -> _StreamIn:
     """`x = recv mg[U] : f16[R, C] @l1(gt4)` in the stream loop: each trip
     takes the next tile cluster U streams into this core's ring."""
     t = op.type
@@ -496,11 +630,23 @@ def estimate(code: list) -> int:
 
 
 def _lower(
-    body, par, env, name, fail, band, remat, ahead, plan=None, land=None
+    body,
+    par,
+    env,
+    name,
+    fail,
+    band,
+    remat,
+    ahead,
+    plan=None,
+    land=None,
+    hold=True,
+    pin=True,
 ) -> tuple:
     pre, loop = _split(par, fail)
     ctx = _Ctx(body, env, fail, loop)
-    ctx.ahead, ctx.band, ctx.remat = ahead, band, remat
+    ctx.ahead, ctx.band, ctx.remat, ctx.hold = ahead, band, remat, hold
+    ctx.pin = pin
     ctx.plan, ctx.land = plan or {}, land or L1_WORDS
     ctx.unit = _unit(body, par, env)
     ctx.pre = pre
@@ -576,13 +722,13 @@ def _no(why: str) -> None:
     MODULO_WHY[0] = why
 
 
-def _modulo(body, par, env, name, fail, plan, land) -> tuple | None:
+def _modulo(body, par, env, name, fail: Fail, plan, land, parsed) -> tuple | None:
     """The stream loop software-pipelined (`modulo.py`): one trip's code from
     the band lowering with every row group in one band, scheduled as an
     iteration every II cycles; None where the loop is not a plain load ->
     compute -> store stream (a sticky block, a cluster stream, a banded
     unpack, a store of loaded bytes) or its image does not fit, the reason
-    in MODULO_WHY."""
+    in MODULO_WHY. `parsed(text)` reads an image (the search's, once)."""
     MODULO_WHY[0] = None
     pre, loop = _split(par, fail)
     if loop is None:
@@ -605,6 +751,8 @@ def _modulo(body, par, env, name, fail, plan, land) -> tuple | None:
         return _no("a banded unpack or a send")
     if any(d.shared is not None for d in ctx.descs):
         return _no("a store packed over a load (no L1 room for its own ring)")
+    if any(d.twin is not None for d in ctx.descs):
+        return _no("a value stored through several views (one ring a view)")
     packed = {o.target for o in ops if o.op == "pack"}
     if any(
         o.op == "store" and o.st.positional()[2] not in {Name(t) for t in packed}
@@ -676,7 +824,7 @@ def _modulo(body, par, env, name, fail, plan, land) -> tuple | None:
             extra = tuple(top + i * d.words for i in range(p.k - len(own)))
             top += d.words * len(extra)
             rings.append(MO.Ring(d.ad, d.kind, d.buf[0], d.words, own + extra))
-        best = None
+        best, overflow = None, False
         for tail in MODULO_TAILS:
             lines, cycles = MO.emit(p, rings, trips, pinned, tail)
             if lines is None or top > ctx.land:
@@ -690,21 +838,39 @@ def _modulo(body, par, env, name, fail, plan, land) -> tuple | None:
                 )
                 + "\n"
             )
-            words = _imem_words(text, name, len(mem), body.vregs)
+            try:
+                words = _words_of(parsed(text), name, len(mem))
+            except TextError as e:  # a loop body past VLOOP's field
+                tried.append(f"II {p.ii} K {p.k} {tail}: {str(e).splitlines()[0]}")
+                overflow = True
+                continue
             tried.append(f"II {p.ii} K {p.k} S {p.stages} {tail}: {words} words")
             if words <= IMEM_ROOM and (best is None or cycles < best[1]):
                 best = (text, cycles)
         if best is not None:
             ctx.top = top
             return best[0], params, best[1], ctx.accesses(), best[1]
+        if overflow and p.k <= 2:
+            # The loop body is K copies of the iteration, two the fewest: no
+            # longer II shortens it.
+            return _no(f"two iterations overflow the loop body: {', '.join(tried)}")
         ii_min = p.ii + max(1, p.ii // 16)
 
 
-def _imem_words(text: str, name: str, nparams: int, vregs: int) -> int:
-    """The IMEM words image `name` of `text` encodes to (its configuration
+class _Anywhere:
+    """Every unit name at one coordinate of the home mesh: a name fills a
+    descriptor's or a peer drain's field, never adds a word."""
+
+    home = 0
+
+    def __call__(self, st, t) -> tuple:
+        return 0, (0, 0)
+
+
+def _words_of(mod, name: str, nparams: int) -> int:
+    """The IMEM words image `name` of `mod` encodes to (its configuration
     words included)."""
-    mod = replace(TM.read(text, f"<{name}>"), vregs=vregs)
-    words, _ = EI.image(mod, name, (0,) * nparams)
+    words, _ = EI.Images(mod, EI.UNKNOWN, _Anywhere())(name, (0,) * nparams)
     return len(words)
 
 
@@ -713,7 +879,7 @@ def _expand(code: list, passes: int) -> list:
     if "loop s15" not in code:
         return code
     a = code.index("loop s15") + 1
-    depth = 0
+    depth, b = 0, a
     for b in range(a, len(code)):
         depth += {"{": 1, "}": -1}.get(code[b] if isinstance(code[b], str) else "", 0)
         if depth == 0:
@@ -721,7 +887,7 @@ def _expand(code: list, passes: int) -> list:
     return code[:a] + code[a + 1 : b] * max(passes, 1) + code[b + 1 :]
 
 
-def _split(par: Par, fail) -> tuple:
+def _split(par: Par, fail: Fail) -> tuple:
     pre, loop = [], None
     for s in par.body:
         if isinstance(s, For):
@@ -736,8 +902,9 @@ def _split(par: Par, fail) -> tuple:
 
 
 class _Ctx:
-    def __init__(self, body, env, fail, loop) -> None:
-        self.body, self.env, self.fail, self.loop = body, env, fail, loop
+    def __init__(self, body, env, fail: Fail, loop) -> None:
+        self.body, self.env, self.loop = body, env, loop
+        self.fail: Fail = fail
         self.trips = span(body, loop, env) if loop is not None else range(1)
         self.descs: list = []
         self.loads: list = []
@@ -745,6 +912,14 @@ class _Ctx:
         self.top = 0
         self.vals: dict = {}
         self.scalars: dict = {}
+        #: constants past the scalar file -> their pinned registers (`hold`)
+        self.held: dict = {}
+        self.hold = True
+        #: row values unpacked before the loop held in pinned registers, else
+        #: unpacked again from L1 in each band that reads them (`_unpin`)
+        self.pin = True
+        #: staging register -> (the constant it holds, the code index after its seti)
+        self.staged: dict = {}
         self.pinned: set = set()
         self.buffers: set = set()
         self.ahead = True
@@ -926,16 +1101,17 @@ class _Ctx:
             view = pos[0] if isinstance(pos[0], View) else View(pos[0].text, ())
             want = None
             packed = self._packed(pos[2].text) if isinstance(pos[2], Name) else None
-            rows = (
-                packed is not None
-                and packed.type is not None
-                and (packed.type.mode == "gt4")
-            )
+            pt = packed.type if packed is not None else None
+            rows = pt is not None and pt.mode == "gt4"
+            if pt is not None and pt.dtype in ("f16", "f32"):
+                # The value's words: the view must hold exactly them.
+                n = pt.shape[0] * (pt.shape[-1] if len(pt.shape) == 2 else 1)
+                want = n * (4 if pt.dtype == "f32" else 2) // 32
         first = self.trips[0] if looped else None
         name, off, walk, words, kind, rows_w, vrows = self._walk(op, view, first, rows)
-        bcast = (
-            kind == "rows" and op.op == "load" and vrows == 1 and op.type.shape[0] > 1
-        )
+        # A load's type (checked above); a store's is None.
+        t = op.type if op.op == "load" else None
+        bcast = t is not None and kind == "rows" and vrows == 1 and t.shape[0] > 1
         if bcast:
             want = rows_w
         if want is not None and words != want:
@@ -944,33 +1120,54 @@ class _Ctx:
             self.fail(
                 op.st, "an MXFP7 buffer is a cluster's operand: a core stores into it"
             )
-        if op.op == "load" and bool(kind) != (op.type.mode == "gt4"):
+        if t is not None and bool(kind) != (t.mode == "gt4"):
             self.fail(op.st, "a tile= buffer loads @l1(gt4); a row-major one @l1")
-        if (
-            not kind
-            and op.op == "load"
-            and len(op.type.shape) == 2
-            and op.type.shape[-1] != ROW
-        ):
+        if not kind and t is not None and len(t.shape) == 2 and t.shape[-1] != ROW:
             self.fail(
                 op.st,
                 f"a row-major load is f16[R, {ROW}], or a GT4 band (@l1(gt4)) of "
                 "whole 32-column blocks",
             )
-        if op.op == "load" and len(op.type.shape) == 1 and op.type.dtype != "f16":
+        if t is not None and len(t.shape) == 1 and t.dtype != "f16":
             self.fail(op.st, "a row statistic loads from f16")
+        if off % 32:
+            # L2's limit: a core's view starts on a word (its producer lays a
+            # read out first, `run._bound`).
+            self.fail(
+                op.st, f"a view {off} bytes in: a descriptor starts on a 32-byte word"
+            )
         inc = 0
         if looped and len(self.trips) > 1:
-            inc = self._walk(op, view, first + 1, rows)[1] - off
+            inc = self._walk(op, view, self.trips[0] + 1, rows)[1] - off
             end = self._walk(op, view, self.trips[-1], rows)[1]
             if end != off + inc * (len(self.trips) - 1):
                 self.fail(op.st, "the view is not affine in the loop variable")
-            if not -(1 << 17) <= inc < 1 << 17:
+            if not -STEP <= inc < STEP:
+                # The step pass moves such a loop out of its par: never met.
                 self.fail(op.st, f"a {inc}-byte step: ainc takes 18 signed bits")
+            if inc % 32:
+                self.fail(op.st, f"a {inc}-byte step: a descriptor steps whole words")
         if len(self.descs) == DESCS:
             self.fail(op.st, f"more than {DESCS} memory views")
-        shared = None
-        if looped and op.op == "store" and self.top + 2 * words > self.land:
+        shared = twin = None
+        value = pos[2].text if op.op == "store" and isinstance(pos[2], Name) else ""
+        if looped and value:
+            # The value packed once for every view of one L1 layout.
+            lay = rows_w if kind == "rows" else 0
+            twin = next(
+                (
+                    x
+                    for x in self.descs
+                    if x.value == value and x.words == words and x.rows_w == lay
+                ),
+                None,
+            )
+        if (
+            twin is None
+            and looped
+            and op.op == "store"
+            and self.top + 2 * words > self.land
+        ):
             # No room for its own two buffers: the store packs over a load of
             # the trip whose bytes it replaces (same words, same L1 layout).
             shared = next(
@@ -983,7 +1180,9 @@ class _Ctx:
                 ),
                 None,
             )
-        if shared is not None:
+        if twin is not None:
+            buf = twin.buf
+        elif shared is not None:
             buf = shared.buf
         elif looped:
             buf = tuple(self._alloc(words, op) for _ in range(2))
@@ -992,12 +1191,16 @@ class _Ctx:
             # Dead once unpacked, so over the loop's buffers -- unless the
             # loop unpacks bands of it.
             kept = self.rel is not None and self.rel[1] == op.target
+            # Not pinned, its unpacks run in the loop: the bytes are kept.
+            kept = kept or not self.pin
+            if self.down < (self.top if kept else 0) and not self.pin:
+                raise Pressure("L1 does not hold the loop's buffers and the kept bytes")
             if self.down < (self.top if kept else 0):
                 self.fail(op.st, f"L1 holds {self.land} words for this core's buffers")
             buf = (self.down,)
         d = Desc(len(self.descs), name, off, words, inc, buf, walk, kind=op.op)
         d.rows_w, d.bcast = (rows_w, bcast) if kind == "rows" else (0, False)
-        d.shared = shared
+        d.shared, d.value, d.twin = shared, value, twin
         self.descs.append(d)
         self.buffers.add(name)
         self.of[id(op)] = d
@@ -1082,21 +1285,41 @@ class _Ctx:
 
     # -------------------------------------------------------- constants
     def constants(self, g: Gen, ops) -> None:
-        for op in ops:
-            if not isinstance(op, Op):
-                continue
-            for a in op.st.positional():
-                f = _number(a)
-                if f is None or f in KREG or f in self.scalars:
-                    continue
-                if len(self.scalars) == STK_S:
-                    self.fail(op.st, f"more than {STK_S} scalar constants")
-                s = f"s{len(self.scalars)}"
-                self.scalars[f] = s
-                g.raw(f"seti {s} = {f!r}")
+        """Every number an op reads, the most read first, in a scalar register;
+        past the scalar file, with `hold` in a pinned register set through the
+        last, else set into a staging register (`STAGE`) before each read."""
+        fs = _numbers(ops)
+        kept = fs if len(fs) <= STK_S else fs[: STK_S - 1]
+        for i, f in enumerate(kept):
+            self.scalars[f] = f"s{i}"
+            g.raw(f"seti s{i} = {f!r}")
+        for f in fs[len(kept) :] if self.hold else ():
+            v = g.sym()
+            self.pinned.add(v)
+            self.held[f] = v
+            g.raw(f"seti {STAGE[0]} = {f!r}")
+            g.emit(f"vmov {{0}}, {STAGE[0]}", v)
 
-    def scalar(self, f: float) -> str:
-        return KREG.get(f) or self.scalars[f]
+    def constant(self, g: Gen, f: float, syms: list, srcs: list, sel: str = "") -> str:
+        """`f`'s source for an op whose sources so far are `srcs`; a held
+        constant's register joins `syms`."""
+        v = self.held.get(f)
+        if v is not None:
+            syms.append(v)
+            return f"{{{len(syms)}}}{sel}"
+        s = KREG.get(f) or self.scalars.get(f)
+        if s is not None:
+            return s
+        # A staging register still holding `f`: no block edge since its seti.
+        for reg, (got, at) in self.staged.items():
+            if got == f and not any(c in ("{", "}") for c in g.code[at:]):
+                return reg
+        reg = next((r for r in STAGE if r not in srcs), None)
+        if reg is None:
+            raise Pressure(f"an op reads more than {len(STAGE)} staged constants")
+        g.raw(f"seti {reg} = {f!r}")
+        self.staged[reg] = (f, len(g.code))
+        return reg
 
     # --------------------------------------------------------- prologue
     def prologue(self, g: Gen, op) -> None:
@@ -1117,7 +1340,8 @@ class _Ctx:
             if len(op.type.shape) == 1:
                 self.fail(op.st, "a row statistic unpacks in the stream loop")
             v = Val("row", _count(op.type), mode=src.mode, cols=op.type.shape[-1])
-            for r in range(v.rows):
+            # Not pinned: unpacked again where the loop reads it (`_unpin`).
+            for r in range(v.rows) if self.pin else ():
                 s = g.sym()
                 v.regs[r] = s
                 self.pinned.add(s)
@@ -1234,6 +1458,9 @@ class _Ctx:
             again = set()
             for i, o in enumerate(body):
                 if isinstance(o, If):
+                    # Unpacked ahead of the block: it may be skipped.
+                    for b in _ops(o.body) if not self.pin else ():
+                        self._unpin(g, b, rws, local, again, fused)
                     g.raw("vsync fe on=math")
                     g.raw(f"getstk s{STK_S}")
                     g.raw(f"skipz s{STK_S}")
@@ -1251,7 +1478,12 @@ class _Ctx:
                     continue
                 if self.remat and first_reduce is not None and i > first_reduce:
                     self._reunpack(g, ops, o, rws, local, again)
+                if not self.pin:
+                    self._unpin(g, o, rws, local, again, fused)
                 self._compute(g, o, grps, rws, local, fused)
+            for o in ops if not self.pin else ():
+                if o.op == "pack":
+                    self._unpin(g, o, rws, local, again)
             if k == 0:
                 g.raw(f"vsync pack on=drain slack={len(stores)}")
                 if shared:
@@ -1378,6 +1610,20 @@ class _Ctx:
                 again.add(n)
                 self._unpacks(g, ops, rows, local, only=n)
 
+    def _unpin(self, g, o, rows, local, again, fused=None) -> None:
+        """A row value unpacked before the loop and not pinned: unpacked from
+        its kept L1 bytes before the first op of the band that reads it (a
+        product a reduction folds read through its factors)."""
+        pre = [u for u in self.pre if u.op == "unpack" and len(u.type.shape) == 2]
+        names = []
+        for a in o.st.positional():
+            n = _value_name(a)
+            names += [n, *map(_value_name, (fused or {}).get(n, ()))]
+        for n in names:
+            if n in {u.target for u in pre} and n not in again:
+                again.add(n)
+                self._unpacks(g, pre, rows, local, only=n)
+
     def _reduces(self, g, o, grps, local, fused) -> None:
         """One reduction over every group of the band, the trees' steps
         interleaved."""
@@ -1466,9 +1712,11 @@ class _Ctx:
                 if (s.op == "store" and s.st.positional()[2] == Name(o.target))
                 or (s.op == "send" and s.st.positional()[0] == Name(o.target))
             ]
-            if len(store) != 1:
-                self.fail(o.st, "a packed value is stored or sent once")
-            buf = self.of[id(store[0])].buf[parity]
+            if not store:
+                self.fail(o.st, "a packed value is stored or sent")
+            # One pack a buffer: twin stores read their first's.
+            dests = list({self.of[id(s)].buf: self.of[id(s)] for s in store}.values())
+            buf = dests[0].buf[parity]
             if o.type.dtype in ("mx7a", "mx7b"):
                 if src.mode != "gt4":
                     self.fail(
@@ -1487,13 +1735,16 @@ class _Ctx:
                                     t,
                                     src.regs[r],
                                 )
-                    g.emit(f"vpack {{0}} -> l1[{buf + r * 4}] {o.type.dtype}", t)
+                    for d in dests:
+                        at = d.buf[parity] + r * 4
+                        g.emit(f"vpack {{0}} -> l1[{at}] {o.type.dtype}", t)
                 local[o.target] = Val("l1", _count(o.type), buf=buf, mode=o.type.dtype)
                 continue
             mode = _mode(o.type)
-            d = self.of[id(store[0])]
-            for _, i in self.once(src, rows):
-                g.emit(_pack_line(d, buf, i, mode, o.type.dtype), src.regs[i])
+            for d in dests:
+                for _, i in self.once(src, rows):
+                    line = _pack_line(d, d.buf[parity], i, mode, o.type.dtype)
+                    g.emit(line, src.regs[i])
             local[o.target] = Val("l1", _count(o.type), buf=buf, mode=mode)
 
     def _pack_stat(self, g, o, ops, stat, rows, local, parity) -> None:
@@ -1570,7 +1821,7 @@ class _Ctx:
                 for a in pos:
                     f = _number(a)
                     if f is not None:
-                        srcs.append(self.scalar(f))
+                        srcs.append(self.constant(g, f, syms, srcs, sel))
                         continue
                     v = self._get(o, a, "stat", local)
                     syms.append(v.regs[grp])
@@ -1587,7 +1838,7 @@ class _Ctx:
             for a in pos:
                 f = _number(a)
                 if f is not None:
-                    srcs.append(self.scalar(f))
+                    srcs.append(self.constant(g, f, syms, srcs))
                 elif (
                     isinstance(a, View)
                     and a.slices
@@ -1618,7 +1869,7 @@ class _Ctx:
             out.regs[i] = d
 
 
-def _xlane_k(o, fail) -> int:
+def _xlane_k(o, fail: Fail) -> int:
     pos = o.st.positional()
     k = _number(pos[1]) if len(pos) == 2 else None
     if k is None or k != int(k) or not 0 < k < 16:
@@ -1899,13 +2150,31 @@ def _contiguous(dims, item) -> bool:
     return True
 
 
+def _value_name(a) -> str | None:
+    """The value an operand reads (a name, or a view's), else None."""
+    return a.name if isinstance(a, View) else a.text if isinstance(a, Name) else None
+
+
 def _number(a):
     if isinstance(a, (Float, Int)):
         return float(a.value)
     return None
 
 
-def _assign(g: Gen, pinned: set, fail, st, regs: int) -> list:
+def _numbers(ops) -> list:
+    """The numbers `ops` read as operands (not K registers), the most read first."""
+    uses: dict = {}
+    for op in ops:
+        if not isinstance(op, Op) or op.op == "xlane":
+            continue
+        for a in op.st.positional():
+            f = _number(a)
+            if f is not None and f not in KREG:
+                uses[f] = uses.get(f, 0) + 1
+    return sorted(uses, key=lambda f: -uses[f])
+
+
+def _assign(g: Gen, pinned: set, fail: Fail, st, regs: int) -> list:
     """Physical registers v0..v{regs-1} over the emitted order: a symbol holds
     its register from its first to its last appearance; a symbol first
     appearing as an instruction's result (template position 0) takes the
@@ -1959,4 +2228,4 @@ def _indent(lines: list) -> list:
     return out
 
 
-__all__ = ["lower"]
+__all__ = ["STEP", "lower", "max_step", "total", "view_offset"]

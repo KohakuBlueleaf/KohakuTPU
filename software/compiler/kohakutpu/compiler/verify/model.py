@@ -14,29 +14,66 @@ from dataclasses import dataclass, field
 
 
 class Clock:
-    """A vector clock: process index -> events of that process seen."""
+    """A vector clock: process index -> events of that process seen. One
+    process's own count is held apart (`own`, `n`) and the rest in a dict
+    copies share until a join raises one of them, so a copy is O(1): every
+    event and every counter increment keeps one (verify.md §7.1)."""
 
-    __slots__ = ("v",)
+    __slots__ = ("base", "mine", "n", "own")
 
     def __init__(self, v=None) -> None:
-        self.v = dict(v or {})
+        self.base = dict(v or {})
+        self.own, self.n = -1, 0
+        #: whether `base` is this clock's alone (else a copy shares it)
+        self.mine = True
+
+    def at(self, k: int) -> int:
+        """Events of process `k` seen."""
+        return self.n if k == self.own else self.base.get(k, 0)
+
+    def items(self):
+        own = self.own
+        for k, n in self.base.items():
+            if k != own:
+                yield k, n
+        if own >= 0:
+            yield own, self.n
 
     def join(self, other: "Clock") -> None:
-        v = self.v
-        get = v.get
-        for k, n in other.v.items():
-            if get(k, 0) < n:
-                v[k] = n
+        at = self.at
+        raise_ = [(k, n) for k, n in other.items() if at(k) < n]
+        if not raise_:
+            return
+        if not self.mine:
+            self.base = dict(self.base)
+            self.mine = True
+        for k, n in raise_:
+            if k == self.own:
+                self.n = n
+            else:
+                self.base[k] = n
+
+    def tick(self, owner: int, n: int) -> None:
+        """Process `owner`'s count set to `n` (its own event)."""
+        if owner != self.own:
+            if self.own >= 0:
+                if not self.mine:
+                    self.base = dict(self.base)
+                    self.mine = True
+                self.base[self.own] = self.n
+            self.own = owner
+        self.n = n
 
     def copy(self) -> "Clock":
         c = Clock.__new__(Clock)
-        c.v = self.v.copy()
+        c.base, c.own, c.n, c.mine = self.base, self.own, self.n, False
+        self.mine = False
         return c
 
     def before(self, other: "Clock", owner: int) -> bool:
         """Whether the event this clock stamps (on process `owner`) happens
         before the event `other` stamps."""
-        return self.v.get(owner, 0) <= other.v.get(owner, 0)
+        return self.at(owner) <= other.at(owner)
 
 
 class Counter:
@@ -144,6 +181,15 @@ class Machine:
         self.procs.append(proc)
         return len(self.procs) - 1
 
+    def close(self) -> None:
+        """Drop every process's state once the run is read: the run's
+        objects (processes holding the machine, the card and each other)
+        are freed with their last reference, not left to the cycle
+        collector. Findings, counters and events stay."""
+        for p in self.procs:
+            vars(p).clear()
+        self.procs.clear()
+
     def find(self, kind: str, where: str, text: str) -> None:
         self.findings.append(Finding(kind, where, text))
 
@@ -189,7 +235,7 @@ class Proc:
             if r is not clock:
                 clock.join(r)
         self.n += 1
-        clock.v[self.ix] = self.n
+        clock.tick(self.ix, self.n)
         return clock.copy()
 
     def step(self) -> bool:

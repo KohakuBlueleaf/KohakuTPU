@@ -19,18 +19,25 @@ walk is the iteration order (a scatter's, its source's; a transform's steps
 once per converted entry).
 """
 
-from kohakuaccel.compiler.package.mover import MOVE_WORDS, NDIM
+from collections.abc import Callable
+from typing import NoReturn
+
+from kohakuaccel.compiler.package.mover import MAX_INDEX, MOVE_WORDS, NDIM
 from kohakutpu.compiler.l2 import memory as M
 from kohakutpu.compiler.l2 import sync
 from kohakutpu.compiler.l2.body import const, value
 from kohakutpu.language.text.syntax import Arrow, Int, Name, Tuple, View
 
 WORD = 32
+#: Words a gathered or scattered row takes at most (a 16-bit count).
+ROW_WORDS = 0xFFFF
 OPS = ("copy", "fill", "gen", "gather", "scatter", "quant", "gt4")
 UNIT = "mover"
+#: The reader's failure: raises a `TextError` at a statement.
+Fail = Callable[..., NoReturn]
 
 
-def words(body, st, t, env, fail) -> tuple:
+def words(body, st, t, env, fail: Fail) -> tuple:
     """``(buffer, byte offset, [(count, stride)])`` of a view as 32-byte
     words, outermost level first."""
     v = value(body, st, t if isinstance(t, View) else View(t.text, ()), env)
@@ -68,7 +75,7 @@ def _squeeze(levels) -> list:
 
 
 def _walk(name, off, levels) -> str:
-    lv = ", ".join(f"({n}, {s})" for n, s in _merge(levels))
+    lv = ", ".join(f"({n}, {s})" for n, s in _merge(_squeeze(levels)))
     return f"w({name} + {off}, {lv})"
 
 
@@ -83,7 +90,7 @@ def _span(name, off, levels, step=WORD) -> tuple:
     return name, lo, hi + step
 
 
-def lower(body, op, env, fail) -> tuple:
+def lower(body, op, env, fail: Fail) -> tuple:
     """``(L1 mover lines, accesses)`` of one node-level op."""
     st = op.st
     pos, kw = st.positional(), st.kwargs()
@@ -102,8 +109,11 @@ def lower(body, op, env, fail) -> tuple:
         if key not in kw:
             fail(st, f"{op.op} needs {key}=")
         extra = f" ew={kw['ew'].value}" if "ew" in kw else ""
-        text = f"{op.op} {_walk(name, off, lv)} {key}={_int(st, kw[key], fail)}{extra}"
-        return [text], [sync.mem(UNIT, True, *_span(name, off, lv))]
+        tail = f"{key}={_int(st, kw[key], fail)}{extra}"
+        lines = [
+            f"{op.op} {_walk(name, off + o, dl)} {tail}" for (o,), (dl,) in _cut([lv])
+        ]
+        return lines, [sync.mem(UNIT, True, *_span(name, off, lv))]
     fp = Name("fp") in pos
     pos = [p for p in pos if p != Name("fp")]
     if len(pos) != 3 or pos[1] != Arrow("<-"):
@@ -142,16 +152,11 @@ def lower(body, op, env, fail) -> tuple:
             sl = [sl[i.value] for i in p.items]
         if _count(dl) != _count(sl):
             fail(st, f"copy of {_count(sl)} words into {_count(dl)}")
-        for lv in (sl, dl):
-            if len(_merge(_squeeze(lv))) > NDIM:
-                fail(
-                    st,
-                    f"a walk of {len(_merge(_squeeze(lv)))} levels; a walker holds {NDIM}",
-                )
-        if "walk" in kw or "dwalk" in kw:
-            sl, dl = _squeeze(sl), _squeeze(dl)
-        text = f"copy {_walk(sn, soff, sl)} -> {_walk(dn, doff, dl)}"
-        return [text], [
+        lines = [
+            f"copy {_walk(sn, soff + so, sl_)} -> {_walk(dn, doff + do, dl_)}"
+            for (so, do), (sl_, dl_) in _cut([sl, dl])
+        ]
+        return lines, [
             sync.mem(UNIT, False, *_span(sn, soff, sl)),
             sync.mem(UNIT, True, *_span(dn, doff, dl)),
         ]
@@ -172,17 +177,31 @@ def lower(body, op, env, fail) -> tuple:
         rn, roff, rl = words(body, st, rows, env, fail)
         n = rl[0][0] if len(rl) > 1 else 1
         per = _count(rl) // n
-        walk = _walk(rn, roff, rl)
-        if op.op == "gather":
-            text = f"gather {tv.name} -> {walk}"
-        else:
-            text = f"scatter {walk} -> {tv.name}"
-        text += (
-            f" index={idx_name} n={n} pitch={pitch} words={per}{' fp' if fp else ''}"
-        )
+        (_, rs), wlv = (rl[0], rl[1:]) if len(rl) > 1 else ((1, WORD), rl)
+        # Rows a move: at most the index list's MAX_INDEX, in whole 32-byte
+        # lines of 4-byte indices; a row's words a 16-bit count, so a longer
+        # row goes in column pieces.
+        many = max(8, min(MAX_INDEX, MOVE_WORDS // per) // 8 * 8)
+        lines, c0 = [], 0
+        for (wo,), (wl,) in _cut([wlv], ROW_WORDS, spare=1):
+            k = _count(wl)
+            for r0 in range(0, n, many):
+                m = min(many, n - r0)
+                walk = _walk(rn, roff + r0 * rs + wo, [(m, rs), *wl])
+                table = f"{tv.name} + {c0 * WORD}"
+                text = (
+                    f"gather {table} -> {walk}"
+                    if op.op == "gather"
+                    else f"scatter {walk} -> {table}"
+                )
+                lines.append(
+                    f"{text} index={idx_name} + {4 * r0} n={m} pitch={pitch} "
+                    f"words={k}{' fp' if fp else ''}"
+                )
+            c0 += k
         table_acc = sync.mem(UNIT, op.op == "scatter", tv.name, 0, tb.nbytes)
         rows_acc = sync.mem(UNIT, op.op == "gather", *_span(rn, roff, rl))
-        return [text], [
+        return lines, [
             table_acc,
             rows_acc,
             sync.mem(UNIT, False, idx_name, 0, ibuf.nbytes),
@@ -191,7 +210,7 @@ def lower(body, op, env, fail) -> tuple:
 
 
 # ------------------------------------------------------------- conversions
-def _gt4_walks(body, op, dst, src, env, fail) -> tuple:
+def _gt4_walks(body, op, dst, src, env, fail: Fail) -> tuple:
     """`gt4 DST <- SRC walk=.. dwalk=..`: whole buffers, the source walk's
     innermost level the four words of a group, the destination one level
     fewer (a group's four words land consecutively)."""
@@ -216,21 +235,20 @@ def _gt4_walks(body, op, dst, src, env, fail) -> tuple:
         )
     if soff % WORD or doff % WORD or any(s % WORD for _, s in sl + dl):
         fail(st, "a walk steps whole 32-byte words")
-    lines = []
-    for s0, d0, sl_, dl_ in _cut(sl, dl):
-        sl_, dl_ = _merge(_squeeze(sl_)), _merge(_squeeze(dl_))
-        if max(len(sl_), len(dl_)) > NDIM:
-            fail(st, f"gt4: {max(len(sl_), len(dl_))} levels; a walker holds {NDIM}")
-        lines.append(
-            f"gt4 {_walk(src.text, soff + s0, sl_)} -> {_walk(dst.text, doff + d0, dl_)}"
+    lines = [
+        f"gt4 {_walk(src.text, soff + s0, [*sl_, sl[-1]])} -> "
+        f"{_walk(dst.text, doff + d0, dl_)}"
+        for (s0, d0), (sl_, dl_) in _cut(
+            [sl[:-1], dl], MOVE_WORDS // sl[-1][0], [sl[-1:], []]
         )
+    ]
     return lines, [
         sync.mem(UNIT, False, *_span(src.text, soff, sl)),
         sync.mem(UNIT, True, *_span(dst.text, doff, dl, 4 * WORD)),
     ]
 
 
-def _convert(body, op, dst, src, env, fail) -> tuple:
+def _convert(body, op, dst, src, env, fail: Fail) -> tuple:
     """`quant` / `gt4`: the source walk visits the destination's entries in
     its own order -- each entry's source words innermost -- and the
     destination walk steps once per entry. Cut into moves of at most
@@ -253,15 +271,20 @@ def _convert(body, op, dst, src, env, fail) -> tuple:
         (dbase, slv, dlv), flag = conv(dbuf, dax, pitch)
     except M.ViewError as e:
         fail(st, str(e))
-    lines = []
-    for s0, d0, sl, dl in _cut(slv, dlv):
-        sl, dl = _merge(_squeeze(sl)), _merge(_squeeze(dl))
-        if len(sl) > NDIM:
-            fail(st, f"{op.op}: {len(sl)} source levels; a walker holds {NDIM}")
-        lines.append(
-            f"{op.op} {_walk(sv.name, soff + s0, sl)} -> {_walk(dv.name, dbase + d0, dl)}"
-            f"{flag}"
+    # The source's innermost levels are one entry's words; the destination
+    # steps once an entry.
+    per_entry = _count(slv) // _count(dlv)
+    k = len(slv)
+    while _count(slv[k:]) < per_entry:
+        k -= 1
+    assert _count(slv[k:]) == per_entry, (slv, dlv)
+    lines = [
+        f"{op.op} {_walk(sv.name, soff + s0, [*sl, *slv[k:]])} -> "
+        f"{_walk(dv.name, dbase + d0, dl)}{flag}"
+        for (s0, d0), (sl, dl) in _cut(
+            [slv[:k], dlv], MOVE_WORDS // per_entry, [slv[k:], []]
         )
+    ]
     per = 4 * WORD if op.op == "gt4" else M.ENTRY
     return lines, [
         sync.mem(UNIT, False, *_span(sv.name, soff, slv)),
@@ -349,19 +372,85 @@ def _gt4(buf, ax, pitch) -> tuple:
     return (base + first, src, dst), ""
 
 
-def _cut(slv, dlv) -> list:
-    """``[(source offset, destination offset, source levels, destination
-    levels)]``: the move as pieces of at most `MOVE_WORDS` source words, cut
-    along the outer levels (the destination has one level fewer: the entry's
-    own words)."""
-    total = _count(slv)
-    if total <= MOVE_WORDS or not dlv:
-        return [(0, 0, slv, dlv)]
-    (n, s), (_, ds) = slv[0], dlv[0]
+def _cut(walks: list, limit: int = MOVE_WORDS, tails=None, spare: int = 0) -> list:
+    """``[(byte offsets, levels)]``, one per walk each: `walks` (equal step
+    counts, ``[(count, stride)]`` outermost level first) as consecutive runs
+    of steps, each at most `limit` steps and each walk's levels -- with its
+    `tails`, the levels inside one step (a transform entry's words), and
+    `spare` levels a caller puts outside -- at most a walker's `NDIM`. A run
+    takes U steps at a time, U the largest count every walk's level
+    boundaries share (1 always does) whose inner levels fit, and as many U
+    as stay inside every walk's next level out."""
+    walks = _aligned([_squeeze(lv) for lv in walks])
+    tails = tails or [[] for _ in walks]
+    total = _count(walks[0])
+
+    def fits(levels, tail) -> bool:
+        lv = [*levels, *tail]
+        return (len(_merge(_squeeze(lv))) if lv else 0) + spare <= NDIM
+
+    if total <= limit and all(fits(lv, t) for lv, t in zip(walks, tails)):
+        return [((0,) * len(walks), walks)]
+    # Per walk: the step count inside each level boundary -> that level.
+    at = []
+    for lv in walks:
+        units, u = {}, 1
+        for i in range(len(lv), -1, -1):
+            units[u] = i
+            if i:
+                u *= lv[i - 1][0]
+        at.append(units)
+    for unit in sorted(set.intersection(*(set(a) for a in at)), reverse=True):
+        if unit > limit or unit == total:
+            continue
+        inner = [lv[a[unit] :] for lv, a in zip(walks, at)]
+        if all(fits(i, t) for i, t in zip(inner, tails)):
+            break
+    else:
+        raise AssertionError("one step always fits a walker")
+    outer = [lv[: a[unit]] for lv, a in zip(walks, at)]
+    # A run of several units is one more level; inside the next level only.
+    group = all(fits([(2, o[-1][1]), *i], t) for o, i, t in zip(outer, inner, tails))
+    most = limit // unit if group else 1
+    out, b, blocks = [], 0, total // unit
+    while b < blocks:
+        run = min(most, blocks - b, *(o[-1][0] - b % o[-1][0] for o in outer))
+        offs, lvs = [], []
+        for o, i in zip(outer, inner):
+            off, rest = 0, b
+            for n, s in reversed(o):
+                off += rest % n * s
+                rest //= n
+            offs.append(off)
+            lvs.append([(run, o[-1][1]), *i])
+        out.append((tuple(offs), lvs))
+        b += run
+    return out
+
+
+def _aligned(walks: list) -> list:
+    """Each walk's levels split where another walk's level boundaries fall
+    inside them, the counts dividing ((a b, s) -> (a, b s), (b, s)): a run
+    of steps one walk takes whole, the others then can too (a dense
+    destination beside a window's levels)."""
+    marks: set = set()
+    for lv in walks:
+        u = 1
+        for n, _ in reversed(lv):
+            u *= n
+            marks.add(u)
     out = []
-    for i in range(n):
-        for so, do, sl, dl in _cut(slv[1:], dlv[1:]):
-            out.append((i * s + so, i * ds + do, sl, dl))
+    for lv in walks:
+        new, u = [], 1
+        for n, s in reversed(lv):
+            prev = 1
+            for c in sorted(m // u for m in marks if m % u == 0 and 1 < m // u < n):
+                if n % c == 0 and c % prev == 0:
+                    new.append((c // prev, s * prev))
+                    prev = c
+            new.append((n // prev, s * prev))
+            u *= n
+        out.append(list(reversed(new)))
     return out
 
 
@@ -372,7 +461,7 @@ def _count(levels) -> int:
     return out
 
 
-def _levels(body, st, t, env, fail) -> list:
+def _levels(body, st, t, env, fail: Fail) -> list:
     """``[(count, stride)]`` of a ``((COUNT, STRIDE), ...)`` keyword."""
     if not isinstance(t, Tuple) or not t.items:
         fail(st, "walk=((COUNT, STRIDE), ...)")
@@ -387,7 +476,7 @@ def _levels(body, st, t, env, fail) -> list:
     return out
 
 
-def _int(st, t, fail) -> int:
+def _int(st, t, fail: Fail) -> int:
     if not isinstance(t, Int):
         fail(st, f"wanted a constant, got {t!r}")
     return t.value

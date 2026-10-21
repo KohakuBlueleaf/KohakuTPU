@@ -35,7 +35,7 @@ def test_a_second_specialisation_compiles_nothing():
 
 
 @kt.kernel
-def wide(x=kt.In("R", "W"), y=kt.Out("R", "W"), *, rows=kt.auto(128, 64, 32)):
+def wide(x=kt.In("R", "W"), y=kt.Out("R", "W"), *, rows=kt.auto(1, 128, 64)):
     per = x.shape[0] // 2
     for c in kt.par(2, on=kt.vc):
         for t in kt.range(per // rows):
@@ -44,10 +44,10 @@ def wide(x=kt.In("R", "W"), y=kt.Out("R", "W"), *, rows=kt.auto(128, 64, 32)):
 
 
 def test_auto_takes_the_first_candidate_that_compiles():
-    # 128 rows of 256 columns overflow a core's L1 even retiled to 64-row
-    # trips packed over their loads (two 512-word buffers); 64 rows fit.
+    # One row loads as a 4-row broadcast band, no store into one row; 128
+    # rows overflow a core's L1 but retile to a tile that fits.
     c = K.specialise(wide, {"x": ((512, 256), "f16")}, machine=MACHINE)
-    assert c.traced.consts["rows"] == 64
+    assert c.traced.consts["rows"] == 128
 
 
 def _unpacked_and_read(l1: str) -> tuple:

@@ -22,6 +22,7 @@ first time), then the RUN.
 
 from kohakutpu.compiler.encode import sru as E
 from kohakutpu.compiler.isa import sru as S
+from kohakutpu.language.text.reader import Fail
 from kohakutpu.language.text.syntax import Arrow, Float, Int, Name, Neg, View
 
 #: `job` field names: G's, lowercase; 1-bit ones may be written as a flag.
@@ -56,7 +57,7 @@ class RowReader:
 
     def __init__(self, node, held: dict) -> None:
         self.node = node
-        self.fail = node.fail
+        self.fail: Fail = node.fail
         self.held = held
         prof = {**PROFILE, **node.p.machine.params.get("SR", {})}
         self.f_lanes, self.h_taps = prof["F_LANES"], prof["H_TAPS"]
@@ -106,13 +107,11 @@ class RowReader:
         return self.node.const(st, t)
 
     def num(self, st, t) -> float:
-        """A number: an integer, a float, `inf`, or one negated."""
+        """A number: an integer, a float (`inf` too), or one negated."""
         if isinstance(t, Neg):
             return -self.num(st, t.x)
         if isinstance(t, Int | Float):
             return float(t.value)
-        if t == Name("inf"):
-            return float("inf")
         self.fail(st, f"wanted a number, got {t!r}")
 
     # --------------------------------------------------------------- job
@@ -191,7 +190,8 @@ class RowReader:
                 or ("neg" in flags and not modes & {"mant", "half"})
             ):
                 self.fail(
-                    st, "op fn a=SRC k=SRC [fix | mant [neg] | half [neg]] [cs=N] [pre=N]"
+                    st,
+                    "op fn a=SRC k=SRC [fix | mant [neg] | half [neg]] [cs=N] [pre=N]",
                 )
             fix, mant = FN_MODE[modes.pop() if modes else "exp"]
             f = {

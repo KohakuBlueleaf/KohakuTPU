@@ -17,10 +17,13 @@ is `check` before a run: it refuses one with a finding of a REFUSE kind.
 """
 
 import bisect
+import collections
 import functools
 import hashlib
 import json
+import os
 import pathlib
+import pickle
 
 from kohakutpu.compiler import imem
 from kohakutpu.compiler import target as T
@@ -80,15 +83,48 @@ def schedule(programs, machine=None, fetch=None, residents=None) -> dict:
     programs = _nodes(programs)
     machine = machine or T.machine(nodes=max(programs) + 1)
     residents = residents if residents is not None else {}
+    cores = {
+        mesh: residents.setdefault(mesh, imem.Cores(imem.IMEM_WORDS))
+        for mesh in programs
+    }
+    # A build is a function of the program and its cores' whole state (IMEM
+    # placement and eviction order, descriptors): the same pair seen again
+    # returns its packages and leaves the cores as that build did.
+    bkey = (
+        repr(machine),
+        repr(fetch),
+        tuple((m, id(p), cores_digest(cores[m])) for m, p in sorted(programs.items())),
+    )
+    hit = _BUILT.get(bkey)
+    if hit is not None and all(hit[0][m] is p for m, p in programs.items()):
+        _BUILT.move_to_end(bkey)
+        for mesh, snap in hit[2].items():
+            cores_restore(cores[mesh], snap)
+        return dict(hit[1])
     held = {mesh: _held(residents, mesh) for mesh in programs}
     built = {}
     for mesh, prog in programs.items():
         b = prog.build(fetch, residents.setdefault(mesh, imem.Cores(imem.IMEM_WORDS)))
         built[mesh] = (b.build(defaults=False), b.bindings())
+    # The order is a function of the machine, the fetch port, what the cores
+    # hold and the packages' bytes (bindings are outside them): a package
+    # sent again with new buffers is not run on the model again.
+    h = hashlib.sha256(f"{machine!r}|{fetch!r}|{held!r}".encode())
+    for mesh, (pkg, _) in sorted(built.items()):
+        h.update(f"|{mesh}|".encode() + pkg.to_bytes())
+    k = h.digest()
+    got = _SCHEDULED.get(k)
+    if got is not None:
+        _SCHEDULED.move_to_end(k)
+        return _keep(bkey, programs, cores, got, built)
+    got = _order_stored(k)
+    if got is not None:
+        _SCHEDULED[k] = got
+        return _keep(bkey, programs, cores, got, built)
     m = Machine()
     card = Card(m, machine)
-    for mesh, cores in held.items():
-        for coord, mem, desc in cores:
+    for mesh, units in held.items():
+        for coord, mem, desc in units:
             u = card.unit((mesh, *coord))
             if u is not None and hasattr(u, "imem"):
                 u.imem.update(mem)
@@ -97,11 +133,98 @@ def schedule(programs, machine=None, fetch=None, residents=None) -> dict:
         mesh: Node(card, mesh, [pkg], free=True)
         for mesh, (pkg, _) in sorted(built.items())
     }
-    m.run()
-    stuck = [f for f in m.findings if f.kind == "deadlock"]
-    if stuck:
-        raise ScheduleError(stuck)
-    return {mesh: (nodes[mesh].packages()[0], built[mesh][1]) for mesh in built}
+    try:
+        m.run()
+        stuck = [f for f in m.findings if f.kind == "deadlock"]
+        if stuck:
+            raise ScheduleError(stuck)
+        got = {mesh: nodes[mesh].packages()[0] for mesh in built}
+    finally:
+        card.close()
+    _SCHEDULED[k] = got
+    if len(_SCHEDULED) > SCHEDULED_MAX:
+        _SCHEDULED.popitem(last=False)
+    _order_store(k, got)
+    return _keep(bkey, programs, cores, got, built)
+
+
+#: Orders `schedule` found, on disk by what decides them and this checker's
+#: source; the variable names another directory, empty turns the store off.
+ORDER_ENV = "KTPU_SCHEDULE_CACHE"
+ORDER_DIR = pathlib.Path(__file__).resolve().parents[5] / "build" / "schedule"
+
+
+def _order_path(k: bytes) -> pathlib.Path | None:
+    where = os.environ.get(ORDER_ENV, str(ORDER_DIR))
+    if not where:
+        return None
+    return pathlib.Path(where) / hashlib.sha256(_source_digest() + k).hexdigest()[:40]
+
+
+def _order_stored(k: bytes) -> dict | None:
+    path = _order_path(k)
+    if path is None or not path.exists():
+        return None
+    return pickle.loads(path.read_bytes())
+
+
+def _order_store(k: bytes, got: dict) -> None:
+    path = _order_path(k)
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f".{os.getpid()}.tmp")
+    tmp.write_bytes(pickle.dumps(got))
+    tmp.replace(path)
+
+
+#: Orders `schedule` found, by what decides them, and whole builds by program
+#: and cores' state (each holds a copy of every core's IMEM and its programs:
+#: ~5 MB of host memory an entry of a convolution net's step, measured); the
+#: least recently used past SCHEDULED_MAX / BUILT_MAX are dropped.
+SCHEDULED_MAX = 4096
+BUILT_MAX = 256
+_SCHEDULED: collections.OrderedDict = collections.OrderedDict()
+_BUILT: collections.OrderedDict = collections.OrderedDict()
+
+
+def _keep(bkey, programs, cores, got, built) -> dict:
+    """`schedule`'s result, kept under `bkey` with the cores' state after it
+    (the programs held, so an id in the key is never another program's)."""
+    out = {mesh: (got[mesh], built[mesh][1]) for mesh in built}
+    after = {mesh: cores_snapshot(c) for mesh, c in cores.items()}
+    _BUILT[bkey] = (dict(programs), out, after)
+    if len(_BUILT) > BUILT_MAX:
+        _BUILT.popitem(last=False)
+    return dict(out)
+
+
+def cores_snapshot(cores: imem.Cores) -> dict:
+    return {
+        coord: (tuple(r.slots.items()), r.last, dict(r.desc), dict(r.mem))
+        for coord, r in cores.items()
+    }
+
+
+def cores_restore(cores: imem.Cores, snap: dict) -> None:
+    for coord, (slots, last, desc, mem) in snap.items():
+        r = cores[coord]
+        r.slots = collections.OrderedDict(slots)
+        r.last, r.desc, r.mem = last, dict(desc), dict(mem)
+
+
+def cores_digest(cores: imem.Cores) -> bytes:
+    """A digest of every core's whole state: slots in eviction order, the
+    last base, descriptors and IMEM words."""
+    h = hashlib.sha256()
+    for coord, r in sorted(cores.items()):
+        h.update(
+            repr(
+                (coord, tuple(r.slots.items()), r.last, sorted(r.desc.items()))
+            ).encode()
+        )
+        h.update(repr(sorted(r.mem.items())).encode())
+    return h.digest()
 
 
 def check(programs, machine=None, fetch=None, runs: int = 2) -> list:
@@ -118,12 +241,16 @@ def check(programs, machine=None, fetch=None, runs: int = 2) -> list:
             return e.findings
         for mesh, (pkg, _) in got.items():
             pkgs[mesh].append(pkg)
-    first, _ = run(pkgs, machine)
+    first, first_card = run(pkgs, machine)
+    first_card.close()
     m, card = run(pkgs, machine, first.tally())
-    out = list(m.findings)
-    if any(f.kind == "deadlock" for f in out):
-        return out
-    return out + _rest(m, card) + _ports(card)
+    try:
+        out = list(m.findings)
+        if any(f.kind == "deadlock" for f in out):
+            return out
+        return out + _rest(m, card) + _ports(card)
+    finally:
+        card.close()
 
 
 def gate(programs, machine=None, fetch=None, mode: str = "refuse", cache=None) -> list:
@@ -139,18 +266,47 @@ def gate(programs, machine=None, fetch=None, mode: str = "refuse", cache=None) -
     path = None
     if cache is not None:
         path = pathlib.Path(cache) / f"{key(programs, machine, fetch)}.json"
-    if path is not None and path.exists():
-        rows = json.loads(path.read_text(encoding="utf-8"))
+    rows = _load(path) if path is not None else None
+    if rows is not None:
         found = [Finding(*r) for r in rows]
     else:
         found = check(programs, machine, fetch)
         if path is not None:
-            path.parent.mkdir(parents=True, exist_ok=True)
             rows = [[f.kind, f.where, f.text] for f in found]
-            path.write_text(json.dumps(rows), encoding="utf-8")
+            _store(path, json.dumps(rows))
     if mode == "refuse" and any(f.kind in REFUSE for f in found):
         raise Refused(found)
     return found
+
+
+def _load(path: pathlib.Path):
+    """A cache entry's rows; None when there is none, or another process
+    holds it while it is being renamed in (Windows): a miss, computed again
+    to the same rows."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, PermissionError):
+        return None
+
+
+def _store(path: pathlib.Path, text: str) -> None:
+    """Write a cache entry whole or not at all: the bytes reach the disk in a
+    sibling file before it is renamed over `path`, so a power loss leaves the
+    old entry or none, never a truncated one that every later gate reads. An
+    entry's rows are its key's, so one another process already stored is
+    kept (a rename onto it may be refused while that process reads it)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    try:
+        os.replace(tmp, path)
+    except PermissionError:
+        if not path.exists():
+            raise
+        tmp.unlink()
 
 
 def key(programs, machine=None, fetch=None) -> str:
@@ -219,10 +375,10 @@ def _rest(m: Machine, card: Card) -> list:
     # A DATA_RECEIVED belongs to the package whose step sent the burst it
     # answers; the next package counts completions from zero.
     for node, dst, sent, landed in card.acks:
-        at = sent.v.get(node.ix, 0)
+        at = sent.at(node.ix)
         end = next((c for n, c in node.ends if n >= at), None)
         port = dst.port.ix
-        if end is None or end.v.get(port, 0) < landed.v.get(port, 0):
+        if end is None or end.at(port) < landed.at(port):
             out.append(
                 Finding(
                     "rest",
@@ -246,7 +402,7 @@ def _ports(card: Card) -> list:
             if (
                 prev is not None
                 and prev[0] != owner
-                and prev[2].v.get(port, 0) > sent.v.get(port, 0)
+                and prev[2].at(port) > sent.at(port)
             ):
                 out.append(
                     Finding(
@@ -264,8 +420,8 @@ def _ports(card: Card) -> list:
             continue
         port = u.port.ix
         for owner, sent, landed in u.landings:
-            before = landed.v.get(port, 0) <= lead_at.v.get(port, 0)
-            after = mine.v.get(me, 0) <= sent.v.get(me, 0)
+            before = landed.at(port) <= lead_at.at(port)
+            after = mine.at(me) <= sent.at(me)
             if not (before or after):
                 out.append(
                     Finding(
@@ -289,24 +445,22 @@ def _collisions(card: Card) -> list:
         if not windows:
             continue
         seq, port = u.seq.ix, u.port.ix
-        ends = [end.v.get(seq, 0) for _, end in windows]
+        ends = [end.at(seq) for _, end in windows]
         # A FILL of this cluster's own starts at its sequencer's previous
         # event: those starts only grow. A shared FILL's starts at its lead's.
-        own = [start.v.get(seq, 0) >= end.v.get(seq, 0) - 1 for start, end in windows]
+        own = [start.at(seq) >= end.at(seq) - 1 for start, end in windows]
         shared = [i for i, o in enumerate(own) if not o]
         for landed, sent, what in u.l1_bursts:
-            at = landed.v.get(port, 0)
-            first = bisect.bisect_right(ends, sent.v.get(seq, 0))
+            at = landed.at(port)
+            first = bisect.bisect_right(ends, sent.at(seq))
             bad = None
             for i in range(first, len(windows)):
-                if at > windows[i][0].v.get(port, 0):
+                if at > windows[i][0].at(port):
                     bad = i
                     break
                 if own[i]:
                     later = shared[bisect.bisect_right(shared, i) :]
-                    bad = next(
-                        (j for j in later if at > windows[j][0].v.get(port, 0)), None
-                    )
+                    bad = next((j for j in later if at > windows[j][0].at(port)), None)
                     break
             if bad is not None:
                 out.append(
@@ -326,6 +480,9 @@ __all__ = [
     "Refused",
     "ScheduleError",
     "check",
+    "cores_digest",
+    "cores_restore",
+    "cores_snapshot",
     "gate",
     "key",
     "lint",

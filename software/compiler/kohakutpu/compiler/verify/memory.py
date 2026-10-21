@@ -27,20 +27,20 @@ class Memory:
         self, space, locs, write: bool, clock: Clock, proc: int, what: str
     ) -> None:
         e = (clock, proc, what)
-        cv = clock.v
+        at = clock.at
         writes, reads = self.writes, self.reads
         # Access a = (clock, proc, what) happens before e iff e's clock has
-        # seen a's event on a's process: a[0].v[a[1]] <= e's v[a[1]].
+        # seen a's event on a's process: a[0] at a[1] <= e's at a[1].
         for loc in locs:
             key = (space, loc)
             w = writes.get(key)
-            if w is not None and w[0].v.get(w[1], 0) > cv.get(w[1], 0):
+            if w is not None and w[0].at(w[1]) > at(w[1]):
                 self._race(key, w, e)
             if write:
                 rs = reads.pop(key, None)
                 if rs:
                     for r in rs.values():
-                        if r[0].v.get(r[1], 0) > cv.get(r[1], 0):
+                        if r[0].at(r[1]) > at(r[1]):
                             self._race(key, r, e)
                 writes[key] = e
             else:

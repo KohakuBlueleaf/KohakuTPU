@@ -38,6 +38,16 @@ class Card:
         #: DATA_RECEIVED counted by a node: (node, receiver, send clock, landing clock)
         self.acks: list = []
 
+    def close(self) -> None:
+        """Drop the run's objects once it is read: the machine's processes
+        (`Machine.close`), every unit's state, then the card's own. Units,
+        nodes and memories hold the card, the machine and each other; this
+        frees them with their last reference, not the cycle collector."""
+        self.m.close()
+        for u in self.units.values():
+            vars(u).clear()
+        vars(self).clear()
+
     # ------------------------------------------------------------ the units
     def unit(self, key: tuple):
         """The unit at (mesh, x, y), made when first named; None if the

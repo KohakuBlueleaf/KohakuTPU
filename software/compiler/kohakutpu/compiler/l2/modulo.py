@@ -244,6 +244,10 @@ def _place(ops: list, ii: int) -> bool:
     for i in reversed(range(n)):  # a dependence points back in program order
         height[i] = max((d + height[s] for s, d in succ[i]), default=ops[i].occ)
     owner = {e: [None] * ii for e in "MUP"}
+    # Each engine's held slots as a bit mask (bit s: slot s), for the
+    # first-fit search; `owner` names who holds each.
+    held = dict.fromkeys("MUP", 0)
+    full = (1 << ii) - 1
     at: list = [None] * n
     last: list = [None] * n
     queue = [(-height[i], i) for i in range(n)]
@@ -251,11 +255,27 @@ def _place(ops: list, ii: int) -> bool:
     budget = (PLACE_BUDGET + 1) * n
 
     def evict(j: int) -> None:
-        row = owner[ops[j].eng]
+        e = ops[j].eng
+        row = owner[e]
         for b in range(ops[j].occ):
             row[(at[j] + b) % ii] = None
+            held[e] &= ~(1 << ((at[j] + b) % ii))
         at[j] = None
         heapq.heappush(queue, (-height[j], j))
+
+    def first_fit(e: str, lo: int, occ: int) -> int | None:
+        """The least t in lo..lo+ii-1 whose occ slots from t (mod ii) are
+        all free."""
+        free = ~held[e] & full
+        ext = free | free << ii | free << 2 * ii  # the circle, unrolled
+        runs, span = ext, 1
+        while span < occ:  # runs of 2^k free slots, doubled up to occ
+            step = min(span, occ - span)
+            runs &= runs >> step
+            span += step
+        s = lo % ii
+        window = (runs >> s) & full
+        return lo + (window & -window).bit_length() - 1 if window else None
 
     while queue:
         _, i = heapq.heappop(queue)
@@ -267,15 +287,14 @@ def _place(ops: list, ii: int) -> bool:
         o, row = ops[i], owner[ops[i].eng]
         early = max((at[p] + d for p, d in pred[i] if at[p] is not None), default=0)
         lo = early if last[i] is None or last[i] < early else last[i] + 1
-        for t in range(lo, lo + ii):
-            if all(row[(t + b) % ii] is None for b in range(o.occ)):
-                break
-        else:
+        t = first_fit(o.eng, lo, o.occ)
+        if t is None:
             t = lo
             for j in {row[(t + b) % ii] for b in range(o.occ)} - {None}:
                 evict(j)
         for b in range(o.occ):
             row[(t + b) % ii] = i
+            held[o.eng] |= 1 << ((t + b) % ii)
         at[i] = last[i] = t
         for s, d in succ[i]:
             if at[s] is not None and at[s] < t + d:
@@ -316,18 +335,19 @@ def _colour(life: dict, ii: int, k: int, regs: int, first: int) -> dict | None:
             a = (s + j * ii) % period
             arcs.append((a, a + e - s, x, j))
     arcs.sort()
-    busy: dict = {}
+    # Arcs in start order, none past a period: (s, e) meets an earlier
+    # (s', e') on the circle iff e' > s or e - period > s' (per register).
+    end: dict = {}
+    start: dict = {}
     out = {}
-
-    def overlap(a, b) -> bool:
-        return any(a[0] < b[1] + sh and b[0] + sh < a[1] for sh in (-period, 0, period))
-
     for s, e, x, j in arcs:
         for r in range(first, regs):
-            if all(not overlap((s, e), iv) for iv in busy.get(r, [])):
-                busy.setdefault(r, []).append((s, e))
-                out[(x, j)] = r
-                break
+            if r in end and (end[r] > s or e - period > start[r]):
+                continue
+            end[r] = max(end.get(r, e), e)
+            start.setdefault(r, s)
+            out[(x, j)] = r
+            break
         else:
             return None
     return out
@@ -370,7 +390,8 @@ def plan(
     smallest K that gives packed values PAD_MIN cycles of reuse slack (else
     the most slack). The iteration's fills issue `lead` cycles before its
     first unpack, its drains at its last pack's end; K covers both rings'
-    reuse. None past `ii_max` or `k_max`."""
+    reuse. None past `ii_max` or `k_max`, or once II spans a whole iteration
+    without colouring (no overlap left to gain)."""
     first = max(pinned.values(), default=-1) + 1
     lower = max(sum(o.occ for o in ops if o.eng == e) for e in ("M", "U", "P"))
     for ii in range(max(lower, ii_min, 1), ii_max + 1):
@@ -421,6 +442,11 @@ def plan(
                 best = (lo, got)
         if best is not None:
             return best[1]
+        # An II as long as one iteration (its ops, fills, drains and values'
+        # lives) overlaps no two: pipelining gains nothing past it.
+        span = [*times, *(t for se in life.values() for t in se)]
+        if ii >= max(span) - min(span):
+            return None
     return None
 
 
@@ -617,6 +643,13 @@ def _dataflow(p, order, trips, pinned, n_inst, tail, lo_loop, hi_loop) -> None:
     """Replay the emission's register writes in program order: every read of
     iteration j's value finds it in that copy's register. Raises where a
     register was given to a value still to be read (a colouring defect)."""
+    # A partial unpack's merge-read of a value no earlier op wrote keeps
+    # chunks nobody owns: it checks nothing.
+    seen: set = set()
+    merge: list = []
+    for o in p.ops:
+        merge.append({x for x in o.reads if x in o.writes and x not in seen})
+        seen.update(o.writes)
     holds: dict = {}
     for n in range(n_inst):
         past = tail == "kernel" and lo_loop <= n < hi_loop
@@ -629,7 +662,7 @@ def _dataflow(p, order, trips, pinned, n_inst, tail, lo_loop, hi_loop) -> None:
             o = p.ops[i]
             if j < trips:
                 for x in o.reads:
-                    if x in pinned or x == PRED:
+                    if x in pinned or x == PRED or x in merge[i]:
                         continue
                     r = p.phys[(x, j % p.k)]
                     if holds.get(r) != (x, j):

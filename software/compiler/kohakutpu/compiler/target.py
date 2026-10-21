@@ -98,11 +98,12 @@ def machine_of(
     board: dict, nodes: int | None = None, mesh: int = 0, **kw
 ) -> MachineSpec:
     """`machine` for a board file: its die's units and system-node ports when
-    it carries them (scripts/py/gen_board.py), the 4+2 die otherwise."""
+    it carries them (scripts/py/gen_board.py), the 4+2 die's otherwise (a
+    card's enumerated units may stand in for the board's)."""
     units = board.get("units")
     if not units:
         return machine(mesh=mesh, nodes=nodes, **kw)
-    ports = tuple(tuple(p) for p in board["sys_ports"])
+    ports = tuple(tuple(p) for p in board.get("sys_ports", SYS_PORTS))
     if ports != SYS_PORTS:
         raise ValueError(
             f"{board['name']}: system-node ports {ports}, the compiler's {SYS_PORTS}"

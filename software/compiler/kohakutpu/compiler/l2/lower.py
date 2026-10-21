@@ -448,6 +448,8 @@ def _par(
     if kind == "vc":
         lines, units, acc = [], [], []
         for i in insts:
+            if vector.idle(body, i.par, i.env):
+                continue
             img = f"{body.name}_n{i.node}_vc{i.index}_{len(images)}"
             text, params, got = vector.lower(body, i.par, i.env, img, fail, links, land)
             img = _shared_image(images, text, img)

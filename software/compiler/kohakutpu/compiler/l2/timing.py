@@ -196,6 +196,13 @@ def cycles(
     taking `fill` = (latency, cycles a word) of the memory path (default:
     `target.MEM` alone)."""
     mod = replace(TM.read(text, f"<{name}>"), vregs=vregs)
+    return cycles_of(mod, name, vregs, copies, fill)
+
+
+def cycles_of(
+    mod, name: str, vregs: int, copies: int, fill: tuple | None = None
+) -> int:
+    """`cycles` of a module already read (its `vregs` set)."""
     r = mod.reader()
     img = mod.images[name]
     macros = {m.name: (m.params, m.stmts) for m in mod.macros.values()}
@@ -266,4 +273,4 @@ def cycles(
     return core.end()
 
 
-__all__ = ["COND", "DMA_QUEUE", "LOOP_PASSES", "QUEUE", "cycles"]
+__all__ = ["COND", "DMA_QUEUE", "LOOP_PASSES", "QUEUE", "cycles", "cycles_of"]
