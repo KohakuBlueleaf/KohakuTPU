@@ -47,6 +47,19 @@ def test_compile_time_branches_trace_away():
     assert "mul" in with_mul and "mul" not in without
 
 
+def test_a_store_of_a_value_not_the_views_shape_is_refused():
+    @kt.kernel
+    def bad(x=kt.In("R", 128), y=kt.Out("R", 128)):
+        for c in kt.par(2, on=kt.vc):
+            # A 32-column band, bytes as loaded, into a 128-column view.
+            kt.store(y[0:4, :], kt.load(x[0:4, 0:32], gt4=True))
+
+    with pytest.raises(
+        kt.DSLError, match=r"a store of \[4, 32\] values into a \[4, 128\]"
+    ):
+        bad.trace({"x": ((8, 128), "f16")})
+
+
 def test_a_branch_on_a_runtime_value_is_refused():
     @kt.kernel
     def bad(x=kt.In("R", 128), y=kt.Out("R", 128)):

@@ -50,7 +50,10 @@ def one(text: str) -> Stmt:
         ("1e-05", Float(1e-05)),
         ("64x64x2", Dims((64, 64, 2))),
         ('"kohakutpu-l1"', Str("kohakutpu-l1")),
-        ("-inf", Neg(Name("inf"))),
+        ("-inf", Neg(Float(float("inf")))),
+        ("inf", Float(float("inf"))),
+        ("info", Name("info")),
+        ("nanos", Name("nanos")),
         ("!p", Not(Name("p"))),
         ("buf+0x40", Offset(Name("buf"), Int(0x40, "hex"))),
         ("0..H", Span(Int(0), Name("H"))),
@@ -128,7 +131,7 @@ def test_a_statement_carries_target_args_annotation_block_and_position():
     assert (a.target, a.op, a.args, a.annot) == (
         "m",
         "carry",
-        [Neg(Name("inf"))],
+        [Neg(Float(float("inf")))],
         View("f32", (Name("bq"),)),
     )
     assert (a.line, a.col) == (3, 1)

@@ -240,6 +240,22 @@ class Kernel:
             + "\n  ".join(errors)
         )
 
+    def _identity(self):
+        """What decides this kernel's body, where each piece is a plain value:
+        its function's code, the values its closure and defaults hold, its
+        name and port roles. None where one is not (an object's repr may name
+        an address another object later takes)."""
+        fn = self.fn
+        code = getattr(fn, "__code__", None)
+        if code is None:
+            return None
+        cells = tuple(c.cell_contents for c in (fn.__closure__ or ()))
+        defaults = (fn.__defaults__, tuple(sorted((fn.__kwdefaults__ or {}).items())))
+        if not _plain((cells, defaults)):
+            return None
+        roles = tuple((n, p.role) for n, p in self.ports.items())
+        return (code, self.name, cells, defaults, roles)
+
     def _trace(self, given, consts, machine) -> Traced:
         specs = self.specs(given, consts)
         key = (
@@ -249,6 +265,14 @@ class Kernel:
         )
         hit = self._cache.get(key)
         if hit is not None:
+            return hit
+        # The same body built again (a kernel factory called per launch) is
+        # traced once.
+        ident = self._identity()
+        shared = None if ident is None or not _plain(key[1]) else (ident, key)
+        hit = _TRACES.get(shared) if shared is not None else None
+        if hit is not None:
+            self._cache[key] = hit
             return hit
         t = Trace(self.name, machine)
         params = {}
@@ -271,7 +295,24 @@ class Kernel:
             self.source,
         )
         self._cache[key] = traced
+        if shared is not None:
+            _TRACES[shared] = traced
         return traced
+
+
+#: Traces by kernel identity (`Kernel._identity`) and specialisation.
+_TRACES: dict = {}
+_PLAIN = (int, float, str, bool, bytes, type(None))
+
+
+def _plain(v) -> bool:
+    """Whether `v` is built of plain values alone (numbers, strings, None,
+    and tuples / frozensets of them), so equal keys mean equal values."""
+    if isinstance(v, _PLAIN):
+        return True
+    if isinstance(v, (tuple, frozenset)):
+        return all(_plain(x) for x in v)
+    return False
 
 
 @overload

@@ -1,5 +1,6 @@
 """The DSL's refusals, each naming the source line that caused it."""
 
+import functools
 import pathlib
 import sys
 
@@ -14,18 +15,23 @@ class TracerControlFlowError(DSLError):
     """A traced value asked a question only the machine can answer."""
 
 
+@functools.cache
+def _inside(filename: str) -> bool:
+    """Whether a code object's file is in this package (resolved once a file:
+    a trace asks for every op it records)."""
+    try:
+        return pathlib.Path(filename).resolve().is_relative_to(_HERE)
+    except OSError:
+        return False
+
+
 def at_caller() -> str:
     """``file:line`` of the innermost frame outside this package (the
     kernel author's line)."""
     f = sys._getframe(1)
     while f is not None:
-        path = pathlib.Path(f.f_code.co_filename)
-        try:
-            inside = path.resolve().is_relative_to(_HERE)
-        except OSError:
-            inside = False
-        if not inside:
-            return f"{path.name}:{f.f_lineno}"
+        if not _inside(f.f_code.co_filename):
+            return f"{pathlib.Path(f.f_code.co_filename).name}:{f.f_lineno}"
         f = f.f_back
     return "<unknown>"
 

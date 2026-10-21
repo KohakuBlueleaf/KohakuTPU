@@ -91,7 +91,8 @@ NAME: /[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*/
 HEX.3: /0x[0-9A-Fa-f][0-9A-Fa-f_]*/
 DIMS.2: /\d+(x\d+)+/
 SIZE.2: /\d[\d_]*[KMG]/
-FLOAT.2: /\d[\d_]*\.\d[\d_]*([eE][+-]?\d+)?|\d[\d_]*[eE][+-]?\d+/
+// `inf` and `nan` whole words: what the writer prints for those values.
+FLOAT.2: /\d[\d_]*\.\d[\d_]*([eE][+-]?\d+)?|\d[\d_]*[eE][+-]?\d+|(inf|nan)\b/
 INT: /\d[\d_]*/
 // A string holds no quote and no newline: names a machine or a file, nothing
 // a statement computes with.

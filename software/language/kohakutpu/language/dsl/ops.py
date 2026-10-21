@@ -435,7 +435,19 @@ def store(view, x) -> None:
             raise DSLError(f"store a value, not a number, at {at_caller()}")
         band = r.stat and len(v.shape) == 2 and v.shape[-1] == 32
         p = pack(r, spec.dtype, gt4=r.mode == "gt4" or band)
+    if _count(p.shape) != _count(v.shape) or p.shape[-1] != v.shape[-1]:
+        raise DSLError(
+            f"a store of {list(p.shape)} values into a {list(v.shape)} view, "
+            f"at {at_caller()}"
+        )
     active().emit("store", v.text(), "<-", p.name)
+
+
+def _count(shape) -> int:
+    n = 1
+    for d in shape:
+        n *= d
+    return n
 
 
 def pack(x: Value, dtype: str = "f16", *, gt4=None) -> Value:

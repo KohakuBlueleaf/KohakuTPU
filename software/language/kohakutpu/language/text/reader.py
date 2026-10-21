@@ -1,7 +1,13 @@
 """Reading state shared by the level readers: the source for diagnostics and
 the term readers every level uses."""
 
+from collections.abc import Callable
+from typing import NoReturn
+
 from kohakutpu.language.text.syntax import Int, Name, Neg, TextError, Tuple
+
+#: A reader's `fail`: raises a `TextError` at a statement, never returns.
+Fail = Callable[..., NoReturn]
 
 
 class Reader:
@@ -11,7 +17,7 @@ class Reader:
         self.source, self.file = source, file
         self.names: dict = {}
 
-    def fail(self, st, message: str):
+    def fail(self, st, message: str) -> NoReturn:
         raise TextError(message, st.line, st.col, self.source, self.file)
 
     def int(self, st, t) -> int:
@@ -33,9 +39,9 @@ class Reader:
         self.fail(st, f"wanted a tuple of integers, got {t!r}")
 
 
-def dec(v: int) -> Int:
+def dec(v: int) -> Int | Neg:
     """`v` as a decimal term."""
     return Int(v, "dec") if v >= 0 else Neg(Int(-v, "dec"))
 
 
-__all__ = ["Reader", "dec"]
+__all__ = ["Fail", "Reader", "dec"]
