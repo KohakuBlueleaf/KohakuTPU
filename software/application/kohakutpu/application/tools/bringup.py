@@ -291,7 +291,7 @@ def step_enumerate(a) -> int:
     fails = 0
     want = b.get("units", {})
     for mesh in card.meshes:
-        got = {k: sorted(mesh.coords(k)) for k in ("MG", "VC")}
+        got = {k: sorted(mesh.coords(k)) for k in (want or ("MG", "VC"))}
         ok = all(got[k] == sorted(tuple(p) for p in want.get(k, [])) for k in got)
         fails += not ok
         print(f"node {mesh.index}: caps {mesh.caps}; {got} {'ok' if ok else 'DIFFERS'}")

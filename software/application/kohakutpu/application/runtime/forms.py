@@ -1,14 +1,16 @@
 """Making the form a kernel reads, and launching kernels.
 
-A kernel reads f16: a buffer of another element type has an f16 form (its
-values rounded once), made from the host bytes it was uploaded from (packed
-on the way in, never a readback) or from a kernel that wrote it. A row
+A kernel reads f16: an f32 buffer has an f16 form (its values rounded
+once), made from the host bytes it was uploaded from (packed on the way in)
+or on the card from its f32 bytes. A row
 statistic is read in the [n, 32] form (`kernels.convert.expand_kernel`); a
 cluster operand in an MXFP7 packing of a 2-D view (`kernels.matmul.
 quant_kernel`), kept for the next call while the buffer is unwritten.
 """
 
 import hashlib
+import os
+import sys
 from dataclasses import replace
 
 import numpy as np
@@ -20,6 +22,8 @@ from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime.storage import FLAT, Storage, StorageView
 from kohakutpu.compiler import kernel as K
 
+#: Set: each statistic-form transpose (`unexpand`) prints its size.
+TRACE_ENV = "KOHAKUTPU_TRACE_FORMS"
 F16 = ("f16",)
 ROWSTAT = ("rowstat",)
 #: ``("rows", n, np)``: rows of n f16 values held np apart (np whole 32-byte
@@ -36,10 +40,6 @@ def padded(st: Storage) -> tuple | None:
     if FLAT in st.valid:
         return None
     return next((k for k in st.valid if k[0] == ROWS), None)
-
-
-#: The largest integer magnitude every f16 holds exactly (11 significand bits).
-INT_EXACT = 2048
 
 
 class FormError(RuntimeError):
@@ -65,8 +65,11 @@ def base_of(s):
 
 def f16(dev, s, dtype, n: int) -> int:
     """The address of `s`'s contents as f16 (`dtype` its element type, `n`
-    its elements)."""
+    its elements; a sub-buffer's inside its base's)."""
     st, off = base_of(s)
+    item = np.dtype(dtype).itemsize
+    if off and np.dtype(dtype) != np.float16:
+        return f16(dev, st, dtype, st.nbytes // item) + off // item * 2
     if np.dtype(dtype) == np.float16:
         if FLAT in st.valid:
             return st.addr + off
@@ -74,31 +77,22 @@ def f16(dev, s, dtype, n: int) -> int:
             flatten(dev, st, st.nbytes // 2)
             return st.addr + off
         key = padded(st)
-        if key is not None and (2 * key[1]) % 32 == 0:
-            compact(dev, st, key)
-            return st.addr + off
-        raise FormError(
-            "an f16 buffer held as rows not of whole 32-byte words, read row-major"
-        )
-    if off:
-        raise FormError("a sub-buffer of a non-f16 buffer")
+        if key is None:
+            raise FormError("an f16 buffer with no current form, read row-major")
+        compact(dev, st, key)
+        return st.addr + off
     if F16 in st.valid:
         return st.forms[F16].addr
-    key = padded(st)
-    if key is not None and (2 * key[1]) % 32 == 0:
-        return compact(dev, st, key, np.dtype(dtype).itemsize)
     f = st.form(F16, 2 * n)
+    if ROWSTAT in st.valid:
+        unexpand(dev, st.forms[ROWSTAT].addr, n, f.addr)
+        st.made(F16)
+        return f.addr
+    key = padded(st)
+    if key is not None:
+        return compact(dev, st, key, np.dtype(dtype).itemsize)
     if st.host is not None:
         raw = np.frombuffer(st.host, dtype)[:n]
-        if (
-            np.issubdtype(np.dtype(dtype), np.integer)
-            and raw.size
-            and np.abs(raw).max() > INT_EXACT
-        ):
-            raise FormError(
-                f"{np.dtype(dtype)} values up to {np.abs(raw).max()}: an f16 form holds "
-                f"integers exactly only up to {INT_EXACT}"
-            )
         dev.write(f.addr, raw.astype(np.float16).tobytes())
     elif FLAT in st.valid and np.dtype(dtype) == np.float32:
         k, given = C.cast_kernel(n, "f32", "f16", dev.machine.count("VC"))
@@ -123,6 +117,12 @@ def unexpand(dev, src: int, n: int, dst: int) -> None:
     rounding)."""
     np_ = -(-n // 16) * 16
     t = Storage(dev, np_ * 64)
+    if os.environ.get(TRACE_ENV):
+        print(
+            f"unexpand n={n} np={np_} src={src:#x} dst={dst:#x}",
+            file=sys.stderr,
+            flush=True,
+        )
     try:
         k, given = TP.transpose_kernel(1, np_, 32, dev.machine.count("VC"))
         mask = table(dev, TP.masks())
@@ -140,23 +140,38 @@ def stat_bytes(n: int) -> int:
 
 
 def gather(
-    dev, stat: int, n: int, walk: tuple, at: int, dwalk: tuple, m: int, dst: int
+    dev,
+    stat: int,
+    n: int,
+    walk: tuple,
+    at: int,
+    dwalk: tuple,
+    m: int,
+    dst: int,
+    dat: int = 0,
+    keep: bool = False,
 ) -> None:
     """`m` f16 values row-major at `dst` from the statistic form of `n`
     values at `stat` (`expand`): source element `at` walked by `walk`
     (``(count, element stride)``, outermost first) into destination elements
-    walked by `dwalk`; a destination element no walk reaches is 0. One value
-    is one 64-byte row there, so any strides are whole words."""
+    walked by `dwalk` from element `dat`; a destination element no walk
+    reaches is 0, or with `keep` what `dst` held (`m` whole words of it).
+    One value is one 64-byte row there, so any strides are whole words."""
     g = Storage(dev, stat_bytes(m))
     try:
-        k, given = C.fill_kernel(
-            g.nbytes, ((g.nbytes // 1024, 1024), (32, 32)), 0, 0, 16
-        )
-        launch(dev, k, given, {"dst": g.addr}, kind="convert")
+        if keep:
+            expand(dev, dst, m, g.addr)
+        else:
+            k, given = C.fill_kernel(
+                g.nbytes, ((g.nbytes // 1024, 1024), (32, 32)), 0, 0, 16
+            )
+            launch(dev, k, given, {"dst": g.addr}, kind="convert")
 
         levels = (*((c, 64 * s) for c, s in walk), (2, 32))
         dlevels = (*((c, 64 * s) for c, s in dwalk), (2, 32))
-        k, given = C.walk_kernel(stat_bytes(n), levels, 64 * at, g.nbytes, dlevels, 0)
+        k, given = C.walk_kernel(
+            stat_bytes(n), levels, 64 * at, g.nbytes, dlevels, 64 * dat
+        )
         launch(dev, k, given, {"src": stat, "dst": g.addr}, kind="convert")
 
         unexpand(dev, g.addr, m, dst)
@@ -173,24 +188,36 @@ def flatten(dev, st: Storage, n: int) -> None:
 def repitch(
     dev, src: int, src_pitch: int, dst: int, dst_pitch: int, rows: int, w: int
 ) -> None:
-    """`rows` rows of `w` f16 values (whole 32-byte words) from `src_pitch`
-    apart to `dst_pitch` apart, by the mover."""
-    words = 2 * w // 32
-    k, given = C.walk_kernel(
-        rows * 2 * src_pitch + 32,
-        ((rows, 2 * src_pitch), (words, 32)),
-        0,
-        rows * 2 * dst_pitch + 32,
-        ((rows, 2 * dst_pitch), (words, 32)),
-        0,
-    )
-    launch(dev, k, given, {"src": src, "dst": dst}, kind="convert")
+    """`rows` rows of `w` f16 values from `src_pitch` apart to `dst_pitch`
+    apart (both addresses on words): the mover where rows and pitches are
+    whole 32-byte words, else through the statistic form (`gather`, exact;
+    the destination between its rows 0)."""
+    if not ((2 * w) % 32 or (2 * src_pitch) % 32 or (2 * dst_pitch) % 32):
+        words = 2 * w // 32
+        k, given = C.walk_kernel(
+            rows * 2 * src_pitch + 32,
+            ((rows, 2 * src_pitch), (words, 32)),
+            0,
+            rows * 2 * dst_pitch + 32,
+            ((rows, 2 * dst_pitch), (words, 32)),
+            0,
+        )
+        launch(dev, k, given, {"src": src, "dst": dst}, kind="convert")
+        return
+    n = (rows - 1) * src_pitch + w
+    e = Storage(dev, stat_bytes(n))
+    try:
+        expand(dev, src, n, e.addr)
+        walk, dwalk = ((rows, src_pitch), (w, 1)), ((rows, dst_pitch), (w, 1))
+        gather(dev, e.addr, n, walk, 0, dwalk, (rows - 1) * dst_pitch + w, dst)
+    finally:
+        e.free()
 
 
 def compact(dev, st: Storage, key: tuple, item: int = 2) -> int:
-    """A padded-rows form (rows of whole words, f16 values) made row-major:
-    the flat bytes of an f16 buffer, else (`item`-byte elements) its f16
-    form. Returns that address."""
+    """A padded-rows form (f16 values) made row-major (`repitch`): the flat
+    bytes of an f16 buffer, else (`item`-byte elements) its f16 form.
+    Returns that address."""
     _, w, wp = key
     rows = st.nbytes // (item * w)
     if item == 2:
@@ -203,10 +230,9 @@ def compact(dev, st: Storage, key: tuple, item: int = 2) -> int:
 
 
 def rowstat(dev, s, dtype, n: int) -> int:
-    """The address of `s`'s [n, 32] row-statistic form."""
-    st, off = base_of(s)
-    if off:
-        raise FormError("a statistic of a sub-buffer")
+    """The address of the [n, 32] row-statistic form of `s` (of its base for
+    a sub-buffer, whose values start ``offset / item`` rows in)."""
+    st, _ = base_of(s)
     if ROWSTAT in st.valid:
         return st.forms[ROWSTAT].addr
     src = f16(dev, st, dtype, n)
@@ -312,18 +338,15 @@ def for_port(dev, s, dtype, shape: tuple, spec) -> int:
     raise FormError(f"a {np.dtype(dtype)} tensor for a {spec.text()} port")
 
 
-_tables: dict = {}
-
-
 def table(dev, arr) -> int:
-    """A folded constant uploaded once (by content)."""
+    """A folded constant uploaded once to `dev` (by content: `dev.tables`)."""
     a = np.ascontiguousarray(arr, np.float16)
     key = hashlib.sha1(a.tobytes() + repr(a.shape).encode()).hexdigest()
-    got = _tables.get(key)
+    got = dev.tables.get(key)
     if got is None:
         got = Storage(dev, max(a.nbytes, 32))
         dev.write(got.addr, a.tobytes())
-        _tables[key] = got
+        dev.tables[key] = got
     return got.addr
 
 

@@ -1,21 +1,26 @@
 """A reduction down the rows (over an outer axis): ``out[c] = post(op over r of
 e(row r)[c])`` as a halving tree of generated rows kernels. Each level folds
-the top half of the rows onto the bottom half (the first level computing `e`
-on both halves on the fly); an odd row left over waits beside the tree and
-folds in at the end, where `post` (the expression around the reduction)
-applies too.
+the top half of the rows onto the bottom half; an odd row left over is moved
+into the next level's scratch as its last row. The first level computes `e`
+on both halves on the fly while its reads, twice over, fit a core's memory
+views; else `e` is computed into a scratch first. The last kernel applies
+`post` (the expression around the reduction) to the one row left.
 
-Levels: ceil(log2 R) kernels plus one, every intermediate an f16 [rows, W]
-scratch the device frees after the last level.
+Levels: ceil(log2 R) kernels (one more when `e` is computed first), every
+intermediate an f16 [rows, W] scratch freed after the last level.
 """
 
 from dataclasses import replace
 
+from kohakutpu.application.kernels import convert as C
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels.vector import Operand
+from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import rows as RW
 
 OP = {"sum": "add", "max": "max", "prod": "mul"}
+#: Memory views one vector core's kernel takes (`l2/vector.py` DESCS).
+VIEWS = 8
 
 
 def _shift(o: Operand, rows: int, W: int) -> Operand:
@@ -48,38 +53,40 @@ def column(
     red = reds[0]
     op = OP[red.op]
     post, keep = RW.substitute(e, red, X.Load(0))
-    item = 2
-    runs, scratch, pending = [], [], []
+    row = 2 * W  # bytes a scratch row
+    full = Operand("full", pitch=W)
+    runs: list = []
+    scratch: list = []
+
+    def alloc(rows: int) -> int:
+        at = dev.alloc(rows * row)
+        scratch.append(at)
+        return at
+
     try:
-        n, inner, ops, bnd = R, red.arg, list(operands), dict(binds)
-        cur = None  # once the first level ran: the scratch rows
+        n, ops, bnd = R, list(operands), dict(binds)
+        cur = None  # once a level ran: the scratch rows
+        if n > 1 and 2 * len(ops) + 1 > VIEWS:
+            # e's reads twice over pass a core's views: e into a scratch first.
+            cur = alloc(n)
+            runs += RW.run(dev, red.arg, ops, bnd, n, W, full, cur, info)
         while n > 1:
             h = n // 2
+            nxt = alloc(h + n % 2)
             if cur is None:
                 k = len(ops)
-                expr = X.Op(op, (inner, _renumber(inner, k)))
-                shifted = [_shift(o, h, W) for o in ops]
-                lvl_ops = ops + shifted
+                expr = X.Op(op, (red.arg, _renumber(red.arg, k)))
+                lvl_ops = ops + [_shift(o, h, W) for o in ops]
                 lvl_b = {
                     **{f"in{i}": bnd[f"in{i}"] for i in range(k)},
                     **{f"in{i + k}": bnd[f"in{i}"] for i in range(k)},
                 }
                 if n % 2:
-                    # The odd last row of `e`, kept for the end.
-                    last = dev.alloc((4 * W) * item)
-                    scratch.append(last)
+                    # e's odd last row: the next level's last.
+                    last = [_shift(o, n - 1, W) for o in ops]
                     runs += RW.run(
-                        dev,
-                        inner,
-                        [_shift(o, n - 1, W) for o in ops],
-                        bnd,
-                        1,
-                        W,
-                        Operand("full", pitch=W),
-                        last,
-                        info,
+                        dev, red.arg, last, bnd, 1, W, full, nxt + h * row, info
                     )
-                    pending.append(last)
             else:
                 expr = X.Op(op, (X.Load(0), X.Load(1)))
                 lvl_ops = [
@@ -88,34 +95,22 @@ def column(
                 ]
                 lvl_b = {"in0": cur, "in1": cur}
                 if n % 2:
-                    pending.append(cur + (n - 1) * W * item)
-            nxt = dev.alloc((h + 4) * W * item)
-            scratch.append(nxt)
-            runs += RW.run(
-                dev, expr, lvl_ops, lvl_b, h, W, Operand("full", pitch=W), nxt, info
-            )
-            cur, n = nxt, h
-        # The last row: the tree's (or e's own, for one row), the odd rows, post.
+                    k, given = C.copy_kernel(row)
+                    at = {"src": cur + (n - 1) * row, "dst": nxt + h * row}
+                    runs.append(FM.launch(dev, k, given, at, kind="copy"))
+            runs += RW.run(dev, expr, lvl_ops, lvl_b, h, W, full, nxt, info)
+            cur, n = nxt, h + n % 2
+        # The one row left (e's own, for one row), under post.
         if cur is None:
-            head, head_ops, head_b = (
-                inner,
-                list(ops),
-                {f"in{i}": bnd[f"in{i}"] for i in range(len(ops))},
-            )
+            head = red.arg
+            head_ops = list(ops)
+            head_b = {f"in{i}": bnd[f"in{i}"] for i in range(len(ops))}
         else:
-            head, head_ops, head_b = (
-                X.Load(0),
-                [Operand("full", pitch=W, rows=1)],
-                {"in0": cur},
-            )
-        acc = head
-        for p in pending:
-            j = len(head_ops)
-            head_ops.append(Operand("full", pitch=W, rows=1))
-            head_b[f"in{j}"] = p
-            acc = X.Op(op, (acc, X.Load(j)))
+            head = X.Load(0)
+            head_ops = [Operand("full", pitch=W, rows=1)]
+            head_b = {"in0": cur}
         base = len(head_ops)
-        final = _place(post, acc, base)
+        final = _place(post, head, base)
         for j, i in enumerate(keep):
             head_ops.append(operands[i])
             head_b[f"in{base + j}"] = binds[f"in{i}"]
@@ -136,4 +131,4 @@ def _place(post, acc, base: int):
     return post
 
 
-__all__ = ["OP", "column"]
+__all__ = ["OP", "VIEWS", "column"]

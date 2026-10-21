@@ -1,7 +1,10 @@
 """The device tensors live on and kernels run on: the Verilated card by
 default (``KOHAKUTPU_DEVICE=sim``, its model build from
-``KOHAKUTPU_SIM_BUILD``), or the card itself over JTAG
-(``KOHAKUTPU_DEVICE=card``, its board from ``KOHAKUTPU_BOARD``).
+``KOHAKUTPU_SIM_BUILD``), or the card itself (``KOHAKUTPU_DEVICE=card``)
+over ``KOHAKUTPU_TRANSPORT`` (jtag, the default, or xdma on a Linux host),
+or nothing attached (``KOHAKUTPU_DEVICE=offline``: every run compiled,
+checked and encoded, nothing executed). ``KOHAKUTPU_BOARD`` names the board
+each opens.
 
     dev = runtime.device()              # opened once, shared
     a = dev.alloc(nbytes)               # an address in the card's DRAM
@@ -18,18 +21,30 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 
-from kohakutpu.application.runtime.arena import Arena
-from kohakutpu.application.runtime.card import SiliconCard, VerilatorCard
+from kohakutpu.application.runtime.arena import OutOfMemory
+from kohakutpu.application.runtime.card import TRANSPORTS, SiliconCard, VerilatorCard
+from kohakutpu.application.runtime.offline import OfflineCard
 from kohakutpu.compiler.layout.buffer import Buffer
+from kohakutpu.driver.clock.card import load_board
 
 ROOT = pathlib.Path(__file__).resolve().parents[5]
 DEVICE_ENV = "KOHAKUTPU_DEVICE"
 BUILD_ENV = "KOHAKUTPU_SIM_BUILD"
 #: How many nodes (sysnodes sharing memory through the Xache) the card has.
 NODES_ENV = "KOHAKUTPU_SIM_NODES"
-#: The board a `card` device opens (boards/<name>.json).
+#: The board a device opens (boards/<name>.json); a `sim` device without it
+#: opens its model's default.
 BOARD_ENV = "KOHAKUTPU_BOARD"
 BOARD = "multimesh_v9t4"
+#: An `offline` device's board: the current 4 + 2 die.
+OFFLINE_BOARD = "multimesh_v9t8"
+#: `sim` the Verilated card, `card` the card itself, `offline` nothing
+#: attached (every run compiled, checked and encoded; nothing executed).
+KINDS = ("sim", "card", "offline")
+#: How a `card` device reaches the card (`card.TRANSPORTS`).
+TRANSPORT_ENV = "KOHAKUTPU_TRANSPORT"
+#: The private DRAM arena's most bytes (an eighth of the free DRAM below that).
+PRIVATE_MAX = 128 << 20
 
 
 #: The card models' build root: fast models (no probes) with V2 vector cores
@@ -61,20 +76,35 @@ class Run:
 
 class Device:
     """A KohakuTPU card of one or more nodes sharing memory: kernel runs,
-    counters."""
+    counters. Each argument left None comes from its environment variable."""
 
     def __init__(
-        self, kind: str | None = None, build=None, log=None, nodes: int | None = None
+        self,
+        kind: str | None = None,
+        build=None,
+        log=None,
+        nodes: int | None = None,
+        board: str | None = None,
+        transport: str | None = None,
     ) -> None:
         kind = kind or os.environ.get(DEVICE_ENV, "sim")
-        if kind not in ("sim", "card"):
-            raise ValueError(f"{DEVICE_ENV}={kind!r}: one of sim, card")
-        nodes = int(nodes or os.environ.get(NODES_ENV) or 1)
+        if kind not in KINDS:
+            raise ValueError(f"{DEVICE_ENV}={kind!r}: one of {', '.join(KINDS)}")
+        board = board or os.environ.get(BOARD_ENV)
+        # The card itself runs on every node its board has.
+        whole = load_board(board or BOARD)["meshes"] if kind == "card" else 1
+        nodes = int(nodes or os.environ.get(NODES_ENV) or whole)
         self.kind, self.nodes = kind, nodes
-        if kind == "card":
+        if kind == "offline":
             self.build = None
-            board = os.environ.get(BOARD_ENV, BOARD)
-            self.card = SiliconCard(board, nodes=tuple(range(nodes)))
+            self.card = OfflineCard(board or OFFLINE_BOARD, nodes=tuple(range(nodes)))
+        elif kind == "card":
+            self.build = None
+            self.card = SiliconCard(
+                board or BOARD,
+                transport=transport or os.environ.get(TRANSPORT_ENV, "jtag"),
+                nodes=tuple(range(nodes)),
+            )
         else:
             build = pathlib.Path(
                 build or os.environ.get(BUILD_ENV) or default_build(nodes)
@@ -88,38 +118,65 @@ class Device:
                 log or pathlib.Path(tempfile.mkdtemp(prefix="ktpu_dev_")) / "model.log"
             )
             self.build = build
-            self.card = VerilatorCard(build, nodes=tuple(range(nodes)), log=log)
+            named = {"board": board} if board else {}
+            self.card = VerilatorCard(
+                build, nodes=tuple(range(nodes)), log=log, **named
+            )
         self.machine = self.card.machine
-        self.dram = Arena(self.card.top, self.card.arena_end)
-        self.staging = {
-            n: Arena(lo, hi, align=256) for n, (lo, hi) in self.card.stages.items()
+        #: The card's memory, which every allocation here comes from.
+        self.memory = self.card.memory
+        self.dram = self.memory.dram
+        #: Where allocations go while recording (`record`): spans carved out
+        #: of the card's memory, so what a recorded log writes is free again
+        #: whenever these arenas are as it found them.
+        self.private: dict = {
+            "dram": self.memory.carve(min(PRIVATE_MAX, self.dram.free // 8))
         }
+        for n, st in self.memory.staging.items():
+            self.private[n] = self.memory.carve(st.free // 4, node=n)
+        self.recording = False
         self.runs: list = []
         self.counters = {"runs": 0, "cycles": 0, "bytes_in": 0, "bytes_out": 0}
+        #: folded constants uploaded once, by content (`forms.table`)
+        self.tables: dict = {}
 
     # ------------------------------------------------------------ memory
     def alloc(self, nbytes: int, space: str = "dram", node: int | None = None) -> int:
         if space == "stage":
             n = self.card.nodes[0] if node is None else node
-            return self.staging[n].alloc(nbytes)
-        return self.dram.alloc(int(nbytes) + TAIL)
+            if self.recording:
+                return self.private[n].alloc(nbytes)
+            return self._take(lambda: self.memory.stage(nbytes, n))
+        if self.recording:
+            return self.private["dram"].alloc(int(nbytes) + TAIL)
+        return self._take(lambda: self.memory.alloc(int(nbytes) + TAIL))
+
+    def _take(self, alloc) -> int:
+        """`alloc()`; when memory runs out, again after the packages spilled
+        outside the queues' heaps have given theirs back."""
+        try:
+            return alloc()
+        except OutOfMemory:
+            self.card.drop_spilled()
+            return alloc()
 
     def free(self, addr: int) -> None:
-        for arena in (self.dram, *self.staging.values()):
+        for arena in self.private.values():
             if addr in arena.live:
                 arena.release(addr)
                 return
-        raise KeyError(f"{addr:#x} was never allocated")
+        self.memory.free(addr)
 
     def write(self, addr: int, raw: bytes) -> None:
         raw = bytes(raw)
-        # Whole 32-byte lines: the memory endpoint fills a short line's rest.
-        pad = -len(raw) % 32
+        # Whole host lines: the memory endpoint fills a short line's rest
+        # (a JTAG write), or the host reads it to merge (an XDMA write).
+        pad = -len(raw) % self.card.line
         self.card.write(addr, raw + bytes(pad))
         self.counters["bytes_in"] += len(raw)
 
     def read(self, addr: int, nbytes: int) -> bytes:
-        n = -(-int(nbytes) // 32) * 32
+        n = -(-int(nbytes) // self.card.line) * self.card.line
         self.counters["bytes_out"] += nbytes
         return bytes(self.card.get(addr, n))[:nbytes]
 
@@ -151,6 +208,38 @@ class Device:
         self.counters["runs"] += 1
         self.counters["cycles"] += r.cycles
         return r
+
+    # ----------------------------------------------------- record / replay
+    def record(self) -> None:
+        """Log the card's runs and host writes and reads from now on, every
+        allocation made from the private arenas."""
+        self.recording = True
+        self.card.record()
+
+    def recorded(self) -> list:
+        """The log since `record` (`card.NodeCard.replay` runs it again)."""
+        self.recording = False
+        return self.card.recorded()
+
+    def private_state(self) -> tuple:
+        """The private arenas' spans: a log is replayed only from the state
+        it was recorded in."""
+        return tuple(
+            (k, tuple(a.free_list), tuple(sorted(a.live.items())))
+            for k, a in sorted(self.private.items(), key=str)
+        )
+
+    def replay(self, log: list) -> list:
+        """`log` run again, nothing recompiled or rebuilt: one `Run` a
+        package run, its node cycles (no wall time of its own)."""
+        out = []
+        for c in self.card.replay(log):
+            r = Run("replay", int(c), 0.0, "replay")
+            self.runs.append(r)
+            self.counters["runs"] += 1
+            self.counters["cycles"] += r.cycles
+            out.append(r)
+        return out
 
     def close(self) -> dict:
         return self.card.close()
@@ -185,6 +274,8 @@ __all__ = [
     "BUILD_ENV",
     "DEVICE_ENV",
     "NODES_ENV",
+    "TRANSPORTS",
+    "TRANSPORT_ENV",
     "Device",
     "Run",
     "attach",

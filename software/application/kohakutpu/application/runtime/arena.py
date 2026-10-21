@@ -33,6 +33,26 @@ class Arena:
             f"{len(self.free_list)} spans, the largest {self.largest:,}"
         )
 
+    def alloc_top(self, nbytes: int) -> int:
+        """A span at the top of the highest free span that holds it: kept
+        clear of the first-fit allocations growing from below."""
+        size = max(self.align, -(-int(nbytes) // self.align) * self.align)
+        for i in range(len(self.free_list) - 1, -1, -1):
+            at, n = self.free_list[i]
+            top = (at + n - size) // self.align * self.align
+            if top < at:
+                continue
+            rest = [(at, top - at)] if top > at else []
+            if at + n > top + size:
+                rest.append((top + size, at + n - top - size))
+            self.free_list[i : i + 1] = rest
+            self.live[top] = size
+            return top
+        raise OutOfMemory(
+            f"{nbytes:,} bytes do not fit: {self.free:,} free in "
+            f"{len(self.free_list)} spans, the largest {self.largest:,}"
+        )
+
     def release(self, addr: int) -> None:
         size = self.live.pop(addr)
         i = bisect.bisect_left(self.free_list, (addr, 0))
