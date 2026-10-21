@@ -14,7 +14,7 @@ tinygrad's own. Pinned while installed (the traps each one avoids):
 | WINO | 0 | a winograd conv is constant-matrix transforms over permuted tiles |
 | PCONTIG | 0 | partial contiguous stages local buffers; a unit has none to name |
 | buffers a kernel | 8 | a vector core walks 8 memory views (the output and 7 reads): the scheduler cuts wider kernels |
-| producer inlining | elementwise | a computed producer inlined into a consumer's reduction (`relu(h)` into a product) hides the contraction from the planner: it stays its own kernel; plain reloads and elementwise consumers follow tinygrad (`KTPU_TINYGRAD_FUSE`: `0` keeps every computed producer, `1` is tinygrad's own) |
+| producer inlining | elementwise | a computed producer inlined into a consumer's reduction (`relu(h)` into a product) hides the contraction from the planner: it stays its own kernel; reloads (plain or padded: a convolution's input) and elementwise consumers follow tinygrad (`KTPU_TINYGRAD_FUSE`: `0` keeps every computed producer, `1` is tinygrad's own) |
 | buffer lifetime | last read | a schedule holds every buffer it names to its end: `run_linear` frees each KTPU intermediate after its last kernel |
 """
 
@@ -42,6 +42,7 @@ from tinygrad.schedule import rangeify
 from tinygrad.uop import Ops
 from tinygrad.uop.ops import AxisType, PatternMatcher, ProgramInfo, UOp
 
+from kohakutpu.application.ktpugrad import fold as F
 from kohakutpu.application.ktpugrad import lower as L
 from kohakutpu.application.ktpugrad.device import NAME, register
 from kohakutpu.application.ktpugrad.plans import PLANS, KTPUUnsupported
@@ -81,11 +82,23 @@ def _reduced(idx) -> bool:
     return any(r.arg[-1] == AxisType.REDUCE for s in idx.src[1:] for r in s.ranges)
 
 
+def _reload(u) -> bool:
+    """A view of a buffer: a read, padded (zero where an index-only
+    condition fails) or not."""
+    if u.op is Ops.INDEX:
+        return True
+    if u.op is Ops.WHERE and F.index_only(u.src[0]):
+        z = u.src[2]
+        return z.op is Ops.CONST and z.arg == 0 and _reload(u.src[1])
+    return False
+
+
 def _remove_bufferize(src, buf, idx):
-    """tinygrad's rule for a KTPU buffer read as a plain reload or by an
-    elementwise consumer; a computed producer read inside a reduction stays
-    its own kernel (``elementwise``), or every computed one does (``0``)."""
-    computed = src.op is not Ops.INDEX
+    """tinygrad's rule for a KTPU buffer read as a reload (padded or not:
+    a convolution's input) or by an elementwise consumer; a computed
+    producer read inside a reduction stays its own kernel (``elementwise``),
+    or every computed one does (``0``)."""
+    computed = not _reload(src)
     if (
         _on_ktpu(getattr(buf.arg, "device", None))
         and computed

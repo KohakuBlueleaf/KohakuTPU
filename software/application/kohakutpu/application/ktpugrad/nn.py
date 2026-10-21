@@ -13,8 +13,6 @@ device in a dtype, `Adam16` is AdamW whose every state is f16 on the card.
         Tensor.realize(loss, *opt.schedule_step())  # loss read before the write
 """
 
-import math
-
 from tinygrad.dtype import DType, dtypes
 from tinygrad.helpers import TRAINING
 from tinygrad.nn.optim import Optimizer
@@ -38,7 +36,8 @@ class Adam16(Optimizer):
     update is computed at register precision and narrowed on writeback:
     w -= lr * (m * m_scale / (rms * r_scale + eps) + weight_decay * w).
     - the second moment is held as its root (`rms`), the gradient's own range;
-    - the bias corrections m_scale, r_scale are host scalars, uploaded a step;
+    - the bias corrections m_scale, r_scale come from b1**t, b2**t kept on
+      the card and advanced in the step's graph (a TinyJit replay is exact);
       `lr` is the base optimizer's tensor (a schedule assigns it, no rebuild);
     - `scale(loss)` multiplies the loss by `loss_scale` before `backward`, so
       small gradients stay above f16's subnormals; m / rms does not see it;
@@ -61,6 +60,10 @@ class Adam16(Optimizer):
         self.b1, self.b2, self.eps, self.wd = b1, b2, eps, weight_decay
         self.loss_scale, self.compensate = loss_scale, compensate
         self.steps = 0
+        self.b1_t, self.b2_t = (
+            Tensor([1.0], device=self.device).is_param_(False).realize()
+            for _ in range(2)
+        )
 
         self.m = [self._zeros(p) for p in self.params]
         self.rms = [self._zeros(p) for p in self.params]
@@ -80,9 +83,12 @@ class Adam16(Optimizer):
             raise RuntimeError("Adam16.step needs Context(TRAINING=1)")
 
         self.steps += 1
-        t = self.steps
-        scales = (1 / (1 - self.b1**t), 1 / math.sqrt(1 - self.b2**t))
-        ms, rs = (Tensor([s], device=self.device) for s in scales)
+        # b1**t and b2**t live on the card and advance in the step's own
+        # graph: a captured step (TinyJit) replays them, not frozen scalars.
+        b1_t = self.b1_t.assign(self.b1_t * self.b1)
+        b2_t = self.b2_t.assign(self.b2_t * self.b2)
+        ms = 1 / (1 - b1_t)
+        rs = (1 - b2_t).rsqrt()
         eps = self.eps * self.loss_scale  # rms is of the scaled gradient
 
         for i, p in enumerate(self.params):
@@ -111,7 +117,15 @@ class Adam16(Optimizer):
             self.err[i].assign((new - p.detach()) - y)
             p.assign(new)
 
-        return [*self.m, *self.rms, *self.err, *self.params, *self.buffers]
+        return [
+            b1_t,
+            b2_t,
+            *self.m,
+            *self.rms,
+            *self.err,
+            *self.params,
+            *self.buffers,
+        ]
 
 
 __all__ = ["Adam16", "place"]

@@ -5,8 +5,8 @@ to vector-core ops.
 `OPS`, `Reduce(op, x)` folds a row (sum, max, prod). `emit` writes an
 expression as DSL values (each op is one vector instruction or a fixed
 pattern of them: a square root through `rsqrt`, a sine through a reduction
-to [-pi, pi] and a polynomial, a truncation through the round-to-integer
-constant); `evaluate` is the same arithmetic in numpy, for references.
+to [-pi, pi] and a polynomial, a truncation through the rounding constant);
+`evaluate` is the same arithmetic in numpy, for references.
 """
 
 import math
@@ -16,8 +16,8 @@ import numpy as np
 
 from kohakutpu.language import dsl as kt
 
-#: 1.5 * 2**15: added and subtracted, a lane value |x| < 2**14 rounds to an
-#: integer (E8M15 lanes carry 16 significand bits).
+#: 1.5 * 2**15: added and subtracted, a lane value |x| < 2**14 rounds to a
+#: whole number (E8M15 lanes carry 16 significand bits).
 ROUND = 49152.0
 TINY = 1e-30
 TWO_PI_HI = 6.28125  # exact in few bits, so n * hi stays exact
@@ -84,11 +84,6 @@ OPS = {
     "xor": 2,
     "not": 1,
     "id": 1,
-    # Integer division on integral lane values (C: toward zero; floor).
-    "cdiv": 2,
-    "cmod": 2,
-    "floordiv": 2,
-    "floormod": 2,
 }
 
 
@@ -117,10 +112,13 @@ def loads(e) -> set:
 
 
 def reduces(e) -> list:
+    """The outermost reductions in `e`, a node the expression reads twice
+    (a mean a layer norm's gradient takes in two places) once."""
     if isinstance(e, Reduce):
         return [e]
     if isinstance(e, Op):
-        return [r for a in e.args for r in reduces(a)]
+        found = [r for a in e.args for r in reduces(a)]
+        return [r for i, r in enumerate(found) if all(r is not q for q in found[:i])]
     return []
 
 
@@ -231,41 +229,7 @@ def _op(name, *a):
             return 1.0 - a[0]
         case "id":
             return a[0]
-        case "cdiv":
-            return _cdiv(a[0], a[1])[0]
-        case "cmod":
-            return _cdiv(a[0], a[1])[1]
-        case "floordiv":
-            return _floordiv(a[0], a[1])[0]
-        case "floormod":
-            return _floordiv(a[0], a[1])[1]
     raise ValueError(f"no lowering for {name}")
-
-
-def _sign(x):
-    return _cmp("cmpgt", x, 0.0) - _cmp("cmplt", x, 0.0)
-
-
-def _cdiv(a, b):
-    """``(quotient, remainder)`` toward zero of integral values: the
-    truncated product with the reciprocal, corrected by one where the exact
-    remainder overshot (wrong sign) or undershot (|r| >= |b|)."""
-    q = _trunc(a * (1.0 / b if _num(b) else kt.recip(b)))
-    r = a - q * b
-    sa, sb = _sign(a), (float(np.sign(b)) if _num(b) else _sign(b))
-    over = _cmp("cmplt", r * sa, 0.0)
-    under = 1.0 - _cmp("cmplt", kt.absolute(r), abs(b) if _num(b) else kt.absolute(b))
-    q = q + sa * sb * (under - over)
-    return q, a - q * b
-
-
-def _floordiv(a, b):
-    """``(quotient, remainder)`` toward minus infinity: the C quotient less
-    one where the remainder's sign is not the divisor's."""
-    q, r = _cdiv(a, b)
-    sb = float(np.sign(b)) if _num(b) else _sign(b)
-    q = q - _cmp("cmplt", r * sb, 0.0)
-    return q, a - q * b
 
 
 def _cmp(name, a, b):
@@ -278,13 +242,13 @@ def _cmp(name, a, b):
 
 
 def _round(x):
-    """x rounded to the nearest integer (|x| < 2**14)."""
+    """x rounded to the nearest whole number (|x| < 2**14)."""
     return (x + ROUND) - ROUND
 
 
 def _trunc(x):
-    """Toward zero: the nearest integer, less one where it overshot away from
-    zero; |x| >= 2**14 is already an integer in a lane."""
+    """Toward zero: the nearest whole number, less one where it overshot away
+    from zero; |x| >= 2**14 is already whole in a lane."""
     r = _round(x)
     floor = r - kt.math("cmpgt", r, x)
     ceil = r + kt.math("cmplt", r, x)
@@ -396,14 +360,6 @@ def evaluate(e, arrays: list):
                 return (a[0] == 0).astype(np.float64)
             case "id":
                 return a[0]
-            case "cdiv":
-                return np.trunc(a[0] / a[1])
-            case "cmod":
-                return np.fmod(a[0], a[1])
-            case "floordiv":
-                return np.floor_divide(a[0], a[1])
-            case "floormod":
-                return np.mod(a[0], a[1])
     raise ValueError(f"no numpy for {e.name}")
 
 

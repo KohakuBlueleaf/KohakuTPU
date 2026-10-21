@@ -41,13 +41,12 @@ class Mm:
 
 
 def plan(bt: int, m: int, n: int, k: int, shared: bool = True) -> Mm:
-    """The tiling for an [M, K] x [N, K] product, `bt` of them. Raises
-    ValueError for an N that is not whole 32-column blocks (the epilogue
-    stores whole blocks) or a batched M that is not whole groups of 4."""
+    """The tiling for an [M, K] x [N, K] product, `bt` of them, each batch's
+    rows padded to `mp` (whole groups of 4: the epilogue's operands and
+    output are [bt * mp, N]). Raises ValueError for an N that is not whole
+    32-column blocks (the epilogue stores whole blocks)."""
     if n % 32:
         raise ValueError(f"N = {n}: the product's columns are whole blocks of 32")
-    if bt > 1 and m % 4:
-        raise ValueError(f"M = {m} in a batch: whole groups of 4 rows")
     kp = -(-k // 32) * 32
     nk = 2 if kp % 64 == 0 else 1
     mp = -(-m // 4) * 4

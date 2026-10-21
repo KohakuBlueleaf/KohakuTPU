@@ -85,7 +85,13 @@ def _bands_fit(operands, out_kind: str, wc: int, W: int) -> int:
 
 
 def plan(
-    operands, out_kind: str, R: int, W: int, bands=None, wc=None, quantum: int = 4
+    operands,
+    out_kind: str,
+    R: int,
+    W: int,
+    bands=None,
+    wc=None,
+    quantum: int = 4,
 ) -> Plan:
     """The trips and blocks of a rows stage: as many bands a trip as the
     L1 holds double-buffered (at most 4), `quantum` rows dividing a trip.
@@ -103,7 +109,7 @@ def plan(
         wc = narrower
     if fit < 1:
         raise ValueError(f"one band of {wc} columns does not fit a core's L1")
-    b = bands or max(1, min(4, fit))
+    b = max(1, bands or min(4, fit))
     rows = 4 * b
     while rows % quantum:
         rows += 4
@@ -112,17 +118,21 @@ def plan(
 
 
 def stages(pl: Plan, R: int, quantum: int = 4) -> list:
-    """``[(plan, first row)]``: the trips of whole `pl.rows`, then (when R
-    is not a multiple of them) one short trip rounded up to `quantum` rows,
-    so the kernel writes at most quantum - 1 rows past R."""
+    """``[(plan, first row, rows)]``: the trips of whole `pl.rows`, then the
+    rest in one trip of whole `quantum`s, then (R not a multiple of
+    `quantum`) one band of `quantum` rows holding the last `rows` (None:
+    every row of the stage is one of R)."""
     full, rem = divmod(R, pl.rows)
-    if not rem:
-        return [(pl, 0)]
-    short = -(-rem // quantum) * quantum
-    last = (Plan(pl.wc, pl.nblk, short, 1, short), full * pl.rows)
-    if not full:
-        return [last]
-    return [(Plan(pl.wc, pl.nblk, pl.rows, full, full * pl.rows), 0), last]
+    out = []
+    if full:
+        out.append((Plan(pl.wc, pl.nblk, pl.rows, full, full * pl.rows), 0, None))
+    whole = rem // quantum * quantum
+    if whole:
+        out.append((Plan(pl.wc, pl.nblk, whole, 1, whole), full * pl.rows, None))
+    if rem % quantum:
+        band = Plan(pl.wc, pl.nblk, quantum, 1, quantum)
+        out.append((band, full * pl.rows + whole, rem % quantum))
+    return out
 
 
 def overrun(R: int, quantum: int = 4) -> int:
@@ -219,7 +229,24 @@ def _rows_block(bufs, e, operands, out, pl: Plan, r, cb: int, pro: dict) -> None
             kt.store(dst[r : r + pl.rows, :], v)
     else:
         rr, cc = divmod(out.offset, out.pitch)
-        kt.store(dst[rr + r : rr + r + pl.rows, cc + col0 : cc + col0 + pl.wc], v)
+        _store_over(dst, rr + r, cc + col0, pl.rows, pl.wc, v)
+
+
+def _store_over(dst, r0, c0, rows: int, cols: int, v) -> None:
+    """`v` over the [rows, cols] window of `dst` at (r0, c0): packed once,
+    then stored over each of its bands (a statistic is one band of 32
+    columns, a row broadcast one band of 4 rows: repeated across)."""
+    if not (isinstance(v, kt.Value) and v.space == "l1"):
+        if not isinstance(v, kt.Value):
+            raise ValueError("a rows kernel stores a computed value, not a number")
+        gt4 = v.stat or v.mode == "gt4"
+        v = kt.pack(v, dst.spec.dtype, gt4=gt4)
+    h, w = (v.shape[0], v.shape[-1]) if len(v.shape) == 2 else (v.shape[0], cols)
+    if rows % h or cols % w:
+        raise ValueError(f"a [{h}, {w}] value does not tile a [{rows}, {cols}] window")
+    for i in range(0, rows, h):
+        for j in range(0, cols, w):
+            kt.store(dst[r0 + i : r0 + i + h, c0 + j : c0 + j + w], v)
 
 
 def rows_kernel(
@@ -237,23 +264,53 @@ def rows_kernel(
     if pl.nblk > 1 and len(reduces) > 1:
         raise ValueError("several reductions over a row wider than one block")
     parts = stages(pl, R)
-    rp = parts[-1][1] + parts[-1][0].rp
     ports, given = {}, {}
     for i, o in enumerate(operands):
-        ports[f"in{i}"], given[f"in{i}"] = port(o, rp, W)
+        ports[f"in{i}"], given[f"in{i}"] = port(o, R, W)
     if out.kind == "row":
-        out_shape = (max(out.rows, rp), 32 * pl.nblk)
+        out_shape = (max(out.rows, R), 32 * pl.nblk)
     else:
-        out_shape = port(out, rp, W)[1].shape
+        out_shape = port(out, R, W)[1].shape
     ports["out"] = kt.Out(*out_shape)
     given["out"] = kt.TensorSpec.make(out_shape)
 
     def body(**p):
-        for sp, row0 in parts:
-            rows_stage(p, e, operands, out, sp, cores, row0=row0)
+        for sp, row0, rows in parts:
+            if rows is None:
+                rows_stage(p, e, operands, out, sp, cores, row0=row0)
+            else:
+                _tail_band(p, e, operands, out, sp, row0, rows, W)
 
     k = kt.Kernel.build(name("rows", repr(e), operands, R, W, out, pl), body, ports)
     return k, given, pl.nblk
+
+
+def _tail_band(p, e, operands, out: Operand, pl: Plan, row0: int, rows: int, W: int):
+    """The last band of a rows kernel, `rows` (< 4) of its rows real: each
+    operand's rows copied by the mover into a zeroed band of scratch, the
+    band computed there, its first `rows` rows copied out -- no row past R
+    read or written."""
+    bufs, ops = dict(p), list(operands)
+    for i, o in enumerate(operands):
+        if o.kind not in ("full", "tile", "row"):
+            continue
+        cols = 32 if o.kind == "row" else W
+        rr, cc = (o.offset, 0) if o.kind == "row" else divmod(o.offset, o.pitch)
+        s = kt.buffer((pl.rows, cols), o.dtype)
+        kt.fill_value(s, 0)
+        kt.copy(s[0:rows, :], p[f"in{i}"][rr + row0 : rr + row0 + rows, cc : cc + cols])
+        bufs[f"in{i}"] = s
+        ops[i] = Operand(o.kind, o.dtype, 0, 0 if o.kind == "row" else cols, pl.rows)
+    cols = 32 * pl.nblk if out.kind == "row" else W
+    s = kt.buffer((pl.rows, cols), out.dtype)
+    bufs["out"] = s
+    tail = Operand(out.kind, out.dtype, 0, 0 if out.kind == "row" else cols, pl.rows)
+    rows_stage(bufs, e, tuple(ops), tail, pl, 1, row0=0)
+    if out.kind == "row":
+        kt.copy(p["out"][row0 : row0 + rows, :], s[0:rows, :])
+    else:
+        rr, cc = divmod(out.offset, out.pitch)
+        kt.copy(p["out"][rr + row0 : rr + row0 + rows, cc : cc + W], s[0:rows, :])
 
 
 def flat_kernel(e, dtypes: tuple, n: int, out_dtype: str = "f16", cores: int = 2):
@@ -265,24 +322,34 @@ def flat_kernel(e, dtypes: tuple, n: int, out_dtype: str = "f16", cores: int = 2
     while rows > 1 and 2 * rows * words > L1_WORDS - L1_MARGIN:
         rows //= 2
     total = -(-n // 128)
-    nb = -(-total // rows)
-    rp = nb * rows
+    full, rem = divmod(total, rows)
     ports, given = {}, {}
     for i, d in enumerate(dtypes):
-        ports[f"in{i}"] = kt.In(rp, 128, dtype=d)
-        given[f"in{i}"] = kt.TensorSpec.make((rp, 128), d)
-    ports["out"] = kt.Out(rp, 128, dtype=out_dtype)
-    given["out"] = kt.TensorSpec.make((rp, 128), out_dtype)
+        ports[f"in{i}"] = kt.In(total, 128, dtype=d)
+        given[f"in{i}"] = kt.TensorSpec.make((total, 128), d)
+    ports["out"] = kt.Out(total, 128, dtype=out_dtype)
+    given["out"] = kt.TensorSpec.make((total, 128), out_dtype)
+
+    def trip(p, r, h: int) -> None:
+        vals = {i: kt.load(p[f"in{i}"][r : r + h, :]) for i in range(len(dtypes))}
+        kt.store(p["out"][r : r + h, :], X.emit(e, vals))
 
     def body(**p):
-        ncore, start, trips = split(nb, cores)
-        for c in kt.par(ncore, on=kt.vc):
-            for t in kt.range(trips(c)):
-                r = start(c) * rows + t * rows
-                vals = {
-                    i: kt.load(p[f"in{i}"][r : r + rows, :]) for i in range(len(dtypes))
-                }
-                kt.store(p["out"][r : r + rows, :], X.emit(e, vals))
+        # Whole trips over the cores, then the rest in one trip of its own:
+        # no row past the output's last is read or written.
+        if full:
+            ncore, start, trips = split(full, cores)
+            for c in kt.par(ncore, on=kt.vc):
+                for t in kt.range(trips(c)):
+                    trip(p, start(c) * rows + t * rows, rows)
+        # The rest as whole groups of 4 rows, then 2, then 1.
+        r = full * rows
+        for h in (rem // 4 * 4, rem % 4 & 2, rem % 2):
+            if h:
+                for _ in kt.par(1, on=kt.vc):
+                    for _ in kt.range(1):
+                        trip(p, r, h)
+                r += h
 
     k = kt.Kernel.build(name("flat", repr(e), dtypes, n, out_dtype), body, ports)
     return k, given

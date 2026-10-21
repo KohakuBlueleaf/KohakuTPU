@@ -18,6 +18,7 @@ from tinygrad.uop import Ops
 from tinygrad.uop.ops import UOp
 
 from kohakutpu.application.kernels import expr as X
+from kohakutpu.application.ktpugrad import domain as D
 from kohakutpu.application.ktpugrad import fold as F
 from kohakutpu.application.ktpugrad import uops as U
 
@@ -97,21 +98,6 @@ ALU = {
 }
 #: ALU ops on bools only (0.0 / 1.0 in a lane).
 BOOL = {Ops.AND: "and", Ops.OR: "or", Ops.XOR: "xor"}
-#: Integer data runs on integral lane values (exact while the f16 forms
-#: hold them: |v| <= 2048); these ALU ops keep a value integral.
-INT_EXACT = {Ops.ADD, Ops.SUB, Ops.MUL, Ops.MAX, Ops.NEG, Ops.MULACC} | {
-    Ops.CMPLT,
-    Ops.CMPNE,
-    Ops.CMPEQ,
-    Ops.WHERE,
-}
-#: Integer division and remainder (`kernels.expr`: corrected to exact).
-INTEGER = {
-    Ops.CDIV: "cdiv",
-    Ops.CMOD: "cmod",
-    Ops.FLOORDIV: "floordiv",
-    Ops.FLOORMOD: "floormod",
-}
 REDUCE = {Ops.ADD: "sum", Ops.MAX: "max", Ops.MUL: "prod"}
 
 
@@ -120,7 +106,7 @@ def plan(ast) -> Plan:
     got = U.envelope(ast)
     if got is None:
         raise Refused(f"not one stored loop nest; it holds {U.summarise(ast)}")
-    ast, digits = _unfold(ast)
+    ast, digits = D.normalise(*_unfold(ast))
     store = ast.src[0].src[0] if ast.src[0].op is Ops.END else ast.src[0]
     ranges = tuple(d for r in got[1] for d in digits.get(r, (r,)))
     idx, value = store.src[0], store.src[1]
@@ -360,19 +346,12 @@ class _Reader:
         if u.op is Ops.RECIPROCAL and u.src[0].op is Ops.SQRT:
             return X.op("rsqrt", self.read(u.src[0].src[0]))
         if u.op in ALU:
-            if dtypes.is_int(u.dtype) and u.op not in INT_EXACT:
-                raise Refused(
-                    f"{u.op.name} on {u.dtype} data: not an integer operation"
-                )
-            return X.op(ALU[u.op], *[self.read(s) for s in u.src])
-        if u.op in INTEGER:
-            return X.op(INTEGER[u.op], *[self.read(s) for s in u.src])
-        if u.op in (Ops.SHL, Ops.SHR):
-            return self._shift(u)
-        if u.op in BOOL:
-            if u.dtype == dtypes.bool:
-                return X.op(BOOL[u.op], *[self.read(s) for s in u.src])
-            return self._mask(u)
+            args = [self.read(s) for s in u.src]
+            if u.op is Ops.WHERE and isinstance(args[0], X.Const):
+                return args[1] if args[0].value else args[2]
+            return X.op(ALU[u.op], *args)
+        if u.op in BOOL and u.dtype == dtypes.bool:
+            return X.op(BOOL[u.op], *[self.read(s) for s in u.src])
         if u.op is Ops.THREEFRY:
             raise Refused(
                 "THREEFRY on data: a bit-mixing hash has no lane operation "
@@ -380,31 +359,14 @@ class _Reader:
             )
         raise Refused(f"no lowering for {u.op.name}")
 
-    def _shift(self, u):
-        """A shift by a constant: a multiply or a floor division by 2^k."""
-        k = u.src[1]
-        if k.op is not Ops.CONST or not isinstance(k.arg, int):
-            raise Refused(f"{u.op.name} by a data-dependent count")
-        x, p = self.read(u.src[0]), float(2**k.arg)
-        return X.op("mul", x, p) if u.op is Ops.SHL else X.op("floordiv", x, p)
-
-    def _mask(self, u):
-        """``x & (2^k - 1)``: the remainder mod 2^k (two's complement)."""
-        a, b = u.src
-        if a.op is Ops.CONST:
-            a, b = b, a
-        m = b.arg if b.op is Ops.CONST else None
-        if u.op is not Ops.AND or not isinstance(m, int) or m < 0 or m & (m + 1):
-            raise Refused(f"{u.op.name} on {u.dtype} data: bits, not values, in a lane")
-        return X.op("floormod", self.read(a), float(m + 1))
-
     def _cast(self, u):
-        src, to = u.src[0], u.dtype
-        x = self.read(src)
+        """A cast: to a bool, a compare with 0; to a float, the value."""
+        to = u.dtype
+        x = self.read(u.src[0])
         if to == dtypes.bool:
             return X.op("cmpne", x, 0.0)
-        if dtypes.is_int(to):
-            return X.op("trunc", x)
+        if not dtypes.is_float(to):
+            raise Refused(f"a cast to {to}")
         return x
 
     def _reduce(self, u):
@@ -447,23 +409,29 @@ class _Reader:
         if gate is None:
             return load
         # Out of bounds the read is 0 (tinygrad's padding).
-        return X.op("where", self._table(gate, gate=True), load, 0.0)
+        bound = self._table(gate, gate=True)
+        if isinstance(bound, X.Const):
+            return load if bound.value else X.Const(0.0)
+        return X.op("where", bound, load, 0.0)
 
     def _table(self, u, gate: bool = False):
         """An index-only subexpression inside data math: folded over the
-        ranges it reads, a compact row-major table."""
+        ranges it reads, a compact row-major f16 table."""
         rs = [r for r in u.toposort() if r.op is Ops.RANGE]
         rs = sorted(set(rs), key=lambda r: (self._rank(r), r.arg[0]))
         arr = np.asarray(F.evaluate(u, tuple(rs)), np.float64)
-        arr = np.broadcast_to(arr, tuple(U.extent(r) for r in rs)).astype(np.float16)
+        arr = np.broadcast_to(arr, tuple(U.extent(r) for r in rs))
+        if arr.size and np.all(arr == arr.flat[0]):
+            # One value over the whole nest: a constant.
+            return X.Const(float(arr.flat[0]))
         coef, step = {}, 1
         for r in reversed(rs):
             coef[r] = step
             step *= U.extent(r)
-        acc = Access(
-            None, dtypes.half, tuple(coef.items()), 0, np.ascontiguousarray(arr), gate
+        table = np.ascontiguousarray(arr.astype(np.float16))
+        self.accesses.append(
+            Access(None, dtypes.half, tuple(coef.items()), 0, table, gate)
         )
-        self.accesses.append(acc)
         return X.Load(len(self.accesses) - 1)
 
     def _rank(self, r) -> int:

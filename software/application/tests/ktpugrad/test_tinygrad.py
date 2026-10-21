@@ -3,6 +3,7 @@ the cases that once came back wrong, and refusals by name."""
 
 import numpy as np
 import pytest
+from numpy.lib.stride_tricks import sliding_window_view
 from tinygrad.dtype import dtypes
 from tinygrad.tensor import Tensor
 
@@ -24,10 +25,6 @@ def T(a):
     return Tensor(a, device="KTPU")
 
 
-def I(a):
-    return Tensor(np.asarray(a, np.int32), device="KTPU")
-
-
 def softmax(a):
     a = f(a)
     e = np.exp(a - a.max(-1, keepdims=True))
@@ -41,10 +38,17 @@ Q = h(2, 4, 8, 32)
 BX, BY = h(2, 32, 64), (h(2, 64, 48) / 8).astype(np.float16)
 IMG = h(2, 4, 8, 8)
 LAB = RNG.integers(0, 64, 32)
-INTS = RNG.integers(-200, 200, (8, 64))
+#: One-hot float labels: the loss reads labels as values.
+ONEHOT = np.eye(64, dtype=np.float16)[LAB]
 N10, ODD = h(24, 10), h(3, 5, 7)
 POS = h(32, 64)
 W10 = (h(10, 96) / 3).astype(np.float16)
+WIDE, WIDE2 = h(8, 1184), h(8, 2400)
+W84 = (h(84, 64) / 8).astype(np.float16)
+B120, CH, H84 = h(8, 120), h(8, 6, 28, 28), h(32, 84)
+FAR, FARTHER, CH64 = h(4, 20480), h(2, 40960), h(64, 6, 28, 28)
+APART = h(64, 6144)
+NHWC16 = h(2, 64, 16)
 
 ELEMENTWISE = {
     "add": (lambda: T(X) + T(Y), lambda: f(X) + Y),
@@ -74,7 +78,7 @@ ELEMENTWISE = {
         lambda: f(X) * 3,
     ),
     "arange_times": (
-        lambda: Tensor.arange(64).to("KTPU").cast(dtypes.half) * T(X),
+        lambda: Tensor.arange(64, dtype=dtypes.half).to("KTPU") * T(X),
         lambda: np.arange(64) * f(X),
     ),
     "row_broadcast": (lambda: T(X) + T(X[0].copy()), lambda: f(X) + X[0]),
@@ -83,8 +87,6 @@ ELEMENTWISE = {
         lambda: T(BX) + T(POS) + T(BX[0, 0].copy()),
         lambda: f(BX) + POS + BX[0, 0],
     ),
-    # Once wrong: a value a row beside one row took the narrower width.
-    "one_hot": (lambda: I(LAB).one_hot(64), lambda: np.eye(64)[LAB]),
 }
 REDUCTIONS = {
     "sum_rows": (lambda: T(X).sum(axis=1), lambda: f(X).sum(1)),
@@ -99,6 +101,26 @@ REDUCTIONS = {
         / np.sqrt(f(X).var(-1, keepdims=True) + 1e-5),
     ),
     "mean_of_all": (lambda: T(X).mean(), lambda: f(X).mean()),
+    # Rows of 32 x an odd number: column blocks of 32, their partials folded
+    # by halving (a group norm's statistic over 3 x 28 x 28 padded).
+    "sum_wide_rows": (lambda: T(WIDE).sum(axis=1), lambda: f(WIDE).sum(1)),
+    "max_wide_rows": (lambda: T(WIDE2).max(axis=1), lambda: f(WIDE2).max(1)),
+    # Down rows of 120 (a bias gradient): laid out 128 apart exactly.
+    "sum_cols_120": (lambda: T(B120).sum(axis=0), lambda: f(B120).sum(0)),
+    # A channel's sum over batch and image: rows too far apart for one walk.
+    "channel_sum": (lambda: T(CH).sum((0, 2, 3)), lambda: f(CH).sum((0, 2, 3))),
+    # Rows too far apart for a band's step (ainc): the step pass runs the
+    # stream's trips as a node loop, one trip a run.
+    "sum_far_rows": (lambda: T(FAR).sum(axis=1), lambda: f(FAR).sum(1)),
+    "max_far_rows": (lambda: T(FAR).max(axis=1), lambda: f(FAR).max(1)),
+    "mean_far_rows": (lambda: T(FAR).mean(axis=1), lambda: f(FAR).mean(1)),
+    # Rows 12 KB apart, several trips a core.
+    "sum_rows_apart": (lambda: T(APART).sum(axis=1), lambda: f(APART).sum(1)),
+    "sum_farther_rows": (lambda: T(FARTHER).sum(axis=1), lambda: f(FARTHER).sum(1)),
+    "channel_sum_64": (
+        lambda: T(CH64).sum((0, 2, 3)),
+        lambda: f(CH64).sum((0, 2, 3)),
+    ),
     "std": (lambda: T(X).std(1), lambda: f(X).std(1, ddof=1)),
     # Reductions over several axes, narrow rows, statistics of statistics.
     "sum_02": (lambda: T(IMG).sum((0, 2)), lambda: f(IMG).sum((0, 2))),
@@ -106,16 +128,9 @@ REDUCTIONS = {
     "bn_mean": (lambda: T(IMG).mean((0, 2, 3)), lambda: f(IMG).mean((0, 2, 3))),
     "bn_var": (lambda: T(IMG).var((0, 2, 3)), lambda: f(IMG).var((0, 2, 3), ddof=1)),
     "cross_entropy": (
-        lambda: T(X).sparse_categorical_crossentropy(I(LAB)).reshape(1),
+        lambda: -(T(X).log_softmax() * T(ONEHOT)).sum(-1).mean().reshape(1),
         lambda: np.array([-np.log(softmax(X)[np.arange(32), LAB]).mean()]),
     ),
-}
-INTEGER = {
-    "int_add": (lambda: I(INTS) + 5, lambda: INTS + 5),
-    "int_mul": (lambda: I(INTS) * 3, lambda: INTS * 3),
-    "int_div": (lambda: I(INTS) // 7, lambda: INTS // 7),
-    "int_mod": (lambda: I(INTS) % 7, lambda: INTS % 7),
-    "argmax": (lambda: T(X).argmax(1), lambda: X.argmax(1)),
 }
 MOVEMENT = {
     # Once wrong: a store of loaded bytes did not wait for their fill.
@@ -159,6 +174,12 @@ MOVEMENT = {
         lambda: ODD.transpose(2, 0, 1),
     ),
     "narrow_flip": (lambda: T(ODD[0]).flip(1), lambda: ODD[0][:, ::-1]),
+    # Six channels of rows of 16 innermost to first (a convolution's product
+    # to NCHW): the 4 x 4 lane transpose over 16 lanes, the rest dropped.
+    "channels_first_6": (
+        lambda: T(NHWC16)[:, :, :6].permute(0, 2, 1).contiguous(),
+        lambda: NHWC16[:, :, :6].transpose(0, 2, 1),
+    ),
     "stride_slice": (lambda: T(X)[:, ::3].contiguous(), lambda: X[:, ::3]),
 }
 MATMUL = {
@@ -176,10 +197,62 @@ MATMUL = {
         lambda: T(X) @ T(W10[:, :64].copy()).T,
         lambda: f(X) @ f(W10[:, :64]).T,
     ),
+    # A product of 84 columns (held as padded rows) read by another's
+    # epilogue: made row-major through the statistic form.
+    "n84_epilogue": (
+        lambda: T(X) @ T(W84).T + (T(Y) @ T(W84).T).relu(),
+        lambda: f(X) @ f(W84).T + np.maximum(f(Y) @ f(W84).T, 0),
+    ),
+    # A dense [32, 84] operand of the epilogue: laid out 96 apart exactly.
+    "n84_dense_operand": (
+        lambda: T(X) @ T(W84).T * T(H84),
+        lambda: f(X) @ f(W84).T * f(H84),
+    ),
 }
-CASES = {**ELEMENTWISE, **REDUCTIONS, **INTEGER, **MOVEMENT, **MATMUL}
-#: Exact by construction: data movement and integer math.
-EXACT = (set(INTEGER) | set(MOVEMENT)) - {"transpose_add", "cat_then_math"}
+
+
+def conv(x, w, pad):
+    """f64 cross-correlation of [B, C, H, W] with [O, C, KH, KW], zero padding."""
+    xp = np.pad(f(x), ((0, 0), (0, 0), (pad, pad), (pad, pad)))
+    p = sliding_window_view(xp, w.shape[2:], axis=(2, 3))
+    return np.einsum("bchwij,ocij->bohw", p, f(w))
+
+
+def conv_grads(x, w, pad, g):
+    """d sum(conv(x, w) * g) / dx and / dw."""
+    xp = np.pad(f(x), ((0, 0), (0, 0), (pad, pad), (pad, pad)))
+    kh, kw = w.shape[2:]
+    dw = np.einsum(
+        "bchwij,bohw->ocij", sliding_window_view(xp, (kh, kw), axis=(2, 3)), f(g)
+    )
+    dxp = np.zeros_like(xp)
+    oh, ow = g.shape[2:]
+    for i in range(kh):
+        for j in range(kw):
+            dxp[:, :, i : i + oh, j : j + ow] += np.einsum(
+                "bohw,oc->bchw", f(g), f(w[:, :, i, j])
+            )
+    return dxp[:, :, pad : pad + x.shape[2], pad : pad + x.shape[3]], dw
+
+
+CX, CW = h(2, 3, 6, 6), (h(4, 3, 3, 3) / 3).astype(np.float16)
+C1, CW1 = h(2, 1, 8, 8), (h(4, 1, 5, 5) / 5).astype(np.float16)
+WINDOW = {
+    "conv2d": (lambda: T(CX).conv2d(T(CW)), lambda: conv(CX, CW, 0)),
+    "conv2d_padded": (lambda: T(CX).conv2d(T(CW), padding=1), lambda: conv(CX, CW, 1)),
+    # One input channel: no channel to lay innermost, a lane of one.
+    "conv2d_one_channel": (
+        lambda: T(C1).conv2d(T(CW1), padding=2),
+        lambda: conv(C1, CW1, 2),
+    ),
+    "avg_pool2d": (
+        lambda: T(IMG).avg_pool2d((2, 2)),
+        lambda: f(IMG).reshape(2, 4, 4, 2, 4, 2).mean((3, 5)),
+    ),
+}
+CASES = {**ELEMENTWISE, **REDUCTIONS, **MOVEMENT, **MATMUL, **WINDOW}
+#: Exact by construction: data movement.
+EXACT = set(MOVEMENT) - {"transpose_add", "cat_then_math"}
 
 
 @pytest.mark.parametrize("name", sorted(CASES))
@@ -219,9 +292,39 @@ def test_wide_kernels_split_at_eight_views(dev, rel):
 
 
 @pytest.mark.parametrize(
+    "x, w, pad", [(CX, CW, 0), (C1, CW1, 2)], ids=["plain", "padded"]
+)
+def test_conv_gradients(dev, rel, x, w, pad):
+    """Both gradients of a convolution: the input's (a window with a
+    negative stride on the kernel) and the weight's (a window summed over
+    the batch)."""
+    oh = x.shape[2] + 2 * pad - w.shape[2] + 1
+    g = h(x.shape[0], w.shape[0], oh, oh)
+    tx, tw = T(x), T(w)
+    gx, gw = (tx.conv2d(tw, padding=pad) * T(g)).sum().gradient(tx, tw)
+    dx, dw = conv_grads(x, w, pad, g)
+    assert rel(gx.numpy(), dx) < 2e-2
+    assert rel(gw.numpy(), dw) < 2e-2
+
+
+def test_avg_pool_gradient(dev, rel):
+    """The backward of tinygrad's pool (a repeat sliced into windows): each
+    input element in exactly one window; through a SiLU, the upsampled
+    gradient times the SiLU's derivative (a read broadcast over the window's
+    digits, laid out over the output first)."""
+    g = h(2, 4, 4, 4)
+    up = np.repeat(np.repeat(f(g), 2, 2), 2, 3) / 4
+    tx = T(IMG)
+    (gx,) = (tx.avg_pool2d((2, 2)) * T(g)).sum().gradient(tx)
+    assert rel(gx.numpy(), up) < 2e-2
+    (gs,) = (tx.silu().avg_pool2d((2, 2)) * T(g)).sum().gradient(tx)
+    s = 1 / (1 + np.exp(-f(IMG)))
+    assert rel(gs.numpy(), up * (s + f(IMG) * s * (1 - s))) < 2e-2
+
+
+@pytest.mark.parametrize(
     "make, why",
     [
-        (lambda: T(h(1, 4, 16, 16)).conv2d(T(h(8, 4, 3, 3)), padding=1), "window"),
         (lambda: T(X).cumsum(1), "window"),
         (lambda: Tensor.rand(32, 64, device="KTPU"), "BITCAST|THREEFRY"),
     ],

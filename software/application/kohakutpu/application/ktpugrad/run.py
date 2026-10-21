@@ -24,11 +24,12 @@ from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.ktpugrad import fold as F
 from kohakutpu.application.ktpugrad import lower as L
 from kohakutpu.application.ktpugrad import uops as U
+from kohakutpu.application.ktpugrad import window as W
 from kohakutpu.application.ktpugrad.lower import Access, Plan, Refused
+from kohakutpu.application.ktpugrad.window import tabled
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import rows as RW
 from kohakutpu.application.runtime import tree as TR
-from kohakutpu.application.runtime.arena import OutOfMemory
 from kohakutpu.application.runtime.storage import FLAT, Storage, StorageView
 
 
@@ -66,12 +67,23 @@ def _reform(dev, plan: Plan, bufs: dict) -> tuple:
 
 def execute(dev, plan: Plan, bufs: dict):
     """Run `plan` with `bufs` (param slot -> storage); returns the runs."""
-    if plan.kind in ("vector", "copy"):
-        plan, bufs = _reform(dev, plan, bufs)
-        if plan.kind == "copy" and any(
-            a.slot != plan.out_slot and isinstance(a.slot, tuple) for a in plan.accesses
-        ):
-            plan = replace(plan, kind="vector")
+    if plan.kind not in ("vector", "copy"):
+        return _execute(dev, plan, bufs)
+    plan, aliased = _reform(dev, plan, bufs)
+    if plan.kind == "copy" and any(
+        a.slot != plan.out_slot and isinstance(a.slot, tuple) for a in plan.accesses
+    ):
+        plan = replace(plan, kind="vector")
+    try:
+        return _execute(dev, plan, aliased)
+    finally:
+        # An alias owns no bytes, only the forms a kernel made of it.
+        for k, s in aliased.items():
+            if k not in bufs:
+                s.free()
+
+
+def _execute(dev, plan: Plan, bufs: dict):
     out = bufs[plan.out_slot]
     ndt = F.np_dtype(plan.out_dtype)
     match plan.kind:
@@ -139,24 +151,19 @@ def _n(st, dtype) -> int:
 
 
 def _addr(dev, acc, o: Operand, bufs) -> tuple:
-    """``(address, operand)`` of a read in the form its kind wants."""
+    """``(address, operand)`` of a read in the form its kind wants: a value a
+    row or one value in the statistic form (a sub-buffer's rows its base's,
+    from its offset), rows of values in the f16 form."""
     if acc.slot is None:
-        at = FM.table(dev, acc.table)
-        if o.kind == "row":
+        if o.kind in ("row", "scalar"):
             return _table_rowstat(dev, acc), o
-        return at, o
+        return FM.table(dev, acc.table), o
     s = bufs[acc.slot]
     dt = F.np_dtype(acc.dtype)
     st, off = FM.base_of(s)
-    if o.kind == "row" or (
-        o.kind == "scalar" and FLAT not in st.valid and FM.F16 not in st.valid
-    ):
-        if off:
-            raise Refused("a statistic read from a sub-buffer")
-        return FM.rowstat(dev, st, dt, _n(st, dt)), o
-    if o.kind == "scalar":
-        # One value: its row of the statistic form.
-        return FM.rowstat(dev, st, dt, _n(st, dt)), o
+    if o.kind in ("row", "scalar"):
+        at = FM.rowstat(dev, st, dt, _n(st, dt))
+        return at, replace(o, offset=o.offset + off // np.dtype(dt).itemsize)
     return FM.f16(dev, s, dt, _n(st, dt) if not off else s.nbytes // dt.itemsize), o
 
 
@@ -173,15 +180,26 @@ def _out(dev, plan: Plan, bufs, stat: bool) -> tuple:
     if stat:
         # A segment's statistic: its rows of the whole buffer's [N, 32] form,
         # with room for a statistic-space kernel's last band (4 rows a value).
-        item = np.dtype(F.np_dtype(plan.out_dtype)).itemsize
+        dt = F.np_dtype(plan.out_dtype)
+        item = np.dtype(dt).itemsize
         total = max(n, st.nbytes // item)
+        written = st.dtype is not None or st.host is not None
+        keep = (off or n != total) and written and FM.ROWSTAT not in st.valid
+        src = FM.f16(dev, st, dt, total) if keep else None
         f = st.form(FM.ROWSTAT, max(RW.stat_bytes(total), 4 * 64 * total))
+        if src is not None:
+            # Part of a written buffer: the rest kept, in its statistic form.
+            FM.expand(dev, src, total, f.addr)
+            st.made(FM.ROWSTAT)
         return f.addr + (off // item) * 64, FM.ROWSTAT
-    if np.dtype(F.np_dtype(plan.out_dtype)) == np.float16:
+    dt = np.dtype(F.np_dtype(plan.out_dtype))
+    if dt == np.float16:
         return st.addr + off, FLAT
-    if off:
-        raise Refused(f"a {plan.out_dtype} result into a sub-buffer")
-    return st.form(FM.F16, 2 * n).addr, FM.F16
+    total = st.nbytes // dt.itemsize
+    if (off or n != total) and (st.dtype is not None or st.host is not None):
+        # Part of a written buffer: the rest kept, in its f16 form.
+        FM.f16(dev, st, dt, total)
+    return st.form(FM.F16, 2 * total).addr + off // dt.itemsize * 2, FM.F16
 
 
 def _wrote(dev, plan: Plan, bufs, key) -> None:
@@ -199,24 +217,30 @@ def _stat_only(dev, acc, bufs) -> bool:
 
 # ----------------------------------------------------------------- copy
 def _copy(dev, plan: Plan, bufs) -> list:
+    """A buffer's current form copied whole by the copy kernel: its bytes
+    word to word, or its f16 / statistic / padded-rows form; any other copy
+    (a sub-buffer off a word, a form of part of a buffer) is the bare read it
+    is (`_vector`)."""
     acc = plan.accesses[0]
     src, dst = bufs[acc.slot], bufs[plan.out_slot]
     sst, soff = FM.base_of(src)
     dst_, doff = FM.base_of(dst)
     key = next((k for k in (FLAT, FM.F16, FM.ROWSTAT) if k in sst.valid), None)
+    key = key or FM.padded(sst)
     if key is None:
         raise Refused("a copy of a buffer with no current form")
-    if key != FLAT and (soff or doff):
-        raise Refused("a copy of a sub-buffer's statistic")
     if key == FLAT:
         n = plan.out_n * np.dtype(F.np_dtype(plan.out_dtype)).itemsize
         a, b = sst.addr + soff, dst_.addr + doff
-        if a % 32 or b % 32:
-            raise Refused("a copy between sub-buffers not on 32-byte words")
+        whole = not (a % 32 or b % 32)
     else:
-        f = sst.forms[key]
-        n = f.nbytes
-        a, b = f.addr, dst_.form(key, n).addr
+        n = sst.forms[key].nbytes
+        a, b = sst.forms[key].addr, 0
+        whole = not (soff or doff)
+    if not whole:
+        return _vector(dev, replace(plan, kind="vector"), bufs)
+    if key != FLAT:
+        b = dst_.form(key, n).addr
     k, given = C.copy_kernel(n)
     run = FM.launch(
         dev, k, given, {"src": a, "dst": b}, kind="copy", info={"plan": plan.name}
@@ -230,9 +254,12 @@ def _copy(dev, plan: Plan, bufs) -> list:
 
 # --------------------------------------------------------------- vector
 def _all_reduces(e, out=None) -> list:
-    """Every `Reduce` in `e`, inner ones too."""
+    """Every `Reduce` in `e` (a node the expression shares once), inner ones
+    too."""
     out = [] if out is None else out
     if isinstance(e, X.Reduce):
+        if any(r is e for r in out):
+            return out
         out.append(e)
         _all_reduces(e.arg, out)
     elif isinstance(e, X.Op):
@@ -241,25 +268,46 @@ def _all_reduces(e, out=None) -> list:
     return out
 
 
+def _rebuild(e, f):
+    """`e` rebuilt, `f(x, walk)` first given each node (its result used when
+    not None; `walk` rebuilds a child); a node the expression shares stays
+    one node."""
+    memo: dict = {}
+
+    def walk(x):
+        if id(x) in memo:
+            return memo[id(x)]
+        got = f(x, walk)
+        if got is None:
+            if isinstance(x, X.Op):
+                got = X.Op(x.name, tuple(walk(a) for a in x.args))
+            elif isinstance(x, X.Reduce):
+                got = X.Reduce(x.op, walk(x.arg))
+            else:
+                got = x
+        memo[id(x)] = got
+        return got
+
+    return walk(e)
+
+
 def _prune(e, accesses: list) -> tuple:
     """`e` reading only the accesses it uses, renumbered in order of use."""
     used: dict = {}
+    remap: dict = {}
 
-    def walk(x):
+    def f(x, walk):
         if isinstance(x, X.Load):
             if x.i not in used:
                 used[x.i] = len(used)
             return X.Load(used[x.i])
-        if isinstance(x, X.Op):
-            return X.Op(x.name, tuple(walk(a) for a in x.args))
         if isinstance(x, X.Reduce):
             new = X.Reduce(x.op, walk(x.arg))
             remap[id(new)] = id(x)
             return new
-        return x
+        return None
 
-    remap: dict = {}
-    e2 = walk(e)
+    e2 = _rebuild(e, f)
     acc = [None] * len(used)
     for old, new in used.items():
         acc[new] = accesses[old]
@@ -340,18 +388,16 @@ def _materialise(dev, plan: Plan, bufs) -> list:
     read = Access(key, dtypes.half, tuple(zip(outside, mult)), 0)
     reductions = {}
 
-    def swap(x):
+    def swap(x, walk):
         if x is leaf:
             return X.Load(len(plan.accesses))
-        if isinstance(x, X.Op):
-            return X.Op(x.name, tuple(swap(a) for a in x.args))
         if isinstance(x, X.Reduce):
-            new = X.Reduce(x.op, swap(x.arg))
+            new = X.Reduce(x.op, walk(x.arg))
             reductions[id(new)] = plan.reductions[id(x)]
             return new
-        return x
+        return None
 
-    outer_e = swap(plan.expr)
+    outer_e = _rebuild(plan.expr, swap)
     outer_e, outer_acc, remap2 = _prune(outer_e, [*plan.accesses, read])
     left = {k: reductions[v] for k, v in remap2.items()}
     rr = tuple(dict.fromkeys(r for rs in left.values() for r in rs))
@@ -402,228 +448,6 @@ def _split_reduction(plan: Plan):
     return replace(
         plan, expr=swap(plan.expr), reductions={id(first): inner, id(second): outer}
     )
-
-
-def _column(dev, plan: Plan, bufs) -> list:
-    """A reduction over outer ranges: the kept ranges are the columns, the
-    reduced ones the rows of a halving tree (`runtime.tree`)."""
-    rows, cols = _reduce_order(plan), list(plan.out_ranges)
-    got = [classify(a, rows, cols) for a in plan.accesses]
-    bad = [a for a, o in zip(plan.accesses, got) if o is None]
-    if bad:
-        split = _split_reduction(plan)
-        if split is not None:
-            return _materialise(dev, split, bufs)
-        raise Refused(
-            "an operand read transposed against the reduction: strides "
-            f"{dict(bad[0].coef)}"
-        )
-    ops = [o for o in got if o is not None]
-    R = int(np.prod([U.extent(r) for r in rows])) if rows else 1
-    W = int(np.prod([U.extent(r) for r in _live(cols)])) if _live(cols) else 1
-    # A statistic read as a value a row (or one value) is read through its
-    # [n, 32] form as it stands; only one read as rows of values matters.
-    stat_in = any(
-        _stat_only(dev, a, bufs) and o.kind in ("full", "col")
-        for a, o in zip(plan.accesses, ops)
-    )
-    if (
-        stat_in
-        and W > 1
-        and not W % 32
-        and all(
-            o.kind == "full"
-            for a, o in zip(plan.accesses, ops)
-            if _stat_only(dev, a, bufs) and o.kind in ("full", "col")
-        )
-    ):
-        # Rows of values held as a statistic: their row-major bytes made on
-        # card (`forms.flatten`), then reduced W wide, not 32 W.
-        for a in plan.accesses:
-            if _stat_only(dev, a, bufs):
-                st, _ = FM.base_of(bufs[a.slot])
-                FM.flatten(dev, st, _n(st, F.np_dtype(a.dtype)))
-        stat_in = False
-    if W > 1 and W % 32 and not stat_in:
-        runs = _column_padded(dev, plan, bufs, ops, R, W)
-        if runs is not None:
-            return runs
-    # Statistic space (any width): every value its [n, 32] form's row, so a kept
-    # value is 32 columns and the result is the output's statistic form.
-    stat = W == 1 or W % 32 or stat_in
-    binds, operands = {}, []
-    for i, (a, o) in enumerate(zip(plan.accesses, ops)):
-        if not stat:
-            at, o = _addr(dev, a, o, bufs)
-            binds[f"in{i}"] = at
-            operands.append(o)
-            continue
-        if a.slot is None:
-            binds[f"in{i}"] = _table_rowstat(dev, a)
-        else:
-            st, off = FM.base_of(bufs[a.slot])
-            if off:
-                raise Refused("a statistic of a sub-buffer")
-            dt = F.np_dtype(a.dtype)
-            binds[f"in{i}"] = FM.rowstat(dev, st, dt, _n(st, dt))
-        if o.kind == "full":
-            o = Operand("full", pitch=o.pitch * 32, offset=o.offset * 32, rows=R)
-        elif o.kind == "col":
-            o = Operand("col", offset=o.offset * 32)
-        operands.append(o)
-    width = W * 32 if stat else W
-    if width % 32:
-        raise Refused(f"a reduction down rows of {W}: whole 32-column blocks")
-    out_at, key = _out(dev, plan, bufs, bool(stat))
-    out = Operand("full", pitch=width)
-    try:
-        runs = TR.column(
-            dev,
-            plan.expr,
-            operands,
-            binds,
-            R,
-            width,
-            out,
-            out_at,
-            info={"plan": plan.name, "tree": R},
-        )
-    except RW.RowsError as e:
-        raise Refused(str(e)) from None
-    _wrote(dev, plan, bufs, key)
-    return runs
-
-
-def _column_padded(dev, plan: Plan, bufs, ops, R: int, W: int) -> list | None:
-    """A reduction down rows of W kept values, W not whole 32-column blocks:
-    the tree runs W' = ceil32(W) wide (rows read W' apart, laid out so by the
-    mover when they are closer), its row into the output's padded-rows form.
-    None when a read or the output does not allow it."""
-    Wp = -(-W // 32) * 32
-    dst, doff = FM.base_of(bufs[plan.out_slot])
-    item = np.dtype(F.np_dtype(plan.out_dtype)).itemsize
-    if doff or item * plan.out_n != dst.nbytes or not dtypes.is_float(plan.out_dtype):
-        return None
-    binds, operands, tmps = {}, [], []
-    try:
-        for i, (a, o) in enumerate(zip(plan.accesses, ops)):
-            if a.slot is None:
-                if o.kind != "scalar" and a.c(plan.out_ranges[-1]):
-                    return None
-                at, o = _addr(dev, a, o, bufs)
-            elif o.kind == "full" and o.pitch < Wp:
-                if (2 * W) % 32 or o.offset % 16 or o.pitch % 16:
-                    return None
-                src = FM.f16(
-                    dev, bufs[a.slot], F.np_dtype(a.dtype), _n(*_st_dt(bufs[a.slot], a))
-                )
-                t = Storage(dev, 2 * R * Wp)
-                tmps.append(t)
-                FM.repitch(dev, src + 2 * o.offset, o.pitch, t.addr, Wp, R, W)
-                at, o = t.addr, Operand("full", pitch=Wp, rows=R)
-            else:
-                at, o = _addr(dev, a, o, bufs)
-            binds[f"in{i}"] = at
-            operands.append(o)
-        key = FM.rows_key(W, Wp)
-        f = dst.form(key, 2 * Wp)
-        try:
-            runs = TR.column(
-                dev,
-                plan.expr,
-                operands,
-                binds,
-                R,
-                Wp,
-                Operand("full", pitch=Wp),
-                f.addr,
-                info={"plan": plan.name, "tree": R, "narrow": W},
-            )
-        except RW.RowsError as e:
-            raise Refused(str(e)) from None
-        dst.wrote(key)
-        dst.dtype = F.np_dtype(plan.out_dtype)
-        return runs
-    finally:
-        for t in tmps:
-            t.free()
-
-
-#: Most launches a segmented kernel takes (one an index of its fixed ranges).
-MAX_SEGMENTS = 64
-
-
-def _views(plan: Plan) -> bool:
-    """Whether some row view reads every operand: along the rows, down them
-    (a reduction) or elementwise."""
-    if plan.reduce_ranges:
-        for rows, cols in (
-            (list(plan.out_ranges), _reduce_order(plan)),
-            (_reduce_order(plan), list(plan.out_ranges)),
-        ):
-            if all(classify(a, rows, cols) is not None for a in plan.accesses):
-                return True
-        return False
-    try:
-        _split(plan)
-        return True
-    except Refused:
-        return False
-
-
-def _fix(plan: Plan, fixed: list, idx: tuple, bufs: dict):
-    """`plan` with the ranges `fixed` held at `idx`: the reads' offsets
-    moved, the output a view of its block."""
-    at = dict(zip(fixed, idx))
-    accesses = []
-    for a in plan.accesses:
-        off = a.off + sum(c * at[r] for r, c in a.coef if r in at)
-        coef = tuple((r, c) for r, c in a.coef if r not in at)
-        table = a.table
-        if a.slot is None and any(r in at for r, _ in a.coef):
-            # A folded table (row-major, outermost range first): its slice at
-            # the held indices, dense again.
-            rs = [r for r, _ in sorted(a.coef, key=lambda rc: -rc[1])]
-            sl = tuple(at[r] if r in at else slice(None) for r in rs)
-            table = np.ascontiguousarray(np.asarray(a.table)[sl])
-            keep = [r for r in rs if r not in at]
-            coef = tuple(zip(keep, _mult(keep)))
-            off = 0
-        accesses.append(replace(a, off=off, coef=coef, table=table))
-    out = [r for r in plan.out_ranges if r not in at]
-    mult = dict(zip(plan.out_ranges, _mult(plan.out_ranges)))
-    first = sum(mult[r] * at[r] for r in fixed)
-    n = int(np.prod([U.extent(r) for r in out])) if out else 1
-    item = np.dtype(F.np_dtype(plan.out_dtype)).itemsize
-    st, off = FM.base_of(bufs[plan.out_slot])
-    view = StorageView(st, off + first * item, n * item)
-    sub = replace(
-        plan,
-        out_ranges=tuple(out),
-        out_shape=tuple(U.extent(r) for r in out),
-        accesses=accesses,
-    )
-    return sub, {**bufs, plan.out_slot: view}
-
-
-def _segmented(dev, plan: Plan, bufs) -> list | None:
-    """No row view of the whole kernel: the smallest outermost set of kept
-    ranges whose every index leaves one, a launch an index; None if none."""
-    live = [r for r in plan.out_ranges if U.extent(r) > 1]
-    for k in range(1, len(live) + 1):
-        fixed = live[:k]
-        count = int(np.prod([U.extent(r) for r in fixed]))
-        if count > MAX_SEGMENTS:
-            return None
-        trial, _ = _fix(plan, fixed, (0,) * k, bufs)
-        if not _views(trial):
-            continue
-        runs = []
-        for idx in itertools.product(*(range(U.extent(r)) for r in fixed)):
-            sub, sub_bufs = _fix(plan, fixed, idx, bufs)
-            runs += _vector(dev, sub, sub_bufs)
-        return runs
-    return None
 
 
 #: Reads a vector-core kernel walks beside its output (8 memory views).
@@ -683,18 +507,18 @@ def _narrow(dev, plan: Plan, bufs) -> list:
     read = Access(key, dtypes.half, tuple(zip(rs, _mult(rs))), 0)
     reductions = {}
 
-    def swap(x):
+    def swap(x, walk):
         if x is best[1]:
             return X.Load(len(plan.accesses))
-        if isinstance(x, X.Op):
-            return X.Op(x.name, tuple(swap(a) for a in x.args))
         if isinstance(x, X.Reduce):
-            new = X.Reduce(x.op, swap(x.arg))
+            new = X.Reduce(x.op, walk(x.arg))
             reductions[id(new)] = plan.reductions[id(x)]
             return new
-        return x
+        return None
 
-    outer_e, outer_acc, remap = _prune(swap(plan.expr), [*plan.accesses, read])
+    outer_e, outer_acc, remap = _prune(
+        _rebuild(plan.expr, swap), [*plan.accesses, read]
+    )
     outer = replace(
         plan,
         expr=outer_e,
@@ -740,12 +564,13 @@ def _move(dev, plan: Plan, bufs) -> list | None:
         return None
     base, nbytes, item, soff = src
     dst, doff = FM.base_of(bufs[plan.out_slot])
+    at = soff + acc.off * item
+    if doff % 32 or not _words(plan, acc, item, at):
+        return None
     levels = _walk(plan, dict(acc.coef), item)
     dlevels = _walk(plan, _out_coef(plan), item)
-    at = soff + acc.off * item
-    if levels is None or dlevels is None or at % 32 or doff % 32 or at < 0:
-        return None
-    _window_ok(dst, plan)
+    assert levels is not None and dlevels is not None
+    _window_ok(dev, dst, plan)
     k, given = C.walk_kernel(
         nbytes, tuple(levels), at, dst.nbytes, tuple(dlevels), doff
     )
@@ -759,6 +584,17 @@ def _move(dev, plan: Plan, bufs) -> list | None:
     )
     _wrote_flat(dst, plan)
     return [run]
+
+
+def _words(plan: Plan, acc: Access, item: int, at: int) -> bool:
+    """Whether the mover walks read `acc` (from byte `at`, `item`-byte
+    elements) into `plan`'s output in whole 32-byte words."""
+    return (
+        not at % 32
+        and at >= 0
+        and _walk(plan, dict(acc.coef), item) is not None
+        and _walk(plan, _out_coef(plan), item) is not None
+    )
 
 
 def _source(dev, plan: Plan, acc: Access, bufs) -> tuple | None:
@@ -803,55 +639,85 @@ def _transpose(dev, plan: Plan, bufs) -> list | None:
     if r_s is None or r_s is r_in:
         return None
     A, B = U.extent(r_in), U.extent(r_s)
-    if A % 16 or B % 16:
-        return None  # sides not of whole words: `_gather`
+    if A % 16:
+        return None  # rows not of whole words: `_gather`
+    # A side of B not whole words is read 16-padded (the extra lanes, inside
+    # the buffer, dropped after): a narrow channel count's NHWC -> NCHW.
+    Bp = -(-B // 16) * 16
+    rsp = (
+        r_s if Bp == B else r_s.replace(src=(r_s.src[0].replace(arg=Bp), *r_s.src[1:]))
+    )
     others = [r for r in live if r not in (r_in, r_s)]
     nb = int(np.prod([U.extent(r) for r in others])) if others else 1
-    n = nb * A * B
+    n = nb * A * Bp
     runs: list = []
     found = _source(dev, plan, acc, bufs)
     if found is None:
         return None
-    base, _, item, off = found
-    order1 = [*others, r_in, r_s]
+    base, nbytes, item, off = found
+    if Bp != B:
+        last = off // item + acc.off + Bp - 1
+        last += sum(
+            c * (U.extent(r) - 1) for r, c in acc.coef if r is not r_s and c > 0
+        )
+        if last >= nbytes // item:
+            return None
+    read1 = replace(acc, coef=tuple((rsp if r is r_s else r, c) for r, c in acc.coef))
+    order1 = [*others, r_in, rsp]
+    sub = replace(
+        plan,
+        name=f"{plan.name}_p",
+        out_slot=("tr1", id(plan)),
+        out_dtype=dtypes.half,
+        out_ranges=tuple(order1),
+        out_shape=tuple(U.extent(r) for r in order1),
+        out_strides=None,
+        accesses=[read1],
+    )
+    staged = not (
+        Bp == B
+        and {r: c for r, c in acc.coef if U.extent(r) > 1} == _dense(order1)
+        and item == 2
+        and not (off + 2 * acc.off) % 32
+    )
+    order2 = [*others, r_s, r_in]
+    dst, doff = FM.base_of(bufs[plan.out_slot])
+    oc = {r: c for r, c in _out_coef(plan).items() if U.extent(r) > 1}
+    direct = Bp == B and oc == _dense(order2) and not doff % 32
+    # The first B of each Bp rows, read back into the output.
+    coef2 = _dense([*others, rsp, r_in])
+    key2 = ("tr2", id(plan))
+    read = Access(
+        key2,
+        dtypes.half,
+        tuple((r_s if r is rsp else r, c) for r, c in coef2.items()),
+        0,
+    )
+    post = replace(plan, expr=X.Load(0), accesses=[read])
+    # Every move in whole words before anything runs; else not one.
+    if staged and not _words(sub, read1, item, off + item * acc.off):
+        return None
+    if not direct and (doff % 32 or not _words(post, read, 2, 0)):
+        return None
     tmps = []
     try:
-        if (
-            {r: c for r, c in acc.coef if U.extent(r) > 1} == _dense(order1)
-            and item == 2
-            and not (off + 2 * acc.off) % 32
-        ):
+        if not staged:
             src = base + off + 2 * acc.off
         else:
             t1 = Storage(dev, 2 * n)
             tmps.append(t1)
-            key = ("tr1", id(plan))
-            sub = replace(
-                plan,
-                name=f"{plan.name}_p",
-                out_slot=key,
-                out_dtype=dtypes.half,
-                out_ranges=tuple(order1),
-                out_shape=tuple(U.extent(r) for r in order1),
-                out_strides=None,
-            )
-            got = _move(dev, sub, {**bufs, key: t1})
-            if got is None:
-                raise Refused("a transpose whose read is not whole words before it")
+            got = _move(dev, sub, {**bufs, sub.out_slot: t1})
+            assert got is not None
             runs += got
             src = t1.addr
-        order2 = [*others, r_s, r_in]
-        dst, doff = FM.base_of(bufs[plan.out_slot])
-        oc = {r: c for r, c in _out_coef(plan).items() if U.extent(r) > 1}
-        direct = oc == _dense(order2) and not doff % 32
         if direct:
-            _window_ok(dst, plan)
+            _window_ok(dev, dst, plan)
             out = dst.addr + doff
         else:
             t2 = Storage(dev, 2 * n)
             tmps.append(t2)
             out = t2.addr
-        k, given = TP.transpose_kernel(nb, A, B, dev.machine.count("VC"))
+        k, given = TP.transpose_kernel(nb, A, Bp, dev.machine.count("VC"))
         runs.append(
             FM.launch(
                 dev,
@@ -865,88 +731,71 @@ def _transpose(dev, plan: Plan, bufs) -> list | None:
         if direct:
             _wrote_flat(dst, plan)
             return runs
-        key2 = ("tr2", id(plan))
-        read = Access(key2, dtypes.half, tuple(_dense(order2).items()), 0)
-        got = _move(
-            dev,
-            replace(plan, expr=X.Load(0), accesses=[read]),
-            {**bufs, key2: tmps[-1]},
-        )
-        if got is None:
-            raise Refused("a transpose whose output is not whole words after it")
+        got = _move(dev, post, {**bufs, key2: tmps[-1]})
+        assert got is not None
         return runs + got
     finally:
         for t in tmps:
             t.free()
 
 
-#: Levels one mover walk holds (`kohakuaccel...package.mover.NDIM`).
-WALK_LEVELS = 6
-
-
 def _gather(dev, plan: Plan, bufs) -> list | None:
-    """A read no word walk takes (a transpose or a flip of rows not of whole
-    words, any strides): the source's statistic form (`forms.expand`, the
-    current one kept if valid) walked into the output's order and made
-    row-major (`forms.gather`), moved into a window when the output is one.
-    None when it is not one (or not f16)."""
+    """Any read into an f16 output, element by element: the source's
+    statistic form (`forms.expand`, the current one kept if valid) walked
+    into the output's elements (`forms.gather`, exact). A dense output from
+    a word is written whole; any other (a window, an offset) keeps what its
+    words held between its elements. None for a table, a non-f16 output or
+    a buffer with no f16 form."""
     acc = plan.accesses[0]
     if acc.slot is None or plan.out_dtype != dtypes.half:
         return None
-    if not dtypes.is_float(acc.dtype):
-        return None
     live = [r for r in plan.out_ranges if U.extent(r) > 1]
-    if not live or len(live) >= WALK_LEVELS:
+    n = _size(live)
+    item = np.dtype(F.np_dtype(acc.dtype)).itemsize
+    if FM.base_of(bufs[acc.slot])[1] // item + acc.off < 0:
         return None
+    coef, oc = dict(acc.coef), _out_coef(plan)
+    walk = tuple((U.extent(r), coef.get(r, 0)) for r in live)
+    dwalk = tuple((U.extent(r), oc[r]) for r in live)
+    view = bufs[plan.out_slot]
+    dst, doff = FM.base_of(view)
+    # The gather writes whole words: a dense output owns the last one's rest
+    # (a whole buffer ends in its allocation's tail).
+    whole = (
+        {r: oc[r] for r in live} == _dense(live)
+        and doff % 32 == 0
+        and (
+            n % 16 == 0
+            or view.nbytes >= 2 * -(-n // 16) * 16
+            or (not doff and dst.nbytes == 2 * n)
+        )
+    )
+    at = dst.addr + doff // 32 * 32
+    dat = doff % 32 // 2
+    m = n if whole else -(-(dat + 1 + sum((e - 1) * s for e, s in dwalk)) // 16) * 16
+    if not whole:
+        _window_ok(dev, dst, plan)
+    if not _gather_to(dev, acc, bufs, walk, acc.off, dwalk, dat, m, at, keep=not whole):
+        return None
+    _wrote_flat(dst, plan)
+    return []
 
+
+def _gather_to(dev, acc, bufs, walk, first, dwalk, dat, n, dst, keep=False) -> bool:
+    """`n` f16 values at `dst` from `acc`'s buffer through its statistic form
+    (`forms.gather`): element `first` (from `acc`'s view) walked by `walk`
+    into elements walked by `dwalk` from `dat`, every other one zero (with
+    `keep`, as `dst` held it). False when the buffer has no f16 form."""
     st, off = FM.base_of(bufs[acc.slot])
     dt = F.np_dtype(acc.dtype)
     N = _n(st, dt)
-    first = off // np.dtype(dt).itemsize + acc.off
-    n = int(np.prod([U.extent(r) for r in live]))
-    if first < 0:
-        return None
-
-    coef, dense = dict(acc.coef), _dense(live)
-    walk = tuple((U.extent(r), coef.get(r, 0)) for r in live)
-    dwalk = tuple((U.extent(r), dense[r]) for r in live)
-
-    tmps: list = []
+    first += off // np.dtype(dt).itemsize
     try:
-        if FM.ROWSTAT in st.valid and not off:
-            stat = st.forms[FM.ROWSTAT].addr
-        else:
-            try:
-                src = FM.f16(dev, st, dt, N)
-            except FM.FormError:
-                return None
-            e = Storage(dev, FM.stat_bytes(N))
-            tmps.append(e)
-            FM.expand(dev, src, N, e.addr)
-            stat = e.addr
-
-        dst, doff = FM.base_of(bufs[plan.out_slot])
-        oc = {r: c for r, c in _out_coef(plan).items() if U.extent(r) > 1}
-        whole = not doff and (dst.nbytes == 2 * n or n % 16 == 0)
-        if oc == dense and whole:
-            _window_ok(dst, plan)
-            FM.gather(dev, stat, N, walk, first, dwalk, n, dst.addr)
-            _wrote_flat(dst, plan)
-            return []
-
-        f = Storage(dev, 2 * -(-n // 16) * 16)
-        tmps.append(f)
-        FM.gather(dev, stat, N, walk, first, dwalk, n, f.addr)
-
-        key = ("gather", id(plan))
-        read = Access(key, dtypes.half, tuple(dense.items()), 0)
-        moved = _move(dev, replace(plan, accesses=[read]), {**bufs, key: f})
-        if moved is None:
-            raise Refused("a gathered read whose output window is not whole words")
-        return moved
-    finally:
-        for t in tmps:
-            t.free()
+        stat = FM.rowstat(dev, st, dt, N)
+    except FM.FormError:
+        return False
+    FM.gather(dev, stat, N, walk, first, dwalk, n, dst, dat, keep)
+    return True
 
 
 def _coalesce(plan: Plan) -> Plan:
@@ -1014,6 +863,12 @@ def _flip(dev, plan: Plan, bufs) -> list | None:
     dst, doff = FM.base_of(bufs[plan.out_slot])
     oc = {r: c for r, c in _out_coef(plan).items() if U.extent(r) > 1}
     whole = oc == _dense(live) and doff == 0 and 2 * n == dst.nbytes
+    key = ("flip", id(plan))
+    post = replace(
+        plan, accesses=[Access(key, dtypes.half, tuple(_dense(live).items()), 0)]
+    )
+    if not whole and (doff % 32 or not _words(post, post.accesses[0], 2, 0)):
+        return None  # its output not whole words: `_gather`
     t = None if whole else Storage(dev, 2 * n)
     try:
         k, given = TP.reverse_kernel(
@@ -1033,70 +888,29 @@ def _flip(dev, plan: Plan, bufs) -> list | None:
         if t is None:
             _wrote_flat(dst, plan)
             return runs
-        key = ("flip", id(plan))
-        read = Access(key, dtypes.half, tuple(_dense(live).items()), 0)
-        moved = _move(dev, replace(plan, accesses=[read]), {**bufs, key: t})
-        if moved is None:
-            raise Refused("a flip whose output is not whole words")
+        moved = _move(dev, post, {**bufs, key: t})
+        assert moved is not None
         return runs + moved
     finally:
         if t is not None:
             t.free()
 
 
-def _relayout(dev, plan: Plan, bufs) -> list | None:
-    """Reads no row view takes (a transposed operand of elementwise math):
-    each laid out first in the output's order (`_vector` of the bare read,
-    a move or a transpose), then read dense. None when every read is fine
-    or a read is not a buffer's."""
-    rs = [r for r in plan.out_ranges if U.extent(r) > 1]
-    if not rs or plan.reduce_ranges or _views(plan):
-        return None
-    cols = [rs[-1]]
-    fix = [i for i, a in enumerate(plan.accesses) if classify(a, rs[:-1], cols) is None]
-    if not fix or any(plan.accesses[i].slot is None for i in fix):
-        return None
-    runs, tmps, accesses, bufs2 = [], [], list(plan.accesses), dict(bufs)
-    try:
-        for i in fix:
-            a = plan.accesses[i]
-            key = ("lay", i, id(plan))
-            own = [r for r in rs if a.c(r)]
-            if (
-                classify(
-                    Access(key, a.dtype, tuple(_dense(own).items()), 0), rs[:-1], cols
-                )
-                is None
-            ):
-                own = rs  # broadcast across a row range no view takes: laid out in full
-            n = int(np.prod([U.extent(r) for r in own])) if own else 1
-            item = np.dtype(F.np_dtype(a.dtype)).itemsize
-            t = Storage(dev, max(32, item * n))
-            tmps.append(t)
-            bufs2[key] = t
-            sub = replace(
-                plan,
-                name=f"{plan.name}_l{i}",
-                out_slot=key,
-                out_dtype=a.dtype,
-                out_ranges=tuple(own),
-                out_shape=tuple(U.extent(r) for r in own),
-                out_strides=None,
-                expr=X.Load(0),
-                accesses=[a],
-            )
-            runs += _vector(dev, sub, bufs2)
-            accesses[i] = Access(key, a.dtype, tuple(_dense(own).items()), 0)
-        return runs + _vector(dev, replace(plan, accesses=accesses), bufs2)
-    finally:
-        for t in tmps:
-            t.free()
-
-
-def _window_ok(dst: Storage, plan: Plan) -> None:
-    """A window keeps the rest of its buffer: its flat bytes must be current."""
-    if plan.out_strides is not None and FLAT not in dst.valid:
-        raise Refused("a window written into a buffer whose bytes are not current")
+def _window_ok(dev, dst: Storage, plan: Plan) -> None:
+    """A plan writing part of `dst` keeps the rest: its flat bytes made
+    current first (an f16 buffer's from its current form, `forms.f16`)."""
+    item = np.dtype(F.np_dtype(plan.out_dtype)).itemsize
+    if FLAT in dst.valid or (
+        plan.out_strides is None and plan.out_n * item == dst.nbytes
+    ):
+        return
+    if dst.dtype is None or np.dtype(dst.dtype) == np.float16:
+        FM.f16(dev, dst, np.float16, dst.nbytes // 2)
+        return
+    raise Refused(
+        f"part of a {np.dtype(dst.dtype)} buffer written while its bytes are not "
+        "current (its f16 form is)"
+    )
 
 
 def _wrote_flat(dst: Storage, plan: Plan) -> None:
@@ -1111,20 +925,29 @@ def _out_coef(plan: Plan) -> dict:
 
 def _fill(dev, plan: Plan, bufs, value: float) -> list:
     """A box of the loop nest that is one value (a padding): the mover's
-    fill over the output window."""
+    fill over the output window where it is whole words, else the value
+    moved in from a temporary (`_moved`: any window)."""
     item = np.dtype(F.np_dtype(plan.out_dtype)).itemsize
     dst, doff = FM.base_of(bufs[plan.out_slot])
     dlevels = _walk(plan, _out_coef(plan), item)
-    if dlevels is None or doff % 32:
-        raise Refused("a padding not of whole 32-byte words")
+    if dlevels is None or doff % 32 or item == 8:
+        live = _live(plan.out_ranges)
+        t = Storage(dev, max(32, 2 * _size(live)))
+        t.dtype = np.float16
+        try:
+            dev.write(t.addr, np.full(_size(live), value, np.float16).tobytes())
+            tplan, tbufs, finish = _half_target(dev, plan, bufs)
+            runs = _moved(dev, tplan, tbufs, t, _dense(live))
+            finish()
+        finally:
+            t.free()
+        return runs
     bits = (
         np.asarray(value, F.np_dtype(plan.out_dtype))
         .reshape(1)
-        .view({1: np.uint8, 2: np.uint16, 4: np.uint32, 8: np.uint64}[item])
+        .view({1: np.uint8, 2: np.uint16, 4: np.uint32}[item])
     )
-    if item == 8:
-        raise Refused("a padding of 8-byte elements")
-    _window_ok(dst, plan)
+    _window_ok(dev, dst, plan)
     k, given = C.fill_kernel(dst.nbytes, tuple(dlevels), doff, int(bits[0]), 8 * item)
     run = FM.launch(
         dev, k, given, {"dst": dst.addr}, kind="move", info={"plan": plan.name}
@@ -1166,7 +989,10 @@ def _table_axes(a: Access) -> tuple:
 def _boxes(dev, plan: Plan, bufs) -> list | None:
     """Tables a `where` selects by: the kept ranges cut where any changes,
     each box run with them constant -- the selects resolved, a padded read
-    never reading outside its buffer. None when nothing cuts."""
+    never reading outside its buffer. None when nothing cuts, a bound moves
+    with a reduced range, the cuts are not boxes or more than `MAX_BOXES`,
+    or a box's output is not a window of whole words (`_ungated` then reads
+    the padded reads in bounds)."""
     kept = [r for r in plan.out_ranges if U.extent(r) > 1]
     cuts: dict = {}
     must = False
@@ -1176,10 +1002,7 @@ def _boxes(dev, plan: Plan, bufs) -> list | None:
         live = [k for k, r in enumerate(rs) if U.extent(r) > 1]
         if any(rs[k] not in kept for k in live):
             if gate:
-                raise Refused(
-                    "a padded read whose bound moves with a reduced range (a window: "
-                    "a convolution's or a cumulative sum's)"
-                )
+                return None
             continue
         must |= gate
         sel[i] = gate
@@ -1202,15 +1025,13 @@ def _boxes(dev, plan: Plan, bufs) -> list | None:
     spans = [sorted(cuts[r]) for r in axes]
     count = int(np.prod([len(s) - 1 for s in spans]))
     if count > MAX_BOXES:
-        if must:
-            raise Refused(f"a padded read cut into {count} boxes (at most {MAX_BOXES})")
         return None
     boxes = []
+    item = np.dtype(F.np_dtype(plan.out_dtype)).itemsize
     for pick in itertools.product(*(list(itertools.pairwise(s)) for s in spans)):
         sub, sub_bufs, ok = _box(plan, dict(zip(axes, pick)), bufs, sel)
-        if not ok:
-            if must:
-                raise Refused("a padded read whose bound is not a box of the loop nest")
+        doff = FM.base_of(sub_bufs[sub.out_slot])[1]
+        if not ok or doff % 32 or _walk(sub, _out_coef(sub), item) is None:
             return None
         boxes.append((sub, sub_bufs))
     runs = []
@@ -1220,6 +1041,62 @@ def _boxes(dev, plan: Plan, bufs) -> list | None:
         else:
             runs += _vector(dev, sub, sub_bufs)
     return runs
+
+
+def _ungated(dev, plan: Plan, bufs) -> list:
+    """Each padded read (a buffer read a gate table selects) read from a
+    zero-padded copy of its source over its coordinates instead
+    (`_pad_copy`; the gates a box of them, `window.boxed`): no read leaves
+    its buffer, the gates stay selects."""
+    guards: dict = {}  # read -> the gates selecting it
+
+    def walk(x, gates):
+        if isinstance(x, X.Load):
+            if plan.accesses[x.i].slot is not None and gates:
+                guards.setdefault(x.i, set()).update(gates)
+        elif isinstance(x, X.Op):
+            g = x.args[0] if x.name == "where" else None
+            if isinstance(g, X.Load) and plan.accesses[g.i].gate:
+                walk(x.args[1], gates | {g.i})
+                walk(x.args[2], gates)
+                return
+            for a in x.args:
+                walk(a, gates)
+        elif isinstance(x, X.Reduce):
+            walk(x.arg, gates)
+
+    walk(plan.expr, frozenset())
+    bufs, tmps, accesses = dict(bufs), [], list(plan.accesses)
+    try:
+        for i, gs in guards.items():
+            acc = accesses[i]
+            rs, g = W.gate_of(plan, sorted(gs))
+            # Where the read is: the gate over the ranges it reads.
+            mine = {r for r, c in acc.coef if c}
+            other = tuple(k for k, r in enumerate(rs) if r not in mine)
+            g = g.any(axis=other) if other else g
+            rs = [r for r in rs if r in mine]
+            side = W.Side(acc, W.dims(acc, W.coupled(rs, g)), None)
+            # The gate stays a select: the copy need only hold every
+            # coordinate it lets through.
+            if not g.any():
+                # Never let through: a zero (the select takes the other arm).
+                zero = np.zeros(1, np.float16)
+                accesses[i] = Access(None, dtypes.half, (), 0, zero)
+                continue
+            side = W.boxed(side, rs, g, exact=False)
+            if side is None:
+                raise Refused("a padded read whose gate reads a range it does not")
+            key, strides, off = _pad_copy(
+                dev, bufs, tmps, acc, list(side.dims), ("ungated", i, id(plan))
+            )
+            coef = tuple((r, m * strides[d]) for d in side.dims for r, m in d.terms)
+            accesses[i] = Access(key, dtypes.half, coef, off)
+        accesses = [replace(a, gate=False) for a in accesses]
+        return _vector(dev, replace(plan, accesses=accesses), bufs)
+    finally:
+        for t in tmps:
+            t.free()
 
 
 def _box(plan: Plan, box: dict, bufs, sel: dict) -> tuple:
@@ -1251,21 +1128,21 @@ def _box(plan: Plan, box: dict, bufs, sel: dict) -> tuple:
         accesses.append(replace(a, off=off, coef=coef, table=table))
     reductions: dict = {}
 
-    def fold(x):
+    def fold(x, walk):
         if isinstance(x, X.Load):
             return X.Const(consts[x.i]) if x.i in consts else x
         if isinstance(x, X.Op):
-            args = tuple(fold(a) for a in x.args)
+            args = tuple(walk(a) for a in x.args)
             if x.name == "where" and isinstance(args[0], X.Const):
                 return args[1] if args[0].value else args[2]
             return X.Op(x.name, args)
         if isinstance(x, X.Reduce):
-            out = X.Reduce(x.op, fold(x.arg))
+            out = X.Reduce(x.op, walk(x.arg))
             reductions[id(out)] = tuple(new.get(r, r) for r in plan.reductions[id(x)])
             return out
-        return x
+        return None
 
-    e = fold(plan.expr)
+    e = _rebuild(plan.expr, fold)
     if not isinstance(e, X.Const):
         e, accesses, remap = _prune(e, accesses)
         reductions = {k: reductions[v] for k, v in remap.items()}
@@ -1288,7 +1165,10 @@ def _box(plan: Plan, box: dict, bufs, sel: dict) -> tuple:
         reduce_ranges=tuple(new.get(r, r) for r in plan.reduce_ranges),
         out_strides=tuple(mult[r] for r in plan.out_ranges),
     )
-    if tuple(mult[r] for r in plan.out_ranges) == tuple(_mult(out_ranges)):
+    # Dense when the ranges left (a box of one value has no stride) are.
+    live = [(r, new.get(r, r)) for r in plan.out_ranges if U.extent(new.get(r, r)) > 1]
+    dense = _dense([n for _, n in live])
+    if all(mult[r] == dense[n] for r, n in live):
         sub = replace(sub, out_strides=None)
     return sub, {**bufs, plan.out_slot: view}, True
 
@@ -1330,7 +1210,211 @@ def _contraction(plan: Plan) -> Plan | None:
     return None
 
 
+def _size(rs) -> int:
+    return int(np.prod([U.extent(r) for r in rs])) if rs else 1
+
+
+def _window(dev, plan: Plan, bufs) -> list | None:
+    """A window contraction (`window.find`): each side laid out dense as
+    ``[batch.., outer.., K.., lane]`` (`_lay`), the product on the clusters
+    into a temporary, the rest of the expression reading it. None when the
+    plan is not one."""
+    c = W.find(plan)
+    if c is None:
+        return None
+    plan = c.plan
+    M, N, K = _size(c.ma), _size(c.nb), _size(c.ks) * c.pad
+    m, n, k, lane = W.ranges(plan, [M, N, K, c.pad])
+    bufs, tmps, runs = dict(bufs), [], []
+    try:
+        keys = []
+        for side, outer in ((c.a, c.ma), (c.b, c.nb)):
+            key = ("win", len(keys), id(plan))
+            runs += _lay(dev, plan, bufs, tmps, c, side, [*c.bt, *outer], lane, key)
+            keys.append(key)
+        a, b = (
+            Access(
+                key,
+                dtypes.half,
+                (*zip(c.bt, (s * R * K for s in _mult(c.bt))), (r, K), (k, 1)),
+                0,
+            )
+            for key, r, R in ((keys[0], m, M), (keys[1], n, N))
+        )
+        pkey = ("winp", id(plan))
+        tp = Storage(dev, max(32, 2 * _size(c.bt) * M * N))
+        tmps.append(tp)
+        bufs[pkey] = tp
+        out = (*c.bt, m, n)
+        runs += _product(
+            dev,
+            replace(
+                plan,
+                kind="matmul",
+                name=f"{plan.name}_mm",
+                out_slot=pkey,
+                out_dtype=dtypes.half,
+                out_ranges=out,
+                out_shape=tuple(U.extent(r) for r in out),
+                out_strides=None,
+                expr=X.Load(0),
+                accesses=[],
+                reduce_ranges=(k,),
+                reductions={},
+                a=a,
+                b=b,
+                mnk=(m, n, (k,)),
+                batch=c.bt,
+            ),
+            bufs,
+        )
+        # The rest of the expression, the sum a read of the product.
+        read = Access(
+            pkey, dtypes.half, tuple(_dense([*c.bt, *c.ma, *c.nb]).items()), 0
+        )
+        prod = X.Load(len(plan.accesses))
+        if c.scale != 1.0:
+            prod = X.op("mul", X.Const(c.scale), prod)
+
+        def swap(x):
+            if x is c.red:
+                return prod
+            if isinstance(x, X.Op):
+                return X.Op(x.name, tuple(swap(y) for y in x.args))
+            return x
+
+        e, accs, _ = _prune(swap(plan.expr), [*plan.accesses, read])
+        epi = replace(plan, expr=e, accesses=accs, reduce_ranges=(), reductions={})
+        epi, bufs = _reform(dev, epi, bufs)
+        return runs + _vector(dev, epi, bufs)
+    finally:
+        for t in tmps:
+            t.free()
+
+
+def _lay(dev, plan: Plan, bufs, tmps, c, side, outer, lane, key) -> list:
+    """`side`'s read dense at ``bufs[key]`` as f16 ``[outer.., c.ks..,
+    lane]``: its padded source (`_padded`) walked by the mover, every step
+    whole words (the lane innermost, whole words)."""
+    src, strides, off = _padded(dev, plan, bufs, tmps, c, side, side is c.a)
+    order = [*outer, *c.ks, lane]
+    coef = {r: side.mult(r) * strides[side.dim(r)] for r in [*outer, *c.ks]}
+    coef[lane] = 1
+    if coef == {r: s for r, s in _dense(order).items()} and off == 0:
+        bufs[key] = bufs[src]
+        return []
+    t = Storage(dev, max(32, 2 * _size(order)))
+    tmps.append(t)
+    t.wrote(FLAT)
+    bufs[key] = t
+    sub = Plan(
+        "vector",
+        plan.ast,
+        f"{plan.name}_w",
+        key,
+        dtypes.half,
+        tuple(U.extent(r) for r in order),
+        tuple(order),
+        expr=X.Load(0),
+        accesses=[Access(src, dtypes.half, tuple(coef.items()), off)],
+    )
+    runs = _move(dev, sub, bufs)
+    if runs is None:
+        raise Refused("a window operand not walked in whole words")
+    return runs
+
+
+def _padded(dev, plan: Plan, bufs, tmps, c, side, copies: bool = False) -> tuple:
+    """``(slot, {coordinate: element stride}, element of coordinate 0)``
+    of `side`'s source with its lane innermost in whole words and zero
+    outside its gate's box: the buffer itself when it is so already, else
+    gathered (`_gather_to`) into ``[coordinates.., lane]``. A lane of one
+    with `copies` (the other side's lanes zero) holds 16 copies of each
+    value (`_lane_copies`): no transpose."""
+    acc = side.acc
+    axes = [d for d in side.dims if d is not side.lane]
+    full = all(d.box == (0, d.span) for d in side.dims)
+    st, voff = FM.base_of(bufs[acc.slot])
+    lane = side.lane
+    if (
+        full
+        and lane is not None
+        and lane.stride == 1
+        and U.extent(lane.ranges()[0]) == c.pad
+        and all(d.stride % W.WORD == 0 for d in axes)
+        and (voff // 2 + acc.off) % W.WORD == 0
+        and acc.dtype == dtypes.half
+        and FLAT in st.valid
+    ):
+        return acc.slot, {d: d.stride for d in side.dims}, acc.off
+    key = ("pad", id(side), id(plan))
+    return _pad_copy(dev, bufs, tmps, acc, axes, key, lane, c.pad, copies)
+
+
+def _pad_copy(dev, bufs, tmps, acc, axes, key, lane=None, pad=1, copies=False):
+    """``(key, {coordinate: element stride}, element of coordinate 0)``:
+    `acc`'s source over its coordinates (`axes` outermost first, then the
+    `lane` innermost, `pad` elements wide) gathered dense as f16 into
+    ``bufs[key]``, every element outside the coordinates' boxes zero. A lane
+    of one with `copies` holds 16 copies of each value (`_lane_copies`)."""
+    ext = [d.span for d in axes] + [pad]
+    dense = [int(np.prod(ext[i + 1 :])) for i in range(len(ext))]
+    strides = dict(zip(axes, dense))
+    if lane is not None:
+        strides[lane] = 1
+    walk, dwalk = [], []
+    first, dat = acc.off, 0
+    for d in axes + ([lane] if lane is not None else []):
+        a, b = d.box
+        walk.append((b - a, d.stride))
+        dwalk.append((b - a, strides[d]))
+        first += d.stride * (d.lo + a)
+        dat += strides[d] * a
+    n = int(np.prod(ext))
+    s = Storage(dev, 2 * -(-n // 16) * 16)
+    tmps.append(s)
+    if lane is None and copies:
+        _lane_copies(dev, acc, bufs, walk, first, dwalk, dat, s)
+    elif not _gather_to(
+        dev, acc, bufs, tuple(walk), first, tuple(dwalk), dat, n, s.addr
+    ):
+        raise Refused("a padded operand with no f16 form")
+    s.wrote(FLAT)
+    s.dtype = np.float16
+    bufs[key] = s
+    return key, strides, -sum(strides[d] * d.lo for d in axes)
+
+
+def _lane_copies(dev, acc, bufs, walk, first, dwalk, dat, dst: Storage) -> None:
+    """`dst` (16-lane words, positions `dwalk` elements apart from `dat`)
+    := each value `walk` reaches from `first` in all 16 lanes, every other
+    word zero: the statistic form's first word of each value, one mover
+    walk."""
+    st, off = FM.base_of(bufs[acc.slot])
+    dt = F.np_dtype(acc.dtype)
+    N = _n(st, dt)
+    first += off // np.dtype(dt).itemsize
+    stat = FM.rowstat(dev, st, dt, N)
+    k, given = C.fill_kernel(dst.nbytes, ((dst.nbytes // 32, 32),), 0, 0, 16)
+    FM.launch(dev, k, given, {"dst": dst.addr}, kind="convert")
+    levels = (*((n, 64 * s) for n, s in walk), (1, 32))
+    dlevels = (*((n, 2 * s) for n, s in dwalk), (1, 32))
+    k, given = C.walk_kernel(
+        FM.stat_bytes(N), levels, 64 * first, dst.nbytes, dlevels, 2 * dat
+    )
+    FM.launch(dev, k, given, {"src": stat, "dst": dst.addr}, kind="convert")
+
+
 def _vector(dev, plan: Plan, bufs) -> list:
+    win = _window(dev, plan, bufs) if plan.reduce_ranges else None
+    if win is not None:
+        return win
+    tab = tabled(plan) if plan.reduce_ranges else None
+    if tab is not None:
+        return _uploaded(dev, tab, bufs)
+    phases = _table_only(plan) if plan.reduce_ranges else []
+    if phases:
+        return _enumerated(dev, plan, bufs, phases)
     mm = _contraction(plan)
     if mm is not None:
         return _matmul(dev, mm, bufs)
@@ -1340,379 +1424,419 @@ def _vector(dev, plan: Plan, bufs) -> list:
         boxed = _boxes(dev, plan, bufs)
         if boxed is not None:
             return boxed
+        if any(a.gate for a in plan.accesses):
+            return _ungated(dev, plan, bufs)
     if len(plan.accesses) > MAX_READS:
         return _narrow(dev, plan, bufs)
     if not plan.reduce_ranges and isinstance(plan.expr, X.Load):
-        one = _coalesce(plan)
-        moved = (
-            _move(dev, one, bufs)
-            or _transpose(dev, one, bufs)
-            or _flip(dev, one, bufs)
-            or _gather(dev, one, bufs)
-        )
+        moved = _bare(dev, plan, bufs)
         if moved is not None:
             return moved
-    elif not plan.reduce_ranges:
-        laid = _relayout(dev, plan, bufs)
-        if laid is not None:
-            return laid
-    window = plan.out_strides is not None
-    if window and plan.reduce_ranges:
-        raise Refused("a reduction into a window of its output (a padded statistic)")
     if len(set(plan.reductions.values())) > 1:
         return _materialise(dev, plan, bufs)
-    if not window and not _views(plan) and _split_reduction(plan) is None:
-        runs = _segmented(dev, plan, bufs)
-        if runs is not None:
-            return runs
-    cores = dev.machine.count("VC")
-    oc = {
-        r: c for r, c in zip(plan.out_ranges, _mult(plan.out_ranges)) if U.extent(r) > 1
-    }
-    at_out = [
-        a
-        for a in plan.accesses
-        if _stat_only(dev, a, bufs)
-        and {r: c for r, c in a.coef if U.extent(r) > 1} == oc
-    ]
-    if at_out and not plan.reduce_ranges:
-        if window:
-            raise Refused("a statistic read into a window of the output")
-        # A statistic read element for element: the vector is the work.
-        return _stat_space(dev, plan, bufs, cores)
-    if plan.reduce_ranges:
-        rows, cols = list(plan.out_ranges), _reduce_order(plan)
-    else:
-        flat = None if window else _flat(dev, plan, bufs, cores)
+    if not plan.reduce_ranges and plan.out_strides is None:
+        cores = dev.machine.count("VC")
+        if _in_stat_space(dev, plan, bufs):
+            # A statistic read element for element: the vector is the work.
+            return _stat_space(dev, plan, bufs, cores)
+        flat = _flat(dev, plan, bufs, cores)
         if flat is not None:
             return flat
+    if not plan.reduce_ranges:
         plan = _refold(plan) or plan
-        try:
-            rows, cols = _split(plan)
-        except Refused:
-            narrow = None if window else _narrow_rows(dev, plan, bufs)
-            if narrow is None:
-                raise
-            return narrow
-    got = [classify(a, rows, cols) for a in plan.accesses]
-    bad = [a for a, o in zip(plan.accesses, got) if o is None]
-    stat_row = [
-        a
-        for a, o in zip(plan.accesses, got)
-        if o is not None and o.kind in ("full", "col") and _stat_only(dev, a, bufs)
-    ]
-    if stat_row and not bad and plan.reduce_ranges and rows == list(plan.out_ranges):
-        # A statistic read as rows of values along a row reduction: its
-        # row-major bytes made on card (`forms.flatten`), then read as rows.
-        for a in stat_row:
-            st, _ = FM.base_of(bufs[a.slot])
-            FM.flatten(dev, st, _n(st, F.np_dtype(a.dtype)))
-        stat_row = []
-    if (bad or stat_row) and plan.reduce_ranges:
-        live = [r for r in rows if U.extent(r) > 1]
-        partial = any(
-            any(a.c(r) == 0 for r in live) and any(a.c(r) for r in live) for a in bad
-        )
-        if partial and not window:
-            # A value broadcast over some kept ranges only: one launch an
-            # index of the outer ones.
-            runs = _segmented(dev, plan, bufs)
-            if runs is not None:
-                return runs
-        # Not along the rows: down them (the kept ranges inside the reduced;
-        # a statistic is a value a row, never a row of values).
-        return _column(dev, plan, bufs)
-    if bad:
-        raise Refused(
-            "an operand read as neither a whole row, one row, a value a row nor one "
-            f"value (a transpose): strides {dict(bad[0].coef)}"
-        )
-    ops = [o for o in got if o is not None]
-    R = int(np.prod([U.extent(r) for r in rows])) if rows else 1
-    W = int(np.prod([U.extent(r) for r in cols])) if cols else 1
-    if W % 32 and plan.reduce_ranges:
-        narrow = _narrow_reduce(dev, plan, bufs, rows, cols)
-        return (
-            narrow if narrow is not None else _expanded_rows(dev, plan, bufs, ops, R, W)
-        )
-    if W % 32:
-        raise Refused(f"rows of {W} with a broadcast operand: whole 32-column blocks")
-    for o in ops:
-        if o.kind in ("full", "col") and (
-            o.offset % 16 or (o.kind == "full" and o.pitch % 16)
-        ):
-            raise Refused(
-                f"a read not on 32-byte words (offset {o.offset}, pitch {o.pitch})"
-            )
-    binds, operands = {}, []
-    for i, (a, o) in enumerate(zip(plan.accesses, ops)):
-        at, o = _addr(dev, a, o, bufs)
-        binds[f"in{i}"] = at
-        operands.append(o)
-    stat = bool(plan.reduce_ranges)
-    if window:
-        _window_ok(FM.base_of(bufs[plan.out_slot])[0], plan)
-    out_at, key = _out(dev, plan, bufs, stat)
-    out = (
-        Operand("row")
-        if stat
-        else Operand("full", pitch=_out_pitch(plan, rows, cols, W))
+    return _rows(dev, plan, bufs)
+
+
+def _bare(dev, plan: Plan, bufs) -> list | None:
+    """A bare read into the output (`plan.expr` one `Load`): the mover's word
+    walk, a transpose, a flip, else element by element (`_gather`); None
+    where none is one (a table, a non-f16 output no word walk takes)."""
+    one = _coalesce(plan)
+    for way in (_move, _transpose, _flip, _gather):
+        got = way(dev, one, bufs)
+        if got is not None:
+            return got
+    return None
+
+
+def _in_stat_space(dev, plan: Plan, bufs) -> bool:
+    """Elementwise math over statistics (`_stat_space`): a statistic read at
+    the output's index, every other read there too or one value."""
+    oc = {r: c for r, c in _dense(plan.out_ranges).items() if U.extent(r) > 1}
+    at = [{r: c for r, c in a.coef if U.extent(r) > 1} for a in plan.accesses]
+    return any(
+        _stat_only(dev, a, bufs) and c == oc for a, c in zip(plan.accesses, at)
+    ) and all(
+        c == oc or (not c and a.slot is not None) for a, c in zip(plan.accesses, at)
     )
-    try:
-        runs = RW.run(
-            dev, plan.expr, operands, binds, R, W, out, out_at, info={"plan": plan.name}
-        )
-    except RW.RowsError as e:
-        raise Refused(str(e)) from None
-    _wrote(dev, plan, bufs, key)
-    return runs
 
 
-def _out_access(plan: Plan) -> Access:
-    return Access(plan.out_slot, plan.out_dtype, tuple(_out_coef(plan).items()), 0)
-
-
-def _out_pitch(plan: Plan, rows, cols, W: int) -> int:
-    """Elements between the output's rows: W, or a window's pitch."""
-    if plan.out_strides is None:
-        return W
-    o = classify(_out_access(plan), rows, cols)
-    if o is None or o.kind != "full" or o.pitch % 16:
-        raise Refused("a window of the output not rows of whole 32-byte words")
-    return o.pitch
-
-
-def _st_dt(s, a: Access) -> tuple:
-    st, _ = FM.base_of(s)
-    return st, F.np_dtype(a.dtype)
-
-
-def _narrow_rows(dev, plan: Plan, bufs) -> list | None:
-    """Elementwise rows of W not whole 32-column blocks: computed W' =
-    ceil32(W) wide (a read's extra columns are the next row's, a table
-    padded with zeros), into the output's padded rows form (W' apart: read
-    back compacted, read on card through `_reform`). None when the reads
-    take no [rows, innermost] view or the output is not a whole f16 buffer."""
-    live = [r for r in plan.out_ranges if U.extent(r) > 1]
-    if not live or not dtypes.is_float(plan.out_dtype):
-        return None
-    rows, cols = list(plan.out_ranges[:-1]), [plan.out_ranges[-1]]
-    W = U.extent(cols[0])
-    Wp = -(-W // 32) * 32
-    dst, doff = FM.base_of(bufs[plan.out_slot])
-    item = np.dtype(F.np_dtype(plan.out_dtype)).itemsize
-    if doff or item * plan.out_n != dst.nbytes:
-        return None
-    got = [classify(a, rows, cols) for a in plan.accesses]
-    if any(o is None for o in got):
-        return None
-    R = int(np.prod([U.extent(r) for r in rows])) if rows else 1
-    binds, operands, tmps = {}, [], []
-    try:
-        return _narrow_run(
-            dev, plan, bufs, got, rows, cols, R, W, Wp, dst, binds, operands, tmps
-        )
-    finally:
-        for t in tmps:
-            t.free()
-
-
-def _narrow_run(dev, plan, bufs, got, rows, cols, R, W, Wp, dst, binds, operands, tmps):
-    if not _padded_operands(
-        dev, plan, bufs, got, cols, R, W, Wp, binds, operands, tmps
-    ):
-        return None
-    key = FM.rows_key(W, Wp)
-    f = dst.form(key, 2 * R * Wp)
-    try:
-        runs = RW.run(
-            dev,
-            plan.expr,
-            operands,
-            binds,
-            R,
-            Wp,
-            Operand("full", pitch=Wp),
-            f.addr,
-            info={"plan": plan.name, "narrow": W},
-        )
-    except RW.RowsError as e:
-        raise Refused(str(e)) from None
-    dst.wrote(key)
-    dst.dtype = F.np_dtype(plan.out_dtype)
-    return runs
-
-
+# ------------------------------------------------------------ rows path
 #: What a padding lane holds so a reduction ignores it.
 IDENTITY = {"sum": 0.0, "max": -65504.0, "prod": 1.0}
 
 
-def _narrow_reduce(dev, plan: Plan, bufs, rows, cols) -> list | None:
-    """A reduction along rows of W not whole 32-column blocks: run W' =
-    ceil32(W) wide over the padded reads (`_padded_operands`), each
-    reduction's padding lanes its identity by a column mask. None when a
-    read does not allow it (the statistic-space path is then taken)."""
-    live = [r for r in cols if U.extent(r) > 1]
-    if len(live) != 1:
-        return None
-    col = live[0]
-    W = U.extent(col)
-    Wp = -(-W // 32) * 32
-    got = [classify(a, rows, cols) for a in plan.accesses]
-    if any(o is None for o in got):
-        return None
-    R = int(np.prod([U.extent(r) for r in rows])) if rows else 1
-    mask = Access(
-        None, dtypes.half, ((col, 1),), 0, (np.arange(Wp) < W).astype(np.float16)
-    )
-    k = len(plan.accesses)
-
-    def guard(x):
-        if isinstance(x, X.Reduce):
-            return X.Reduce(
-                x.op, X.op("where", X.Load(k), guard(x.arg), IDENTITY[x.op])
-            )
-        if isinstance(x, X.Op):
-            return X.Op(x.name, tuple(guard(a) for a in x.args))
-        return x
-
-    padded = replace(plan, expr=guard(plan.expr), accesses=[*plan.accesses, mask])
-    got = [*got, Operand("col")]
-    binds, operands, tmps = {}, [], []
+def _rows(dev, plan: Plan, bufs) -> list:
+    """`plan` -- one reduction, or none -- on the rows kernels: its view
+    (`_view`), each read bound to it (`_bind`), W' = ceil32(W) columns wide
+    (a reduction's padding lanes its identity), the result placed
+    (`_place`). A reduction whose view takes a read only laid out, and whose
+    ranges interleave with the kept ones, runs as two (`_split_reduction`);
+    reductions down the rows (a tree holds one) one after another."""
+    kind, rows, cols = _view(plan)
+    Wp = _wide(cols)
+    if plan.reduce_ranges and _laid(plan, rows, cols, Wp, out=False):
+        split = _split_reduction(plan)
+        if split is not None:
+            return _materialise(dev, split, bufs)
+    if kind == "down" and len(_all_reduces(plan.expr)) > 1:
+        return _materialise(dev, plan, bufs)
+    W, R = _size(cols), _size(rows)
+    expr = plan.expr
+    binds, operands, tmps, runs = {}, [], [], []
     try:
-        if not _padded_operands(
-            dev,
-            padded,
-            bufs,
-            got,
-            [col],
-            R,
-            W,
-            Wp,
-            binds,
-            operands,
-            tmps,
-            masked=frozenset({k}),
-        ):
-            return None
-        out_at, key = _out(dev, plan, bufs, True)
-        try:
-            runs = RW.run(
-                dev,
-                padded.expr,
-                operands,
-                binds,
-                R,
-                Wp,
-                Operand("row"),
-                out_at,
-                info={"plan": plan.name, "narrow": W},
-            )
-        except RW.RowsError as e:
-            raise Refused(str(e)) from None
-        _wrote(dev, plan, bufs, key)
+        for i, a in enumerate(plan.accesses):
+            at, o, got = _bind(dev, plan, a, rows, cols, Wp, bufs, tmps)
+            binds[f"in{i}"] = at
+            operands.append(o)
+            runs += got
+        if kind == "along" and Wp != W:
+            k = len(operands)
+            binds[f"in{k}"] = FM.table(dev, (np.arange(Wp) < W).astype(np.float16))
+            operands.append(Operand("col"))
+
+            def guard(x, walk):
+                if isinstance(x, X.Reduce):
+                    lane = X.op("where", X.Load(k), walk(x.arg), IDENTITY[x.op])
+                    return X.Reduce(x.op, lane)
+                return None
+
+            expr = _rebuild(expr, guard)
+        out_at, out, done = _place(dev, plan, bufs, kind, rows, cols, Wp, tmps)
+        kernel = TR.column if kind == "down" else RW.run
+        info = {"plan": plan.name, "view": kind}
+        runs += kernel(dev, expr, operands, binds, R, Wp, out, out_at, info)
+        runs += done()
+    except RW.RowsError as e:
+        raise Refused(str(e)) from None
+    finally:
+        for t in tmps:
+            t.free()
+    return runs
+
+
+def _wide(cols) -> int:
+    """W' of a rows kernel over `cols`: whole 32-column blocks."""
+    return -(-_size(cols) // 32) * 32
+
+
+def _view(plan: Plan) -> tuple:
+    """``(kind, rows, cols)`` of `plan`'s rows kernel: a reduction "along"
+    the rows (rows the kept ranges, cols the reduced) or "down" them (rows
+    the reduced, cols the kept: `runtime.tree`), elementwise "rows" at a
+    split of the output's ranges. The fewest reads laid out wins (`_laid`),
+    then whole 32-column rows, then the order listed."""
+    if plan.reduce_ranges:
+        red, kept = _reduce_order(plan), list(plan.out_ranges)
+        views = [("along", kept, red)]
+        if _live(kept):
+            views.append(("down", red, kept))
+    else:
+        order = list(plan.out_ranges)
+        views = [
+            ("rows", order[:s], order[s:])
+            for s in range(len(order) - 1, -1, -1)
+            if _live(order[s:])
+        ] or [("rows", [], order)]
+
+    def cost(i: int) -> tuple:
+        _, rows, cols = views[i]
+        return (_laid(plan, rows, cols, _wide(cols)), _size(cols) % 32 != 0, i)
+
+    return views[min(range(len(views)), key=cost)]
+
+
+def _laid(plan: Plan, rows, cols, Wp: int, out: bool = True) -> int:
+    """How many of `plan`'s reads (and its output window, with `out`) a rows
+    kernel over [rows, cols] W' wide does not take as they are."""
+    accs = list(plan.accesses)
+    if out and plan.out_strides is not None:
+        accs.append(_out_access(plan))
+    return sum(not _takes(classify(a, rows, cols), Wp) for a in accs)
+
+
+def _takes(o: Operand | None, Wp: int, start: int = 0) -> bool:
+    """Whether a rows kernel W' columns wide reads `o` as it is (its buffer's
+    view `start` elements in; `rows._whole_rows`): rows of whole 32-byte
+    words at least W' apart, a row from a word, a value a row, one value."""
+    if o is None:
+        return False
+    if o.kind == "full":
+        return (
+            not ((start + o.offset) % 16 or o.pitch % 16)
+            and o.offset % o.pitch + Wp <= o.pitch
+        )
+    if o.kind == "col":
+        return not (start + o.offset) % 16
+    return True
+
+
+def _bind(dev, plan: Plan, a: Access, rows, cols, Wp: int, bufs, tmps) -> tuple:
+    """``(address, operand, runs)`` of read `a` for a rows kernel over [rows,
+    cols] W' wide: as it is where the kernel takes it (`_takes`; rows of
+    values in the f16 form, a statistic's flattened), else laid out
+    (`_laid_read`) over every row when it reads one and every column when it
+    reads one, rows W' apart."""
+    o = classify(a, rows, cols)
+    off = FM.base_of(bufs[a.slot])[1] if a.slot is not None else 0
+    if o is not None and _takes(o, Wp, off // np.dtype(F.np_dtype(a.dtype)).itemsize):
+        at, o = _addr(dev, a, o, bufs)
+        return at, o, []
+    over_r = _live(rows) if any(a.c(r) for r in _live(rows)) else []
+    over_c = _live(cols) if any(a.c(r) for r in _live(cols)) else []
+    pitch = Wp if over_c else 1
+    key = ("laid", id(a), id(plan))
+    t, runs = _laid_read(dev, plan, a, over_r, over_c, pitch, bufs, key)
+    tmps.append(t)
+    coef = {r: s * pitch for r, s in _dense(over_r).items()} | _dense(over_c)
+    laid = Access(key, dtypes.half, tuple(coef.items()), 0)
+    o = classify(laid, rows, cols)
+    assert o is not None and _takes(o, Wp)
+    at, o = _addr(dev, laid, o, {key: t})
+    return at, o, runs
+
+
+def _laid_read(dev, plan: Plan, a: Access, over_r, over_c, pitch, bufs, key) -> tuple:
+    """``(storage, runs)``: read `a` as f16 over ``[over_r.., over_c..]``,
+    rows `pitch` apart (the columns past W unspecified) -- a table on the
+    host, a buffer's by the bare-read kernels (`_bare`), spread to the pitch
+    by `forms.repitch`."""
+    order = [*over_r, *over_c]
+    R, W = _size(over_r), _size(over_c)
+    t = Storage(dev, max(32, 2 * R * pitch))
+    t.dtype = np.float16
+    if a.slot is None:
+        laid = np.zeros((R, pitch), np.float16)
+        laid[:, :W] = _table_over(a, order).reshape(R, W)
+        dev.write(t.addr, laid.tobytes())
+        return t, []
+    dense = t if pitch == W else Storage(dev, max(32, 2 * R * W))
+    try:
+        runs = _bare(dev, _laid_plan(plan, key, a, order), {**bufs, key: dense})
+        if runs is None:
+            raise Refused(f"a read with no f16 form: strides {dict(a.coef)}")
+        if dense is not t:
+            FM.repitch(dev, dense.addr, W, t.addr, pitch, R, W)
+    except BaseException:
+        t.free()
+        raise
+    finally:
+        if dense is not t:
+            dense.free()
+    return t, runs
+
+
+def _place(dev, plan: Plan, bufs, kind: str, rows, cols, Wp: int, tmps) -> tuple:
+    """``(address, operand, done)`` a rows kernel writes `plan`'s result to,
+    `done()` finishing it (its runs): along, the output's statistic form (a
+    window's through a temporary); otherwise the output itself where its
+    rows are whole words and W' = W, its padded-rows form when it is a whole
+    float buffer, else a temporary moved into it (`_moved`: any window, any
+    offset)."""
+    if kind == "along" and plan.out_strides is None:
+        at, key = _out(dev, plan, bufs, True)
+
+        def stat() -> list:
+            _wrote(dev, plan, bufs, key)
+            return []
+
+        return at, Operand("row"), stat
+    W = _size(cols)
+    out_rows = rows if kind == "rows" else []
+    R = _size(out_rows)
+    dst, doff = FM.base_of(bufs[plan.out_slot])
+    item = np.dtype(F.np_dtype(plan.out_dtype)).itemsize
+    whole = not doff and plan.out_strides is None and plan.out_n * item == dst.nbytes
+    if kind != "along" and Wp != W and whole and dtypes.is_float(plan.out_dtype):
+        key = FM.rows_key(W, Wp)
+        f = dst.form(key, 2 * R * Wp)
+
+        def form() -> list:
+            dst.wrote(key)
+            dst.dtype = F.np_dtype(plan.out_dtype)
+            return []
+
+        return f.addr, Operand("full", pitch=Wp), form
+    tplan, tbufs, finish = _half_target(dev, plan, bufs)
+    if kind == "along":
+        # A window's statistic: flattened in a temporary, then moved in.
+        R = _size(rows)
+        t = Storage(dev, max(32, 2 * R))
+        tmps.append(t)
+        t.dtype = np.float16
+        f = t.form(FM.ROWSTAT, max(RW.stat_bytes(R), 4 * 64 * R))
+
+        def window() -> list:
+            t.wrote(FM.ROWSTAT)
+            FM.flatten(dev, t, R)
+            runs = _moved(dev, tplan, tbufs, t, _dense(_live(rows)))
+            finish()
+            return runs
+
+        return f.addr, Operand("row"), window
+    tdst, tdoff = FM.base_of(tbufs[tplan.out_slot])
+    o = classify(_out_access(tplan), out_rows, cols)
+    if Wp == W and not tdoff % 32 and o is not None and _takes(o, Wp):
+        _window_ok(dev, tdst, tplan)
+
+        def direct() -> list:
+            _wrote_flat(tdst, tplan)
+            finish()
+            return []
+
+        pitch = o.pitch if o.kind == "full" else Wp
+        return tdst.addr + tdoff, Operand("full", pitch=pitch), direct
+    t = Storage(dev, max(32, 2 * R * Wp))
+    tmps.append(t)
+    t.dtype = np.float16
+    coef = {r: s * Wp for r, s in _dense(_live(out_rows)).items()} | _dense(_live(cols))
+
+    def moved() -> list:
+        runs = _moved(dev, tplan, tbufs, t, coef)
+        finish()
         return runs
+
+    return t.addr, Operand("full", pitch=Wp), moved
+
+
+def _half_target(dev, plan: Plan, bufs) -> tuple:
+    """``(plan, bufs, finish)``: `plan` writing f16 values -- as it is for an
+    f16 output, else into its output's f16 form (the rest of the buffer
+    current first when it writes part of a written one); `finish()` records
+    the form written."""
+    st, off = FM.base_of(bufs[plan.out_slot])
+    dt = np.dtype(F.np_dtype(plan.out_dtype))
+    if dt == np.float16:
+        return plan, bufs, lambda: None
+    total = st.nbytes // dt.itemsize
+    part = off or plan.out_strides is not None or plan.out_n != total
+    if part and (st.dtype is not None or st.host is not None):
+        FM.f16(dev, st, dt, total)
+    f = st.form(FM.F16, 2 * total)
+    alias = Storage(dev, f.nbytes, addr=f.addr, owned=False)
+    key = ("f16", plan.out_slot)
+    nbytes = bufs[plan.out_slot].nbytes // dt.itemsize * 2
+    view = StorageView(alias, off // dt.itemsize * 2, nbytes)
+
+    def finish() -> None:
+        st.wrote(FM.F16)
+        st.dtype = dt
+
+    out = replace(plan, out_slot=key, out_dtype=dtypes.half)
+    return out, {**bufs, key: view}, finish
+
+
+def _moved(dev, plan: Plan, bufs, t: Storage, coef: dict) -> list:
+    """`t` (f16 values at element strides `coef` over `plan`'s output
+    ranges) moved into `plan`'s f16 output by the bare-read kernels."""
+    key = ("placed", id(plan))
+    read = Access(key, dtypes.half, tuple(coef.items()), 0)
+    sub = replace(
+        plan,
+        kind="vector",
+        expr=X.Load(0),
+        accesses=[read],
+        reduce_ranges=(),
+        reductions={},
+    )
+    runs = _bare(dev, sub, {**bufs, key: t})
+    assert runs is not None  # an f16 output: `_gather` takes any read
+    return runs
+
+
+def _uploaded(dev, plan: Plan, bufs) -> list:
+    """`plan` with each folded table its reductions read uploaded as an f16
+    buffer (an operand the clusters can take)."""
+    under: set = set()
+
+    def walk(x, inside):
+        if isinstance(x, X.Load) and inside:
+            under.add(x.i)
+        elif isinstance(x, X.Op):
+            for a in x.args:
+                walk(a, inside)
+        elif isinstance(x, X.Reduce):
+            walk(x.arg, True)
+
+    walk(plan.expr, False)
+    bufs, tmps, accesses = dict(bufs), [], list(plan.accesses)
+    try:
+        for i in sorted(under):
+            a = accesses[i]
+            if a.slot is not None:
+                continue
+            raw = np.ascontiguousarray(a.table, np.float16).reshape(-1)
+            t = Storage(dev, max(32, raw.nbytes))
+            tmps.append(t)
+            dev.write(t.addr, raw.tobytes())
+            t.dtype = np.float16
+            key = ("table", i, id(plan))
+            bufs[key] = t
+            accesses[i] = replace(a, slot=key, dtype=dtypes.half, table=None)
+        return _vector(dev, replace(plan, accesses=accesses), bufs)
     finally:
         for t in tmps:
             t.free()
 
 
-def _padded_operands(
-    dev, plan, bufs, got, cols, R, W, Wp, binds, operands, tmps, masked=frozenset()
-) -> bool:
-    """Each read in the form a W'-wide rows kernel takes: rows closer than
-    W' laid out W' apart by the mover (whole words), a table over the
-    columns padded with zeros (`masked` ones are already W' long). False
-    when a read cannot be."""
-    for i, (a, o) in enumerate(zip(plan.accesses, got)):
-        if i in masked:
-            binds[f"in{i}"] = FM.table(dev, a.table)
-            operands.append(o)
-            continue
-        assert o is not None
-        if a.slot is not None and o.kind == "full" and o.pitch < Wp:
-            # Rows read W' wide: laid out W' apart first (whole words only).
-            if (2 * W) % 32 or o.offset % 16 or o.pitch % 16:
-                return False
-            src = FM.f16(
-                dev, bufs[a.slot], F.np_dtype(a.dtype), _n(*_st_dt(bufs[a.slot], a))
-            )
-            t = Storage(dev, 2 * R * Wp)
-            tmps.append(t)
-            FM.repitch(dev, src + 2 * o.offset, o.pitch, t.addr, Wp, R, W)
-            binds[f"in{i}"] = t.addr
-            operands.append(Operand("full", pitch=Wp))
-            continue
-        if a.slot is None and a.c(cols[0]):
-            rs, arr = _table_axes(a)
-            arr = np.pad(arr, [(0, Wp - W if r is cols[0] else 0) for r in rs])
-            ext = [Wp if r is cols[0] else U.extent(r) for r in rs]
-            co, step = {}, 1
-            for r, e in reversed(list(zip(rs, ext))):
-                co[r] = step
-                step *= e
-            a = replace(a, table=arr.reshape(-1), coef=tuple(co.items()))
-            if o.kind == "full":
-                o = Operand("full", pitch=Wp, offset=o.offset // W * Wp)
-        if o.kind in ("full", "col") and (
-            o.offset % 16 or (o.kind == "full" and o.pitch % 16)
-        ):
-            return False
-        at, o = _addr(dev, a, o, bufs)
-        binds[f"in{i}"] = at
-        operands.append(o)
-    return True
+def _table_only(plan: Plan) -> list:
+    """Kept ranges only folded tables read (a stride's phase: which taps of
+    a window an output digit takes)."""
+    buf = {r for a in plan.accesses if a.slot is not None for r, c in a.coef if c}
+    tab = {r for a in plan.accesses if a.slot is None for r, c in a.coef if c}
+    return [r for r in plan.out_ranges if U.extent(r) > 1 and r in tab and r not in buf]
 
 
-def _expanded_rows(dev, plan: Plan, bufs, ops, R: int, W: int) -> list:
-    """A reduction along rows not of whole 32-column blocks: each operand's
-    [n, 32] form is the operand with every value repeated 32 times, so a row
-    is 32 * W columns; a sum of it is 32 times the row's."""
-    if any(r.op == "prod" for r in _all_reduces(plan.expr)):
-        raise Refused(f"a product along rows of {W}: whole 32-column blocks")
-    binds, operands = {}, []
-    for i, (a, o) in enumerate(zip(plan.accesses, ops)):
-        if a.slot is None:
-            binds[f"in{i}"] = _table_rowstat(dev, a)
-        else:
-            st, off = FM.base_of(bufs[a.slot])
-            if off:
-                raise Refused("a statistic of a sub-buffer")
-            dt = F.np_dtype(a.dtype)
-            binds[f"in{i}"] = FM.rowstat(dev, st, dt, _n(st, dt))
-        if o.kind == "full":
-            o = Operand("full", pitch=o.pitch * 32, offset=o.offset * 32, rows=R)
-        elif o.kind == "col":
-            o = Operand("col", offset=o.offset * 32)
-        operands.append(o)
-
-    def scale(x):
-        if isinstance(x, X.Reduce):
-            inner = X.Reduce(x.op, scale(x.arg))
-            return X.op("mul", inner, 1.0 / 32) if x.op == "sum" else inner
-        if isinstance(x, X.Op):
-            return X.Op(x.name, tuple(scale(a) for a in x.args))
-        return x
-
-    out_at, key = _out(dev, plan, bufs, True)
+def _enumerated(dev, plan: Plan, bufs, phases: list) -> list:
+    """`plan` once a value of the kept ranges `phases` (each table then
+    reads the reduced ranges alone: a window contraction), each into its
+    slab of an f16 temporary ``[phases.., the other kept ranges..]`` (slabs
+    whole words), then the temporary moved into the output."""
+    rest = [r for r in plan.out_ranges if r not in phases]
+    slab = -(-_size(rest) // 16) * 16
+    strides = [*(s * slab for s in _mult(phases)), *_mult(rest)]
+    order = [*phases, *rest]
+    key = ("phase", id(plan))
+    t = Storage(dev, max(32, 2 * _size(phases) * slab))
     try:
-        runs = RW.run(
-            dev,
-            scale(plan.expr),
-            operands,
-            binds,
-            R,
-            32 * W,
-            Operand("row"),
-            out_at,
-            info={"plan": plan.name, "expanded": W},
+        laid = replace(
+            plan,
+            out_slot=key,
+            out_dtype=dtypes.half,
+            out_ranges=tuple(order),
+            out_shape=tuple(U.extent(r) for r in order),
+            out_strides=tuple(strides),
         )
-    except RW.RowsError as e:
-        raise Refused(str(e)) from None
-    except OutOfMemory as e:
-        raise Refused(f"rows of {W} read as {32 * W} statistic columns: {e}") from None
-    _wrote(dev, plan, bufs, key)
-    return runs
+        tb = {**bufs, key: t}
+        runs: list = []
+        for at in itertools.product(*(range(U.extent(r)) for r in phases)):
+            box = {r: (v, v + 1) for r, v in zip(phases, at)}
+            sub, sub_bufs, _ = _box(laid, box, tb, {})
+            # The slab's padding is the box's own: its view spans it.
+            v = sub_bufs[key]
+            sub_bufs[key] = StorageView(t, v.offset, 2 * slab)
+            runs += _vector(dev, sub, sub_bufs)
+        read = Access(key, dtypes.half, tuple(zip(order, strides)), 0)
+        moved = replace(
+            plan, expr=X.Load(0), accesses=[read], reduce_ranges=(), reductions={}
+        )
+        return runs + _vector(dev, moved, tb)
+    finally:
+        t.free()
+
+
+def _out_access(plan: Plan) -> Access:
+    return Access(plan.out_slot, plan.out_dtype, tuple(_out_coef(plan).items()), 0)
 
 
 def _reduce_order(plan) -> list:
@@ -1765,27 +1889,6 @@ def _refold(plan: Plan) -> Plan | None:
     )
 
 
-def _split(plan: Plan) -> tuple:
-    """[rows, cols] of an elementwise kernel: the widest whole-32 column
-    set every read classifies against."""
-    order = list(plan.out_ranges)
-    accs = [
-        *plan.accesses,
-        *([_out_access(plan)] if plan.out_strides is not None else []),
-    ]
-    for s in range(len(order) - 1, -1, -1):
-        rows, cols = order[:s], order[s:]
-        w = int(np.prod([U.extent(r) for r in cols])) if cols else 1
-        if w % 32:
-            continue
-        if all(classify(a, rows, cols) is not None for a in accs):
-            return rows, cols
-    raise Refused(
-        "no rows-and-columns view of the loop nest reads every operand as whole "
-        "32-column rows, one row, a value a row or one value"
-    )
-
-
 def _flat(dev, plan: Plan, bufs, cores):
     """Every read at the output's own index: N elements as 128-value rows."""
     oc = dict(zip(plan.out_ranges, _mult(plan.out_ranges)))
@@ -1795,6 +1898,13 @@ def _flat(dev, plan: Plan, bufs, cores):
         if coef != oc or a.off % 16:
             return None
     n = plan.out_n
+    # The kernel stores whole 128-value rows at word-aligned addresses: a
+    # part of a buffer takes it only when those rows are its own.
+    ost, ooff = FM.base_of(bufs[plan.out_slot])
+    item = np.dtype(F.np_dtype(plan.out_dtype)).itemsize
+    part = ooff or n * item != ost.nbytes
+    if part and (n % 128 or (ooff // item) % 16):
+        return None
     binds, dts = {}, []
     for i, a in enumerate(plan.accesses):
         if a.slot is None:
@@ -1857,19 +1967,22 @@ def _ks(k) -> tuple:
 
 def _matmul(dev, plan: Plan, bufs) -> list:
     m, n, k = plan.mnk
-    live = [r for r in plan.out_ranges if U.extent(r) > 1]
-    if not live or live[-1] is not n:
-        raise Refused("a product stored transposed")
     a, b = plan.a, plan.b
     if a is None or b is None:
         raise Refused("a matmul plan without its A and B reads")
     batch = [r for r in plan.out_ranges if r in plan.batch]
-    # An operand not [.., rows, K] row-major (x @ w with w [K, N], x.T @ y):
-    # laid out first, on card, as [batch it reads.., rows, K].
+    order = [*batch, m, n]
+    if {r: c for r, c in _out_coef(plan).items() if U.extent(r) > 1} != {
+        r: c for r, c in _dense(order).items() if U.extent(r) > 1
+    }:
+        return _reordered(dev, plan, bufs, order)
+    # An operand not [.., rows, K] row-major laid out as [batch.., rows, K]:
+    # a stack over every batch range, but a B no batch reads is one shared.
     runs, tmps, bufs = [], [], dict(bufs)
     try:
         for side, acc, row in (("a", a, m), ("b", b, n)):
-            order = [*(r for r in batch if acc.c(r)), row, *_ks(k)]
+            whole = side == "a" or any(acc.c(r) for r in batch)
+            order = [*(batch if whole else []), row, *_ks(k)]
             if {r: c for r, c in acc.coef if U.extent(r) > 1} == {
                 r: c for r, c in _dense(order).items() if U.extent(r) > 1
             }:
@@ -1908,6 +2021,31 @@ def _matmul(dev, plan: Plan, bufs) -> list:
     finally:
         for t in tmps:
             t.free()
+
+
+def _reordered(dev, plan: Plan, bufs, order: list) -> list:
+    """A product whose output is not dense as ``[batch.., m, n]`` (a batch
+    range between M and N, N not innermost, a window): into an f16
+    temporary so, then moved into the output (`_moved`)."""
+    key = ("mmout", id(plan))
+    t = Storage(dev, max(32, 2 * _size(order)))
+    t.dtype = np.float16
+    sub = replace(
+        plan,
+        out_slot=key,
+        out_dtype=dtypes.half,
+        out_ranges=tuple(order),
+        out_shape=tuple(U.extent(r) for r in order),
+        out_strides=None,
+    )
+    try:
+        runs = _matmul(dev, sub, {**bufs, key: t})
+        tplan, tbufs, finish = _half_target(dev, plan, bufs)
+        runs += _moved(dev, tplan, tbufs, t, _dense(order))
+        finish()
+    finally:
+        t.free()
+    return runs
 
 
 def _product(dev, plan: Plan, bufs) -> list:
@@ -1954,61 +2092,104 @@ def _product(dev, plan: Plan, bufs) -> list:
         1 if shared else bt,
     )
     rows = list(plan.out_ranges[:-1])
-    extras, binds = [], {"a": qa, "b": qb}
-    lays: list = []  # epilogue rows laid out Np apart, freed after the run
-    for i, acc in enumerate(plan.accesses, start=1):
-        o = classify(acc, rows, [n])
-        if o is None and acc.slot is not None:
-            # Broadcast over some rows only (a position table over a batch):
-            # laid out over the output's ranges first (a move, stride 0).
-            t = Storage(dev, max(32, 2 * plan.out_n))
-            lays.append(t)
-            key = ("epi", i, id(plan))
-            sub = replace(
-                plan,
-                kind="vector",
-                name=f"{plan.name}_e{i}",
-                out_slot=key,
-                out_dtype=dtypes.half,
-                out_strides=None,
-                expr=X.Load(0),
-                accesses=[acc],
-                reduce_ranges=(),
-                reductions={},
-                a=None,
-                b=None,
-                mnk=(),
-                batch=(),
-            )
-            bufs = {**bufs, key: t}
-            _vector(dev, sub, bufs)
-            acc = Access(
-                key, dtypes.half, tuple(_dense(list(plan.out_ranges)).items()), 0
-            )
-            o = classify(acc, rows, [n])
-        if o is None:
-            for t in lays:
-                t.free()
-            raise Refused(
-                f"an epilogue operand read as no row form: strides {dict(acc.coef)}"
-            )
-        at, o = _addr(dev, acc, o, bufs)
-        if o.kind == "full" and o.pitch < Np:
-            # Rows read Np wide: laid out Np apart first (whole words only).
-            if (2 * N) % 32 or o.offset % 16 or o.pitch % 16:
-                for t in lays:
-                    t.free()
-                raise Refused(
-                    f"an epilogue operand of rows of {N}: not whole 32-byte words"
-                )
-            t = Storage(dev, 2 * bt * M * Np)
-            lays.append(t)
-            FM.repitch(dev, at + 2 * o.offset, o.pitch, t.addr, Np, bt * M, N)
-            at, o = t.addr, Operand("full", pitch=Np, rows=bt * M)
-        binds[f"in{i}"] = at
-        extras.append(o)
+    # Each batch's rows padded to whole groups of 4: the epilogue's operands
+    # and output are [bt, mp] rows (none read or written past them).
+    rpad = mm.mp != M
+    extras, binds, runs = [], {"a": qa, "b": qb}, []
+    lays: list = []  # epilogue operands laid out for the kernel, freed after the run
     try:
-        return _product_run(
+        for i, acc in enumerate(plan.accesses, start=1):
+            o = classify(acc, rows, [n])
+            if o is None and acc.slot is None:
+                # A table broadcast over some rows only (a mask over a batch):
+                # laid out over the output's ranges on the host.
+                t = Storage(dev, max(32, 2 * plan.out_n))
+                lays.append(t)
+                key = ("epi", i, id(plan))
+                dev.write(t.addr, _table_over(acc, plan.out_ranges).tobytes())
+                t.wrote(FLAT)
+                bufs = {**bufs, key: t}
+                acc = Access(
+                    key, dtypes.half, tuple(_dense(list(plan.out_ranges)).items()), 0
+                )
+                o = classify(acc, rows, [n])
+            elif o is None:
+                # Broadcast over some rows only (a position table over a batch):
+                # laid out over the output's ranges first (a move, stride 0).
+                t = Storage(dev, max(32, 2 * plan.out_n))
+                lays.append(t)
+                key = ("epi", i, id(plan))
+                bufs = {**bufs, key: t}
+                runs += _vector(dev, _laid_plan(plan, key, acc, plan.out_ranges), bufs)
+                acc = Access(
+                    key, dtypes.half, tuple(_dense(list(plan.out_ranges)).items()), 0
+                )
+                o = classify(acc, rows, [n])
+            if o is None:
+                raise Refused(
+                    f"an epilogue operand read as no row form: strides {dict(acc.coef)}"
+                )
+            if rpad and o.kind in ("full", "row"):
+                cols = [n] if o.kind == "full" else []
+                width = Np if cols else 1
+                t, got = _pad_rows(dev, plan, bufs, acc, batch, m, cols, mm.mp, width)
+                lays.append(t)
+                runs += got
+                nrows = bt * mm.mp
+                if cols:
+                    at, o = t.addr, Operand("full", pitch=Np, rows=nrows)
+                else:
+                    at = FM.rowstat(dev, t, np.float16, nrows)
+                    o = Operand("row", rows=nrows)
+                binds[f"in{i}"] = at
+                extras.append(o)
+                continue
+            if o.kind == "col" and o.offset % 16:
+                # A row not on a word: laid out Np wide, the rest zero.
+                t = Storage(dev, 2 * Np)
+                lays.append(t)
+                if acc.slot is None:
+                    laid = np.zeros(Np, np.float16)
+                    laid[:N] = np.asarray(acc.table, np.float16).reshape(-1)[
+                        o.offset : o.offset + N
+                    ]
+                    dev.write(t.addr, laid.tobytes())
+                elif not _gather_to(
+                    dev, acc, bufs, ((N, 1),), o.offset, ((N, 1),), 0, Np, t.addr
+                ):
+                    raise Refused(f"an epilogue row of {N} with no f16 form")
+                binds[f"in{i}"] = t.addr
+                extras.append(Operand("col"))
+                continue
+            at, o = _addr(dev, acc, o, bufs)
+            if o.kind == "full" and (o.pitch < Np or o.offset % 16 or o.pitch % 16):
+                # Rows read Np wide: laid out Np apart first, the extra columns
+                # zero (the mover, else the statistic form; a table on the host).
+                nrows = bt * M
+                t = Storage(dev, 2 * nrows * Np)
+                lays.append(t)
+                if not ((2 * N) % 32 or o.offset % 16 or o.pitch % 16):
+                    FM.repitch(dev, at + 2 * o.offset, o.pitch, t.addr, Np, nrows, N)
+                elif acc.slot is None:
+                    flat = np.asarray(acc.table, np.float16).reshape(-1)
+                    laid = np.zeros((nrows, Np), np.float16)
+                    for r in range(nrows):
+                        laid[r, :N] = flat[
+                            o.offset + r * o.pitch : o.offset + r * o.pitch + N
+                        ]
+                    dev.write(t.addr, laid.tobytes())
+                else:
+                    walk, dwalk = ((nrows, o.pitch), (N, 1)), ((nrows, Np), (N, 1))
+                    if not _gather_to(
+                        dev, acc, bufs, walk, o.offset, dwalk, 0, nrows * Np, t.addr
+                    ):
+                        raise Refused(
+                            f"an epilogue operand of rows of {N} with no f16 form"
+                        )
+                at, o = t.addr, Operand("full", pitch=Np, rows=nrows)
+            binds[f"in{i}"] = at
+            extras.append(o)
+        return runs + _product_run(
             dev, plan, bufs, mm, binds, extras, bt, M, N, Np, batch, m, n
         )
     finally:
@@ -2016,25 +2197,78 @@ def _product(dev, plan: Plan, bufs) -> list:
             t.free()
 
 
+def _laid_plan(plan: Plan, key, acc: Access, order, strides=None) -> Plan:
+    """The vector plan writing `acc` as f16 over the ranges `order` into
+    ``bufs[key]``: dense, or at element `strides` (a window)."""
+    return replace(
+        plan,
+        kind="vector",
+        name=f"{plan.name}_l",
+        out_slot=key,
+        out_dtype=dtypes.half,
+        out_ranges=tuple(order),
+        out_shape=tuple(U.extent(r) for r in order),
+        out_strides=None if strides is None else tuple(strides),
+        expr=X.Load(0),
+        accesses=[acc],
+        reduce_ranges=(),
+        reductions={},
+        a=None,
+        b=None,
+        mnk=(),
+        batch=(),
+    )
+
+
+def _pad_rows(dev, plan: Plan, bufs, acc, batch, m, cols, mp: int, width: int):
+    """``(storage, runs)``: `acc` over ``[batch.., m, cols..]`` as f16 with
+    each batch's rows padded to `mp`, rows `width` elements apart."""
+    order = [*batch, m, *cols]
+    strides = [width, *([1] if cols else [])]
+    step = mp * width
+    for r in reversed(batch):
+        strides.insert(0, step)
+        step *= U.extent(r)
+    t = Storage(dev, max(32, 2 * step))
+    t.wrote(FLAT)
+    t.dtype = np.float16
+    if acc.slot is None:
+        laid = np.zeros(step, np.float16)
+        idx = np.zeros([U.extent(r) for r in order], np.int64)
+        for i, (r, s) in enumerate(zip(order, strides)):
+            shape = [1] * len(order)
+            shape[i] = U.extent(r)
+            idx = idx + s * np.arange(U.extent(r)).reshape(shape)
+        laid[idx] = _table_over(acc, order)
+        dev.write(t.addr, laid.tobytes())
+        return t, []
+    key = ("pad_rows", id(acc), id(plan))
+    try:
+        return t, _vector(
+            dev, _laid_plan(plan, key, acc, order, strides), {**bufs, key: t}
+        )
+    except BaseException:
+        t.free()
+        raise
+
+
 def _product_run(dev, plan, bufs, mm, binds, extras, bt, M, N, Np, batch, m, n) -> list:
-    padded = Np != N
+    # A batch's rows padded to mp (`MM.plan`): the product's rows are moved
+    # out of an [bt, mp, Np] temporary.
+    mp = mm.mp
+    padded = Np != N or mp != M
     tmp: Storage | None = None
     dst, doff = FM.base_of(bufs[plan.out_slot])
     # Rows of N not whole words: the product stays in the output's padded
     # rows form (read back compacted; readers on card take its strides).
     whole = not doff and plan.out_strides is None
     narrow = (2 * N) % 32 != 0 or plan.out_dtype != dtypes.half
-    in_form = padded and narrow and whole
+    in_form = Np != N and narrow and whole and dtypes.is_float(plan.out_dtype)
     if padded:
-        if not dtypes.is_float(plan.out_dtype) or (narrow and not whole):
-            raise Refused(
-                f"a {plan.out_dtype} product of {N} columns (not whole blocks of 32) "
-                "into a window of its buffer"
-            )
-        if in_form:
+        if in_form and mp == M:
             out_at, key = dst.form(FM.rows_key(N, Np), 2 * bt * M * Np).addr, None
         else:
-            tmp = Storage(dev, 2 * bt * M * Np)
+            tmp = Storage(dev, 2 * bt * mp * Np)
             out_at, key = tmp.addr, None
     else:
         out_at, key = _out(dev, plan, bufs, False)
@@ -2044,7 +2278,7 @@ def _product_run(dev, plan, bufs, mm, binds, extras, bt, M, N, Np, batch, m, n) 
             mm,
             plan.expr,
             tuple(extras),
-            Operand("full", pitch=Np, rows=bt * M),
+            Operand("full", pitch=Np, rows=bt * mp),
             dev.machine.count("MG"),
             dev.machine.count("VC"),
         )
@@ -2054,35 +2288,53 @@ def _product_run(dev, plan, bufs, mm, binds, extras, bt, M, N, Np, batch, m, n) 
         if not padded:
             _wrote(dev, plan, bufs, key)
             return [run]
-        if in_form:
+        if tmp is None:
             dst.wrote(FM.rows_key(N, Np))
             dst.dtype = F.np_dtype(plan.out_dtype)
             return [run]
-        # The [.., M, N] window of the [.., M, Np] product.
-        tkey = ("mmpad", id(plan))
+        # The [.., M, N] window of the [.., mp, Np] product: into the output's
+        # padded rows form, else the output itself (`_moved`: any window).
+        cols = n if not in_form else W.ranges(plan, [Np])[0]
         coef, step = {}, 1
         for r, e in reversed(
-            list(zip([*batch, m, n], [*(U.extent(x) for x in batch), M, Np]))
+            list(zip([*batch, m, cols], [*(U.extent(x) for x in batch), mp, Np]))
         ):
             coef[r] = step
             step *= e
-        sub = replace(
-            plan,
-            kind="vector",
-            expr=X.Load(0),
-            accesses=[Access(tkey, dtypes.half, tuple(coef.items()), 0)],
-            reduce_ranges=(),
-            reductions={},
-        )
-        moved = _move(dev, sub, {**bufs, tkey: tmp})
-        if moved is None:
-            raise Refused(
-                f"a product of {N} columns: its window is not whole 32-byte words"
-            )
+        if not in_form:
+            tplan, tbufs, finish = _half_target(dev, plan, bufs)
+            moved = _moved(dev, tplan, tbufs, tmp, coef)
+            finish()
+            return [run, *moved]
+        tkey, fkey = ("mmpad", id(plan)), ("mmform", id(plan))
+        form = dst.form(FM.rows_key(N, Np), 2 * bt * M * Np)
+        moves = {
+            **bufs,
+            tkey: tmp,
+            fkey: Storage(dev, form.nbytes, addr=form.addr, owned=False),
+        }
+        read = Access(tkey, dtypes.half, tuple(coef.items()), 0)
+        moved = _bare(dev, _laid_plan(plan, fkey, read, (*batch, m, cols)), moves)
+        assert moved is not None  # an f16 output: `_gather` takes any read
+        dst.wrote(FM.rows_key(N, Np))
+        dst.dtype = F.np_dtype(plan.out_dtype)
         return [run, *moved]
     finally:
         if tmp is not None:
             tmp.free()
+
+
+def _table_over(acc: Access, order) -> np.ndarray:
+    """A folded table's values (f16) over the ranges `order`, outermost
+    first: each range it does not read broadcast."""
+    assert all(r in order for r, c in acc.coef if c and U.extent(r) > 1)
+    flat = np.asarray(acc.table, np.float16).reshape(-1)
+    idx = np.full([U.extent(r) for r in order], acc.off, np.int64)
+    for i, r in enumerate(order):
+        shape = [1] * len(order)
+        shape[i] = U.extent(r)
+        idx = idx + acc.c(r) * np.arange(U.extent(r)).reshape(shape)
+    return np.ascontiguousarray(flat[idx])
 
 
 def _batched(acc, batch, step: int, what: str) -> None:
