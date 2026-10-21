@@ -541,10 +541,15 @@ static uint32_t dispatch_group(uint32_t s0, uint64_t head)
     return s1 - s0;
 }
 
-/* Until `gos` moves since `s0` are done and the mover is idle. The bound is on
- * PROGRESS, not on the step: many moves may take far longer than one wait's
- * timeout, and only a mover that stops finishing moves is hung. */
-static int moves_done(uint64_t s0, uint32_t gos)
+/* What a wait on the mover waits for. */
+enum { MV_UPTO, MV_IDLE, MV_ROOM };
+
+/* Until `n` moves since `s0` are done (MV_UPTO; the mover may be busy with a
+ * later one), and the mover is idle too (MV_IDLE), or until its configuration
+ * queue has room (MV_ROOM). The bound is on PROGRESS, not on the step: many
+ * moves may take far longer than one wait's timeout, and only a mover that
+ * stops finishing moves is hung. */
+static int mv_wait(uint64_t s0, uint32_t n, int what)
 {
     uint64_t t0 = ka_cycles(), s;
     uint32_t seen = KA_MV_DONE(s0);
@@ -553,7 +558,9 @@ static int moves_done(uint64_t s0, uint32_t gos)
         if (KA_MV_FAULT(s)) {
             return ka_engine_fail(&eng, KA_ST_MOVER_FAULT, KA_MV_FAULT(s), s);
         }
-        if (!KA_MV_BUSY(s) && ((KA_MV_DONE(s) - KA_MV_DONE(s0)) & 0x0fffffff) >= gos) {
+        if (what == MV_ROOM ? KA_MV_ROOM(s) != 0
+                            : ((KA_MV_DONE(s) - KA_MV_DONE(s0)) & 0x0fffffff) >= n &&
+                                  !(what == MV_IDLE && KA_MV_BUSY(s))) {
             return 0;
         }
         if (KA_MV_DONE(s) != seen) {
@@ -581,60 +588,20 @@ static int moves_all_done(void)
         return 0;
     }
     mv.fresh = 0;
-    return moves_done(mv.s0, mv.gos);
-}
-
-/* Until `n` of the package's moves are done; the mover may be busy with a
- * later one. */
-static int moves_upto(uint32_t n)
-{
-    uint64_t t0 = ka_cycles(), s;
-    uint32_t seen = KA_MV_DONE(mv.s0);
-    for (;;) {
-        s = ka_ctrl_rd(KA_R_MVSTAT);
-        if (KA_MV_FAULT(s)) {
-            return ka_engine_fail(&eng, KA_ST_MOVER_FAULT, KA_MV_FAULT(s), s);
-        }
-        if (((KA_MV_DONE(s) - KA_MV_DONE(mv.s0)) & 0x0fffffff) >= n) {
-            return 0;
-        }
-        if (KA_MV_DONE(s) != seen) {
-            seen = KA_MV_DONE(s);
-            t0 = ka_cycles();
-        }
-        if (ka_cycles() - t0 > eng.timeout) {
-            return ka_engine_fail(&eng, KA_ST_TIMEOUT, KA_WAIT_MOVER, s);
-        }
-        ka_yield();
-    }
+    return mv_wait(mv.s0, mv.gos, MV_IDLE);
 }
 
 /* Writes the mover's configuration queue takes before ROOM is read again. */
 static uint32_t mv_credit;
 
-/* Until the configuration queue has room; bounded on progress like
- * moves_done, since the queue drains only as moves finish. */
+/* Until the configuration queue has room; it drains only as moves finish. */
 static int mover_room(void)
 {
-    uint64_t t0 = ka_cycles(), s;
-    uint32_t seen = KA_MV_DONE(mv.s0);
-    while (!mv_credit) {
-        s = ka_ctrl_rd(KA_R_MVSTAT);
-        if (KA_MV_FAULT(s)) {
-            return ka_engine_fail(&eng, KA_ST_MOVER_FAULT, KA_MV_FAULT(s), s);
+    if (!mv_credit) {
+        if (mv_wait(mv.s0, 0, MV_ROOM)) {
+            return eng.status;
         }
-        if (KA_MV_ROOM(s)) {
-            mv_credit = KA_MV_ROOM_WRITES;
-            break;
-        }
-        if (KA_MV_DONE(s) != seen) {
-            seen = KA_MV_DONE(s);
-            t0 = ka_cycles();
-        }
-        if (ka_cycles() - t0 > eng.timeout) {
-            return ka_engine_fail(&eng, KA_ST_TIMEOUT, KA_WAIT_MOVER, s);
-        }
-        ka_yield();
+        mv_credit = KA_MV_ROOM_WRITES;
     }
     --mv_credit;
     return 0;
@@ -688,11 +655,17 @@ static struct {
     unsigned nmapped;
 } de;
 
-/* Faults and unclaimed signals, and no progress for a timeout. */
+/* Faults and unclaimed signals, and no progress for a timeout. A faulted move
+ * never completes, so the engine's WAIT for it would hold until the timeout:
+ * the mover's fault is read here. */
 static int de_watch(uint64_t stat)
 {
     if (KA_NM_STAT_COUNT(ka_nm_rd(KA_NM_STAT)) && ka_engine_drain(&eng)) {
         return eng.status;
+    }
+    uint64_t m = ka_ctrl_rd(KA_R_MVSTAT);
+    if (KA_MV_FAULT(m)) {
+        return ka_engine_fail(&eng, KA_ST_MOVER_FAULT, KA_MV_FAULT(m), m);
     }
     if (KA_DE_STAT_OVF(stat)) {
         return ka_engine_fail(&eng, KA_ST_BAD_STEP, 0xde, stat);
@@ -1401,7 +1374,7 @@ static int step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, int *end)
     case KA_OP_MOVER:
         return mover((uint32_t)arg, count, (w0 >> 8) & KA_STEP_F_POSTED);
     case KA_OP_MWAIT:
-        return moves_upto(count);
+        return mv_wait(mv.s0, count, MV_UPTO);
     case KA_OP_FETCH:
         if (unit >= eng.n) {
             return ka_engine_fail(&eng, KA_ST_BAD_UNIT, unit, 0);

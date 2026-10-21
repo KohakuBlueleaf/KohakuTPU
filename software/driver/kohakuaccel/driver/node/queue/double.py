@@ -38,7 +38,7 @@ class SpecFirmware:
         )
         self.sq = self.q + L.SQ
         self.cq = self.sq + 64 * self.sq_n
-        self.so_at = self.cq + 32 * self.cq_n
+        self.so_at = -(-(self.cq + 32 * self.cq_n) // L.LINE) * L.LINE
         self.si_at = self.so_at + self.so
         self.wr(L.FW, L.ST_READY)
 
@@ -111,5 +111,5 @@ class SpecFirmware:
         )
         line = (st["free"], st["largest"], st["live"] | st["blocks"] << 32, st["fails"])
         for k, v in enumerate(line):
-            self.wr(L.HEAPS + 32 * r + 8 * k, v)
+            self.wr(L.HEAPS + L.LINE * r + 8 * k, v)
         return status, value

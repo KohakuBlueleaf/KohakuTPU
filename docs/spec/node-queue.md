@@ -79,30 +79,32 @@ The host allocates it, page-aligned, in the node's DRAM, writes the header
 resumes the indices it finds, so a restarted firmware continues a queue the host
 still holds.
 
-**One writer per 32-byte line.** The host writes card memory in 32-byte
-granules and zero-fills whatever a write does not carry; two writers in one line
-would erase each other. Every field below therefore sits alone at the start of
-its own line, and the host always writes whole lines. The processor's 8-byte
-uncached stores honour byte strobes, so the firmware may write single words.
+**One writer per 64-byte line.** A host writes card memory in whole granules
+and fills whatever a write does not carry: 32 bytes over JTAG (the rest zeroed),
+64 bytes over XDMA (a narrower write is a read-modify-write of the line). Two
+writers in one line would erase each other. Every field below therefore sits
+alone at the start of its own 64-byte line (`KA_Q_LINE`), and the host always
+writes whole lines. The processor's 8-byte uncached stores honour byte strobes,
+so the firmware may write single words.
 
 | Offset | Writer | Words |
 |---|---|---|
-| `0x000` | host | magic `0x314555455551414B` ("KAQUEUE1"), version `2`, `sq_n \| cq_n << 16`, `so_bytes \| si_bytes << 32` |
-| `0x020` | firmware | state (0 none, 1 ready, 2 stopped, 3 fatal), ABI version, entries completed, fatal code |
-| `0x040` | host | SQ tail — entries submitted, ever |
-| `0x060` | firmware | SQ head — entries consumed |
-| `0x080` | firmware | CQ tail — completions posted |
-| `0x0A0` | host | CQ head — completions read |
-| `0x0C0` | firmware | stdout written (bytes, ever), stdout bytes lost |
-| `0x0E0` | host | stdout read |
-| `0x100` | host | stdin written |
-| `0x120` | firmware | stdin read |
-| `0x140` | firmware | the number of units served; the unit words follow from `0x160`, one per 8 bytes, room for 16 |
-| `0x1E0` + 32·r | firmware | node heap `r` (r = 0..3, §7): free bytes, largest free block, `live \| table entries << 32`, failed requests; all 0 while unconfigured |
-| `0x280` | host | the SQ: `sq_n` entries of 64 bytes |
+| `0x000` | host | magic `0x314555455551414B` ("KAQUEUE1"), version `3`, `sq_n \| cq_n << 16`, `so_bytes \| si_bytes << 32` |
+| `0x040` | firmware | state (0 none, 1 ready, 2 stopped, 3 fatal), ABI version, entries completed, fatal code |
+| `0x080` | host | SQ tail — entries submitted, ever |
+| `0x0C0` | firmware | SQ head — entries consumed |
+| `0x100` | firmware | CQ tail — completions posted |
+| `0x140` | host | CQ head — completions read |
+| `0x180` | firmware | stdout written (bytes, ever), stdout bytes lost |
+| `0x1C0` | host | stdout read |
+| `0x200` | host | stdin written |
+| `0x240` | firmware | stdin read |
+| `0x280` | firmware | the number of units served; the unit words follow from `0x2C0`, one per 8 bytes, room for 16 |
+| `0x340` + 64·r | firmware | node heap `r` (r = 0..3, §7): free bytes, largest free block, `live \| table entries << 32`, failed requests; all 0 while unconfigured |
+| `0x440` | host | the SQ: `sq_n` entries of 64 bytes |
 | then | firmware | the CQ: `cq_n` entries of 32 bytes |
-| then | firmware | stdout ring, `so_bytes` (a multiple of 32) |
-| then | host | stdin ring, `si_bytes` (a multiple of 32) |
+| next 64-byte line | firmware | stdout ring, `so_bytes` (a multiple of 64) |
+| then | host | stdin ring, `si_bytes` (a multiple of 64) |
 
 Indices count entries or bytes **ever**, never wrapped; a slot is the index
 modulo the ring's size. A ring is empty when its two indices are equal and full
@@ -226,7 +228,7 @@ firmware's own code (`ka_mem_alloc`/`ka_mem_free`), from one pool.
 1. Write the region's header and zero its indices before the firmware boots;
    write the boot block after the image and before `HR_BOOT`.
 2. Wait for the firmware state to read *ready* before the first submission.
-3. Write whole 32-byte lines, and the SQ entry before the SQ tail.
+3. Write whole 64-byte lines, and the SQ entry before the SQ tail.
 4. Read the CQ tail before the entries it publishes, and advance the CQ head
    after — the firmware will not post into a full CQ.
 5. Read results from memory only after the package's completion: a unit's

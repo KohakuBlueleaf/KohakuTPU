@@ -25,6 +25,8 @@ from kohakuaccel.driver.node.queue import layout as L
 REGION_BYTES = 1 << 20
 #: Bindings per submission slot: the firmware's KA_MAX_BUFFERS.
 MAX_BINDINGS = 64
+#: A package's own granule (package-format.md): whole 32-byte lines.
+PACKAGE_LINE = 32
 
 
 @dataclass
@@ -86,6 +88,8 @@ class NodeQueue:
         idle=None,
         poll_seconds: float = 0.0,
         spill=None,
+        spin: float = 0.0,
+        unspill=None,
     ) -> None:
         if base % 4096:
             raise ValueError(f"a queue region is page aligned; {base:#x} is not")
@@ -102,9 +106,17 @@ class NodeQueue:
             raise ValueError(f"{size:#x} bytes leaves no package heap")
         self.idle = idle
         self.poll_seconds = poll_seconds
+        #: Seconds a `wait` polls back to back before it idles between polls:
+        #: where a poll is cheap (PCIe, ~30 us) and a package short, an idle
+        #: of any length is the wait.
+        self.spin = spin
         #: `spill(nbytes) -> address` places a package larger than the heap
-        #: anywhere the node reads (an entry carries the package's address).
+        #: anywhere the node reads (an entry carries the package's address);
+        #: `unspill(address)` gives the place back when the package is dropped.
         self.spill = spill
+        self.unspill = unspill
+        #: digest -> address of each package placed outside the heap
+        self._spilled: dict[bytes, int] = {}
         self.sq_tail = self.cq_head = self.so_rd = self.si_wr = 0
         self._cache: OrderedDict[bytes, tuple[int, int]] = OrderedDict()
         self._heap_top = self.heap_off
@@ -129,6 +141,9 @@ class NodeQueue:
         )
         self.mem.write_block(self.base, info + bytes(L.SQ - L.LINE))
         self.sq_tail = self.cq_head = self.so_rd = self.si_wr = 0
+        # Nothing submitted before this is waited for: a node restarted
+        # mid-run never completes it.
+        self._unspill_all()
         self._cache.clear()
         self._heap_top = self.heap_off
         self._done.clear()
@@ -180,22 +195,32 @@ class NodeQueue:
     def upload(self, package: bytes) -> int:
         """Where `package` is in the heap, uploading it the first time.
 
-        A package larger than the heap goes where `spill` puts it, or raises
+        A package larger than the heap goes where `spill` puts it (kept
+        until :meth:`drop_spilled`; once more after dropping every spilled
+        package when `spill` raises MemoryError), or raises
         :class:`ValueError` without one. A full heap is emptied only when
         nothing submitted is still outstanding.
         """
-        if len(package) % L.LINE:
-            raise ValueError("a package is whole 32-byte lines")
+        if len(package) % PACKAGE_LINE:
+            raise ValueError(f"a package is whole {PACKAGE_LINE}-byte lines")
         key = hashlib.sha1(package).digest()
         got = self._cache.get(key)
         if got is not None:
             self._cache.move_to_end(key)
             self.counters["cache_hits"] += 1
             return got[0]
+        # Written in whole queue lines: the host's write granule may be wider
+        # than the package's.
+        padded = package + bytes(-len(package) % L.LINE)
         if self.heap_off + len(package) > self.size and self.spill is not None:
-            at = self.spill(len(package))
-            self.mem.write_block(at, package)
+            try:
+                at = self.spill(len(padded))
+            except MemoryError:
+                self.drop_spilled()
+                at = self.spill(len(padded))
+            self.mem.write_block(at, padded)
             self._cache[key] = (at, len(package))
+            self._spilled[key] = at
             self.counters["uploads"] += 1
             self.counters["upload_bytes"] += len(package)
             return at
@@ -203,13 +228,15 @@ class NodeQueue:
             raise ValueError(
                 f"a {len(package)}-byte package exceeds the {self.size - self.heap_off}-byte heap"
             )
-        if self._heap_top + len(package) > self.size:
+        if self._heap_top + len(padded) > self.size:
             self._drain_all()
-            self._cache.clear()
+            # The heap's packages are overwritten from here; spilled ones stay.
+            for k in [k for k in self._cache if k not in self._spilled]:
+                del self._cache[k]
             self._heap_top = self.heap_off
         at = self.base + self._heap_top
-        self.mem.write_block(at, package)
-        self._heap_top += -(-len(package) // L.LINE) * L.LINE
+        self.mem.write_block(at, padded)
+        self._heap_top += len(padded)
         self._cache[key] = (at, len(package))
         self.counters["uploads"] += 1
         self.counters["upload_bytes"] += len(package)
@@ -231,9 +258,11 @@ class NodeQueue:
         `words` replaces entry words 2.. whole (at most 6), for the opcodes
         whose arguments are not a package's (HEAP, ALLOC, FREE).
         """
+        t0 = time.monotonic()
         while self.sq_tail - self._sq_head() >= self.sq_n:
             self.poll()
-            self._idle()
+            if time.monotonic() - t0 >= self.spin:
+                self._idle()
         slot = self.sq_tail % self.sq_n
         self._tag += 1
         tag = self._tag
@@ -299,11 +328,12 @@ class NodeQueue:
         completion (unless `check` is False) and :class:`TimeoutError`."""
         t0 = time.monotonic()
         while tag not in self._done:
-            if time.monotonic() - t0 > timeout:
+            waited = time.monotonic() - t0
+            if waited > timeout:
                 raise TimeoutError(
                     f"tag {tag:#x} did not complete in {timeout}s: {self.state()}"
                 )
-            if not self.poll() and tag not in self._done:
+            if not self.poll() and tag not in self._done and waited >= self.spin:
                 self._idle()
         c = self._done.pop(tag)
         self._outstanding.discard(tag)
@@ -357,7 +387,7 @@ class NodeQueue:
     def heap_stats(self, region: int) -> dict:
         """The firmware's line for `region`: free and largest free bytes, live
         blocks, table entries, failed requests (all 0 while unconfigured)."""
-        free, largest, lb, fails = struct.unpack(
+        free, largest, lb, fails = struct.unpack_from(
             "<4Q", self.mem.read_block(self.base + L.HEAPS + region * L.LINE, L.LINE)
         )
         return {
@@ -367,6 +397,20 @@ class NodeQueue:
             "blocks": lb >> 32,
             "fails": fails,
         }
+
+    def drop_spilled(self) -> None:
+        """Every package placed outside the heap given back (`unspill`) once
+        nothing submitted is outstanding; a later submit places it again."""
+        if self._spilled:
+            self._drain_all()
+            self._unspill_all()
+
+    def _unspill_all(self) -> None:
+        for key, at in self._spilled.items():
+            self._cache.pop(key, None)
+            if self.unspill is not None:
+                self.unspill(at)
+        self._spilled.clear()
 
     def _drain_all(self) -> None:
         """Poll until every submitted entry has its final completion."""
@@ -382,9 +426,8 @@ class NodeQueue:
 
     # ----------------------------------------------------------------- stdio
     def _stdout(self, so_wr: int | None = None) -> None:
-        if so_wr is None:
-            so_wr = self.mem.read64(self.base + L.SO_WR)
-        n = so_wr - self.so_rd
+        wr = int(self.mem.read64(self.base + L.SO_WR)) if so_wr is None else so_wr
+        n = wr - self.so_rd
         if n <= 0:
             return
         n = min(n, self.so_bytes)
@@ -401,7 +444,7 @@ class NodeQueue:
             )
         text = raw[start - lo : start - lo + n].decode("utf-8", "replace")
         self.console += text
-        self.so_rd = so_wr
+        self.so_rd = wr
         self.mem.write_block(self.base + L.SO_RD, L.line(self.so_rd))
 
     def read_stdout(self) -> str:

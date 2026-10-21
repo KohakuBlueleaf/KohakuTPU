@@ -97,7 +97,7 @@ def test_boot_block_matches_the_firmware():
 
 
 class HostMemory(MemoryTransport):
-    """Records the HOST's writes, which must be whole 32-byte lines."""
+    """Records the HOST's writes, which must be whole queue lines."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -201,15 +201,93 @@ def test_node_heap_ops_through_the_queue():
     )
 
 
+class Places:
+    """A spill target: distinct addresses, at most `cap` bytes held."""
+
+    def __init__(self, cap: int = 1 << 30) -> None:
+        self.cap, self.top = cap, 0x4000_0000
+        self.live: dict[int, int] = {}
+
+    def alloc(self, n: int) -> int:
+        if sum(self.live.values()) + n > self.cap:
+            raise MemoryError(f"{n} B do not fit")
+        at, self.top = self.top, self.top + n
+        self.live[at] = n
+        return at
+
+    def free(self, at: int) -> None:
+        del self.live[at]
+
+
+SMALL_REGION = 1 << 16
+
+
+def _big(q, salt: int = 0) -> bytes:
+    """A package one heap and a bit long, its words named by `salt`."""
+    n = (q.size - q.heap_off) // 32 + 8
+    return Package(payloads=[salt << 32 | k for k in range(n)]).to_bytes()
+
+
+def test_a_package_past_the_heap_runs_from_its_spilled_place():
+    places = Places()
+    mem, _fw, q = _queue(size=SMALL_REGION, spill=places.alloc, unspill=places.free)
+    big = _big(q)
+    assert q.run(big).ok
+    assert f"run {len(big)}B" in q.read_stdout()
+    ((at, n),) = places.live.items()
+    assert n >= len(big) and mem.read_block(at, len(big)) == big
+    assert q.run(big).ok and list(places.live) == [at]
+    assert q.counters["uploads"] == 1 and q.counters["cache_hits"] == 1
+
+
+def test_spilled_packages_outlive_heap_wraps_and_go_back_when_dropped():
+    places = Places()
+    _mem, _fw, q = _queue(size=SMALL_REGION, spill=places.alloc, unspill=places.free)
+    big = _big(q)
+    q.run(big)
+    (at,) = places.live
+    third = (q.size - q.heap_off) // 3 // 32
+    for k in range(5):  # small packages enough to wrap the heap twice
+        q.run(Package(payloads=[k << 32 | j for j in range(third)]).to_bytes())
+    hits = q.counters["cache_hits"]
+    q.run(big)
+    assert q.counters["cache_hits"] == hits + 1 and list(places.live) == [at]
+    q.drop_spilled()
+    assert not places.live
+    q.run(big)
+    assert len(places.live) == 1 and at not in places.live
+
+
+def test_a_spill_that_does_not_fit_gives_the_spilled_ones_back_first():
+    places = Places()
+    _mem, _fw, q = _queue(size=SMALL_REGION, spill=places.alloc, unspill=places.free)
+    a, b = _big(q, 1), _big(q, 2)
+    places.cap = len(a) + 64
+    assert q.run(a).ok
+    (first,) = places.live
+    assert q.run(b).ok
+    assert len(places.live) == 1 and first not in places.live
+
+
+def test_init_gives_spilled_packages_back():
+    places = Places()
+    _mem, _fw, q = _queue(size=SMALL_REGION, spill=places.alloc, unspill=places.free)
+    q.run(_big(q))
+    q.init()
+    assert not places.live
+
+
 def test_stdout_wraps_and_stdin_lands_whole_lines():
-    mem, fw, q = _queue(so_bytes=32, si_bytes=64)
+    mem, fw, q = _queue(cq_n=3, so_bytes=64, si_bytes=64)
     for k in range(3):
-        fw.print(f"line {k} of a ring\n")
-        assert q.read_stdout() == f"line {k} of a ring\n"
+        fw.print(f"line {k} of a ring, longer than a third of it\n")
+        assert q.read_stdout() == f"line {k} of a ring, longer than a third of it\n"
     q.stdin("hello")
-    si = BASE + L.SQ + 64 * q.sq_n + 32 * q.cq_n + 32
-    assert mem.read_block(si, 8)[:5] == b"hello"
+    # 3 CQ entries end mid-line; the stdout ring starts on the next line.
+    so = BASE + L.SQ + 64 * q.sq_n + 32 * q.cq_n + 32
+    assert so % L.LINE == 0
+    assert mem.read_block(so + 64, 8)[:5] == b"hello"
     assert mem.read64(BASE + L.SI_WR) == 5
     assert mem.host_writes and all(
-        a % 32 == 0 and n % 32 == 0 for a, n in mem.host_writes
+        a % L.LINE == 0 and n % L.LINE == 0 for a, n in mem.host_writes
     )

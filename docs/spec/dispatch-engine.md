@@ -90,7 +90,10 @@ entries (or copies an `ENGINE` step's), and at the end waits for the queue to
 drain. While it waits for room it pops whatever reaches the completion queue: a
 fault fails the package, the engine is disabled, and the words each unit has not
 retired are handed to the firmware's counters so the usual quiesce drains them.
-No progress for the timeout fails it with `TIMEOUT`.
+A faulted move never completes, so a `WAIT` on the mover would hold: each look
+at a stalled queue also reads the mover's status, and its fault fails the
+package with `MOVER_FAULT`. No progress for the timeout fails it with
+`TIMEOUT`.
 
 ## 6. Cost
 

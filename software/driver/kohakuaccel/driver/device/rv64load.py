@@ -13,6 +13,15 @@ A 64-bit write to LOAD_DATA streams one word into the region LOAD_CTL named
 (imem: 4 bytes, spad: 8) and the pointer walks itself, so an 8 KB image is
 2,048 writes and needs no mapped window. Console bytes queue in the window
 (256 deep) and are read back one per access at CONS -- a write pops.
+
+The window's registers ignore byte strobes. Over a 32-bit control path
+(``transport.control_bytes == 4``, AXI-Lite) each half of a word is a write
+of its own, and the station copies a 32-bit write into both halves of its
+beat (`sb_nmu` place mode): a register takes {v, v}. BOOT, LOAD_CTL, STDIN
+and CONS read a low field, so they are written their low half alone; PC is
+the whole word, so only 0 can be written. A scratchpad word is two half
+writes, each after LOAD_CTL re-aims the pointer: a half write still walks it
+8, and the scratchpad keeps the strobes (0x0F, then 0xF0).
 """
 
 import pathlib
@@ -36,6 +45,32 @@ class LoadWindow:
         self.base = base
         self.image: dict[int, int] = {}
         self.entry = 0
+        self.narrow = getattr(transport, "control_bytes", 8) == 4
+
+    def _w(self, off: int, v: int) -> None:
+        """One register write; over a narrow path its low half alone."""
+        if not self.narrow:
+            self.t.write64(self.base + off, v)
+        elif v >> 32 or (off == R_PC and v):
+            raise ValueError(
+                f"{v:#x} at +{off:#x} needs a 64-bit write: a 32-bit path "
+                f"writes {{v, v}} (link the image at 0)"
+            )
+        else:
+            self.t.write32(self.base + off, v)
+
+    def _spad_words(self, offset: int, words: list) -> None:
+        """Scratchpad words from byte `offset` (LOADC[23:8] is the start)."""
+        if not self.narrow:
+            self._w(R_LOADC, REGION_SPAD | (offset << 8))
+            self.t.write_seq(self.base + R_LOADD, words)
+            return
+        for k, w in enumerate(words):
+            at = REGION_SPAD | ((offset + 8 * k) << 8)
+            self.t.write32(self.base + R_LOADC, at)
+            self.t.write32(self.base + R_LOADD, w & 0xFFFF_FFFF)
+            self.t.write32(self.base + R_LOADC, at)
+            self.t.write32(self.base + R_LOADD + 4, w >> 32)
 
     # ---------------------------------------------------------------- ELF
     def load_elf(self, path) -> dict:
@@ -108,40 +143,45 @@ class LoadWindow:
     def _stream(self, region: int, base: int, nbytes: int, width: int) -> None:
         if nbytes == 0:
             return
-        self.t.write64(self.base + R_LOADC, region | (0 << 8))
         words = []
         for a in range(0, nbytes, width):
             w = 0
             for j in range(width):
                 w |= self._byte(base + a + j) << (8 * j)
             words.append(w)
-        self.t.write_seq(self.base + R_LOADD, words)
+        if region == REGION_SPAD:
+            self._spad_words(0, words)
+            return
+        self._w(R_LOADC, region | (0 << 8))
+        if self.narrow:
+            for w in words:
+                self.t.write32(self.base + R_LOADD, w)
+        else:
+            self.t.write_seq(self.base + R_LOADD, words)
 
     # ----------------------------------------------------------------- run
     def stdin(self, text: str) -> None:
         """Queue bytes for the program to read at R_STDIN, before boot."""
         for ch in text.encode():
-            self.t.write64(self.base + R_STDIN, ch)
+            self._w(R_STDIN, ch)
 
     def write_spad(self, offset: int, data: bytes) -> None:
         """Stream `data` into the scratchpad from byte `offset` (8-byte words).
         Only while the core is stopped: both share the scratchpad's write port."""
         if offset % 8 or len(data) % 8:
             raise ValueError("the scratchpad is streamed in whole 8-byte words")
-        # LOADC[23:8] holds the start offset.
-        self.t.write64(self.base + R_LOADC, REGION_SPAD | (offset << 8))
-        self.t.write_seq(
-            self.base + R_LOADD,
+        self._spad_words(
+            offset,
             [int.from_bytes(data[a : a + 8], "little") for a in range(0, len(data), 8)],
         )
 
     def stop(self) -> None:
         """Hold the core in reset (HR_BOOT = 0)."""
-        self.t.write64(self.base + R_BOOT, 0)
+        self._w(R_BOOT, 0)
 
     def boot(self) -> None:
-        self.t.write64(self.base + R_PC, self.entry)
-        self.t.write64(self.base + R_BOOT, 1)
+        self._w(R_PC, self.entry)
+        self._w(R_BOOT, 1)
 
     def status(self) -> int:
         return self.t.read64(self.base + R_STATUS)
@@ -153,7 +193,7 @@ class LoadWindow:
             if not (w >> 8) & 1:
                 break
             out.append(chr(w & 0xFF))
-            self.t.write64(self.base + R_CONS, 0)  # pop
+            self._w(R_CONS, 0)  # pop
         return "".join(out)
 
     def run(self, expect: str | None = None, timeout: float = 600.0, poll=None) -> dict:

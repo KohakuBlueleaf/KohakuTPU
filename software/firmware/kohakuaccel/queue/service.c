@@ -122,13 +122,15 @@ static int setup(void)
     Q.cq_n = (g >> 16) & 0xffff;
     Q.so_n = (uint32_t)s;
     Q.si_n = (uint32_t)(s >> 32);
-    if (!Q.sq_n || !Q.cq_n || !Q.so_n || !Q.si_n || (Q.so_n & 31) || (Q.si_n & 31)) {
+    if (!Q.sq_n || !Q.cq_n || !Q.so_n || !Q.si_n || (Q.so_n & (KA_Q_LINE - 1)) ||
+        (Q.si_n & (KA_Q_LINE - 1))) {
         ka_printf("[ka] bad queue geometry %lx %lx\n", g, s);
         return 2;
     }
     Q.sq = Q.q + KA_Q_SQ;
     Q.cq = Q.sq + (uint64_t)Q.sq_n * KA_Q_SQ_BYTES;
-    Q.so = Q.cq + (uint64_t)Q.cq_n * KA_Q_CQ_BYTES;
+    /* The rings start on a line: the host writes the stdin ring in whole lines. */
+    Q.so = (Q.cq + (uint64_t)Q.cq_n * KA_Q_CQ_BYTES + KA_Q_LINE - 1) & ~(uint64_t)(KA_Q_LINE - 1);
     Q.si = Q.so + Q.so_n;
 
     /* Resume the firmware-owned indices from the region. */
@@ -151,7 +153,7 @@ static void heap_line(unsigned r)
     if (h) {
         ka_heap_stats(h, &s);
     }
-    uint64_t at = Q.q + KA_Q_HEAPS + 32 * r;
+    uint64_t at = Q.q + KA_Q_HEAPS + KA_Q_LINE * r;
     ka_st64(at, s.free);
     ka_st64(at + 8, s.largest);
     ka_st64(at + 16, s.live | (uint64_t)s.blocks << 32);
@@ -202,7 +204,7 @@ uint64_t ka_queue_serve(void)
     ka_package_boot();
     /* The units this node serves, given or found, before it says READY. */
     for (unsigned i = 0; i < ka_boot.nunits; ++i) {
-        ka_st64(Q.q + KA_Q_UNITS + 0x20 + 8 * i, ka_boot.units[i]);
+        ka_st64(Q.q + KA_Q_UNITS + KA_Q_LINE + 8 * i, ka_boot.units[i]);
     }
     ka_st64(Q.q + KA_Q_UNITS, ka_boot.nunits);
     for (unsigned r = 0; r < KA_MEM_REGIONS; ++r) {
