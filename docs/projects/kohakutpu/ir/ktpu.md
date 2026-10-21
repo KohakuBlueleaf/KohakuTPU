@@ -371,9 +371,9 @@ KohakuTPU's spaces and ops. Code: `software/compiler/kohakutpu/compiler/l2/`.
 | | `x = load VIEW : f16[1, C] @l1(gt4)` read by a band of R rows; `s = load VIEW : f16[R] @l1` | one row broadcast to every row of the band; a 1-D view loaded as a row statistic |
 | | `rmax`, `rsum` (rows to `f32[R] @reg`) | the merge tree over 8 rows; `rsum (mul a, b)` folds the product. Of `@reg(gt4)` rows (drained tiles): a 4-row band's registers folded, chunk 4 + i onto chunk i, an xor butterfly over the 16 lanes, chunks 0-3 copied to 4-7 -- one register a band whose every chunk holds its row's value, an elementwise operand to the band (`m[:, *]`); `rsum (mul a, b)` there folds the product too (a multiply, then a fused multiply-add of the next register pair: the product is never held) |
 | | `if sticky` (a block of math) | the front end waits for the math, GETSTK, VSKIPZ over the block; the block's results overwrite their names' registers, so the skipped path keeps the values |
-| node scope | `copy DST <- SRC [perm=]`, `fill`, `gen`, `gather`, `scatter` | one move of walks |
+| node scope | `copy DST <- SRC [perm=]`, `fill`, `gen`, `gather`, `scatter` | one move of walks; any walks a move cannot hold (more than 16,384 words, or more than a walker's 6 levels) cut into consecutive runs of steps: U steps at a time, U the largest step count every walk's level boundaries share (1 always does) whose inner levels a walker holds, as many U a move as stay inside every walk's next level; a gather or scatter cut into moves of at most 2,048 rows (whole 32-byte lines of the index list) and rows of at most 65,535 words |
 | | `copy BUF <- BUF walk=((N, S), ...) [at=B] [dwalk=(...)] [dat=B]`; `fill BUF value=V walk=(...) [at=B]` | explicit signed byte walks of whole buffers (the last level whole words; a stride of 0 repeats): flips, permutes, broadcasts, windows |
-| | `quant DST <- SRC`; `gt4 DST <- SRC` (row-major f16 to an `mx7a` / `mx7b` buffer, or to `tile=` sub-tiles) | a transform move: the source walked in the destination's entry order, cut into moves of at most 16,384 source words |
+| | `quant DST <- SRC`; `gt4 DST <- SRC` (row-major f16 to an `mx7a` / `mx7b` buffer, or to `tile=` sub-tiles) | a transform move: the source walked in the destination's entry order, cut the same way in whole entries (at most 16,384 source words a move) |
 | | `gt4 BUF <- BUF walk=(..., (4, S)) dwalk=(...)` | any GT4 move: each group of four source words (the walk's last level) to four consecutive words, the destination stepping once a group |
 
 **Order.** Each `par` of units and each run of node-scope moves is a stage.
@@ -438,15 +438,34 @@ its words' cycles ahead of its first unpack.
 **Passes** (`l2/passes.py`, `l2/pipeline.py compile_l1`): `place`, `space`,
 `share` (in a body over several nodes, a fill whose view does not name the
 cluster becomes `share=cross`), `split` (`gemm ... split`: the K loop),
-`pipeline` (a node-scope `for` whose iterations run pars of two unit kinds
-gets `pipe=2`; when the body's first `par` runs on units a later `par` of it
-also runs on, the loop is rotated -- that `par` of iteration i + 1 ahead of
-the rest of iteration i -- where no memory view of it meets one of the `par`s
-it passes), `retile` (a vector stream loop's rows a trip: of 1/4 to 4
-times the written tile, the one the issue model times fastest over all its
-trips, kept only 2% better; a `par` inside node-scope loops costed at their
-first iteration, its transfers landing at the top of the L1), the lowering,
-then the L1 image
+`step` (a vector stream loop some view of which steps further a trip than a
+descriptor's 18-bit `ainc` reaches: its trips become a node-scope loop
+around the `par`, one trip a run, `for t in T..T + 1` inside; trips that
+depend on the instance make the node loop span every instance's, each
+instance's trip under `when T < HI` / `when T >= LO`, and an instance left
+with nothing that iteration runs nothing; a loop whose trips carry values is
+refused), `pipeline` (a node-scope `for` whose
+iterations run pars of two unit kinds gets `pipe=2`; when the body's first
+`par` runs on units a later `par` of it also runs on, the loop is rotated --
+that `par` of iteration i + 1 ahead of the rest of iteration i -- where no
+memory view of it meets one of the `par`s it passes), `retile` (a vector
+stream loop's rows a trip: of 1/4 to 4 times the written tile and every
+whole band dividing it -- 4 rows for GT4, 1 for plain rows -- the one that
+lowers (registers, L1, a loop body in VLOOP's field, an image in IMEM) the
+issue model times fastest over all its trips, kept only 2% better; both
+bounds of the trips scale by R / new (a bound that is an expression, the
+`par`'s variable or the step pass's node trip, with a dividing tile); ops
+reading only values made before the loop keep their rows; none lowering, a
+stream whose ops each work on 32-column GT4 blocks apart splits its columns
+into the fewest equal pieces one of which lowers, a `par` a piece; else
+refused with the written tile's reason; a `par` inside node-scope loops
+costed at their first iteration and first instance, its transfers landing at
+the top of the L1), the lowering (of its candidate images the fastest that
+encodes into IMEM: numbers past the 14 scalar registers held in pinned
+registers or set into `s13` / `k3` before each read, and a row unpacked
+before the loop pinned or unpacked again from its kept L1 bytes where read,
+whichever times faster; a value stored through several views packed once
+for each L1 layout among them), then the L1 image
 scheduler (`opt/schedule.py`: each run of math, unpack and pack
 list-scheduled under the same issue model with a cost for each configuration
 word, kept only when the model times it 1% faster).

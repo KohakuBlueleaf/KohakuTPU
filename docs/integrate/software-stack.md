@@ -309,7 +309,10 @@ the members.
                                            registry), node/, daemon/, runtime/
                     kohakutpu.driver       clock/, host/, units/, daemon/
       simulation/   kohakuaccel.simulation the package interpreter and SimMachine
-                    kohakutpu.simulation   verilator/: the Verilator card
+                    kohakutpu.simulation   verilator/: the Verilator card;
+                                           behave/: the behaviour model (a
+                                           card's packages for values, no
+                                           cycles: mover, vector core, cluster)
       firmware/     (C)                    the node firmware and its host tools
       application/  kohakutpu.application  a skeleton, and the kernel tools
       template/     toyaccel.*             the smallest project, every component

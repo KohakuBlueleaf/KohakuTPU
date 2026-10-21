@@ -431,3 +431,9 @@ does not report them. The vector lowering places compiled values to avoid them
   measure cases only `flash` (S through DRAM) has findings: 8 `model` (the
   peer VDRAINs of its redo block, under `skipz` on the sticky flag), 16
   `race`, 39,047 `port`, so it is refused by default.
+- Host memory: a run's objects (processes, units, memories, clocks) hold
+  the card, the machine and each other; `schedule` and `check` end each
+  machine run with `Card.close`, which clears them, so they are freed with
+  their last reference. A run of a million events peaks at ~0.4 GB while it
+  runs (a batch-64 LeNet step's transposes reach 2.6 M events, ~1.1 GB).
+  `test_verify.py` asserts a check leaves the cycle collector nothing.

@@ -50,7 +50,7 @@ chain is 1 kernel, 4 unfused).
 
 A tensor's storage is its row-major bytes plus forms made on the card when a
 kernel needs them, kept while the buffer is unwritten: the f16 form of a
-float32 / int buffer (integers exact to 2,048), the `[n, 32]` row-statistic
+float32 buffer, the `[n, 32]` row-statistic
 form (each value in 32 lanes: how a reduction leaves a statistic and how a
 row reads it), MXFP7 A / B packings of a product's operands (quantised once,
 reused), and padded rows (rows of `n` values `ceil32(n)` apart: what the
