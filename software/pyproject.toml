@@ -70,4 +70,4 @@ extraPaths = ["language", "compiler", "driver", "simulation", "application", "te
 # its path, so same-named test files in two components do not collide. Tests
 # run on every CPU (xdist); `-p no:xdist` runs one in a debugger.
 addopts = "--import-mode=importlib -n auto"
-testpaths = ["language/tests", "compiler/tests", "driver/tests", "tests"]
+testpaths = ["language/tests", "compiler/tests", "driver/tests", "simulation/tests", "tests"]
