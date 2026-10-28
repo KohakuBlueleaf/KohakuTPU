@@ -294,7 +294,10 @@ def emit(tab, err, split=False):
                 C0, C1, C2 = tab[(fsel, idx6)]
                 a = (fsel << 6) | idx6
                 if split:
-                    f = [f"-{CW}'sd{-v}" if v < 0 else f"{CW}'sd{v}" for v in (C0, C1, C2)]
+                    f = [
+                        f"-{CW}'sd{-v}" if v < 0 else f"{CW}'sd{v}"
+                        for v in (C0, C1, C2)
+                    ]
                     out.append(
                         f"{ind}8'd{a:<3}: begin c0 <= {f[0]} ; c1 <= {f[1]} ;"
                         f" c2 <= {f[2]} ; end"

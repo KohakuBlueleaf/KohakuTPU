@@ -13,7 +13,10 @@ By default Verilator runs inside WSL (Ubuntu-24.04, Verilator 5.020), paths
 translated on the way in. `--native` runs the one on PATH instead: on Linux
 `verilator`, on Windows conda-forge's `verilator_bin.exe` with `make` and a
 mingw `g++` on PATH -- its verilated.mk names MSVC, so the toolchain is passed
-to make (`VLT_CXX` / `VLT_AR` override g++ / ar).
+to make (`VLT_CXX` / `VLT_AR` override g++ / ar). `--verilator-root` (or
+`KTPU_VERILATOR_ROOT`) names the install instead of PATH. Verilator 5.020
+rejects a delayed array store inside a `for` (BLKLOOPINIT, mx_quant.v); every
+card carrying the transform builds with the native conda-forge 5.052.
 
 The XPM cells are SHIMMED, not taken from Vivado: sim/verilator/shims/ explains
 why (Vivado's own xpm_memory.sv uses `deassign`, which Verilator rejects).
@@ -86,13 +89,28 @@ def opt_make(fast: str) -> str:
     return f"OPT_FAST={fast} OPT_GLOBAL=-O3 OPT_SLOW=-O1"
 
 
-def native_cmd(fast: str) -> list:
+def native_env(vroot: str | None) -> dict | None:
+    """The environment of a native Verilator installed at `vroot`: its
+    VERILATOR_ROOT, and its bin/ (verilator_bin, make) first on PATH."""
+    if not vroot:
+        return None
+    env = dict(os.environ, VERILATOR_ROOT=vroot)
+    env["PATH"] = str(pathlib.Path(vroot) / "bin") + os.pathsep + env.get("PATH", "")
+    return env
+
+
+def native_cmd(fast: str, env: dict | None = None) -> list:
     """The native Verilator and, on Windows, the toolchain its make must use."""
+    path = (env or os.environ).get("PATH")
     if os.name != "nt":
-        return ["verilator", "-MAKEFLAGS", opt_make(fast)]
-    exe = shutil.which("verilator_bin")
+        exe = shutil.which("verilator", path=path)
+        return [exe or "verilator", "-MAKEFLAGS", opt_make(fast)]
+    exe = shutil.which("verilator_bin", path=path)
     if exe is None:
-        sys.exit("--native on Windows needs verilator_bin.exe on PATH (conda-forge)")
+        sys.exit(
+            "--native on Windows needs verilator_bin.exe on PATH or under "
+            "--verilator-root (conda-forge)"
+        )
     cxx = os.environ.get("VLT_CXX", "g++")
     mk = [
         f"CXX={cxx}",
@@ -171,7 +189,17 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("bench")
     ap.add_argument("--lint-only", action="store_true")
-    ap.add_argument("--native", action="store_true", help="verilator on PATH, not WSL")
+    ap.add_argument(
+        "--native",
+        action="store_true",
+        help="verilator on PATH, not WSL (always so off Windows)",
+    )
+    ap.add_argument(
+        "--verilator-root",
+        default=os.environ.get("KTPU_VERILATOR_ROOT"),
+        help="--native: the Verilator install to use (its VERILATOR_ROOT); "
+        "default $KTPU_VERILATOR_ROOT, else the one on PATH",
+    )
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--warn", action="store_true", help="show the silenced warnings")
     ap.add_argument("--define", "-d", action="append", default=[])
@@ -207,6 +235,8 @@ def main() -> int:
         help="C++ flags of a --cc model, added to every file",
     )
     ap.add_argument("--run-args", default="", help="passed to the harness binary")
+    # A host-driven harness (card_main.cpp) with no host waits forever.
+    ap.add_argument("--no-run", action="store_true", help="build, do not run")
     ap.add_argument("--vlt-config", action="append", default=[], help="a .vlt file")
     ap.add_argument("--vflag", action="append", default=[], help="a raw verilator flag")
     ap.add_argument(
@@ -217,6 +247,8 @@ def main() -> int:
     # every build removes), and `use` rebuilds from that profile.
     ap.add_argument("--pgo", choices=["gen", "use"], help="profile-guided --cc build")
     args = ap.parse_args()
+    # WSL exists only under Windows; elsewhere the Verilator on PATH is native.
+    args.native = args.native or os.name != "nt"
 
     if args.cc and args.lint_only:
         sys.exit("--cc and --lint-only are different jobs; pick one")
@@ -310,8 +342,9 @@ def main() -> int:
     # those modules take Verilator's default instead of the bench's unit.
     # --cc: the harness owns time, so RTL `#` delays are not scheduled.
     timing = "--no-timing" if harness else "--timing"
+    env = native_env(args.verilator_root) if args.native else None
     head = (
-        native_cmd(args.opt_fast)
+        native_cmd(args.opt_fast, env)
         if args.native
         else ["verilator", "-MAKEFLAGS", opt_make(args.opt_fast)]
     )
@@ -358,6 +391,7 @@ def main() -> int:
         bp = subprocess.run(
             cmd,
             cwd=work,
+            env=env,
             check=False,
             capture_output=True,
             text=True,
@@ -395,6 +429,10 @@ def main() -> int:
         return rc
     if args.lint_only:
         print(f"  LINT OK -- {top}  ({t_build:.1f}s)")
+        return 0
+    if args.no_run:
+        print(f"  @@@ TIMING build {t_build:.2f}s")
+        print(f"  model at {vsim_of(work)}")
         return 0
 
     inv = f"./obj_dir/vsim {args.run_args}".strip()

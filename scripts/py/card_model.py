@@ -25,6 +25,8 @@ import subprocess
 import sys
 import time
 
+from kohakutpu.driver.clock.card import load_board
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 HARNESS = "sim/verilator/harness/card_main.cpp"
 VLT_CONFIG = "sim/verilator/card.vlt"
@@ -38,6 +40,7 @@ def vlt(card: str, root: pathlib.Path, extra: list) -> None:
         "--cc",
         HARNESS,
         "--keep",
+        "--no-run",
         "--vlt-config",
         VLT_CONFIG,
         "--build-root",
@@ -91,6 +94,15 @@ def main() -> int:
     nodes = a.nodes or (",".join(str(i) for i in range(int(m.group(2)))) if m else None)
     if not a.no_pgo and (board is None or nodes is None):
         sys.exit(f"cannot derive --board/--nodes from {a.card!r}; give them")
+
+    if board is not None:
+        model = load_board(board).get("model")
+        if model is not None:
+            if model["bench"] != a.card:
+                sys.exit(f"{board} describes model {model['bench']}, not {a.card}")
+            if any(g.split("=", 1)[0] == "DRAM_WORDS" for g in a.gparam):
+                sys.exit("DRAM_WORDS comes from the model board; edit model.dram_words")
+            defs += ["-G", f"DRAM_WORDS={model['dram_words']}"]
 
     if a.no_pgo:
         vlt(a.card, root, defs)

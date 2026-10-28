@@ -252,6 +252,7 @@ module dispatch_engine_tb;
                     end
                     if ($urandom % 4 == 0) @(negedge clk);
                 end
+                while (rd_data[15:0] >= DEPTH + 1) @(negedge clk);
                 push(6'd1, 64'hFEED);
             end
             begin : signals

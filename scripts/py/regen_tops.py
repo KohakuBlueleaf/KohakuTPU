@@ -139,6 +139,16 @@ MANIFEST = [
         (True, False, False),
         True,
     ),
+    # The small simulated card's die: the v9t6 node and its two system ports
+    # around one matmul cluster and one vector core.
+    (
+        "ktpu_sim_1x2_1c1v_1m_nol2",
+        "mesh_1x2_1+1.txt",
+        True,
+        True,
+        (True, False, False),
+        True,
+    ),
     ("ktpu_ship_2x2_6c2v_il", "mesh_2x2_6+2.txt", True, False),
     ("ktpu_ship_2x2_6c4v_il", "mesh_2x2_6+4.txt", True, False),
     ("ktpu_ship_2x3", "mesh_2x3_6cu3vec.txt", False, False),

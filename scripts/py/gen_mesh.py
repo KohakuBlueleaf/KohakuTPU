@@ -138,7 +138,9 @@ class Mesh:
                     self.units.setdefault(t, []).append((x, y))
 
         if len(self.mags) > 4:
-            raise MeshError(f"{len(self.mags)} sys tiles; the system node has at most 4 ports")
+            raise MeshError(
+                f"{len(self.mags)} sys tiles; the system node has at most 4 ports"
+            )
         if not self.mags:
             raise MeshError("no sys tile: the mesh has no system node")
 

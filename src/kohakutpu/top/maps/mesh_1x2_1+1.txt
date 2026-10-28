@@ -1,0 +1,7 @@
+# The v9t6 port surface around one cluster and one vector core: two routers
+# stacked, a system-node port on each (west), the cluster local to the first,
+# the vector core local to the second.
+xxx nul xxx
+sys mat nul
+sys vec nul
+xxx nul xxx

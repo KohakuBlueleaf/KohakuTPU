@@ -89,9 +89,16 @@ module mx_cluster_data_tb;
 
     assign noc_in_busy = dut_busy || ack_v;
 
+    // Held in reset with the DUT: `noc_out_valid` is X until the DUT's first
+    // reset edge, and an X sampled into the running count never leaves it.
     always @(posedge clk) begin
-        ack_v    <= ack_go;
-        ack_owed <= ack_owed + (last_wd ? 1 : 0) - (ack_go ? 1 : 0);
+        if (!resetn) begin
+            ack_v    <= 1'b0;
+            ack_owed <= 0;
+        end else begin
+            ack_v    <= ack_go;
+            ack_owed <= ack_owed + (last_wd ? 1 : 0) - (ack_go ? 1 : 0);
+        end
     end
 
     // GA/GB = 512 and block RAM, the production shape: two banks of 256, which

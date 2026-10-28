@@ -1276,6 +1276,12 @@ BENCHES = {
         + MOVER
         + ["src/kohakuaccel/verif/axi_ram.v", "tests/sysnode/mm_mover_tb.v"],
     ),
+    # Back-to-back gathers, scatters and pitched copies against a jittered AXI
+    # memory: every W beat, every FIFO pop and the idle FIFO checked.
+    "mm_mover_stream": (
+        "mm_mover_stream_tb",
+        COMMON + MOVER + ["tests/sysnode/mm_mover_stream_tb.v"],
+    ),
     # Workflow bandwidth: conv A', a large copy, a short-run relayout, a fill.
     # mm_mover_v1.v is the pre-burst engine, so before and after are measured.
     "mm_mover_bw": (
@@ -1524,6 +1530,7 @@ HARNESS = {
     "card_v9t4_1n",
     "card_v9t4_2n",
     "card_v9t4_4n",
+    "card_v9t6s_1n",
 }
 RV64_COMMON = ["src/kohakuaccel/common/kohaku_sdpram.v"]
 
@@ -2440,6 +2447,16 @@ for _n in (1, 2, 4):
         gen_card.image_sources("v9t6") + [f"tests/system/card_v9t6_{_n}n.v"],
     )
     DEFINES[f"card_v9t6_{_n}n"] = gen_card.image_defines("v9t6")
+# The smallest v9t6 card: one node on the 1 MG + 1 VC simulation die with the
+# v9t6 system ports (gen_card.py --ver v9t6 --sim-mesh
+# ktpu_sim_1x2_1c1v_1m_nol2_pump --compute 0; boards/ and
+# machines/vlt_v9t6s_1n.json).
+BENCHES["card_v9t6s_1n"] = (
+    "card_v9t6s_1n",
+    gen_card.image_sources("v9t6", "ktpu_sim_1x2_1c1v_1m_nol2_pump")
+    + ["tests/system/card_v9t6s_1n.v"],
+)
+DEFINES["card_v9t6s_1n"] = gen_card.image_defines("v9t6")
 # The v9t7 card (gen_card.py --ver v9t7): v9t6 at 4+2 a die.
 BENCHES["card_v9t7_4n"] = (
     "card_v9t7_4n",

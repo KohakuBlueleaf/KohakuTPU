@@ -9,12 +9,14 @@ its data check reads what the wait protects.
 """
 
 import argparse
+import json
 import os
 import pathlib
 import subprocess
 import sys
 
-from kohakutpu.compiler.encode import vector as A
+from kohakutpu.compiler import _rs
+from kohakutpu.language import machine as MF
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PAYLOAD = (1 << 256) - 1
@@ -24,22 +26,30 @@ VLT_ENV = (
 
 
 def program(control: bool) -> list:
-    first = A.vsync(A.W_FE, on=A.K_FILL) if control else A.vwait(A.W_FE, A.RX, 8)
-    words = [
+    machine = (MF.MACHINES / "multimesh_v9t8.json").read_text(encoding="utf-8")
+    first = (
+        {"Sync": {"waiter": 0, "on": 0}}
+        if control
+        else {"Wait": {"waiter": 0, "counter": 0, "n": 8}}
+    )
+    instructions = [
         first,
-        A.vdrain(0, 256),
-        A.vwait(A.W_D, A.CR, 4),
-        A.vdrain(1, 256),
-        A.vpost((5, 6), 300),
-        A.vsync(A.W_FE, on=A.K_DRAIN),
-        A.vhalt(),
+        {"Drain": {"ad": 0, "l1off": 256}},
+        {"Wait": {"waiter": 6, "counter": 1, "n": 4}},
+        {"Drain": {"ad": 1, "l1off": 256}},
+        {"Post": {"dst": [5, 6], "n": 300}},
+        {"Sync": {"waiter": 0, "on": 4}},
+        "Halt",
     ]
-    flits = [A.desc_flit(0, 0, 0x1000), A.desc_flit(0, 1, A.dim(32, 8))]
-    flits += [A.desc_flit(0, f, 0) for f in (2, 3, 4)]
-    flits += [A.desc_flit(1, 0, 0x2000), A.desc_flit(1, 1, A.dim(32, 4))]
-    flits += [A.desc_flit(1, f, 0) for f in (2, 3, 4)]
-    flits += [A.imem_flit(i, w) for i, w in enumerate(words)] + [A.run_flit(0)]
-    return [f & PAYLOAD for f in flits]
+    words = _rs.vc_encode(json.dumps(instructions), machine)
+    text = """target ktpu.v9
+image flow()
+    desc a0 = 4096 walk=(32, 8)
+    desc a1 = 8192 walk=(32, 4)
+    halt
+"""
+    _, descs = _rs.image(text, "flow", [], machine)
+    return _rs.vc_flits(descs, words, 0, machine)
 
 
 def main() -> int:

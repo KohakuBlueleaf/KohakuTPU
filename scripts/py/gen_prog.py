@@ -2,8 +2,8 @@
 
     python scripts/py/gen_prog.py build/prog/mm_mesh_fill.hex
 
-A bench that reads this runs the bits the compiler emits
-(`kohakutpu.compiler.isa.cluster.ISA`), not a hand-built copy of them.
+A bench that reads this runs the Rust ISA encoder's bits through
+`_rs.mg_encode`, not a hand-built copy of them.
 
 One 256-bit payload per line, MSB first, as $readmemh wants.
 """
@@ -11,14 +11,23 @@ One 256-bit payload per line, MSB first, as $readmemh wants.
 import pathlib
 import sys
 
-from kohakutpu.compiler.isa.cluster import ISA
+from kohakutpu.compiler import _rs
+from kohakutpu.language import machine as MF
+
+MACHINE = (MF.MACHINES / "multimesh_v9t8.json").read_text(encoding="utf-8")
 
 #: mm_mesh_tb section 3. nk/anchor are GEMM fields a FILL or DRAIN ignores;
 #: they are zero here, as in the payload the bench injects.
 PROGRAM = [
-    ("fill A_MSRC n=1", ISA.fill(0x1000, 1, nk=0, anchor=0)),
-    ("gemm 1x1 nk=1", ISA.gemm(1, 1, 1)),
-    ("drain A_MDST n=1", ISA.drain(0x2000, 1, nk=0, anchor=0)),
+    (
+        "fill A_MSRC n=1",
+        _rs.mg_encode("FILL", {"addr": 0x1000, "n": 1, "nk": 0, "anchor": 0}, MACHINE),
+    ),
+    ("gemm 1x1 nk=1", _rs.mg_encode("GEMM", {"gm": 1, "gn": 1, "nk": 1}, MACHINE)),
+    (
+        "drain A_MDST n=1",
+        _rs.mg_encode("DRAIN", {"addr": 0x2000, "n": 1, "nk": 0, "anchor": 0}, MACHINE),
+    ),
 ]
 
 
