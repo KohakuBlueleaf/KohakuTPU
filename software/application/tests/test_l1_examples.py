@@ -14,11 +14,12 @@ import numpy as np
 import pytest
 
 from kohakutpu.application.runtime.card import VerilatorCard
-from kohakutpu.application.tools.l1 import run
-from kohakutpu.compiler.l2 import pipeline
-from kohakutpu.compiler.layout import tensor
+from kohakutpu.application.tools.l1 import run, run_compiled
 from kohakutpu.language import examples
+from kohakutpu.language.numerics import fp16
 from kohakutpu.language.numerics.mxfp7 import value_fp16
+from kohakutpu.stack import kernel
+from kohakutpu.stack.buffer import Buffer
 
 CARD1 = os.environ.get("KTPU_CARD1")
 CARD2 = os.environ.get("KTPU_CARD2")
@@ -108,7 +109,12 @@ def test_loop_runs_a_count_from_memory(card1, n):
 
 
 def test_memops(card1):
-    o = run(card1, "memops", {})["out"]["out"].astype(np.uint64)
+    module = examples.load(examples.example("memops"))
+    compiled = kernel.compile(module, "memops", card1.machine, level="l1")
+    # This package must work by binding, not by the legacy concrete-build fallback.
+    # Numeric output alone cannot distinguish a dropped relocation from a rebuild.
+    assert compiled.bound is None, compiled.bound
+    o = run_compiled(card1, compiled, {})["out"]["out"].astype(np.uint64)
     assert o[0] == 0x1234 and o[1] == 0x1235
     assert o[2] == 4 << 16 | 2048  # the quantiser's {out words, in bits}
     caps = (int(o[6]) >> 48 | int(o[7]) << 16) & ((1 << 64) - 1)
@@ -252,7 +258,7 @@ def l2(name: str, tmp_path, card) -> str:
     """The L2 example `name` through the compile pipeline (passes, lowering,
     image scheduling) for `card`'s machine, as an L1 file; its path."""
     m = examples.load(examples.example(name, "l2"))
-    l1 = pipeline.compile_l1(m, name, card.machine)
+    l1 = kernel.compile(m, name, card.machine).l1
     p = tmp_path / f"{name}.ktpu"
     p.write_text(l1.source, encoding="utf-8")
     return str(p)
@@ -374,10 +380,14 @@ def test_l2_mover_quantises_and_tiles(card1, tmp_path):
     x = f16(np.random.default_rng(3), 64, 128)
     out = run(card1, l2("convert", tmp_path, card1), {"x": x}, reps=1)["out"]
     # Witnessed against the host packing, byte for byte.
-    assert bytes(out["a"]) == tensor.pack_a(x, 8, 2)
-    assert bytes(out["b"]) == tensor.pack_b(x, 16, 4)
+    assert bytes(out["a"]) == Buffer.of(
+        "mx7a[64,128] @dram(gm=8,nk=2)", card1.machine_json
+    ).pack(x)
+    assert bytes(out["b"]) == Buffer.of(
+        "mx7b[64,128] @dram(gn=16,nk=4)", card1.machine_json
+    ).pack(x)
     # A tile= buffer reads back as the accumulator does (no subnormals).
-    assert np.array_equal(out["t"], tensor.fp16_values(x.view(np.uint16)))
+    assert np.array_equal(out["t"], fp16.values(x.view(np.uint16), consumer="cluster"))
 
 
 def test_l2_mover_gather_and_transpose(card1, tmp_path):

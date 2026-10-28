@@ -40,6 +40,7 @@ import time
 import numpy as np
 
 from kohakuaccel.driver.device import by_type, rv64load
+from kohakuaccel.driver.node.boot.args import idle_bound
 from kohakuaccel.driver.node.queue import NodeError
 from kohakuaccel.driver.transport.jtag import JtagTransport
 from kohakuaccel.driver.transport.rebase import UnitGlobal
@@ -47,11 +48,11 @@ from kohakuaccel.driver.transport.simdram import DramMap
 from kohakuaccel.driver.transport.verilator import VerilatorTransport
 from kohakutpu.application.runtime.card import ARENA, SiliconCard
 from kohakutpu.application.tools.l1 import bufs, raw
-from kohakutpu.compiler import build
 from kohakutpu.driver.clock.card import CardClocks, load_board
-from kohakutpu.driver.host import SCRATCH, Card, Mesh, board_map
+from kohakutpu.driver.host import Card, Mesh, board_map
 from kohakutpu.language import examples
 from kohakutpu.language.numerics.mxfp7 import value_fp16
+from kohakutpu.stack import kernel
 
 ROOT = pathlib.Path(__file__).resolve().parents[5]
 OUT = ROOT / "build" / "bringup"
@@ -69,8 +70,6 @@ def _script(path: pathlib.Path):
 
 
 cpuprobe = _script(CPUPROBE)
-#: A rehearsal on a Verilated card: its DRAM wraps at 16 MB.
-MODEL_ARENA_END = 0x00F0_0000
 
 
 def f16(rng, *shape):
@@ -304,12 +303,15 @@ def cpu(a, t, nodes) -> int:
     is DRAM (it tests the node's Xache path), so it refuses `--space stage`."""
     if a.space == "stage":
         raise SystemExit("cpuprobe runs in DRAM through the Xache: --space dram")
-    m = board_map(load_board(a.board))
+    board = load_board(a.board)
+    m = board_map(board)
     mem = UnitGlobal(t, m["dram"], m["mem"], m["size"], staging=True)
     idle = idle_of(t, a) or (lambda: time.sleep(0.05))
     fails = 0
     for n in nodes:
-        ok, r = cpuprobe.card_run(t, m, n, mem, a.rounds, a.seed_cpu, idle, 600.0)
+        ok, r = cpuprobe.card_run(
+            t, m, n, mem, a.rounds, a.seed_cpu, idle, 600.0, idle_bound(board, 300.0)
+        )
         print(
             f"cpuprobe node {n}: {'ok' if ok else 'FAIL'} {r['cycles']} cycles "
             f"({r['wall']:.1f}s)" + (f"; MISMATCH {r['bad']}" if r["bad"] else "")
@@ -324,7 +326,7 @@ def home_line(board: dict, home: int) -> int:
     different homes, so the first granule of the scratch that maps there."""
     dm = DramMap.of_board(board, board["meshes"])
     for k in range(64):
-        off = SCRATCH + k * (16 << 10)
+        off = board_map(board)["scratch"] + k * (16 << 10)
         if dm.locate(off)[0] == home:
             return off
     raise ValueError(f"no scratch granule on home {home}")
@@ -485,7 +487,9 @@ def step_xmove(a) -> int:
         t.write_block(m["mem"][node] + poff, pat)
     mod = examples.load(examples.example(src))
     fn = mod.names()[0]
-    progs = build.programs(mod, fn, binds, card.machine.for_mesh(node))
+    progs = kernel.compile(
+        kernel.on_mesh(mod, fn, node), fn, card.machine, level="l1"
+    ).programs(binds)
     print(
         f"node {node} mover, {a.dir}: DRAM {dram_unit:#x} on home {home} "
         f"(checked via node {home}'s window {dram_host:#x})",
@@ -493,7 +497,7 @@ def step_xmove(a) -> int:
     )
     hung = None
     try:
-        res = card.run(progs[None])
+        res = card.run(progs.get(None, progs.get(node)))
         print(f"ran: {res['cycles']} cycles", flush=True)
     except (TimeoutError, NodeError) as e:
         hung = str(e)[:300]
@@ -530,7 +534,7 @@ def step_cpu(a) -> int:
 def open_card(a, t, nodes, profile: str | None = "idle"):
     """The card on `nodes`. Under `--space stage` the DRAM arena is empty, so a
     DRAM placement raises instead of reaching the Xache."""
-    kw = {"arena_end": MODEL_ARENA_END} if a.build else {}
+    kw = {"arena_end": board_map(load_board(a.board))["arena_limit"]}
     if a.space == "stage":
         kw["arena_end"] = ARENA
     return SiliconCard(
@@ -576,17 +580,17 @@ def rung_setup(
     m = examples.load(examples.example(example_in(space, example)))
     fn = m.names()[0]
     held = card.mark()
-    binds, layout = {}, bufs(m, fn)
+    binds, layout = {}, bufs(m, fn, card.machine_json)
     for p, b in layout:
-        at = b.layout.get("node", node)
+        at = b.layout["node"] if b.layout["node"] is not None else node
         if p in want:
             binds[p] = card.place(b.nbytes, b.space, at)
             continue
         data = raw(b, ins[p]) if p in ins else bytes(b.nbytes)
         binds[p] = card.put(np.frombuffer(data, np.uint8), b.space, at)
-    # A body with no node block compiles against the machine's default mesh:
-    # seen from the node it runs on, its units are that node's.
-    progs = build.programs(m, fn, binds, card.machine.for_mesh(node))
+    progs = kernel.compile(
+        kernel.on_mesh(m, fn, node), fn, card.machine, level="l1"
+    ).programs(binds)
     return {
         "name": name,
         "node": node,
@@ -812,7 +816,7 @@ def main() -> int:
     ap.add_argument(
         "what", nargs="?", default="", help="rung: a workload; ladder: a domain"
     )
-    ap.add_argument("--board", default="multimesh_v9t4")
+    ap.add_argument("--board", required=True, help="RUL.011: named board")
     ap.add_argument("--nodes", default="0")
     ap.add_argument("--home", type=int, default=0, help="line: the Xache home")
     ap.add_argument("--read", action="store_true", help="stage: read only, no write")

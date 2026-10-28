@@ -5,25 +5,29 @@ statistics it reads within one column block, and the epilogue of a product
 are folded into that kernel; a part no kernel covers is realised first.
 
 Physical forms follow the runtime (`runtime.storage`): row-major f16 bytes,
-or a row statistic held as [R, 32] (a reduction's result, shown with the
+or a row statistic held as [R], 16 f16 values a word (shown with the
 reduced axis dropped or kept as 1). Anything no generated kernel covers is
-refused by name (`Unsupported`); nothing runs on the host.
+refused by clause (`Unsupported`); nothing runs on the host.
 """
 
 import contextlib
 from dataclasses import dataclass
 
 import numpy as np
+from tinygrad.dtype import dtypes
+from tinygrad.uop.ops import AxisType, UOp
 
 from kohakutpu.application.kernels import expr as X
-from kohakutpu.application.kernels import matmul as MM
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.vector import Operand
+from kohakutpu.application.ktpugrad import run as R
+from kohakutpu.application.ktpugrad.lower import Access, Plan, Refused
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import rows as RW
 from kohakutpu.application.runtime.call import upload
 from kohakutpu.application.runtime.storage import FLAT, Storage
+from kohakutpu.language.numerics import fp16
 
 _fuse = True
 
@@ -37,7 +41,11 @@ def set_fusion(on: bool) -> bool:
 
 
 class Unsupported(RuntimeError):
-    """An op no generated kernel covers, named with the way round it."""
+    """An unsupported API operation, identified by its spec clause."""
+
+    def __init__(self, clause: str, message: str):
+        self.clause = clause
+        super().__init__(f"{clause}: {message}")
 
 
 class Buf:
@@ -140,7 +148,9 @@ class Tensor:
     def st(self) -> Storage:
         """The storage of a realised tensor."""
         if self._buf is None:
-            raise Unsupported("a lazy tensor has no storage yet: realize() it")
+            raise Unsupported(
+                "API.REF.008", "a lazy tensor has no storage yet: realize() it"
+            )
         return self._buf.st
 
     @property
@@ -168,7 +178,7 @@ class Tensor:
         if self._stat:
             raw = FM.read(dev, st, np.float16, max(1, self.size))
             return np.frombuffer(raw, np.float16).reshape(self.shape).copy()
-        raw = dev.read(st.addr, self.size * self.dtype.itemsize)
+        raw = FM.read(dev, st, self.dtype, self.size)
         return np.frombuffer(raw, self.dtype).reshape(self.shape).copy()
 
     def reshape(self, *shape) -> "Tensor":
@@ -179,7 +189,9 @@ class Tensor:
         )
         shape = tuple(np.empty(self.shape, np.int8).reshape(shape).shape)
         if self._T is not None:
-            raise Unsupported("a reshape of a transposed view: only matmul reads one")
+            raise Unsupported(
+                "API.REF.009", "a reshape of a transposed view: only matmul reads one"
+            )
         self.realize()
         return Tensor(shape, self._buf, stat=self._stat)
 
@@ -191,7 +203,9 @@ class Tensor:
         """The transpose of the last two axes, as matmul's right operand
         (the clusters read B as [N, K]): no bytes move."""
         if self.ndim < 2:
-            raise Unsupported(f"a transpose of a rank-{self.ndim} tensor")
+            raise Unsupported(
+                "API.REF.009", f"a transpose of a rank-{self.ndim} tensor"
+            )
         if self._T is not None:
             return self._T
         self.realize()
@@ -257,7 +271,9 @@ class Tensor:
         return matmul(self, o)
 
     def __bool__(self):
-        raise Unsupported("the truth of a device tensor: read it with .numpy() first")
+        raise Unsupported(
+            "API.REF.010", "the truth of a device tensor: read it with .numpy() first"
+        )
 
     def maximum(self, o):
         return _ew("max", self, o)
@@ -375,28 +391,37 @@ class Tensor:
 def _last(t: Tensor, axis, what: str) -> None:
     if axis not in (-1, t.ndim - 1):
         raise Unsupported(
-            f"{what} over axis {axis} of {t.shape}: rows are the last axis"
+            "API.REF.002",
+            f"{what} over axis {axis} of {t.shape}: rows are the last axis",
         )
 
 
 def tensor(a, dtype=np.float16) -> Tensor:
     """`a` uploaded as a device tensor (f16 unless `dtype` says f32)."""
-    a = np.ascontiguousarray(np.asarray(a, dtype))
+    a = np.ascontiguousarray(
+        fp16.write(a) if np.dtype(dtype) == np.float16 else a, dtype
+    )
     if a.dtype not in (np.float16, np.float32):
-        raise Unsupported(f"a {a.dtype} tensor: the card computes on f16 / f32")
+        raise Unsupported(
+            "API.REF.011", f"a {a.dtype} tensor: the card computes on f16 / f32"
+        )
     return Tensor(a.shape, Buf(upload(D.device(), a), a.dtype))
 
 
 def _check_flat(t: Tensor, why: str) -> None:
     if t._T is not None:
         raise Unsupported(
-            f"{why}: a transposed view is read only as matmul's right operand"
+            "API.REF.005",
+            f"{why}: a transposed view is read only as matmul's right operand",
         )
 
 
 def _fusable(a: Tensor, view: tuple, wide: bool, have_prod, have_red: int) -> bool:
     """May lazy `a` be inlined into an expression over `view`?"""
     if not _fuse or a._node is None or a._node.view != view:
+        return False
+    # Partial columns need a separate masked reduction before its broadcast.
+    if view[-1] % 32 and X.reduces(a._node.expr):
         return False
     e = a._node.expr
     reds = len(X.reduces(e))
@@ -430,14 +455,16 @@ def _ew(name: str, *args) -> Tensor:
         shape = tuple(np.broadcast_shapes(*(t.shape for t in ts)))
     except ValueError:
         raise Unsupported(
-            f"{name} of shapes {[t.shape for t in ts]}: they do not broadcast"
+            "API.REF.012",
+            f"{name} of shapes {[t.shape for t in ts]}: they do not broadcast",
         ) from None
     stat = all(t._stat for t in ts)
     for t in ts:
         if not stat and t._stat and t.size > 1 and t.shape[-1:] != (1,):
             raise Unsupported(
+                "API.REF.003",
                 f"a row statistic {t.shape} broadcast as a row of values against "
-                f"{shape}: keep the reduced axis (keepdim=True)"
+                f"{shape}: keep the reduced axis (keepdim=True)",
             )
     probe = Tensor(shape, stat=stat)
     view = probe.rows
@@ -462,14 +489,16 @@ def _reduce(op: str, t: Tensor, axis, keepdim: bool) -> Tensor:
     if axis is None:
         if t._stat:
             raise Unsupported(
-                f"a {op} over every row statistic: reduce the rows themselves"
+                "API.REF.006",
+                f"a {op} over every row statistic: reduce the rows themselves",
             )
         r = _reduce(op, t.realize().reshape(1, t.size), -1, True)
         return Tensor((1,) * t.ndim if keepdim else (), node=r._node, stat=True)
     _last(t, axis, f"a {op}")
     if t._stat:
         raise Unsupported(
-            f"a {op} along a row statistic's rows: reduce the rows themselves"
+            "API.REF.006",
+            f"a {op} along a row statistic's rows: reduce the rows themselves",
         )
     view = t.rows
     state = {"prod": None, "red": 1}  # this reduction
@@ -486,16 +515,20 @@ def matmul(a: Tensor, b: Tensor) -> Tensor:
     batched [.., N, K]) tensor, as a Linear weight is stored."""
     if b._T is None:
         raise Unsupported(
+            "API.REF.001",
             "x @ w with w as [K, N]: the clusters read B as [N, K] rows; store the "
-            "weight [N, K] and write x @ w.T"
+            "weight [N, K] and write x @ w.T",
         )
     w = b._T
     if a.ndim < 2 or a.shape[-1] != w.shape[-1]:
         raise Unsupported(
-            f"matmul of {a.shape} and {b.shape}: K differs or A is not 2-D"
+            "API.REF.004",
+            f"matmul of {a.shape} and {b.shape}: K differs or A is not 2-D",
         )
     if w.ndim > 2 and w.shape[:-2] != a.shape[:-2]:
-        raise Unsupported(f"batched B {w.shape} for A {a.shape}: one B, or one a batch")
+        raise Unsupported(
+            "API.REF.004", f"batched B {w.shape} for A {a.shape}: one B, or one a batch"
+        )
     _check_flat(a, "matmul's left operand")
     a.realize()
     shape = a.shape[:-1] + (w.shape[-2],)
@@ -517,7 +550,7 @@ def _kind(t: Tensor, view: tuple) -> str:
         return "scalar"
     s = (1,) * (len(view) - len(s)) + s
     if len(s) != len(view):
-        raise Unsupported(f"a {t.shape} operand of a {view} kernel")
+        raise Unsupported("API.REF.013", f"a {t.shape} operand of a {view} kernel")
     if s == view:
         return "full"
     if s[-1] == view[-1] and all(d == 1 for d in s[:-1]):
@@ -525,24 +558,25 @@ def _kind(t: Tensor, view: tuple) -> str:
     if s[-1] == 1 and s[:-1] == view[:-1]:
         return "row"
     raise Unsupported(
+        "API.REF.013",
         f"a {t.shape} operand broadcast to {view}: kernels read whole rows, one row, "
-        "a value a row or one value"
+        "a value a row or one value",
     )
 
 
 def _addr(dev, t: Tensor, kind: str, stat_space: bool) -> tuple:
     st = t.st
     R = RW.rows_of(t.rows)
-    if stat_space:
-        if kind == "scalar":
-            return FM.rowstat(dev, st, t.dtype, 1), Operand("scalar")
-        return FM.rowstat(dev, st, t.dtype, R), Operand("full", pitch=32, rows=R)
+    if stat_space and kind != "scalar":
+        # Statistics of statistics: each value a row.
+        return FM.f16(dev, st, t.dtype, R), Operand("row", rows=R)
     if kind in ("row", "scalar"):
-        return FM.rowstat(dev, st, t.dtype, max(1, t.size)), Operand(kind)
+        return FM.f16(dev, st, t.dtype, max(1, t.size)), Operand(kind)
     if t._stat:
         raise Unsupported(
+            "API.REF.003",
             f"a row statistic {t.shape} read as a row of values: keep the reduced "
-            "axis (keepdim=True) so it broadcasts down the rows"
+            "axis (keepdim=True) so it broadcasts down the rows",
         )
     return FM.f16(dev, st, t.dtype, t.size), Operand(
         kind, pitch=t.shape[-1] if kind == "full" else 0
@@ -569,9 +603,8 @@ def _lower(e, leaves: list, memo: dict):
 
 def _out_storage(dev, t: Tensor, stat: bool) -> tuple:
     if stat:
-        R = RW.rows_of(t.rows)
-        st = Storage(dev, max(32, 2 * max(1, t.size)))
-        return st, st.form(FM.ROWSTAT, RW.stat_bytes(R)).addr
+        st = Storage(dev, RW.stat_bytes(RW.rows_of(t.rows)))
+        return st, st.addr
     R, W = RW.rows_of(t.rows), t.rows[-1]
     st = Storage(dev, max(32, 2 * (R + V.overrun(R)) * W))
     return st, st.addr
@@ -589,8 +622,9 @@ def _realize(t: Tensor) -> None:
     view = node.view
     info = {"api": X.count(e), "shape": t.shape}
     if prod is not None:
-        st = _matmul(dev, t, prod, e, leaves[1:], view, info)
-        key = FLAT
+        st, key = _matmul(dev, t, prod, e, leaves[1:], view, info)
+    elif view[-1] % 32 and view[-1] != 1:
+        st, key = _planned_rows(dev, t, e, leaves, view, info)
     elif t._stat:
         st, key = _statistic(dev, t, e, leaves, view, info)
     else:
@@ -615,17 +649,22 @@ def _wide(dev, t, e, leaves, view, info) -> Storage:
     if W % 32:
         if any(k != "full" for k in kinds) or any(x.t._stat for x in leaves):
             raise Unsupported(
-                f"rows of {W} (not whole 32-column blocks) with a broadcast operand"
+                "API.REF.007",
+                f"rows of {W} (not whole 32-column blocks) with a broadcast operand",
             )
         st, out = _out_storage(dev, t, False)
         binds = {
             f"in{i}": FM.f16(dev, x.t.st, x.t.dtype, x.t.size)
             for i, x in enumerate(leaves)
         }
-        k, given = V.flat_kernel(
-            e, tuple("f16" for _ in leaves), t.size, "f16", dev.machine.count("VC")
+        FM.generated.flat(
+            dev,
+            e,
+            tuple("f16" for _ in leaves),
+            t.size,
+            dict(binds, out=out),
+            info=info,
         )
-        FM.launch(dev, k, given, dict(binds, out=out), info=info)
         return st
     binds, ops = _bind(dev, leaves, view)
     st, out = _out_storage(dev, t, False)
@@ -633,7 +672,7 @@ def _wide(dev, t, e, leaves, view, info) -> Storage:
         RW.run(dev, e, ops, binds, R, W, Operand("full", pitch=W), out, info)
     except (RW.RowsError, ValueError) as err:
         st.free()
-        raise Unsupported(str(err)) from None
+        raise Unsupported("API.REF.007", str(err)) from None
     return st
 
 
@@ -642,54 +681,132 @@ def _statistic(dev, t, e, leaves, view, info) -> tuple:
     st, out = _out_storage(dev, t, True)
     try:
         if view[-1] == 1:
-            # Statistics of statistics: each value a row of its [R, 32] form.
+            # Statistics of statistics: R values a statistic, 16 a word.
             binds, ops = _bind(dev, leaves, view, stat_space=True)
-            RW.run(dev, e, ops, binds, R, 32, Operand("full", pitch=32), out, info)
+            RW.run(dev, e, ops, binds, R, 32, Operand("row"), out, info)
         else:
             if view[-1] % 32:
                 raise Unsupported(
-                    f"a reduction of rows of {view[-1]}: whole 32-column blocks"
+                    "API.REF.007",
+                    f"a reduction of rows of {view[-1]}: whole 32-column blocks",
                 )
             binds, ops = _bind(dev, leaves, view)
             RW.run(dev, e, ops, binds, R, view[-1], Operand("row"), out, info)
     except (RW.RowsError, ValueError) as err:
         st.free()
-        raise Unsupported(str(err)) from None
-    return st, FM.ROWSTAT
+        raise Unsupported("API.REF.007", str(err)) from None
+    return st, FLAT
 
 
-def _matmul(dev, t, prod: Prod, e, extras, view, info) -> Storage:
-    a, w = prod.a, prod.b
-    M, K = a.shape[-2], a.shape[-1]
-    N = w.shape[-2]
-    bt = int(np.prod(a.shape[:-2])) if a.ndim > 2 else 1
-    shared = w.ndim == 2
+def _access(t: Tensor, slot: int, ranges: tuple, broadcast: bool = True) -> Access:
+    """A tensor's dense read, broadcast over the planner's output ranges."""
+    shape = (1,) * (len(ranges) - len(t.rows)) + t.rows
+    stride, coef = 1, []
+    for r, extent in reversed(tuple(zip(ranges, shape, strict=True))):
+        if extent != 1 or not broadcast:
+            coef.append((r, stride))
+        stride *= extent
+    dtype = dtypes.float if t.dtype == np.float32 else dtypes.half
+    return Access(slot, dtype, tuple(reversed(coef)), 0)
+
+
+def _planned_rows(dev, t, e, leaves, view, info) -> tuple:
+    """Logical row axes through the device planner, including partial columns.
+
+    Each reduction owns its column range; a flat 128-value trip is not a
+    logical row. Nested reductions retain their distinct read coordinates.
+    """
+    ranges = tuple(UOp.range(n, i, AxisType.LOOP) for i, n in enumerate(view))
+    accesses, reductions, memo = [], {}, {}
+    next_axis = len(ranges)
+
+    def walk(x, axes):
+        nonlocal next_axis
+        key = (id(x), axes)
+        if key in memo:
+            return memo[key]
+        if isinstance(x, X.Load):
+            a = _access(leaves[x.i].t, x.i + 1, axes)
+            result = X.Load(len(accesses))
+            accesses.append(a)
+        elif isinstance(x, X.Reduce):
+            col = UOp.range(view[-1], next_axis, AxisType.REDUCE)
+            next_axis += 1
+            result = X.Reduce(x.op, walk(x.arg, (*axes[:-1], col)))
+            reductions[id(result)] = (col,)
+        elif isinstance(x, X.Op):
+            result = X.Op(x.name, tuple(walk(a, axes) for a in x.args))
+        else:
+            result = x
+        memo[key] = result
+        return result
+
+    expr = walk(e, ranges)
+    kept = ranges[:-1] if t._stat else ranges
+    plan = Plan(
+        "vector",
+        None,
+        "api_rows",
+        0,
+        dtypes.half,
+        view[:-1] if t._stat else view,
+        kept,
+        expr=expr,
+        accesses=accesses,
+        reduce_ranges=tuple(r for rs in reductions.values() for r in rs),
+        reductions=reductions,
+    )
+    st = Storage(dev, 2 * t.size)
+    bufs = {0: st, **{i + 1: x.t.st for i, x in enumerate(leaves)}}
     try:
-        mm = MM.plan(bt, M, N, K, shared)
-    except ValueError as err:
-        raise Unsupported(str(err)) from None
-    qa = FM.mx7(dev, a.st, a.dtype, Operand("full", pitch=K), M, K, mm, "a", bt)
-    qb = FM.mx7(
-        dev, w.st, w.dtype, Operand("full", pitch=K), N, K, mm, "b", 1 if shared else bt
+        for run in R.execute(dev, plan, bufs):
+            run.info.update(info)
+    except (Refused, RW.RowsError, FM.FormError, ValueError) as err:
+        st.free()
+        raise Unsupported("API.REF.007", str(err)) from None
+    return st, next(iter(st.valid))
+
+
+def _matmul(dev, t, prod: Prod, e, extras, view, info) -> tuple:
+    """Use the device's product planner, including padding and output forms."""
+    a, w = prod.a, prod.b
+    ranges = tuple(UOp.range(n, i, AxisType.LOOP) for i, n in enumerate(view))
+    batch, (m, n) = ranges[:-2], ranges[-2:]
+    k = UOp.range(a.shape[-1], len(ranges), AxisType.REDUCE)
+    aa = _access(a, 1, (*batch, m, k), broadcast=False)
+    bb = _access(w, 2, (*(batch if w.ndim > 2 else ()), n, k), broadcast=False)
+    accesses, bufs = [], {1: a.st, 2: w.st}
+    for i, x in enumerate(extras, start=3):
+        kind = _kind(x.t, view)
+        if x.t._stat and kind in ("full", "col"):
+            raise Unsupported("API.REF.003", "a statistic is a value per row")
+        accesses.append(_access(x.t, i, ranges))
+        bufs[i] = x.t.st
+    plan = Plan(
+        "matmul",
+        None,
+        "api_product",
+        0,
+        dtypes.half,
+        t.shape,
+        ranges,
+        expr=e,
+        accesses=accesses,
+        a=aa,
+        b=bb,
+        mnk=(m, n, (k,)),
+        batch=batch,
     )
-    binds, ops = {"a": qa, "b": qb}, []
-    for i, x in enumerate(extras, start=1):
-        at, o = _addr(dev, x.t, _kind(x.t, view), False)
-        binds[f"in{i}"] = at
-        ops.append(o)
-    st, out = _out_storage(dev, t, False)
-    k, given = MM.mm_kernel(
-        mm,
-        e,
-        tuple(ops),
-        Operand("full", pitch=N, rows=bt * M),
-        dev.machine.count("MG"),
-        dev.machine.count("VC"),
-    )
-    FM.launch(
-        dev, k, given, dict(binds, out=out), kind="matmul", info=dict(info, mm=mm)
-    )
-    return st
+    st = Storage(dev, 2 * t.size)
+    bufs[0] = st
+    try:
+        runs = R.execute(dev, plan, bufs)
+        for run in runs:
+            run.info.update(info)
+    except (Refused, RW.RowsError, FM.FormError, ValueError) as err:
+        st.free()
+        raise Unsupported("API.REF.007", str(err)) from None
+    return st, next(iter(st.valid))
 
 
 __all__ = [

@@ -9,7 +9,6 @@ from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime.call import NUMPY
 from kohakutpu.application.runtime.storage import FLAT, Storage
-from kohakutpu.compiler import kernel as K
 from kohakutpu.language import dsl as kt
 
 
@@ -23,14 +22,15 @@ def call(kernel: kt.Kernel, *args: Tensor, **consts) -> tuple[Tensor, ...]:
     for t in args:
         if t._T is not None or t._stat:
             raise Unsupported(
-                f"{kernel.name}: a transposed view or a row statistic as a kernel input"
+                "API.REF.014",
+                f"{kernel.name}: a transposed view or a row statistic as a kernel input",
             )
         t.realize()
     given = {
         n: kt.TensorSpec.make(t.shape, "f32" if t.dtype == np.float32 else "f16")
         for n, t in zip(ins, args)
     }
-    compiled = K.specialise(kernel, given, machine=dev.machine, **consts)
+    compiled = dev.specialise(kernel, given, **consts)
     specs = dict(compiled.params)
     binds = {
         n: FM.for_port(dev, t.st, t.dtype, t.shape, specs[n]) for n, t in zip(ins, args)
@@ -40,7 +40,8 @@ def call(kernel: kt.Kernel, *args: Tensor, **consts) -> tuple[Tensor, ...]:
         spec = specs[n]
         if not spec.rowmajor or spec.dtype not in NUMPY:
             raise Unsupported(
-                f"{kernel.name}: output {n} is {spec.text()}; a Tensor holds row-major f16 / f32"
+                "API.REF.014",
+                f"{kernel.name}: output {n} is {spec.text()}; a Tensor holds row-major f16 / f32",
             )
         st = Storage(dev, spec.nbytes())
         binds[n] = st.addr

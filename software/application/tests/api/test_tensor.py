@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from kohakutpu.application import api as kp
+from kohakutpu.application.runtime import device as D
 from kohakutpu.language.examples import dsl as ex
 from kohakutpu.language.numerics.mxfp7 import value_fp16
 
@@ -109,14 +110,16 @@ def test_your_own_kernel_on_tensors(dev, rel):
 
 
 @pytest.mark.parametrize(
-    "make, why",
+    "make, clause",
     [
-        (lambda: T(X) @ T(W), "store the weight"),
-        (lambda: T(X).sum(0), "rows are the last axis"),
+        (lambda: T(X) @ T(W), "API.REF.001"),
+        (lambda: T(X).sum(0), "API.REF.002"),
         # [64, 64] + [64]: a row statistic broadcast as a row of values.
-        (lambda: T(X[:, :64].copy()) + T(X[:, :64].copy()).sum(-1), "keepdim=True"),
+        (lambda: T(X[:, :64].copy()) + T(X[:, :64].copy()).sum(-1), "API.REF.003"),
     ],
 )
-def test_refused_by_name(dev, make, why):
-    with pytest.raises(kp.Unsupported, match=why):
-        make().numpy()
+def test_refused_by_clause(make, clause):
+    with D.attached(D.Device(kind="offline", board="multimesh_v9t6")):
+        with pytest.raises(kp.Unsupported) as caught:
+            make().realize()
+        assert caught.value.clause == clause

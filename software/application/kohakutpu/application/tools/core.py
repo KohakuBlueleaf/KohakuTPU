@@ -22,9 +22,9 @@ import sys
 
 import numpy as np
 
-from kohakutpu.compiler.emit import image as vector
-from kohakutpu.compiler.encode import vector as A
+from kohakutpu.compiler import _rs
 from kohakutpu.language import examples
+from kohakutpu.language import machine as MF
 from kohakutpu.simulation.verilator import replay as bench
 
 MASK = (1 << 256) - 1
@@ -38,6 +38,7 @@ def main() -> int:
     ap.add_argument("image")
     ap.add_argument("params", nargs="*", help="NAME=INT | NAME=in:N | NAME=out:N")
     ap.add_argument("--memwait", type=int, default=1)
+    ap.add_argument("--machine", default="multimesh_v9t8")
     ap.add_argument("--seed", type=int, default=2)
     ap.add_argument("--scale", type=float, default=2.0)
     ap.add_argument("--out", default=None)
@@ -61,10 +62,9 @@ def main() -> int:
         at += -(-len(raw) // 256) * 256 + 256
     if at > len(mem):
         raise SystemExit(f"{at} bytes pass the 128 KB replay memory")
-    words, descs = vector.image(m, a.image, tuple(args))
-    flits = [A.desc_flit(ad, f, v) for (ad, f), v in sorted(descs.items())]
-    flits += [A.imem_flit(i, w) for i, w in enumerate(words)]
-    flits.append(A.run_flit(0))
+    machine = (MF.MACHINES / f"{a.machine}.json").read_text(encoding="utf-8")
+    words, descs = _rs.image(m.source, a.image, args, machine)
+    flits = _rs.vc_flits(descs, words, 0, machine)
     # The model truncates long plusarg paths: the image and a short digest.
     digest = hashlib.sha1(repr(sorted(given.items())).encode()).hexdigest()[:8]
     tag = f"{a.image}_{digest}"
