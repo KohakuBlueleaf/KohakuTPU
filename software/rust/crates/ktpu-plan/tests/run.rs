@@ -102,3 +102,19 @@ fn every_run_takes_the_python_steps() {
     assert!(bad.is_empty(), "{} differ:\n{}", bad.len(), bad.join("\n"));
     assert_eq!(unported, 0, "not ported: {why:?}");
 }
+
+#[test]
+fn quant_schedule_emission_reverse_witness() {
+    let failure = std::panic::catch_unwind(|| {
+        ktpu_kernels::mutants::with(
+            "kernels.quant/no-schedule",
+            every_run_takes_the_python_steps,
+        );
+    })
+    .expect_err("removing Rust quant schedule attributes must fail the recorded-step comparison");
+    let message = failure
+        .downcast_ref::<String>()
+        .expect("assertion failure text");
+    assert!(message.contains(".kw: 0 vs 8 items"), "{message}");
+    eprintln!("quant schedule reverse witness: recorded-step gate rejects removed emission");
+}

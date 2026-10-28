@@ -47,6 +47,30 @@ is rewritten only when the Python trace is shown wrong. Rewritten:
   model (`rows_7b307e07d5`, CPU f32 relative error 2.31). Witness:
   `ktpu-kernels` `clauses::rows::api_row_math_takes_a_statistics_rows`.
 
+## Quant schedule recording export
+
+Planner quant launches use the native generator's explicit schedule, including
+finite batch, overlap, classifier overlap, pipeline, zero classifier, stream axes,
+fill overlap and zero reuse. Generated names include this schedule. Frozen planner
+recordings must contain those same attributes; comparison never strips them.
+
+From `software/rust`, export reviewed replacements to a new directory:
+
+```text
+cargo run -p ktpu-kernels --example plan_regold -- --quant-schedule --output <backup-dir>/plan
+```
+
+This mode permits only quant schedule additions and their generated graph/launch
+names. Tensor operations, views, ports, finite contracts and all non-quant steps
+remain unchanged. It refuses in-place `--write`; existing exports are not overwritten.
+`scripts/py/measure/vq_plan_regold.py --output <backup-dir>` wraps this exporter,
+checks every added attribute against defaults extracted from Python's launch
+producer, saves old files in `originals/`, installs reviewed replacements in the
+job-local golden directory and runs only `cargo test -p ktpu-plan --test run`.
+`manifest.json` lists dataset paths and changed launch counts for the lead's upload.
+The `quant_schedule_emission_reverse_witness` test reruns the same comparison
+with Rust quant attribute emission disabled and requires the attribute mismatch.
+
 ## Machine digest regeneration
 
 After regenerating machines with `python -m machine --all` from `scripts/py`,

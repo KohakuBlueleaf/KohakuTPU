@@ -42,7 +42,7 @@ fn first_diff(a: &Value, b: &Value, path: String) -> Option<String> {
 
 /// Rewrites every launch under `v` whose traced graph differs; returns the
 /// rewritten launches' names and first differences.
-fn visit(v: &mut Value, board: &str, out: &mut Vec<String>) {
+fn visit(v: &mut Value, board: &str, out: &mut Vec<String>, quant_schedule: bool) {
     match v {
         Value::Object(m) => {
             if let Some(l) = m.get_mut("launch") {
@@ -59,6 +59,9 @@ fn visit(v: &mut Value, board: &str, out: &mut Vec<String>) {
                             && l["call"]["args"]["n"].as_i64().unwrap_or(0)
                                 % machine.vc.vlmax as i64
                                 != 0);
+                    if quant_schedule && gen != "matmul.quant_kernel" {
+                        return;
+                    }
                     if ruled {
                         // left as recorded
                     } else if let Ok(k) = ktpu_kernels::call(&gen, &l["call"]["args"], &machine) {
@@ -72,22 +75,72 @@ fn visit(v: &mut Value, board: &str, out: &mut Vec<String>) {
                             );
                             let d = first_diff(&a, &b, String::new()).unwrap_or_default();
                             out.push(format!("{} {gen}: {d}", want.name));
-                            l["graph"] = serde_json::to_value(&got).unwrap();
+                            if quant_schedule {
+                                // Only schedule attrs and their generated name may change.
+                                let mut approved: g::Graph =
+                                    serde_json::from_value(l["graph"].clone()).unwrap();
+                                approved.name = got.name.clone();
+                                for st in &mut approved.body {
+                                    if let g::Node::Mover {
+                                        op: g::MoverOp::Quant,
+                                        kw,
+                                        ..
+                                    } = &mut st.node
+                                    {
+                                        assert!(
+                                            kw.iter().all(|(k, _)| k == "finite"),
+                                            "not a bare quant recording"
+                                        );
+                                        kw.extend(
+                                            ktpu_kernels::gen::matmul::QUANT_SCHEDULE
+                                                .iter()
+                                                .map(|&(k, v)| (k.into(), g::Attr::Int(v))),
+                                        );
+                                    }
+                                }
+                                let mut comparable = approved.clone();
+                                clear(&mut comparable.body);
+                                assert_eq!(
+                                    comparable, got,
+                                    "quant regold cannot change tensor/layout/contract operations"
+                                );
+                                l["name"] = Value::String(approved.name.clone());
+                                l["graph"] = serde_json::to_value(approved).unwrap();
+                            } else {
+                                l["graph"] = serde_json::to_value(&got).unwrap();
+                            }
                         }
                     }
                 }
             }
             for x in m.values_mut() {
-                visit(x, board, out);
+                visit(x, board, out, quant_schedule);
             }
         }
-        Value::Array(a) => a.iter_mut().for_each(|x| visit(x, board, out)),
+        Value::Array(a) => a
+            .iter_mut()
+            .for_each(|x| visit(x, board, out, quant_schedule)),
         _ => {}
     }
 }
 
 fn main() {
-    let write = std::env::args().any(|a| a == "--write");
+    let args: Vec<String> = std::env::args().collect();
+    let write = args.iter().any(|a| a == "--write");
+    let quant_schedule = args.iter().any(|a| a == "--quant-schedule");
+    let output = args
+        .windows(2)
+        .find(|p| p[0] == "--output")
+        .map(|p| PathBuf::from(&p[1]));
+    if quant_schedule {
+        assert!(
+            !write,
+            "quant schedule exports use --output, never in-place --write"
+        );
+    }
+    if let Some(out) = &output {
+        std::fs::create_dir_all(out).unwrap();
+    }
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../golden/plan");
     let mut files: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
@@ -107,9 +160,20 @@ fn main() {
             continue;
         };
         let mut changed = vec![];
-        visit(&mut doc, &board, &mut changed);
+        visit(&mut doc, &board, &mut changed, quant_schedule);
         for c in &changed {
             println!("{}: {c}", path.file_name().unwrap().to_string_lossy());
+        }
+        if let Some(out) = output.as_ref().filter(|_| !changed.is_empty()) {
+            let dest = out.join(path.file_name().unwrap());
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dest)
+                .unwrap();
+            file.write_all((serde_json::to_string_pretty(&doc).unwrap() + "\n").as_bytes())
+                .unwrap();
         }
         if write && !changed.is_empty() {
             std::fs::write(&path, serde_json::to_string_pretty(&doc).unwrap() + "\n").unwrap();
