@@ -9,6 +9,12 @@ struct kos_kernel_stat kstat;
 
 static int rq[K_THREADS + 1];
 static unsigned rq_head, rq_tail;
+#ifdef KOS_POLL_EVENTS
+static struct thread *waiters[W_EVENT + 1];
+#ifdef KOS_WAIT_ACTIVE
+static unsigned poll_waiters;
+#endif
+#endif
 
 static void rq_push(int slot)
 {
@@ -30,6 +36,17 @@ static int rq_empty(void) { return rq_head == rq_tail; }
 
 void k_ready(struct thread *t)
 {
+#ifdef KOS_POLL_EVENTS
+    if (t->state == KOS_T_BLOCKED) {
+#ifdef KOS_WAIT_ACTIVE
+        poll_waiters -= t->wkind >= W_MEM;
+#endif
+        *t->wprev = t->wnext;
+        if (t->wnext) {
+            t->wnext->wprev = t->wprev;
+        }
+    }
+#endif
     t->state = KOS_T_READY;
     t->wkind = W_NONE;
     rq_push((int)t->slot);
@@ -43,6 +60,17 @@ void k_block(struct thread *t, uint32_t kind, uint64_t a, uint64_t b, uint64_t t
     t->wb = b;
     t->deadline = timeout ? hw_time() + timeout : 0;
     t->result = 0;
+#ifdef KOS_POLL_EVENTS
+    t->wnext = waiters[kind];
+    t->wprev = &waiters[kind];
+    if (t->wnext) {
+        t->wnext->wprev = &t->wnext;
+    }
+    waiters[kind] = t;
+#ifdef KOS_WAIT_ACTIVE
+    poll_waiters += kind >= W_MEM;
+#endif
+#endif
 }
 
 void k_wake(struct thread *t, int64_t result)
@@ -180,7 +208,7 @@ static int64_t test_wait(struct thread *t, int *done)
             *done = 1;
             t->x[11] = k_events;
             int st = k_event_out(t->wb, (uint64_t)t->result & 0xffffffff);
-            return st ? st : q;
+            return st ? (int64_t)st : (int64_t)q;
         }
         break;
     }
@@ -202,11 +230,61 @@ static int64_t test_wait(struct thread *t, int *done)
     return 0;
 }
 
+#ifdef KOS_POLL_EVENTS
+void k_channel_ready(unsigned chan)
+{
+#if !defined(KOS_HOT_MUT) || KOS_HOT_MUT != 5
+    for (unsigned kind = W_RECV; kind <= W_EVENT; kind += W_EVENT - W_RECV) {
+        struct thread *t = waiters[kind];
+        while (t) {
+            struct thread *next = t->wnext;
+            uint64_t key = kind == W_RECV ? t->wa : (uint64_t)t->result >> 32;
+            if (key == chan) {
+                int done;
+                int64_t r = test_wait(t, &done);
+                if (done) {
+                    k_wake(t, r);
+                }
+            }
+            t = next;
+        }
+    }
+#else
+    (void)chan;
+#endif
+}
+#endif
+
 void k_poll(void)
 {
     k_units_poll();
     k_msg_poll();
     k_pending_poll();
+#ifdef KOS_POLL_EVENTS
+#ifdef KOS_WAIT_ACTIVE
+    if (!poll_waiters) {
+        return;
+    }
+#endif
+    for (unsigned kind = W_MEM; kind <= W_EVENT; ++kind) {
+        struct thread *t = waiters[kind];
+        while (t) {
+            struct thread *next = t->wnext;
+            int done = 0;
+            int64_t r;
+            if (kind == W_RECV) {
+                done = t->deadline && (int64_t)(hw_time() - t->deadline) >= 0;
+                r = KOS_ETIME;
+            } else {
+                r = test_wait(t, &done);
+            }
+            if (done) {
+                k_wake(t, r);
+            }
+            t = next;
+        }
+    }
+#else
     for (unsigned i = 0; i < K_THREADS; ++i) {
         struct thread *t = &kthreads[i];
         if (t->state != KOS_T_BLOCKED || t->wkind == W_JOIN || t->wkind == W_REPLY) {
@@ -218,6 +296,7 @@ void k_poll(void)
             k_wake(t, r);
         }
     }
+#endif
 }
 
 static void arm_timer(void)
@@ -319,7 +398,12 @@ int64_t k_prof_info(uint64_t a)
 }
 #endif
 
+#ifdef KOS_SPLIT
+struct trap_return { struct thread *next, *old; };
+struct trap_return k_trap(uint64_t *frame)
+#else
 void k_trap(uint64_t *frame)
+#endif
 {
     struct thread *t = kcur;
     if (!t || frame != t->x) {
@@ -336,6 +420,9 @@ void k_trap(uint64_t *frame)
         unsigned code = (unsigned)(cause & 0x3f);
         if (code == 5) {
             ++kstat.ticks;
+#ifdef KOS_LOCAL_LOG
+            k_log_sync();
+#endif
             k_l0(KOS_M_SET_TIMER, ~0UL, 0, 0, 0);
             if (!rq_empty()) {
                 k_ready(t);
@@ -358,8 +445,19 @@ void k_trap(uint64_t *frame)
         k_exit_thread(t, -(int64_t)(0x100 + cause));
     }
     K_PROF(4);
+#ifdef KOS_SPLIT
+    struct thread *old = kcur == t ? t : 0;
+#endif
+#ifdef KOS_SMALL_CALL
+    struct thread *n = kcur && kcur->state == KOS_T_RUN ? kcur : k_schedule();
+#else
     struct thread *n = k_schedule();
+#endif
     K_PROF(5);
     n->since = hw_cycles();
+#ifdef KOS_SPLIT
+    return (struct trap_return){n, old};
+#else
     k_resume(n);
+#endif
 }

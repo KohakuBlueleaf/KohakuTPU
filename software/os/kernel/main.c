@@ -52,7 +52,7 @@ void k_main(struct kos_boot *b, uint64_t node)
     k_printf("KohakuAccel OS: node %u of %u (mesh %u), private %lx+%lx, shared %lx+%lx, %u units, flags %x, tick %lu\n",
              kn.me, kn.n, kn.mesh, kn.priv, kn.priv_size, kn.shared, kn.shared_size, k_boot.nunits, kn.flags,
              kn.tick);
-    if (k_map(KOS_UV_LAND, kn.priv + kn.land_off, KOS_LAND_SIZE,
+    if (k_map(KOS_UV_LAND, kn.priv + kn.land_off, KOS_USER_LAND_SIZE,
               KOS_MAP_R | KOS_MAP_W | KOS_MAP_U | KOS_MAP_UNCACHED)) {
         k_panic("cannot map the landing zone");
     }

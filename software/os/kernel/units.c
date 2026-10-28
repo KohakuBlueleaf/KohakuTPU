@@ -15,7 +15,14 @@ unsigned knunits;
 uint64_t k_events;
 
 /* per unit: retired = done + faults; engine-owned units mirror a counter */
+#ifdef KOS_EVENT_ASM
+uint64_t k_retired[KOS_MAX_UNITS];
+#define retired k_retired
+_Static_assert(sizeof(struct kunit) == 80 && offsetof(struct kunit, faults) == 32,
+               "event.S unit layout");
+#else
 static uint64_t retired[KOS_MAX_UNITS];
+#endif
 static int de_mapped[KOS_MAX_UNITS];
 static uint32_t de_seen[KOS_MAX_UNITS];
 static int de_ready;
@@ -107,6 +114,7 @@ void k_units_poll(void)
 uint64_t k_unit_retired(unsigned u) { return retired[u]; }
 
 /* Units [0, n): retired and fault counts, two words each, into a user buffer. */
+#ifndef KOS_EVENT_ASM
 int k_event_out(uint64_t ubuf, uint64_t n)
 {
     uint64_t w[2 * KOS_MAX_UNITS];
@@ -117,6 +125,7 @@ int k_event_out(uint64_t ubuf, uint64_t n)
     }
     return n ? k_copy_out(ubuf, w, 16 * n) : KOS_OK;
 }
+#endif
 
 /* One flit to unit u: `dst` adds the typed bits to its coordinate. Once the
  * dispatch engine runs, it owns the mailbox registers, so every flit goes
@@ -257,22 +266,66 @@ struct pend {
     uint64_t req, a, b, faults;
 };
 static struct pend *pend; /* in private DRAM */
+#ifdef KOS_POLL_EVENTS
+static unsigned pending_count;
+#endif
 
 static void pending_init(void) { pend = k_alloc(K_PENDING * sizeof *pend); }
 
-void k_pending_add(unsigned kind, unsigned node, uint64_t req, uint64_t a, uint64_t b)
+#ifdef KOS_REMOTE_BATCH
+__attribute__((noinline))
+#endif
+static struct pend *pending_new(unsigned kind, unsigned node, uint64_t req, uint64_t a, uint64_t b)
 {
     for (unsigned i = 0; i < K_PENDING; ++i) {
         if (!pend[i].kind) {
             pend[i] = (struct pend){kind, node, 0, req, a, b, a < knunits ? kunits[a].faults : 0};
-            return;
+#ifdef KOS_POLL_EVENTS
+            ++pending_count;
+#endif
+            return &pend[i];
         }
     }
     k_reply(node, req, KOS_EAGAIN, 0);
+    return 0;
 }
+
+void k_pending_add(unsigned kind, unsigned node, uint64_t req, uint64_t a, uint64_t b)
+{
+    pending_new(kind, node, req, a, b);
+}
+
+#ifdef KOS_REMOTE_BATCH
+__attribute__((minsize))
+void k_batch_start(unsigned node, uint64_t req, unsigned u, const uint64_t *w, unsigned count)
+{
+    struct pend *p = pending_new(M_BATCH, node, req, u, 0);
+    if (!p) {
+        return;
+    }
+#if defined(KOS_HOT_MUT) && KOS_HOT_MUT == 7
+    --count;
+#endif
+    int64_t ticket = k_engine_run(u, w, count);
+    if (ticket < 0) {
+        k_reply(node, req, ticket, 0);
+        p->kind = 0;
+#ifdef KOS_POLL_EVENTS
+        --pending_count;
+#endif
+    } else {
+        p->b = (uint64_t)ticket;
+    }
+}
+#endif
 
 void k_pending_poll(void)
 {
+#ifdef KOS_POLL_EVENTS
+    if (!pending_count) {
+        return;
+    }
+#endif
     for (unsigned i = 0; i < K_PENDING; ++i) {
         struct pend *p = &pend[i];
         if (!p->kind) {
@@ -281,16 +334,29 @@ void k_pending_poll(void)
         if (p->a >= knunits || !kunits[p->a].local) {
             k_reply(p->node, p->req, KOS_EINVAL, 0);
             p->kind = 0;
+#ifdef KOS_POLL_EVENTS
+            --pending_count;
+#endif
             continue;
         }
         struct kunit *u = &kunits[p->a];
-        if (p->kind == M_UNIT_WAIT) {
+        if (p->kind == M_UNIT_WAIT
+#ifdef KOS_REMOTE_BATCH
+            || p->kind == M_BATCH
+#endif
+        ) {
             if (u->faults != p->faults) {
                 k_reply(p->node, p->req, KOS_EFAULT, u->fault_arg);
                 p->kind = 0;
+#ifdef KOS_POLL_EVENTS
+            --pending_count;
+#endif
             } else if ((int64_t)(retired[p->a] - p->b) >= 0) {
-                k_reply(p->node, p->req, KOS_OK, 0);
+                k_reply(p->node, p->req, KOS_OK, p->kind == M_BATCH ? p->b : 0);
                 p->kind = 0;
+#ifdef KOS_POLL_EVENTS
+            --pending_count;
+#endif
             }
         } else if (p->kind == M_UNIT_CTRL) {
             if (!p->started) {
@@ -300,6 +366,9 @@ void k_pending_poll(void)
                 u->ctrl_busy = 0;
                 k_reply(p->node, p->req, KOS_OK, u->ctrl_value);
                 p->kind = 0;
+#ifdef KOS_POLL_EVENTS
+            --pending_count;
+#endif
             }
         }
     }

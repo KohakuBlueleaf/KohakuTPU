@@ -11,6 +11,14 @@ static volatile uint64_t *log_hdr;
 static volatile uint8_t *log_bytes;
 static uint64_t log_cap;
 static uint64_t where[3];
+#ifdef KOS_LOCAL_LOG
+static uint64_t switches;
+void k_log_sync(void)
+{
+    kos_where(log_hdr, where[0], where[1], where[2]);
+    log_hdr[KOS_LOG_SWITCHES] = switches;
+}
+#endif
 
 void k_log_init(void)
 {
@@ -29,7 +37,13 @@ void k_where(uint64_t code, uint64_t a, uint64_t b)
     where[0] = code;
     where[1] = a;
     where[2] = b;
+#ifdef KOS_LOCAL_LOG
+    if (code != KOS_W_USER) {
+        k_log_sync();
+    }
+#else
     kos_where(log_hdr, code, a, b);
+#endif
 }
 
 /* A wait that ends puts back what the node was doing before it. */
@@ -38,8 +52,12 @@ void k_where_back(void) { kos_where(log_hdr, where[0], where[1], where[2]); }
 
 void k_switched(void)
 {
+#ifdef KOS_LOCAL_LOG
+    ++switches;
+#else
     static uint64_t n;
     log_hdr[KOS_LOG_SWITCHES] = ++n;
+#endif
 }
 
 void k_write(const char *s, uint64_t len)
@@ -48,6 +66,9 @@ void k_write(const char *s, uint64_t len)
         hw_wr(HW_R_CONSOLE, (unsigned char)s[i]);
     }
     if (log_hdr) {
+#ifdef KOS_LOCAL_LOG
+        k_log_sync();
+#endif
         uint64_t c = log_hdr[KOS_LOG_COUNT];
         for (uint64_t i = 0; i < len; ++i) {
             log_bytes[(c + i) % log_cap] = (uint8_t)s[i];

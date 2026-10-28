@@ -13,6 +13,9 @@ static uint32_t rings_written;
 static struct kmsg *inbox;
 static unsigned in_head, in_tail;
 static uint64_t next_req;
+#ifdef KOS_POLL_EVENTS
+static int rx_pending;
+#endif
 
 static volatile uint64_t *ring_at(unsigned dst_node, unsigned src, unsigned idx)
 {
@@ -57,13 +60,42 @@ struct kbar {
 };
 /* in private DRAM: the inbox, the channel queue, the barriers (node 0's) */
 static struct chanmsg *chq;
+#ifndef KOS_CHAN_FIFO
 static unsigned ch_head, ch_tail;
+#else
+struct channel {
+    unsigned key, head, tail, count, next;
+};
+struct channel k_channels[K_CHANQ];
+unsigned k_chan_buckets[K_CHANQ];
+#define channels k_channels
+#define buckets k_chan_buckets
+static unsigned free_channel, free_message;
+_Static_assert(sizeof(struct channel) == 20 && offsetof(struct channel, count) == 12 &&
+               offsetof(struct channel, next) == 16 && K_CHANQ == 64, "entry.S channel index");
+
+static unsigned *channel_link(unsigned key)
+{
+    unsigned *link = &buckets[(key ^ (key >> 16)) % K_CHANQ];
+    while (*link && channels[*link].key != key) {
+        link = &channels[*link].next;
+    }
+    return link;
+}
+#endif
 static struct kbar *bars;
 
 void k_msg_init(void)
 {
     inbox = k_alloc(K_INBOX * sizeof *inbox);
     chq = k_alloc(K_CHANQ * sizeof *chq);
+#ifdef KOS_CHAN_FIFO
+    free_channel = free_message = 1;
+    for (unsigned i = 1; i < K_CHANQ; ++i) {
+        channels[i].next = i + 1 < K_CHANQ ? i + 1 : 0;
+        chq[i].pad = channels[i].next;
+    }
+#endif
     if (kn.me == 0) {
         bars = k_alloc(K_BAR * sizeof *bars);
     }
@@ -76,6 +108,9 @@ uint64_t k_req_id(void) { return ++next_req; }
 /* Drain every peer's ring into the inbox; return what was taken as credits. */
 static void drain(void)
 {
+#ifdef KOS_POLL_EVENTS
+    rx_pending = 0;
+#endif
     hw_wr(HW_R_IL + HW_IL_CTL, 1 | 2); /* keep the link enabled, clear the doorbell counts */
     for (unsigned p = 0; p < kn.n; ++p) {
         if (p == kn.me) {
@@ -94,6 +129,9 @@ static void drain(void)
             ++rx_done[p];
             ++took;
         }
+#ifdef KOS_POLL_EVENTS
+        rx_pending |= rx_done[p] != have;
+#endif
         if (took) {
             kstat.msgs_rcvd += took;
             k_ring(p, KOS_SLOT_CRED(kn.me), took, 0);
@@ -156,6 +194,9 @@ void k_rpc(unsigned node, unsigned type, uint64_t *p, unsigned np)
 }
 
 /* ---- the handlers ---- */
+#ifdef KOS_REMOTE_BATCH
+__attribute__((noinline, minsize))
+#endif
 static void handle(struct kmsg *m)
 {
     unsigned src = KMSG_SRC(m);
@@ -204,6 +245,13 @@ static void handle(struct kmsg *m)
         k_reply(src, p[0], r < 0 ? r : KOS_OK, r < 0 ? 0 : (uint64_t)r);
         break;
     }
+#ifdef KOS_REMOTE_BATCH
+    case M_BATCH: {
+        const uint64_t *w = (const uint64_t *)((kn.priv + kn.land_off + p[2]) | HW_UNC);
+        k_batch_start(src, p[0], (unsigned)p[1], w, (unsigned)p[3]);
+        break;
+    }
+#endif
     case M_UNIT_WAIT:
         k_pending_add(M_UNIT_WAIT, src, p[0], p[1], p[2]);
         break;
@@ -234,7 +282,13 @@ void k_msg_poll(void)
     if (kn.n < 2) {
         return;
     }
+#ifdef KOS_POLL_EVENTS
+    if (rx_pending || hw_rd(HW_R_DBCNT)) {
+        drain();
+    }
+#else
     drain();
+#endif
     unsigned keep = in_head;
     int held = 0;
     for (unsigned i = in_head; i != in_tail; i = (i + 1) % K_INBOX) {
@@ -255,6 +309,38 @@ void k_msg_poll(void)
 
 int k_chan_put(unsigned src, unsigned chan, const void *data, unsigned len)
 {
+#ifdef KOS_CHAN_FIFO
+    if (!free_message) {
+        ++kstat.chan_full;
+        return -1;
+    }
+    unsigned *link = channel_link(chan);
+    if (!*link) {
+        unsigned q = free_channel;
+        free_channel = channels[q].next;
+        channels[q] = (struct channel){.key = chan};
+        *link = q;
+    }
+    struct channel *q = &channels[*link];
+    unsigned i = free_message;
+    struct chanmsg *c = &chq[i];
+    free_message = c->pad;
+    c->src = src;
+    c->len = len > 40 ? 40 : len;
+    memcpy(c->data, data, c->len);
+    c->pad = 0;
+    if (q->count) {
+        chq[q->tail].pad = i;
+    } else {
+        q->head = i;
+    }
+    q->tail = i;
+    ++q->count;
+#ifdef KOS_POLL_EVENTS
+    k_channel_ready(chan);
+#endif
+    return 0;
+#else
     if ((ch_tail + 1) % K_CHANQ == ch_head) {
         ++kstat.chan_full;
         return -1;
@@ -265,16 +351,24 @@ int k_chan_put(unsigned src, unsigned chan, const void *data, unsigned len)
     c->len = len > 40 ? 40 : len;
     memcpy(c->data, data, c->len);
     ch_tail = (ch_tail + 1) % K_CHANQ;
+#ifdef KOS_POLL_EVENTS
+    k_channel_ready(chan);
+#endif
     return 0;
+#endif
 }
 
 unsigned k_chan_count(unsigned chan)
 {
+#ifdef KOS_CHAN_FIFO
+    return channels[*channel_link(chan)].count;
+#else
     unsigned n = 0;
     for (unsigned i = ch_head; i != ch_tail; i = (i + 1) % K_CHANQ) {
         n += chq[i].chan == chan;
     }
     return n;
+#endif
 }
 
 /* A user send: into the local queue, or a message to the node, when there is
@@ -299,6 +393,33 @@ int k_chan_send(uint64_t node_chan, const void *data, unsigned len)
  * the source node. */
 int k_chan_take(struct thread *t)
 {
+#ifdef KOS_CHAN_FIFO
+    if (t->wa > 0xffffffffUL) {
+        return -1;
+    }
+    unsigned *link = channel_link((unsigned)t->wa), id = *link;
+    if (!id) {
+        return -1;
+    }
+    struct channel *q = &channels[id];
+    unsigned i = q->head;
+    struct chanmsg *c = &chq[i];
+    const void *payload = c->data;
+#if defined(KOS_HOT_MUT) && KOS_HOT_MUT == 6
+    payload = chq[q->tail].data;
+#endif
+    int len = k_copy_out(t->wb, payload, c->len) ? KOS_EFAULT : (int)c->len;
+    t->x[11] = c->src;
+    q->head = c->pad;
+    c->pad = free_message;
+    free_message = i;
+    if (!--q->count) {
+        *link = q->next;
+        q->next = free_channel;
+        free_channel = id;
+    }
+    return len;
+#else
     for (unsigned i = ch_head; i != ch_tail; i = (i + 1) % K_CHANQ) {
         struct chanmsg *c = &chq[i];
         if (c->chan != t->wa) {
@@ -316,6 +437,7 @@ int k_chan_take(struct thread *t)
         return len;
     }
     return -1;
+#endif
 }
 
 /* ---- atomics: one home per shared word, the word's uncached alias ---- */

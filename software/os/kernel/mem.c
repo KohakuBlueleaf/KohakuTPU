@@ -11,6 +11,18 @@ static uint64_t mmap_next;
 
 struct knode kn;
 uint64_t k_user_satp;
+#ifdef KOS_XLAT
+static uint64_t map_generation = 1;
+extern uint64_t kos_walk(uint64_t va, uint64_t root, uint64_t alias);
+static void mappings_changed(void)
+{
+#if !defined(KOS_HOT_MUT) || KOS_HOT_MUT != 4
+    ++map_generation;
+#endif
+}
+#else
+#define mappings_changed() ((void)0)
+#endif
 
 extern char __u_img_size[];
 
@@ -60,6 +72,7 @@ void k_frame_free(uint64_t pa)
 
 int k_map(uint64_t va, uint64_t pa, uint64_t size, unsigned attr)
 {
+    mappings_changed();
     return (int)k_l0(KOS_M_MAP, va, pa, size, attr).st;
 }
 
@@ -163,13 +176,33 @@ int k_stack_map(struct thread *t)
     return KOS_OK;
 }
 
+#ifdef KOS_COMPACT_XLAT
+__attribute__((noinline))
+#endif
 uint64_t k_user_pa(uint64_t va)
 {
+#ifdef KOS_XLAT
+    uint64_t page = va & ~0xfffUL;
+    if (kcur && kcur->tlb_gen == map_generation && kcur->tlb_va == page) {
+        return kcur->tlb_pa | (va & 0xfff);
+    }
+    uint64_t root = (k_user_satp << 20) >> 8;
+    uint64_t pte = kos_walk(va, root, kn.flags & KOS_F_PT_DRAM ? HW_UNC : 0);
+#else
     uint64_t pte = k_l0(KOS_M_QUERY, va & ~0xfffUL, 0, 0, 0).val;
+#endif
     if (!(pte & 1)) {
         return 0;
     }
-    return (((pte >> 10) << 12) & ((1UL << 40) - 1)) | (va & 0xfff);
+    uint64_t pa = ((pte >> 10) << 12) & ((1UL << 40) - 1);
+#ifdef KOS_XLAT
+    if (kcur) {
+        kcur->tlb_va = page;
+        kcur->tlb_pa = pa;
+        kcur->tlb_gen = map_generation;
+    }
+#endif
+    return pa | (va & 0xfff);
 }
 
 void k_stack_unmap(struct thread *t)
@@ -179,6 +212,7 @@ void k_stack_unmap(struct thread *t)
         uint64_t va = top - (i + 1) * 4096;
         uint64_t pa = k_user_pa(va) & ~0xfffUL & ~HW_UNC;
         if (pa) {
+            mappings_changed();
             k_l0(KOS_M_UNMAP, va, 4096, 0, 0);
             k_frame_free(pa);
         }
@@ -244,6 +278,7 @@ int64_t k_munmap(uint64_t va, uint64_t pa, uint64_t size)
     if (!pa || (va | size) & 0xfff || va < lo || va + size > mmap_next) {
         return KOS_EINVAL;
     }
+    mappings_changed();
     int64_t st = k_l0(KOS_M_UNMAP, va, size, 0, 0).st;
     for (uint64_t off = 0; !st && off < size; off += 4096) {
         k_frame_free(pa + off);

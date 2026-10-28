@@ -65,7 +65,18 @@ struct thread {
     uint64_t rjoin_req;
     char name[16];
     uint8_t sendbuf[40];       /* a send waiting for room (W_SEND) */
+#ifdef KOS_POLL_EVENTS
+    struct thread *wnext, **wprev;
+#endif
+#ifdef KOS_XLAT
+    uint64_t tlb_va, tlb_pa, tlb_gen;
+#endif
 };
+_Static_assert(offsetof(struct thread, tid) == 272, "entry.S tid");
+_Static_assert(offsetof(struct thread, cycles) == 328, "entry.S cycles");
+_Static_assert(offsetof(struct thread, since) == 344, "entry.S since");
+_Static_assert(offsetof(struct knode, flags) == 28, "entry.S flags");
+_Static_assert((KOS_F_POLL | KOS_F_TRACE) == 40, "entry.S slow flags");
 extern struct thread kthreads[K_THREADS];
 extern struct thread *kcur;
 
@@ -76,6 +87,9 @@ void k_wake(struct thread *t, int64_t result);
 void k_exit_thread(struct thread *t, int64_t code);
 struct thread *k_schedule(void);
 void k_poll(void);
+#ifdef KOS_POLL_EVENTS
+void k_channel_ready(unsigned chan);
+#endif
 __attribute__((noreturn)) void k_resume(struct thread *t);
 __attribute__((noreturn)) void k_panic(const char *fmt, ...);
 
@@ -115,6 +129,9 @@ void k_where(uint64_t code, uint64_t a, uint64_t b);      /* what the node is do
 void k_where_wait(uint64_t code, uint64_t a, uint64_t b); /* a wait inside it ... */
 void k_where_back(void);                                   /* ... that has ended */
 void k_switched(void);
+#ifdef KOS_LOCAL_LOG
+void k_log_sync(void);
+#endif
 __attribute__((noreturn)) void k_halt(uint64_t code);
 
 /* ---- messages between nodes ---- */
@@ -131,6 +148,7 @@ enum {
     M_SHUTDOWN,  /* p0 code */
     M_PING,      /* p0 req */
     M_RUN,       /* p0 req, p1 app index, p2..p6 argument text (40 bytes) */
+    M_BATCH,     /* p0 req, p1 unit, p2 landing offset, p3 count; reply on retirement */
 };
 struct kmsg {
     uint64_t hdr; /* [7:0] type, [15:8] source node */
@@ -186,6 +204,9 @@ int64_t k_engine_run(unsigned u, const uint64_t *w, unsigned count);
 int64_t k_move(uint64_t src_pa, uint64_t dst_pa, uint64_t words);
 void k_pending_add(unsigned kind, unsigned node, uint64_t req, uint64_t a, uint64_t b);
 void k_pending_poll(void);
+#ifdef KOS_REMOTE_BATCH
+void k_batch_start(unsigned node, uint64_t req, unsigned u, const uint64_t *w, unsigned count);
+#endif
 
 /* ---- trap profile (a -D KOS_PROF build): cycle stamps along the trap
  * path, k_prof_at[0..6] = entry after the first saves, before k_trap, k_trap

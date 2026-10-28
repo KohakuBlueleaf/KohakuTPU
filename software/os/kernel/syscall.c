@@ -6,6 +6,12 @@
 
 extern char __ushared_start[], __ushared_end[];
 
+#ifdef KOS_SMALL_CALL
+#define BUFFER_CALL __attribute__((noinline, minsize))
+#else
+#define BUFFER_CALL __attribute__((always_inline)) inline
+#endif
+
 static unsigned napps(void) { return (unsigned)(__kos_apps_end - __kos_apps_start); }
 
 /* The app table and its name strings live in the user image. */
@@ -103,6 +109,9 @@ static int64_t stat_into(uint64_t what, void *buf, uint64_t max)
         return (int64_t)(n * sizeof *o);
     }
     if (what == KOS_S_KERNEL && max >= sizeof(struct kos_kernel_stat)) {
+#ifdef KOS_LOCAL_LOG
+        k_log_sync();
+#endif
         kstat.frames_free = k_frames_free();
         kstat.frames_total = kn.frames_end >> 12;
         kstat.uptime = hw_time();
@@ -126,7 +135,7 @@ static int64_t stat_into(uint64_t what, void *buf, uint64_t max)
 }
 
 /* Built in a kernel buffer, then copied out. */
-static int64_t stat(uint64_t what, uint64_t ubuf, uint64_t max)
+static BUFFER_CALL int64_t stat(uint64_t what, uint64_t ubuf, uint64_t max)
 {
     union {
         struct kos_thread_stat t[K_THREADS];
@@ -147,13 +156,145 @@ static unsigned unit_node(unsigned u)
     return kn.me;
 }
 
+static BUFFER_CALL int64_t write_user(uint64_t addr, uint64_t len)
+{
+    char b[256];
+    int64_t r = len > 4096 ? KOS_EFAULT : (int64_t)len;
+    for (uint64_t at = 0; r >= 0 && at < len; at += sizeof b) {
+        uint64_t n = len - at < sizeof b ? len - at : sizeof b;
+        if (k_copy_in(b, addr + at, n)) {
+            return KOS_EFAULT;
+        }
+        k_write(b, n);
+    }
+    return r;
+}
+
+static BUFFER_CALL void dispatch_user(struct thread *t, uint64_t unit, uint64_t addr)
+{
+    uint64_t w[4];
+    if (unit >= knunits || k_copy_in(w, addr, sizeof w)) {
+        ret2(t, KOS_EINVAL, 0);
+        return;
+    }
+    if (kunits[unit].local) {
+        int64_t tk = k_dispatch_local((unsigned)unit, w);
+        ret2(t, tk < 0 ? tk : KOS_OK, tk < 0 ? 0 : (uint64_t)tk);
+    } else {
+        uint64_t p[6] = {0, unit, w[0], w[1], w[2], w[3]};
+        k_rpc(unit_node((unsigned)unit), M_DISPATCH, p, 6);
+    }
+}
+
+static BUFFER_CALL void engine_user(struct thread *t, uint64_t unit, uint64_t addr, uint64_t count)
+{
+    uint64_t w[8 * 4];
+    if (count == 0 || count > 8 || k_copy_in(w, addr, count * 32)) {
+        ret2(t, KOS_EINVAL, 0);
+        return;
+    }
+#ifdef KOS_REMOTE_BATCH
+    if (unit < knunits && !kunits[unit].local) {
+        static uint64_t *staging;
+        if (!staging) {
+            staging = k_alloc(KOS_BATCH_SLOT);
+        }
+        unsigned node = unit_node((unsigned)unit);
+        uint64_t off = KOS_BATCH_BASE + (kn.me * K_THREADS + t->slot) * KOS_BATCH_SLOT;
+        memcpy(staging, w, count * 32);
+        hw_dcache(HW_DC_FLUSH);
+        int64_t st = k_move((uint64_t)staging,
+                           kn.peer_priv[node] + kn.peer_priv_size[node] - KOS_LAND_SIZE + off,
+                           count);
+        if (st) {
+            ret2(t, st, 0);
+            return;
+        }
+        uint64_t p[4] = {0, unit, off, count};
+        k_rpc(node, M_BATCH, p, 4);
+        return;
+    }
+#endif
+    int64_t tk = k_engine_run((unsigned)unit, w, (unsigned)count);
+    ret2(t, tk < 0 ? tk : KOS_OK, tk < 0 ? 0 : (uint64_t)tk);
+}
+
+static BUFFER_CALL void run_user(struct thread *t, uint64_t uname, uint64_t uargs, uint64_t node)
+{
+    char name[24], args[41] = {0};
+    if (k_copy_str(name, uname, sizeof name) < 0 || k_copy_str(args, uargs, sizeof args) < 0) {
+        ret2(t, KOS_EFAULT, 0);
+        return;
+    }
+    int app = k_find_app(name);
+    if (app < 0) {
+        ret2(t, KOS_ENOENT, 0);
+        return;
+    }
+    if (node == kn.me || node >= kn.n) {
+        int64_t tid = k_run_local((unsigned)app, args);
+        ret2(t, tid < 0 ? tid : KOS_OK, tid < 0 ? 0 : (uint64_t)tid);
+    } else {
+        uint64_t p[7] = {0, (uint64_t)app, 0, 0, 0, 0, 0};
+        memcpy(&p[2], args, 40);
+        k_rpc((unsigned)node, M_RUN, p, 7);
+    }
+}
+
+static BUFFER_CALL int64_t info_user(uint64_t a0, uint64_t a1)
+{
+    switch (a0) {
+    case KOS_I_NODE: return kn.me;
+    case KOS_I_NODES: return kn.n;
+    case KOS_I_MESH: return kn.mesh;
+    case KOS_I_FLAGS: return kn.flags;
+    case KOS_I_SHARED: return kn.shared_size ? (int64_t)KOS_UV_SHARED : 0;
+    case KOS_I_SHSIZE: return (int64_t)kn.shared_size;
+    case KOS_I_SHHEAP:
+        return kn.shared_size ? (int64_t)(KOS_UV_SHARED +
+               KOS_ALIGN_UP((uint64_t)(__ushared_end - __ushared_start), 64)) : 0;
+    case KOS_I_L0RTT: {
+        uint64_t start = hw_cycles();
+        for (int i = 0; i < 16; ++i) {
+            k_l0(KOS_M_NOP, 0, 0, 0, 0);
+        }
+        return (int64_t)((hw_cycles() - start) / 16);
+    }
+    case KOS_I_SHPA: return (int64_t)(kn.shared_size ? kn.shared : 0);
+    case KOS_I_LANDPA: return (int64_t)(kn.priv + kn.land_off);
+    case KOS_I_CLOCK: return (int64_t)k_boot.clock_hz;
+    case KOS_I_NUNITS: return knunits;
+    case KOS_I_SPAN:
+    case KOS_I_SPANSZ:
+    case KOS_I_MESHOF:
+        if (a1 >= kn.n) {
+            return KOS_EINVAL;
+        }
+        return (int64_t)(a0 == KOS_I_SPAN ? kn.peer_priv[a1] :
+                        a0 == KOS_I_SPANSZ ? kn.peer_priv_size[a1] : kn.mesh_of[a1]);
+#ifdef KOS_PROF
+    case KOS_I_PROF: return k_prof_info(a1);
+#endif
+    default: return KOS_EINVAL;
+    }
+}
+
+static BUFFER_CALL void trace_user(const struct thread *t)
+{
+    k_printf("[k%u] %x sys %lu (%lx %lx %lx)\n", kn.me, t->tid,
+             t->x[17], t->x[10], t->x[11], t->x[12]);
+}
+
+#ifdef KOS_SMALL_CALL
+__attribute__((minsize))
+#endif
 void k_syscall(struct thread *t)
 {
+    if (kn.flags & KOS_F_TRACE) {
+        trace_user(t);
+    }
     uint64_t a0 = t->x[10], a1 = t->x[11], a2 = t->x[12], a3 = t->x[13];
     uint64_t nr = t->x[17];
-    if (kn.flags & KOS_F_TRACE) {
-        k_printf("[k%u] %x sys %lu (%lx %lx %lx)\n", kn.me, t->tid, nr, a0, a1, a2);
-    }
     int64_t r = 0;
     switch (nr) {
     case SYS_EXIT:
@@ -162,19 +303,9 @@ void k_syscall(struct thread *t)
     case SYS_YIELD:
         k_ready(t);
         return;
-    case SYS_WRITE: {
-        char b[256];
-        r = a1 > 4096 ? KOS_EFAULT : (int64_t)a1;
-        for (uint64_t at = 0; r >= 0 && at < a1; at += sizeof b) {
-            uint64_t n = a1 - at < sizeof b ? a1 - at : sizeof b;
-            if (k_copy_in(b, a0 + at, n)) {
-                r = KOS_EFAULT;
-                break;
-            }
-            k_write(b, n);
-        }
+    case SYS_WRITE:
+        r = write_user(a0, a1);
         break;
-    }
     case SYS_READ:
         if (!k_user_range(a0, a1) || !a1) {
             r = KOS_EFAULT;
@@ -218,69 +349,7 @@ void k_syscall(struct thread *t)
         r = t->tid;
         break;
     case SYS_INFO:
-        switch (a0) {
-        case KOS_I_NODE:
-            r = kn.me;
-            break;
-        case KOS_I_NODES:
-            r = kn.n;
-            break;
-        case KOS_I_MESH:
-            r = kn.mesh;
-            break;
-        case KOS_I_FLAGS:
-            r = kn.flags;
-            break;
-        case KOS_I_SHARED:
-            r = kn.shared_size ? (int64_t)KOS_UV_SHARED : 0;
-            break;
-        case KOS_I_SHSIZE:
-            r = (int64_t)kn.shared_size;
-            break;
-        case KOS_I_SHHEAP:
-            r = kn.shared_size ? (int64_t)(KOS_UV_SHARED +
-                                           KOS_ALIGN_UP((uint64_t)(__ushared_end - __ushared_start), 64))
-                               : 0;
-            break;
-        case KOS_I_L0RTT: {
-            uint64_t t0 = hw_cycles();
-            for (int i = 0; i < 16; ++i) {
-                k_l0(KOS_M_NOP, 0, 0, 0, 0);
-            }
-            r = (int64_t)((hw_cycles() - t0) / 16);
-            break;
-        }
-        case KOS_I_SHPA:
-            r = (int64_t)(kn.shared_size ? kn.shared : 0);
-            break;
-        case KOS_I_LANDPA:
-            r = (int64_t)(kn.priv + kn.land_off);
-            break;
-        case KOS_I_CLOCK:
-            r = (int64_t)k_boot.clock_hz;
-            break;
-        case KOS_I_NUNITS:
-            r = knunits;
-            break;
-        case KOS_I_SPAN:
-        case KOS_I_SPANSZ:
-        case KOS_I_MESHOF:
-            if (a1 >= kn.n) {
-                r = KOS_EINVAL;
-            } else {
-                r = (int64_t)(a0 == KOS_I_SPAN     ? kn.peer_priv[a1]
-                              : a0 == KOS_I_SPANSZ ? kn.peer_priv_size[a1]
-                                                   : kn.mesh_of[a1]);
-            }
-            break;
-#ifdef KOS_PROF
-        case KOS_I_PROF:
-            r = k_prof_info(a1);
-            break;
-#endif
-        default:
-            r = KOS_EINVAL;
-        }
+        r = info_user(a0, a1);
         break;
     case SYS_SLEEP:
         k_block(t, W_SLEEP, 0, 0, a0 ? a0 : 1);
@@ -333,21 +402,9 @@ void k_syscall(struct thread *t)
         }
         break;
     }
-    case SYS_DISPATCH: {
-        uint64_t w[4];
-        if (a0 >= knunits || k_copy_in(w, a1, sizeof w)) {
-            ret2(t, KOS_EINVAL, 0);
-            return;
-        }
-        if (kunits[a0].local) {
-            int64_t tk = k_dispatch_local((unsigned)a0, w);
-            ret2(t, tk < 0 ? tk : KOS_OK, tk < 0 ? 0 : (uint64_t)tk);
-        } else {
-            uint64_t p[6] = {0, a0, w[0], w[1], w[2], w[3]};
-            k_rpc(unit_node((unsigned)a0), M_DISPATCH, p, 6);
-        }
+    case SYS_DISPATCH:
+        dispatch_user(t, a0, a1);
         return;
-    }
     case SYS_UNIT_WAIT: {
         if (a0 >= knunits) {
             ret2(t, KOS_EINVAL, 0);
@@ -391,7 +448,7 @@ void k_syscall(struct thread *t)
         uint64_t src = move_pa(a0, bytes), dst;
         if (a3 & 0x100) {
             unsigned node = a3 & 0xff;
-            if (node >= kn.n || a1 + bytes > KOS_LAND_SIZE || a1 + bytes < a1) {
+            if (node >= kn.n || a1 + bytes > KOS_USER_LAND_SIZE || a1 + bytes < a1) {
                 r = KOS_EINVAL;
                 break;
             }
@@ -444,27 +501,9 @@ void k_syscall(struct thread *t)
     case SYS_STAT:
         r = stat(a0, a1, a2);
         break;
-    case SYS_RUN: {
-        char name[24], args[41] = {0};
-        if (k_copy_str(name, a0, sizeof name) < 0 || k_copy_str(args, a1, sizeof args) < 0) {
-            ret2(t, KOS_EFAULT, 0);
-            return;
-        }
-        int app = k_find_app(name);
-        if (app < 0) {
-            ret2(t, KOS_ENOENT, 0);
-            return;
-        }
-        if (a2 == kn.me || a2 >= kn.n) {
-            int64_t tid = k_run_local((unsigned)app, args);
-            ret2(t, tid < 0 ? tid : KOS_OK, tid < 0 ? 0 : (uint64_t)tid);
-        } else {
-            uint64_t p[7] = {0, (uint64_t)app, 0, 0, 0, 0, 0};
-            memcpy(&p[2], args, 40);
-            k_rpc((unsigned)a2, M_RUN, p, 7);
-        }
+    case SYS_RUN:
+        run_user(t, a0, a1, a2);
         return;
-    }
     case SYS_BARRIER: {
         uint64_t req = k_req_id();
         k_block(t, W_REPLY, req, 0, 0);
@@ -477,15 +516,7 @@ void k_syscall(struct thread *t)
         return;
     }
     case SYS_ENGINE:
-        {
-            uint64_t w[8 * 4];
-            if (a2 == 0 || a2 > 8 || k_copy_in(w, a1, a2 * 32)) {
-                ret2(t, KOS_EINVAL, 0);
-                return;
-            }
-            int64_t tk = k_engine_run((unsigned)a0, w, (unsigned)a2);
-            ret2(t, tk < 0 ? tk : KOS_OK, tk < 0 ? 0 : (uint64_t)tk);
-        }
+        engine_user(t, a0, a1, a2);
         return;
     case SYS_SHUTDOWN: {
         uint64_t p[1] = {a0};
@@ -507,7 +538,7 @@ void k_syscall(struct thread *t)
             return;
         }
         int st = k_event_out(a2, a3 & 0xffffffff);
-        ret2(t, st ? st : q, k_events);
+        ret2(t, st ? (int64_t)st : (int64_t)q, k_events);
         return;
     }
     case SYS_VTOP: {

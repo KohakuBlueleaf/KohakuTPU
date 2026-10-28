@@ -136,6 +136,13 @@
 #define KOS_STACK_SPAN 0x0000000000020000UL
 #define KOS_STACK_SIZE 0x0000000000004000UL
 #define KOS_LAND_SIZE  0x0000000000010000UL /* the tail of each node's private span */
+#define KOS_BATCH_BASE 0x000000000000c000UL /* remote-batch build: top 16 KB reserved */
+#define KOS_BATCH_SLOT 256UL
+#ifdef KOS_REMOTE_BATCH
+#define KOS_USER_LAND_SIZE KOS_BATCH_BASE
+#else
+#define KOS_USER_LAND_SIZE KOS_LAND_SIZE
+#endif
 #define KOS_LOG_SIZE   0x0000000000004000UL /* the kernel's console log, before the landing zone */
 /* The log's first 64 bytes, written uncached so a host reads them while the
  * node runs or after it hangs (u64 index); the bytes follow from +64. */
