@@ -77,7 +77,7 @@ SLR1 holds the host interface (XDMA, JTAG, the clock root), so it is the most
 crowded die and carries the smallest mesh on the compute card. The four meshes
 are otherwise the same module, differing only by `MESH_ID`. `MachineSpec`
 carries a `MeshSpec` per mesh so a placement pass reads each mesh's unit table
-and refuses precisely (`kohakuaccel.compiler.machine`).
+and refuses precisely (`kohakutpu.application.runtime.machine`).
 
 Unit populations come from enumeration over the control plane, not from this
 table — read them off the card rather than trusting a document.
@@ -141,9 +141,9 @@ with no ready travelling back; each stage is a cycle of the credit loop.
 
 `MachineSpec.global_addr(base, mesh)` builds `mesh << 36 | base` — a 40-bit
 address with the mesh id in **`[37:36]`**, 64 GB per mesh
-(`kohakuaccel.compiler.machine`). It raises for a mesh this machine does
+(`kohakutpu.application.runtime.machine`). It raises for a mesh this machine does
 not have and for a `base` that does not fit one mesh's 64 GB;
-`MachineSpec.addr_mesh` reads the id back out. Above it, `[39]` selects a
+the machine's `die.address.mesh_shift` and `mesh_bits` define the id field. Above it, `[39]` selects a
 command aperture instead of DRAM and `[38]` is reserved for a third mesh bit —
 `stage_addr` is the one accessor that sets them. See
 [address-map.md](../../address-map.md).

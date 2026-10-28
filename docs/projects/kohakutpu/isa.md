@@ -546,7 +546,7 @@ loop counter ([vector-core.md](vector-core.md) §9).
 ### 7.1 A vector instruction is not a flit
 
 This is the structural difference from the cluster and the reason the two
-encoders (`kohakutpu/compiler/encode/cluster.py`, `encode/vector.py`) are separate. The 32-bit word is
+encoders (`ktpu-isa::unit::cluster`, `ktpu-isa::unit::vector`) are separate. The 32-bit word is
 **cargo**: it rides inside an envelope that says "write this into instruction
 memory at this address". A kernel is therefore *a program, not an instruction* —
 N writes to instruction memory, M descriptor writes, then one run.

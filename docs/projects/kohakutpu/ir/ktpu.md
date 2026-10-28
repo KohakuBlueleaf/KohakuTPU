@@ -22,11 +22,10 @@ runner loads the file, binds buffers to addresses and runs.
 
 Code: `software/language/kohakutpu/language/` (`text/` the syntax and
 modules, `l1/ops.py` the vector core's math facts, `numerics/`, `examples/`);
-`software/compiler/kohakutpu/compiler/` (`emit/node.py` an `fn NAME.l1` body
-to programs, `emit/image.py` an `image` to V2 IMEM words, `encode/` the unit
-and mover ops, `layout/buffer.py` a parameter's memory layout, `build.py`).
-Tests: `software/compiler/tests/` (encoders and L1 statements, against the
-reference package interpreter), `software/application/tests/test_l1_examples.py`
+`software/rust/crates/ktpu-l1/src/` (`lower/node/` for L1 bodies,
+`lower/image/` for V2 IMEM words, `layout/` for memory layouts),
+`ktpu-isa` for encodings, and `ktpu-l0` for packages.
+Tests: Rust crate clause and frozen-golden tests, Python binding tests, `software/application/tests/test_l1_examples.py`
 (every example on the Verilated card).
 
 ## 1. A body
@@ -332,7 +331,7 @@ What sets the numbers:
 ## 9. L2 (`fn NAME.l2`)
 
 The structure is [l2-program.md](../../../spec/l2-program.md)'s; these are
-KohakuTPU's spaces and ops. Code: `software/compiler/kohakutpu/compiler/l2/`.
+KohakuTPU's spaces and ops. Code: `software/rust/crates/ktpu-l2/src/`.
 
 **Spaces**
 
@@ -368,7 +367,10 @@ KohakuTPU's spaces and ops. Code: `software/compiler/kohakutpu/compiler/l2/`.
 | | `add sub mul max min exp2d fma fnma exp2 inv rsqrt log2 neg abs mov` | one instruction a register; a constant in an S or K register; `m[:, *]` a statistic broadcast to its row |
 | | `m = cmplt\|cmpgt\|cmpeq a, b`; `o = sel m, a, b` | a compare into a predicate, then 1.0 / 0.0 by a move and a predicated move; VSEL (a where m is not 0, else b) |
 | | `y = xlane x, K` | lane l of every 16-lane chunk takes lane `l xor K`: `vmul d, k1, xor(x, K)` a register (exact); with `sel` over a lane mask, any swap inside a chunk (a 4 x 4 transpose is two) |
-| | `x = load VIEW : f16[1, C] @l1(gt4)` read by a band of R rows; `s = load VIEW : f16[R] @l1` | one row broadcast to every row of the band; a 1-D view loaded as a row statistic |
+| | `y = xrot x, K` | lane l of every 16-lane chunk takes lane `(l + K) mod 16`: `vmul d, k1, rot(x, K)` a register (exact); two under a lane mask shift a run across a word boundary |
+| | `x = load VIEW : f16[1, C] @l1(gt4)` read by a band of R rows; `s = load VIEW : f16[R] @l1` | one row broadcast to every row of the band; a 1-D view loaded as a row statistic (16 rows a word, each band's values broadcast by `bcast`) |
+| | `v = unpack s lane=L : f32[16] @reg` | value L of a word, every row's: one `bcast` into every lane of every chunk |
+| | `p = pack m : f16[R] @l1` (m a GT4 statistic); `store VIEW <- p` | 16 rows a word: four bands' registers merged lane by lane (`vmax d, a, merge(b, K)`, K = 8, 4, 2, 1: each input constant across bit K, so the max is the select), one chunk packed; a loop of statistics alone runs as bands one register wide, `cmp` / `sel` on them as on rows |
 | | `rmax`, `rsum` (rows to `f32[R] @reg`) | the merge tree over 8 rows; `rsum (mul a, b)` folds the product. Of `@reg(gt4)` rows (drained tiles): a 4-row band's registers folded, chunk 4 + i onto chunk i, an xor butterfly over the 16 lanes, chunks 0-3 copied to 4-7 -- one register a band whose every chunk holds its row's value, an elementwise operand to the band (`m[:, *]`); `rsum (mul a, b)` there folds the product too (a multiply, then a fused multiply-add of the next register pair: the product is never held) |
 | | `if sticky` (a block of math) | the front end waits for the math, GETSTK, VSKIPZ over the block; the block's results overwrite their names' registers, so the skipped path keeps the values |
 | node scope | `copy DST <- SRC [perm=]`, `fill`, `gen`, `gather`, `scatter` | one move of walks; any walks a move cannot hold (more than 16,384 words, or more than a walker's 6 levels) cut into consecutive runs of steps: U steps at a time, U the largest step count every walk's level boundaries share (1 always does) whose inner levels a walker holds, as many U a move as stay inside every walk's next level; a gather or scatter cut into moves of at most 2,048 rows (whole 32-byte lines of the index list) and rows of at most 65,535 words |
@@ -414,14 +416,14 @@ queues, unpack words and math beats sharing the write port, a result 20
 cycles after issue). `when` on an instance variable keeps a block per
 instance.
 
-The other lowering of a stream loop is a **modulo schedule** (`l2/modulo.py`):
+The other lowering of a stream loop is a **modulo schedule** (`ktpu-l2/src/lower/vector/modulo.rs`):
 one trip's code becomes an iteration started every II cycles, several in
 flight; its registers rotate over K copies, coloured on a circle of K x II
 (an arc starts at its time modulo the circle), each load and store a ring of
 K L1 slots, each VSYNC's slack the exact count it may leave outstanding.
 Before an image is kept its register dataflow is replayed in program order:
 a read that would find another iteration's value fails the compile. The
-lowering takes whichever of the two the image timing model (`l2/timing.py`)
+lowering takes whichever of the two the image timing model (`ktpu-l1/src/sched/timing.rs`)
 times faster; a sticky block, a cluster stream, a banded unpack or a store
 packed over its load keeps the band lowering.
 
@@ -435,7 +437,7 @@ with a cluster stage (the pipeline pass overlaps them) takes the shared
 figures; the modulo schedule issues an iteration's fills that latency plus
 its words' cycles ahead of its first unpack.
 
-**Passes** (`l2/passes.py`, `l2/pipeline.py compile_l1`): `place`, `space`,
+**Passes** (`ktpu-l2/src/passes/`, `ktpu_l2::compile_l1`): `place`, `space`,
 `share` (in a body over several nodes, a fill whose view does not name the
 cluster becomes `share=cross`), `split` (`gemm ... split`: the K loop),
 `step` (a vector stream loop some view of which steps further a trip than a
@@ -466,7 +468,7 @@ registers or set into `s13` / `k3` before each read, and a row unpacked
 before the loop pinned or unpacked again from its kept L1 bytes where read,
 whichever times faster; a value stored through several views packed once
 for each L1 layout among them), then the L1 image
-scheduler (`opt/schedule.py`: each run of math, unpack and pack
+scheduler (`ktpu-l1/src/sched/`: each run of math, unpack and pack
 list-scheduled under the same issue model with a cost for each configuration
 word, kept only when the model times it 1% faster).
 

@@ -381,8 +381,9 @@ is described in [vector-core.md](vector-core.md) §7 and it is **not built**: th
 conversion field exists in the vector ISA, but nothing emits accumulator-width
 words into a vector core's L1 yet.
 
-Until then, silent FP16 saturation is an open defect rather than a documented
-limit, and nothing in the compiler mitigates it.
+The FP16 drain contract is silent saturation: values clamp to ±65,504, and
+nothing detects or reports the saturation. Preserving range requires the
+accumulator-width finish described above, which is not yet built.
 
 ---
 

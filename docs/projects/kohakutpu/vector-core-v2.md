@@ -15,8 +15,8 @@ with one SFU each. The format, the FMA and the transcendentals are in
 [vector-core.md](vector-core.md) §1-4. This page covers what V2 changes: the control
 machine, the register file, the operand network, and the ISA.
 
-Machine code: `kohakutpu.compiler.encode.vector` (the encoders) and
-`kohakutpu.compiler.emit.image` (a `.ktpu` image to IMEM words).
+Machine code: `ktpu-isa::unit::vector` (the encoders) and
+`ktpu-l1::lower::image` (a `.ktpu` image to IMEM words).
 
 ## 1. Structure
 
@@ -362,4 +362,4 @@ closes.
 
 **V2.1** is the build `VEC_CORE v21` (`scripts/tcl/v8t3/00_config.tcl`): `RW` 7,
 `RF_COPIES` 2, a LUTRAM scoreboard. The compiler targets it with
-`target.machine(core="v21")` (128 registers, two copies).
+the machine file's `vc.regs` and `vc.rf_copies` (128 registers, two copies).

@@ -61,9 +61,9 @@ part exists to prevent: a machine description with one flat unit table says the
 wrong thing about every mesh that differs from the first.
 
 `MachineSpec` therefore holds a `MeshSpec` per mesh — its units, memory ports and
-orchestrator — and the flat accessors answer for a default one, so every caller
-written before the machine had several keeps working
-(`software/compiler/kohakuaccel/compiler/machine.py`).
+orchestrator. Runtime addresses come from the schema-derived Rust card view
+(`software/application/kohakutpu/application/runtime/machine.py` and
+`software/rust/crates/ktpu-machine/src/card.rs`).
 
 Two design rules worth copying:
 

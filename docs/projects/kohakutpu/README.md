@@ -171,7 +171,7 @@ a project to prove anything.
 | vector ALU | **built and measured** — FMA within one ulp (correctly rounded outside one stated subtractive corner), faithful seeds |
 | vector core around it | **built**, and its instruction set partly so |
 | driver and hand-built encoders | **run on the card** |
-| software | `software/`: the `kt` DSL and `.ktpu` L2 / L1 (`language`), L2 → L1 → machine code and packages (`compiler`), the Tensor API and the tinygrad device (`application`), the driver, the Verilated card (`simulation`), the node firmware |
+| software | `software/`: the `kt` DSL and `.ktpu` L2 / L1 (`language`), L2 → L1 → machine code and packages (`rust`; native binding in `compiler`), the Tensor API and the tinygrad device (`application`), the driver, the Verilated card (`simulation`), the node firmware |
 | tensor-descriptor ISA | designed, walker built and validated, **not wired in** |
 | chain bypass, `FWD` | **not built** |
 | split-K epilogue on a vector core | **designed, not built** |

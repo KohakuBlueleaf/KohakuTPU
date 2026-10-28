@@ -301,18 +301,16 @@ the members.
       language/     kohakutpu.language     the .ktpu text, the vector core's
                                            math facts, number formats, the
                                            hand-written L1 examples
-      compiler/     kohakuaccel.compiler   L1 programs, packages, the machine
-                                           description, the ISA field tables
-                    kohakutpu.compiler     the ISA, encoders, layouts, the L1
-                                           body and image emitters
+      compiler/     kohakuaccel.compiler.isa  generic instruction-layout toolkit
+                    kohakutpu.compiler._rs    native Rust binding
+                    kohakutpu.stack           Python adapters over Rust
+      rust/         ktpu-*                    machine, ISA, L0/L1/L2, verifier
       driver/       kohakuaccel.driver     transport/, device/, unit/ (the
                                            registry), node/, daemon/, runtime/
                     kohakutpu.driver       clock/, host/, units/, daemon/
       simulation/   kohakuaccel.simulation the package interpreter and SimMachine
-                    kohakutpu.simulation   verilator/: the Verilator card;
-                                           behave/: the behaviour model (a
-                                           card's packages for values, no
-                                           cycles: mover, vector core, cluster)
+                    kohakutpu.simulation   Verilator interfaces and Rust
+                                           package reader for callback tests
       firmware/     (C)                    the node firmware and its host tools
       application/  kohakutpu.application  a skeleton, and the kernel tools
       template/     toyaccel.*             the smallest project, every component
@@ -326,8 +324,9 @@ breach:
 | component | may import |
 |---|---|
 | language | language |
-| compiler | compiler, language |
-| driver | driver |
+| compiler namespace | compiler namespace |
+| stack | stack, native binding, language, runtime package adapters |
+| driver | driver, language machine reader |
 | simulation | simulation, driver, compiler, language |
 | application | every component |
 
@@ -341,9 +340,9 @@ it moves bytes, words and packages, and what they mean is the compiler's.
    cut: `kohakuaccel.driver.unit` is the registry a project populates
    (`kohakutpu.driver.units`, `toyaccel.driver.unit`).
 
-2. **Machine geometry against project capacities.** `kohakuaccel.compiler.machine`
-   (`MachineSpec`, a `MeshSpec` per mesh) carries the geometry; a project's
-   target (`kohakutpu.compiler.target`) its units and ports.
+2. **Machine geometry and capacities.** `ktpu-machine` reads the generated
+   machine schema. `kohakutpu.application.runtime.machine` exposes its card
+   view, unit coordinates, memory ports and address helpers to the runtime.
 
 3. **The bench source list is a hand-maintained file list** naming every RTL file
    the driver-to-simulator path elaborates, framework and project mixed. Adding a

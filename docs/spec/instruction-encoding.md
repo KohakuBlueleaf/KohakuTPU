@@ -353,7 +353,7 @@ encoding carries, so old programs still mean what they meant.
 The cost is that **a reader must rejoin them**. Taking `[251:218]` alone drops
 the aperture bit and the mesh id, so a staging or a remote address decodes as
 local DRAM at the same offset: a legal read of the wrong window, not a fault.
-`isa/cluster.py`'s `_addr` splits, `model.py`'s `full_addr` rejoins, and
+The Rust cluster encoder (`ktpu-isa/src/unit/cluster.rs`) splits the address, and
 `mx_cluster_cu.v:268` is `{inst_flit[68 -: 6], inst_flit[251 -: 34]}`.
 
 ### 8.2 `vec_cu` — vector core
@@ -371,10 +371,10 @@ Opcodes: 1 `IMEM`, 2 `DESC`, 3 `RUN`.
 | `[31:0]` | `word` | IMEM | The instruction word to store. |
 
 A base address is split here for the same reason and in the same place as the
-cluster's — `isa/vector.py`'s `desc_value_hi_lsb` is 63, matching `cluster.py`'s
-`addr_hi` — and it has the same trap: read `[245:212]` alone and a staging or a
-remote base decodes as local DRAM at the same offset. `model.py`'s `_descriptor`
-rejoins them.
+cluster's — the Rust vector and cluster field definitions in `ktpu-isa/src/unit/`
+both place `addr_hi` at bit 63 — and it has the same trap: read `[245:212]` alone and a staging or a
+remote base decodes as local DRAM at the same offset. Every descriptor reader must
+rejoin them.
 
 This unit spends most of its 256 bits on nothing, because its real instruction
 set is a kernel in its own instruction memory. `CU_INST` here is a loader plus a

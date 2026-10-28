@@ -1,6 +1,6 @@
 ---
 title: tinygrad on KohakuTPU (ktpugrad)
-summary: The KTPU tinygrad device -- where it hooks in, which tinygrad optimisations it switches off and why, how each scheduled kernel becomes a generated DSL kernel on the card (moves, transposes, padded boxes, narrow rows, statistics), what it covers, what it refuses by name, and the examples that run models on the simulator.
+summary: The KTPU tinygrad device -- where it hooks in, which tinygrad optimisations it switches off and why, how each scheduled kernel becomes a generated DSL kernel on the card (moves, transposes, padded boxes, narrow rows, statistics), what it covers, what it refuses by clause, and the examples that run models on the simulator.
 tags:
   - kohakutpu
   - tinygrad
@@ -12,8 +12,9 @@ tags:
 `kohakutpu.application.ktpugrad` makes `Tensor(x, device="KTPU")` a tinygrad
 device whose kernels run on the KohakuTPU card -- the Verilated card model
 by default (`build/v9g/vlt_card_v9_<n>n_v2`: the fast models with V2 vector
-cores and 256 MB of DRAM, `scripts/py/card_model.py card_v9_<n>n_v2
---build-root build/v9g -d VEC_CORE_V2 -G DRAM_WORDS=1048576`;
+cores and `card.dram.bytes` of DRAM from the named machine file;
+`card_model.py --board` takes the model's DRAM depth from its board's
+`model.dram_words`;
 `KOHAKUTPU_SIM_BUILD`, `KOHAKUTPU_SIM_NODES`). Every kernel
 tinygrad schedules is planned, lowered to a generated DSL kernel
 ([dsl.md](dsl.md)), compiled L2 -> L1 ([ir/ktpu.md](ir/ktpu.md) §9) and run;
@@ -56,11 +57,41 @@ off while installed and the runner shapes kernels itself:
 | `WINO` / `PCONTIG` | 0 | constant-matrix conv transforms; local staging buffers |
 | buffers a kernel | 8 | a vector core walks 8 memory views (output + 7 reads) |
 | producer inlining | `elementwise` | a computed producer inlined into a consumer's reduction (`relu(h)` into a product) hides the contraction from the planner, so it stays its own kernel; reloads, plain (which `assign` relies on) or padded (a convolution's input, read through its window), and elementwise consumers follow tinygrad. `KTPU_TINYGRAD_FUSE=0` keeps every computed producer, `1` is tinygrad's own rule |
-| buffer lifetime | last read | a schedule holds every buffer it names until it ends; the seam's `run_linear` frees each KTPU intermediate (no live Tensor names it) after the last kernel that reads it -- the card's memory is its 16 MB of DRAM |
+| buffer lifetime | last read | a schedule holds every buffer it names until it ends; the seam's `run_linear` frees each KTPU intermediate (no live Tensor names it) after the last kernel that reads it -- the card's DRAM capacity is the named machine's `card.dram.bytes` |
 
 tinygrad still writes float32 for some intermediates (sum accumulators,
 `exp`); on the card every float buffer is held as f16 (its f16 form), so a
 hidden state is f16 or, as a product's operand, MXFP7.
+
+### Queued execution and host visibility
+
+`KOHAKUTPU_QUEUE=1` (the default) submits generated kernels without waiting
+for their completions. `KOHAKUTPU_QUEUE=0`, or `Device(queued=False)` on the
+attached runtime, keeps synchronous kernel calls. This is independent of
+TinyJit: eager calls and recorded replay use the same queues and limits.
+
+The node executes its submission queue in order. A host read (`numpy()`,
+`item()`, allocator `_copyout`) collects through the last pending writer of
+the storage's forms. A host upload (`_copyin`) collects through the last
+reader or writer before replacing bytes or invalidating forms. Transfers to
+unrelated storage do not drain the device. `Device["KTPU"].synchronize()`
+collects everything; an explicit program timing request (`wait=True`) waits
+for its runs and returns their cycles divided by the active sysnode clock.
+An ordinary queued call returns no completed timing value.
+
+The runtime retains every bound allocation, including temporary forms, until
+completion is collected. Freeing a tinygrad intermediate releases its owner,
+not memory still referenced by a submitted run. Admission collects oldest
+runs at the actual node queue's SQ/CQ limit or at the pinned-byte budget
+(`KOHAKUTPU_QUEUE_BYTES`, bytes; default: combined arena capacity). A changed
+node set, or a multi-node run, establishes a completion barrier because
+independent node queues alone cannot order cross-node memory dependencies.
+
+A completion fault raises `NodeError` naming the tinygrad plan, generated
+run and original completion tag/status/step. Later results are discarded;
+close the runtime before using another device. Pending pins remain protected
+until shutdown. See [runtime queue ownership](runtime/queue.md) for the
+submission, capture and collection interfaces.
 
 ## 2. A kernel's plan
 
@@ -97,26 +128,25 @@ over one range of a product of two reads, any layout, any epilogue) and
 
 | path | takes | on the card |
 |---|---|---|
-| window | one sum of the product of two reads (under constants, zero-else gates and any epilogue) where a read is a window (two ranges at one stride, signed: `x[oy + ky]`, `g[y - ky]`) or a gate bounds it: a convolution, its two gradients (`window.py`) | each side laid out dense `[batch.., outer.., K.., lane]`: its source gathered once (statistic form) into its coordinates with a lane innermost -- a K range each side reads alone (a channel, the batch) padded to whole 16-element words, or a lane of one -- zero outside the gate's box (the padding), then the window walked by the mover in whole words (im2col); the clusters' product into a temporary; the epilogue reading it. M is the side with more outer elements; M's lane of one holds 16 copies of each value (its statistic form's first word, one mover walk: the other side's padded lanes are zero) |
+| window | one sum of the product of two reads (under constants, zero-else gates and any epilogue) where a read is a window (two ranges at one stride, signed: `x[oy + ky]`, `g[y - ky]`) or a gate bounds it: a convolution, its two gradients (`window.py`) | each side laid out dense `[batch.., outer.., K.., lane]`: its source gathered once (`forms.relayout`) into its coordinates with a lane innermost -- a K range each side reads alone (a channel, the batch) padded to whole 16-element words, or a lane of one -- zero outside the gate's box (the padding), then the window walked by the mover in whole words (im2col); the clusters' product into a temporary; the epilogue reading it. M is the side with more outer elements; M's lane of one holds 16 copies of each value (`forms.relayout`: the other side's padded lanes are zero) |
 | move | one read stored as it is, walked in whole 32-byte words: slices, row flips, permutes keeping the innermost axis, row broadcasts, windows | one mover copy with signed walks |
 | transpose | one read whose innermost axis moved (`x.T`, NHWC <-> NCHW), the new innermost side whole 16-element words; the other side too, or read 16-padded where the extra lanes stay inside its buffer (a narrow channel count of a product held in padded rows) | mover GT4, a 4 x 4 transpose in each 16-lane chunk (`xlane` + lane masks), GT4, a mover copy (the padded rows dropped) -- exact |
 | flip | one read walking its innermost axis backwards, rows of whole words | mover walks words last to first, `xlane(v, 15)` reverses lanes |
-| gather | any other single read into an f16 output (a transpose or flip of rows not of whole words, odd permutes, strided slices, any window) | every source value expanded to a 64-byte row of its own (the `[n, 32]` statistic form), one mover walk into the output's elements (any element stride is a word stride there), the on-card transpose back to row-major -- exact; 128 bytes of scratch a value. Into a window or at an offset, the output's words are expanded first, so what they hold between its elements is kept |
+| gather | any other single read into an f16 output (a transpose or flip of rows not of whole words, odd permutes, strided slices, any window) | one kernel of `kernels/relayout.py`'s forms (exact; `forms.relayout`): both walks whole words, one mover walk; the output's innermost axis contiguous in the source too, runs -- each cut into segments of at most one vector-core row of words, a segment's source words one gathered row (bursts), rotated by its lane rotation and masked in a core, its whole lines scattered back (segments sharing a line in turn); a broadcast, each value a row of copies first (a statistic broadcast), then runs; strided with another axis contiguous, a transpose (runs into whole-word sides, `kernels/transpose.py`'s 16 x 16 exchange, runs out). Any other pair, the lane relayout (`kernels/lanes.py`): taps of one source word at one lane rotation, a class's words gathered and scattered per tap. Into a window or at an offset, what the output's words hold between its elements is kept |
 | boxes | a `where` on index tables (pad, cat, stack): the kept ranges cut where any table changes | each box with the tables constant: a fill, a move, or a rows kernel into a window -- no read leaves its buffer |
 | materialise / narrow | several reduction range sets; more than 7 reads | an inner part first into a temporary; a sub-expression first |
-| stat space / flat | elementwise math over statistics at the output's index; every read at the output's index | over the `[n, 32]` forms; one pass of 128-value rows |
-| rows | everything else: elementwise math, reductions along the rows or down them (`sum(0)`, batch statistics) | one view (`run._view`): along (rows the kept ranges, columns the reduced), down (rows the reduced: a halving tree of rows kernels, `runtime/tree.py`), or elementwise at a split of the output's ranges -- the fewest reads laid out, then whole 32-column rows. A single long range (a flat update beside scalars) is folded into rows first. W runs as W' = ceil32(W), a reduction's padding lanes its identity (a column mask). A read the kernel takes as it is binds as it is (rows of whole words at least W' apart, a row from a word, a value a row or one value from the statistic form, a statistic read as rows flattened first); any other is laid out once over every row and every column range it reads, rows W' apart (a table on the host; a buffer by move / transpose / flip / gather, spread to W' by the mover or the statistic form). A reduction needing a layout whose ranges interleave with the kept ones runs as two, the inner first (a channel's statistic over batch and image); reductions down the rows run one after another. The result goes into the output where its rows are whole words and W' = W, else its padded-rows form (a whole float buffer), else a temporary moved in (any window, any offset; a non-f16 output through its f16 form). A reduction across more than one column block: per-block partials, folded by halving the blocks |
-| matmul | a product in any layout; a product under an epilogue the planner did not take as one (its output permuted: the projection a head split reads) | the product alone into a `[batch, M, N]` temporary first (its range order searched, adjacent runs coalesced), the epilogue after; an output not dense as `[batch.., M, N]` (a batch range between M and N, a window) computed into such a temporary and moved in; operands not `[.., rows, K]` laid out first as `[batch.., rows, K]` over every batch range (a B no batch reads shared) (move / transpose / gather); `N` padded to whole 32-column blocks; an operand whose rows are not whole words gathered to a 16-element pitch with zero columns; an epilogue operand of rows narrower than the padded `N` laid out to it (the mover, else the statistic form, a table on the host); MXFP7 packings made once; the clusters' product with the epilogue on the cores |
+| flat | elementwise math with every read at the output's index or one value (a statistic is its f16 values) | one pass of 128-value rows; a one-value read is its word, the value broadcast to every lane (`unpack lane=`) |
+| rows | everything else: elementwise math, reductions along the rows or down them (`sum(0)`, batch statistics) | one view (`run._view`): along (rows the kept ranges, columns the reduced), down (rows the reduced: a halving tree of rows kernels, `runtime/tree.py`), or elementwise at a split of the output's ranges -- the fewest reads laid out, then whole 32-column rows. A single long range (a flat update beside scalars) is folded into rows first. W runs as W' = ceil32(W), a reduction's padding lanes its identity (a column mask). A read the kernel takes as it is binds as it is (rows of whole words at least W' apart, a row from a word, a value a row from a word (16 a word), one value); any other is laid out once over every row and every column range it reads, rows W' apart (a table on the host; a buffer by move / transpose / flip / gather, spread to W' by the mover or `forms.relayout`). A statistic (a reduction along the rows) is R f16 values, 16 a word: a kernel reading or writing one moves 16 rows a trip, its band registers merged lane by lane into a word (the crossbar's merge) and broadcast back (`bcast`). A reduction needing a layout whose ranges interleave with the kept ones runs as two, the inner first (a channel's statistic over batch and image); reductions down the rows run one after another. The result goes into the output where its rows are whole words and W' = W, else its padded-rows form (a whole float buffer), else a temporary moved in (any window, any offset; a non-f16 output through its f16 form). A reduction across more than one column block: per-block partials (`[blocks, R]`), folded by halving the blocks |
+| matmul | a product in any layout; a product under an epilogue the planner did not take as one (its output permuted: the projection a head split reads) | the product alone into a `[batch, M, N]` temporary first (its range order searched, adjacent runs coalesced), the epilogue after; an output not dense as `[batch.., M, N]` (a batch range between M and N, a window) computed into such a temporary and moved in; operands not `[.., rows, K]` laid out first as `[batch.., rows, K]` over every batch range (a B no batch reads shared) (move / transpose / gather); `N` padded to whole 32-column blocks; an operand whose rows are not whole words gathered to a 16-element pitch with zero columns; an epilogue operand of rows narrower than the padded `N` laid out to it (the mover, else `forms.relayout`, a table on the host), one held as padded rows at least that wide read as those rows; an MXFP7 packing of padded rows made from them, never compacted first; an epilogue reading a statistic pads each batch's rows to 16; MXFP7 packings made once; the clusters' product with the epilogue on the cores |
 
 **Forms.** A buffer is its row-major bytes plus forms made on the card
-(`runtime/forms.py`): the f16 form of a float32 buffer, the `[n, 32]`
-row-statistic form a reduction leaves (made row-major by an on-card
-transpose when a kernel reads it as rows), MXFP7 packings, and **padded
-rows** (`n` values `ceil32(n)` apart) for rows that are not whole words --
-read back compacted on the way out, read on the card through remapped
-strides. A product's output of `N` not whole words stays in that form; read
-row-major, it is compacted on the card (the mover for whole words, else
-through the statistic form, exact).
+(`runtime/forms.py`): the f16 form of a float32 buffer, MXFP7 packings, and
+**padded rows** (`n` values `ceil32(n)` apart) for rows that are not whole
+words -- read back compacted on the way out, read on the card through
+remapped strides. A product's output of `N` not whole words stays in that
+form; read row-major, it is compacted on the card (the mover for whole
+words, else `forms.relayout`, exact). A product's epilogue reading those rows
+at its padded width, or an MXFP7 packing of them, reads them where they are.
 
 ## 4. Coverage
 
@@ -124,9 +154,30 @@ through the statistic form, exact).
 an assign read back in the same realize, a bridged kernel, a kernel of 12
 reads, convolution and pool gradients, refusals; `test_train.py` the
 optimizer and a module step; all on
-`build/v9f/vlt_card_v9_1n_v2`; data movement bit-exact, the rest rel err
-< 2e-2 against float64 numpy). Every tensor is float: a loss reads its
-labels as one-hot float values.
+`build/v9f/vlt_card_v9_1n_v2`; data movement bit-exact; MATMUL products
+within 1e-2 of the quantised host reference, whose quantisation loss against
+float64 numpy is < `MXFP7_BOUND = 20*u + 34*u^2 = 0.18631495504963153`,
+`u = (1 + 2^-3)/(2*(2^6 - 1)) + 2^-12`; other non-exact cases < 2e-2).
+The metric is max absolute error / max absolute reference (floor 1e-9).
+The quantised reference replaces both product operands with MXFP7 values,
+32-element blocks along K, and keeps float64 products and epilogues; bias,
+dense epilogue operands and relu are unchanged. The 1e-2 check includes the
+card's f16 product drain and vector-core epilogue rounding. Every tensor is
+float: a loss reads its labels as one-hot float values.
+
+The quantisation bound is conservative and specific to these seeded inputs,
+not an elementwise relative-error guarantee. With `P_A`, `P_B` the K-block
+peaks repeated at each element, `|dA| <= u*P_A`: six magnitude bits give 63,
+the E5M3 scale rounds up by at most `1 + 2^-3`, magnitude rounding is
+half-up, and the 12-bit reciprocal table's relative error is at most `2^-12`
+(its 13 entry is 2520, under the nearest 2521). A product's absolute error is
+then at most `u*E1 + u^2*E2`, where `E1 = P_A @ abs(B) + abs(A) @ P_B` and
+`E2 = P_A @ P_B` for `A @ B`. Bias adds no error, relu is 1-Lipschitz, two
+products' envelopes add, and multiplication by an unchanged dense operand
+scales them by its absolute value. Divided by the largest float64 output,
+these inputs give `max(E1) < 20` and `max(E2) < 34`; measured quantisation
+loss is 0.013-0.024 (k10 0.0239, n10_out 0.0215, n84_epilogue 0.0221: the
+whole of those cases' distance from float64).
 
 | family | covered |
 |---|---|
@@ -148,14 +199,15 @@ gradients) on an offline device (`runtime.device` kind `offline`):
 L2 -> L1 -> L0, scheduling and the static verifier; `test_plans_compute`
 computes every plan by its numpy meaning (`ktpugrad.reference`, no kernel)
 against tinygrad on the CPU, within 3% of the result's largest magnitude.
-`software/application/tests/behave/test_values.py` runs one case of each
-lowering path through the compiled packages themselves on the behaviour
-model (`kohakutpu.simulation.behave`: the node's steps, the mover, vector
-cores and clusters for values, no cycles) against the CPU.
+Compiled-package value witnesses run on the card or Verilated card through
+`software/tests/spec/runners/target/num.py` and the application card tests.
+No tensor-computing behaviour model serves as an oracle.
 
-**Refused by name:** `rand` (THREEFRY / BITCAST: lanes hold E8M15 values, not
-bits). A module is therefore initialised on the host (`with Context(DEV="CPU")`)
-and placed on the card.
+**Refusal clause:** TG.PLAN.010 identifies an unsupported plan, including
+`rand` (THREEFRY / BITCAST: lanes hold E8M15 values, not bits).
+`KTPUUnsupported.clause` carries the id, also included in its diagnostic;
+tests assert the id rather than message wording. A module is initialised
+on the host (`with Context(DEV="CPU")`) and placed on the card.
 
 ## 5. Models on the simulator
 

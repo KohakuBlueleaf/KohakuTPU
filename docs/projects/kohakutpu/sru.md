@@ -49,7 +49,7 @@ word `h` its columns `4h..4h+3`, the order a cluster drains a tile in.
 | 3 | unpack | FP16 -> E8M15, exact; B likewise | a word a cycle | `HAS_B` |
 | 4 | mask | `col - row > DHI` or `col >= CLIM` takes `MVAL` | a word a cycle | `HAS_MASK` |
 | 5 | pool | the pass program on every element | a word per II cycles | `F_LANES`, `HAS_FN`, `TAB` |
-| 6 | R2 | per-row sum of the program's result | a word a cycle | `HAS_R2` |
+| 6 | R2 | per-row word-ordered sum of the program's result, with 8 guard bits and truncation before final RNE ([RUL.098](../../spec/stack/rulings.md#sru-accumulation-precision-lead-ruling-2026-10-24)) | a word a cycle | `HAS_R2` |
 | 7 | out | E8M15 -> FP16; MXFP7 pack; credited out FIFO | a word a cycle | `HAS_MX7`, `MX_DSP` |
 | 8 | finalise | a pass's scalar program over the sub-row's 4 rows: ADD/SUB/MUL/FMA on pool lane 0, MOV/MAX/MIN on a compare-select | -- | -- |
 

@@ -20,9 +20,9 @@ them. It sits directly on L0, the package bytes the node firmware runs
 supplies the unit op types and an optional per-unit-type lowering;
 KohakuTPU's L1 body text is in
 [../projects/kohakutpu/ir/ktpu.md](../projects/kohakutpu/ir/ktpu.md), its ops in
-`kohakutpu.compiler.encode` and its lowering in `kohakutpu.compiler.program`.
+`ktpu-isa` and its lowering in `ktpu-l1::lower`.
 
-Code: `software/compiler/kohakuaccel/compiler/program.py` (`Program`).
+Code: `software/rust/crates/ktpu-l0/src/program.rs` (`Program`).
 
 ## 1. A program
 
@@ -32,7 +32,7 @@ Code: `software/compiler/kohakuaccel/compiler/program.py` (`Program`).
 | `wait(unit)` | hold the node until `unit` has completed every word sent to it since its last wait |
 | `mark(unit)` / `wait(unit, token)` | a point in `unit`'s stream; hold the node until everything sent to `unit` up to the mark has completed, whatever was sent after it (revision 2: a cross-unit dependence per tile, with the producer already holding its next work) |
 | `barrier()` | hold the node until every unit has |
-| `move(*ops)` | one mover step (`kohakuaccel.compiler.package.mover`): ops with `writes()` (the project's mover ops), or one list of raw `(register, value)` writes; a barrier on both sides |
+| `move(*ops)` | one mover step (`ktpu-l0::mover`): ops with `writes()` (the project's mover ops), or one list of raw `(register, value)` writes; a barrier on both sides |
 | `post(*ops) -> token` | a mover step the node does not wait for: it goes on while the moves run |
 | `wait_moves(token)` | hold the node until the moves of that `post`, and every move before them, are done |
 | `fetch(unit, addr, count)` | `count` words for `unit` that its fetch port reads from `addr` when the node gets here: words a unit wrote while the package ran. They count as sent to `unit`; no lowering hook sees them |
@@ -98,7 +98,7 @@ Several nodes are several programs, one per node, each on its node's mesh
 (`MachineSpec.for_mesh`); they share memory and meet through `ring` and
 `wait_slot`.
 
-Units resolve through the package unit table (`kohakuaccel.compiler.package.units`).
+Units resolve through the package unit table (`ktpu-l0::units`).
 
 ## 4. What the node costs (L0 executor, card_v9_1n)
 

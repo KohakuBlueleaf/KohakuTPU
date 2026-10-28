@@ -50,9 +50,8 @@ chain is 1 kernel, 4 unfused).
 
 A tensor's storage is its row-major bytes plus forms made on the card when a
 kernel needs them, kept while the buffer is unwritten: the f16 form of a
-float32 buffer, the `[n, 32]` row-statistic
-form (each value in 32 lanes: how a reduction leaves a statistic and how a
-row reads it), MXFP7 A / B packings of a product's operands (quantised once,
+float32 buffer (a row statistic is its f16 values, 16 a word), MXFP7 A / B
+packings of a product's operands (quantised once,
 reused), and padded rows (rows of `n` values `ceil32(n)` apart: what the
 tinygrad runner's kernels over rows not of whole 32-column blocks write). A
 form is made on the card or refused; bytes cross the link only on upload and
@@ -67,12 +66,26 @@ output of a one-output kernel, `.outputs(...)` every output in port order,
 new tensors that keep fusing with what follows. `kp.call(kernel, *tensors)`
 is the tuple form.
 
-## 4. Refused, by name
+## 4. Refused, by clause
 
-`Unsupported` names the construct: a product `x @ w` with `w` stored [K, N]
-(keep weights [N, K] and write `x @ w.T`, or use tinygrad, which lays it out
-on the card), a reduction over an axis other than the last, a row statistic
-broadcast as a row of values (keep the axis: `keepdim=True`).
+`Unsupported.clause` identifies the refusal and the diagnostic includes the
+same id. Message wording is not an interface. The complete clause list is
+[API.REF.001–014](../../spec/stack/api/tensor.md#9-refused-by-clause):
+
+- API.REF.001: a product with row-major [K, N] B rather than `w.T`.
+- API.REF.002–003: a non-last reduction axis, or a statistic broadcast as a row.
+- API.REF.004–006: incompatible product shapes, a transposed operand outside
+  matmul's right side, or a reduction along statistics.
+- API.REF.007: a kernel planning refusal.
+- API.REF.008–010: lazy storage access, an unsupported transpose/reshape, or
+  Python truth conversion.
+- API.REF.011–014: unsupported dtype, broadcast shape, operand form, or custom
+  kernel input/output form.
+
+Products accept any N: the shared device planner pads to
+`vc.vlmax / mg.lanes` columns per block from the machine schema (one vector
+register across a cluster GT4 row band). The logical result keeps N columns;
+read-back strips any padded-rows form.
 
 ## 5. Measured
 

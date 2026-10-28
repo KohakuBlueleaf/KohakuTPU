@@ -15,7 +15,7 @@ project writes for its own words (its unit ops, layouts).
 
 Code: `software/language/kohakutpu/language/text/` (the grammar `ktpu.lark`,
 `syntax.py`, `reader.py`, `meta.py`, `module.py`). The L1 reader is in the
-compiler (`software/compiler/kohakutpu/compiler/emit/`).
+Rust stack (`software/rust/crates/ktpu-l1/src/lower/`).
 
 ## 1. Statements
 
@@ -118,5 +118,6 @@ and is conformant when it reads the examples of
 ## 4. Gates
 
 `software/language/tests/test_syntax.py` (the grammar, canonical text, each
-kind of wrong text refused at its line), `software/compiler/tests/test_emit_image.py`,
-`test_emit_node.py` and `test_l1_coverage.py` (the L1 bodies).
+kind of wrong text refused at its line), and the Rust L1 tests under
+`software/rust/crates/ktpu-l1/tests/`: `spec_image.rs`, `spec_build.rs`,
+`clauses.rs` and `parse_grammars.rs` (the L1 bodies).

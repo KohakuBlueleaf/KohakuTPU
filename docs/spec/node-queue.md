@@ -1,6 +1,6 @@
 ---
 title: Node queue
-summary: How a host hands work to a node's dispatcher and gets results back — the boot block, the queue region in card memory, the submission and completion rings, the stdio rings, the package heap and the node's region heaps, all polled.
+summary: How a host hands work to a node's dispatcher and gets results back — the boot block, the queue region in card memory, the submission and completion rings, the stdio rings, host-owned package storage and allocator-backed boot regions, all polled.
 tags:
   - spec
   - normative
@@ -100,7 +100,7 @@ so the firmware may write single words.
 | `0x200` | host | stdin written |
 | `0x240` | firmware | stdin read |
 | `0x280` | firmware | the number of units served; the unit words follow from `0x2C0`, one per 8 bytes, room for 16 |
-| `0x340` + 64·r | firmware | node heap `r` (r = 0..3, §7): free bytes, largest free block, `live \| table entries << 32`, failed requests; all 0 while unconfigured |
+| `0x340`..`0x43f` | reserved | no heap statistics |
 | `0x440` | host | the SQ: `sq_n` entries of 64 bytes |
 | then | firmware | the CQ: `cq_n` entries of 32 bytes |
 | next 64-byte line | firmware | stdout ring, `so_bytes` (a multiple of 64) |
@@ -120,16 +120,20 @@ word 1 is the tag, returned in the completion. Words 2–7 depend on the opcode:
 | 0 `NOP` | | | | | | 0 |
 | 1 `RUN` | the package's unit-global address | its length in bytes | the bindings' address (one 64-bit address per buffer), or 0 | per-wait timeout in cycles, 0 for the boot block's | flags: `[0]` verify the checksum, `[1]` raise the host interrupt once the completion is posted (control-registers.md §7.2 `R_IRQ`; a host that cannot take one leaves it clear) | §3.2 |
 | 2 `STOP` | the exit value | | | | | 0 |
-| 3 `HEAP` | region `r` | base | bytes, 0 retires the region | granule, 0 for 64 | | 0 |
-| 4 `ALLOC` | region `r` | bytes | alignment, 0 for the granule | tag | | the block's address |
-| 5 `FREE` | region `r` | the block's address | | | | 0 |
+| 3..5 reserved | | | | | | `BAD_OP` |
 
-Unused words are 0. A heap entry's completion carries the region in its detail
-and the cycles the firmware spent on it.
+Unused words are 0. Binding belongs to the host; firmware refuses packages
+carrying relocation entries. RUN's binding fields are reserved compatibility
+fields, not a firmware relocation service.
 
 The host writes the entry, then the SQ tail. The firmware reads the entry, runs
 it, posts its completion and only then advances the SQ head, so a slot is free
-for reuse once the head has passed it.
+for reuse once the head has passed it. A head one behind the tail can therefore
+mean an executing package, not just an unread submission.
+
+`NodeQueue.pointers()` reports host-local `sq_tail` and `cq_head` alongside
+`sq_tail_card` and `cq_head_card`, which read back the published words. These
+reads are sequential observations, not an atomic snapshot of both agents.
 
 ### 3.2 Completion entry — 32 bytes
 
@@ -143,6 +147,15 @@ for reuse once the head has passed it.
 The firmware writes the entry, then the CQ tail; each uncached store completes
 before the next is issued, so a host that reads the tail first and the entry
 second never sees a torn entry.
+
+The application runtime's default per-wait firmware budget is one third of its
+host completion timeout. A failed wait can consume one budget, and the firmware
+can spend another budget draining outstanding work before posting its error
+completion. The remaining third allows setup, reporting and host observation.
+An explicit `NodeCard(wait_seconds=...)` overrides that default. This is a
+budget allocation, not a bound on a package with arbitrarily many progressing
+waits or on an unresponsive bus transaction. A posted completion can report an
+error; its tag alone does not establish success.
 
 ## 4. Status codes
 
@@ -163,7 +176,7 @@ second never sees a torn entry.
 | `0x21` | `MBOX_OVERFLOW` | reserved: the mailbox holds rather than drops, and the firmware raises it nowhere |
 | `0x22` | `MOVER_FAULT` | detail: the mover's fault code |
 | `0x23` | `NO_REACH` | a mover register the processor cannot write; detail: the register |
-| `0x30` | `TIMEOUT` | detail: what was awaited — 1 credit, 2 `AWAIT`, 3 barrier, 4 mover, 5 doorbell, 6 the mailbox's outbound slot |
+| `0x30` | `TIMEOUT` | detail: what was awaited — 1 credit, 2 `AWAIT`, 3 barrier, 4 mover, 5 doorbell, 6 the mailbox's outbound slot, 7 slot, 8 RX, 9 ack, 10 ring, 11 the dispatch engine (value: its raw `STAT`, decoded on the host) |
 | `0x40` | `BAD_OP` | an unknown submission opcode |
 | `0x50` | `NO_MEMORY` | no free block of the region holds the request |
 | `0x51` | `NO_SLOTS` | the region's block table (64 entries) is full |
@@ -197,31 +210,22 @@ count.
 
 The rest of the region, past the rings, is the host's: it holds a binding array
 per SQ slot (64 addresses each) and then the packages. The firmware never
-allocates in it — a submission names the package's address and length. A host
-keeps a package resident and submits it again, with new bindings, for as long as
-it likes; `NodeQueue` finds a package it has uploaded before by its digest and
-empties the heap only when nothing submitted is still outstanding.
+allocates in it — a submission names the package's address and length. Runtime packages use the shared host allocator. Submitted tags retain them;
+the final reference's completion returns the package span. Identical in-flight
+packages share one upload. A recording retains its host-side package bytes and
+uploads them again during replay. The queue-local fallback coalesces retired
+spans and never wraps over outstanding work.
 
-## 7. Node heaps
+## 7. Host-owned boot regions
 
-The firmware holds four **region heaps** (`software/firmware/kohakuaccel/os/heap/`,
-`ka/os/mem.h`). Each covers one span of unit-global memory the host names with
-`HEAP` — by convention region 0 is the node's DRAM and region 1 its staging —
-and hands out blocks from it to the host (`ALLOC`/`FREE`) and to the
-firmware's own code (`ka_mem_alloc`/`ka_mem_free`), from one pool.
-
-- **Granules.** Every block is whole granules (a power of two, at least 8; 64
-  by default, 32 matches the host's write granule) at an address aligned to
-  the larger of the granule and the request's alignment, so no two blocks
-  share a granule.
-- **Placement** is first fit by address; a pad left in front of an aligned
-  block stays free; a free merges with both free neighbours. The policy is
-  deterministic: `kohakuaccel.driver.node.heap` is the same policy in Python
-  and predicts every address the firmware returns.
-- **Bookkeeping is off the managed memory.** The block table (64 entries per
-  region, so at least 31 live blocks) is in the scratchpad: a heap never
-  reads or writes the memory it manages.
-- **Reconfiguring** a region is refused while it has live blocks.
+The driver reserves each node's QUEUE region from its staging allocator and
+DEBUG regions from shared DRAM. The boot table supplies `(base, bytes, use)`;
+DEBUG is use 1 and QUEUE is use 2. Populated regions must have nonempty,
+nonoverflowing, nonoverlapping extents and distinct uses. The queue pointer
+must match its region, which must cover all declared rings and run records.
+The dispatcher refuses invalid queue regions before ready. Reservations remain
+owned until the node stops. Dispatcher images carry no `os/heap` allocator.
+See [the host memory model](stack/l0/memory.md) for lifetimes and proof vectors.
 
 ## 8. What a host owes
 
@@ -250,8 +254,7 @@ round trip per operation:
 | `node_ready` | polls until the state reads *ready* | the firmware's line |
 | `node_submit` / `node_wait` | one entry; its final completion | tag; completion (+ stdout on failure) |
 | `node_run`, `node_nop`, `node_stop` | submit and wait in one | completion |
-| `node_heap`, `node_alloc`, `node_free` | §7, submit and wait in one | completion (`ALLOC`: the address) |
-| `node_heap_stats`, `node_stdout`, `node_state`, `node_units`, `node_counters` | reads | |
+| `node_stdout`, `node_state`, `node_units`, `node_counters` | reads | |
 
 A waiting op polls in steps on the daemon's hardware thread and gives the
 thread to other clients between steps; on the Verilator backend

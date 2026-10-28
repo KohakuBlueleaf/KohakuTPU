@@ -283,8 +283,9 @@ it, and a framework doc that quotes them as if they were is wrong.
 
     software/          the uv workspace, one package per component
                        (software/README.md):
-      language/          the kohakutpu IR text and its L3 -> L1 compilers
-      compiler/          IR to machine code: ISA, encoders, layout, packages
+      language/          Python DSL tracing, .ktpu syntax and host numerics
+      compiler/          native Rust binding, stack adapters and generic ISA toolkit
+      rust/              lowering, encoding, packages and verification
       driver/            the card, the nodes, the daemon, the runtime
       simulation/        the package interpreter and the Verilator card
       firmware/          the node firmware (C) and its host tools

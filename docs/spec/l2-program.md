@@ -17,10 +17,9 @@ core's local memory, apply hardware ops to register-shaped values, store or
 send the result -- and leaves out only what a compiler can decide without
 changing what is computed.
 
-Code: `software/compiler/kohakutpu/compiler/l2/` -- `body.py` (the reader:
-scopes, views, instances), `memory.py` (a view as runs of its buffer's
-layout), `cluster.py` / `vector.py` (each unit's lowering), `lower.py` (the
-stages, interleaving and node sync), `passes.py` (L2 -> L2). KohakuTPU's
+Code: `software/rust/crates/ktpu-l2/src/`: `ir/` reads typed bodies,
+`lower/` lowers views, units and node synchronization, and `passes/`
+implements the L2-to-L2 transformations. KohakuTPU's
 words: [../projects/kohakutpu/ir/ktpu.md](../projects/kohakutpu/ir/ktpu.md) §9.
 
 ## 1. The rule

@@ -31,7 +31,7 @@ print(silu.trace({"x": ((512, 128), "f16")}).text)      # the L2 module
 Code: `software/language/kohakutpu/language/dsl/` (`kernel.py` ports and
 tracing, `ops.py` every statement, `values.py` buffers and register values,
 `expr.py` symbolic indices, `trace.py` the recorder). Compiling and running:
-`kohakutpu.compiler.kernel.specialise(kernel, given)` (L2 -> L1, cached by L2
+`kohakutpu.stack.kernel.specialise(kernel, given)` (L2 -> L1, cached by L2
 text) and `kohakutpu.application.runtime.call.call(dev, kernel, arrays)`.
 
 ## 1. What runs when
@@ -71,11 +71,12 @@ before that (`Sym.__bool__` returns `NoReturn`).
 
 | op | |
 |---|---|
-| `kt.load(view, gt4=)`, `kt.unpack(x)`, `kt.store(view, x)`, `kt.pack(x, dtype)` | memory <-> L1 <-> registers; `gt4=True` reads 4-row bands (4 x 32 a register); storing into an `mx7a` buffer quantises |
+| `kt.load(view, gt4=)`, `kt.unpack(x, lane=)`, `kt.store(view, x)`, `kt.pack(x, dtype)` | memory <-> L1 <-> registers; `gt4=True` reads 4-row bands (4 x 32 a register); a 1-D view is a row statistic (16 a word), `lane=L` its value L for every row; a statistic stores 16 a word into a 1-D view; storing into an `mx7a` buffer quantises |
 | `+ - * /`, `kt.exp2 log2 recip rsqrt absolute maximum minimum exp2d fma fnma` | one vector op a register; a number becomes a scalar register |
 | `kt.rmax(x)`, `kt.rsum(x)` | row reductions into a statistic, broadcast back with arithmetic (`x - m`) |
 | `kt.where(m, a, b)`, comparisons `<`, `>`, `==` on values | `cmp*` into a predicate, `sel` |
 | `kt.xlane(x, k)` | lane l of every 16-lane chunk takes lane `l xor k` (the crossbar, exact) |
+| `kt.xrot(x, k)` | lane l of every 16-lane chunk takes lane `(l + k) mod 16` (the crossbar's rotate, exact) |
 | `kt.recv(kt.mg[u], shape)`, `kt.send(p, kt.mg[u])` | a cluster's drained tile into L1; packed MXFP7 rows into a cluster's bank |
 
 **Cluster** (inside `par ... on=kt.mg`): `a = kt.fill(view, share=)`,

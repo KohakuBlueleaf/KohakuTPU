@@ -18,14 +18,15 @@ words for the compute units, which unit each goes to, the order and the waits
 between them, and where inside the words the memory addresses sit. It is
 **storable** — nothing in it depends on where its operands happen to be on a
 given call — and **relocatable**: the addresses are supplied when the package is
-submitted (*binding*) and patched into the words by the dispatcher
-(*relocation*). One compile therefore serves every call of a kernel at a shape.
+bound on the host and patched into the words before submission. The dispatcher
+refuses any package carrying relocation entries (`BAD_RELOC`, detail 0, value
+the relocation count). One compile therefore serves every call of a kernel at
+a shape; the relocation table is host metadata, not firmware work.
 
-The writer is `software/compiler/kohakuaccel/compiler/package/` (`format.py`,
-`build.py`); the reader that runs on the node is
+The writer is `software/rust/crates/ktpu-l0/src/` (`format/`, `build/`); the reader that runs on the node is
 `software/firmware/kohakuaccel/package/interp.c`, with the offsets in
 `software/firmware/kohakuaccel/include/ka/package/format.h`; a reference
-interpreter with the firmware's semantics is
+interpreter for package construction is
 `software/simulation/kohakuaccel/simulation/package.py`. How a package reaches a node is
 [node-queue.md](node-queue.md).
 
@@ -319,7 +320,7 @@ bytes (`0xFF` for none) and words 1–3 their values. A code is the engine's
 `ARG3` and the node adds the package's payload address, shifted left 24, to it.
 A code past `WAIT` fails the package with `BAD_STEP`, as does an `ENGINE` step on
 a node that runs the package without an engine. The writer lowers a bound
-package into `ENGINE` steps (`kohakuaccel.compiler.package.engine.lower`): it
+package into `ENGINE` steps (`ktpu_l0::engine::lower`): it
 tracks each unit's words sent, credit and `AWAIT`s exactly
 as the firmware would, spells `REPEAT` out into payloads it fetches, and ends
 the stream with the end's barrier. The node then decodes nothing; measured on
@@ -432,10 +433,10 @@ package starts clean, and reports the status, the step index and a detail word
 ## 7. How a compiler builds packages
 
 A package is an L1 program lowered ([l1-program.md](l1-program.md) §3):
-`Program.build(fetch, resident, addresses, spans)`
-(`kohakuaccel.compiler.program`) returns the `PackageBuilder`, and
-`kohakuaccel.compiler.package.engine.lower` turns its steps into `ENGINE`
-steps. KohakuTPU's `kohakutpu.compiler.build.package` is the two in a row.
+`ktpu_l0::Program::build` returns a `PackageBuilder`, and
+`ktpu_l0::engine::lower` turns its steps into `ENGINE` steps.
+The `ktpu` pipeline builds relocatable packages; `_rs.bind` binds addresses
+and optionally lowers the package for dispatch.
 
 **Acknowledgements are awaited once per unit.** A unit both dispatched to and
 acknowledging is awaited once, for its own completions plus the

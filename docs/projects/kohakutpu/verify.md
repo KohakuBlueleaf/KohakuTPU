@@ -9,7 +9,7 @@ tags:
 
 # Static verification of node programs
 
-`kohakutpu.compiler.verify` decides, before a package reaches a card, whether
+`ktpu-verify` decides, before a package reaches a card, whether
 it can hang, whether it leaves state that changes its next run, whether two
 streams can collide on a unit's receive port, and whether any two accesses to
 a unit's local memory are unordered. It does so by running the packages once on
@@ -34,20 +34,13 @@ emit a dispatch order that deadlocks.
 
 Entry points:
 
-- `verify.check(programs, machine)` builds the packages of a program's first
-  run and its rerun (the vector cores' programs then resident), schedules them
-  (§6) and runs both, back to back, on one machine. Empty means none of the
-  above can happen.
-- `verify.schedule(programs, machine, fetch, residents)` is the dispatch
-  scheduler; `kohakutpu.compiler.build.packages` and `VerilatorCard.run` send
-  only what it returns.
-- `verify.gate(programs, machine, fetch, mode, cache)` is `check` before a
-  run. `mode` "refuse" raises `verify.Refused` when a finding is of a
-  `verify.REFUSE` kind (every kind above but `loop` and `model`), "warn"
-  returns the findings, "off" checks nothing. With `cache`, the findings are
-  kept as `<cache>/<verify.key>.json`: the key digests the checker's own
-  source, the machine, the fetch port and each node's package built against
-  empty vector cores, so a program set already checked is read back.
+- `ktpu_verify::check_runs` checks the first run and rerun of a package set.
+- `ktpu_verify::schedule` orders dispatches (§6). The Rust stack builds,
+  orders and verifies packages before returning them through `_rs.compile`.
+- `kohakutpu.application.runtime.packages.findings` applies the runtime gate
+  to the compiled verdict: `refuse` raises `Refused` for unsafe findings,
+  `warn` returns them, and `off` suppresses reporting. Rust owns the order
+  and verifier caches. Python does not rebuild or reverify a package.
 
 ## 2. The machine
 
@@ -57,7 +50,7 @@ Every process is sequential and deterministic.
 
 | process | one per | actions |
 |---|---|---|
-| node | mesh | the package's steps (`node.py`) |
+| node | mesh | the package's steps (`ktpu-verify/src/sim/node/`) |
 | CU | vector core | IMEM / DESC words; a RUN; its completion at VHALT |
 | front end | vector core | fetch, scalars, VLOOP, VSKIPZ, marks; dispatch into an engine queue |
 | F, D, U, M, P engine | vector core | its queue in order (`vec_cu.v`, `v2_core.v`) |
@@ -406,7 +399,7 @@ for every node before the next submission).
 
 `verify.lint(module, machine)` checks every image of a module, hand-written
 or compiled, against the read copies of `machine`'s vector cores
-(`target.vcopies`; `kohakutpu.compiler.l2.banks.lint`). A register file is
+(`vc.rf_copies`; `ktpu-verify/src/lint.rs`). A register file is
 two banks by chunk parity, each with that many read copies; math reads take
 them first. One `bank` finding names a math statement with the beats it
 costs: on two copies, a beat reading three distinct words of one bank holds
@@ -417,23 +410,11 @@ does not report them. The vector lowering places compiled values to avoid them
 
 ## 11. Where it runs
 
-- `kohakutpu.compiler.build.packages` → `verify.schedule`: every package a
-  `VerilatorCard` runs is scheduled.
-- `VerilatorCard(check="refuse")` gates each new set of programs before its
-  first run (cache `build/verify/`); `tools.measure --check` and
-  `tools.l1 --check` pass the mode. A refused measure case is a report row
-  with its findings and no cycles.
-- `software/compiler/tests/test_verify.py`: the examples verify clean, and
-  each finding kind fires on a program built to have exactly that hazard.
-- Cost: about 80k events a second in Python. The 2-head compiled flash
-  checks (two runs, two passes) in 26 s; on the v21 machine, flashd (10
-  heads) in 165 s, ffn in 24 s, every other measure case under 6 s. Of the
-  measure cases only `flash` (S through DRAM) has findings: 8 `model` (the
-  peer VDRAINs of its redo block, under `skipz` on the sticky flag), 16
-  `race`, 39,047 `port`, so it is refused by default.
-- Host memory: a run's objects (processes, units, memories, clocks) hold
-  the card, the machine and each other; `schedule` and `check` end each
-  machine run with `Card.close`, which clears them, so they are freed with
-  their last reference. A run of a million events peaks at ~0.4 GB while it
-  runs (a batch-64 LeNet step's transposes reach 2.6 M events, ~1.1 GB).
-  `test_verify.py` asserts a check leaves the cycle collector nothing.
+- The Rust compile pipeline schedules and verifies every compiled package.
+- `VerilatorCard(check="refuse")` and `tools.l1 --check` gate the compiled
+  verdict; the runtime accepts only prebuilt Rust packages.
+- `software/rust/crates/ktpu-verify/tests/` covers findings, machine facts,
+  frozen verdicts and bank lint. `software/compiler/tests/test_verify.py`
+  checks that Rust finding clause identities survive the Python gate.
+- The checker tracks dependencies, counters and accesses. It does not compute
+  tensor values and is not a behaviour-model oracle.
