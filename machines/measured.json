@@ -1,0 +1,18 @@
+{
+  "vc.fill_alone": {
+    "value": [78, 2],
+    "source": "cycles before the first word, cycles a 32-byte word: a vector core's fills of 2 KB and 256 B alone, Verilated card_v9t3_1n; no v9t6 figure yet (RUL.064)"
+  },
+  "vc.fill_shared": {
+    "value": [330, 5],
+    "source": "the same fills beside a four-cluster matmul, Verilated card_v9t3_1n; no v9t6 figure yet (RUL.064)"
+  },
+  "mg.shared_b_max": {
+    "value": 64,
+    "source": "largest shared B fill the follower receives right, Verilated build/v9f card, 2026-10-12 (96 and 128 entries wrong)"
+  },
+  "mover.one_word_runs": {
+    "value": false,
+    "source": "a move whose read and write sides both step runs of one 32-byte word leaves the mover's data FIFO a word behind, every later move writing each word one position late until node reset: v9t6 card, 2026-10-22, 1024 back-to-back moves of 21 rows (gather into 1-word rows at a 256 B pitch poisons from ~384 moves, scatter from 1-word rows at a pitch poisons; contiguous 1-word rows, contiguous<->pitched copies and 2- and 4-word rows at a pitch clean)"
+  }
+}

@@ -1,0 +1,720 @@
+{
+ "schema": "da87842edbfe458c",
+ "name": "vlt_v9t6s_1n",
+ "image": "v9t6",
+ "die": "ktpu_sim_1x2_1c1v_1m_nol2_pump",
+ "board": "vlt_v9t6s_1n",
+ "machine": {
+  "conversion": {
+   "fp16_mx7": {
+    "version": 2,
+    "allowed_backends": [
+     "mover_quant",
+     "vector_mx7"
+    ],
+    "preferred_backend": "mover_quant",
+    "nonfinite_policy": "reject_vector",
+    "vector_slots": 2,
+    "vector_cores": 0,
+    "vector_looped": false
+   }
+  },
+  "card": {
+   "name": "vlt_v9t6s_1n",
+   "nodes": 1,
+   "chain": [
+    0
+   ],
+   "die": "ktpu_sim_1x2_1c1v_1m_nol2_pump",
+   "profiles": {
+    "low": {
+     "noc": 100,
+     "mat2x": 200,
+     "vec": 100,
+     "sys": 100
+    },
+    "mid": {
+     "noc": 200,
+     "mat2x": 400,
+     "vec": 200,
+     "sys": 200
+    },
+    "ship": {
+     "noc": 300,
+     "mat2x": 600,
+     "vec": 300,
+     "sys": 300
+    }
+   },
+   "idle_profile": "low",
+   "clocks": {
+    "noc": {
+     "index": 0,
+     "nominal_mhz": 300
+    },
+    "mat2x": {
+     "index": 1,
+     "nominal_mhz": 600
+    },
+    "vec": {
+     "index": 2,
+     "nominal_mhz": 300
+    },
+    "sys": {
+     "index": 3,
+     "nominal_mhz": 300
+    }
+   },
+   "dram": {
+    "flat_gb": 16,
+    "interleave_kb": 16,
+    "bytes": 268435456,
+    "line_bytes": 64
+   },
+   "host": {
+    "ctrl_base": "0x800000",
+    "ctrl_stride": "0x10000",
+    "wizard_base": "0x900000",
+    "vco_mhz": 1200,
+    "mem_window_shift": 40,
+    "mem_window_offset": 1,
+    "dram_mesh_shift": 36,
+    "write_granule": 32,
+    "write_replicates": false,
+    "burst_read": true,
+    "max_burst_beats": 64
+   }
+  },
+  "die": {
+   "units": {
+    "mg": [
+     [
+      1,
+      1
+     ]
+    ],
+    "vc": [
+     [
+      1,
+      2
+     ]
+    ],
+    "sr": [],
+    "simt": []
+   },
+   "target": "ktpu.v9",
+   "sys_ports": [
+    [
+     0,
+     1
+    ],
+    [
+     0,
+     2
+    ]
+   ],
+   "fetch_port": [
+    0,
+    2
+   ],
+   "noc": {
+    "flit_bits": 288,
+    "data_bits": 256,
+    "addr_bits": 40,
+    "pos_bits": 4,
+    "router_depth": 512
+   },
+   "word_bytes": 32,
+   "address": {
+    "special_bit": 39,
+    "reserved_bit": 38,
+    "mesh_shift": 36,
+    "mesh_bits": 2,
+    "aperture_shift": 32,
+    "aperture_bits": 4
+   },
+   "staging": {
+    "entry_words": 4,
+    "aperture": 0,
+    "implemented": 55,
+    "banks": 4,
+    "entries": 16384,
+    "flits": 128
+   }
+  },
+  "unit": {
+   "inst_depth": 512,
+   "recv_depth": 512,
+   "burst_words": 256
+  },
+  "sr": {
+   "count": 0,
+   "profile": null,
+   "f16_ieee": null,
+   "buf_words": null,
+   "fifo_depth": null,
+   "op_depth": null,
+   "fin_depth": null,
+   "npass": null,
+   "rows": null,
+   "ldep": null,
+   "wlead": null,
+   "taps": null,
+   "burst": null,
+   "held": null
+  },
+  "simt": {
+   "count": 0,
+   "flanes": 0,
+   "fsfu_units": 0
+  },
+  "mg": {
+   "count": 1,
+   "l1_a_entries": 512,
+   "l1_b_entries": 512,
+   "l1_bank_entries": 256,
+   "tiles": 4096,
+   "dq_depth": 4096,
+   "dq_limit": 4080,
+   "acc_mantissa_bits": 14,
+   "acc_bits": 22,
+   "shared_b_max": 64,
+   "lanes": 4,
+   "kblock": 32,
+   "entry_bits": 928,
+   "kstep": 2,
+   "max_fill": 255,
+   "max_peers": 3,
+   "reuse_min": 5,
+   "wburst": 8,
+   "macs_per_cycle": 1024
+  },
+  "vc": {
+   "count": 1,
+   "build": "v21",
+   "regs": 128,
+   "rf_copies": 2,
+   "rf_banks": 2,
+   "vlmax": 128,
+   "lanes": 16,
+   "chunks": 8,
+   "l1_words": 512,
+   "l1_banks": 2,
+   "imem_words": 1024,
+   "run_reach": 512,
+   "queue_depth": 8,
+   "dma_queue_depth": 4,
+   "dualq": 0,
+   "has_mx": 1,
+   "xnet": 1,
+   "tau": 8,
+   "sregs": 16,
+   "kregs": 4,
+   "preds": 4,
+   "marks": 8,
+   "sig_bits": 16,
+   "descriptors": 8,
+   "descriptor_dims": 4,
+   "ainc_bits": 18,
+   "walk_max": 256,
+   "faults": [
+    5,
+    6,
+    7,
+    9,
+    10,
+    11,
+    12,
+    13
+   ],
+   "fault_names": {
+    "F_LEN": 5,
+    "F_LOOP": 6,
+    "F_VL": 7,
+    "F_CUDATA": 9,
+    "F_GT4": 10,
+    "F_SRC": 11,
+    "F_MODE": 12,
+    "F_SYNC": 13
+   },
+   "timing": {
+    "math_math": 20,
+    "xbar": 0,
+    "unpack_math": 9,
+    "math_pack": 20,
+    "cond": 2,
+    "seti": 3,
+    "mx7_issue_gap": 1,
+    "mx7_pack_words": 16
+   },
+   "crossbar_modes": [
+    "none",
+    "xor",
+    "rot",
+    "bcast",
+    "merge"
+   ],
+   "pack_modes": [
+    "f16",
+    "gt4",
+    "f32",
+    "mx7"
+   ],
+   "fill_alone": [
+    78,
+    2
+   ],
+   "fill_shared": [
+    330,
+    5
+   ]
+  },
+  "mover": {
+   "index_words": 256,
+   "max_index": 2048,
+   "levels": 6,
+   "burst_max": 128,
+   "fifo_depth": 512,
+   "one_word_runs": false,
+   "faults": {
+    "F_NONE": 0,
+    "F_IDXLEN": 1,
+    "F_RANGE": 2,
+    "F_AXI": 3,
+    "F_MODE": 4,
+    "F_EWIDTH": 5,
+    "F_ALIGN": 6,
+    "F_XPAD": 7,
+    "F_XFORM": 8,
+    "F_CFGQ": 9,
+    "F_INDEX": 10
+   },
+   "cfgq_depth": 64,
+   "cfgq_margin": 8,
+   "fault_bits": 4,
+   "row_words": 65535,
+   "modes": {
+    "copy": 0,
+    "transpose": 1,
+    "gather": 2,
+    "generate": 3,
+    "fill": 4,
+    "transform": 5,
+    "scatter": 6
+   },
+   "xform": {
+    "quant_lanes": 4,
+    "quant_values": 32,
+    "gt4_rows": 4,
+    "gt4_cols": 16,
+    "gt4_granule_bits": 64
+   }
+  },
+  "node": {
+   "imem_bytes": 32768,
+   "spad_bytes": 32768,
+   "engine": {
+    "depth": 64,
+    "counters": 16,
+    "counter_bits": 12
+   },
+   "spad_base": 65536,
+   "uncached_bit": 38,
+   "ctrl_bytes": 1024,
+   "console_fifo_bytes": 256,
+   "rx_depth": 8,
+   "cq_depth": 16,
+   "ring_depth": 4,
+   "mover_span": 128,
+   "mover_room_writes": 8
+  },
+  "il": {
+   "slots": 16,
+   "meshes": 4
+  },
+  "fw": {
+   "image": "kohakutpu_node",
+   "parts": [
+    "kohakuaccel/boot",
+    "kohakuaccel/os",
+    "kohakuaccel/queue",
+    "kohakuaccel/package",
+    "kohakuaccel/dispatch",
+    "kohakuaccel/unit",
+    "kohakuaccel/apps/dispatcher",
+    "kohakutpu/units"
+   ],
+   "unit_classes": [
+    "matmul",
+    "vector"
+   ],
+   "memory": {
+    "imem_bytes": 32768,
+    "spad_bytes": 32768
+   },
+   "sections": {
+    ".text": 30048,
+    ".bootargs": 320,
+    ".rodata": 1728,
+    ".data": 8,
+    ".bss": 3080,
+    ".noinit": 4096,
+    ".stack": 6144,
+    ".ka_abi": 48
+   },
+   "max_units": 16,
+   "max_pkg_units": 32,
+   "engine_units": 16,
+   "fetch_depth": 512,
+   "max_buffers": 64,
+   "enum_wait": 1500,
+   "heap": {
+    "regions": 4,
+    "blocks": 64
+   },
+   "boot": {
+    "version": 3,
+    "flags": {
+     "SERIAL": 1,
+     "TIMING": 2,
+     "NOFETCH": 4,
+     "STEPS": 8,
+     "NOENGINE": 16,
+     "SERIALQ": 32
+    },
+    "regions": 4,
+    "region_uses": {
+     "DEBUG": 1,
+     "QUEUE": 2
+    }
+   },
+   "debug": {
+    "image": "kohakutpu_debug",
+    "features": {
+     "STEPS": 1,
+     "FAIL": 2,
+     "LAST": 4
+    },
+    "last": 4
+   },
+   "queue": {
+    "version": 4,
+    "line": 64,
+    "sq_bytes": 64,
+    "cq_bytes": 32,
+    "record": {
+     "version": 1,
+     "bytes": 128,
+     "fields": {
+      "tag": {
+       "offset": 0,
+       "width": 8
+      },
+      "so_wr": {
+       "offset": 8,
+       "width": 8
+      },
+      "head": {
+       "offset": 16,
+       "width": 8
+      },
+      "copy": {
+       "offset": 24,
+       "width": 8
+      },
+      "bind": {
+       "offset": 32,
+       "width": 8
+      },
+      "steps": {
+       "offset": 40,
+       "width": 8
+      },
+      "barrier": {
+       "offset": 48,
+       "width": 8
+      },
+      "local": {
+       "offset": 56,
+       "width": 8
+      },
+      "total": {
+       "offset": 64,
+       "width": 8
+      },
+      "first": {
+       "offset": 72,
+       "width": 8
+      },
+      "last": {
+       "offset": 80,
+       "width": 8
+      },
+      "sent": {
+       "offset": 88,
+       "width": 8
+      },
+      "idle": {
+       "offset": 96,
+       "width": 8
+      }
+     }
+    }
+   },
+   "package": {
+    "magic": 1263550795,
+    "version": 2,
+    "header_bytes": 96,
+    "regs": 16,
+    "copy_bytes": 0,
+    "unbounded": 4294967296
+   },
+   "status": {
+    "KA_ST_OK": 0,
+    "KA_ST_PROGRESS": 1,
+    "KA_ST_BAD_MAGIC": 16,
+    "KA_ST_BAD_VERSION": 17,
+    "KA_ST_BAD_SIGNATURE": 18,
+    "KA_ST_BAD_CHECKSUM": 19,
+    "KA_ST_BAD_STEP": 20,
+    "KA_ST_TOO_LARGE": 21,
+    "KA_ST_BAD_RELOC": 22,
+    "KA_ST_BAD_UNIT": 23,
+    "KA_ST_BAD_LAYOUT": 24,
+    "KA_ST_UNIT_FAULT": 32,
+    "KA_ST_MBOX_OVERFLOW": 33,
+    "KA_ST_MOVER_FAULT": 34,
+    "KA_ST_CONTRACT": 36,
+    "KA_ST_NO_REACH": 35,
+    "KA_ST_TIMEOUT": 48,
+    "KA_ST_BAD_OP": 64,
+    "KA_ST_NO_MEMORY": 80,
+    "KA_ST_NO_SLOTS": 81,
+    "KA_ST_BAD_FREE": 82,
+    "KA_ST_BAD_ARG": 83,
+    "KA_ST_HEAP_BUSY": 84
+   },
+   "waits": {
+    "KA_WAIT_CREDIT": 1,
+    "KA_WAIT_AWAIT": 2,
+    "KA_WAIT_BARRIER": 3,
+    "KA_WAIT_MOVER": 4,
+    "KA_WAIT_BELL": 5,
+    "KA_WAIT_OFFER": 6,
+    "KA_WAIT_SLOT": 7,
+    "KA_WAIT_RX": 8,
+    "KA_WAIT_ACK": 9,
+    "KA_WAIT_RING": 10,
+    "KA_WAIT_ENGINE": 11
+   },
+   "signals": {
+    "KA_SIG_INST_COMPLETE": 0,
+    "KA_SIG_BATCH_COMPLETE": 1,
+    "KA_SIG_BARRIER": 2,
+    "KA_SIG_DATA_RECEIVED": 3,
+    "KA_SIG_FAULT": 4
+   }
+  }
+ },
+ "sources": {
+  "conversion.fp16_mx7.version": "scripts/py/machine/conversion.json:default.version",
+  "conversion.fp16_mx7.allowed_backends": "scripts/py/machine/conversion.json:default.allowed_backends",
+  "conversion.fp16_mx7.preferred_backend": "scripts/py/machine/conversion.json:default.preferred_backend",
+  "conversion.fp16_mx7.nonfinite_policy": "scripts/py/machine/conversion.json:default.nonfinite_policy",
+  "conversion.fp16_mx7.vector_slots": "scripts/py/machine/conversion.json:default.vector_slots",
+  "conversion.fp16_mx7.vector_cores": "scripts/py/machine/conversion.json:default.vector_cores",
+  "conversion.fp16_mx7.vector_looped": "scripts/py/machine/conversion.json:default.vector_looped",
+  "card.name": "boards/vlt_v9t6s_1n.json:name",
+  "card.nodes": "boards/vlt_v9t6s_1n.json:meshes",
+  "card.chain": "boards/vlt_v9t6s_1n.json:chain",
+  "card.die": "derived: scripts/tcl/v9t6/00_config.tcl:MESHES",
+  "card.profiles": "boards/vlt_v9t6s_1n.json:profiles",
+  "card.idle_profile": "boards/vlt_v9t6s_1n.json:idle_profile",
+  "card.clocks": "boards/vlt_v9t6s_1n.json:wizard_outputs",
+  "card.dram.flat_gb": "boards/vlt_v9t6s_1n.json:dram_flat_gb",
+  "card.dram.interleave_kb": "boards/vlt_v9t6s_1n.json:dram_interleave_kb",
+  "card.dram.bytes": "derived: boards/vlt_v9t6s_1n.json:model.dram_words * 64 bytes * build DRAM channels (gen_card.py)",
+  "card.dram.line_bytes": "derived: W / 8, xilinx-fpga/xcvu13p/bd/kx_pbd_4x4.v:328; scripts/tcl/v8t3/35_xache.tcl:19; scripts/tcl/multimesh_v9t6_bd.tcl:5",
+  "card.host.ctrl_base": "boards/vlt_v9t6s_1n.json:ctrl_base",
+  "card.host.ctrl_stride": "boards/vlt_v9t6s_1n.json:ctrl_stride",
+  "card.host.wizard_base": "boards/vlt_v9t6s_1n.json:wizard_base",
+  "card.host.vco_mhz": "boards/vlt_v9t6s_1n.json:vco_mhz",
+  "card.host.mem_window_shift": "boards/vlt_v9t6s_1n.json:mem_window_shift",
+  "card.host.mem_window_offset": "boards/vlt_v9t6s_1n.json:mem_window_offset",
+  "card.host.dram_mesh_shift": "boards/vlt_v9t6s_1n.json:dram_mesh_shift",
+  "card.host.write_granule": "boards/vlt_v9t6s_1n.json:host_write_granule",
+  "card.host.write_replicates": "boards/vlt_v9t6s_1n.json:host_write_replicates",
+  "card.host.burst_read": "boards/vlt_v9t6s_1n.json:burst_read",
+  "card.host.max_burst_beats": "boards/vlt_v9t6s_1n.json:max_burst_beats",
+  "die.units.mg": "boards/vlt_v9t6s_1n.json:units.MG",
+  "die.units.vc": "boards/vlt_v9t6s_1n.json:units.VC",
+  "die.units.sr": "boards/vlt_v9t6s_1n.json:units.SR",
+  "die.units.simt": "boards/vlt_v9t6s_1n.json:units.SIMT",
+  "die.target": "derived: ktpu.<vN of multimesh_v9t6>, scripts/tcl/v9t6/00_config.tcl:design_name",
+  "die.sys_ports": "boards/vlt_v9t6s_1n.json:sys_ports",
+  "die.fetch_port": "boards/vlt_v9t6s_1n.json:fetch_port",
+  "die.noc.flit_bits": "src/kohakutpu/top/generated/ktpu_sim_1x2_1c1v_1m_nol2_pump.v:25",
+  "die.noc.data_bits": "src/kohakutpu/top/generated/ktpu_sim_1x2_1c1v_1m_nol2_pump.v:27",
+  "die.noc.addr_bits": "src/kohakutpu/top/generated/ktpu_sim_1x2_1c1v_1m_nol2_pump.v:28",
+  "die.noc.pos_bits": "src/kohakutpu/top/generated/ktpu_sim_1x2_1c1v_1m_nol2_pump.v:26",
+  "die.noc.router_depth": "src/kohakutpu/top/generated/ktpu_sim_1x2_1c1v_1m_nol2_pump.v:82",
+  "die.word_bytes": "derived: die.noc.data_bits / 8",
+  "die.address.special_bit": "src/kohakuaccel/sysnode/core/mag_stage.v:90",
+  "die.address.reserved_bit": "src/kohakuaccel/sysnode/core/mag_stage.v:85",
+  "die.address.mesh_shift": "src/kohakuaccel/sysnode/core/mag_stage.v:85",
+  "die.address.mesh_bits": "src/kohakuaccel/sysnode/core/mag_stage.v:85",
+  "die.address.aperture_shift": "src/kohakuaccel/sysnode/core/mag_stage.v:87",
+  "die.address.aperture_bits": "src/kohakuaccel/sysnode/core/mag_stage.v:87",
+  "die.staging.entry_words": "src/kohakuaccel/sysnode/core/mag_stage.v:25; src/kohakuaccel/sysnode/core/mag.v:1158; src/kohakuaccel/sysnode/core/mag_mem_port.v:651",
+  "die.staging.aperture": "src/kohakuaccel/sysnode/core/mag_stage.v:39; src/kohakuaccel/sysnode/core/mag.v:1182; src/kohakuaccel/sysnode/core/mag_mem_port.v:341; src/kohakuaccel/sysnode/core/mag_mem_port.v:356",
+  "die.staging.implemented": "src/kohakuaccel/sysnode/core/mag_stage.v:42",
+  "die.staging.banks": "src/kohakutpu/top/generated/ktpu_sim_1x2_1c1v_1m_nol2_pump.v:45",
+  "die.staging.entries": "src/kohakutpu/top/generated/ktpu_sim_1x2_1c1v_1m_nol2_pump.v:46",
+  "die.staging.flits": "src/kohakuaccel/sysnode/sysnode.v:56",
+  "unit.inst_depth": "src/kohakutpu/top/generated/ktpu_sim_1x2_1c1v_1m_nol2_pump.v:77",
+  "unit.recv_depth": "src/kohakutpu/top/generated/ktpu_sim_1x2_1c1v_1m_nol2_pump.v:78",
+  "unit.burst_words": "derived: 2^CU_DATA length field bits (N - 1), src/kohakutpu/vector/vec_cu.v:293",
+  "sr.count": "derived: die.units.sr (boards/vlt_v9t6s_1n.json:units.SR)",
+  "sr.profile": "derived: no SR units",
+  "sr.f16_ieee": "derived: no SR units",
+  "sr.buf_words": "derived: no SR units",
+  "sr.fifo_depth": "derived: no SR units",
+  "sr.op_depth": "derived: no SR units",
+  "sr.fin_depth": "derived: no SR units",
+  "sr.npass": "derived: no SR units",
+  "sr.rows": "derived: no SR units",
+  "sr.ldep": "derived: no SR units",
+  "sr.wlead": "derived: no SR units",
+  "sr.taps": "derived: no SR units",
+  "sr.burst": "derived: no SR units",
+  "sr.held": "derived: no SR units",
+  "simt.count": "derived: die.units.simt (boards/vlt_v9t6s_1n.json:units.SIMT)",
+  "simt.flanes": "derived: no SIMT units",
+  "simt.fsfu_units": "derived: no SIMT units",
+  "mg.count": "derived: die.units.mg (boards/vlt_v9t6s_1n.json:units.MG)",
+  "mg.l1_a_entries": "src/kohakutpu/top/generated/ktpu_sim_1x2_1c1v_1m_nol2_pump.v:69",
+  "mg.l1_b_entries": "src/kohakutpu/top/generated/ktpu_sim_1x2_1c1v_1m_nol2_pump.v:70",
+  "mg.l1_bank_entries": "derived: mg.l1_a_entries / 2 banks (isa.md, mx_cluster_mgr_pump.v)",
+  "mg.tiles": "src/kohakutpu/top/generated/ktpu_sim_1x2_1c1v_1m_nol2_pump.v:54",
+  "mg.dq_depth": "derived: max(mg.tiles, src/kohakutpu/matmul/mx_cluster_cu.v:96)",
+  "mg.dq_limit": "derived: mg.dq_depth - src/kohakutpu/matmul/mx_cluster_node_pump.v:252",
+  "mg.acc_mantissa_bits": "src/kohakutpu/matmul/mx_cluster_cu_pump.v:21",
+  "mg.acc_bits": "derived: mg.acc_mantissa_bits + 8, src/kohakutpu/matmul/mx_cluster_cu.v:163",
+  "mg.shared_b_max": "machines/measured.json:mg.shared_b_max (largest shared B fill the follower receives right, Verilated build/v9f card, 2026-10-12 (96 and 128 entries wrong))",
+  "mg.lanes": "derived: L1A[g] layout, src/kohakutpu/matmul/mx_cluster_mgr_pump.v:12",
+  "mg.kblock": "derived: L1A[g] layout, src/kohakutpu/matmul/mx_cluster_mgr_pump.v:12",
+  "mg.entry_bits": "src/kohakutpu/matmul/mx_cluster_cu.v:363",
+  "mg.kstep": "derived: KSTEP src/kohakutpu/matmul/mx_cluster_mgr_pump.v:238, the clusters built with PUMP src/kohakutpu/top/generated/ktpu_sim_1x2_1c1v_1m_nol2_pump.v:498",
+  "mg.max_fill": "derived: 2^memory request count bits - 1, src/kohakutpu/matmul/mx_cluster_cu.v:538",
+  "mg.max_peers": "derived: 2^FILL npeer bits - 1, src/kohakutpu/matmul/mx_cluster_cu.v:302",
+  "mg.reuse_min": "src/kohakutpu/matmul/mx_cluster_cu.v:382",
+  "mg.wburst": "src/kohakutpu/matmul/mx_cluster_cu.v:1047",
+  "mg.macs_per_cycle": "derived: mg.lanes^2 x mg.kblock x mg.kstep",
+  "vc.count": "derived: die.units.vc (boards/vlt_v9t6s_1n.json:units.VC)",
+  "vc.build": "scripts/tcl/v9t6/00_config.tcl:VEC_CORE",
+  "vc.regs": "derived: 2^RW, src/kohakutpu/vector2/v2_core.v:72",
+  "vc.rf_copies": "src/kohakutpu/vector2/v2_core.v:61",
+  "vc.rf_banks": "derived: the g_bank loop, src/kohakutpu/vector2/v2_lanes.v:176",
+  "vc.vlmax": "src/kohakutpu/vector2/v2_core.v:37",
+  "vc.lanes": "derived: die.noc.data_bits / 16-bit lanes (one word of f16)",
+  "vc.chunks": "derived: vc.vlmax / vc.lanes",
+  "vc.l1_words": "src/kohakutpu/top/generated/ktpu_sim_1x2_1c1v_1m_nol2_pump.v:48",
+  "vc.l1_banks": "derived: HD = L1_DEPTH / banks, src/kohakutpu/vector2/v2_core.v:194",
+  "vc.imem_words": "src/kohakutpu/vector2/v2_core.v:38",
+  "vc.run_reach": "derived: 2^RUN start pc bits, src/kohakutpu/vector2/v2_core.v:115",
+  "vc.queue_depth": "src/kohakutpu/vector2/v2_core.v:45",
+  "vc.dma_queue_depth": "src/kohakutpu/vector2/v2_core.v:450",
+  "vc.dualq": "src/kohakutpu/vector2/v2_core.v:51",
+  "vc.has_mx": "src/kohakutpu/vector2/v2_core.v:56",
+  "vc.xnet": "src/kohakutpu/vector2/v2_core.v:58",
+  "vc.tau": "src/kohakutpu/vector2/v2_core.v:54",
+  "vc.sregs": "src/kohakutpu/vector2/v2_core.v:213",
+  "vc.kregs": "src/kohakutpu/vector2/v2_core.v:214",
+  "vc.preds": "src/kohakutpu/vector2/v2_lanes.v:331",
+  "vc.marks": "src/kohakutpu/vector2/v2_core.v:240",
+  "vc.sig_bits": "derived: lane word bits - sign - 8 exponent + 1, src/kohakutpu/vector2/v2_core.v:213",
+  "vc.descriptors": "src/kohakutpu/vector2/v2_agu.v:45",
+  "vc.descriptor_dims": "src/kohakutpu/vector2/v2_agu.v:46",
+  "vc.ainc_bits": "src/kohakutpu/vector2/v2_core.v:229",
+  "vc.walk_max": "derived: F_LEN past this count, src/kohakutpu/vector2/v2_core.v:1247",
+  "vc.faults": "derived: F_* raised outside a default arm, src/kohakutpu/vector2/v2_core.v:187-189",
+  "vc.fault_names": "derived: F_* raised outside a default arm, src/kohakutpu/vector2/v2_core.v:187-189",
+  "vc.timing.math_math": "machines/measured/vc_timing.v21.mq1.json:math_math; vec2_replay/math_math",
+  "vc.timing.xbar": "machines/measured/vc_timing.v21.mq1.json:xbar; vec2_replay/xbar,xbar_rot,math_math",
+  "vc.timing.unpack_math": "machines/measured/vc_timing.v21.mq1.json:unpack_math; vec2_replay/unpack_waw,unpack_ring",
+  "vc.timing.math_pack": "machines/measured/vc_timing.v21.mq1.json:math_pack; vec2_replay/pack_ring,math_math",
+  "vc.timing.cond": "machines/measured/vc_timing.v21.mq1.json:cond; vec2_replay/cond_sync,cond_setvl,cond_seti",
+  "vc.timing.seti": "machines/measured/vc_timing.v21.mq1.json:seti; vec2_replay/cond_seti",
+  "vc.timing.mx7_issue_gap": "machines/measured/vc_timing.v21.mq1.json:mx7_issue_gap; vec2_replay/mx7a,mx7b",
+  "vc.timing.mx7_pack_words": "machines/measured/vc_timing.v21.mq1.json:mx7_pack_words; vec2_replay/mx7a,mx7b",
+  "vc.crossbar_modes": "derived: vc.xnet (v2_core.v XNET)",
+  "vc.pack_modes": "derived: v2_core.v MD_* with vc.has_mx",
+  "vc.fill_alone": "machines/measured.json:vc.fill_alone (cycles before the first word, cycles a 32-byte word: a vector core's fills of 2 KB and 256 B alone, Verilated card_v9t3_1n; no v9t6 figure yet (RUL.064))",
+  "vc.fill_shared": "machines/measured.json:vc.fill_shared (the same fills beside a four-cluster matmul, Verilated card_v9t3_1n; no v9t6 figure yet (RUL.064))",
+  "mover.index_words": "src/kohakuaccel/sysnode/mover/mm_mover.v:46",
+  "mover.max_index": "derived: mover.index_words x 8 indices a word",
+  "mover.levels": "src/kohakuaccel/sysnode/mover/mx_tdesc.v:32",
+  "mover.burst_max": "src/kohakuaccel/sysnode/mover/mm_mover.v:58",
+  "mover.fifo_depth": "src/kohakuaccel/sysnode/mover/mm_mover.v:49",
+  "mover.one_word_runs": "machines/measured.json:mover.one_word_runs (a move whose read and write sides both step runs of one 32-byte word leaves the mover's data FIFO a word behind, every later move writing each word one position late until node reset: v9t6 card, 2026-10-22, 1024 back-to-back moves of 21 rows (gather into 1-word rows at a 256 B pitch poisons from ~384 moves, scatter from 1-word rows at a pitch poisons; contiguous 1-word rows, contiguous<->pitched copies and 2- and 4-word rows at a pitch clean))",
+  "mover.faults": "src/kohakuaccel/sysnode/mover/mm_mover.v:134-137",
+  "mover.cfgq_depth": "src/kohakuaccel/sysnode/mover/mm_mover.v:66",
+  "mover.cfgq_margin": "src/kohakuaccel/sysnode/mover/mm_mover.v:68",
+  "mover.fault_bits": "src/kohakuaccel/sysnode/mover/mm_mover.v:79",
+  "mover.row_words": "derived: 2^gather row count bits - 1, src/kohakuaccel/sysnode/mover/mm_mover.v:189",
+  "mover.modes": "derived: mm_mover.v mode decode (src/kohakuaccel/sysnode/mover/mm_mover.v:130-132)",
+  "mover.xform.quant_lanes": "src/kohakutpu/transform/xform_bank.v:33",
+  "mover.xform.quant_values": "derived: IN_BITS / 16 / OUT_WORDS (src/kohakutpu/transform/xform_bank.v:32, src/kohakutpu/transform/xform_bank.v:33; src/kohakutpu/transform/mx_quant.v:7-10,71)",
+  "mover.xform.gt4_rows": "src/kohakutpu/transform/xform_bank.v:105",
+  "mover.xform.gt4_cols": "derived: DATA_W / 16 FP16 values a word (src/kohakutpu/transform/xform_bank.v:28)",
+  "mover.xform.gt4_granule_bits": "derived: DATA_W / gt4_rows (src/kohakutpu/transform/xform_bank.v:104-113)",
+  "node.imem_bytes": "derived: PE_IMEM x 4 bytes",
+  "node.spad_bytes": "derived: PE_SPAD x 8 bytes",
+  "node.engine.depth": "src/kohakuaccel/sysnode/dispatch/dispatch_engine.v:14",
+  "node.engine.counters": "src/kohakuaccel/sysnode/dispatch/dispatch_engine.v:15",
+  "node.engine.counter_bits": "src/kohakuaccel/sysnode/dispatch/dispatch_engine.v:16",
+  "node.spad_base": "src/kohakuaccel/pe/rv64-sys/rv64_syscore.v:41",
+  "node.uncached_bit": "derived: ADDR_W - 2, src/kohakuaccel/pe/rv64-sys/rv64_syscore.v:398",
+  "node.ctrl_bytes": "software/firmware/kohakuaccel/include/ka/hal/node.h:31",
+  "node.console_fifo_bytes": "src/kohakuaccel/sysnode/cpu/rv64_load_win.v:89",
+  "node.rx_depth": "src/kohakuaccel/pe/rv64-sys/rv64_noc_mbox.v:19",
+  "node.cq_depth": "software/firmware/kohakuaccel/include/ka/hal/node.h:74",
+  "node.ring_depth": "software/firmware/kohakuaccel/include/ka/hal/node.h:46",
+  "node.mover_span": "software/firmware/kohakuaccel/include/ka/hal/node.h:29",
+  "node.mover_room_writes": "software/firmware/kohakuaccel/include/ka/hal/node.h:93",
+  "il.slots": "src/kohakuaccel/sysnode/interlink/mag_ilink.v:69",
+  "il.meshes": "derived: 2^(U_SMESH - U_DMESH), src/kohakuaccel/sysnode/interlink/mag_ilink.v:181",
+  "fw.image": "derived: the machine's firmware image",
+  "fw.parts": "software/firmware/build.py:IMAGES",
+  "fw.unit_classes": "software/firmware/build.py:IMAGES",
+  "fw.memory": "software/firmware/build.py:MEMORY",
+  "fw.sections": "build/fw/kohakutpu_node.size",
+  "fw.max_units": "software/firmware/kohakuaccel/include/ka/boot/args.h:10",
+  "fw.max_pkg_units": "software/firmware/kohakuaccel/include/ka/dispatch/engine.h:12",
+  "fw.engine_units": "software/firmware/kohakuaccel/include/ka/dispatch/de.h:23",
+  "fw.fetch_depth": "software/firmware/kohakuaccel/include/ka/dispatch/engine.h:14",
+  "fw.max_buffers": "software/firmware/kohakuaccel/include/ka/package/interp.h:7",
+  "fw.enum_wait": "software/firmware/kohakuaccel/include/ka/unit/enumerate.h:8",
+  "fw.heap.regions": "software/firmware/kohakuaccel/include/ka/os/mem.h:10",
+  "fw.heap.blocks": "software/firmware/kohakuaccel/include/ka/os/mem.h:11",
+  "fw.boot.version": "software/firmware/kohakuaccel/include/ka/boot/args.h:9",
+  "fw.boot.flags": "software/firmware/kohakuaccel/include/ka/boot/args.h:KA_BOOT_F_*",
+  "fw.boot.regions": "software/firmware/kohakuaccel/include/ka/boot/args.h:12",
+  "fw.boot.region_uses": "software/firmware/kohakuaccel/include/ka/boot/args.h:KA_REGION_*",
+  "fw.debug": "software/firmware/build.py:DEFINES; software/firmware/kohakuaccel/include/ka/package/debug.h:KA_DEBUG_F_*",
+  "fw.queue.version": "software/firmware/kohakuaccel/include/ka/queue/layout.h:7",
+  "fw.queue.line": "software/firmware/kohakuaccel/include/ka/queue/layout.h:10",
+  "fw.queue.sq_bytes": "software/firmware/kohakuaccel/include/ka/queue/layout.h:29",
+  "fw.queue.cq_bytes": "software/firmware/kohakuaccel/include/ka/queue/layout.h:30",
+  "fw.queue.record": "software/firmware/kohakuaccel/include/ka/queue/layout.h:35; queue/layout.h:ka_q_rec",
+  "fw.package.magic": "software/firmware/kohakuaccel/include/ka/package/format.h:8",
+  "fw.package.version": "software/firmware/kohakuaccel/include/ka/package/format.h:9",
+  "fw.package.header_bytes": "software/firmware/kohakuaccel/include/ka/package/format.h:12",
+  "fw.package.regs": "software/firmware/kohakuaccel/include/ka/package/format.h:73",
+  "fw.package.copy_bytes": "software/firmware/build.py:DEFINES",
+  "fw.package.unbounded": "software/firmware/kohakuaccel/include/ka/package/format.h:36",
+  "fw.status": "software/firmware/kohakuaccel/include/ka/package/status.h:6",
+  "fw.waits": "software/firmware/kohakuaccel/include/ka/package/status.h:33",
+  "fw.signals": "software/firmware/kohakuaccel/include/ka/hal/node.h:83"
+ }
+}

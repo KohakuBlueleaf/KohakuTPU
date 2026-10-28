@@ -1,0 +1,22 @@
+{
+ "default": {
+  "version": 2,
+  "vector_slots": 2,
+  "vector_cores": 0,
+  "vector_looped": false,
+  "allowed_backends": ["mover_quant", "vector_mx7"],
+  "preferred_backend": "mover_quant",
+  "nonfinite_policy": "reject_vector"
+ },
+ "boards": {
+  "multimesh_v9t6": {
+   "version": 2,
+  "vector_slots": 2,
+  "vector_cores": 0,
+  "vector_looped": false,
+   "allowed_backends": ["vector_mx7"],
+   "preferred_backend": "vector_mx7",
+   "nonfinite_policy": "reject_vector"
+  }
+ }
+}
