@@ -3,10 +3,17 @@ and the error a refused kernel raises."""
 
 #: ast key -> `lower.Plan`
 PLANS: dict = {}
+#: Exact immutable AST witnesses for the binary-key transport namespace.
+PLAN_ASTS: dict = {}
 
 
 class KTPUUnsupported(RuntimeError):
-    """A kernel KTPU refuses, by name (never computed some other way)."""
+    """A kernel refused by TG.PLAN.010, never computed some other way."""
+
+    clause = "TG.PLAN.010"
+
+    def __init__(self, message: str):
+        super().__init__(f"{message} [{self.clause}]")
 
 
-__all__ = ["PLANS", "KTPUUnsupported"]
+__all__ = ["PLANS", "PLAN_ASTS", "KTPUUnsupported"]

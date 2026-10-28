@@ -20,8 +20,15 @@ from kohakutpu.application.ktpugrad import reference as REF
 from kohakutpu.application.ktpugrad import uops as U
 from kohakutpu.application.ktpugrad import window as W
 from kohakutpu.application.ktpugrad.nn import place
+from kohakutpu.application.runtime import device as D
 
 RNG = np.random.default_rng(7)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def offline():
+    with D.attached(D.Device(kind="offline", board="multimesh_v9t8")):
+        yield
 
 
 def T(*shape):

@@ -19,7 +19,6 @@ from kohakutpu.application.ktpugrad.device import NAME
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime.storage import FLAT
-from kohakutpu.compiler import kernel as K
 from kohakutpu.language import dsl as kt
 
 _TINY = {"f16": dtypes.half, "f32": dtypes.float}
@@ -76,7 +75,7 @@ class Bridged:
         rt = D.device()
         args = _realized(args)
         given = {n: kt.TensorSpec.make(t.shape, _code(t)) for n, t in zip(ins, args)}
-        compiled = K.specialise(kernel, given, machine=rt.machine, **consts)
+        compiled = rt.specialise(kernel, given, **consts)
         specs = dict(compiled.params)
 
         binds = {}

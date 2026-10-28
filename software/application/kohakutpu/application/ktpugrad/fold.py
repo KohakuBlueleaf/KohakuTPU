@@ -9,6 +9,7 @@ from tinygrad.dtype import dtypes
 from tinygrad.uop import Ops
 
 from kohakutpu.application.ktpugrad import uops as U
+from kohakutpu.language.numerics import fp16
 
 
 def np_dtype(dt):
@@ -40,7 +41,11 @@ def evaluate(u, ranges: tuple, memo=None):
         raise ValueError("a buffer read is data, not a constant")
     else:
         a = [evaluate(s, ranges, memo) for s in u.src]
+        if u.dtype == dtypes.half:
+            a = [np.asarray(x, np.float64) for x in a]
         out = _alu(u, a)
+    if u.dtype == dtypes.half:
+        out = fp16.write(out)
     memo[u] = out
     return out
 
@@ -49,7 +54,8 @@ def _alu(u, a):
     op = u.op
     with np.errstate(all="ignore"):
         if op is Ops.CAST:
-            return a[0].astype(np_dtype(u.dtype))
+            dtype = np_dtype(u.dtype)
+            return fp16.write(a[0]) if dtype == np.float16 else a[0].astype(dtype)
         if op is Ops.ADD:
             return a[0] + a[1]
         if op is Ops.SUB:

@@ -21,10 +21,13 @@ from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.ktpugrad import domain as D
 from kohakutpu.application.ktpugrad import fold as F
 from kohakutpu.application.ktpugrad import uops as U
+from kohakutpu.language.numerics import fp16
 
 
 class Refused(RuntimeError):
     """A kernel this machine has no lowering for, and why."""
+
+    clause = "TG.PLAN.010"
 
 
 @dataclass(frozen=True)
@@ -428,7 +431,7 @@ class _Reader:
         for r in reversed(rs):
             coef[r] = step
             step *= U.extent(r)
-        table = np.ascontiguousarray(arr.astype(np.float16))
+        table = np.ascontiguousarray(fp16.write(arr))
         self.accesses.append(
             Access(None, dtypes.half, tuple(coef.items()), 0, table, gate)
         )

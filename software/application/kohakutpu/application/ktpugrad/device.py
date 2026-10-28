@@ -23,14 +23,18 @@ from kohakutpu.application.ktpugrad.lower import Refused
 from kohakutpu.application.ktpugrad.plans import PLANS, KTPUUnsupported
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
+from kohakutpu.application.runtime.placement import Placement
 from kohakutpu.application.runtime.rows import RowsError
 from kohakutpu.application.runtime.storage import FLAT, Storage, StorageView
-from kohakutpu.compiler import verify as V
 
 NAME = "KTPU"
 MODULE = f"tinygrad.runtime.ops_{NAME.lower()}"
-#: Device time a run is reported at: cycles over this clock (Hz).
-CLOCK_HZ = 300e6
+
+
+def seconds(rt: D.Device, runs) -> float:
+    """Device time of `runs`: their cycles over the card's sysnode clock at
+    its active profile (`sys_hz`, from the board)."""
+    return sum(r.cycles for r in runs) / rt.card.sys_hz
 
 
 class KTPUAllocator(Allocator):
@@ -50,6 +54,8 @@ class KTPUAllocator(Allocator):
     def _copyin(self, dest, src: memoryview) -> None:
         raw = bytes(src)
         st, off = FM.base_of(dest)
+        for form in st.forms.values():
+            self.rt.wait_address(form.addr, write=True)
         if off or len(raw) % 32:
             # A partial last word: keep the bytes past the buffer.
             lo, hi = off & ~31, -(-(off + len(raw)) // 32) * 32
@@ -63,9 +69,18 @@ class KTPUAllocator(Allocator):
         st.valid = {FLAT}
         st.host = raw if not off and len(raw) == st.nbytes else None
         st.dtype = None
+        if st.host is not None and st.host_f16_dtype is not None:
+            FM.f16(
+                self.rt,
+                st,
+                st.host_f16_dtype,
+                st.nbytes // np.dtype(st.host_f16_dtype).itemsize,
+            )
 
     def _copyout(self, dest: memoryview, src) -> None:
         st, off = FM.base_of(src)
+        for form in st.forms.values():
+            self.rt.wait_address(form.addr)
         n = len(dest)
         dt = getattr(st, "dtype", None)
         if dt is None or FLAT in st.valid:
@@ -117,14 +132,36 @@ class KTPUProgram:
     ):
         by_slot = dict(zip(sorted(self.slots), bufs))
         try:
-            runs = R.execute(self.dev.rt, self.plan, by_slot)
+            rt = self.dev.rt
+            out, _ = FM.base_of(by_slot[self.plan.out_slot])
+
+            def readonly():
+                return [
+                    form.addr
+                    for buf in by_slot.values()
+                    for st, _ in [FM.base_of(buf)]
+                    if st is not out
+                    for key, form in st.forms.items()
+                    if key in st.valid
+                ]
+
+            with rt.submission_scope(
+                self.plan.name, readonly, lambda: [f.addr for f in out.forms.values()]
+            ):
+                runs = R.execute(rt, self.plan, by_slot)
         except (Refused, RowsError, FM.FormError) as e:
             # Refused once the buffers are known (their forms, a sub-buffer, ...).
             raise KTPUUnsupported(
                 f"KTPU refuses kernel {self.plan.name}: {e}"
             ) from None
+        if wait:
+            runs = [
+                rt.collect_through(r) if isinstance(r, D.Submitted) else r for r in runs
+            ]
         self.dev.last_runs = runs
-        return sum(r.cycles for r in runs) / CLOCK_HZ
+        if any(isinstance(r, D.Submitted) for r in runs):
+            return None
+        return seconds(rt, runs)
 
 
 class KTPUGraph(GraphRunner):
@@ -137,7 +174,7 @@ class KTPUGraph(GraphRunner):
     with the card's log on (`NodeCard.record`). Two calls in a row that log
     the same events -- packages, bindings, host writes, no host read -- make
     that log the batch, and later calls replay it: every package already in
-    its node's heap, submitted back to back, the host waiting once.
+    its node's heap, submitted back to back until a host dependency waits.
 
     Inputs without host bytes (made on the card) run through the planner
     every call."""
@@ -155,6 +192,7 @@ class KTPUGraph(GraphRunner):
         self.counts = dict.fromkeys(("planned", "recorded", "replayed"), 0)
         #: why each pair of consecutive records differed
         self.misses: list = []
+        self.placement: Placement | None = None
 
     def _fill(self, input_uops) -> bool:
         """Every input's host bytes into its slot; False where one has none."""
@@ -177,6 +215,8 @@ class KTPUGraph(GraphRunner):
         return True
 
     def _plan(self, input_uops, slots: bool) -> None:
+        all_args = []
+        sched_items = []
         for j, ((_, _, bufs, _), runtime) in enumerate(
             zip(self.calls, self.runtimes, strict=True)
         ):
@@ -185,7 +225,36 @@ class KTPUGraph(GraphRunner):
                 src = self.slots[i] if slots else input_uops[i].buffer
                 args[pos] = src._buf
             assert runtime is not None
-            runtime(*args)
+            all_args.append(args)
+            sched_items.append((runtime.plan, dict(zip(sorted(runtime.slots), args))))
+        rt = self.dev.rt
+        can_fuse = R.horizontal_fusion_enabled() and not (
+            rt.kind != "offline" and R._product.__name__ != "_product"
+        )
+        if not can_fuse:
+            for j, runtime in enumerate(self.runtimes):
+                with rt.placement_scope(self.placement if slots else None, j):
+                    runtime(*all_args[j])
+            return
+        groups = R.plan_schedule(sched_items)
+        for grp, dead_addrs in groups:
+            if len(grp) == 1:
+                j = grp[0]
+                with rt.placement_scope(self.placement if slots else None, j):
+                    self.runtimes[j](*all_args[j])
+            else:
+                last_j = grp[-1]
+                with (
+                    rt.placement_scope(self.placement if slots else None, last_j),
+                    R.multi_stage_scope(
+                        rt,
+                        dead_addrs=dead_addrs,
+                        count=len(grp),
+                        info={"plan": self.runtimes[last_j].plan.name},
+                    ),
+                ):
+                    for j in grp:
+                        self.runtimes[j](*all_args[j])
 
     def _storages(self) -> list:
         """Every storage the batch's kernels name (its slots included)."""
@@ -201,7 +270,7 @@ class KTPUGraph(GraphRunner):
     @staticmethod
     def _cores(cores: dict) -> tuple:
         """What every node's vector cores hold (a package is built for it)."""
-        return tuple((n, V.cores_digest(c)) for n, c in sorted(cores.items()))
+        return tuple((n, c.digest()) for n, c in sorted(cores.items()))
 
     @staticmethod
     def _state(storages: list) -> tuple:
@@ -217,19 +286,39 @@ class KTPUGraph(GraphRunner):
             for st in storages
         )
 
+    def _release_records(self):
+        """Drop capture pins, retaining records for structural comparison."""
+        if getattr(self, "prev", None) is not None:
+            self.prev[1].close()
+        if getattr(self, "log", None) is not None:
+            self.log[1].close()
+
+    def _release_logs(self):
+        """Release capture and placement pins without revoking live forms."""
+        self._release_records()
+        self.prev = self.log = None
+        if getattr(self, "placement", None) is not None:
+            self.placement.close()
+
+    def __del__(self):
+        self._release_logs()
+
     def __call__(self, input_uops, var_vals, wait=False):
         rt = self.dev.rt
         if not self._fill(input_uops):
             self.counts["planned"] += 1
+            self._release_logs()
             self.prev = self.log = None
             self._plan(input_uops, slots=False)
+            if wait:
+                rt.drain()
             return None
         storages = self._storages()
         cores = rt.card.residents
         entry = (self._state(storages), self._cores(cores), rt.private_state())
         if self.log is not None and entry == self.log[0]:
             self.counts["replayed"] += 1
-            runs = rt.replay(self.log[1])
+            runs = rt.replay(self.log[1], wait=wait or not rt.queued)
             # The planner's bookkeeping as the recorded call left it: a
             # replay changes the card's bytes, not the storages' records or
             # what the vector cores are known to hold.
@@ -239,9 +328,16 @@ class KTPUGraph(GraphRunner):
                 if not host:
                     st.host = None
             for n, snap in held.items():
-                V.cores_restore(cores[n], snap)
-            return sum(r.cycles for r in runs) / CLOCK_HZ
+                cores[n].restore(snap)
+            if any(isinstance(r, D.Submitted) for r in runs):
+                return None
+            return seconds(rt, runs)
         self.counts["recorded"] += 1
+        # Placement pins survive recapture; only equal logs become replayable.
+        self._release_records()
+        self.log = None
+        if self.placement is None or self.placement.closed:
+            self.placement = Placement(rt)
         rt.record()
         try:
             self._plan(input_uops, slots=True)
@@ -257,14 +353,17 @@ class KTPUGraph(GraphRunner):
             (set(st.valid), st.host is not None, st.dtype, dict(st.forms))
             for st in storages
         ]
-        held = {n: V.cores_snapshot(c) for n, c in cores.items()}
+        held = {n: c.snapshot() for n, c in cores.items()}
         got = (entry, log, exit_, (objs, held))
         reads = any(ev[0] == "read" for ev in log)
         if not reads and self.prev is not None and got[:3] == self.prev[:3]:
             self.log = got
+            rt.prepare_recorded(log)
         elif self.prev is not None:
             self.misses.append(_first_difference(self.prev[:3], got[:3]))
         self.prev = None if reads else got
+        if wait:
+            rt.drain()
         return None
 
 
@@ -296,7 +395,6 @@ class KTPUDevice(Compiled):
     unless told otherwise)."""
 
     def __init__(self, device: str = NAME) -> None:
-        self.rt = D.device()
         self.last_runs: list = []
         # KTPUProgram is a runtime by duck type (called as tinygrad calls one).
         runtime: Any = KTPUProgram
@@ -304,8 +402,19 @@ class KTPUDevice(Compiled):
             device, KTPUAllocator(self), [KTPURenderer], runtime, graph=KTPUGraph
         )
 
+    @property
+    def rt(self) -> D.Device:
+        """The process's device (`runtime.device.device`), read at each use:
+        whatever is attached is what tinygrad runs on."""
+        return D.device()
+
+    @rt.setter
+    def rt(self, dev: D.Device) -> None:
+        D.attach(dev)
+
     def synchronize(self) -> None:
-        """Runs are synchronous: nothing to wait for."""
+        """Wait for every submitted runtime kernel."""
+        self.rt.drain()
 
 
 def register() -> ModuleType:
@@ -322,7 +431,6 @@ def register() -> ModuleType:
 
 
 __all__ = [
-    "CLOCK_HZ",
     "MODULE",
     "NAME",
     "KTPUAllocator",
@@ -331,4 +439,5 @@ __all__ = [
     "KTPUProgram",
     "KTPURenderer",
     "register",
+    "seconds",
 ]

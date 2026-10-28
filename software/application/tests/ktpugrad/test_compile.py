@@ -420,10 +420,8 @@ def run_case(name: str) -> None:
 
 @pytest.fixture(scope="module", autouse=True)
 def offline():
-    before = D._device
-    D.attach(D.Device(kind="offline"))
-    yield
-    D._device = before
+    with D.attached(D.Device(kind="offline", board="multimesh_v9t8")):
+        yield
 
 
 @pytest.mark.parametrize("name", sorted(CASES))

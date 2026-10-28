@@ -1,5 +1,5 @@
 """tinygrad on the KTPU device (the Verilated card): programs against numpy,
-the cases that once came back wrong, and refusals by name."""
+the cases that once came back wrong, and refusals by clause."""
 
 import numpy as np
 import pytest
@@ -8,7 +8,9 @@ from tinygrad.dtype import dtypes
 from tinygrad.tensor import Tensor
 
 import kohakutpu.application.ktpugrad as kg
+from kohakutpu.application.runtime import device as D
 from kohakutpu.language.examples import dsl as ex
+from kohakutpu.language.numerics.mxfp7 import KBLOCK, value_fp16
 
 RNG = np.random.default_rng(1)
 
@@ -90,6 +92,7 @@ ELEMENTWISE = {
 }
 REDUCTIONS = {
     "sum_rows": (lambda: T(X).sum(axis=1), lambda: f(X).sum(1)),
+    "cumsum_rows": (lambda: T(X).cumsum(1), lambda: np.cumsum(f(X), 1)),
     "max_rows": (lambda: T(X).max(axis=1), lambda: X.max(1)),
     "sum_cols": (lambda: T(X).sum(axis=0), lambda: f(X).sum(0)),
     "max_cols": (lambda: T(X).max(axis=0), lambda: X.max(0)),
@@ -211,6 +214,32 @@ MATMUL = {
 }
 
 
+def mx(a):
+    """Float64 MXFP7 values, with zero-padded K blocks on the last axis."""
+    k = a.shape[-1]
+    pads = [(0, 0)] * (a.ndim - 1) + [(0, -k % KBLOCK)]
+    return value_fp16(np.pad(a, pads))[..., :k]
+
+
+# |dx| <= u * block_peak: six magnitude bits, E5M3 scale, 12-bit reciprocal.
+MXFP7_U = (1 + 2**-3) / (2 * (2**6 - 1)) + 2**-12
+# BOUND = 20*u + 34*u^2; these inputs' peak envelopes C1 < 20, C2 < 34
+# (tinygrad.md section 4, epilogues included).
+MXFP7_BOUND = 20 * MXFP7_U + 34 * MXFP7_U**2
+#: Each MATMUL case on the MXFP7 values the clusters read, in float64.
+QREF = {
+    "linear_relu": lambda: np.maximum(mx(X) @ mx(W).T + B, 0),
+    "k_major_weight": lambda: mx(X) @ mx(WK.T).T,
+    "transposed_left": lambda: mx(X.T) @ mx(Y.T).T,
+    "batched_n48": lambda: mx(BX) @ mx(BY.swapaxes(-1, -2)).swapaxes(-1, -2),
+    "k10": lambda: mx(N10) @ mx(W10.T).T,
+    "n10": lambda: mx(N10) @ mx(W10.T).T,
+    "n10_out": lambda: mx(X) @ mx(W10[:, :64]).T,
+    "n84_epilogue": lambda: mx(X) @ mx(W84).T + np.maximum(mx(Y) @ mx(W84).T, 0),
+    "n84_dense_operand": lambda: mx(X) @ mx(W84).T * f(H84),
+}
+
+
 def conv(x, w, pad):
     """f64 cross-correlation of [B, C, H, W] with [O, C, KH, KW], zero padding."""
     xp = np.pad(f(x), ((0, 0), (0, 0), (pad, pad), (pad, pad)))
@@ -261,6 +290,10 @@ def test_program_on_ktpu(dev, rel, name):
     got, want = make().numpy(), ref()
     if name in EXACT:
         assert np.array_equal(np.asarray(got, np.float64), np.asarray(want, np.float64))
+    elif name in MATMUL:
+        qref = QREF[name]()
+        assert rel(got, qref) < 1e-2
+        assert rel(qref, want) < MXFP7_BOUND
     else:
         assert rel(got, want) < 2e-2
 
@@ -323,12 +356,13 @@ def test_avg_pool_gradient(dev, rel):
 
 
 @pytest.mark.parametrize(
-    "make, why",
+    "make, clause",
     [
-        (lambda: T(X).cumsum(1), "window"),
-        (lambda: Tensor.rand(32, 64, device="KTPU"), "BITCAST|THREEFRY"),
+        (lambda: Tensor.rand(32, 64, device="KTPU"), "TG.PLAN.010"),
     ],
 )
-def test_refused_by_name(dev, make, why):
-    with pytest.raises((kg.KTPUUnsupported, kg.Refused), match=why):
-        make().numpy()
+def test_refused_by_clause(make, clause):
+    with D.attached(D.Device(kind="offline", board="multimesh_v9t6")):
+        with pytest.raises((kg.KTPUUnsupported, kg.Refused)) as caught:
+            make().realize()
+        assert caught.value.clause == clause

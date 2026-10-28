@@ -10,6 +10,7 @@ from kohakutpu.application.ktpugrad import uops as U
 from kohakutpu.application.ktpugrad.lower import Access, Plan
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime.storage import FLAT
+from kohakutpu.language.numerics import fp16
 
 
 def evaluate(plan: Plan, buffers: dict) -> np.ndarray:
@@ -92,7 +93,8 @@ def execute(dev, plan: Plan, bufs: dict) -> list:
         at = [1] * len(plan.out_shape)
         at[i] = n
         pos = pos + s * np.arange(n).reshape(at)
-    _patch(dev, st.addr + off, pos.reshape(-1), out.reshape(-1).astype(dt))
+    out = fp16.write(out) if dt == np.float16 else out.astype(dt)
+    _patch(dev, st.addr + off, pos.reshape(-1), out.reshape(-1))
     st.wrote(FLAT)
     st.dtype = dt
     return []

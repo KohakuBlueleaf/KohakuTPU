@@ -43,9 +43,12 @@ from tinygrad.uop import Ops
 from tinygrad.uop.ops import AxisType, PatternMatcher, ProgramInfo, UOp
 
 from kohakutpu.application.ktpugrad import fold as F
+from kohakutpu.application.ktpugrad import launch_eager
 from kohakutpu.application.ktpugrad import lower as L
+from kohakutpu.application.ktpugrad import run as R
 from kohakutpu.application.ktpugrad.device import NAME, register
-from kohakutpu.application.ktpugrad.plans import PLANS, KTPUUnsupported
+from kohakutpu.application.ktpugrad.plans import PLAN_ASTS, PLANS, KTPUUnsupported
+from kohakutpu.application.runtime import device as D
 
 #: The realize module's global the engine calls by name: patched as an attribute.
 SEAM = "to_program"
@@ -114,6 +117,37 @@ _PM_KEEP = PatternMatcher(
         for pat, fn in _PM_REMOVE.patterns
     ]
 )
+_PM_EARLIEST_ORIG = rangeify.earliest_rewrites
+
+
+def _fix_store_hazard(target, src):
+    """Stop hazard traversal at `Ops.AFTER` (an already realized buffer) as
+    well as `Ops.CONTIGUOUS`, avoiding redundant contiguous copies."""
+    if not R.elide_rule("store_hazard") or R.RW.MUTANT == "drop_member":
+        return rangeify.fix_store_hazard(target, src)
+    if (base := target.base) not in src.toposort(enter_calls=False):
+        return None
+    unsafe = {Ops.PERMUTE, Ops.FLIP} | (
+        {Ops.SHRINK} if target.op_in_backward_slice_with_self(Ops.SHRINK) else set()
+    )
+    reaches_base: dict[UOp, bool] = {}
+    for s in src.toposort(gate=lambda s: s.op not in (Ops.CONTIGUOUS, Ops.AFTER)):
+        reaches_base[s] = s is base or any(reaches_base.get(c) for c in s.src)
+        if (
+            reaches_base[s]
+            and s.op in unsafe
+            and not (s is target and s.op is Ops.SHRINK)
+        ):
+            return target.store(src.contiguous())
+    return None
+
+
+_PM_EARLIEST = PatternMatcher(
+    [
+        (pat, _fix_store_hazard if fn is rangeify.fix_store_hazard else fn)
+        for pat, fn in _PM_EARLIEST_ORIG.patterns
+    ]
+)
 #: The tensor module's global `realize` runs a schedule with.
 RUN = "run_linear"
 _RUN_LINEAR = getattr(tensor, RUN)
@@ -149,12 +183,7 @@ def run_linear(
     used = [] if jit else [_ktpu_buffers(c, inputs) for c in linear.src]
     if not any(used):
         return _RUN_LINEAR(linear, var_vals, input_uops, update_stats, jit, wait)
-    last = {id(b): (i, b) for i, bs in enumerate(used) for b in bs}
     held = _held()
-    dead: dict = {}
-    for k, (i, b) in last.items():
-        if k not in held:
-            dead.setdefault(i, []).append(b)
     linear = realize.link_linear(
         realize.compile_linear(
             linear, validate=bool(VALIDATE_WITH_CPU.value), input_uops=list(inputs)
@@ -163,6 +192,16 @@ def run_linear(
     ctx = realize.ExecContext(
         var_vals or {}, inputs, update_stats, jit, wait or DEBUG >= 2
     )
+    rt = D.device()
+
+    if launch_eager.try_group(linear, ctx, used, inputs, held, rt, _on_ktpu):
+        return
+
+    last = {id(b): (i, b) for i, bs in enumerate(used) for b in bs}
+    dead: dict = {}
+    for k, (i, b) in last.items():
+        if k not in held:
+            dead.setdefault(i, []).append(b)
     for i, call in enumerate(linear.src):
         ets = realize.pm_exec.rewrite(call, ctx) or []
         realize.track_stats(ctx, call, perf_counter_us(), ets)
@@ -183,9 +222,12 @@ def to_program(ast, renderer):
     if getattr(renderer.target, "device", None) != NAME:
         return _TO_PROGRAM(ast, renderer)
     key = ast.key
+    if key in PLANS and PLAN_ASTS.get(key) is not ast:
+        raise KTPUUnsupported("AST binary key collision: exact plan identity differs")
     if key not in PLANS:
         try:
             PLANS[key] = L.plan(ast)
+            PLAN_ASTS[key] = ast
         except L.Refused as e:
             raise KTPUUnsupported(
                 f"KTPU refuses kernel {getattr(ast.arg, 'name', '?')}: {e}"
@@ -223,6 +265,7 @@ def install() -> None:
     if FUSE_MODE not in FUSE_MODES:
         raise ValueError(f"{FUSE_ENV}={FUSE_MODE!r}: one of {FUSE_MODES}")
     rangeify.pm_remove_bufferize = _PM_REMOVE if FUSE_MODE == "1" else _PM_KEEP
+    rangeify.earliest_rewrites = _PM_EARLIEST
     setattr(realize, SEAM, to_program)
     setattr(tensor, RUN, run_linear)
 
@@ -237,6 +280,7 @@ def uninstall() -> None:
         _saved = None
     rangeify.DEVICE_MAX_BUFS.pop(NAME, None)
     rangeify.pm_remove_bufferize = _PM_REMOVE
+    rangeify.earliest_rewrites = _PM_EARLIEST_ORIG
     setattr(realize, SEAM, _TO_PROGRAM)
     setattr(tensor, RUN, _RUN_LINEAR)
 
