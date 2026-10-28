@@ -124,7 +124,13 @@ MUTATIONS = [
         "half1 ? {mrr1, a1[14:6]} : a1[14:5];",
         "half1 ? {1'b0, a1[14:6]} : a1[14:5];",
     ),
-    ("plane_mant_neg", "sru_plane", PLANE, "mn2  <= neg1 ? -mqx1 : mqx1;", "mn2  <= mqx1;"),
+    (
+        "plane_mant_neg",
+        "sru_plane",
+        PLANE,
+        "mn2  <= neg1 ? -mqx1 : mqx1;",
+        "mn2  <= mqx1;",
+    ),
     (
         "plane_mant_q",
         "sru_plane",
@@ -132,8 +138,20 @@ MUTATIONS = [
         "wire signed [8:0]  mq1  = half1 ? (me1 >>> 1) : me1;",
         "wire signed [8:0]  mq1  = half1 ? (me1 >> 1) : me1;",
     ),
-    ("plane_mant_zero", "sru_plane", PLANE, "mz1 ? neg1 : (mi1 & ~neg1),", "mz1 ? 1'b0 : (mi1 & ~neg1),"),
-    ("plane_mant_flip", "sru_plane", PLANE, "~half1 & a1[23], a1[23]};", "1'b0, a1[23]};"),
+    (
+        "plane_mant_zero",
+        "sru_plane",
+        PLANE,
+        "mz1 ? neg1 : (mi1 & ~neg1),",
+        "mz1 ? 1'b0 : (mi1 & ~neg1),",
+    ),
+    (
+        "plane_mant_flip",
+        "sru_plane",
+        PLANE,
+        "~half1 & a1[23], a1[23]};",
+        "1'b0, a1[23]};",
+    ),
     (
         "plane_mant_negx",
         "sru_plane",
@@ -141,7 +159,13 @@ MUTATIONS = [
         "mf2  <= {mn1 | (half1 & a1[23] & ~mz1),",
         "mf2  <= {mn1,",
     ),
-    ("plane_mrom_sel", "sru_plane", PLANE, "assign q7 = mr7 ? mq7 : eq7;", "assign q7 = eq7;"),
+    (
+        "plane_mrom_sel",
+        "sru_plane",
+        PLANE,
+        "assign q7 = mr7 ? mq7 : eq7;",
+        "assign q7 = eq7;",
+    ),
     (
         "plane_mrom_t",
         "sru_plane_nofn",
@@ -257,8 +281,20 @@ MUTATIONS = [
         "(fa_op == F_MUL) ? {fa_a[23] ^ fa_b[23], 23'd0}",
         "(fa_op == F_MUL) ? 24'd0",
     ),
-    ("fin_sub", "sru_core_strong", CORE, "{~fa_c[23], fa_c[22:0]} : fa_c;", "fa_c : fa_c;"),
-    ("fin_min", "sru_core_strong", CORE, "(ka >= kb) : (ka <= kb)", "(ka >= kb) : (ka >= kb)"),
+    (
+        "fin_sub",
+        "sru_core_strong",
+        CORE,
+        "{~fa_c[23], fa_c[22:0]} : fa_c;",
+        "fa_c : fa_c;",
+    ),
+    (
+        "fin_min",
+        "sru_core_strong",
+        CORE,
+        "(ka >= kb) : (ka <= kb)",
+        "(ka >= kb) : (ka >= kb)",
+    ),
     (
         "fin_zero",
         "sru_core_strong",
@@ -266,7 +302,13 @@ MUTATIONS = [
         "sel_o <= (sel_w[22:15] == 8'd0) ? 24'd0 : sel_w;",
         "sel_o <= sel_w;",
     ),
-    ("fin_rcp_route", "sru_core_strong", CORE, "assign fin_dfn   = f_rcp;", "assign fin_dfn   = 1'b0;"),
+    (
+        "fin_rcp_route",
+        "sru_core_strong",
+        CORE,
+        "assign fin_dfn   = f_rcp;",
+        "assign fin_dfn   = 1'b0;",
+    ),
     (
         "fin_rsq_half",
         "sru_core_strong",
@@ -451,7 +493,10 @@ def main():
         text = (ROOT / src).read_text(encoding="utf-8")
         if text.count(old) != 1:
             # a stale entry is a failure of the witness set, not a stop
-            print(f"{name:20s} STALE   '{old}' occurs {text.count(old)} times in {src}", flush=True)
+            print(
+                f"{name:20s} STALE   '{old}' occurs {text.count(old)} times in {src}",
+                flush=True,
+            )
             bad.append(name)
             continue
 

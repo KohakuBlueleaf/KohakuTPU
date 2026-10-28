@@ -1,34 +1,47 @@
-"""The SRU configuration map as the RTL reads it: the map and the scheduler are
-`kohakutpu.compiler.isa.sru` (one table for the compiler, the goldens and the
-header); this file writes the RTL header from it.
+"""The SRU configuration map and scheduler from the Rust ISA bindings.
+
+This file writes the RTL header from the machine-bound map.
 
     python scripts/py/sru/cfg.py      # writes src/kohakutpu/sru/sru_cfg.vh
 """
 
+import json
 import pathlib
 
-from kohakutpu.compiler.isa.sru import (
-    ADDR_BITS,
-    ASRC,
-    BSRC,
-    FIN_BASE,
-    FIN_DEPTH,
-    LDEP,
-    OP_BASE,
-    OP_DEPTH,
-    OP_STRIDE,
-    PASS_BASE,
-    PASS_STRIDE,
-    SRC,
-    TAPS,
-    WLEAD,
-    F,
-    G,
-    O,
-    P,
-    pack,
-    schedule,
+from kohakutpu.compiler import _rs
+from kohakutpu.language import machine as MF
+
+MACHINE = (MF.MACHINES / "sru_v9t7.json").read_text(encoding="utf-8")
+CONFIG = _rs.sru_config(MACHINE)
+ADDR_BITS, FIN_BASE, FIN_DEPTH, LDEP, OP_BASE, OP_DEPTH, OP_STRIDE = (
+    CONFIG[k]
+    for k in (
+        "ADDR_BITS",
+        "FIN_BASE",
+        "FIN_DEPTH",
+        "LDEP",
+        "OP_BASE",
+        "OP_DEPTH",
+        "OP_STRIDE",
+    )
 )
+PASS_BASE, PASS_STRIDE, TAPS, WLEAD = (
+    CONFIG[k] for k in ("PASS_BASE", "PASS_STRIDE", "TAPS", "WLEAD")
+)
+ASRC, BSRC, SRC = (CONFIG[k] for k in ("ASRC", "BSRC", "SRC"))
+F, G, O, P = ({k: tuple(v) for k, v in CONFIG[s].items()} for s in ("F", "G", "O", "P"))
+
+
+def pack(fields, values):
+    return _rs.sru_pack(fields, values, MACHINE)
+
+
+def schedule(prog, f_lanes, h_taps=2):
+    fields, ii, sigma = json.loads(
+        _rs.sru_schedule(json.dumps(prog), f_lanes, h_taps, MACHINE)
+    )
+    return fields, ii, sigma
+
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 

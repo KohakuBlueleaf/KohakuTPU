@@ -116,7 +116,7 @@ def lane(x, k, mode, pre, table, rom=False, neg=0, mrom=None):
 
 
 def _mant(x, half, neg, table, mrom):
-    s, e, m = e8.fields(x)
+    s, e, _m = e8.fields(x)
     if e8.is_nan(x) or (half and s and e != 0):
         return e8.NAN
     if e == 0 or e == 255:
@@ -219,7 +219,7 @@ def half_segs(f, nseg):
 
 def mrom_table():
     """The mantissa ROM: 1/m at 0..127, 1/sqrt(m 2^r) at 256..511."""
-    rsq = lambda u: 1 / math.sqrt(u)  # noqa: E731
+    rsq = lambda u: 1 / math.sqrt(u)
     segs = mant_segs(lambda u: 1 / u, 128) + [(0, ZERO_ES, 1.0, 0.0)] * 128
     return pack(segs + half_segs(rsq, 128))
 

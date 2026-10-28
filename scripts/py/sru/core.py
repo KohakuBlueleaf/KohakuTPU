@@ -21,6 +21,7 @@ import e8
 import fn
 import numpy as np
 import red
+
 from kohakutpu.language.numerics import mxfp7
 
 # the finalise's opcodes
@@ -158,14 +159,22 @@ def program(ops, x, b, rows, cols, table, rom):
         res = []
         for j in range(16):
             av = src(op.get("A", "X"), j, 0, 0, 0) ^ (op.get("NA", 0) << 23)
-            bv = src(op.get("B", "K"), j, op.get("RB", 0), op.get("CB", 0), op.get("KB", 0))
+            bv = src(
+                op.get("B", "K"), j, op.get("RB", 0), op.get("CB", 0), op.get("KB", 0)
+            )
             if op.get("KIND", 0):
                 tab = (table[0], op.get("CS", 0)) if table else None
                 pre = _signed6(op.get("PRE", 0))
                 mode = 2 * op.get("MANT", 0) + op.get("FIX", 0)
                 res.append(fn.lane(av, bv, mode, pre, tab, rom, neg=op.get("NEG", 0)))
             else:
-                cv = src(op.get("C", "K"), j, op.get("RC", 0), op.get("CC", 0), op.get("KC", 0))
+                cv = src(
+                    op.get("C", "K"),
+                    j,
+                    op.get("RC", 0),
+                    op.get("CC", 0),
+                    op.get("KC", 0),
+                )
                 cv ^= op.get("NC", 0) << 23
                 res.append(e8.fma(av, bv, cv))
         vals.append(res)

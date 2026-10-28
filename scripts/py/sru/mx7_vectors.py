@@ -1,5 +1,5 @@
-"""Vectors for tests/sru/stream/sru_mx7_tb.v, from the MXFP7 spec
-(kohakutpu.language.numerics.mxfp7, the model mx_quant.v is checked against).
+"""Vectors for tests/sru/stream/sru_mx7_tb.v, from the independent MXFP7 format
+oracle (scripts/py/sru/oracle.py; NUM.MX7.001-005, NUM.MX7.007, ISA.SR.046).
 
     python scripts/py/sru/mx7_vectors.py
 
@@ -12,13 +12,13 @@ import argparse
 import pathlib
 
 import numpy as np
-from kohakutpu.language.numerics import mxfp7
+import oracle
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 
 
 def rows(rng, n):
-    """n x 32 values, awkward on purpose (run_quant_check.py's mix)."""
+    """n x 32 FP16 values spanning normal, subnormal, zero, and max binades."""
     x = rng.standard_normal((n, 32)) * (10.0 ** rng.integers(-7, 5, (n, 1)))
     k = rng.random((n, 32))
     x[k < 0.03] = 0.0
@@ -27,24 +27,11 @@ def rows(rng, n):
     return x.astype(np.float16)
 
 
-def pack(q, fields, b_layout):
-    """4 out words of one entry: q[4, 32] int, fields[4]."""
-    words = []
-    for w in range(4):
-        word = 0
-        for slot in range(32):
-            lane, kk = (slot % 4, slot // 4) if b_layout else (slot // 8, slot % 8)
-            word |= (int(q[lane, w * 8 + kk]) & 0x7F) << (255 - slot * 7 - 6)
-        for r in range(4):
-            word |= int(fields[r]) << (31 - r * 8 - 7)
-        words.append(word)
-    return words
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--subrows", type=int, default=400)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--out", default=str(ROOT / "build" / "sru"))
     args = ap.parse_args()
     rng = np.random.default_rng(args.seed)
 
@@ -52,20 +39,19 @@ def main():
     for _ in range(args.subrows):
         n_ent = int(rng.choice([1, 1, 2, 3, 4]))
         for e in range(n_ent):
-            h = rows(rng, 4)  # rows 0..3, K 32
-            q, es, m8 = mxfp7.quantise_fp16(h.astype(np.float32))
-            fields = (((es + mxfp7.SBIAS) << 3) | (m8 - 8)).reshape(4)
+            h = rows(rng, 4)
             bits = h.view(np.uint16)
+            rows_f16 = [[int(bits[r, k]) for k in range(32)] for r in range(4)]
             for w in range(8):
                 word = 0
                 for r in range(4):
                     for c in range(4):
-                        word |= int(bits[r, 4 * w + c]) << (16 * (4 * r + c))
+                        word |= rows_f16[r][4 * w + c] << (16 * (4 * r + c))
                 ins.append(f"{int(e == 0 and w == 0)} {word:064x}")
-            out_a += [f"{x:064x}" for x in pack(q, fields, False)]
-            out_b += [f"{x:064x}" for x in pack(q, fields, True)]
+            out_a += [f"{x:064x}" for x in oracle.mx7_pack_entry(rows_f16, False)]
+            out_b += [f"{x:064x}" for x in oracle.mx7_pack_entry(rows_f16, True)]
 
-    out = ROOT / "build" / "sru"
+    out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "mx7_in.hex").write_text("\n".join(ins) + "\n")
     (out / "mx7_a.hex").write_text("\n".join(out_a) + "\n")

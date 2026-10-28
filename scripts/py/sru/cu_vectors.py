@@ -1,5 +1,6 @@
-"""Mesh-level jobs for tests/sru/sru_cu_tb.v: CU instructions through the
-port, memory served by the bench, a CU_DATA producer and a peer consumer.
+"""Mesh-level jobs for tests/sru/sru_cu_tb.v, from the independent SRU oracle
+(scripts/py/sru/oracle.py; ISA.SR.010-013, ISA.SR.015, ISA.SR.040-047,
+ISA.SR.050-053).
 
     python scripts/py/sru/cu_vectors.py
 
@@ -7,26 +8,25 @@ build/sru/cu.cmd, `op addr data` in hex, one a line:
   0 memory word (32-byte index)    1 CU instruction (its payload)
   2 producer word (CU_DATA to the SRU's A, sent on credits, for the next RUN)
   3 expected memory word            4 expected peer word (CU_DATA from the SRU)
-Expectations come from scripts/py/sru/core.py.
 """
 
+import argparse
 import pathlib
 import random
 
-import core
 import core_vectors as cv
-import fn
+import oracle
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 
-TABLE_AT = 0x100000 // 32  # memory word indices
+TABLE_AT = 0x100000 // 32
 COLS_AT = 0x110000 // 32
 ROWS_AT = 0x120000 // 32
 DATA_AT = 0x200000 // 32
 OUT_AT = 0x300000 // 32
 STORE_AT = 0x380000 // 32
-BENCH_X, BENCH_Y = 1, 1  # the bench answers as MEM, producer and consumer
-F_LANES = 16  # sru_cu_tb builds the default (strongest) profile
+BENCH_X, BENCH_Y = 1, 1
+F_LANES = 16
 
 
 def ins_cfg(addr, value):
@@ -70,13 +70,18 @@ def ins_run(amem, peer, abase, astr, obase, ostr, bbase=0, bstr=0, count=0, word
 
 
 def main():
-    rng = random.Random(7)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--out", default=str(ROOT / "build" / "sru"))
+    args = ap.parse_args()
+
+    rng = random.Random(args.seed)
     lines = []
 
     def emit(op, a, d):
         lines.append(f"{op:x} {a:x} {d:x}")
 
-    tabs = {n: b() for n, b in fn.TABLES.items()}
+    tabs = oracle.fn_tables()
     cols = [
         [(cv.f16(rng.gauss(0, 1)), cv.f16(rng.gauss(1, 0.2))) for _ in range(4)]
         for _ in range(512)
@@ -86,7 +91,6 @@ def main():
         for _ in range(512)
     ]
 
-    # memory: tables (4 entries a word), columns (2 a word), row state
     for name, base in (("sigmoid", TABLE_AT), ("exp2", TABLE_AT + 256)):
         ents = tabs[name][0]
         for w in range(256):
@@ -104,7 +108,6 @@ def main():
         emit(0, ROWS_AT + i, (r[0] << 8) | (r[1] << 40) | (r[2] << 72))
 
     insts = []
-    # load the column constants and rows 0..63 once
     insts.append(ins_load(1, 0, COLS_AT, 256))
     insts.append(ins_load(2, 0, ROWS_AT, 64))
 
@@ -128,8 +131,8 @@ def main():
     )
     a1 = cv.rnd_words(rng, 12, 1.5)
     for i, wd in enumerate(a1):
-        emit(0, DATA_AT + (i // 4) * 6 + i % 4, core.pack16(wd))
-    out1 = core.run(j1, a1, [], tabs["sigmoid"], cols, rows)
+        emit(0, DATA_AT + (i // 4) * 6 + i % 4, oracle.pack16(wd))
+    out1 = oracle.run_job(j1, a1, [], tabs["sigmoid"], cols, rows)
     insts.append(ins_load(0, 0, TABLE_AT, 256))
     cfg_all(j1)
     insts.append(ins_run(1, 0, DATA_AT, 6, OUT_AT, 5))
@@ -152,10 +155,10 @@ def main():
     a2 = cv.rnd_words(rng, 8, 1.0)
     b2 = cv.rnd_words(rng, 8, 1.0)
     for i, wd in enumerate(a2):
-        emit(0, DATA_AT + 64 + i, core.pack16(wd))
+        emit(0, DATA_AT + 64 + i, oracle.pack16(wd))
     for i, wd in enumerate(b2):
-        emit(0, DATA_AT + 128 + i, core.pack16(wd))
-    out2 = core.run(j2, a2, b2, None, cols, rows)
+        emit(0, DATA_AT + 128 + i, oracle.pack16(wd))
+    out2 = oracle.run_job(j2, a2, b2, None, cols, rows)
     cfg_all(j2)
     insts.append(ins_run(1, 0, DATA_AT + 64, 4, OUT_AT + 64, 4, DATA_AT + 128, 4))
     exp_mem.update({OUT_AT + 64 + i: w for i, w in enumerate(out2)})
@@ -175,16 +178,16 @@ def main():
             },
         ],
         fin=[
-            {"OP": core.MAX, "DST": 0, "A": 0, "B": 4},
-            {"OP": core.ADD, "DST": 1, "A": 1, "C": 5},
+            {"OP": oracle.FIN_MAX, "DST": 0, "A": 0, "B": 4},
+            {"OP": oracle.FIN_ADD, "DST": 1, "A": 1, "C": 5},
         ],
     )
     a3 = cv.rnd_words(rng, 24, 4.0)
-    out3 = core.run(j3, a3, [], tabs["exp2"], cols, rows)
+    out3 = oracle.run_job(j3, a3, [], tabs["exp2"], cols, rows)
     insts.append(ins_load(0, 0, TABLE_AT + 256, 256))
     cfg_all(j3)
     for wd in a3:
-        insts.append(("producer", core.pack16(wd)))
+        insts.append(("producer", oracle.pack16(wd)))
     insts.append(ins_run(0, 1, 0, 0, 0, 0, count=1, words=len(a3)))
     insts.append(ins_store(16, STORE_AT, 12))
     for i in range(12):
@@ -199,10 +202,10 @@ def main():
         [{"EMIT": 1, "PROG": [cv.fma("X", "K", "K", KB=cv.e8w(0.5), KC=cv.ONE)]}],
     )
     a4 = cv.rnd_words(rng, 15, 1.0)
-    out4 = core.run(j4, a4, [], None, cols, rows)
+    out4 = oracle.run_job(j4, a4, [], None, cols, rows)
     cfg_all(j4)
     for wd in a4:
-        insts.append(("producer", core.pack16(wd)))
+        insts.append(("producer", oracle.pack16(wd)))
     insts.append(ins_run(0, 0, 0, 0, OUT_AT + 160, 5, words=len(a4)))
     exp_mem.update({OUT_AT + 160 + i: w for i, w in enumerate(out4)})
 
@@ -216,7 +219,7 @@ def main():
     for w in out3:
         emit(4, 0, w)
 
-    out = ROOT / "build" / "sru"
+    out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "cu.cmd").write_text("\n".join(lines) + "\n")
     print(f"{out / 'cu.cmd'} {len(lines)} commands, {len(insts)} instructions")

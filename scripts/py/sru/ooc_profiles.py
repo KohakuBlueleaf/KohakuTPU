@@ -59,12 +59,27 @@ def main():
             p = todo.pop(0)
             out = ROOT / "build" / "ooc" / f"sru_cu_{p}"
             cmd = [
-                VIVADO, "-mode", "batch", "-nojournal", "-nolog",
-                "-source", "scripts/tcl/ooc_mod.tcl", "-tclargs",
-                out.as_posix(), "sru_cu", args.period, "clk", generics(p), *FILES,
+                VIVADO,
+                "-mode",
+                "batch",
+                "-nojournal",
+                "-nolog",
+                "-source",
+                "scripts/tcl/ooc_mod.tcl",
+                "-tclargs",
+                out.as_posix(),
+                "sru_cu",
+                args.period,
+                "clk",
+                generics(p),
+                *FILES,
             ]
-            log = open(ROOT / "build" / "ooc" / f"sru_cu_{p}.out", "w")
-            running[p] = (subprocess.Popen(cmd, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT), log)
+            # The process owns this stream until poll reports completion below.
+            log = open(ROOT / "build" / "ooc" / f"sru_cu_{p}.out", "w")  # noqa: SIM115
+            running[p] = (
+                subprocess.Popen(cmd, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT),
+                log,
+            )
             print(f"started {p}", flush=True)
             # Vivados started together race on their init scripts (unimacro
             # "couldn't read file"): one start every 15 s
@@ -74,7 +89,11 @@ def main():
             if proc.poll() is not None:
                 log.close()
                 res = ROOT / "build" / "ooc" / f"sru_cu_{p}" / "result.txt"
-                line = res.read_text().strip() if res.exists() else f"FAILED exit {proc.returncode}"
+                line = (
+                    res.read_text().strip()
+                    if res.exists()
+                    else f"FAILED exit {proc.returncode}"
+                )
                 print(f"{p:8s} {line}", flush=True)
                 del running[p]
         time.sleep(5)
