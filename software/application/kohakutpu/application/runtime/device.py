@@ -53,6 +53,8 @@ BOARD_ENV = "KOHAKUTPU_BOARD"
 KINDS = ("sim", "card", "offline")
 #: How a `card` device reaches the card (`card.TRANSPORTS`).
 TRANSPORT_ENV = "KOHAKUTPU_TRANSPORT"
+#: The board clock profile a `card` device requires (`idle`: the board's idle one).
+PROFILE_ENV = "KOHAKUTPU_PROFILE"
 
 #: The card models' build root: fast models (no probes) with V2 vector cores
 #: and DRAM sized by the named machine's card.dram.bytes.
@@ -202,6 +204,7 @@ class Device:
                 board,
                 transport=transport or os.environ.get(TRANSPORT_ENV, "jtag"),
                 nodes=tuple(range(nodes)),
+                profile=os.environ.get(PROFILE_ENV, "idle"),
             )
         else:
             build = pathlib.Path(
