@@ -1,5 +1,8 @@
 """Wide elementwise rows streamed in block-major scratch order."""
 
+import math
+import os
+
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes import fold
@@ -22,8 +25,14 @@ def zero(buf, rows, words):
 def kernel(e, operands, R, W, out, cores, bands, shape_class):
     if X.reduces(e) or out.kind == "row":
         return fold.kernel(e, operands, R, W, out, cores, bands, shape_class)
-    width = shape_class.kblock
-    if W % width:
+    preferred = int(os.environ.get("KTPU_CLASS_WIDE_WIDTH", str(shape_class.kblock)))
+    if (
+        preferred % shape_class.kblock
+        or not shape_class.kblock <= preferred <= shape_class.max_block
+    ):
+        raise ValueError("wide width must be whole machine blocks within class limits")
+    width = math.gcd(W, preferred)
+    if W % shape_class.kblock:
         raise ValueError("wide rows contain whole machine column blocks")
     quantum = V.STAT_ROWS if V.holds_stat(operands, out.kind) else 4
     height = max(quantum, (bands or 1) * 4)
@@ -39,6 +48,25 @@ def kernel(e, operands, R, W, out, cores, bands, shape_class):
         ports[f"in{i}"], given[f"in{i}"] = V.port(operand, R, W)
     ports["out"] = kt.Out(*V.port(out, R, W)[1].shape, dtype=out.dtype)
     given["out"] = V.port(out, R, W)[1]
+
+    direct = os.environ.get("KTPU_CLASS_WIDE_DIRECT", "0") == "1" and R % height == 0
+    if direct:
+        used = min(used, R // height)
+
+    def direct_body(**p):
+        plan = V.Plan(width, nblocks, height, R // height, R)
+        for block in kt.range(nblocks):
+            for c in kt.par(used, on=kt.vc, classed=True):
+                pro = {}
+                for i, operand in enumerate(operands):
+                    if operand.kind == "col":
+                        start = operand.offset + block * width
+                        pro[i] = kt.unpack(
+                            kt.load(p[f"in{i}"][start : start + width], gt4=True)
+                        )
+                for t in kt.range((R // height + used - 1 - c) // used):
+                    row = (c + t * used) * height
+                    V._rows_block(p, e, operands, out, plan, row, block, pro)
 
     def body(**p):
         bufs = {}
@@ -120,9 +148,19 @@ def kernel(e, operands, R, W, out, cores, bands, shape_class):
 
     result = kt.Kernel.build(
         V.name(
-            "rows_wide_class", repr(e), operands, R, W, out, cores, bands, shape_class
+            "rows_wide_class",
+            repr(e),
+            operands,
+            R,
+            W,
+            out,
+            cores,
+            bands,
+            shape_class,
+            width,
+            direct,
         ),
-        body,
+        direct_body if direct else body,
         ports,
     )
     result.class_info = {
@@ -133,6 +171,6 @@ def kernel(e, operands, R, W, out, cores, bands, shape_class):
         "padded_columns": 0,
         "wide": True,
         "core_policy": shape_class.cores,
-        "lowering": "block-major-serial-band1",
+        "lowering": "direct-blocks" if direct else "block-major-serial-band1",
     }
     return result, given, nblocks

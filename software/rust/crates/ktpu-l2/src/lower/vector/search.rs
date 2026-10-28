@@ -263,8 +263,20 @@ impl Search {
         t: &Target,
     ) -> Result<Best> {
         if par.st.kw("classed").is_some() {
+            let band = match par.st.kw("class_band") {
+                Some(value) => crate::ir::const_of(body, &par.st, value, env)?,
+                None => 1,
+            };
+            if ![1, 2, 4, 8].contains(&band) {
+                return Err(value_error(body, par, "class_band is 1, 2, 4 or 8".into()));
+            }
+            let band = if on("l2.class/serial-band") {
+                1
+            } else {
+                band as usize
+            };
             let (module, params, accesses) = lower_band(
-                body, par, env, name, t, 1, false, false, plan, land, true, true,
+                body, par, env, name, t, band, false, false, plan, land, true, true,
             )
             .map_err(|e| match e {
                 VErr::Fail(e) => e,

@@ -1,16 +1,15 @@
 """Rows staged into class-width scratch, with one fixed trip and a masked tail."""
 
+import os
+
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes import wide
 from kohakutpu.language import dsl as kt
 
 
-def kernel(e, operands, R, W, out, cores, bands, shape_class, *, flat=False):
-    if W > shape_class.max_block:
-        return wide.kernel(e, operands, R, W, out, cores, bands, shape_class)
-    width = shape_class.width(W)
-    quantum = V.STAT_ROWS if V.holds_stat(operands, out.kind) and not flat else 4
+def bands_fit(operands, out, width):
+    """Single-buffered class bands; shared by class emission and admission."""
     words = sum(
         width // 4 * (2 if operand.dtype == "f32" else 1)
         for operand in operands
@@ -19,7 +18,16 @@ def kernel(e, operands, R, W, out, cores, bands, shape_class, *, flat=False):
     words += sum(1 for operand in operands if operand.kind in ("row", "scalar"))
     words += 1 if out.kind == "row" else width // 4 * (2 if out.dtype == "f32" else 1)
     prologue = sum(width // 16 for operand in operands if operand.kind == "col")
-    fit = (V.L1_WORDS - V.L1_MARGIN - prologue) // words
+    return (V.L1_WORDS - V.L1_MARGIN - prologue) // words
+
+
+def kernel(e, operands, R, W, out, cores, bands, shape_class, *, flat=False):
+    if W > shape_class.max_block:
+        return wide.kernel(e, operands, R, W, out, cores, bands, shape_class)
+    class_band = int(os.environ.get("KTPU_CLASS_BAND", "4"))
+    width = shape_class.width(W)
+    quantum = V.STAT_ROWS if V.holds_stat(operands, out.kind) and not flat else 4
+    fit = bands_fit(operands, out, width)
     need = quantum // 4
     selected = max(need, bands or min(4, fit))
     if selected > fit:
@@ -40,6 +48,27 @@ def kernel(e, operands, R, W, out, cores, bands, shape_class, *, flat=False):
     )
     ports["out"] = kt.Out(*out_shape, dtype=out.dtype)
     given["out"] = kt.TensorSpec.make(out_shape, out.dtype)
+
+    direct = (
+        os.environ.get("KTPU_CLASS_ROWS_DIRECT", "0") == "1"
+        and not flat
+        and W == width
+        and R % pl.rows == 0
+        and (out.kind != "row" or out.offset == 0)
+    )
+
+    def direct_body(**p):
+        for c in kt.par(used, on=kt.vc, classed=True, class_band=class_band):
+            pro = {}
+            for i, operand in enumerate(operands):
+                if operand.kind == "col":
+                    start = operand.offset
+                    pro[i] = kt.unpack(
+                        kt.load(p[f"in{i}"][start : start + width], gt4=True)
+                    )
+            for t in kt.range((trips + used - 1 - c) // used):
+                row = (c + t * used) * pl.rows
+                V._rows_block(p, e, operands, out, pl, row, 0, pro)
 
     def body(**p):
         bufs = {}
@@ -70,7 +99,7 @@ def kernel(e, operands, R, W, out, cores, bands, shape_class, *, flat=False):
                 buf = src
             bufs[i] = buf
         dst = kt.buffer((padded,) if out.kind == "row" else (padded, width), out.dtype)
-        for c in kt.par(used, on=kt.vc, classed=True):
+        for c in kt.par(used, on=kt.vc, classed=True, class_band=class_band):
             pro = {}
             for i, operand in enumerate(operands):
                 if operand.kind == "col":
@@ -109,16 +138,29 @@ def kernel(e, operands, R, W, out, cores, bands, shape_class, *, flat=False):
             )
 
     key = V.name(
-        "rows_class", repr(e), operands, R, W, out, pl, shape_class, cores, flat
+        "rows_class",
+        repr(e),
+        operands,
+        R,
+        W,
+        out,
+        pl,
+        shape_class,
+        cores,
+        flat,
+        class_band,
     )
-    result = kt.Kernel.build(key, body, ports)
+    if direct:
+        key = V.name("rows_class_direct", key)
+    result = kt.Kernel.build(key, direct_body if direct else body, ports)
     result.class_info = {
+        "direct": direct,
         "width": width,
         "trip_rows": pl.rows,
         "cores": used,
         "padded_rows": padded - R,
         "padded_columns": width - W,
-        "lowering": "serial-band1-hold-pin",
+        "lowering": f"serial-band{class_band}-hold-pin",
         "core_policy": shape_class.cores,
     }
     return result, given, 1
