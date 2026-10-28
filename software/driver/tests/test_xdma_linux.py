@@ -16,7 +16,7 @@ import pytest
 
 from kohakuaccel.driver.device import rv64load
 from kohakuaccel.driver.transport.memory import MemoryTransport
-from kohakuaccel.driver.transport.xdma_linux import LINE, XdmaLinux
+from kohakuaccel.driver.transport.xdma_linux import LINE, XdmaLinux, load_module
 
 LITE = 1 << 16
 DRAM = 1 << 40
@@ -150,6 +150,19 @@ def _elf(text: bytes, spad: bytes, entry: int = 0) -> bytes:
     for va, off, raw in ((0, off_t, text), (rv64load.SPAD_BASE, off_s, spad)):
         segs += struct.pack("<IIQQQQQQ", 1, 7, off, va, va, len(raw), len(raw), 8)
     return bytes(hdr) + segs + text + spad
+
+
+def test_a_link_reset_loads_the_driver_only_when_it_unloaded(tmp_path):
+    calls = []
+    module = tmp_path / "xdma"
+    module.mkdir()
+    assert not load_module("xdma.ko", ["c2h_timeout=3"], module, calls.append)
+    assert calls == []
+    module.rmdir()
+    assert load_module(
+        "xdma.ko", ["c2h_timeout=3"], module, lambda c, check: calls.append(c)
+    )
+    assert calls == [["insmod", "xdma.ko", "c2h_timeout=3"]]
 
 
 def test_the_load_window_writes_halves_alone_over_lite(tmp_path):

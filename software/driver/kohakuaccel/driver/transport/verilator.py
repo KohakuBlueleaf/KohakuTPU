@@ -10,6 +10,7 @@ addresses are the ones the JTAG manager sees on silicon.
 The DRAM backdoors (`backdoor_read/write`) and `run(cycles)` exist only here.
 """
 
+import os
 import pathlib
 import re
 import subprocess
@@ -49,8 +50,10 @@ class VerilatorTransport(Transport):
     ) -> None:
         build = pathlib.Path(build_dir)
         # A native Windows build links `vsim.exe` and runs as a plain process;
-        # a Linux build is `vsim`, run inside WSL. None picks by what is there.
-        native = build / "obj_dir" / "vsim.exe"
+        # a Linux build is `vsim`, run inside WSL under Windows and directly
+        # elsewhere. None picks by what is there.
+        exe = "vsim.exe" if os.name == "nt" else "vsim"
+        native = build / "obj_dir" / exe
         if wsl is None:
             wsl = not native.exists()
         vsim = build / "obj_dir" / "vsim" if wsl else native
@@ -147,7 +150,15 @@ class VerilatorTransport(Transport):
         out = bytearray()
         for off in range(0, nbytes, self.max_block):
             n = min(self.max_block, nbytes - off)
-            out += bytes.fromhex(self._cmd(f"RB {addr + off:x} {n:x}")[2:])
+            got = bytes.fromhex(self._cmd(f"RB {addr + off:x} {n:x}")[2:])
+            # A reply of another length is not this read's: the pipe is out
+            # of step with the harness, and the bytes would be wrong silently.
+            if len(got) != n:
+                raise RuntimeError(
+                    f"harness: RB {addr + off:#x} asked {n} bytes, the reply holds "
+                    f"{len(got)}"
+                )
+            out += got
         return bytes(out)
 
     # ------------------------------------------------------- simulation-only

@@ -7,25 +7,41 @@ The layout constants are compared with the firmware's C header, which nothing
 else ties them to.
 """
 
+import json
 import pathlib
 import re
 import struct
 
 import pytest
 
-from kohakuaccel.compiler.package.build import PackageBuilder
-from kohakuaccel.compiler.package.format import Package
 from kohakuaccel.driver.node.boot import MAX_UNITS, BootArgs, unit_word
 from kohakuaccel.driver.node.boot import args as boot_args
-from kohakuaccel.driver.node.queue import NodeError, NodeQueue
+from kohakuaccel.driver.node.queue import (
+    BootRefused,
+    FirmwareFatal,
+    NodeError,
+    NodeQueue,
+    OverBudget,
+)
 from kohakuaccel.driver.node.queue import layout as L
+from kohakuaccel.driver.node.queue.client import RecordSkew
 from kohakuaccel.driver.node.queue.double import SpecFirmware
 from kohakuaccel.driver.transport.memory import MemoryTransport
 from kohakuaccel.simulation.package import Interpreter
+from kohakutpu.compiler import _rs
+from kohakutpu.language import machine as MF
+from kohakutpu.simulation.package import Reader
 
 SOFTWARE = pathlib.Path(__file__).resolve().parents[2]
 INC = SOFTWARE / "firmware/kohakuaccel/include/ka"
 BASE = 0x10_0000
+
+
+def package(words=()):
+    text = (MF.MACHINES / "multimesh_v9t6.json").read_text(encoding="utf-8")
+    return _rs.package_build(
+        '{"credit": 32}', json.dumps([["payload", w] for w in words]), text
+    )
 
 
 def c_defines(path: pathlib.Path) -> dict:
@@ -53,22 +69,27 @@ def test_queue_layout_matches_the_firmware():
         "SI_WR",
         "SI_RD",
         "UNITS",
-        "HEAPS",
         "SQ",
     ):
         assert c[f"KA_Q_{name}"] == getattr(L, name), name
     assert c["KA_Q_SQ_BYTES"] == L.SQ_BYTES and c["KA_Q_CQ_BYTES"] == L.CQ_BYTES
-    for name in ("NOP", "RUN", "STOP", "HEAP", "ALLOC", "FREE"):
+    for name in ("NOP", "RUN", "STOP"):
         assert c[f"KA_SQ_{name}"] == getattr(L, f"OP_{name}"), name
     s = c_defines(INC / "package/status.h")
     for code, name in L.STATUS.items():
         assert s[f"KA_ST_{name}"] == code, name
-    m = c_defines(INC / "os/mem.h")
-    assert m["KA_MEM_REGIONS"] == L.MEM_REGIONS and m["KA_MEM_DRAM"] == L.MEM_DRAM
-    # A full unit table (count line, then MAX_UNITS words) ends before the heap
-    # lines, which end before the SQ.
-    assert L.UNITS + L.LINE + 8 * MAX_UNITS <= L.HEAPS
-    assert L.HEAPS + L.MEM_REGIONS * L.LINE <= L.SQ
+    # RUL.031: every status and wait the header declares, by its own name.
+    assert {v for k, v in s.items() if k.startswith("KA_ST_")} == set(L.STATUS)
+    waits = {
+        v: k.removeprefix("KA_WAIT_").lower()
+        for k, v in s.items()
+        if k.startswith("KA_WAIT_")
+    }
+    assert waits == L.WAITS
+    assert L.UNITS + L.LINE + 8 * MAX_UNITS <= L.SQ
+    for name in ("HEAP", "ALLOC", "FREE"):
+        assert f"KA_SQ_{name}" not in c
+        assert not hasattr(L, f"OP_{name}")
 
 
 def test_boot_block_matches_the_firmware():
@@ -76,13 +97,37 @@ def test_boot_block_matches_the_firmware():
     assert c["KA_BOOT_MAGIC"] == boot_args.MAGIC
     assert c["KA_BOOT_VERSION"] == boot_args.VERSION
     assert c["KA_MAX_UNITS"] == MAX_UNITS
+    assert c["KA_BOOT_REGIONS"] == boot_args.REGIONS
+    assert c["KA_REGION_DEBUG"] == boot_args.REGION_DEBUG
+    errs = {
+        v: k.removeprefix("KA_BOOT_ERR_")
+        for k, v in c.items()
+        if k.startswith("KA_BOOT_ERR_")
+    }
+    assert errs == {
+        boot_args.ERR_MAGIC: "MAGIC",
+        boot_args.ERR_VERSION: "VERSION",
+        boot_args.ERR_UNITS: "UNITS",
+        boot_args.ERR_REGIONS: "REGIONS",
+        boot_args.ERR_QUEUE: "QUEUE",
+    }
+    assert set(errs) == set(boot_args.REFUSALS)
     raw = BootArgs(
-        queue=0x1234_5000, mesh=1, scan=3, units=[unit_word(0x4D47, 1, 1, 1)]
+        queue=0x1234_5000,
+        mesh=1,
+        scan=3,
+        timeout=2_000_000,
+        units=[unit_word(0x4D47, 1, 1, 1)],
+        regions=[(0x8000_0000, 0x1_0000, boot_args.REGION_DEBUG)],
     ).pack()
     words = struct.unpack(f"<{len(raw) // 8}Q", raw)
+    # The region table follows the unit table (args.h: units[KA_MAX_UNITS]).
+    at = 9 + MAX_UNITS
+    assert len(words) == at + 3 * boot_args.REGIONS
+    assert words[at : at + 6] == (0x8000_0000, 0x1_0000, 1, 0, 0, 0)
     assert words[:10] == (
         boot_args.MAGIC,
-        2,
+        3,
         0x1234_5000,
         1,
         3,
@@ -93,7 +138,14 @@ def test_boot_block_matches_the_firmware():
         0x4D47 << 32 | 1 << 16 | 1 << 8 | 1,
     )
     with pytest.raises(ValueError):
-        BootArgs(queue=0, units=[0] * (MAX_UNITS + 1)).pack()
+        BootArgs(queue=0, timeout=1, units=[0] * (MAX_UNITS + 1)).pack()
+    with pytest.raises(ValueError):
+        BootArgs(
+            queue=0, timeout=1, regions=[(0, 0, 0)] * (boot_args.REGIONS + 1)
+        ).pack()
+    # RUL.033: no raw default bound.
+    with pytest.raises(TypeError):
+        BootArgs(queue=0)
 
 
 class HostMemory(MemoryTransport):
@@ -113,7 +165,9 @@ class HostMemory(MemoryTransport):
 def _queue(**kw):
     mem = HostMemory()
     mailbox = kw.pop("mailbox", None)
-    fw = SpecFirmware(mem, BASE, Interpreter(mailbox) if mailbox else None)
+    fw = SpecFirmware(
+        mem, BASE, Interpreter(mailbox, reader=Reader()) if mailbox else None
+    )
     q = NodeQueue(mem, BASE, idle=lambda: fw.step(), **kw)
     q.init()
     fw.boot()
@@ -124,7 +178,7 @@ def test_round_trip_nop_and_package():
     _mem, _fw, q = _queue()
     assert q.wait_ready()["state"] == "ready"
     assert q.nop().ok
-    pkg = PackageBuilder().build().to_bytes()
+    pkg = package()
     c = q.run(pkg, bindings=[0x40_0000, 0x50_0000])
     assert c.ok
     assert "run 96B [4194304, 5242880]" in q.read_stdout()
@@ -132,16 +186,16 @@ def test_round_trip_nop_and_package():
 
 def test_a_package_is_uploaded_once_and_found_by_digest():
     _mem, _fw, q = _queue()
-    pkg = Package(payloads=[1, 2, 3]).to_bytes()
+    pkg = package([1, 2, 3])
     q.run(pkg)
     q.run(pkg, bindings=[7])
-    q.run(Package(payloads=[4]).to_bytes())
-    assert q.counters["uploads"] == 2 and q.counters["cache_hits"] == 1
+    q.run(package([4]))
+    assert q.counters["uploads"] == 3 and q.counters["cache_hits"] == 0
 
 
 def test_entries_and_bindings_land_where_the_spec_says():
     mem, _fw, q = _queue(sq_n=4, cq_n=4)
-    pkg = Package(payloads=[9]).to_bytes()
+    pkg = package([9])
     tag = q.submit(pkg, bindings=[0xAA, 0xBB])
     sq = BASE + L.SQ
     words = [mem.read64(sq + 8 * k) for k in range(8)]
@@ -167,38 +221,199 @@ def test_a_failed_package_raises_with_its_status():
         q.wait(tag)
 
 
-def test_node_heap_ops_through_the_queue():
+def test_a_wait_ends_when_the_firmware_goes_fatal():
+    # DBG.SESS.004: the firmware traps while the host waits; its line reads
+    # FATAL with the exit code, and the wait ends at once, not at its timeout.
     mem, _fw, q = _queue()
-    q.heap(L.MEM_DRAM, 0x40_0000, 1 << 16)
-    words = [mem.read64(BASE + L.SQ + 8 * k) for k in range(8)]
-    assert words[0] == L.OP_HEAP and words[2:6] == [L.MEM_DRAM, 0x40_0000, 1 << 16, 64]
-    a = q.alloc(L.MEM_DRAM, 100, align=256, tag=5)
-    b = q.alloc(L.MEM_DRAM, 1)
-    assert a == 0x40_0000 and b == 0x40_0080
-    st = q.heap_stats(L.MEM_DRAM)
-    assert st == {
-        "free": (1 << 16) - 192,
-        "largest": (1 << 16) - 192,
-        "live": 2,
-        "blocks": 3,
-        "fails": 0,
-    }
-    with pytest.raises(NodeError, match="HEAP_BUSY"):
-        q.heap(L.MEM_DRAM, 0x40_0000, 4096)
-    with pytest.raises(NodeError, match="NO_MEMORY"):
-        q.alloc(L.MEM_DRAM, 1 << 17)
-    q.free(L.MEM_DRAM, a)
-    with pytest.raises(NodeError, match="BAD_FREE"):
-        q.free(L.MEM_DRAM, a)
-    with pytest.raises(NodeError, match="BAD_ARG"):
-        q.alloc(L.MEM_STAGING, 64)
-    q.free(L.MEM_DRAM, b)
-    st = q.heap_stats(L.MEM_DRAM)
+    q.wait_ready()
+    code = 0xE000_0000_0000_0005
+
+    def trap():
+        mem.write_block(BASE + L.FW, struct.pack("<4Q", L.ST_FATAL, 0, 0, code))
+
+    q.idle = trap
+    tag = q.submit(None, op=L.OP_NOP)
+    with pytest.raises(FirmwareFatal) as e:
+        q.wait(tag, timeout=1.0)
+    assert e.value.state == {"state": "fatal", "abi": 0, "done": 0, "fatal": code}
+
+
+def _corrupt_boot_block(word: int, value: int) -> bytes:
+    raw = bytearray(BootArgs(queue=BASE, timeout=2_000_000).pack())
+    struct.pack_into("<Q", raw, 8 * word, value)
+    return bytes(raw)
+
+
+@pytest.mark.parametrize(
+    "raw,code,reason",
+    [
+        (_corrupt_boot_block(0, 0x32544F4F42414B), boot_args.ERR_MAGIC, "no magic"),
+        (_corrupt_boot_block(1, 99), boot_args.ERR_VERSION, "version"),
+        (_corrupt_boot_block(8, MAX_UNITS + 1), boot_args.ERR_UNITS, "units"),
+        (_corrupt_boot_block(9 + MAX_UNITS + 2, 1), boot_args.ERR_REGIONS, "regions"),
+    ],
+)
+def test_a_refused_boot_raises_immediately_naming_its_refusal_code(raw, code, reason):
+    mem = HostMemory()
+    fw = SpecFirmware(mem, BASE)
+    ticks = [0.0]
+
+    def idle():
+        ticks[0] += 0.01
+
+    q = NodeQueue(mem, BASE, idle=idle, clock=lambda: ticks[0])
+    q.init()
+    # Old firmware behaviour: ka_boot_check exits without writing KA_Q_FW, so
+    # the host's wait_ready times out reporting state 'none'.
+    with pytest.raises(TimeoutError, match="'state': 'none'"):
+        q.wait_ready(timeout=0.02)
+    assert ticks[0] >= 0.02
+    # New firmware behaviour: ka_boot_check writes KA_Q_ST_FATAL with
+    # KA_EXIT_BOOTARGS | reason to KA_Q_FW, and wait_ready raises BootRefused
+    # on the first poll without idling.
+    ticks[0] = 0.0
+    assert fw.boot(raw) == code
+    with pytest.raises(BootRefused, match=reason) as e:
+        q.wait_ready(timeout=1.0)
+    assert e.value.code == code and e.value.reason == reason
+    assert ticks[0] == 0.0
+
+
+#: The firmware's wait bound, in sysnode cycles at SYS_HZ (20 ms).
+BOUND = 2_000_000
+SYS_HZ = 100e6
+IDLE = 600
+TIMEOUT = next(k for k, v in L.STATUS.items() if v == "TIMEOUT")
+
+
+class Stuck:
+    """A package whose unit never answers: the firmware's TIMEOUT."""
+
+    def run(self, pkg, binds):
+        return type("Done", (), {"status": TIMEOUT, "sent": 0})()
+
+
+class SlowModel:
+    """A model whose firmware ends a stuck wait after `BOUND` of its own
+    cycles; an idle advances it `IDLE` cycles and costs the host `seconds`
+    of wall clock (the model's speed)."""
+
+    def __init__(self, fw: SpecFirmware, seconds: float) -> None:
+        self.fw, self.seconds = fw, seconds
+        self.cycles, self.wall = 0, 0.0
+        self.since: int | None = None
+
+    def idle(self) -> None:
+        self.cycles += IDLE
+        self.wall += self.seconds
+        if self.fw.rd(L.SQ_HEAD) == self.fw.rd(L.SQ_TAIL):
+            return
+        self.since = self.cycles if self.since is None else self.since
+        if self.cycles - self.since >= BOUND:
+            self.fw.step()
+            self.since = None
+
+    def modelled(self) -> float:
+        return self.cycles / SYS_HZ
+
+
+def _stuck(seconds: float, clock: str):
+    mem = HostMemory()
+    fw = SpecFirmware(mem, BASE, Stuck())
+    model = SlowModel(fw, seconds)
+    tick = model.modelled if clock == "modelled" else lambda: model.wall
+    q = NodeQueue(mem, BASE, idle=model.idle, clock=tick, timeout=2 * BOUND / SYS_HZ)
+    q.init()
+    fw.boot()
+    q.wait_ready()
+    return q
+
+
+@pytest.mark.parametrize("seconds", [1e-6, 1e-3, 0.011, 1.0])
+def test_a_models_firmware_timeout_lands_before_the_hosts_modelled_wait(seconds):
+    # The host's bound (twice the firmware's) counts the model's own time: at
+    # any model speed the firmware's TIMEOUT completes the package first.
+    q = _stuck(seconds, "modelled")
+    with pytest.raises(NodeError, match="TIMEOUT"):
+        q.wait(q.submit(package([1])))
+
+
+def test_a_wall_clock_wait_on_a_slow_model_times_out_before_its_firmware():
+    # The mutant: the same wait on the host's wall clock. A model slower than
+    # the card ends the host's wait before its firmware's bound has passed.
+    q = _stuck(0.011, "wall")
+    with pytest.raises(TimeoutError):
+        q.wait(q.submit(package([1])))
+
+
+def test_a_timeout_names_both_rings_pointers():
+    # Inject a lost publication: local tail must not masquerade as device readback.
+    mem = HostMemory()
+    SpecFirmware(mem, BASE)
+    ticks = [0.0]
+
+    def idle():
+        ticks[0] += 0.01
+
+    q = NodeQueue(mem, BASE, idle=idle, clock=lambda: ticks[0])
+    q.init()
+    tag = q.submit(None, op=L.OP_NOP)
+    mem.write64(BASE + L.SQ_TAIL, 0)
+    with pytest.raises(TimeoutError) as e:
+        q.wait(tag, timeout=0.02)
     assert (
-        st["free"] == st["largest"] == 1 << 16
-        and st["blocks"] == 1
-        and st["fails"] == 1
+        "{'sq_head': 0, 'sq_tail': 1, 'cq_tail': 0, 'cq_head': 0, 'cq_head_tag': 0, "
+        "'sq_tail_card': 0, 'cq_head_card': 0}" in str(e.value)
     )
+
+
+def test_local_tail_as_device_readback_mutant(monkeypatch):
+    original = NodeQueue.pointers
+
+    def local_tail(self):
+        got = original(self)
+        got["sq_tail_card"] = self.sq_tail
+        return got
+
+    monkeypatch.setattr(NodeQueue, "pointers", local_tail)
+    with pytest.raises(AssertionError):
+        test_a_timeout_names_both_rings_pointers()
+
+
+def test_a_completion_for_no_package_in_flight_raises_naming_its_tag():
+    # The CQ tail published before its entry: the host reads the slot's
+    # previous contents (tag 7, never submitted) and refuses it.
+    mem = HostMemory()
+    SpecFirmware(mem, BASE)
+    q = NodeQueue(mem, BASE, idle=lambda: None, clock=lambda: 0.0)
+    q.init()
+    q.submit(None, op=L.OP_NOP)
+    mem.write_block(BASE + q.geo["cq"], struct.pack("<4Q", 7, 0, 0, 0))
+    mem.write_block(BASE + L.CQ_TAIL, L.line(1))
+    with pytest.raises(RecordSkew, match="stale completion tag 0x7"):
+        q.poll()
+    assert q.cq_head == 0
+
+
+def test_a_wait_past_its_wall_clock_alarm_is_over_budget_not_a_timeout():
+    mem = HostMemory()
+    fw = SpecFirmware(mem, BASE)
+    q = NodeQueue(mem, BASE, idle=lambda: None, clock=lambda: 0.0, alarm=1e-3)
+    q.init()
+    fw.boot()
+    with pytest.raises(OverBudget) as e:
+        q.wait(q.submit(None, op=L.OP_NOP))
+    assert not isinstance(e.value, TimeoutError)
+
+
+@pytest.mark.parametrize("op", (3, 4, 5))
+def test_memory_management_opcodes_are_reserved(op):
+    _mem, _fw, q = _queue()
+    tag = q.submit(op=op, words=[0, 0x40_0000, 1 << 16, 64])
+    with pytest.raises(NodeError, match="BAD_OP"):
+        q.wait(tag)
+    for name in ("heap", "alloc", "free", "heap_stats"):
+        assert not hasattr(q, name)
 
 
 class Places:
@@ -225,19 +440,21 @@ SMALL_REGION = 1 << 16
 def _big(q, salt: int = 0) -> bytes:
     """A package one heap and a bit long, its words named by `salt`."""
     n = (q.size - q.heap_off) // 32 + 8
-    return Package(payloads=[salt << 32 | k for k in range(n)]).to_bytes()
+    return package([salt << 32 | k for k in range(n)])
 
 
 def test_a_package_past_the_heap_runs_from_its_spilled_place():
     places = Places()
     mem, _fw, q = _queue(size=SMALL_REGION, spill=places.alloc, unspill=places.free)
     big = _big(q)
-    assert q.run(big).ok
-    assert f"run {len(big)}B" in q.read_stdout()
+    tag = q.submit(big)
     ((at, n),) = places.live.items()
     assert n >= len(big) and mem.read_block(at, len(big)) == big
-    assert q.run(big).ok and list(places.live) == [at]
-    assert q.counters["uploads"] == 1 and q.counters["cache_hits"] == 1
+    assert q.wait(tag).ok
+    assert f"run {len(big)}B" in q.read_stdout()
+    assert not places.live
+    assert q.run(big).ok and not places.live
+    assert q.counters["uploads"] == 2 and q.counters["cache_hits"] == 0
 
 
 def test_spilled_packages_outlive_heap_wraps_and_go_back_when_dropped():
@@ -245,17 +462,17 @@ def test_spilled_packages_outlive_heap_wraps_and_go_back_when_dropped():
     _mem, _fw, q = _queue(size=SMALL_REGION, spill=places.alloc, unspill=places.free)
     big = _big(q)
     q.run(big)
-    (at,) = places.live
+    assert not places.live
     third = (q.size - q.heap_off) // 3 // 32
     for k in range(5):  # small packages enough to wrap the heap twice
-        q.run(Package(payloads=[k << 32 | j for j in range(third)]).to_bytes())
+        q.run(package([k << 32 | j for j in range(third)]))
     hits = q.counters["cache_hits"]
     q.run(big)
-    assert q.counters["cache_hits"] == hits + 1 and list(places.live) == [at]
+    assert q.counters["cache_hits"] == hits and not places.live
     q.drop_spilled()
     assert not places.live
     q.run(big)
-    assert len(places.live) == 1 and at not in places.live
+    assert not places.live
 
 
 def test_a_spill_that_does_not_fit_gives_the_spilled_ones_back_first():
@@ -264,9 +481,9 @@ def test_a_spill_that_does_not_fit_gives_the_spilled_ones_back_first():
     a, b = _big(q, 1), _big(q, 2)
     places.cap = len(a) + 64
     assert q.run(a).ok
-    (first,) = places.live
+    assert not places.live
     assert q.run(b).ok
-    assert len(places.live) == 1 and first not in places.live
+    assert not places.live
 
 
 def test_init_gives_spilled_packages_back():

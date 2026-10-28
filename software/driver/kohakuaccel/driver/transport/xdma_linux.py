@@ -280,6 +280,18 @@ class XdmaLinux(Transport):
         return f"XdmaLinux(xdma{self.index}, {self.counts})"
 
 
+def load_module(
+    ko: str, args, module=pathlib.Path("/sys/module/xdma"), run=subprocess.run
+) -> bool:
+    """Load the driver from `ko` unless it is still loaded: an rmmod refused
+    while a handle was open leaves it loaded, and the rescan re-probes the
+    device under it. Whether it loaded the module."""
+    if module.exists():
+        return False
+    run(["insmod", ko, *args], check=True)
+    return True
+
+
 def reset_link(index: int = 0, ko: str | None = None, params: str | None = None):
     """A recovery for `XdmaLinux(recover=...)`: unload the driver, take the
     endpoint off the tree, pulse a secondary-bus reset on its root port,
@@ -322,7 +334,7 @@ def reset_link(index: int = 0, ko: str | None = None, params: str | None = None)
         time.sleep(2.0)
         if not (pci / "devices" / dev.name).exists():
             raise TransportUnavailable(f"{dev.name} did not come back after the reset")
-        subprocess.run(["insmod", ko, *args], check=True)
+        load_module(ko, args)
         for _ in range(50):
             if pathlib.Path(f"/dev/xdma{index}_c2h_0").exists():
                 return

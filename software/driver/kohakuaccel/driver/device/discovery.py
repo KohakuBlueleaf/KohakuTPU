@@ -7,6 +7,7 @@ endpoint answers CU_CAPS through the raw-flit mailbox, which is the only path to
 a node that is not a dispatch.
 """
 
+import time
 from dataclasses import dataclass
 
 from kohakuaccel.driver.device.flit import (
@@ -31,6 +32,9 @@ from kohakuaccel.driver.device.registers import (
 from kohakuaccel.driver.transport.base import MASK64, WORD_BYTES, Transport
 
 Coord = tuple[int, int]
+#: How long a control read waits for its reply: far past any unit's round
+#: trip (thousands of node cycles at 100 MHz are tens of microseconds).
+REPLY_SECONDS = 1e-3
 
 
 @dataclass(frozen=True)
@@ -103,14 +107,20 @@ def drain_mailbox(t: Transport, limit: int = 32) -> int:
     return limit
 
 
-def reply_waiting(t: Transport, polls: int = 4) -> bool:
-    """Whether a reply sits in the receive queue within `polls` status reads.
-    A single read right after the kick can beat a far unit's round trip (on a
-    Verilated card a host access is only a few hundred node cycles)."""
-    for _ in range(polls):
+def reply_waiting(t: Transport, polls: int = 4, seconds: float = REPLY_SECONDS) -> bool:
+    """Whether a reply sits in the receive queue within at least `polls`
+    status reads and at least `seconds`. A count of reads alone is a time only
+    for one transport: a JTAG read takes milliseconds, an XDMA register read
+    microseconds, while a unit's round trip is a number of node cycles."""
+    # perf_counter: a 1 ms bound needs a finer clock than Windows' monotonic.
+    start = time.perf_counter()
+    n = 0
+    while True:
         if not t.read64(MAG_BASE + A_RX_STATUS) & (1 << 16):
             return True
-    return False
+        n += 1
+        if n >= polls and time.perf_counter() - start >= seconds:
+            return False
 
 
 def control_exchange(

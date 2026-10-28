@@ -132,7 +132,8 @@ class RemoteNodeQueue:
     per call -- the daemon polls the completion ring.
 
         q = RemoteNodeQueue(client, node=0, base=staging_addr)   # attaches, inits
-        q.load("build/fw/kohakutpu_node.elf", BootArgs(queue=q.base, mesh=0))
+        q.load("build/fw/kohakutpu_node.elf",
+               BootArgs(queue=q.base, mesh=0, timeout=bound(seconds, sys_mhz)))
         q.wait_ready()
         q.run(package, bindings=[a, b])
     """
@@ -203,26 +204,6 @@ class RemoteNodeQueue:
 
     def stop(self, value: int = 0) -> Completion:
         return self._final(self._call("node_stop", value=value))
-
-    # ----------------------------------------------------------- node heaps
-    def heap(
-        self, region: int, base: int, nbytes: int, granule: int = 64
-    ) -> Completion:
-        return self._final(
-            self._call(
-                "node_heap", region=region, base=base, nbytes=nbytes, granule=granule
-            )
-        )
-
-    def alloc(self, region: int, nbytes: int, align: int = 0, tag: int = 0) -> int:
-        d = self._call("node_alloc", region=region, nbytes=nbytes, align=align, tag=tag)
-        return self._final(d).value
-
-    def free(self, region: int, addr: int) -> Completion:
-        return self._final(self._call("node_free", region=region, addr=addr))
-
-    def heap_stats(self, region: int) -> dict:
-        return self._call("node_heap_stats", region=region)
 
     # ---------------------------------------------------------------- stdio
     def read_stdout(self) -> str:

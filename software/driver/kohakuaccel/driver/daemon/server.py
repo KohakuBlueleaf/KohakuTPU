@@ -45,9 +45,6 @@ _POLLING = {
     "node_run",
     "node_nop",
     "node_stop",
-    "node_heap",
-    "node_alloc",
-    "node_free",
 }
 
 
@@ -389,9 +386,6 @@ class Daemon:
     def _op_node_counters(self, conn, msg):
         return dict(self._node(msg).counters)
 
-    def _op_node_heap_stats(self, conn, msg):
-        return self._node(msg).heap_stats(msg["region"])
-
     async def _polling(self, msg):
         """A node op that waits: issue on the hardware thread, then poll in
         steps there, giving the queue to other clients between steps."""
@@ -407,21 +401,6 @@ class Daemon:
                 sub["qop"] = L.OP_NOP
             elif op == "node_stop":
                 sub.update(qop=L.OP_STOP, arg=msg.get("value", 0))
-            elif op == "node_heap":
-                g = msg.get("granule", 64)
-                sub.update(
-                    qop=L.OP_HEAP, words=[msg["region"], msg["base"], msg["nbytes"], g]
-                )
-            elif op == "node_alloc":
-                w = [
-                    msg["region"],
-                    msg["nbytes"],
-                    msg.get("align", 0),
-                    msg.get("tag", 0),
-                ]
-                sub.update(qop=L.OP_ALLOC, words=w)
-            elif op == "node_free":
-                sub.update(qop=L.OP_FREE, words=[msg["region"], msg["addr"]])
             tag = await self._hw_call(self._submit, q, sub)
         c = await self._until(lambda: q.take(tag), timeout)
         out = dataclasses.asdict(c)
@@ -431,10 +410,7 @@ class Daemon:
 
     @staticmethod
     def _ready_step(q: NodeQueue):
-        st = q.state()
-        if st["state"] == "fatal":
-            raise RuntimeError(f"firmware stopped fatally: {st}\n{q.read_stdout()}")
-        return st if st["state"] == "ready" else None
+        return q._check_ready_state(q.state())
 
     async def _until(self, step, timeout: float):
         """`step()` on the hardware thread until it returns non-None."""

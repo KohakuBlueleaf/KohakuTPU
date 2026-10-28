@@ -15,7 +15,8 @@ import pathlib
 import time
 
 from kohakuaccel.driver.device import rv64load
-from kohakuaccel.driver.node.boot.args import SPAD_OFFSET, BootArgs
+from kohakuaccel.driver.node.boot import abi
+from kohakuaccel.driver.node.boot.args import SPAD_OFFSET, VERSION, BootArgs
 
 MODES = ("axi", "burn")
 
@@ -53,6 +54,7 @@ class NodeBoot:
         """
         if mode not in MODES:
             raise ValueError(f"load mode must be one of {MODES}, not {mode!r}")
+        abi.check(elf, VERSION)
         t0 = time.monotonic()
         self.win.stop()
         if mode == "burn":
@@ -74,6 +76,7 @@ class NodeBoot:
         core, re-place the scratchpad's file bytes and the boot block, boot.
         For a node whose arrays outlived a reset (a wizard relock); a node that
         lost power or a reprogram needs :meth:`load`."""
+        abi.check(elf, VERSION)
         t0 = time.monotonic()
         self.win.stop()
         info = self.win.reload_spad(elf)

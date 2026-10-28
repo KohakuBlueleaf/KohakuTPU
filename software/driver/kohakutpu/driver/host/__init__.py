@@ -7,7 +7,6 @@ forwards to a default mesh.
 
 import time
 
-from kohakuaccel.driver import device as _device_mod
 from kohakuaccel.driver.device import (
     CU_STATUS,
     T_CU_INST,
@@ -16,22 +15,18 @@ from kohakuaccel.driver.device import (
     decode_node_status,
     decode_status,
     enumerate_mesh,
-    find_control_window,
     find_control_windows,
     header,
     node_status_addr,
     read_agent_caps,
 )
-from kohakuaccel.driver.device import discovery as _discovery_mod
-from kohakuaccel.driver.device import program as _program_mod
-from kohakuaccel.driver.device import registers as _registers_mod
 from kohakuaccel.driver.device.discovery import control_write
 from kohakuaccel.driver.device.program import Program
 from kohakuaccel.driver.device.registers import A_CAPS, L2_BASE_REG, L2_COUNTERS, L2_EN
-from kohakuaccel.driver.transport import rebase as _rebase_mod
 from kohakuaccel.driver.transport.jtag import JtagTransport
 from kohakuaccel.driver.transport.rebase import Rebased, UnitGlobal, Window
 from kohakutpu.driver.clock.card import load_board
+from kohakutpu.language.machine import load as load_machine
 
 #: Windows a block design might have assigned. The board files in this
 #: repository do not agree, so the card is asked rather than trusted.
@@ -46,18 +41,9 @@ CONTROL_WINDOWS = (0x4_0080_0000, 0x4_0081_0000, 0x4_0082_0000, 0x4_0083_0000)
 MESH_SHIFT = 36
 MEMORY_WINDOWS = tuple(i << MESH_SHIFT for i in range(4))
 
-#: What the card HAS, not what the space allows: 4 GB populated per 64 GB window.
-#: Verified -- markers at 0, 256 MB, 1, 2, 3 GB and each window's last word differ.
-MEMORY_SIZE = 1 << 32
-
 #: The driver's own scratch, in the LAST megabyte of each mesh's DRAM. Calibration
 #: destroys whatever is here, so it sits where no allocator grows into it.
 SCRATCH_RESERVE = 1 << 20
-SCRATCH = MEMORY_SIZE - SCRATCH_RESERVE
-
-#: The address an allocator over a mesh's DRAM must stop below. Imported rather
-#: than restated, so the reservation above cannot drift from what respects it.
-ARENA_LIMIT = SCRATCH
 
 #: What A_CAPS reports on every build of this mesh, which is what makes it a
 #: read-skew reference that needs no write.
@@ -73,34 +59,27 @@ def board_map(board: dict) -> dict:
     """Control windows, host memory windows and global DRAM bases from a board.
 
     The windows a bitstream assigns are not derivable from anything in this
-    repository, so they are read from the board file rather than guessed. Also
-    applies `agent_at_offset_zero`: a top that wires `S_AXI_CTRL` straight to
-    the agent has no control-program engine, so the driver's bit-28 select
-    must not be added to any register address.
+    repository, so they are read from the board file rather than guessed. A
+    mesh's registers are reached through its `Rebased` control window, which
+    puts the agent at the window's base (no bit-28 select is ever added on the
+    card); nothing here changes the driver's logical map.
     """
+    size = load_machine(board["name"]).get("card.dram.bytes")
+    if size <= SCRATCH_RESERVE:
+        raise ValueError("machine DRAM must exceed the driver's scratch reserve")
     n = board["meshes"]
     ctrl = int(board["ctrl_base"], 16)
     stride = int(board["ctrl_stride"], 16)
     wshift = board["mem_window_shift"]
     woff = board.get("mem_window_offset", 0)
     dshift = board.get("dram_mesh_shift", MESH_SHIFT)
-    if board.get("agent_at_offset_zero"):
-        # Every module that from-imported MAG_BASE holds its own copy, and
-        # node_status_addr reads the registers module's at call time, so all
-        # five rebind or one path still adds the phantom bit-28 select.
-        for mod in (
-            _device_mod,
-            _discovery_mod,
-            _program_mod,
-            _registers_mod,
-            _rebase_mod,
-        ):
-            mod.MAG_BASE = 0
     return {
         "ctrl": [ctrl + i * stride for i in range(n)],
         "mem": [(i + woff) << wshift for i in range(n)],
         "dram": [i << dshift for i in range(n)],
-        "size": board.get("mem_words", MEMORY_SIZE // 32) * 32,
+        "size": size,
+        "scratch": size - SCRATCH_RESERVE,
+        "arena_limit": size - SCRATCH_RESERVE,
         "granule": board.get("host_write_granule", 0),
     }
 
@@ -123,7 +102,7 @@ class Mesh:
         index: int,
         ctrl_base: int,
         mem_base: int,
-        mem_size: int = MEMORY_SIZE,
+        mem_size: int,
         dram_base: int | None = None,
         granule: int = 0,
         reply_at_agent: bool = False,
@@ -194,12 +173,13 @@ class Mesh:
                 out.append(coord)
         return tuple(out)
 
-    def verify_write_path(self, addr: int = SCRATCH, nwords: int = 8) -> None:
+    def verify_write_path(self, addr: int | None = None, nwords: int = 8) -> None:
         """Write a pattern to this mesh's DRAM and read it back. Raises if they differ.
 
         The write path can skew silently and still report success, so a run that
         skips this reports wrong numbers as if they were right.
         """
+        addr = self.mem_size - SCRATCH_RESERVE if addr is None else addr
         want = bytes((0x5A ^ i) for i in range(nwords * 8))
         self.mem.write_block(addr, want)
         got = self.mem.read_block(addr, len(want))
@@ -229,7 +209,7 @@ class Mesh:
         # op 1 = OP_FILL. Shifted up 192 this hits mx_cluster_cu.v:265/268/269;
         # the address's top 6 bits live at flit[68:63], so `addr` must fit 34.
         payload = (1 << 60) | (addr << 26) | (1 << 10)
-        was = decode_node_status(self.raw.read64(self.base + node_status_addr(x, y)))
+        was = decode_node_status(self.ctrl.read64(node_status_addr(x, y)))
 
         prog = Program()
         prog.stage_flit(0, header(T_CU_INST, 2, True) | (payload << 192))
@@ -238,7 +218,7 @@ class Mesh:
         prog.await_node_at(x, y, (was["count"] + 1) & 0xFFFF)
         prog.done(0).execute(self.ctrl, timeout=timeout)
 
-        return decode_node_status(self.raw.read64(self.base + node_status_addr(x, y)))
+        return decode_node_status(self.ctrl.read64(node_status_addr(x, y)))
 
     def probe_type(
         self, unit_type: str, addr: int = 0x4000, timeout: float = 5.0
@@ -277,9 +257,7 @@ class Mesh:
             )
 
         was = {
-            c: decode_node_status(self.raw.read64(self.base + node_status_addr(*c)))[
-                "count"
-            ]
+            c: decode_node_status(self.ctrl.read64(node_status_addr(*c)))["count"]
             for c in coords
         }
 
@@ -300,7 +278,7 @@ class Mesh:
         return {
             "coords": coords,
             "status": {
-                c: decode_node_status(self.raw.read64(self.base + node_status_addr(*c)))
+                c: decode_node_status(self.ctrl.read64(node_status_addr(*c)))
                 for c in coords
             },
             "seconds": elapsed,
@@ -363,7 +341,9 @@ class Card:
     ) -> None:
         self.board = board
         self.reply_at_agent = reply_at_agent
-        self._map = board_map(board) if board else None
+        if board is None:
+            raise ValueError("a named board is required for the machine's DRAM size")
+        self._map = board_map(board)
         self.raw = transport or JtagTransport()
         if board:
             beats = board.get("max_burst_beats")
@@ -385,7 +365,7 @@ class Card:
         replicating = bool(board and board.get("host_write_replicates"))
         preflight = getattr(self.raw, "verify_write_path", None)
         if preflight is not None and not replicating:
-            at = (self._map["mem"][0] + SCRATCH) if self._map else SCRATCH
+            at = self._map["mem"][0] + self._map["scratch"]
             preflight(at, realign=realign)
         self.meshes = tuple(self._discover(which))
         if not self.meshes:
@@ -441,19 +421,7 @@ class Card:
                     )
                 )
             return out
-        wanted = range(len(CONTROL_WINDOWS)) if which is None else which
-        windows = [CONTROL_WINDOWS[i] for i in wanted]
-        found = find_control_windows(self.raw, windows)
-        if not found:
-            # A board that put the one mesh somewhere else entirely. Its memory
-            # is the whole card, since there is no second mesh to collide with.
-            base = find_control_window(self.raw, CANDIDATES)
-            return [] if base is None else [Mesh(self.raw, 0, base, 0x0, None)]
-        out = []
-        for base in found:
-            i = CONTROL_WINDOWS.index(base)
-            out.append(Mesh(self.raw, i, base, MEMORY_WINDOWS[i], MEMORY_SIZE))
-        return out
+        return []
 
     @property
     def global_mem(self):
@@ -523,7 +491,7 @@ class Card:
         """Units of `unit_type` on the default mesh that are not executing."""
         return self.mesh.idle(unit_type)
 
-    def verify_write_path(self, addr: int = SCRATCH, nwords: int = 8) -> None:
+    def verify_write_path(self, addr: int | None = None, nwords: int = 8) -> None:
         """Check the write path into the default mesh's DRAM."""
         self.mesh.verify_write_path(addr, nwords)
 
