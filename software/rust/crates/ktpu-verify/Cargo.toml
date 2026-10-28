@@ -1,0 +1,28 @@
+[package]
+name = "ktpu-verify"
+description = "Static verifier over L0 packages."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ktpu-machine.workspace = true
+ktpu-isa.workspace = true
+ktpu-l0.workspace = true
+ktpu-l1.workspace = true
+thiserror.workspace = true
+indexmap.workspace = true
+rayon.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[features]
+# The spec vectors' checker mutants (src/mutant.rs).
+mutants = []
+
+[dev-dependencies]
+ktpu-l2 = { workspace = true, features = ["mutants"] }
+
+[build-dependencies]
+sha2.workspace = true

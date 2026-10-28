@@ -1,0 +1,16 @@
+[package]
+name = "ktpu-isa"
+description = "Unit ISAs and encoders: cluster, vector core, SRU, mover."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Spec-vector mutants, switched per thread (src/mutant.rs).
+mutants = ["ktpu-machine/mutants"]
+
+[dependencies]
+ktpu-machine.workspace = true
+serde.workspace = true
+serde_json.workspace = true

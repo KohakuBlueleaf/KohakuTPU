@@ -1,0 +1,102 @@
+// One logical `.ktpu` line (L1.TXT.001-.011): `[TARGET =] OP ARGS [: ANNOT]`.
+// Indentation, comments and newlines inside brackets are the line splitter's
+// (`text::lines`); a logical line reaches this grammar with its newlines
+// inside brackets turned to spaces. The grammar knows no keyword.
+
+WHITESPACE = _{ " " | "\t" | "\x0C" }
+
+line = { SOI ~ (computed_binding | binding | command) ~ EOI }
+
+binding          = { op ~ eq ~ command }
+computed_binding = { cname ~ "{" ~ expr ~ "}" ~ eq ~ command }
+
+command = { op ~ args? ~ annot? }
+op      = @{ dotted }
+annot   = { ":" ~ term }
+
+// Arguments apart by spaces or by commas (L1.TXT.005).
+args  = { arg ~ (comma? ~ arg)* }
+comma = { "," }
+
+arg         = { arrow | term ~ (assign_tail | add_tail | member_tail)? }
+assign_tail = { eq ~ term }
+add_tail    = { "+=" ~ term }
+member_tail = { kw_in ~ term }
+
+term      = { expr ~ (span_tail | cmp_tail)? }
+span_tail = { ".." ~ expr }
+cmp_tail  = { cmp ~ expr }
+
+// Binary operators bind tighter than argument separation (L1.TXT.009).
+// `unary` is `unary.pest`'s: an atom read once, its `@ SPACE` a tail.
+expr        = { product ~ (addop ~ product)* }
+product     = { unary ~ (mulop ~ unary)* }
+neg         = { minus ~ unary }
+pos         = { plus ~ unary }
+notp        = { bang ~ unary }
+placed_tail = { "@" ~ atom }
+// The mutant `l1.text/placed-first` reads `atom @ atom` as one rule tried
+// before `atom` (`unary_v0.pest`): every atom read twice, at every depth.
+placed      = { atom ~ "@" ~ atom }
+
+atom = {
+    hex
+  | dims
+  | size
+  | float
+  | int
+  | string
+  | call
+  | view
+  | computed
+  | paren
+  | name
+}
+
+call     = { callname ~ "(" ~ cargs? ~ ")" }
+cargs    = { carg ~ ("," ~ carg)* ~ ","? }
+carg     = { typed | kwarg | term }
+typed    = { name ~ ":" ~ term }
+kwarg    = { name ~ eq ~ term }
+view     = { viewname ~ "[" ~ slices? ~ "]" }
+computed = { cname ~ "{" ~ expr ~ "}" ~ ("[" ~ slices? ~ "]")? }
+slices   = { slice ~ ("," ~ slice)* ~ ","? }
+slice    = { newaxis | colon_first | term_slice }
+colon_first = { colon ~ term? }
+term_slice  = { term ~ (colon ~ term?)? }
+colon    = { ":" }
+newaxis  = { "*" }
+paren    = { "(" ~ (term ~ (tcomma ~ term)* ~ tcomma?)? ~ ")" }
+tcomma   = { "," }
+
+// Tokens. A call or a view is a name touching its bracket (L1.TXT.008).
+ident_start = _{ ASCII_ALPHA | "_" }
+ident_char  = _{ ASCII_ALPHANUMERIC | "_" }
+ident       = _{ ident_start ~ ident_char* }
+dotted      = _{ ident ~ ("." ~ ident)* }
+name        = @{ dotted }
+callname    = @{ dotted ~ &"(" }
+viewname    = @{ dotted ~ &"[" }
+cname       = @{ ident ~ &"{" }
+
+hex   = @{ "0x" ~ ASCII_HEX_DIGIT ~ (ASCII_HEX_DIGIT | "_")* }
+dims  = @{ ASCII_DIGIT+ ~ ("x" ~ ASCII_DIGIT+)+ }
+size  = @{ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ ("K" | "M" | "G") }
+float = @{
+    ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ "." ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+)?
+  | ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ ("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+
+  | ("inf" | "nan") ~ !ident_char
+}
+int    = @{ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
+string = @{ "\"" ~ (!("\"" | "\n") ~ ANY)* ~ "\"" }
+
+// The arrow outranks the comparisons: `a <- b` an arrow, `a < -b` a compare.
+arrow = @{ "->" | "<-" }
+cmp   = @{ "==" | "!=" | "<=" | ">=" | "<" ~ !"-" | ">" }
+eq    = @{ "=" ~ !"=" }
+addop = @{ "+" ~ !"=" | "-" ~ !">" }
+mulop = @{ "*" | "/" | "%" }
+minus = @{ "-" ~ !">" }
+plus  = @{ "+" ~ !"=" }
+bang  = @{ "!" ~ !"=" }
+kw_in = @{ "in" ~ !ident_char }

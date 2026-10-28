@@ -1,0 +1,39 @@
+[package]
+name = "ktpu-spec"
+description = "Tier-0 spec vectors run against the Rust stack."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = ["stack"]
+# Each stage crate's ports, one feature a crate (a crate mid-edit leaves the
+# others testable); `stack` is all of them and the pipeline's.
+stack = ["ktpu/stack", "ktpu/mutants", "isa", "l0", "l1", "l2", "verify", "graph", "kernels", "plan"]
+isa = ["dep:ktpu-isa", "ktpu-isa/mutants"]
+l0 = ["dep:ktpu-l0", "ktpu-l0/mutants"]
+l1 = ["dep:ktpu-l1", "ktpu-l1/mutants"]
+l2 = ["dep:ktpu-l2", "ktpu-l2/mutants"]
+verify = ["dep:ktpu-verify", "ktpu-verify/mutants"]
+graph = ["dep:ktpu-graph"]
+kernels = ["dep:ktpu-kernels", "ktpu-kernels/mutants", "dep:regex"]
+plan = ["dep:ktpu-plan", "ktpu-plan/mutants", "dep:regex", "kernels", "graph", "l1"]
+
+[dependencies]
+ktpu = { path = "../ktpu", default-features = false }
+ktpu-machine.workspace = true
+ktpu-isa = { workspace = true, optional = true }
+ktpu-l0 = { workspace = true, optional = true }
+ktpu-l1 = { workspace = true, optional = true }
+ktpu-l2 = { workspace = true, optional = true }
+ktpu-verify = { workspace = true, optional = true }
+ktpu-graph = { workspace = true, optional = true }
+ktpu-kernels = { workspace = true, optional = true }
+ktpu-plan = { workspace = true, optional = true }
+regex = { version = "1", optional = true }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "ktpu-debug"
+description = "The host decoder of the debug firmware's records (DBG.*, RUL.080)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ktpu-machine.workspace = true
+serde.workspace = true
+serde_json.workspace = true

@@ -1,0 +1,72 @@
+[package]
+name = "ktpu"
+description = "The compiler pipeline and the kohakutpu_rs Python module."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "ktpu"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["stack"]
+# The stage crates behind `Stack`; off, the pipeline builds alone (its tests
+# run on a test backend).
+stack = [
+    "dep:sha2",
+    "dep:ktpu-isa",
+    "dep:ktpu-l0",
+    "dep:ktpu-l1",
+    "dep:ktpu-l2",
+    "dep:ktpu-verify",
+    "dep:ktpu-graph",
+    "dep:ktpu-kernels",
+    "dep:ktpu-plan",
+]
+python = ["stack", "dep:pyo3", "dep:ktpu-debug", "dep:sha2"]
+# The wasm-bindgen exports of the JSON compile path (`json`), for
+# wasm32-unknown-unknown: no disk cache; rayon runs on the calling thread.
+wasm = ["stack", "dep:wasm-bindgen"]
+# The stage crates' spec-vector mutants, switched by name (`mutant::with`,
+# `_rs.compile(mutant=)`): the spec-test build only (scripts/py/build_rs.py).
+mutants = [
+    "stack",
+    "ktpu-isa/mutants",
+    "ktpu-machine/mutants",
+    "ktpu-l0/mutants",
+    "ktpu-l1/mutants",
+    "ktpu-l2/mutants",
+    "ktpu-verify/mutants",
+    "ktpu-kernels/mutants",
+    "ktpu-plan/mutants",
+]
+
+[dependencies]
+ktpu-machine.workspace = true
+ktpu-cache.workspace = true
+ktpu-isa = { workspace = true, optional = true }
+ktpu-l0 = { workspace = true, optional = true }
+ktpu-l1 = { workspace = true, optional = true }
+ktpu-l2 = { workspace = true, optional = true }
+ktpu-verify = { workspace = true, optional = true }
+ktpu-graph = { workspace = true, optional = true }
+ktpu-kernels = { workspace = true, optional = true }
+ktpu-plan = { workspace = true, optional = true }
+regex = "1"
+ktpu-debug = { workspace = true, optional = true }
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+pyo3 = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+
+[build-dependencies]
+sha2.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
+regex = "1"

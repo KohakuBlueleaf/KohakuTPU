@@ -1,0 +1,10 @@
+[package]
+name = "ktpu-cache"
+description = "Per-stage on-disk caches keyed on input, machine and stage version."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sha2.workspace = true

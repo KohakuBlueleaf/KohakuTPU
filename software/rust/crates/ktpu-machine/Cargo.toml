@@ -1,0 +1,17 @@
+[package]
+name = "ktpu-machine"
+description = "The machine schema: the only hardware facts the stack reads."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# The machine-file check's mutant, switched per thread (src/mutant.rs).
+mutants = []
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true

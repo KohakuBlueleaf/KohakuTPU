@@ -1,0 +1,24 @@
+[package]
+name = "ktpu-l2"
+description = "L2 IR, text, passes, lowering to L1."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+mutants = ["ktpu-l1/mutants"]
+witness = ["mutants"]
+
+[dependencies]
+ktpu-machine.workspace = true
+ktpu-isa.workspace = true
+ktpu-l1.workspace = true
+indexmap.workspace = true
+rayon.workspace = true
+regex = "1"
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+ktpu-verify.workspace = true

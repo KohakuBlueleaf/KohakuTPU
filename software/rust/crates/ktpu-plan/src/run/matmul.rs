@@ -1,0 +1,848 @@
+//! Contractions on the clusters (`run._matmul`, `_product`, `_product_run`,
+//! `forms.mx7`, `kernels.matmul.plan`, TG.RUN.019-.020, .028-.029): each
+//! side laid out as [batch.., rows, K] where it is not, quantised once into
+//! its MXFP7 packing, the product and its epilogue one kernel; a padded
+//! product moved out of a temporary or kept in its padded-rows form.
+
+use std::collections::BTreeMap;
+
+use ktpu_machine::Refusal;
+use serde_json::{json, Value};
+
+use super::{expr_arg, is_float, item, np_name, Bufs, Operand, Runner};
+use crate::exec::{rows_key, View};
+use crate::hw::Hw;
+use crate::lower::{Access, Plan, Slot};
+use crate::program::{Addr, Call};
+use crate::uop::{Arg, Id};
+
+/// The tallest M tile tried (`matmul.plan`'s search start): a search bound,
+/// the bank and the accumulator cap the tile.
+const MAX_TM: i64 = 256;
+
+/// One contraction's tiling (`matmul.Mm`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mm {
+    pub bt: i64,
+    pub m: i64,
+    pub n: i64,
+    pub k: i64,
+    pub mp: i64,
+    pub kp: i64,
+    pub tm: i64,
+    pub tn: i64,
+    pub nk: i64,
+    pub shared: bool,
+    pub quantum: i64,
+    /// whether the call named the quantum (one band otherwise)
+    pub named: bool,
+}
+
+impl Mm {
+    /// `matmul.plan`, sized by the machine's cluster (`hw`).
+    pub fn plan(
+        hw: &Hw,
+        bt: i64,
+        m: i64,
+        n: i64,
+        k: i64,
+        shared: bool,
+        quantum: Option<i64>,
+    ) -> Result<Mm, Refusal> {
+        let (named, quantum) = (quantum.is_some(), quantum.unwrap_or(hw.band));
+        if n % hw.kblock != 0 {
+            return Err(Refusal::new(
+                "TG.RUN.019",
+                format!(
+                    "N = {n}: the product's columns are whole blocks of {}",
+                    hw.kblock
+                ),
+            ));
+        }
+        let kp = hw.whole_blocks(k);
+        let nk = if kp % (hw.kstep * hw.kblock) == 0 {
+            hw.kstep
+        } else {
+            1
+        };
+        let mp = (m + quantum - 1) / quantum * quantum;
+        let tm = (hw.band..=mp.min(MAX_TM))
+            .rev()
+            .step_by(hw.band as usize)
+            .find(|t| mp % t == 0 && t % quantum == 0 && (t / hw.band) * nk <= hw.bank)
+            .ok_or_else(|| {
+                Refusal::new(
+                    "TG.RUN.019",
+                    format!("M = {m}: no tile of whole {quantum}-row quanta fits a bank"),
+                )
+            })?;
+        let mut tn = hw
+            .blocks()
+            .into_iter()
+            .find(|w| n % w == 0)
+            .expect("N is whole GT4 blocks");
+        while (tm / hw.band) * (tn / hw.band) > hw.acc_subtiles {
+            tn /= 2;
+        }
+        Ok(Mm {
+            bt,
+            m,
+            n,
+            k,
+            mp,
+            kp,
+            tm,
+            tn,
+            nk,
+            shared,
+            quantum,
+            named,
+        })
+    }
+
+    /// The generator call that made it.
+    pub fn made_by(&self) -> Value {
+        let mut args = json!({
+            "bt": self.bt, "m": self.m, "n": self.n, "k": self.k, "shared": self.shared,
+        });
+        if self.named {
+            args["quantum"] = json!(self.quantum);
+        }
+        json!({"made_by": {"gen": "matmul.plan", "args": args}})
+    }
+}
+
+/// `coef` without the ranges of extent one.
+fn live_coef(r: &Runner, coef: &[(Id, i64)]) -> Vec<(Id, i64)> {
+    coef.iter()
+        .copied()
+        .filter(|(x, _)| r.extent(*x) > 1)
+        .collect()
+}
+
+fn same_map(a: &[(Id, i64)], b: &[(Id, i64)]) -> bool {
+    a.len() == b.len() && a.iter().all(|x| b.contains(x))
+}
+
+impl Runner<'_> {
+    /// `_batched`: refuse a batched operand whose batches are not one
+    /// row-major stack.
+    fn batched(&self, acc: &Access, batch: &[Id], step: i64, what: &str) -> Result<(), Refusal> {
+        let mut want = step;
+        for r in batch.iter().rev() {
+            if self.extent(*r) > 1 && acc.c(*r) != want {
+                return Err(Refusal::new(
+                    "TG.RUN.028",
+                    format!("{what}'s batches are not one row-major stack of [rows, K] blocks"),
+                ));
+            }
+            want *= self.extent(*r);
+        }
+        Ok(())
+    }
+
+    /// `window.ranges`: new ranges of `extents`, ids no range of `plan` has,
+    /// of the kind of its output's.
+    pub(super) fn fresh_ranges(&mut self, plan: &Plan, extents: &[i64]) -> Vec<Id> {
+        let id = |me: &Self, r: Id| match me.g.arg(r) {
+            Arg::Range { id, .. } => *id,
+            _ => 0,
+        };
+        let mut seen: Vec<i64> = plan
+            .accesses
+            .iter()
+            .flat_map(|a| a.coef.iter().map(|(r, _)| id(self, *r)))
+            .collect();
+        seen.extend(
+            plan.out_ranges
+                .iter()
+                .chain(&plan.reduce_ranges)
+                .map(|r| id(self, *r)),
+        );
+        let top = 1 + seen.into_iter().max().unwrap_or(0);
+        let kind = match self.g.arg(plan.out_ranges[0]) {
+            Arg::Range { axis, .. } => axis.clone(),
+            _ => unreachable!("an output range"),
+        };
+        extents
+            .iter()
+            .enumerate()
+            .map(|(i, n)| self.g.range(*n, top + i as i64, &kind))
+            .collect()
+    }
+
+    /// `forms.packed` (`forms.mx7`): `batches` [rows, cols] blocks of the
+    /// buffer quantised into [batches * rp, cp] MXFP7, kept while unwritten.
+    #[allow(clippy::too_many_arguments)]
+    pub fn packed(
+        &mut self,
+        view: &View,
+        dtype: &str,
+        src: &Operand,
+        (rows, cols, rp, cp): (i64, i64, i64, i64),
+        side: &str,
+        (g, nk, batches): (i64, i64, i64),
+    ) -> Result<Addr, Refusal> {
+        let (st, off) = (view.base.clone(), view.offset);
+        let it = item(dtype);
+        let src = Operand {
+            offset: src.offset + off.div_euclid(it),
+            ..src.clone()
+        };
+        let key = json!(["mx7", side, src.json(), rows, cols, rp, cp, g, nk, batches]);
+        let at = Addr {
+            buf: st.clone(),
+            form: key.clone(),
+            offset: 0,
+        };
+        if self.x.store(&st).has(&key) {
+            return Ok(at);
+        }
+        let nbytes = self.x.store(&st).nbytes;
+        let n = nbytes / it;
+        let whole = View {
+            base: st.clone(),
+            offset: 0,
+            nbytes,
+        };
+        let mut base = self.f16_of(&whole, dtype, n)?;
+        let f = self.x.form(&st, &key, batches * rp * cp);
+        let (mut qsrc, mut qcols) = (src.clone(), cols);
+        let mut tmp = None;
+        let h = self.hw.halves;
+        if cols % h != 0 || src.pitch % h != 0 || src.offset % h != 0 {
+            let (r, dp) = (batches * rows, self.hw.whole_halves(cols));
+            let t = self.x.storage(2 * r * dp);
+            let tat = self.x.addr(&t, 0);
+            tmp = Some(t);
+            let walk = [(r, src.pitch), (cols, 1)];
+            let got = self.relayout(
+                base,
+                n,
+                &walk,
+                src.offset,
+                &[(r, dp), (cols, 1)],
+                r * dp,
+                tat.clone(),
+                0,
+                false,
+            );
+            if let Err(e) = got {
+                self.x.free(tmp.as_ref().unwrap());
+                return Err(e);
+            }
+            base = tat;
+            qsrc = Operand {
+                pitch: dp,
+                rows: r,
+                ..Operand::new("full")
+            };
+            qcols = dp;
+        }
+        let call = Call {
+            gen: "matmul.quant_kernel".into(),
+            args: json!({
+                "src": qsrc.json(), "rows": rows, "cols": qcols, "rp": rp, "cp": cp,
+                "side": side, "g": g, "nk": nk, "batches": batches,
+            }),
+        };
+        let binds = BTreeMap::from([("x".to_string(), base), ("q".to_string(), f)]);
+        self.x.launch(call, "quant", json!({}), binds);
+        if let Some(t) = tmp {
+            self.x.free(&t);
+        }
+        self.x.made(&st, &key);
+        Ok(at)
+    }
+
+    /// `_matmul`: each side not [.., rows, K] row-major laid out first.
+    pub(super) fn matmul(&mut self, plan: &Plan, bufs: &Bufs) -> Result<(), Refusal> {
+        let (m, n, ks) = plan.mnk.clone().expect("a matmul plan's M, N, K");
+        let (Some(a), Some(b)) = (plan.a.clone(), plan.b.clone()) else {
+            return Err(Refusal::new(
+                "TG.RUN.019",
+                "a matmul plan without its A and B reads",
+            ));
+        };
+        let batch: Vec<Id> = plan
+            .out_ranges
+            .iter()
+            .copied()
+            .filter(|r| plan.batch.contains(r))
+            .collect();
+        let order: Vec<Id> = batch.iter().copied().chain([m, n]).collect();
+        let oc = live_coef(self, &self.out_coef(plan));
+        if !same_map(&oc, &live_coef(self, &self.dense(&order))) {
+            return self.reordered(plan, bufs, &order);
+        }
+        let mut bufs = bufs.clone();
+        let mut tmps = Vec::new();
+        let (mut a, mut b) = (a, b);
+        let got = (|| -> Result<(), Refusal> {
+            for side in ["a", "b"] {
+                let (acc, row) = if side == "a" { (&a, m) } else { (&b, n) };
+                let whole = side == "a" || batch.iter().any(|r| acc.c(*r) != 0);
+                let mut order: Vec<Id> = if whole { batch.clone() } else { vec![] };
+                order.push(row);
+                order.extend(&ks);
+                let dense = self.dense(&order);
+                if same_map(&live_coef(self, &acc.coef), &live_coef(self, &dense)) {
+                    continue;
+                }
+                let t = self.x.storage(self.hw.f16_bytes(self.size(&order)));
+                tmps.push(t.clone());
+                let key = self.key(&format!("mm{side}"));
+                let nbytes = self.x.store(&t).nbytes;
+                bufs.insert(
+                    key.clone(),
+                    View {
+                        base: t,
+                        offset: 0,
+                        nbytes,
+                    },
+                );
+                let sub = Plan {
+                    name: format!("{}_{side}", plan.name),
+                    ..self.laid_plan(plan, key.clone(), acc, &order, None)
+                };
+                self.vector(&sub, &bufs)?;
+                let new = Access {
+                    slot: key,
+                    dtype: "half".into(),
+                    coef: dense,
+                    off: 0,
+                    table: None,
+                    gate: false,
+                };
+                if side == "a" {
+                    a = new;
+                } else {
+                    b = new;
+                }
+            }
+            let p = Plan {
+                a: Some(a.clone()),
+                b: Some(b.clone()),
+                ..plan.clone()
+            };
+            self.product(&p, &bufs)
+        })();
+        for t in tmps {
+            self.x.free(&t);
+        }
+        got
+    }
+
+    /// `_reordered`: a product whose output is not dense [batch.., m, n]
+    /// into an f16 temporary so, then moved into the output.
+    fn reordered(&mut self, plan: &Plan, bufs: &Bufs, order: &[Id]) -> Result<(), Refusal> {
+        let key = self.key("mmout");
+        let nbytes = self.hw.f16_bytes(self.size(order));
+        let t = self.x.storage(nbytes);
+        self.x.store_mut(&t).dtype = Some("float16".into());
+        let sub = Plan {
+            out_slot: key.clone(),
+            out_dtype: "half".into(),
+            out_ranges: order.to_vec(),
+            out_shape: order.iter().map(|r| self.extent(*r)).collect(),
+            out_strides: None,
+            ..plan.clone()
+        };
+        let mut b2 = bufs.clone();
+        b2.insert(
+            key,
+            View {
+                base: t.clone(),
+                offset: 0,
+                nbytes,
+            },
+        );
+        let got = self.matmul(&sub, &b2).and_then(|_| {
+            let (tplan, tbufs, fin) = self.half_target(plan, bufs)?;
+            self.moved(&tplan, &tbufs, &t, &self.dense(order))?;
+            self.finish_half(fin);
+            Ok(())
+        });
+        self.x.free(&t);
+        got
+    }
+
+    /// `_product`: both sides packed, the epilogue's operands bound.
+    pub(super) fn product(&mut self, plan: &Plan, bufs: &Bufs) -> Result<(), Refusal> {
+        let (m, n, ks) = plan.mnk.clone().unwrap();
+        let (a, b) = (plan.a.clone().unwrap(), plan.b.clone().unwrap());
+        let (em, en) = (self.extent(m), self.extent(n));
+        let k = self.size(&ks);
+        let batch: Vec<Id> = plan
+            .out_ranges
+            .iter()
+            .copied()
+            .filter(|r| plan.batch.contains(r))
+            .collect();
+        let bt = self.size(&batch);
+        let (pa, pb) = (a.c(m), b.c(n));
+        self.batched(&a, &batch, em * pa, "A")?;
+        let shared = !batch.iter().any(|r| b.c(*r) != 0);
+        if !shared {
+            self.batched(&b, &batch, en * pb, "B")?;
+        }
+        let np = self.hw.whole_blocks(en);
+        let rows = plan.out_ranges[..plan.out_ranges.len() - 1].to_vec();
+        let stat = plan.accesses.iter().any(|acc| {
+            self.classify(acc, &rows, &[n])
+                .is_some_and(|o| o.kind == "row")
+        });
+        let hw = self.hw;
+        let q = if stat { self.stat_rows() } else { hw.band };
+        let mm = Mm::plan(&hw, bt, em, np, k, shared, Some(q))?;
+        let qa = self.packed(
+            &bufs[&a.slot],
+            &a.dtype,
+            &Operand {
+                pitch: pa,
+                offset: a.off,
+                ..Operand::new("full")
+            },
+            (em, k, mm.mp, mm.kp),
+            "a",
+            (mm.tm / hw.band, mm.nk, bt),
+        )?;
+        let qb = self.packed(
+            &bufs[&b.slot],
+            &b.dtype,
+            &Operand {
+                pitch: pb,
+                offset: b.off,
+                ..Operand::new("full")
+            },
+            (en, k, en.max(mm.n), mm.kp),
+            "b",
+            (mm.tn / hw.band, mm.nk, if shared { 1 } else { bt }),
+        )?;
+        let mut binds = BTreeMap::from([("a".to_string(), qa), ("b".to_string(), qb)]);
+        let mut extras = Vec::new();
+        let mut lays = Vec::new();
+        let got = self
+            .epilogue(
+                plan,
+                bufs,
+                &mm,
+                (&batch, m, n, np, &rows),
+                &mut binds,
+                &mut extras,
+                &mut lays,
+            )
+            .and_then(|bufs| {
+                self.product_run(plan, &bufs, &mm, binds, &extras, (&batch, m, n, np))
+            });
+        for t in lays {
+            self.x.free(&t);
+        }
+        got
+    }
+
+    /// `_product`'s epilogue operands: each read as a row form the kernel
+    /// takes, laid out first where it is not one.
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn epilogue(
+        &mut self,
+        plan: &Plan,
+        bufs: &Bufs,
+        mm: &Mm,
+        (batch, m, n, np, rows): (&[Id], Id, Id, i64, &[Id]),
+        binds: &mut BTreeMap<String, Addr>,
+        extras: &mut Vec<Operand>,
+        lays: &mut Vec<String>,
+    ) -> Result<Bufs, Refusal> {
+        let mut bufs = bufs.clone();
+        let (em, en) = (self.extent(m), self.extent(n));
+        let bt = self.size(batch);
+        let rpad = mm.mp != em;
+        let out_n: i64 = plan.out_shape.iter().product();
+        for (i, acc0) in plan.accesses.iter().enumerate() {
+            let i = i + 1;
+            let mut acc = acc0.clone();
+            let mut o = self.classify(&acc, rows, &[n]);
+            if o.is_none() {
+                let t = self.x.storage(self.hw.f16_bytes(out_n));
+                lays.push(t.clone());
+                let key = self.key("epi");
+                let nbytes = self.x.store(&t).nbytes;
+                if acc.slot == Slot::Table {
+                    let vals = self.table_over(&acc, &plan.out_ranges);
+                    self.write_u16(&t, &vals);
+                    self.x.wrote(&t, &crate::exec::flat(), false);
+                    bufs.insert(
+                        key.clone(),
+                        View {
+                            base: t,
+                            offset: 0,
+                            nbytes,
+                        },
+                    );
+                } else {
+                    bufs.insert(
+                        key.clone(),
+                        View {
+                            base: t,
+                            offset: 0,
+                            nbytes,
+                        },
+                    );
+                    let lp = self.laid_plan(plan, key.clone(), &acc, &plan.out_ranges, None);
+                    self.vector(&lp, &bufs)?;
+                }
+                acc = Access {
+                    slot: key,
+                    dtype: "half".into(),
+                    coef: self.dense(&plan.out_ranges),
+                    off: 0,
+                    table: None,
+                    gate: false,
+                };
+                o = self.classify(&acc, rows, &[n]);
+            }
+            let Some(mut o) = o else {
+                return Err(Refusal::new(
+                    "TG.RUN.019",
+                    format!(
+                        "an epilogue operand read as no row form: strides {:?}",
+                        acc.coef
+                    ),
+                ));
+            };
+            let start = match bufs.get(&acc.slot) {
+                Some(v) => v.offset.div_euclid(item(&acc.dtype)),
+                None => 0,
+            };
+            let off_word = o.kind == "row" && !self.takes(Some(&o), np, start);
+            if (rpad || off_word) && (o.kind == "full" || o.kind == "row") {
+                let cols: Vec<Id> = if o.kind == "full" { vec![n] } else { vec![] };
+                let width = if cols.is_empty() { 1 } else { np };
+                let t = self.pad_rows(plan, &bufs, &acc, (batch, m, &cols), mm.mp, width)?;
+                lays.push(t.clone());
+                let nrows = bt * mm.mp;
+                let o2 = if cols.is_empty() {
+                    Operand {
+                        rows: nrows,
+                        ..Operand::new("row")
+                    }
+                } else {
+                    Operand {
+                        pitch: np,
+                        rows: nrows,
+                        ..Operand::new("full")
+                    }
+                };
+                binds.insert(format!("in{i}"), self.x.addr(&t, 0));
+                extras.push(o2);
+                continue;
+            }
+            let h = self.hw.halves;
+            if o.kind == "col"
+                && (o.offset % h != 0 || (np != en && !crate::mutant::on("memory/unsafe-bounds")))
+            {
+                let t = self.x.storage(2 * np);
+                lays.push(t.clone());
+                let at = self.x.addr(&t, 0);
+                if acc.slot == Slot::Table {
+                    let bits = &acc.table.as_ref().unwrap().bits;
+                    let mut laid = vec![0u16; np as usize];
+                    laid[..en as usize]
+                        .copy_from_slice(&bits[o.offset as usize..(o.offset + en) as usize]);
+                    self.write_u16(&t, &laid);
+                } else if !self.gather_to(
+                    &acc,
+                    &bufs,
+                    &[(en, 1)],
+                    o.offset,
+                    &[(en, 1)],
+                    0,
+                    np,
+                    at.clone(),
+                    false,
+                )? {
+                    return Err(Refusal::new(
+                        "TG.RUN.019",
+                        format!("an epilogue row of {en} with no f16 form"),
+                    ));
+                }
+                binds.insert(format!("in{i}"), at);
+                extras.push(Operand::new("col"));
+                continue;
+            }
+            let (mut at, o2) = self.addr_of(&acc, &o, &bufs)?;
+            o = o2;
+            if o.kind == "full" && (o.pitch < np || o.offset % h != 0 || o.pitch % h != 0) {
+                let nrows = bt * em;
+                let t = self.x.storage(2 * nrows * np);
+                lays.push(t.clone());
+                let tat = self.x.addr(&t, 0);
+                if (2 * en) % self.hw.word == 0 && o.offset % h == 0 && o.pitch % h == 0 {
+                    let src = Addr {
+                        offset: at.offset + 2 * o.offset,
+                        ..at.clone()
+                    };
+                    self.repitch(src, o.pitch, tat.clone(), np, nrows, en)?;
+                } else if acc.slot == Slot::Table {
+                    let bits = &acc.table.as_ref().unwrap().bits;
+                    let mut laid = vec![0u16; (nrows * np) as usize];
+                    for r in 0..nrows {
+                        let from = (o.offset + r * o.pitch) as usize;
+                        let to = (r * np) as usize;
+                        laid[to..to + en as usize].copy_from_slice(&bits[from..from + en as usize]);
+                    }
+                    self.write_u16(&t, &laid);
+                } else {
+                    let walk = [(nrows, o.pitch), (en, 1)];
+                    let dwalk = [(nrows, np), (en, 1)];
+                    if !self.gather_to(
+                        &acc,
+                        &bufs,
+                        &walk,
+                        o.offset,
+                        &dwalk,
+                        0,
+                        nrows * np,
+                        tat.clone(),
+                        false,
+                    )? {
+                        return Err(Refusal::new(
+                            "TG.RUN.019",
+                            format!("an epilogue operand of rows of {en} with no f16 form"),
+                        ));
+                    }
+                }
+                at = tat;
+                o = Operand {
+                    pitch: np,
+                    rows: nrows,
+                    ..Operand::new("full")
+                };
+            }
+            binds.insert(format!("in{i}"), at);
+            extras.push(o);
+        }
+        Ok(bufs)
+    }
+
+    /// `_pad_rows`: `acc` over [batch.., m, cols..] as f16, each batch's
+    /// rows padded to `mp`, rows `width` apart.
+    fn pad_rows(
+        &mut self,
+        plan: &Plan,
+        bufs: &Bufs,
+        acc: &Access,
+        (batch, m, cols): (&[Id], Id, &[Id]),
+        mp: i64,
+        width: i64,
+    ) -> Result<String, Refusal> {
+        let order: Vec<Id> = batch
+            .iter()
+            .copied()
+            .chain([m])
+            .chain(cols.iter().copied())
+            .collect();
+        let mut strides = vec![width];
+        if !cols.is_empty() {
+            strides.push(1);
+        }
+        let mut step = mp * width;
+        for r in batch.iter().rev() {
+            strides.insert(0, step);
+            step *= self.extent(*r);
+        }
+        let t = self.x.storage(self.hw.f16_bytes(step));
+        self.x.wrote(&t, &crate::exec::flat(), false);
+        self.x.store_mut(&t).dtype = Some("float16".into());
+        if acc.slot == Slot::Table {
+            let vals = self.table_over(acc, &order);
+            let ext: Vec<i64> = order.iter().map(|r| self.extent(*r)).collect();
+            let mut laid = vec![0u16; step as usize];
+            let mut idx = vec![0i64; order.len()];
+            for v in vals {
+                let at: i64 = idx.iter().zip(&strides).map(|(i, s)| i * s).sum();
+                laid[at as usize] = v;
+                for d in (0..order.len()).rev() {
+                    idx[d] += 1;
+                    if idx[d] < ext[d] {
+                        break;
+                    }
+                    idx[d] = 0;
+                }
+            }
+            self.write_u16(&t, &laid);
+            return Ok(t);
+        }
+        let key = self.key("pad_rows");
+        let mut b2 = bufs.clone();
+        let nbytes = self.x.store(&t).nbytes;
+        b2.insert(
+            key.clone(),
+            View {
+                base: t.clone(),
+                offset: 0,
+                nbytes,
+            },
+        );
+        let lp = self.laid_plan(plan, key, acc, &order, Some(strides));
+        match self.vector(&lp, &b2) {
+            Ok(()) => Ok(t),
+            Err(e) => {
+                self.x.free(&t);
+                Err(e)
+            }
+        }
+    }
+
+    /// `_product_run`: the kernel, into the output, its padded-rows form,
+    /// or an [bt, mp, Np] temporary whose window is moved out.
+    #[allow(clippy::type_complexity)]
+    fn product_run(
+        &mut self,
+        plan: &Plan,
+        bufs: &Bufs,
+        mm: &Mm,
+        mut binds: BTreeMap<String, Addr>,
+        extras: &[Operand],
+        (batch, m, n, np): (&[Id], Id, Id, i64),
+    ) -> Result<(), Refusal> {
+        let (em, en) = (self.extent(m), self.extent(n));
+        let bt = self.size(batch);
+        let mp = mm.mp;
+        let padded = np != en || mp != em;
+        let (dst, doff) = self.base(bufs, &plan.out_slot);
+        let whole = doff == 0 && plan.out_strides.is_none();
+        let narrow = (2 * en) % self.hw.word != 0 || plan.out_dtype != "half";
+        let in_form = np != en && narrow && whole && is_float(&plan.out_dtype);
+        let pkey = rows_key(en, np);
+        let mut tmp = None;
+        let mut key = None;
+        let out_at = if padded {
+            if in_form && mp == em {
+                self.x.form(&dst, &pkey, 2 * bt * em * np)
+            } else {
+                let t = self.x.storage(2 * bt * mp * np);
+                let at = self.x.addr(&t, 0);
+                tmp = Some(t);
+                at
+            }
+        } else {
+            let (at, k) = self.out(plan, bufs)?;
+            key = Some(k);
+            at
+        };
+        binds.insert("out".into(), out_at);
+        let call = Call {
+            gen: "matmul.mm_kernel".into(),
+            args: json!({
+                "mm": mm.made_by(),
+                "e": expr_arg(plan.expr.as_ref().unwrap()),
+                "extras": extras.iter().map(Operand::json).collect::<Vec<_>>(),
+                "out": Operand { pitch: np, rows: bt * mp, ..Operand::new("full") }.json(),
+                "clusters": self.clusters(),
+                "cores": self.cores(),
+            }),
+        };
+        self.x.launch(
+            call,
+            "matmul",
+            json!({"plan": plan.name, "mm": mm.made_by()}),
+            binds,
+        );
+        if let Some(k) = key {
+            self.wrote(plan, bufs, &k);
+            return Ok(());
+        }
+        let Some(tmp) = tmp else {
+            self.x.wrote(&dst, &pkey, false);
+            self.x.store_mut(&dst).dtype = Some(np_name(&plan.out_dtype));
+            return Ok(());
+        };
+        let got = self.product_out(plan, bufs, &tmp, (batch, m, n, np, mp), in_form);
+        self.x.free(&tmp);
+        got
+    }
+
+    /// The [.., M, N] window of the [.., mp, Np] product in `tmp` into the
+    /// output's padded-rows form, else the output itself.
+    fn product_out(
+        &mut self,
+        plan: &Plan,
+        bufs: &Bufs,
+        tmp: &str,
+        (batch, m, n, np, mp): (&[Id], Id, Id, i64, i64),
+        in_form: bool,
+    ) -> Result<(), Refusal> {
+        let cols = if in_form {
+            self.fresh_ranges(plan, &[np])[0]
+        } else {
+            n
+        };
+        let ids: Vec<Id> = batch.iter().copied().chain([m, cols]).collect();
+        let ext: Vec<i64> = batch
+            .iter()
+            .map(|r| self.extent(*r))
+            .chain([mp, np])
+            .collect();
+        let mut coef: Vec<(Id, i64)> = Vec::new();
+        let mut step = 1;
+        for (r, e) in ids.iter().zip(&ext).rev() {
+            coef.push((*r, step));
+            step *= e;
+        }
+        if !in_form {
+            let (tplan, tbufs, fin) = self.half_target(plan, bufs)?;
+            self.moved(&tplan, &tbufs, tmp, &coef)?;
+            self.finish_half(fin);
+            return Ok(());
+        }
+        let (dst, _) = self.base(bufs, &plan.out_slot);
+        let (em, en) = (self.extent(m), self.extent(n));
+        let bt = self.size(batch);
+        let pkey = rows_key(en, np);
+        let form = self.x.form(&dst, &pkey, 2 * bt * em * np);
+        let fbytes = self
+            .x
+            .store(&dst)
+            .forms
+            .iter()
+            .find(|(k, _)| *k == pkey)
+            .unwrap()
+            .1;
+        let (tkey, fkey) = (self.key("mmpad"), self.key("mmform"));
+        let alias = self.x.alias(form, fbytes);
+        let mut moves = bufs.clone();
+        let tbytes = self.x.store(tmp).nbytes;
+        moves.insert(
+            tkey.clone(),
+            View {
+                base: tmp.into(),
+                offset: 0,
+                nbytes: tbytes,
+            },
+        );
+        moves.insert(
+            fkey.clone(),
+            View {
+                base: alias,
+                offset: 0,
+                nbytes: fbytes,
+            },
+        );
+        let read = Access {
+            slot: tkey,
+            dtype: "half".into(),
+            coef,
+            off: 0,
+            table: None,
+            gate: false,
+        };
+        let lp = self.laid_plan(plan, fkey, &read, &ids, None);
+        let got = self.bare(&lp, &moves)?;
+        assert!(got, "an f16 output: the gather takes any read");
+        self.x.wrote(&dst, &pkey, false);
+        self.x.store_mut(&dst).dtype = Some(np_name(&plan.out_dtype));
+        Ok(())
+    }
+}

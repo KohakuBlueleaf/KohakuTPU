@@ -1,0 +1,3 @@
+// A unary term of `ktpu.pest`: a sign, or an atom placed in a space when an
+// `@` follows it. The atom is read once.
+unary = { neg | pos | notp | atom ~ placed_tail? }

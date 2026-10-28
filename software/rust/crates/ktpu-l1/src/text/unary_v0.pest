@@ -1,0 +1,3 @@
+// The mutant `l1.text/placed-first`: `atom @ atom` tried before `atom`, so a
+// term without `@` reads its atom twice, at every nesting depth.
+unary = { neg | pos | notp | placed | atom }
