@@ -227,6 +227,11 @@ part that is genuinely laborious and where the framework saves the most time.
 level. [KohakuTPU](projects/kohakutpu/) is the reference instance: an MXFP7
 tensor accelerator that exercises every part of the framework.
 
+**[os/](os/)** — KohakuAccel OS, the operating system for the system nodes of
+any KohakuAccel machine: one image per node, a board description for what
+differs, threads and shared memory across nodes over AMP hardware, and generic
+dispatch to compute units. Architecture, ABI, boards, building, measured costs.
+
 **[notes/](notes/)** — design rationale and open research. Why decisions went
 the way they did, and what is still undecided.
 
