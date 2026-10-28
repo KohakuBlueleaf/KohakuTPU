@@ -68,7 +68,18 @@
 #define SYS_ENGINE        24 /* (unit, words, count) -> 0 / fault: instructions through the dispatch engine */
 #define SYS_SHUTDOWN      25 /* (code): every node exits; the caller's node last */
 #define SYS_LAND          26 /* (node) -> user address of this node's landing zone; `node` must be this node */
-#define SYS_NCALLS        27
+#define SYS_EVENT         27 /* (target, timeout, buf, n | chan << 32) -> once the retirement count reaches target or
+                                chan has messages: their number; units' retired/faults into buf, a1 = the count */
+#define SYS_VTOP          28 /* (va, len) -> physical address of a contiguous user range, as units and the mover name it */
+#define SYS_MUNMAP        29 /* (va, size): unmap a contiguous SYS_MMAP range and free its frames */
+#define SYS_NCALLS        30
+
+/* SYS_MMAP flags */
+#define KOS_MMAP_UNCACHED 1u /* map through the uncached alias */
+/* SYS_RECV timeout: return KOS_ETIME at once when no message is queued */
+#define KOS_NOWAIT        (~0UL)
+/* SYS_SEND length flag: return KOS_EAGAIN instead of waiting for room */
+#define KOS_SEND_NOWAIT   0x100u
 
 #define KOS_I_NODE    0
 #define KOS_I_NODES   1
@@ -82,6 +93,10 @@
 #define KOS_I_L0RTT   9 /* cycles of one kernel -> L0 call round trip, measured now */
 #define KOS_I_SHPA    10 /* the address units and the mover name the shared region by, 0 if none */
 #define KOS_I_LANDPA  11 /* the address units and the mover name this node's landing zone by */
+#define KOS_I_SPAN    12 /* (node) that node's private span, as this node's units and mover name it */
+#define KOS_I_SPANSZ  13 /* (node) its size */
+#define KOS_I_MESHOF  14 /* (node) its mesh */
+#define KOS_I_PROF    15 /* (a) trap-profile sums, a -D KOS_PROF kernel only (kernel.h); EINVAL otherwise */
 
 #define KOS_C_RELEASE 1 /* write back this node's dirty lines */
 #define KOS_C_ACQUIRE 2 /* write back, then drop every line */

@@ -268,6 +268,15 @@ int k_chan_put(unsigned src, unsigned chan, const void *data, unsigned len)
     return 0;
 }
 
+unsigned k_chan_count(unsigned chan)
+{
+    unsigned n = 0;
+    for (unsigned i = ch_head; i != ch_tail; i = (i + 1) % K_CHANQ) {
+        n += chq[i].chan == chan;
+    }
+    return n;
+}
+
 /* A user send: into the local queue, or a message to the node, when there is
  * room; the caller blocks (W_SEND) and retries otherwise. */
 int k_chan_send(uint64_t node_chan, const void *data, unsigned len)

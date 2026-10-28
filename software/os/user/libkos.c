@@ -87,6 +87,7 @@ int64_t kos_run(const char *app, const char *args, unsigned node)
 }
 
 uint64_t kos_info(unsigned key) { return (uint64_t)kos_sys(SYS_INFO, key, 0, 0, 0).st; }
+int64_t kos_info_of(unsigned key, unsigned node) { return kos_sys(SYS_INFO, key, node, 0, 0).st; }
 unsigned kos_node(void) { return (unsigned)kos_info(KOS_I_NODE); }
 unsigned kos_nodes(void) { return (unsigned)kos_info(KOS_I_NODES); }
 uint64_t kos_time(void) { return (uint64_t)kos_sys(SYS_TIME, 0, 0, 0, 0).st; }
@@ -115,11 +116,17 @@ int kos_printf(const char *fmt, ...)
 }
 
 /* ---- memory ---- */
-void *kos_mmap(uint64_t size)
+void *kos_mmap(uint64_t size) { return kos_mmap_flags(size, 0); }
+
+void *kos_mmap_flags(uint64_t size, unsigned flags)
 {
-    int64_t r = kos_sys(SYS_MMAP, size, 0, 0, 0).st;
+    int64_t r = kos_sys(SYS_MMAP, size, flags, 0, 0).st;
     return r < 0 ? 0 : (void *)r;
 }
+
+int kos_munmap(void *p, uint64_t size) { return (int)kos_sys(SYS_MUNMAP, (uint64_t)p, size, 0, 0).st; }
+
+int64_t kos_vtop(const void *p, uint64_t len) { return kos_sys(SYS_VTOP, (uint64_t)p, len, 0, 0).st; }
 
 int kos_shared_ok(void) { return kos_info(KOS_I_SHARED) != 0; }
 
@@ -239,6 +246,14 @@ int kos_send(unsigned node, unsigned chan, const void *buf, unsigned len)
     return (int)kos_sys(SYS_SEND, node, chan, (uint64_t)buf, len).st;
 }
 
+int kos_send_nowait(unsigned node, unsigned chan, const void *buf, unsigned len)
+{
+    if (shared_cached()) {
+        kos_release();
+    }
+    return (int)kos_sys(SYS_SEND, node, chan, (uint64_t)buf, len | KOS_SEND_NOWAIT).st;
+}
+
 int kos_recv(unsigned chan, void *buf, uint64_t timeout, unsigned *src)
 {
     struct kos_r r = kos_sys(SYS_RECV, chan, (uint64_t)buf, timeout, 0);
@@ -293,6 +308,15 @@ int64_t kos_move(const void *src, uint64_t dst, uint64_t words, unsigned flags)
 }
 
 volatile void *kos_land(void) { return (volatile void *)kos_sys(SYS_LAND, kos_node(), 0, 0, 0).st; }
+
+int kos_event(uint64_t target, uint64_t timeout, uint64_t *counts, unsigned n, unsigned chan, uint64_t *now)
+{
+    struct kos_r r = kos_sys(SYS_EVENT, target, timeout, (uint64_t)counts, n | (uint64_t)chan << 32);
+    if (r.st >= 0 && now) {
+        *now = r.val;
+    }
+    return (int)r.st;
+}
 
 int64_t kos_stat(unsigned what, void *buf, uint64_t max)
 {

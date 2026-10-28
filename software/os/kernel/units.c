@@ -12,6 +12,7 @@
 
 struct kunit kunits[KOS_MAX_UNITS];
 unsigned knunits;
+uint64_t k_events;
 
 /* per unit: retired = done + faults; engine-owned units mirror a counter */
 static uint64_t retired[KOS_MAX_UNITS];
@@ -60,12 +61,14 @@ void k_units_poll(void)
             ++u->done;
             ++retired[i];
             ++kstat.completions;
+            ++k_events;
             break;
         case HW_SIG_FAULT_CODE:
             ++u->faults;
             ++retired[i];
             u->fault_arg = HW_CQ_ARG(w);
             ++kstat.faults;
+            ++k_events;
             break;
         case HW_SIG_DATA:
             ++u->acks;
@@ -96,11 +99,24 @@ void k_units_poll(void)
             kunits[i].done += d;
             retired[i] += d;
             kstat.completions += d;
+            k_events += d;
         }
     }
 }
 
 uint64_t k_unit_retired(unsigned u) { return retired[u]; }
+
+/* Units [0, n): retired and fault counts, two words each, into a user buffer. */
+int k_event_out(uint64_t ubuf, uint64_t n)
+{
+    uint64_t w[2 * KOS_MAX_UNITS];
+    n = n < knunits ? n : knunits;
+    for (unsigned i = 0; i < n; ++i) {
+        w[2 * i] = retired[i];
+        w[2 * i + 1] = kunits[i].faults;
+    }
+    return n ? k_copy_out(ubuf, w, 16 * n) : KOS_OK;
+}
 
 /* One flit to unit u: `dst` adds the typed bits to its coordinate. Once the
  * dispatch engine runs, it owns the mailbox registers, so every flit goes

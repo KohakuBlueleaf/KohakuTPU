@@ -26,6 +26,11 @@ s_trap_entry:
     sd      x3, 24(tp)
     sd      x5, 40(tp)
     sd      x6, 48(tp)
+#ifdef KOS_PROF
+    csrr    t0, cycle
+    la      t1, k_prof_at
+    sd      t0, 0(t1)
+#endif
     sd      x7, 56(tp)
     sd      x8, 64(tp)
     sd      x9, 72(tp)
@@ -58,6 +63,11 @@ s_trap_entry:
     csrw    sscratch, zero
     mv      a0, tp
     la      sp, __k_stack_top
+#ifdef KOS_PROF
+    csrr    t0, cycle
+    la      t1, k_prof_at
+    sd      t0, 8(t1)
+#endif
     call    k_trap
     /* k_trap does not return: it ends in k_resume */
 2:  j       2b
@@ -75,6 +85,11 @@ s_trap_kernel:
 /* k_resume(t): t's frame is at t. */
     .globl  k_resume
 k_resume:
+#ifdef KOS_PROF
+    csrr    t0, cycle
+    la      t1, k_prof_at
+    sd      t0, 48(t1)
+#endif
     ld      t0, 256(a0)
     csrw    sepc, t0
     li      t0, 0x100           /* SPP = U */

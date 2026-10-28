@@ -54,7 +54,15 @@ int64_t kos_run(const char *app, const char *args, unsigned node);
 unsigned kos_node(void);
 unsigned kos_nodes(void);
 uint64_t kos_info(unsigned key);
+int64_t kos_info_of(unsigned key, unsigned node); /* KOS_I_SPAN, KOS_I_SPANSZ, KOS_I_MESHOF */
 uint64_t kos_time(void);
+/* The same global time, read from the time CSR without a system call. */
+static inline uint64_t kos_now(void)
+{
+    uint64_t t;
+    __asm__ volatile("csrr %0, time" : "=r"(t));
+    return t;
+}
 void kos_sleep(uint64_t cycles);
 __attribute__((noreturn)) void kos_shutdown(int64_t code);
 
@@ -65,6 +73,9 @@ int kos_printf(const char *fmt, ...);
 
 /* memory */
 void *kos_mmap(uint64_t size);
+void *kos_mmap_flags(uint64_t size, unsigned flags); /* KOS_MMAP_UNCACHED */
+int kos_munmap(void *p, uint64_t size);
+int64_t kos_vtop(const void *p, uint64_t len); /* physical address of a contiguous range, or KOS_EINVAL */
 void *kos_shalloc(uint64_t size); /* shared, 64-byte aligned, never freed */
 int kos_shared_ok(void);
 void kos_release(void);
@@ -93,7 +104,8 @@ void kos_unlock(kos_lock_t *l);
 
 /* channels: up to 40 bytes per message */
 int kos_send(unsigned node, unsigned chan, const void *buf, unsigned len);
-int kos_recv(unsigned chan, void *buf, uint64_t timeout, unsigned *src);
+int kos_send_nowait(unsigned node, unsigned chan, const void *buf, unsigned len); /* KOS_EAGAIN: no room */
+int kos_recv(unsigned chan, void *buf, uint64_t timeout, unsigned *src); /* timeout KOS_NOWAIT: never waits */
 
 /* units, the mover, the engine */
 int64_t kos_units(struct kos_unit *buf, unsigned max);
@@ -103,6 +115,11 @@ int kos_unit_ctrl(unsigned unit, unsigned index, uint64_t *value);
 int64_t kos_engine(unsigned unit, const uint64_t *w, unsigned count);
 int64_t kos_move(const void *src, uint64_t dst, uint64_t words, unsigned flags);
 volatile void *kos_land(void); /* this node's landing zone (uncached); KOS_I_LANDPA names it for units */
+/* Wait until the node's retirement count (every unit completion or fault)
+ * reaches `target` or channel `chan` has a message; units [0, n)'s retired
+ * and fault counts go to counts[2 * i], counts[2 * i + 1], *now the count.
+ * The number of messages queued on chan, or KOS_ETIME. */
+int kos_event(uint64_t target, uint64_t timeout, uint64_t *counts, unsigned n, unsigned chan, uint64_t *now);
 
 int64_t kos_stat(unsigned what, void *buf, uint64_t max);
 

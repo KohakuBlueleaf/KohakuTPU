@@ -174,6 +174,16 @@ static int64_t test_wait(struct thread *t, int *done)
         }
         break;
     }
+    case W_EVENT: {
+        unsigned q = k_chan_count((uint32_t)((uint64_t)t->result >> 32));
+        if ((int64_t)(k_events - t->wa) >= 0 || q) {
+            *done = 1;
+            t->x[11] = k_events;
+            int st = k_event_out(t->wb, (uint64_t)t->result & 0xffffffff);
+            return st ? st : q;
+        }
+        break;
+    }
     case W_ENGINE: {
         uint64_t c = hw_rd(HW_R_DE_CTR + 8 * (unsigned)t->wa) & 0xfff;
         if (((c - t->wb) & 0xfff) < 0x800) {
@@ -270,6 +280,45 @@ void k_kernel_trap(uint64_t cause, uint64_t epc, uint64_t tval)
     k_panic("kernel trap cause %lx epc %lx tval %lx", cause, epc, tval);
 }
 
+#ifdef KOS_PROF
+uint64_t k_prof_at[K_PROF_AT];
+/* [0] the caller's stamp (its a0) to the entry, [1] the saves, [2] into
+ * k_trap, [3] the system call, [4] the poll, [5] k_schedule, [6] to k_resume */
+static uint64_t prof_sum[K_PROF_AT], prof_n, prof_nr = ~0UL;
+static int prof_last;
+
+void k_prof_trap(const struct thread *t, uint64_t cause, uint64_t start)
+{
+    if (prof_last) {
+        for (unsigned i = 3; i < K_PROF_AT; ++i) {
+            prof_sum[i] += k_prof_at[i] - k_prof_at[i - 1];
+        }
+    }
+    k_prof_at[2] = start;
+    prof_last = cause == 8 && t->x[17] == prof_nr;
+    if (prof_last) {
+        prof_sum[0] += k_prof_at[0] - t->x[10];
+        prof_sum[1] += k_prof_at[1] - k_prof_at[0];
+        prof_sum[2] += k_prof_at[2] - k_prof_at[1];
+        ++prof_n;
+    }
+}
+
+/* KOS_I_PROF: a < K_PROF_AT a sum, K_PROF_AT the count; 0x100 + nr clears
+ * the sums and selects system call nr. */
+int64_t k_prof_info(uint64_t a)
+{
+    if (a >= 0x100) {
+        memset(prof_sum, 0, sizeof prof_sum);
+        prof_n = 0;
+        prof_nr = a - 0x100;
+        prof_last = 0;
+        return KOS_OK;
+    }
+    return a < K_PROF_AT ? (int64_t)prof_sum[a] : a == K_PROF_AT ? (int64_t)prof_n : KOS_EINVAL;
+}
+#endif
+
 void k_trap(uint64_t *frame)
 {
     struct thread *t = kcur;
@@ -280,6 +329,9 @@ void k_trap(uint64_t *frame)
     t->cycles += now - t->since;
     ++kstat.traps;
     uint64_t cause = csr_read(scause);
+#ifdef KOS_PROF
+    k_prof_trap(t, cause, now);
+#endif
     if (cause & CAUSE_IRQ) {
         unsigned code = (unsigned)(cause & 0x3f);
         if (code == 5) {
@@ -296,6 +348,7 @@ void k_trap(uint64_t *frame)
         t->x[32] += 4;
         ++kstat.syscalls;
         k_syscall(t);
+        K_PROF(3);
         if (kn.flags & KOS_F_POLL || t->state != KOS_T_RUN) {
             k_poll();
         }
@@ -304,7 +357,9 @@ void k_trap(uint64_t *frame)
                  cause, t->x[32], csr_read(stval));
         k_exit_thread(t, -(int64_t)(0x100 + cause));
     }
+    K_PROF(4);
     struct thread *n = k_schedule();
+    K_PROF(5);
     n->since = hw_cycles();
     k_resume(n);
 }

@@ -218,19 +218,35 @@ void *k_alloc(uint64_t bytes)
 }
 
 /* Private pages for the caller's node, physically contiguous (so the mover
- * and units can take the range whole), mapped cached and zeroed. */
+ * and units can take the range whole), zeroed, mapped cached or (flags
+ * KOS_MMAP_UNCACHED) through the uncached alias. */
 int64_t k_mmap(uint64_t size, unsigned flags)
 {
-    (void)flags;
     uint64_t n = KOS_ALIGN_UP(size, 4096) >> 12;
     uint64_t pa = frames(n);
     if (!pa) {
         return KOS_ENOMEM;
     }
     uint64_t va = mmap_next;
-    if (k_map(va, pa, n << 12, KOS_MAP_R | KOS_MAP_W | KOS_MAP_U)) {
+    unsigned attr = KOS_MAP_R | KOS_MAP_W | KOS_MAP_U | ((flags & KOS_MMAP_UNCACHED) ? KOS_MAP_UNCACHED : 0);
+    if (k_map(va, pa, n << 12, attr)) {
         return KOS_ENOMEM;
     }
     mmap_next += (n + 1) << 12;
     return (int64_t)va;
+}
+
+/* Unmap [va, va + size) of the mmap area, physically contiguous from pa, and
+ * free its frames. */
+int64_t k_munmap(uint64_t va, uint64_t pa, uint64_t size)
+{
+    uint64_t lo = KOS_UV_MMAP + (uint64_t)kn.me * 0x10000000UL;
+    if (!pa || (va | size) & 0xfff || va < lo || va + size > mmap_next) {
+        return KOS_EINVAL;
+    }
+    int64_t st = k_l0(KOS_M_UNMAP, va, size, 0, 0).st;
+    for (uint64_t off = 0; !st && off < size; off += 4096) {
+        k_frame_free(pa + off);
+    }
+    return st;
 }

@@ -262,6 +262,22 @@ void k_syscall(struct thread *t)
         case KOS_I_NUNITS:
             r = knunits;
             break;
+        case KOS_I_SPAN:
+        case KOS_I_SPANSZ:
+        case KOS_I_MESHOF:
+            if (a1 >= kn.n) {
+                r = KOS_EINVAL;
+            } else {
+                r = (int64_t)(a0 == KOS_I_SPAN     ? kn.peer_priv[a1]
+                              : a0 == KOS_I_SPANSZ ? kn.peer_priv_size[a1]
+                                                   : kn.mesh_of[a1]);
+            }
+            break;
+#ifdef KOS_PROF
+        case KOS_I_PROF:
+            r = k_prof_info(a1);
+            break;
+#endif
         default:
             r = KOS_EINVAL;
         }
@@ -395,13 +411,18 @@ void k_syscall(struct thread *t)
         break;
     }
     case SYS_SEND: {
-        if (a1 > 0xffffffffUL || a3 > 40 || a0 >= kn.n || k_copy_in(t->sendbuf, a2, a3)) {
+        uint64_t len = a3 & ~(uint64_t)KOS_SEND_NOWAIT;
+        if (a1 > 0xffffffffUL || len > 40 || a0 >= kn.n || k_copy_in(t->sendbuf, a2, len)) {
             r = KOS_EINVAL;
             break;
         }
-        if (k_chan_send(a0 << 32 | a1, t->sendbuf, (unsigned)a3)) {
+        if (k_chan_send(a0 << 32 | a1, t->sendbuf, (unsigned)len)) {
+            if (a3 & KOS_SEND_NOWAIT) {
+                r = KOS_EAGAIN;
+                break;
+            }
             k_block(t, W_SEND, a0 << 32 | a1, 0, 0);
-            t->result = (int64_t)a3;
+            t->result = (int64_t)len;
             return;
         }
         r = KOS_OK;
@@ -412,6 +433,10 @@ void k_syscall(struct thread *t)
         t->wb = a1;
         r = k_chan_take(t);
         if (r != -1) {
+            break;
+        }
+        if (a2 == KOS_NOWAIT) {
+            r = KOS_ETIME;
             break;
         }
         k_block(t, W_RECV, a0, a1, a2);
@@ -473,6 +498,25 @@ void k_syscall(struct thread *t)
     }
     case SYS_LAND:
         r = a0 == kn.me ? (int64_t)KOS_UV_LAND : KOS_EINVAL;
+        break;
+    case SYS_EVENT: {
+        unsigned q = k_chan_count((uint32_t)(a3 >> 32));
+        if ((int64_t)(k_events - a0) < 0 && !q) {
+            k_block(t, W_EVENT, a0, a2, a1);
+            t->result = (int64_t)a3;
+            return;
+        }
+        int st = k_event_out(a2, a3 & 0xffffffff);
+        ret2(t, st ? st : q, k_events);
+        return;
+    }
+    case SYS_VTOP: {
+        uint64_t pa = a1 ? move_pa(a0, a1) : 0;
+        r = pa ? (int64_t)pa : KOS_EINVAL;
+        break;
+    }
+    case SYS_MUNMAP:
+        r = k_munmap(a0, a1 ? move_pa(a0, a1) : 0, a1);
         break;
     default:
         r = KOS_EINVAL;

@@ -46,6 +46,7 @@ enum {
     W_READ,
     W_ENGINE,   /* a: counter, b: target */
     W_SEND,     /* a: node << 32 | channel, result: length; the bytes in sendbuf */
+    W_EVENT,    /* a: the retirement count to reach, b: user buffer, result: units to copy | channel << 32 */
 };
 
 struct thread {
@@ -95,6 +96,7 @@ int k_user_range(uint64_t va, uint64_t len);
 int k_stack_map(struct thread *t);
 void k_stack_unmap(struct thread *t);
 int64_t k_mmap(uint64_t size, unsigned flags);
+int64_t k_munmap(uint64_t va, uint64_t pa, uint64_t size);
 uint64_t k_user_pa(uint64_t va);  /* physical address of a user page's byte, 0 if unmapped */
 
 /* ---- L0 calls ---- */
@@ -152,6 +154,7 @@ void k_rings_drain(void); /* every ring queued has left */
 int k_chan_put(unsigned src, unsigned chan, const void *data, unsigned len); /* -1: queue full */
 int k_chan_take(struct thread *t);                                     /* -1: none yet */
 int k_chan_send(uint64_t node_chan, const void *data, unsigned len); /* -1: no room yet */
+unsigned k_chan_count(unsigned chan);                               /* messages queued on chan */
 
 /* ---- atomics at the home node ---- */
 unsigned k_home(uint64_t off);
@@ -170,6 +173,10 @@ struct kunit {
 };
 extern struct kunit kunits[KOS_MAX_UNITS];
 extern unsigned knunits;
+/* The node's retirement count: every unit retirement adds one (SYS_EVENT
+ * waits for it to reach a target, or for a message on a channel). */
+extern uint64_t k_events;
+int k_event_out(uint64_t ubuf, uint64_t n);
 void k_units_init(void);
 void k_units_poll(void);
 int64_t k_dispatch_local(unsigned u, const uint64_t w[4]);
@@ -179,6 +186,20 @@ int64_t k_engine_run(unsigned u, const uint64_t *w, unsigned count);
 int64_t k_move(uint64_t src_pa, uint64_t dst_pa, uint64_t words);
 void k_pending_add(unsigned kind, unsigned node, uint64_t req, uint64_t a, uint64_t b);
 void k_pending_poll(void);
+
+/* ---- trap profile (a -D KOS_PROF build): cycle stamps along the trap
+ * path, k_prof_at[0..6] = entry after the first saves, before k_trap, k_trap
+ * start, after the system call, after the poll, after k_schedule, k_resume;
+ * summed over the system calls with the selected number (KOS_I_PROF). ---- */
+#ifdef KOS_PROF
+#define K_PROF_AT 7
+extern uint64_t k_prof_at[K_PROF_AT];
+#define K_PROF(i) (k_prof_at[i] = hw_cycles())
+void k_prof_trap(const struct thread *t, uint64_t cause, uint64_t start);
+int64_t k_prof_info(uint64_t a);
+#else
+#define K_PROF(i) ((void)0)
+#endif
 
 /* ---- syscalls ---- */
 void k_syscall(struct thread *t);
