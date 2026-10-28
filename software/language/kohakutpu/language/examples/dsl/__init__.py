@@ -1,9 +1,11 @@
 """DSL kernel examples (`kohakutpu.language.dsl`), each with a sample
 specialisation and a float64 numpy reference:
 
+    from kohakutpu.language import dsl as kt, machine as MF
     from kohakutpu.language.examples import dsl as ex
+    machine = kt.Machine.of(MF.load("multimesh_v9t8"))
     e = ex.EXAMPLES["attention"]
-    print(e.kernel.trace(e.given, **e.consts).text)      # its L2 text
+    print(e.kernel.trace(e.given, machine=machine, **e.consts).text)      # its L2 text
     inputs = e.inputs(np.random.default_rng(0)); want = e.reference(inputs)
 
 `vector/` holds row kernels (activation, softmax, layernorm, rmsnorm, glu);

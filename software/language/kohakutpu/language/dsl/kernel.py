@@ -13,16 +13,30 @@ its buffer to be; the caller converts its tensor first. The cache key holds
 every spec, constant and the machine.
 """
 
+import contextvars
+import dataclasses
 import inspect
+import json
+import math
 import types
+from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast, overload
+
+import numpy as np
 
 from kohakutpu.language.dsl.errors import DSLError
 from kohakutpu.language.dsl.trace import Trace, recording
 from kohakutpu.language.dsl.types import Machine, TensorSpec
 from kohakutpu.language.dsl.values import Param
+
+#: Active mutation switch (shared with `kohakutpu.stack.rs._MUTANT`).
+_MUTANT: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "rs_mutant", default=None
+)
+#: Specialisations retained in `_TRACES` and per `Kernel._cache`.
+TRACES_KEPT = 4096
 
 
 class Port:
@@ -72,6 +86,17 @@ def auto[T](*candidates: T) -> T:
     return cast(T, Auto(*candidates))
 
 
+def causes(errors: list) -> str:
+    """The distinct failures of `errors` (``(candidate, exception)``) with
+    their counts, commonest first: ``12 candidates: 12 x ValueError: ...``
+    (each cause its exception's class and first line)."""
+    counts = Counter(
+        f"{type(e).__name__}: {(str(e).splitlines() or [''])[0]}" for _, e in errors
+    )
+    each = "; ".join(f"{n} x {why}" for why, n in counts.most_common())
+    return f"{len(errors)} candidates: {each}"
+
+
 @dataclass
 class Traced:
     """One specialisation: the L2 module text, each buffer's spec and role,
@@ -84,9 +109,18 @@ class Traced:
     consts: dict
     machine: Machine
     source: str = ""
+    #: the same trace as graph data (`dsl.graph.module`), what ktpu-graph reads
+    graph: dict = field(default_factory=dict)
+    _graph_json: str | None = field(default=None, init=False, repr=False, compare=False)
 
     def spec(self, name: str) -> TensorSpec:
         return dict(self.params)[name]
+
+    @property
+    def graph_json(self) -> str:
+        if self._graph_json is None:
+            self._graph_json = json.dumps(self.graph)
+        return self._graph_json
 
 
 def _spec_of(x) -> TensorSpec:
@@ -211,11 +245,16 @@ class Kernel:
         self, given: dict | None = None, *, machine=None, check=None, **consts
     ) -> Traced:
         """The specialisation for `given` (port name -> tensor or spec) and
-        `consts`. A `kt.auto` constant takes its first candidate whose trace
+        `consts`, requiring `machine=kt.Machine.of(machine_file)`. A `kt.auto`
+        constant takes its first candidate whose trace
         succeeds and passes `check` (a function of the `Traced`; the compiler
         passes one that compiles it)."""
         given = dict(given or {})
-        machine = machine or Machine()
+        if not isinstance(machine, Machine):
+            raise DSLError(
+                f"{self.name}: trace needs the machine it is traced for "
+                f"(machine=kt.Machine.of(<machine file>)), got {machine!r}"
+            )
         unknown = set(consts) - set(self.consts)
         if unknown:
             raise DSLError(f"{self.name} has no constant {sorted(unknown)}")
@@ -234,11 +273,18 @@ class Kernel:
             except (DSLError, ValueError) as e:
                 if not autos:
                     raise
-                errors.append(f"{c}: {e}")
+                errors.append((c, e))
         raise DSLError(
-            f"{self.name}: no kt.auto candidate traces and compiles:\n  "
-            + "\n  ".join(errors)
+            f"{self.name}: no kt.auto candidate traces and compiles "
+            f"({causes(errors)}):\n  " + "\n  ".join(f"{c}: {e}" for c, e in errors)
         )
+
+    def graph(
+        self, given: dict | None = None, *, machine=None, check=None, **consts
+    ) -> dict:
+        """The specialisation's graph data (`Traced.graph`), as `trace`
+        picks it."""
+        return self.trace(given, machine=machine, check=check, **consts).graph
 
     def _identity(self):
         """What decides this kernel's body, where each piece is a plain value:
@@ -254,14 +300,16 @@ class Kernel:
         if not _plain((cells, defaults)):
             return None
         roles = tuple((n, p.role) for n, p in self.ports.items())
-        return (code, self.name, cells, defaults, roles)
+        return (code, self.name, cells, defaults, roles, Trace)
 
     def _trace(self, given, consts, machine) -> Traced:
         specs = self.specs(given, consts)
+        ckey = tuple((k, _const_key(v)) for k, v in sorted(consts.items(), key=str))
         key = (
             tuple(sorted(specs.items())),
-            tuple(sorted(consts.items(), key=str)),
+            ckey,
             machine,
+            _MUTANT.get(),
         )
         hit = self._cache.get(key)
         if hit is not None:
@@ -269,10 +317,13 @@ class Kernel:
         # The same body built again (a kernel factory called per launch) is
         # traced once.
         ident = self._identity()
-        shared = None if ident is None or not _plain(key[1]) else (ident, key)
+        raw_consts = tuple(sorted(consts.items(), key=str))
+        shared = None if ident is None or not _plain(raw_consts) else (ident, key)
         hit = _TRACES.get(shared) if shared is not None else None
         if hit is not None:
             self._cache[key] = hit
+            while len(self._cache) > TRACES_KEPT:
+                self._cache.pop(next(iter(self._cache)))
             return hit
         t = Trace(self.name, machine)
         params = {}
@@ -293,10 +344,15 @@ class Kernel:
             dict(consts),
             machine,
             self.source,
+            t.graph(roles, consts),
         )
         self._cache[key] = traced
+        while len(self._cache) > TRACES_KEPT:
+            self._cache.pop(next(iter(self._cache)))
         if shared is not None:
             _TRACES[shared] = traced
+            while len(_TRACES) > TRACES_KEPT:
+                _TRACES.pop(next(iter(_TRACES)))
         return traced
 
 
@@ -305,13 +361,67 @@ _TRACES: dict = {}
 _PLAIN = (int, float, str, bool, bytes, type(None))
 
 
+def _const_key(v) -> tuple:
+    """Exact structural key; array keys retain dtype, shape and full value bytes."""
+    if v is None:
+        return ("none",)
+    if isinstance(v, bool):
+        return ("bool", v)
+    if isinstance(v, int):
+        return ("int", int(v))
+    if isinstance(v, float):
+        if math.isnan(v):
+            return ("float", "nan")
+        return ("float", math.copysign(1.0, v), v)
+    if isinstance(v, str):
+        return ("str", v)
+    if isinstance(v, bytes):
+        return ("bytes", v)
+    if isinstance(v, np.ndarray):
+        return ("ndarray", v.shape, str(v.dtype), v.tobytes())
+    if isinstance(v, np.generic):
+        return ("np", str(v.dtype), v.tobytes())
+    if isinstance(v, tuple):
+        return ("tuple", tuple(_const_key(x) for x in v))
+    if isinstance(v, list):
+        return ("list", tuple(_const_key(x) for x in v))
+    if isinstance(v, dict):
+        return (
+            "dict",
+            tuple(
+                sorted(
+                    ((_const_key(k), _const_key(val)) for k, val in v.items()),
+                    key=repr,
+                )
+            ),
+        )
+    if isinstance(v, (set, frozenset)):
+        return ("set", frozenset(_const_key(x) for x in v))
+    if dataclasses.is_dataclass(v) and not isinstance(v, type):
+        return (
+            "dc",
+            type(v),
+            tuple(
+                (f.name, _const_key(getattr(v, f.name))) for f in dataclasses.fields(v)
+            ),
+        )
+    return ("obj", type(v), id(v))
+
+
 def _plain(v) -> bool:
     """Whether `v` is built of plain values alone (numbers, strings, None,
-    and tuples / frozensets of them), so equal keys mean equal values."""
+    and tuples / frozensets / frozen dataclasses of them), so equal keys
+    mean equal values."""
     if isinstance(v, _PLAIN):
         return True
     if isinstance(v, (tuple, frozenset)):
         return all(_plain(x) for x in v)
+    if (
+        dataclasses.is_dataclass(v)
+        and not isinstance(v, type)
+        and getattr(getattr(v, "__dataclass_params__", None), "frozen", False)
+    ):
+        return all(_plain(getattr(v, f.name)) for f in dataclasses.fields(v))
     return False
 
 
@@ -330,4 +440,4 @@ def kernel(
     return Kernel(fn, name)
 
 
-__all__ = ["Auto", "In", "Kernel", "Out", "Port", "Traced", "auto", "kernel"]
+__all__ = ["Auto", "In", "Kernel", "Out", "Port", "Traced", "auto", "causes", "kernel"]

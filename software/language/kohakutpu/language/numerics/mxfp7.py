@@ -23,6 +23,8 @@ See docs/projects/kohakutpu/number-format.md s4.
 
 import numpy as np
 
+from kohakutpu.language.numerics import fp16
+
 # ---------------------------------------------------------------------------
 # THE BLOCK SCALE IS E5M3, NOT E8M0.
 #
@@ -110,7 +112,9 @@ def quantise_fp16(x):
     Returns ``(q, es, m8)``: the signed int7 significands, the unbiased scale
     exponents, and the scale mantissas in eighths (8..15 meaning 1.0..1.875).
     """
-    h = np.asarray(x).astype(np.float16)
+    h = np.asarray(x)
+    if h.dtype != np.float16:
+        h = fp16.write(h)
     if h.shape[-1] % KBLOCK:
         raise ValueError(f"K={h.shape[-1]} is not a multiple of {KBLOCK}")
 
@@ -174,9 +178,4 @@ def model_matmul(a, bt):
 
 def fp16_to_float(bits: int) -> float:
     """Decode one FP16, matching the accumulator's emission (no subnormals)."""
-    exp = (bits >> 10) & 0x1F
-    if exp == 0:
-        return 0.0
-    m = 1.0 + (bits & 0x3FF) / 1024.0
-    v = m * (2.0 ** (exp - 15))
-    return -v if bits & 0x8000 else v
+    return float(fp16.values(bits, consumer="cluster"))

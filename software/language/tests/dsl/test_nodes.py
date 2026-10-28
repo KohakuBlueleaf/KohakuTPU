@@ -5,9 +5,11 @@ another node's unit (a cross-node connection: an accumulator add)."""
 import pytest
 
 import kohakutpu.language.dsl as kt
+from kohakutpu.language import machine as MF
 from kohakutpu.language.text import module as M
 
-TWO = kt.Machine(mg=4, vc=2, nodes=2)
+ONE = kt.Machine.of(MF.load("multimesh_v9t8"))
+TWO = kt.Machine.of(MF.load("multimesh_v9t8"), nodes=2)
 
 
 @kt.kernel
@@ -21,7 +23,7 @@ def wide(x=kt.In("R", 128), y=kt.Out("R", 128)):
 
 
 def test_a_par_wider_than_a_node_spans_the_nodes():
-    one = wide.trace({"x": ((64, 128), "f16")})
+    one = wide.trace({"x": ((64, 128), "f16")}, machine=ONE)
     two = wide.trace({"x": ((64, 128), "f16")}, machine=TWO)
     assert "node[" not in one.text
     assert "par n1 in 0..2 on node[n1]" in two.text

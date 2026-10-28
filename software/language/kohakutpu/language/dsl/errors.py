@@ -1,10 +1,14 @@
 """The DSL's refusals, each naming the source line that caused it."""
 
+import contextlib
 import functools
 import pathlib
 import sys
 
 _HERE = pathlib.Path(__file__).resolve().parent
+#: Files whose frames stand between the DSL and the author: the
+#: `contextlib.contextmanager` wrapper of `kt.when` / `kt.sticky`.
+FOREIGN = (contextlib.__file__,)
 
 
 class DSLError(ValueError):
@@ -17,12 +21,20 @@ class TracerControlFlowError(DSLError):
 
 @functools.cache
 def _inside(filename: str) -> bool:
-    """Whether a code object's file is in this package (resolved once a file:
-    a trace asks for every op it records)."""
+    """Whether a code object's file is in this package or a `FOREIGN` file
+    (resolved once a file: a trace asks for every op it records)."""
     try:
-        return pathlib.Path(filename).resolve().is_relative_to(_HERE)
+        path = pathlib.Path(filename).resolve()
+        return path.is_relative_to(_HERE) or any(
+            path == pathlib.Path(f).resolve() for f in FOREIGN
+        )
     except OSError:
         return False
+
+
+@functools.cache
+def _basename(filename: str) -> str:
+    return pathlib.Path(filename).name
 
 
 def at_caller() -> str:
@@ -31,7 +43,7 @@ def at_caller() -> str:
     f = sys._getframe(1)
     while f is not None:
         if not _inside(f.f_code.co_filename):
-            return f"{pathlib.Path(f.f_code.co_filename).name}:{f.f_lineno}"
+            return f"{_basename(f.f_code.co_filename)}:{f.f_lineno}"
         f = f.f_back
     return "<unknown>"
 

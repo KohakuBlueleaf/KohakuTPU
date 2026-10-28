@@ -1,11 +1,16 @@
 """E8M15, the vector core's lane format: FP32's exponent with a 15-bit
 mantissa (a 16-bit significand), no subnormals.
 
-A lane result is rounded to nearest even; a magnitude below the smallest
-normal, 2^-126, flushes to zero; one at or above 2^128 is infinite. An `f32`
-in memory is an E8M15 value with its mantissa zero-extended, so it holds the
-same values.
+Lane results round to nearest even except in the effective-subtraction boundary
+corner: `s >= 33`, residue leaving the 48-bit alignment window, and a
+boundary-adjacent bit pattern can make the FMA and `mx_fpacc` split path read
+exactly one ulp high, never low (see vector-core.md). The lane contract is
+within one ulp; bit-exact tests exclude that corner. A magnitude below 2^-126
+flushes to zero; one at or above 2^128 is infinite. An `f32` in memory has the
+E8M15 mantissa zero-extended and holds the same values.
 """
+
+import struct
 
 import numpy as np
 
@@ -20,8 +25,16 @@ def value(x):
     x = np.asarray(x, np.float64)
     m, e = np.frexp(x)
     out = np.ldexp(np.round(np.ldexp(m, SIGNIFICAND)), e - SIGNIFICAND)
-    out = np.where(np.abs(out) < TINY, 0.0, out)
+    out = np.where(np.abs(x) < TINY, np.copysign(0.0, x), out)
     return np.where(np.abs(out) >= HUGE, np.copysign(np.inf, out), out)
 
 
-__all__ = ["HUGE", "SIGNIFICAND", "TINY", "value"]
+def encode(x: float) -> int:
+    """A constant as {sign, exponent, mantissa}, using the lane's RNE rule."""
+    rounded = float(value(x))
+    if np.isnan(rounded):
+        return 0x7FC000
+    return struct.unpack("<I", struct.pack("<f", rounded))[0] >> 8
+
+
+__all__ = ["HUGE", "SIGNIFICAND", "TINY", "encode", "value"]

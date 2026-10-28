@@ -1,6 +1,6 @@
 """The V2 vector core's math mnemonics as L1 names them, and what each reads
 and writes: the facts the L1 optimisers reason with. Their encodings are the
-compiler's (`kohakutpu.compiler.encode.vector.OPS`, keyed by the same names)."""
+Rust ISA's (`ktpu-isa/src/unit/vector`, keyed by the same names)."""
 
 #: One source (a).
 UNARY = frozenset({"vmov", "vneg", "vabs", "vexp2", "vlog2", "vinv", "vrsqrt"})

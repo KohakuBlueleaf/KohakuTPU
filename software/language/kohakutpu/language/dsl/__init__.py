@@ -1,6 +1,7 @@
 """`kt`: KohakuTPU kernels written in Python, traced to L2 text.
 
 import kohakutpu.language.dsl as kt
+from kohakutpu.language import machine as MF
 
 @kt.kernel
 def silu(x=kt.In("R", 128), y=kt.Out("R", 128), *, rows=16):
@@ -10,7 +11,8 @@ def silu(x=kt.In("R", 128), y=kt.Out("R", 128), *, rows=16):
             v = kt.load(x[r : r + rows, :])
             kt.store(y[r : r + rows, :], v * kt.recip(1.0 + kt.exp2(v * -kt.LOG2E)))
 
-print(silu.trace({"x": ((512, 128), "f16")}).text)   # docs/projects/kohakutpu/dsl.md
+machine = kt.Machine.of(MF.load("multimesh_v9t8"))
+print(silu.trace({"x": ((512, 128), "f16")}, machine=machine).text)
 """
 
 from kohakutpu.language.dsl.errors import DSLError, TracerControlFlowError
@@ -26,6 +28,7 @@ from kohakutpu.language.dsl.kernel import (
 )
 from kohakutpu.language.dsl.ops import (
     absolute,
+    broadcast,
     buffer,
     copy,
     drain,
@@ -37,6 +40,7 @@ from kohakutpu.language.dsl.ops import (
     fnma,
     gather,
     gemm,
+    gemm_tiles,
     gen,
     gt4,
     load,
@@ -63,6 +67,7 @@ from kohakutpu.language.dsl.ops import (
     when,
     where,
     xlane,
+    xrot,
     zero,
 )
 from kohakutpu.language.dsl.trace import active
@@ -96,6 +101,7 @@ __all__ = [
     "View",
     "absolute",
     "auto",
+    "broadcast",
     "buffer",
     "copy",
     "drain",
@@ -107,6 +113,7 @@ __all__ = [
     "fnma",
     "gather",
     "gemm",
+    "gemm_tiles",
     "gen",
     "gt4",
     "kernel",
@@ -138,5 +145,6 @@ __all__ = [
     "when",
     "where",
     "xlane",
+    "xrot",
     "zero",
 ]

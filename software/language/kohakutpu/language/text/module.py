@@ -10,6 +10,7 @@ A body stays statements here: what its statements mean is its level's reader.
 """
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from kohakutpu.language.text.meta import macro_params
 from kohakutpu.language.text.reader import Reader
@@ -85,6 +86,57 @@ class Module:
     def reader(self) -> Reader:
         return Reader(self.source, self.file)
 
+    def params(self, name: str, level: str) -> tuple:
+        return self.body(name, level).params
+
+
+class Text:
+    """A module kept as its text: `params` reads one fn's header line alone;
+    any other attribute reads the whole text once (`read`) and answers from
+    that `Module`."""
+
+    def __init__(self, source: str, file: str = "<ktpu>") -> None:
+        self.source = source
+        self.file = file
+        self._module = None
+        self._params = {}
+
+    def module(self) -> Module:
+        if self._module is None:
+            self._module = read(self.source, self.file)
+        return self._module
+
+    def params(self, name: str, level: str) -> tuple:
+        key = (name, level)
+        if key not in self._params:
+            if self._module is not None:
+                self._params[key] = self._module.params(name, level)
+            else:
+                self._params[key] = signature(self.source, name, level, self.file)
+        return self._params[key]
+
+    def __getattr__(self, attr):
+        if attr.startswith("_"):
+            raise AttributeError(attr)
+        return getattr(self.module(), attr)
+
+
+def signature(text: str, name: str, level: str, file: str = "<ktpu>") -> tuple:
+    """The params of `fn NAME.LEVEL` in `text`, read from its header line with
+    a stand-in body: the header is one line, and a body never changes them."""
+    head = f"fn {name}.{level}("
+    at = 0 if text.startswith(head) else text.find("\n" + head) + 1
+    if at == 0 and not text.startswith(head):
+        raise KeyError(f"no fn {name}.{level} in {file}")
+    end = text.find("\n", at)
+    return _header(text[at : None if end < 0 else end], file)
+
+
+@lru_cache(maxsize=4096)
+def _header(line: str, file: str) -> tuple:
+    st = parse(line + "\n    stub\n", file)[0]
+    return _fn(Reader(line, file), st, st.positional()).params
+
 
 def read(text: str, file: str = "<ktpu>") -> Module:
     """The module of a `.ktpu` text; raises `TextError` at the line."""
@@ -155,4 +207,4 @@ def _fn(r, st, pos) -> Body:
     return Body(name, level, tuple(params), ret, st.body, st.line)
 
 
-__all__ = ["LEVELS", "Body", "Definition", "Module", "read"]
+__all__ = ["LEVELS", "Body", "Definition", "Module", "Text", "read", "signature"]

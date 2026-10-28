@@ -10,10 +10,10 @@ annotations line up two columns past its longest statement, at most column
 import contextlib
 from dataclasses import dataclass, field
 
+from kohakutpu.language.dsl import graph as G
 from kohakutpu.language.dsl.errors import DSLError, at_caller
 from kohakutpu.language.dsl.types import Machine
 
-TARGET = "ktpu.v9"
 ANNOT_COL = 48
 
 
@@ -28,6 +28,8 @@ class Stmt:
     body: list | None = None
     #: where the author wrote it, for the L2 -> DSL source map
     where: str = ""
+    #: the statement as graph data (`graph.block` adds target, body, where)
+    node: dict = field(default_factory=dict)
 
     def head(self) -> str:
         pos = [a for a in self.args if "=" not in a or a.startswith("(")]
@@ -56,9 +58,9 @@ class Scope:
 class Trace:
     """One kernel being recorded."""
 
-    def __init__(self, name: str, machine: Machine | None = None) -> None:
+    def __init__(self, name: str, machine: Machine) -> None:
         self.name = name
-        self.machine = machine or Machine()
+        self.machine = machine
         self.params: list = []  # (name, TensorSpec)
         self.scratch: dict = {}  # name -> TensorSpec
         self.root: list = []
@@ -91,12 +93,12 @@ class Trace:
         self.taken.add(name)
         return name
 
-    def emit(self, op, *args, target=None, annot=None, kw=None) -> Stmt:
+    def emit(self, op, *args, target=None, annot=None, kw=None, node=None) -> Stmt:
         texts = [str(a) for a in args]
         for k, v in (kw or {}).items():
             if v is not None:
                 texts.append(f"{k}={v}")
-        st = Stmt(op, texts, target, annot, None, at_caller())
+        st = Stmt(op, texts, target, annot, None, at_caller(), node or {})
         self.stack[-1].append(st)
         return st
 
@@ -116,12 +118,16 @@ class Trace:
     # ------------------------------------------------------------ printing
     def text(self) -> str:
         params = ", ".join(f"{n}: {spec.text()}" for n, spec in self.params)
-        lines = [f"target {TARGET}", "", f"fn {self.name}.l2({params})"]
+        lines = [f"target {self.machine.target}", "", f"fn {self.name}.l2({params})"]
         body = [
             Stmt("buffer", [], n, spec.text()) for n, spec in self.scratch.items()
         ] + self.root
         lines += _block(body, 1)
         return "\n".join(lines) + "\n"
+
+    def graph(self, roles: dict, consts: dict) -> dict:
+        """The trace as graph data (`graph.module`)."""
+        return G.module(self, self.machine.target, roles, consts)
 
 
 def _block(stmts: list, depth: int) -> list:

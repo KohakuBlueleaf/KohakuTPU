@@ -5,13 +5,16 @@ import numpy as np
 import pytest
 
 import kohakutpu.language.dsl as kt
+from kohakutpu.language import machine as MF
 from kohakutpu.language.examples import dsl as ex
 from kohakutpu.language.text import module as M
+
+MACHINE = kt.Machine.of(MF.load("multimesh_v9t8"))
 
 
 def first(e: ex.Example, **consts) -> kt.Traced:
     """The trace at each `kt.auto`'s first candidate (no compiler here)."""
-    return e.kernel.trace(e.given, **{**e.consts, **consts})
+    return e.kernel.trace(e.given, machine=MACHINE, **{**e.consts, **consts})
 
 
 @pytest.mark.parametrize("name", sorted(ex.EXAMPLES))
@@ -57,11 +60,11 @@ def test_linear_refuses_a_shape_its_tiles_do_not_cover():
         "bias": ((512,), "f16"),
     }
     with pytest.raises(kt.DSLError, match="100 rows in whole tiles of 64"):
-        e.kernel.trace(given, tn=256, rows=8)
+        e.kernel.trace(given, machine=MACHINE, tn=256, rows=8)
 
 
 def test_linear_spreads_column_blocks_over_the_cores():
     e = ex.EXAMPLES["linear"]
-    tr = e.kernel.trace(e.given, act="none", tn=128, rows=8)
+    tr = e.kernel.trace(e.given, machine=MACHINE, act="none", tn=128, rows=8)
     assert "on vc[any]" in tr.text  # 4 column blocks x 2 cores, placed by the pass
     assert "par c1 in 0..8" in tr.text

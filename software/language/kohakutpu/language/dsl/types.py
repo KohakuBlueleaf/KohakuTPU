@@ -87,11 +87,31 @@ class TensorSpec:
 
 @dataclass(frozen=True)
 class Machine:
-    """What a kernel may read about the machine it is traced for."""
+    """What a kernel may read about the machine it is traced for, every field
+    a machine-file fact (`of`)."""
 
-    mg: int = 4  # matmul clusters a node
-    vc: int = 2  # vector cores a node
-    nodes: int = 1
+    target: str  # die.target
+    mg: int  # matmul clusters a node (mg.count)
+    vc: int  # vector cores a node (vc.count)
+    nodes: int
+    lanes: int  # lanes a chunk, values a word (vc.lanes)
+    chunk: int  # chunks a vector register (vc.chunks)
+    sig_bits: int  # vector lane significand, including the implicit one
+    packing_backend: str  # conversion.fp16_mx7.preferred_backend
+
+    @classmethod
+    def of(cls, m, nodes: int = 1) -> "Machine":
+        """The machine file `m`'s (`kohakutpu.language.machine`), over `nodes`."""
+        return cls(
+            target=m.die.target,
+            mg=m.mg.count,
+            vc=m.vc.count,
+            nodes=nodes,
+            lanes=m.vc.lanes,
+            chunk=m.vc.chunks,
+            sig_bits=m.vc.sig_bits,
+            packing_backend=m.conversion.fp16_mx7.preferred_backend,
+        )
 
     def total(self, kind: str) -> int:
         """Units of `kind` ("mg" / "vc") over every node: what a par of

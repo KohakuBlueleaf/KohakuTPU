@@ -13,15 +13,16 @@ from collections.abc import Iterator
 from typing import cast
 
 from kohakutpu.language.dsl import expr as E
+from kohakutpu.language.dsl import graph as G
 from kohakutpu.language.dsl import values as V
 from kohakutpu.language.dsl.errors import DSLError, at_caller
 from kohakutpu.language.dsl.trace import Scope, active
 from kohakutpu.language.dsl.types import TensorSpec
 from kohakutpu.language.dsl.values import Param, Unit, Value, ValueView, as_view
 
-#: L2 vector ops by arity (`compiler.l2.vector`), and the comparisons.
+#: L2 vector ops by arity (`ktpu-l2/src/lower/vector`), and the comparisons.
 UNARY = ("exp2", "inv", "rsqrt", "log2", "neg", "abs", "mov")
-BINARY = ("add", "sub", "mul", "max", "min", "exp2d", "xlane")
+BINARY = ("add", "sub", "mul", "max", "min", "exp2d", "xlane", "xrot")
 TERNARY = ("fma", "fnma", "sel")
 COMPARE = ("cmplt", "cmpgt", "cmpeq")
 REDUCE = ("rmax", "rsum")
@@ -40,6 +41,9 @@ def par(
     on: Unit | None = None,
     at=None,
     name: str | None = None,
+    classed: bool = False,
+    repeats: int | None = None,
+    advances: tuple[int, ...] = (),
 ) -> Iterator[E.Sym]:
     """Instances run concurrently, one a value of the variable: ``for c in
     kt.par(2, on=kt.vc)`` is ``par c in 0..2 on vc[c]``. `at` names the
@@ -61,6 +65,8 @@ def par(
     top = hi if isinstance(hi, int) else None
     first = lo if isinstance(lo, int) else None
     wide = top is not None and per is not None and top > per and first == 0
+    if classed and (on.kind != "vc" or wide):
+        raise DSLError("a classed par names this node's vector cores")
     if wide and m.nodes > 1 and not t.scope.node:
         assert top is not None and per is not None
         yield from _over_nodes(t, on, top, per, at, name)
@@ -69,7 +75,29 @@ def par(
     sym = E.var(v)
     where = sym if at is None else at
     unit = f"{on.kind}[any]" if where is V.ANY else f"{on.kind}[{E.text(where)}]"
-    st = t.emit("par", f"{v} in {E.text(lo)}..{E.text(hi)}", "on", unit)
+    st = t.emit(
+        "par",
+        f"{v} in {E.text(lo)}..{E.text(hi)}",
+        "on",
+        unit,
+        kw={
+            **({"classed": 1} if classed else {}),
+            **(
+                {"repeats": repeats, "advances": advances}
+                if repeats is not None
+                else {}
+            ),
+        },
+        node={
+            **_par_node(v, lo, hi, on.kind, None if where is V.ANY else where),
+            **({"classed": True} if classed else {}),
+            **(
+                {"repeats": repeats, "advances": list(advances)}
+                if repeats is not None
+                else {}
+            ),
+        },
+    )
     kind = None if on.kind == "node" else on.kind
     with t.block(st, Scope(kind=kind, node=on.kind == "node" or t.scope.node)):
         yield sym
@@ -96,11 +124,23 @@ def _over_nodes(t, on: Unit, count: int, per: int, at, name) -> Iterator[E.Sym]:
             f"{per}, at {at_caller()}"
         )
     nv = _var_name(t, "node")
-    nst = t.emit("par", f"{nv} in 0..{used}", "on", f"node[{nv}]")
+    nst = t.emit(
+        "par",
+        f"{nv} in 0..{used}",
+        "on",
+        f"node[{nv}]",
+        node=_par_node(nv, 0, used, "node", E.var(nv)),
+    )
     with t.block(nst, Scope(kind=None, node=True)):
         v = t.claim(name) if name else _var_name(t, on.kind)
         unit = f"{on.kind}[any]" if at is V.ANY else f"{on.kind}[{v}]"
-        st = t.emit("par", f"{v} in 0..{share}", "on", unit)
+        st = t.emit(
+            "par",
+            f"{v} in 0..{share}",
+            "on",
+            unit,
+            node=_par_node(v, 0, share, on.kind, None if at is V.ANY else E.var(v)),
+        )
         with t.block(st, Scope(kind=on.kind)):
             yield cast(E.Sym, E.var(nv) * share + E.var(v))
 
@@ -119,7 +159,18 @@ def range(
     t = active()
     lo, hi = _domain(n, hi)
     v = t.claim(name) if name else t.fresh("t" if t.scope.kind == "vc" else "k")
-    st = t.emit("for", f"{v} in {E.text(lo)}..{E.text(hi)}", kw={"pipe": pipe})
+    st = t.emit(
+        "for",
+        f"{v} in {E.text(lo)}..{E.text(hi)}",
+        kw={"pipe": pipe},
+        node={
+            "kind": "for",
+            "var": v,
+            "lo": G.index(lo),
+            "hi": G.index(hi),
+            "pipe": pipe,
+        },
+    )
     scope = Scope(kind=t.scope.kind, loop=True, sticky=t.scope.sticky)
     with t.block(st, scope):
         yield E.var(v)
@@ -134,7 +185,7 @@ def when(cond: E.Cond | bool) -> Iterator[None]:
         raise DSLError(f"kt.when of a Python bool: write `if`, at {at_caller()}")
     if not isinstance(cond, E.Cond):
         raise DSLError(f"kt.when takes an index comparison, at {at_caller()}")
-    st = t.emit("when", cond.text())
+    st = t.emit("when", cond.text(), node={"kind": "when", "cond": G.cond(cond)})
     with t.block(st):
         yield
 
@@ -149,7 +200,7 @@ def sticky() -> Iterator[None]:
         raise DSLError(
             f"kt.sticky is a vector core's, in its stream loop, at {at_caller()}"
         )
-    st = t.emit("if", "sticky")
+    st = t.emit("if", "sticky", node={"kind": "sticky"})
     with t.block(st, Scope(kind="vc", loop=True, sticky=True)):
         yield
 
@@ -160,6 +211,17 @@ def require(cond: bool, why: str) -> None:
         raise DSLError(f"kt.require takes a Python bool, at {at_caller()}")
     if not cond:
         raise DSLError(f"{why}, at {at_caller()}")
+
+
+def _par_node(v: str, lo, hi, kind: str, at) -> dict:
+    """A `par`'s graph node; `at` None is ``KIND[any]``."""
+    return {
+        "kind": "par",
+        "var": v,
+        "lo": G.index(lo),
+        "hi": G.index(hi),
+        "unit": {"kind": kind, "index": None if at is None else G.index(at)},
+    }
 
 
 def _var_name(t, kind: str | None) -> str:
@@ -192,20 +254,57 @@ def _unit() -> Unit:
     return Unit(active().scope.kind)
 
 
-def _value(op, args, dtype, shape, space, mode=None, prefix="v", kw=None, after=None):
-    """A new value made by one statement; `after` puts the statement just
-    behind that value's own (an unpack of a value loaded outside the loop
-    lands beside its load, not in every trip)."""
+def _value(
+    op,
+    args,
+    dtype,
+    shape,
+    space,
+    mode=None,
+    prefix="v",
+    kw=None,
+    after=None,
+    *,
+    nodes,
+):
+    """A new value made by one statement (`args` its operands' text, `nodes`
+    their graph data); `after` puts the statement just behind that value's
+    own (an unpack of a value loaded outside the loop lands beside its load,
+    not in every trip)."""
     t = active()
     name = t.fresh(prefix)
     v = Value(t, name, dtype, shape, space, mode, _unit())
-    v.stmt = t.emit(op, *args, target=name, annot=v.type_text(), kw=kw)
+    v.stmt = t.emit(
+        op,
+        *args,
+        target=name,
+        annot=v.type_text(),
+        kw=kw,
+        node=_value_node(op, v, nodes, kw),
+    )
     v.block = t.stack[-1]
     if after is not None and after.block is not t.stack[-1]:
         t.stack[-1].pop()
         after.block.insert(after.block.index(after.stmt) + 1, v.stmt)
         v.block = after.block
     return v
+
+
+def _value_node(op: str, v: Value, nodes: list, kw=None) -> dict:
+    return {
+        "kind": "value",
+        "op": op,
+        "type": G.vtype(v),
+        "args": nodes,
+        "kw": G.attrs(kw),
+    }
+
+
+def _arg(x) -> dict:
+    """A value-statement operand's graph data: a value or rows of one."""
+    if isinstance(x, ValueView):
+        return G.value_view(x)
+    return G.value(x.name)
 
 
 def fill(view, *, share=None) -> Value:
@@ -226,6 +325,7 @@ def fill(view, *, share=None) -> Value:
         side,
         prefix=side.lower(),
         kw={"share": share},
+        nodes=[G.buffer_view(v)],
     )
 
 
@@ -233,19 +333,20 @@ def zero(m: int, n: int) -> Value:
     """An accumulator tile the next gemm into it opens: ``acc = zero :
     f32[M, N] @acc``."""
     _need("mg", "zero")
-    return _value("zero", [], "f32", (m, n), "acc", prefix="acc")
+    return _value("zero", [], "f32", (m, n), "acc", prefix="acc", nodes=[])
 
 
 def gemm(a, b, acc=None) -> Value:
     """One sweep: ``acc = gemm a, b, acc`` chains into `acc` (the name is
     rebound, so a loop carries it); without `acc` a new tile."""
     _need("mg", "gemm")
-    srcs, rows = [], []
+    srcs, nodes, rows = [], [], []
     for x, side in ((a, "A"), (b, "B")):
         base = x.value if isinstance(x, ValueView) else x
         if not isinstance(base, Value) or base.space != side:
             raise DSLError(f"gemm reads an @A value and an @B value, at {at_caller()}")
         srcs.append(x.text() if isinstance(x, ValueView) else x.name)
+        nodes.append(_arg(x))
         rows.append(x.shape[0])
     shape = (rows[0], rows[1])
     t = active()
@@ -255,9 +356,16 @@ def gemm(a, b, acc=None) -> Value:
                 f"gemm accumulates into an f32{list(shape)} @acc value, at {at_caller()}"
             )
         v = Value(t, acc.name, "f32", shape, "acc", None, _unit())
-        v.stmt = t.emit("gemm", *srcs, acc.name, target=acc.name, annot=v.type_text())
+        v.stmt = t.emit(
+            "gemm",
+            *srcs,
+            acc.name,
+            target=acc.name,
+            annot=v.type_text(),
+            node=_value_node("gemm", v, [*nodes, G.value(acc.name)]),
+        )
         return v
-    return _value("gemm", srcs, "f32", shape, "acc", prefix="acc")
+    return _value("gemm", srcs, "f32", shape, "acc", prefix="acc", nodes=nodes)
 
 
 def drain(acc, dst, *, add=False) -> None:
@@ -275,7 +383,22 @@ def drain(acc, dst, *, add=False) -> None:
             f"to another node's unit a tile is added: kt.drain(acc, kt.node[N].mg[J], "
             f"add=True), at {at_caller()}"
         )
-    active().emit("drain", *args, kw={"node": None if far is None else E.text(far)})
+    active().emit(
+        "drain",
+        *args,
+        kw={"node": None if far is None else E.text(far)},
+        node={
+            "kind": "drain",
+            "src": acc.name,
+            "dst": (
+                G.unit_ref(dst)
+                if isinstance(dst, Unit)
+                else G.buffer_view(as_view(dst))
+            ),
+            "add": bool(add),
+            "node": None if far is None else G.index(far),
+        },
+    )
 
 
 def recv(src: Unit, shape, *, side=None, gt4=True) -> Value:
@@ -285,12 +408,27 @@ def recv(src: Unit, shape, *, side=None, gt4=True) -> Value:
     t = active()
     if t.scope.kind == "vc":
         return _value(
-            "recv", [src.text()], "f16", shape, "l1", "gt4" if gt4 else None, prefix="h"
+            "recv",
+            [src.text()],
+            "f16",
+            shape,
+            "l1",
+            "gt4" if gt4 else None,
+            prefix="h",
+            nodes=[G.unit_ref(src)],
         )
     _need("mg", "recv")
     side = side or "A"
     dtype = {"A": "mx7a", "B": "mx7b"}[side]
-    return _value("recv", [src.text()], dtype, shape, side, prefix=side.lower())
+    return _value(
+        "recv",
+        [src.text()],
+        dtype,
+        shape,
+        side,
+        prefix=side.lower(),
+        nodes=[G.unit_ref(src)],
+    )
 
 
 # ----------------------------------------------------------------- vector
@@ -309,27 +447,52 @@ def load(view, *, gt4=None) -> Value:
     shape = v.shape
     if gt4 and not spec.tiled and (len(shape) == 1 or shape[0] == 1):
         shape = (4, shape[-1])
-    out = _value("load", [v.text()], spec.dtype, shape, "l1", mode, prefix="xl")
+    out = _value(
+        "load",
+        [v.text()],
+        spec.dtype,
+        shape,
+        "l1",
+        mode,
+        prefix="xl",
+        nodes=[G.buffer_view(v)],
+    )
     out.tiled = spec.tiled
     return out
 
 
-def unpack(x) -> Value:
+def unpack(x, *, lane: int | None = None) -> Value:
     """An @l1 value (or a band of one: ``h[t*4 : +4, :]``) into registers:
     f32, one row a register (GT4: a 4 x 32 block a register); a 1-D value
-    becomes a row statistic."""
+    becomes a row statistic -- with `lane`, value `lane` of its first word
+    for every row (one value read by every row)."""
     _need("vc", "unpack")
     base = x.value if isinstance(x, ValueView) else x
     if not isinstance(base, Value) or base.space != "l1":
         raise DSLError(f"unpack takes an @l1 value, at {at_caller()}")
-    if isinstance(x, Value) and x.unpacked is not None:
+    n = active().machine.lanes
+    if lane is not None and (len(x.shape) != 1 or not 0 <= lane < n):
+        raise DSLError(
+            f"unpack lane= takes a lane 0..{n - 1} of a 1-D value, at {at_caller()}"
+        )
+    if isinstance(x, Value) and x.unpacked is not None and lane is None:
         return x.unpacked
     src = x.text() if isinstance(x, ValueView) else x.name
     after = x if isinstance(x, Value) else None
+    kw = {"lane": lane} if lane is not None else None
     out = _value(
-        "unpack", [src], "f32", x.shape, "reg", base.mode, prefix="v", after=after
+        "unpack",
+        [src],
+        "f32",
+        x.shape,
+        "reg",
+        base.mode,
+        prefix="v",
+        kw=kw,
+        after=after,
+        nodes=[_arg(x)],
     )
-    if isinstance(x, Value):
+    if isinstance(x, Value) and lane is None:
         x.unpacked = out
     return out
 
@@ -378,13 +541,22 @@ def math(op: str, *args: V.Operand) -> Value:
         if len(modes) > 1:
             raise DSLError(f"{op} mixes GT4 and plain rows, at {at_caller()}")
         mode = modes.pop()
-        texts = [_operand(r, broadcast=True) for r in regs]
+        bc = True
     else:
         if op in COMPARE or op == "sel":
             raise DSLError(f"{op} runs on rows, not statistics, at {at_caller()}")
         shape, mode = vals[0].shape, None
-        texts = [_operand(r, broadcast=False) for r in regs]
-    return _value(op, texts, "f32", shape, "reg", mode, prefix=_PREFIX.get(op, "e"))
+        bc = False
+    return _value(
+        op,
+        [_operand(r, broadcast=bc) for r in regs],
+        "f32",
+        shape,
+        "reg",
+        mode,
+        prefix=_PREFIX.get(op, "e"),
+        nodes=[_operand_node(r, broadcast=bc) for r in regs],
+    )
 
 
 _PREFIX = {"cmplt": "m", "cmpgt": "m", "cmpeq": "m", "sel": "o"}
@@ -400,7 +572,18 @@ def _operand(r, broadcast: bool) -> str:
     return r.name
 
 
-def reduce(op: str, x) -> Value:
+def _operand_node(r, broadcast: bool) -> dict:
+    """`_operand`'s graph data."""
+    if isinstance(r, float):
+        return G.literal(r)
+    if isinstance(r, ValueView):
+        return G.value_view(r)
+    if broadcast and r.stat:
+        return G.bcast(r.name)
+    return G.value(r.name)
+
+
+def reduce(op: str, x, *, valid_cols: int | None = None, carry: bool = False) -> Value:
     """A row reduction into a statistic: ``m = rmax e : f32[R] @reg``;
     ``x[:, C0:C1]`` reduces those 32-column blocks of GT4 rows."""
     _need("vc", op)
@@ -409,15 +592,34 @@ def reduce(op: str, x) -> Value:
     base = x.value if isinstance(x, ValueView) else _reg(x)
     if not isinstance(base, Value) or base.space != "reg" or base.stat:
         raise DSLError(f"{op} reduces register rows, at {at_caller()}")
+    if valid_cols is not None and (
+        base.mode != "gt4"
+        or valid_cols <= 0
+        or valid_cols % 32
+        or valid_cols > base.shape[-1]
+        or isinstance(x, ValueView)
+    ):
+        raise DSLError("valid_cols selects whole GT4 column blocks")
     src = x.text() if isinstance(x, ValueView) else base.name
-    return _value(op, [src], "f32", (base.shape[0],), "reg", prefix="s")
+    return _value(
+        op,
+        [src],
+        "f32",
+        (base.shape[0],),
+        "reg",
+        prefix="s",
+        kw={
+            **({"valid_cols": valid_cols} if valid_cols is not None else {}),
+            **({"carry": 1} if carry else {}),
+        },
+        nodes=[_arg(x if isinstance(x, ValueView) else base)],
+    )
 
 
 def store(view, x) -> None:
     """A register value (or an @l1 one) to memory: packs it to the buffer's
     element type (f16, f32, or MXFP7 for a cluster operand), then ``store
-    VIEW <- p``. A GT4 statistic packs as f16[R, 32] (its row's value in all
-    32 columns)."""
+    VIEW <- p``. A statistic packs into a 1-D view, 16 rows a word."""
     _need("vc", "store")
     v = as_view(view)
     spec = v.param.spec
@@ -433,14 +635,33 @@ def store(view, x) -> None:
         r = _reg(x)
         if not isinstance(r, Value):
             raise DSLError(f"store a value, not a number, at {at_caller()}")
-        band = r.stat and len(v.shape) == 2 and v.shape[-1] == 32
-        p = pack(r, spec.dtype, gt4=r.mode == "gt4" or band)
+        if r.stat and len(v.shape) == 1 and v.shape[0] % r.shape[0] == 0:
+            # 16 a word; a band's statistic (every row's the same) repeated.
+            p = _value(
+                "pack",
+                [r.name],
+                spec.dtype,
+                v.shape,
+                "l1",
+                prefix="p",
+                nodes=[G.value(r.name)],
+            )
+        elif r.stat:
+            p = pack(r, spec.dtype)
+        else:
+            p = pack(r, spec.dtype, gt4=r.mode == "gt4")
     if _count(p.shape) != _count(v.shape) or p.shape[-1] != v.shape[-1]:
         raise DSLError(
             f"a store of {list(p.shape)} values into a {list(v.shape)} view, "
             f"at {at_caller()}"
         )
-    active().emit("store", v.text(), "<-", p.name)
+    active().emit(
+        "store",
+        v.text(),
+        "<-",
+        p.name,
+        node={"kind": "store", "dst": G.view(v), "src": p.name},
+    )
 
 
 def _count(shape) -> int:
@@ -458,18 +679,48 @@ def pack(x: Value, dtype: str = "f16", *, gt4=None) -> Value:
             raise DSLError(
                 f"an MXFP7 pack takes GT4 rows (4 x 32 blocks), at {at_caller()}"
             )
-        return _value("pack", [x.name], dtype, x.shape, "l1", prefix="q")
+        return _value(
+            "pack", [x.name], dtype, x.shape, "l1", prefix="q", nodes=[G.value(x.name)]
+        )
     if x.stat:
-        if not gt4:
+        if gt4:
             raise DSLError(
-                f"a statistic stores from GT4 rows, as f16[R, 32] (its value in all 32 "
-                f"columns), at {at_caller()}"
+                f"a statistic packs 16 rows a word, not as [R, 32] rows, at {at_caller()}"
             )
         return _value(
-            "pack", [x.name], dtype, (x.shape[0], 32), "l1", "gt4", prefix="p"
+            "pack", [x.name], dtype, x.shape, "l1", prefix="p", nodes=[G.value(x.name)]
         )
     mode = "gt4" if (gt4 or x.mode == "gt4") else None
-    return _value("pack", [x.name], dtype, x.shape, "l1", mode, prefix="p")
+    return _value(
+        "pack",
+        [x.name],
+        dtype,
+        x.shape,
+        "l1",
+        mode,
+        prefix="p",
+        nodes=[G.value(x.name)],
+    )
+
+
+def broadcast(x: Value, columns: int) -> Value:
+    """Materialise a statistic across `columns` columns as GT4 register rows."""
+    _need("vc", "broadcast")
+    x = _reg(x)
+    if not isinstance(x, Value) or not x.stat or columns <= 0 or columns % 32:
+        raise DSLError(
+            f"broadcast takes a statistic and whole 32-column blocks, at {at_caller()}"
+        )
+    return _value(
+        "mul",
+        [f"{x.name}[:, *]", "1.0"],
+        "f32",
+        (x.shape[0], columns),
+        "reg",
+        "gt4",
+        prefix="v",
+        nodes=[G.bcast(x.name), G.literal(1.0)],
+    )
 
 
 def send(x: Value, dst: Unit, *, side="A") -> None:
@@ -477,11 +728,20 @@ def send(x: Value, dst: Unit, *, side="A") -> None:
     _need("vc", "send")
     if not isinstance(x, Value) or x.space != "l1" or x.dtype not in ("mx7a", "mx7b"):
         raise DSLError(f"a core sends a packed MXFP7 value, at {at_caller()}")
-    active().emit("send", x.name, "->", dst.text(), kw={"side": side})
+    active().emit(
+        "send",
+        x.name,
+        "->",
+        dst.text(),
+        kw={"side": side},
+        node={"kind": "send", "src": x.name, "dst": G.unit(dst), "side": side},
+    )
 
 
 # --------------------------------------------------------------- node scope
 def _mover(op, dst, src=None, **kw) -> None:
+    """A mover statement; `kw` holds walks and perms as sequences and the
+    index list as a view, printed by `_kw_text`."""
     _need(None, op)
     args = [as_view(dst).text()]
     if src is not None:
@@ -492,7 +752,51 @@ def _mover(op, dst, src=None, **kw) -> None:
         for k, v in kw.items()
         if v is not True and v is not False and v is not None
     }
-    active().emit(op, *args, *flags, kw=kws)
+    node = {
+        "kind": "mover",
+        "op": op,
+        "dst": G.view(as_view(dst)),
+        "src": None if src is None else G.view(as_view(src)),
+        "flags": flags,
+        "kw": G.attrs(kws),
+    }
+    texts = {k: _kw_text(k, v) for k, v in kws.items()}
+    active().emit(op, *args, *flags, kw=texts, node=node)
+
+
+def gemm_tiles(
+    dst,
+    lhs,
+    rhs,
+    *,
+    batches: int,
+    rows: int,
+    cols: int,
+    clusters: int,
+    shared: bool = True,
+):
+    """Packed matrix product to stacked tile rows using fixed node loops."""
+    _mover(
+        "gemm_tiles",
+        dst,
+        lhs,
+        rhs=as_view(rhs),
+        batches=batches,
+        rows=rows,
+        cols=cols,
+        clusters=clusters,
+        shared=int(shared),
+    )
+
+
+def _kw_text(k: str, v):
+    if k in ("walk", "dwalk"):
+        return _walk_text(v)
+    if k == "perm":
+        return "(" + ", ".join(str(p) for p in v) + ("," if len(v) == 1 else "") + ")"
+    if k in ("index", "rhs"):
+        return v.text()
+    return v
 
 
 def _walk_text(walk) -> str | None:
@@ -506,19 +810,22 @@ def _walk_text(walk) -> str | None:
     )
 
 
-def copy(dst, src, *, perm=None, walk=None, at=None, dwalk=None, dat=None) -> None:
+def copy(
+    dst,
+    src,
+    *,
+    perm=None,
+    walk=None,
+    at=None,
+    dwalk=None,
+    dat=None,
+    classed=False,
+    node_loop=False,
+) -> None:
     """Words of `src` into `dst` by the mover; `perm` reorders the source's
     word axes. `walk` (``[(count, byte stride), ...]``, outermost first,
     signed) walks the whole buffer `src` from byte `at` instead; `dwalk` /
     `dat` the whole buffer `dst` (a window of it)."""
-    perm_text = (
-        None
-        if perm is None
-        else "("
-        + ", ".join(str(p) for p in perm)
-        + ("," if len(perm) == 1 else "")
-        + ")"
-    )
     if (walk is not None and not isinstance(src, Param)) or (
         dwalk is not None and not isinstance(dst, Param)
     ):
@@ -527,20 +834,47 @@ def copy(dst, src, *, perm=None, walk=None, at=None, dwalk=None, dat=None) -> No
         "copy",
         dst,
         src,
-        perm=perm_text,
-        walk=_walk_text(walk),
+        classed=1 if classed else None,
+        node_loop=int(node_loop) if node_loop else None,
+        perm=None if perm is None else tuple(perm),
+        walk=walk,
         at=None if at is None else int(at),
-        dwalk=_walk_text(dwalk),
+        dwalk=dwalk,
         dat=None if dat is None else int(dat),
     )
 
 
-def quant(dst, src) -> None:
-    """Row-major f16 into an mx7a / mx7b packing, by the mover's quantiser."""
-    _mover("quant", dst, src)
+def quant(
+    dst,
+    src,
+    *,
+    node_loop=False,
+    finite=False,
+    backend=None,
+    finite_batch=1,
+    pad_cols=None,
+    overlap=False,
+    pad=False,
+) -> None:
+    """Pack row-major FP16. ``finite`` is a caller-validated input contract;
+    version-2 vector packing checks unproven inputs on device. A backend cannot
+    widen board policy; ``finite=True`` explicitly bypasses the device check.
+    """
+    _mover(
+        "quant",
+        dst,
+        src,
+        node_loop=1 if node_loop else None,
+        finite=1 if finite else None,
+        backend=backend,
+        finite_batch=finite_batch if finite_batch != 1 else None,
+        pad_cols=pad_cols,
+        pad=1 if pad else None,
+        overlap=1 if overlap else None,
+    )
 
 
-def gt4(dst, src, *, walk=None, at=None, dwalk=None, dat=None) -> None:
+def gt4(dst, src, *, walk=None, at=None, dwalk=None, dat=None, node_loop=False) -> None:
     """Row-major f16 into a ``tile=`` buffer's 4 x 4 sub-tiles. With walks
     (whole buffers): each group of four source words (`walk`'s innermost
     level) to four consecutive words, word i = 8-byte granule i of each,
@@ -553,9 +887,10 @@ def gt4(dst, src, *, walk=None, at=None, dwalk=None, dat=None) -> None:
         "gt4",
         dst,
         src,
-        walk=_walk_text(walk),
+        node_loop=1 if node_loop else None,
+        walk=walk,
         at=None if at is None else int(at),
-        dwalk=_walk_text(dwalk),
+        dwalk=dwalk,
         dat=None if dat is None else int(dat),
     )
 
@@ -570,7 +905,7 @@ def fill_value(dst, value: int, *, ew=None, walk=None, at=None) -> None:
         dst,
         value=value,
         ew=ew,
-        walk=_walk_text(walk),
+        walk=walk,
         at=None if at is None else int(at),
     )
 
@@ -580,14 +915,14 @@ def gen(dst, seed: int) -> None:
     _mover("gen", dst, seed=seed)
 
 
-def gather(dst, src, index, *, fp=False) -> None:
+def gather(dst, src, index, *, fp=False, table_stride=None) -> None:
     """Row r of `dst` := row index[r] of `src`."""
-    _mover("gather", dst, src, index=as_view(index).text(), fp=fp)
+    _mover("gather", dst, src, index=as_view(index), fp=fp, table_stride=table_stride)
 
 
-def scatter(dst, src, index, *, fp=False) -> None:
+def scatter(dst, src, index, *, fp=False, table_stride=None) -> None:
     """Row index[r] of `dst` := row r of `src`."""
-    _mover("scatter", dst, src, index=as_view(index).text(), fp=fp)
+    _mover("scatter", dst, src, index=as_view(index), fp=fp, table_stride=table_stride)
 
 
 V.bind(math=math, reduce=reduce, unpack=unpack)
@@ -643,11 +978,25 @@ def where(m: V.Operand, a: V.Operand, b: V.Operand) -> Value:
 
 
 def xlane(x: V.Operand, k: int) -> Value:
-    """Lane l of every 16-lane chunk takes lane ``l xor k`` of `x` (the
-    crossbar, exact); with `where` over a lane mask, any in-chunk swap."""
-    if not isinstance(k, int) or not 0 < k < 16:
-        raise DSLError(f"xlane takes a lane xor 1..15, got {k!r}, at {at_caller()}")
+    """Lane l of every chunk (`Machine.lanes` lanes) takes lane ``l xor k`` of
+    `x` (the crossbar, exact); with `where` over a lane mask, any in-chunk swap."""
+    n = active().machine.lanes
+    if not isinstance(k, int) or not 0 < k < n:
+        raise DSLError(
+            f"xlane takes a lane xor 1..{n - 1}, got {k!r}, at {at_caller()}"
+        )
     return math("xlane", x, float(k))
+
+
+def xrot(x: V.Operand, k: int) -> Value:
+    """Lane l of every chunk (`Machine.lanes` lanes) takes lane ``(l + k) mod
+    lanes`` of `x` (the crossbar's rotate, exact)."""
+    n = active().machine.lanes
+    if not isinstance(k, int) or not 0 < k < n:
+        raise DSLError(
+            f"xrot takes a lane rotation 1..{n - 1}, got {k!r}, at {at_caller()}"
+        )
+    return math("xrot", x, float(k))
 
 
 def rmax(x: Value | ValueView) -> Value:
@@ -660,6 +1009,7 @@ def rsum(x: Value | ValueView) -> Value:
 
 __all__ = [
     "absolute",
+    "broadcast",
     "buffer",
     "copy",
     "drain",
@@ -671,6 +1021,7 @@ __all__ = [
     "fnma",
     "gather",
     "gemm",
+    "gemm_tiles",
     "gen",
     "gt4",
     "load",
@@ -697,5 +1048,6 @@ __all__ = [
     "when",
     "where",
     "xlane",
+    "xrot",
     "zero",
 ]
