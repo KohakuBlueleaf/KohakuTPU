@@ -1,55 +1,68 @@
 ---
 title: software
-summary: The host and node software of KohakuAccel and its projects, one uv workspace with one member per component.
+summary: Rust compilation and Python tracing, runtime and drivers in one workspace.
 tags:
   - software
 ---
 
-# software
+# Software
 
-One uv workspace (`pyproject.toml` here), one member per component. A module is
-named `<side>.<component>.*`: the side is `kohakuaccel` (the framework) or a
-project (`kohakutpu`, `toyaccel`); `kohakuaccel` and `kohakutpu` are namespace
-packages spread across the members.
+The Python packages form one uv workspace, with a member per component. Names
+start with `kohakuaccel` for framework code, `kohakutpu` for the TPU, or
+`toyaccel` for the template project. Rust stage crates live in `rust/crates/`.
 
-    uv sync                                     # every member, editable
-    uv run pytest                               # every component's tests, every CPU
-    uv run python -m toyaccel.application.run   # the template, end to end
+```text
+uv sync
+uv run python ../scripts/py/build_rs.py spec
+uv run pytest -n 8 -p no:cacheprovider
+```
 
-## The components
+Run hardware tests separately, with `-n 1` and an explicitly named target.
+A card or Verilator model is not needed for offline compilation and binding tests.
 
-| member | modules | what it is |
+## Components
+
+| Member | Modules | Responsibility |
 |---|---|---|
-| `language/` | `kohakutpu.language` | the `.ktpu` text (`text/`), the L3 and L2 readers, verifiers and reference interpreters (`l3/`, `l2/`), the L1 op names (`l1/`), the compilers (`lower/`: L3 -> L2 -> L1; `opt/`: retile, schedule), `pipeline.py`, the numerics (`numerics/mxfp7.py`), the kernels (`kernels/`) |
-| `compiler/` | `kohakuaccel.compiler` | the ISA toolkit (`isa.py`: `Field`, `InstFormat`, `InstSet`), the L1 `Program` (`program.py`), the work package (`package/`: format, builder, mover moves, the dispatch-engine lowering), the machine description (`machine.py`) |
-| | `kohakutpu.compiler` | the ISA field tables (`isa/`), the encoders (`encode/`), the memory layouts (`layout/`), the L1 body and image emitters (`emit/`), resident IMEM (`imem.py`), `build.py` (a kernel to a package) |
-| `driver/` | `kohakuaccel.driver` | transports (`transport/`), flits, registers, staging and discovery (`device/`), the unit registry (`unit/`), node boot, heaps and queues (`node/`), the card daemon (`daemon/`), the kick-list loader (`runtime/`) |
-| | `kohakutpu.driver` | the card's clocks (`clock/`), host entry points (`host/`), the unit types (`units/`), the daemon CLI (`daemon/`) |
-| | `tools/` | card, clock and mover scripts against a card or a card model |
-| `simulation/` | `kohakuaccel.simulation` | the package interpreter (`package.py`), `SimMachine` and its mailbox (`machine/`) |
-| | `kohakutpu.simulation` | the Verilator card and the V2 replay bench (`verilator/`) |
-| `firmware/` | C | the node firmware (`kohakuaccel/`, `kohakutpu/`), `build.py`, its host tools (`tools/`) |
-| `application/` | `kohakutpu.application` | a skeleton (no tensor API, no DSL), and the kernel tools (`tools.run`, `tools.core`) |
-| `template/` | `toyaccel.*` | the smallest project, one module per component ([template/README.md](template/README.md)) |
+| `language/` | `kohakutpu.language` | Python DSL tracing, `.ktpu` syntax, machine schema reader, host numerics and examples |
+| `compiler/` | `kohakutpu.compiler._rs` | Native extension built from the Rust `ktpu` crate |
+| | `kohakutpu.stack` | Small Rust compile, buffer and specialisation adapters |
+| | `kohakuaccel.compiler.isa` | Generic instruction-layout toolkit for framework projects |
+| `rust/` | `ktpu-machine`, `ktpu-isa`, `ktpu-l0`, `ktpu-l1`, `ktpu-l2`, `ktpu-verify`, `ktpu` | Machine facts, encodings, packages, lowering, scheduling and static verification |
+| `driver/` | `kohakuaccel.driver`, `kohakutpu.driver` | Transports, node queues, discovery, clocks, staging and host entry points |
+| `simulation/` | `kohakuaccel.simulation` | Callback-driven package interpreter and transport test doubles; computes no tensor values |
+| | `kohakutpu.simulation` | Machine-bound Rust package reader and Verilator interfaces |
+| `firmware/` | C and Python tools | Node firmware, build configuration and offline package producers |
+| `application/` | `kohakutpu.application` | Tensor API, tinygrad integration, kernels, runtime and tools |
+| `template/` | `toyaccel.*` | Small framework project ([template](template/README.md)) |
 
-## The import rules
+The runtime's machine view comes from `_rs.machine_view`; addresses, staging
+capacity, buffers, IMEM accounting and packages use the same machine schema as
+the Rust compiler. Compiled tensor values are checked on a card or Verilated
+card, never a tensor behaviour model. Frozen goldens witness byte layouts offline.
 
-`software/tests/test_imports.py` reads every module's imports and fails on a breach:
+## Import rules
 
-| component | may import |
+`tests/test_imports.py` checks imports at module level. Framework modules import
+no project, and a project imports no other project. The callback interpreter
+receives its package reader from its caller; the framework does not import the
+TPU extension.
+
+| Component | May import |
 |---|---|
 | language | language |
-| compiler | compiler, language |
-| driver | driver |
-| simulation | simulation, driver, compiler, language |
+| compiler namespace | compiler namespace |
+| stack | stack, native compiler binding, language, runtime package adapters |
+| driver | driver, machine-schema language reader |
+| simulation | simulation, driver, native compiler binding, language |
 | application | every component |
 
-The framework imports no project, a project imports no other project, and
-every import sits at module level. Tests that tie two components together live
-in `tests/` (`test_package_mover.py`: the compiler's mover encoding against the
-driver's).
+## Verification and style
 
-## Style
+Tier-0 spec runners call Rust directly; Python retains frontend and runtime
+checks and the target-facing runners. There is no Python-versus-Rust compiler
+selection mode. `KTPU_DUMP` writes compiled L2/L1 text. Rust owns stage caches;
+Python holds bounded in-process specialisation and package memos.
 
-`ruff check .` and `black --check .`, from this directory: the workspace has
-its own config, and the repository root's excludes it.
+Run `ruff check .` and `black --check .` from this directory. Rust uses
+`cargo fmt --check` and crate-scoped tests and clippy.

@@ -33,6 +33,8 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+!software/rust/crates/*/src/build/
+!software/rust/crates/*/build/
 develop-eggs/
 dist/
 downloads/
@@ -159,6 +161,7 @@ celerybeat.pid
 env/
 venv/
 ENV/
+!software/tests/spec/vectors/**/env/
 env.bak/
 venv.bak/
 
@@ -198,3 +201,16 @@ cython_debug/
 
 # card_v9_2n bench input: the mailbox sends a run holds the CUs for
 /cu_hold.txt
+
+# native extension build leftovers
+*.pyd.old-*
+*.pdb
+
+!software/os/lib/
+# KohakuAccel OS run outputs (run_card/run_core --out/--json)
+software/os/tools/*/
+software/os/tools/*.json
+
+# golden witnesses live in the Hugging Face dataset (golden/fetch.py)
+software/rust/golden/**/*.json
+software/rust/golden/.cache/

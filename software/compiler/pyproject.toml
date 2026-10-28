@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.8,<2"]
+build-backend = "maturin"
 
 [project]
 name = "kohaku-compiler"
@@ -12,7 +12,12 @@ dependencies = ["numpy>=1.26", "kohakutpu-language"]
 [tool.uv.sources]
 kohakutpu-language = { workspace = true }
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["kohakuaccel*", "kohakutpu*"]
-namespaces = true
+# The Python packages here plus the Rust stack (software/rust, crate ktpu) as
+# the extension module kohakutpu.compiler._rs:
+#   cd software/compiler && VIRTUAL_ENV=../.venv maturin develop --uv
+[tool.maturin]
+manifest-path = "../rust/crates/ktpu/Cargo.toml"
+python-source = "."
+module-name = "kohakutpu.compiler._rs"
+python-packages = ["kohakuaccel"]
+features = ["python"]
