@@ -15,6 +15,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from kohakutpu.language import dsl as kt
+from kohakutpu.language.numerics import rounding
 
 #: 1.5 * 2**15: added and subtracted, a lane value |x| < 2**14 rounds to a
 #: whole number (E8M15 lanes carry 16 significand bits).
@@ -138,7 +139,7 @@ def count(e) -> int:
 
 
 # --------------------------------------------------------------- emission
-def emit(e, values: dict, memo: dict | None = None):
+def emit(e, values: dict, memo: dict | None = None, *, valid_cols=None, carry=False):
     """`e` as DSL values over `values` (operand i -> a kt value, number or
     statistic). A subexpression reached twice is emitted once."""
     memo = {} if memo is None else memo
@@ -150,9 +151,16 @@ def emit(e, values: dict, memo: dict | None = None):
     elif isinstance(e, Const):
         out = float(e.value)
     elif isinstance(e, Reduce):
-        out = _reduce(e.op, emit(e.arg, values, memo))
+        out = _reduce(
+            e.op,
+            emit(e.arg, values, memo, valid_cols=valid_cols, carry=carry),
+            valid_cols,
+            carry,
+        )
     else:
-        args = [emit(a, values, memo) for a in e.args]
+        args = [
+            emit(a, values, memo, valid_cols=valid_cols, carry=carry) for a in e.args
+        ]
         out = _op(e.name, *args)
     memo[key] = out
     return out
@@ -247,13 +255,8 @@ def _round(x):
 
 
 def _trunc(x):
-    """Toward zero: the nearest whole number, less one where it overshot away
-    from zero; |x| >= 2**14 is already whole in a lane."""
-    r = _round(x)
-    floor = r - kt.math("cmpgt", r, x)
-    ceil = r + kt.math("cmplt", r, x)
-    small = kt.where(kt.math("cmplt", x, 0.0), ceil, floor)
-    return kt.where(kt.math("cmplt", kt.absolute(x), 16384.0), small, x)
+    """Toward zero using the traced machine's lane significand width."""
+    return rounding.trunc(x, kt, kt.machine().sig_bits)
 
 
 def _sin(x):
@@ -268,22 +271,25 @@ def _sin(x):
     return r * acc
 
 
-def _reduce(op, x):
+def _reduce(op, x, valid_cols=None, carry=False):
+    def fold(kind, value):
+        return kt.reduce(kind, value, valid_cols=valid_cols, carry=carry)
+
     match op:
         case "sum":
-            return kt.rsum(x)
+            return fold("rsum", x)
         case "max":
-            return kt.rmax(x)
+            return fold("rmax", x)
         case "prod":
             # sign * 2^sum(log2 |x|), 0 if any element is 0: statistic math
             # holds no compare, so the parity is arithmetic.
             zero = _cmp("cmpeq", x, 0.0)
             neg = _cmp("cmplt", x, 0.0)
-            mag = kt.exp2(kt.rsum(kt.log2(kt.absolute(x) + zero)))
-            n = kt.rsum(neg)
+            mag = kt.exp2(fold("rsum", kt.log2(kt.absolute(x) + zero)))
+            n = fold("rsum", neg)
             half = _round(n * 0.5 - 0.25)
             sign = 1.0 - (n - half * 2.0) * 2.0
-            return sign * mag * (1.0 - kt.minimum(kt.rsum(zero), 1.0))
+            return sign * mag * (1.0 - kt.minimum(fold("rsum", zero), 1.0))
     raise ValueError(f"no row reduction {op!r}")
 
 

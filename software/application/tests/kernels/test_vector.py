@@ -9,10 +9,10 @@ import pytest
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.vector import Operand
-from kohakutpu.compiler import kernel as K
-from kohakutpu.compiler import target as T
+from kohakutpu.application.runtime.machine import machine_of
+from kohakutpu.stack import kernel as K
 
-MACHINE = T.machine(nodes=1)
+MACHINE = machine_of("multimesh_v9t8", nodes=1)
 
 
 def _l2(e, operands, R, W, out) -> str:
@@ -46,10 +46,12 @@ def _each(scopes: list, first: str, n: int, env: dict, out: list) -> None:
     """``(first row, n)`` at every value of `scopes`' variables (index
     arithmetic over them, evaluated)."""
     if not scopes:
-        out.append((eval(first, {}, env), n))
+        out.append((eval(first.replace("/", "//"), {}, env), n))
         return
     _, var, lo, hi = scopes[0]
-    for v in range(eval(lo, {}, env), eval(hi, {}, env)):
+    for v in range(
+        eval(lo.replace("/", "//"), {}, env), eval(hi.replace("/", "//"), {}, env)
+    ):
         _each(scopes[1:], first, n, {**env, var: v}, out)
 
 
@@ -77,10 +79,51 @@ def test_no_row_past_R_is_read_or_written(R):
         assert f": +{R % 4}" in text
 
 
+@pytest.mark.parametrize("vc", range(1, 5))
+@pytest.mark.parametrize("n", range(34))
+def test_split_covers_every_trip_once(vc, n):
+    machine = machine_of(
+        "multimesh_v9t8",
+        nodes=1,
+        units={**MACHINE.units, "VC": tuple((2, i + 1) for i in range(vc))},
+    )
+    cores, start, trips = V.split(n, machine.count("VC"))
+    assert cores == max(1, min(vc, n))
+    seen = [start(c) + i for c in range(cores) for i in range(trips(c))]
+    assert sorted(seen) == list(range(n))
+    counts = [trips(c) for c in range(cores)]
+    assert max(counts) - min(counts) <= 1
+
+
+@pytest.mark.parametrize("vc", range(1, 5))
+def test_split_traces_every_row_once(vc):
+    machine = machine_of(
+        "multimesh_v9t8",
+        nodes=1,
+        units={**MACHINE.units, "VC": tuple((2, i + 1) for i in range(vc))},
+    )
+    rows = 208
+    operand = Operand("full", pitch=32, rows=rows)
+    kernel, given, _ = V.rows_kernel(
+        X.Load(0), (operand,), rows, 32, operand, machine.count("VC"), bands=1
+    )
+    text = kernel.trace(given, machine=K.dsl_machine(machine)).text
+    for op, name in (("load", "in0"), ("store", "out")):
+        seen = [
+            r
+            for first, count in _rows(text, op, name)
+            for r in range(first, first + count)
+        ]
+        assert sorted(seen) == list(range(rows))
+
+
 def test_a_statistic_is_stored_across_the_row():
-    text = _l2(X.Load(0), [Operand("row", rows=8)], 8, 128, Operand("full", pitch=128))
+    text = _l2(
+        X.Load(0), [Operand("row", rows=16)], 16, 128, Operand("full", pitch=128)
+    )
     stores = [ln for ln in text.splitlines() if "store out" in ln]
-    # One packed band of 32 columns, stored into each of the row's four.
+    assert re.search(r"= mul \w+\[:, \*\], 1.0.*: f32\[16, 32\] @reg\(gt4\)", text)
+    # Materialised register rows, packed into each of the row's four bands.
     assert sorted(re.findall(r", (\d+) : \+32\]", "\n".join(stores))) == [
         "0",
         "32",

@@ -3,21 +3,25 @@
 `rows_kernel`: [R, W] f16 rows (W a multiple of 32) in GT4 bands of 4. An
 operand is `full` (an [R, W] view, rows a pitch apart), `tile` (the same of
 a cluster's drained sub-tiles), `col` (one [W] row every row reads), `row` (a
-statistic held as [R, 32], its value in all 32 columns) or `scalar` (row 0
-of one). The output is an [R, W] view, or with a `Reduce` a [R, 32]
-statistic; rows wider than a band's registers go in column blocks, a
-reduction across them leaving partials to fold again. `flat_kernel`: N
-elements as 128-value rows (f16 or f32), each operand read at the output's
-index. A core's trips are a constant of the instance (``h + c * (n - 2h)``
-on two cores).
+statistic: R f16 values, 16 a word, from a word) or `scalar` (one value of
+one, every row's). The output is an [R, W] view, or with a `Reduce` an [R]
+statistic (an [blocks, R] one of partials: rows wider than a band's
+registers go in column blocks, a reduction across them leaving partials to
+fold); a statistic moves in trips of 16 rows. `flat_kernel`: N elements as
+128-value rows (f16 or f32), each operand read at the output's index or one
+value of it. A core's trips are a constant of the instance (``h + c * (n -
+2h)`` on two cores).
 """
 
 import functools
 import hashlib
 import operator
+from collections import OrderedDict
 from dataclasses import dataclass
 
 from kohakutpu.application.kernels import expr as X
+from kohakutpu.application.kernels.classes import flat as class_flat
+from kohakutpu.application.kernels.classes import rows as class_rows
 from kohakutpu.language import dsl as kt
 
 L1_WORDS = 512
@@ -25,6 +29,35 @@ L1_WORDS = 512
 L1_MARGIN = 16
 #: Widest column block one band's registers take: 8 registers a value.
 MAX_BLOCK = 256
+KERNELS_KEPT = 1024
+_kernels: OrderedDict = OrderedDict()
+
+
+def expr_key(e) -> tuple:
+    """DAG-aware structural key for an expression `e` (preserving shared nodes)."""
+    nodes: list = []
+    seen: dict = {}
+
+    def walk(x) -> int:
+        got = seen.get(id(x))
+        if got is not None:
+            return got
+        if isinstance(x, X.Load):
+            node = ("load", x.i)
+        elif isinstance(x, X.Const):
+            node = ("const", float(x.value))
+        elif isinstance(x, X.Op):
+            node = ("op", x.name, tuple(walk(a) for a in x.args))
+        elif isinstance(x, X.Reduce):
+            node = ("reduce", x.op, walk(x.arg))
+        else:
+            node = ("other", repr(x))
+        seen[id(x)] = len(nodes)
+        nodes.append(node)
+        return seen[id(x)]
+
+    root = walk(e)
+    return (tuple(nodes), root)
 
 
 @dataclass(frozen=True)
@@ -33,9 +66,23 @@ class Operand:
 
     kind: str  # "full" | "tile" | "col" | "row" | "scalar"
     dtype: str = "f16"
-    offset: int = 0  # element of row 0, column 0
+    offset: int = 0  # element of row 0, column 0 (row, scalar: the value)
     pitch: int = 0  # elements between rows (full)
     rows: int = 0  # rows the buffer holds past the offset (its declared extent)
+
+
+#: Rows a word of a statistic holds, and a trip's rows when one is read or
+#: written.
+STAT_ROWS = 16
+
+
+def holds_stat(operands, out_kind: str) -> bool:
+    return out_kind == "row" or any(o.kind == "row" for o in operands)
+
+
+def stat_words(R: int) -> int:
+    """Whole words of R statistic values."""
+    return -(-R // STAT_ROWS)
 
 
 @dataclass(frozen=True)
@@ -57,11 +104,17 @@ def name(prefix: str, *parts) -> str:
 
 def split(n: int, cores: int):
     """``(cores, start(c), trips(c))`` of `n` trips over `cores` cores."""
+    if cores < 1 or n < 0:
+        raise ValueError("split needs a positive core count and nonnegative trips")
     cores = max(1, min(cores, n))
     if cores == 1:
         return 1, (lambda c: 0), (lambda c: n)
-    h = -(-n // 2)
-    return 2, (lambda c: c * h), (lambda c: h + c * (n - 2 * h))
+    q, rem = divmod(n, cores)
+
+    def start(c):
+        return c * q + (c * rem + cores - 1) // cores
+
+    return cores, start, lambda c: start(c + 1) - start(c)
 
 
 def block(w: int, most: int = MAX_BLOCK) -> int:
@@ -71,15 +124,15 @@ def block(w: int, most: int = MAX_BLOCK) -> int:
     raise ValueError(f"{w} columns do not split into blocks of 32")
 
 
-def _bands_fit(operands, out_kind: str, wc: int, W: int) -> int:
+def bands_fit(operands, out_kind: str, wc: int, W: int) -> int:
     """Bands of 4 rows x `wc` columns the L1 holds double-buffered, beside
     the prologue (a phase is one column block of W)."""
-    # A band of 4 rows x wc f16 columns is wc / 4 L1 words; a statistic's 8.
+    # A band of 4 rows x wc f16 columns is wc / 4 L1 words; a statistic's or
+    # a scalar's at most one (16 rows a word).
     words = sum(wc // 4 for o in operands if o.kind in ("full", "tile"))
-    words += sum(8 for o in operands if o.kind == "row")
-    words += 8 if out_kind == "row" else wc // 4
+    words += sum(1 for o in operands if o.kind in ("row", "scalar"))
+    words += 1 if out_kind == "row" else wc // 4
     prologue = sum(wc // 16 for o in operands if o.kind == "col")
-    prologue += sum(2 for o in operands if o.kind == "scalar")
     room = L1_WORDS - L1_MARGIN - prologue
     return room // (2 * words) if words else 4
 
@@ -95,20 +148,19 @@ def plan(
 ) -> Plan:
     """The trips and blocks of a rows stage: as many bands a trip as the
     L1 holds double-buffered (at most 4), `quantum` rows dividing a trip.
-    Unless `wc` is given, the column block narrows (halving, whole blocks of
-    32 dividing W) until one band of every operand fits."""
+    Unless `wc` is given, the column block narrows (whole blocks of 32
+    dividing W) until the bands of `quantum` rows of every operand fit."""
     if W % 32:
         raise ValueError(f"a GT4 row is whole 32-column blocks, not {W}")
-    fixed = wc is not None
-    wc = wc or (W if W <= MAX_BLOCK else block(W))
-    while True:
-        fit = _bands_fit(operands, out_kind, wc, W)
-        narrower = wc // 2
-        if fit >= 1 or fixed or narrower < 32 or W % narrower:
-            break
-        wc = narrower
-    if fit < 1:
-        raise ValueError(f"one band of {wc} columns does not fit a core's L1")
+    need = max(1, quantum // 4)
+    if wc is None:
+        widest = W if W <= MAX_BLOCK else block(W)
+        blocks = [w for w in range(widest, 31, -32) if W % w == 0]
+        fits = (w for w in blocks if bands_fit(operands, out_kind, w, W) >= need)
+        wc = next(fits, blocks[-1])
+    fit = bands_fit(operands, out_kind, wc, W)
+    if fit < need:
+        raise ValueError(f"{need} bands of {wc} columns do not fit a core's L1")
     b = max(1, bands or min(4, fit))
     rows = 4 * b
     while rows % quantum:
@@ -142,17 +194,17 @@ def overrun(R: int, quantum: int = 4) -> int:
 
 def port(o: Operand, rp: int, w: int):
     """The port and spec of an operand: a [rows, pitch] buffer covering its
-    view (rows past R are the allocation's tail), a [W] row, or a [rows, 32]
-    statistic."""
+    view (rows past R are the allocation's tail), a [W] row, an [rows]
+    statistic, or a scalar's word."""
     if o.kind in ("full", "tile"):
         r0 = o.offset // o.pitch
         shape = (max(o.rows, r0 + rp), o.pitch)
     elif o.kind == "col":
         shape = (o.offset + w,)
     elif o.kind == "row":
-        shape = (max(o.rows, o.offset + rp), 32)
+        shape = (max(o.rows, stat_words(o.offset + rp) * STAT_ROWS),)
     else:
-        shape = (max(o.rows, o.offset + 1), 32)
+        shape = (max(o.rows, o.offset // STAT_ROWS * STAT_ROWS + STAT_ROWS),)
     return kt.In(*shape), kt.TensorSpec.make(shape, o.dtype)
 
 
@@ -197,9 +249,6 @@ def _rows_trips(bufs, e, operands, out, pl: Plan, c, start, trips, row0, cb) -> 
         if o.kind == "col":
             lo = o.offset + col0
             pro[i] = kt.unpack(kt.load(buf[lo : lo + pl.wc], gt4=True))
-        elif o.kind == "scalar":
-            at = o.offset
-            pro[i] = kt.unpack(kt.load(buf[at : at + 1, :], gt4=True))
 
     for t in kt.range(trips):
         r = start(c) * pl.rows + t * pl.rows + row0
@@ -218,15 +267,19 @@ def _rows_block(bufs, e, operands, out, pl: Plan, r, cb: int, pro: dict) -> None
             vals[i] = kt.load(view, gt4=True)
         elif o.kind == "row":
             rr = o.offset + r
-            vals[i] = kt.load(buf[rr : rr + pl.rows, :], gt4=True)
+            vals[i] = kt.load(buf[rr : rr + pl.rows])
+        elif o.kind == "scalar":
+            w0 = o.offset // STAT_ROWS * STAT_ROWS
+            lane = o.offset % STAT_ROWS
+            vals[i] = kt.unpack(kt.load(buf[w0 : w0 + STAT_ROWS]), lane=lane)
 
     v = X.emit(e, vals)
     dst = bufs["out"]
     if out.kind == "row":
         if pl.nblk > 1:
-            kt.store(dst[r : r + pl.rows, cb * 32 : cb * 32 + 32], v)
+            kt.store(dst[cb, r : r + pl.rows], v)
         else:
-            kt.store(dst[r : r + pl.rows, :], v)
+            kt.store(dst[r : r + pl.rows], v)
     else:
         rr, cc = divmod(out.offset, out.pitch)
         _store_over(dst, rr + r, cc + col0, pl.rows, pl.wc, v)
@@ -234,13 +287,16 @@ def _rows_block(bufs, e, operands, out, pl: Plan, r, cb: int, pro: dict) -> None
 
 def _store_over(dst, r0, c0, rows: int, cols: int, v) -> None:
     """`v` over the [rows, cols] window of `dst` at (r0, c0): packed once,
-    then stored over each of its bands (a statistic is one band of 32
-    columns, a row broadcast one band of 4 rows: repeated across)."""
+    then stored over each of its bands. Statistics first materialise as
+    register rows; their memory form remains 16 values a word."""
+    if isinstance(v, kt.Value) and v.space == "l1" and len(v.shape) == 1:
+        v = kt.unpack(v)  # a statistic as loaded (16 a word): to registers
     if not (isinstance(v, kt.Value) and v.space == "l1"):
         if not isinstance(v, kt.Value):
             raise ValueError("a rows kernel stores a computed value, not a number")
-        gt4 = v.stat or v.mode == "gt4"
-        v = kt.pack(v, dst.spec.dtype, gt4=gt4)
+        if v.stat:
+            v = kt.broadcast(v, 32)
+        v = kt.pack(v, dst.spec.dtype, gt4=v.mode == "gt4")
     h, w = (v.shape[0], v.shape[-1]) if len(v.shape) == 2 else (v.shape[0], cols)
     if rows % h or cols % w:
         raise ValueError(f"a [{h}, {w}] value does not tile a [{rows}, {cols}] window")
@@ -250,25 +306,60 @@ def _store_over(dst, r0, c0, rows: int, cols: int, v) -> None:
 
 
 def rows_kernel(
-    e, operands: tuple, R: int, W: int, out: Operand, cores: int = 2, bands=None
+    e,
+    operands: tuple,
+    R: int,
+    W: int,
+    out: Operand,
+    cores: int,
+    bands=None,
+    *,
+    shape_class=None,
 ):
     """A DSL kernel computing `e` over [R, W] rows into `out`. Returns
     ``(kernel, given, column blocks)``; with several blocks a reduction's
-    output is [R, 32 * blocks] partials."""
+    output is [blocks, ceil(R / 16) * 16] compact partials."""
+    if shape_class is not None:
+        return class_rows.kernel(e, operands, R, W, out, cores, bands, shape_class)
+    operands = tuple(operands)
+    kkey = (
+        "rows",
+        expr_key(e),
+        operands,
+        R,
+        W,
+        out,
+        cores,
+        bands,
+        L1_WORDS,
+        L1_MARGIN,
+        MAX_BLOCK,
+        STAT_ROWS,
+        bands_fit,
+        stages,
+        port,
+        split,
+        kt.Kernel.build,
+    )
+    hit = _kernels.get(kkey)
+    if hit is not None:
+        _kernels.move_to_end(kkey)
+        return hit
     reduces = X.reduces(e)
-    if out.kind == "row" and not reduces and W != 32:
-        raise ValueError(
-            "a statistic output comes from a row reduction or [R, 32] rows"
-        )
-    pl = plan(operands, out.kind, R, W, bands)
+    stats = all(o.kind in ("row", "scalar") for o in operands)
+    if out.kind == "row" and not reduces and not stats:
+        raise ValueError("a statistic output comes from a row reduction or statistics")
+    quantum = STAT_ROWS if holds_stat(operands, out.kind) else 4
+    pl = plan(operands, out.kind, R, W, bands, quantum=quantum)
     if pl.nblk > 1 and len(reduces) > 1:
         raise ValueError("several reductions over a row wider than one block")
-    parts = stages(pl, R)
+    parts = stages(pl, R, quantum)
     ports, given = {}, {}
     for i, o in enumerate(operands):
         ports[f"in{i}"], given[f"in{i}"] = port(o, R, W)
     if out.kind == "row":
-        out_shape = (max(out.rows, R), 32 * pl.nblk)
+        rows = max(out.rows, stat_words(R) * STAT_ROWS)
+        out_shape = (pl.nblk, rows) if pl.nblk > 1 else (rows,)
     else:
         out_shape = port(out, R, W)[1].shape
     ports["out"] = kt.Out(*out_shape)
@@ -282,42 +373,92 @@ def rows_kernel(
                 _tail_band(p, e, operands, out, sp, row0, rows, W)
 
     k = kt.Kernel.build(name("rows", repr(e), operands, R, W, out, pl), body, ports)
-    return k, given, pl.nblk
+    got = (k, given, pl.nblk)
+    if KERNELS_KEPT > 0:
+        _kernels[kkey] = got
+        while len(_kernels) > KERNELS_KEPT:
+            _kernels.popitem(last=False)
+    return got
 
 
 def _tail_band(p, e, operands, out: Operand, pl: Plan, row0: int, rows: int, W: int):
-    """The last band of a rows kernel, `rows` (< 4) of its rows real: each
-    operand's rows copied by the mover into a zeroed band of scratch, the
-    band computed there, its first `rows` rows copied out -- no row past R
-    read or written."""
+    """The last band of a rows kernel, `rows` (< its `pl.rows`) of its rows
+    real: each operand's rows copied by the mover into a zeroed band of
+    scratch, the band computed there, its first `rows` rows copied out -- no
+    row past R read or written, but a statistic's: its word, whole."""
     bufs, ops = dict(p), list(operands)
     for i, o in enumerate(operands):
-        if o.kind not in ("full", "tile", "row"):
+        if o.kind == "row":
+            s = kt.buffer((pl.rows,), o.dtype)
+            at = o.offset + row0
+            kt.copy(s[0 : pl.rows], p[f"in{i}"][at : at + pl.rows])
+            bufs[f"in{i}"] = s
+            ops[i] = Operand("row", o.dtype, 0, 0, pl.rows)
             continue
-        cols = 32 if o.kind == "row" else W
-        rr, cc = (o.offset, 0) if o.kind == "row" else divmod(o.offset, o.pitch)
-        s = kt.buffer((pl.rows, cols), o.dtype)
+        if o.kind not in ("full", "tile"):
+            continue
+        rr, cc = divmod(o.offset, o.pitch)
+        s = kt.buffer((pl.rows, W), o.dtype)
         kt.fill_value(s, 0)
-        kt.copy(s[0:rows, :], p[f"in{i}"][rr + row0 : rr + row0 + rows, cc : cc + cols])
+        kt.copy(s[0:rows, :], p[f"in{i}"][rr + row0 : rr + row0 + rows, cc : cc + W])
         bufs[f"in{i}"] = s
-        ops[i] = Operand(o.kind, o.dtype, 0, 0 if o.kind == "row" else cols, pl.rows)
-    cols = 32 * pl.nblk if out.kind == "row" else W
-    s = kt.buffer((pl.rows, cols), out.dtype)
-    bufs["out"] = s
-    tail = Operand(out.kind, out.dtype, 0, 0 if out.kind == "row" else cols, pl.rows)
-    rows_stage(bufs, e, tuple(ops), tail, pl, 1, row0=0)
+        ops[i] = Operand(o.kind, o.dtype, 0, W, pl.rows)
     if out.kind == "row":
-        kt.copy(p["out"][row0 : row0 + rows, :], s[0:rows, :])
+        shape = (pl.nblk, pl.rows) if pl.nblk > 1 else (pl.rows,)
+        s = kt.buffer(shape, out.dtype)
+        tail = Operand("row", out.dtype, 0, 0, pl.rows)
+    else:
+        s = kt.buffer((pl.rows, W), out.dtype)
+        tail = Operand(out.kind, out.dtype, 0, W, pl.rows)
+    bufs["out"] = s
+    rows_stage(bufs, e, tuple(ops), tail, pl, 1, row0=0)
+    if out.kind == "row" and pl.nblk > 1:
+        kt.copy(p["out"][:, row0 : row0 + pl.rows], s[:, 0 : pl.rows])
+    elif out.kind == "row":
+        kt.copy(p["out"][row0 : row0 + pl.rows], s[0 : pl.rows])
     else:
         rr, cc = divmod(out.offset, out.pitch)
         kt.copy(p["out"][rr + row0 : rr + row0 + rows, cc : cc + W], s[0:rows, :])
 
 
-def flat_kernel(e, dtypes: tuple, n: int, out_dtype: str = "f16", cores: int = 2):
-    """`e` over `n` elements (every operand at the output's index), as
-    128-value rows. Returns ``(kernel, given)``."""
+def flat_kernel(
+    e,
+    dtypes: tuple,
+    n: int,
+    out_dtype: str,
+    cores: int,
+    scalars: tuple = (),
+    *,
+    shape_class=None,
+):
+    """`e` over `n` elements (every operand at the output's index, but
+    ``(i, lane)`` of `scalars`: f16 value `lane` of operand i's word, every
+    element's), as 128-value rows. Returns ``(kernel, given)``."""
+    if shape_class is not None:
+        return class_flat.kernel(e, dtypes, n, out_dtype, cores, scalars, shape_class)
+    dtypes = tuple(dtypes)
+    scalars = tuple(scalars)
+    kkey = (
+        "flat",
+        expr_key(e),
+        dtypes,
+        n,
+        out_dtype,
+        cores,
+        scalars,
+        L1_WORDS,
+        L1_MARGIN,
+        split,
+        kt.Kernel.build,
+    )
+    hit = _kernels.get(kkey)
+    if hit is not None:
+        _kernels.move_to_end(kkey)
+        return hit
     item = {"f16": 2, "f32": 4}
-    words = sum(128 * item[d] // 32 for d in dtypes) + 128 * item[out_dtype] // 32
+    lanes = dict(scalars)
+    words = sum(128 * item[d] // 32 for i, d in enumerate(dtypes) if i not in lanes)
+    words += len(lanes) + 128 * item[out_dtype] // 32
     rows = 16
     while rows > 1 and 2 * rows * words > L1_WORDS - L1_MARGIN:
         rows //= 2
@@ -325,13 +466,19 @@ def flat_kernel(e, dtypes: tuple, n: int, out_dtype: str = "f16", cores: int = 2
     full, rem = divmod(total, rows)
     ports, given = {}, {}
     for i, d in enumerate(dtypes):
-        ports[f"in{i}"] = kt.In(total, 128, dtype=d)
-        given[f"in{i}"] = kt.TensorSpec.make((total, 128), d)
+        shape = (16,) if i in lanes else (total, 128)
+        ports[f"in{i}"] = kt.In(*shape, dtype=d)
+        given[f"in{i}"] = kt.TensorSpec.make(shape, d)
     ports["out"] = kt.Out(total, 128, dtype=out_dtype)
     given["out"] = kt.TensorSpec.make((total, 128), out_dtype)
 
     def trip(p, r, h: int) -> None:
-        vals = {i: kt.load(p[f"in{i}"][r : r + h, :]) for i in range(len(dtypes))}
+        vals = {}
+        for i in range(len(dtypes)):
+            if i in lanes:
+                vals[i] = kt.unpack(kt.load(p[f"in{i}"][0:16]), lane=lanes[i])
+            else:
+                vals[i] = kt.load(p[f"in{i}"][r : r + h, :])
         kt.store(p["out"][r : r + h, :], X.emit(e, vals))
 
     def body(**p):
@@ -351,16 +498,24 @@ def flat_kernel(e, dtypes: tuple, n: int, out_dtype: str = "f16", cores: int = 2
                         trip(p, r, h)
                 r += h
 
-    k = kt.Kernel.build(name("flat", repr(e), dtypes, n, out_dtype), body, ports)
-    return k, given
+    key = name("flat", repr(e), dtypes, n, out_dtype, tuple(sorted(lanes.items())))
+    got = (kt.Kernel.build(key, body, ports), given)
+    if KERNELS_KEPT > 0:
+        _kernels[kkey] = got
+        while len(_kernels) > KERNELS_KEPT:
+            _kernels.popitem(last=False)
+    return got
 
 
 __all__ = [
     "MAX_BLOCK",
+    "STAT_ROWS",
     "Operand",
     "Plan",
+    "bands_fit",
     "block",
     "flat_kernel",
+    "holds_stat",
     "name",
     "overrun",
     "plan",
@@ -369,4 +524,5 @@ __all__ = [
     "rows_stage",
     "split",
     "stages",
+    "stat_words",
 ]
