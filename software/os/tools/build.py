@@ -4,8 +4,8 @@
     python software/os/tools/build.py kos m0       # some
     python software/os/tools/build.py --list
 
-Kernel-side sources (L0 and L1) and user-side sources (L2 runtime, utilities,
-apps) are compiled separately: the shared library sources are compiled once
+Kernel-side sources (L0 and L1) and user-side sources (L2 runtime, the
+dispatcher, utilities, apps) are compiled separately: the shared library sources are compiled once
 for each side, and the link script places every user object's sections in the
 user pages (`*/u/*.o`). Code that runs translated (each image's GAP sides) is
 compiled to assembly and through tools/memgap.py first; `--no-memgap` turns
@@ -71,7 +71,7 @@ IMAGES = {
     "kos": (
         "machine/kos.ld",
         [*tree("machine", "kernel"), *LIB],
-        [*tree("user", "utils", "apps"), *LIB],
+        [*tree("user", "dispatch", "utils", "apps"), *LIB],
         {"u"},
     ),
 }
