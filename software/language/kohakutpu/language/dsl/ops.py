@@ -42,6 +42,7 @@ def par(
     at=None,
     name: str | None = None,
     classed: bool = False,
+    class_band: int | None = None,
     repeats: int | None = None,
     advances: tuple[int, ...] = (),
 ) -> Iterator[E.Sym]:
@@ -52,7 +53,11 @@ def par(
     More `mg` / `vc` instances than a node has, outside a par over nodes,
     span the machine's nodes: the nodes look like one node of all their
     units (``par n on node[n]`` around ``par u on mg[u]``, the variable
-    ``n * per + u``); their memory is one through the Xache."""
+    ``n * per + u``); their memory is one through the Xache.
+
+    ``class_band`` selects 1/2/4/8 independent normalized row-band iterations
+    for a classed VC image. The graph/library key includes this schedule.
+    """
     t = active()
     if not isinstance(on, Unit) or on.index is not None or on.node is not None:
         raise DSLError(f"par runs on=kt.mg, kt.vc or kt.node, at {at_caller()}")
@@ -65,6 +70,8 @@ def par(
     top = hi if isinstance(hi, int) else None
     first = lo if isinstance(lo, int) else None
     wide = top is not None and per is not None and top > per and first == 0
+    if class_band is not None and not classed:
+        raise DSLError("class_band belongs to a classed row band")
     if classed and (on.kind != "vc" or wide):
         raise DSLError("a classed par names this node's vector cores")
     if wide and m.nodes > 1 and not t.scope.node:
@@ -82,6 +89,7 @@ def par(
         unit,
         kw={
             **({"classed": 1} if classed else {}),
+            **({"class_band": class_band} if class_band is not None else {}),
             **(
                 {"repeats": repeats, "advances": advances}
                 if repeats is not None
@@ -91,6 +99,7 @@ def par(
         node={
             **_par_node(v, lo, hi, on.kind, None if where is V.ANY else where),
             **({"classed": True} if classed else {}),
+            **({"class_band": class_band} if class_band is not None else {}),
             **(
                 {"repeats": repeats, "advances": list(advances)}
                 if repeats is not None
@@ -852,6 +861,12 @@ def quant(
     finite=False,
     backend=None,
     finite_batch=1,
+    classifier_overlap=False,
+    pipeline=False,
+    zero_classifier=False,
+    stream_axes=False,
+    fill_overlap=False,
+    zero_reuse=False,
     pad_cols=None,
     overlap=False,
     pad=False,
@@ -859,6 +874,12 @@ def quant(
     """Pack row-major FP16. ``finite`` is a caller-validated input contract;
     version-2 vector packing checks unproven inputs on device. A backend cannot
     widen board policy; ``finite=True`` explicitly bypasses the device check.
+    ``classifier_overlap`` uses register scoreboards inside batched checks,
+    retaining predicate and pack completion barriers. ``pipeline`` overlaps
+    unpack, math and pack with engine-local fences; ``zero_classifier`` uses
+    finite*0 versus nonfinite*0 and EXP2D sticky instead of predicate selection.
+    ``stream_axes`` batches the longest jointly contiguous entry axis;
+    ``fill_overlap`` waits for fill in the unpack queue instead of the front end.
     """
     _mover(
         "quant",
@@ -868,6 +889,12 @@ def quant(
         finite=1 if finite else None,
         backend=backend,
         finite_batch=finite_batch if finite_batch != 1 else None,
+        classifier_overlap=1 if classifier_overlap else None,
+        pipeline=1 if pipeline else None,
+        zero_classifier=1 if zero_classifier else None,
+        stream_axes=1 if stream_axes else None,
+        fill_overlap=1 if fill_overlap else None,
+        zero_reuse=1 if zero_reuse else None,
         pad_cols=pad_cols,
         pad=1 if pad else None,
         overlap=1 if overlap else None,

@@ -13,7 +13,7 @@ pub fn status(name: &str) -> String {
 pub struct Batch<'a> {
     pub name: &'a str,
     pub n: i64,
-    pub pitch: i64,
+    pub source_stride: i64,
     pub stride: i64,
     pub incremental: bool,
     pub dtype: &'a str,
@@ -24,6 +24,14 @@ pub struct Batch<'a> {
     pub valid_rows: i64,
     pub row_words: i64,
     pub overlap: bool,
+    pub classifier_overlap: bool,
+    pub pipeline: bool,
+    pub zero_classifier: bool,
+    pub fill_overlap: bool,
+    pub zero_reuse: bool,
+    pub classifier_banks: bool,
+    pub steady: Option<bool>,
+    pub odd: bool,
 }
 
 impl Batch<'_> {
@@ -39,9 +47,12 @@ impl Batch<'_> {
             lines.push(format!("{ind}vsync pack on=drain slack={}", self.slots - 1));
         }
         // One architectural loop register: the bounded 16-entry body is unrolled.
-        if self.checked && self.finite_batch > 1 {
+        if self.pipeline
+            || self.zero_classifier
+            || (self.finite_batch > 1 && (self.checked || !on("l2.packing/no-finite-batch")))
+        {
             for first in (0..self.n).step_by(self.finite_batch as usize) {
-                self.classified(first, input, output, ind, lines);
+                self.classified(slot, first, input, output, ind, lines);
             }
         } else {
             for j in 0..self.n {
@@ -54,6 +65,11 @@ impl Batch<'_> {
                     lines,
                 );
             }
+        }
+        if self.pipeline {
+            // Input reuse waits for reads; only the drain queue waits for output.
+            lines.push(format!("{ind}vsync fe on=unpack"));
+            lines.push(format!("{ind}vsync drain on=pack"));
         }
         lines.push(format!("{ind}vdrain a1 <- l1[{output}] rel"));
         if !self.overlap && !on("l2.packing/no-drain-wait") {
@@ -87,17 +103,87 @@ impl Batch<'_> {
         }
     }
 
-    fn classified(&self, first: i64, input: i64, output: i64, ind: &str, lines: &mut Vec<String>) {
+    fn classified(
+        &self,
+        slot: i64,
+        first: i64,
+        input: i64,
+        output: i64,
+        ind: &str,
+        lines: &mut Vec<String>,
+    ) {
         let n = self.finite_batch.min(self.n - first);
+        // Three registers per zero-classified value; two disjoint batches stay
+        // below reserved sticky-status v31. Unpack can lead the previous pack.
+        let step = if self.classifier_banks { 3 } else { 4 };
+        let base = if self.classifier_banks {
+            12 * ((slot * ((self.n + self.finite_batch - 1) / self.finite_batch)
+                + first / self.finite_batch)
+                % 2)
+        } else {
+            0
+        };
         for j in 0..n {
-            self.unpack(4 * j, input + (first + j) * self.input_words(), ind, lines);
+            self.unpack(
+                base + step * j,
+                input + (first + j) * self.input_words(),
+                ind,
+                lines,
+            );
         }
-        lines.push(format!("{ind}vsync fe on=unpack"));
+        if !self.pipeline {
+            lines.push(format!("{ind}vsync fe on=unpack"));
+        }
+        if self.checked {
+            self.classify(n, base, step, ind, lines);
+        }
+        for j in 0..n {
+            lines.push(format!(
+                "{ind}vpack v{} -> l1[{}] {}",
+                base + step * j,
+                output + (first + j) * 4,
+                self.dtype
+            ));
+        }
+        if !self.pipeline && !on("l2.packing/batch-no-pack-wait") {
+            lines.push(format!("{ind}vsync fe on=pack"));
+        }
+    }
+
+    fn classify(&self, n: i64, base: i64, step: i64, ind: &str, lines: &mut Vec<String>) {
+        if self.zero_classifier {
+            // IEEE special handling precedes the zero-factor shortcut: finite*0
+            // is zero; Inf*0 and NaN*0 are NaN. EXP2D maps zero to 1 (<2^tau)
+            // and any NaN to sticky. vector_quant admits checked tau=8 only.
+            for j in 0..n {
+                lines.push(format!(
+                    "{ind}vmul v{}, v{}, k0",
+                    base + step * j + 1,
+                    base + step * j
+                ));
+            }
+            for j in 0..n {
+                lines.push(format!(
+                    "{ind}vexp2d v{}, v{}, k0",
+                    base + step * j + step - 1,
+                    base + step * j + 1
+                ));
+            }
+            if !self.pipeline {
+                lines.push(format!("{ind}vsync fe on=math"));
+            }
+            return;
+        }
+        let overlap =
+            self.pipeline || (self.classifier_overlap && !on("l2.packing/serial-classifier"));
         for j in 0..n {
             lines.push(format!("{ind}vabs v{}, v{}", 4 * j + 1, 4 * j));
             lines.push(format!("{ind}vmov v{}, s3", 4 * j + 2));
         }
-        lines.push(format!("{ind}vsync fe on=math"));
+        // Register RAWs are scoreboarded; predicates still need a completed compare.
+        if !overlap {
+            lines.push(format!("{ind}vsync fe on=math"));
+        }
         for j in 0..n {
             lines.push(format!("{ind}vcmplt p{j}, v{}, s2", 4 * j + 1));
         }
@@ -105,21 +191,14 @@ impl Batch<'_> {
         for j in 0..n {
             lines.push(format!("{ind}vmov v{}, k0 if=p{j}", 4 * j + 2));
         }
-        lines.push(format!("{ind}vsync fe on=math"));
+        if !overlap {
+            lines.push(format!("{ind}vsync fe on=math"));
+        }
         for j in 0..n {
             lines.push(format!("{ind}vexp2d v{}, v{}, k0", 4 * j + 3, 4 * j + 2));
         }
-        lines.push(format!("{ind}vsync fe on=math"));
-        for j in 0..n {
-            lines.push(format!(
-                "{ind}vpack v{} -> l1[{}] {}",
-                4 * j,
-                output + (first + j) * 4,
-                self.dtype
-            ));
-        }
-        if !on("l2.packing/batch-no-pack-wait") {
-            lines.push(format!("{ind}vsync fe on=pack"));
+        if !self.pipeline {
+            lines.push(format!("{ind}vsync fe on=math"));
         }
     }
 
@@ -176,12 +255,53 @@ impl Batch<'_> {
     }
 
     pub fn emit(&self) -> String {
+        if self.zero_reuse && self.valid_rows == 0 {
+            // Packed zero entries are immutable for the image lifetime. Prepare
+            // one slot once, then only advance the destination descriptor.
+            let mut lines = vec![format!("image {}(trips)", self.name)];
+            lines.push(format!(
+                "    ainc a1 += {}",
+                if self.incremental {
+                    self.n * self.stride
+                } else {
+                    0
+                }
+            ));
+            lines.push("    vmov v0, k0".into());
+            lines.push("    vsync fe on=math".into());
+            for j in 0..self.n {
+                lines.push(format!(
+                    "    vpack v0 -> l1[{}] {}",
+                    128 + j * 4,
+                    self.dtype
+                ));
+            }
+            lines.push("    vsync fe on=pack".into());
+            lines.push("    seti s0 = trips".into());
+            if self.slots == 2 {
+                lines.extend([
+                    "    skipz s0".into(),
+                    "        loop s0".into(),
+                    "            vdrain a1 <- l1[128] rel".into(),
+                    "            vdrain a1 <- l1[128] rel".into(),
+                    "    vdrain a1 <- l1[128] rel".into(),
+                    "    vdrain a1 <- l1[128] rel".into(),
+                ]);
+            } else {
+                lines.extend([
+                    "    loop s0".into(),
+                    "        vdrain a1 <- l1[128] rel".into(),
+                ]);
+            }
+            lines.extend(["    vsync fe on=drain".into(), "    halt".into()]);
+            return lines.join("\n");
+        }
         let mut lines = vec![
             format!("image {}(trips)", self.name),
             format!(
                 "    ainc a0 += {}",
                 if self.incremental {
-                    self.n * 4 * self.pitch
+                    self.n * self.source_stride
                 } else {
                     0
                 }
@@ -222,23 +342,34 @@ impl Batch<'_> {
                 "    vfill a0 -> l1[0] rel".into(),
                 "    vsync fe on=fill".into(),
                 "    seti s0 = trips".into(),
-                "    skipz s0".into(),
-                "        loop s0".into(),
-                "            vfill a0 -> l1[192] rel".into(),
             ]);
-            self.compute(0, "            ", &mut lines);
-            lines.extend([
-                "            vsync fe on=fill".into(),
-                "            vfill a0 -> l1[0] rel".into(),
-            ]);
-            self.compute(1, "            ", &mut lines);
-            lines.extend([
-                "            vsync fe on=fill".into(),
-                "    vfill a0 -> l1[192] rel".into(),
-            ]);
+            if self.steady != Some(false) {
+                // Known trip topology needs no SKIPZ displacement across a
+                // large loop. Legacy parameterized images retain the guard.
+                let outer = if self.steady.is_none() {
+                    lines.push("    skipz s0".into());
+                    "        "
+                } else {
+                    "    "
+                };
+                let ind = format!("{outer}    ");
+                lines.push(format!("{outer}loop s0"));
+                lines.push(format!("{ind}vfill a0 -> l1[192] rel"));
+                self.compute(0, &ind, &mut lines);
+                lines.push(format!("{ind}vsync fe on=fill"));
+                lines.push(format!("{ind}vfill a0 -> l1[0] rel"));
+                self.compute(1, &ind, &mut lines);
+                lines.push(format!("{ind}vsync fe on=fill"));
+            }
+            lines.push("    vfill a0 -> l1[192] rel".into());
             self.compute(0, "    ", &mut lines);
             lines.push("    vsync fe on=fill".into());
             self.compute(1, "    ", &mut lines);
+            if self.odd {
+                lines.push("    vfill a0 -> l1[0] rel".into());
+                lines.push("    vsync fe on=fill".into());
+                self.compute(0, "    ", &mut lines);
+            }
         }
         if self.checked {
             // RUN resets the sticky latch, but not RF. Fold each run before HALT.
@@ -254,6 +385,11 @@ impl Batch<'_> {
                 !line.trim_start().starts_with("vfill ")
                     && !line.trim_start().starts_with("ainc a0")
             });
+        }
+        if self.fill_overlap {
+            for line in &mut lines {
+                *line = line.replace("vsync fe on=fill", "vsync unpack on=fill");
+            }
         }
         lines.push("    halt".into());
         lines.join("\n")

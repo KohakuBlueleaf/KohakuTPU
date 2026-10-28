@@ -78,9 +78,12 @@ pub fn vector_quant(
         Some(k) => const_of(body, st, k, env)?,
         None => 1,
     };
-    if ![1, 2, 4].contains(&finite_batch) || (checked && vc.preds < finite_batch as u32) {
+    if ![1, 2, 4].contains(&finite_batch)
+        || (checked && vc.preds < finite_batch as u32)
+        || i64::from(tg.vregs) <= 4 * (finite_batch - 1)
+    {
         return Err(err(
-            "finite_batch is 1, 2 or 4, bounded by available predicates".into(),
+            "finite_batch is 1, 2 or 4, bounded by available registers and predicates".into(),
         ));
     }
     let overlap = match st.kw("overlap") {
@@ -91,6 +94,74 @@ pub fn vector_quant(
             _ => return Err(err("overlap is 0 or 1".into())),
         },
     };
+    let classifier_overlap = match st.kw("classifier_overlap") {
+        None => false,
+        Some(k) => match const_of(body, st, k, env)? {
+            0 => false,
+            1 => true,
+            _ => return Err(err("classifier_overlap is 0 or 1".into())),
+        },
+    };
+    let pipeline = match st.kw("pipeline") {
+        None => false,
+        Some(k) => match const_of(body, st, k, env)? {
+            0 => false,
+            1 => true,
+            _ => return Err(err("pipeline is 0 or 1".into())),
+        },
+    } && !on("l2.packing/serial-engines");
+    let zero_classifier = match st.kw("zero_classifier") {
+        None => false,
+        Some(k) => match const_of(body, st, k, env)? {
+            0 => false,
+            1 => true,
+            _ => return Err(err("zero_classifier is 0 or 1".into())),
+        },
+    } && !on("l2.packing/compare-classifier");
+    let stream_axes = match st.kw("stream_axes") {
+        None => false,
+        Some(k) => match const_of(body, st, k, env)? {
+            0 => false,
+            1 => true,
+            _ => return Err(err("stream_axes is 0 or 1".into())),
+        },
+    } && !on("l2.packing/ordered-axes");
+    let fill_overlap = match st.kw("fill_overlap") {
+        None => false,
+        Some(k) => match const_of(body, st, k, env)? {
+            0 => false,
+            1 => true,
+            _ => return Err(err("fill_overlap is 0 or 1".into())),
+        },
+    } && !on("l2.packing/frontend-fill");
+    let zero_reuse = match st.kw("zero_reuse") {
+        None => false,
+        Some(k) => match const_of(body, st, k, env)? {
+            0 => false,
+            1 => true,
+            _ => return Err(err("zero_reuse is 0 or 1".into())),
+        },
+    } && !on("l2.packing/repeated-zero");
+    let stream_batch = match st.kw("stream_batch") {
+        None => false,
+        Some(k) => match const_of(body, st, k, env)? {
+            0 => false,
+            1 => true,
+            _ => return Err(err("stream_batch is 0 or 1".into())),
+        },
+    } && !on("l2.packing/short-batches");
+    let classifier_banks = match st.kw("classifier_banks") {
+        None => false,
+        Some(k) => match const_of(body, st, k, env)? {
+            0 => false,
+            1 => true,
+            _ => return Err(err("classifier_banks is 0 or 1".into())),
+        },
+    } && zero_classifier
+        && !on("l2.packing/single-classifier-bank");
+    if classifier_banks && tg.vregs < 24 {
+        return Err(err("classifier_banks requires 24 vector registers".into()));
+    }
     let slots = policy.vector_slots;
     let cores = if policy.vector_cores == 0 {
         tg.vc.len() as i64
@@ -191,6 +262,14 @@ pub fn vector_quant(
         status,
         finite_batch,
         overlap,
+        classifier_overlap,
+        pipeline,
+        zero_classifier,
+        stream_axes,
+        fill_overlap,
+        zero_reuse,
+        stream_batch,
+        classifier_banks,
         slots,
         cores,
         pitch,
@@ -219,6 +298,14 @@ struct Schedule<'a> {
     status: Option<&'a str>,
     finite_batch: i64,
     overlap: bool,
+    classifier_overlap: bool,
+    pipeline: bool,
+    zero_classifier: bool,
+    stream_axes: bool,
+    fill_overlap: bool,
+    zero_reuse: bool,
+    stream_batch: bool,
+    classifier_banks: bool,
     slots: i64,
     cores: i64,
     pitch: i64,
@@ -236,6 +323,14 @@ impl Schedule<'_> {
             status,
             finite_batch,
             overlap,
+            classifier_overlap,
+            pipeline,
+            zero_classifier,
+            stream_axes,
+            fill_overlap,
+            zero_reuse,
+            stream_batch,
+            classifier_banks,
             slots,
             cores,
             pitch,
@@ -253,7 +348,7 @@ impl Schedule<'_> {
             rows: valid_rows,
             words: row_words,
         } = piece;
-        let ((dbase, mut sl, dl), flag) = xform::quant(db, &dax, pitch, tg).map_err(err)?;
+        let ((dbase, mut sl, mut dl), flag) = xform::quant(db, &dax, pitch, tg).map_err(err)?;
         sl[4].0 = valid_rows;
         sl[5].0 = row_words;
         // Zero entries have no source walk and cannot raise the finite flag.
@@ -265,12 +360,41 @@ impl Schedule<'_> {
         if split_rows && tg.descriptors < 6 {
             return Err(err("large-pitch MX7 gathers require six descriptors".into()));
         }
-        let incremental = 4 * pitch < tg.step() && dl[2].1 < tg.step();
+        if stream_axes && !split_rows {
+            // Reordering disjoint output entries preserves the address-pair map.
+            // Jointly contiguous axes can be collapsed before selecting a stream.
+            for i in 0..4 {
+                for j in 0..4 {
+                    if i != j
+                        && sl[i].0 > 1
+                        && sl[j].0 > 1
+                        && sl[i].1 == sl[j].0 * sl[j].1
+                        && dl[i].1 == dl[j].0 * dl[j].1
+                    {
+                        sl[j].0 *= sl[i].0;
+                        dl[j].0 *= dl[i].0;
+                        sl[i].0 = 1;
+                        dl[i].0 = 1;
+                    }
+                }
+            }
+            let axis = (0..4)
+                .filter(|&i| sl[i].1 < tg.step() && dl[i].1 < tg.step())
+                .max_by_key(|&i| sl[i].0)
+                .unwrap_or(2);
+            sl.swap(2, axis);
+            dl.swap(2, axis);
+        }
+        let stream_batch = stream_batch && valid_rows != 0 && !split_rows;
+        let source_stride = if valid_rows == 0 { 0 } else { sl[2].1 };
+        let incremental = source_stride < tg.step() && dl[2].1 < tg.step();
         // Only a steady-state pair needs VSKIPZ's 255-word displacement bound.
         // Small partitions use a single batch instead of splitting 8 entries into
         // 7+1 and repeatedly replacing two images at every outer tile.
         let paired = checked && slots == 2 && sl[2].0 / cores >= 14;
-        let cap = if partial {
+        let cap = if stream_batch || (valid_rows == 0 && zero_reuse) {
+            16
+        } else if partial {
             4
         } else if paired {
             7
@@ -278,7 +402,7 @@ impl Schedule<'_> {
             16
         };
         let batch = if incremental {
-            cap.min((tg.step() - 1) / (4 * pitch).max(1))
+            cap.min((tg.step() - 1) / source_stride.max(1))
                 .min((tg.step() - 1) / dl[2].1)
         } else {
             1 // Every entry is absolute when a gather stride cannot be represented.
@@ -303,14 +427,28 @@ impl Schedule<'_> {
             let end = sl[2].0 * (v + 1) / cores;
             let mut group = first;
             while group < end {
-                let n = batch.min(end - group);
+                let n = if stream_batch {
+                    (1..=batch.min(end - group))
+                        .rev()
+                        .find(|n| (end - group) % n == 0)
+                        .unwrap()
+                } else {
+                    batch.min(end - group)
+                };
                 let full = if incremental { (end - group) / n } else { 1 };
                 let double = slots == 2 && full >= 2;
-                let consumed = if double { full / 2 * 2 } else { full };
+                let odd = stream_batch && double && full % 2 != 0;
+                let consumed = if double && !odd { full / 2 * 2 } else { full };
                 let trips = if double { full / 2 - 1 } else { full };
                 let used_slots = if double { 2 } else { 1 };
-                let name = format!("{}.mx7_{tag}_{n}_{used_slots}", body.name);
-                if emitted.insert((n, used_slots)) {
+                let steady = stream_batch.then_some(trips != 0);
+                let suffix = if stream_batch {
+                    format!("_s{}_o{}", i32::from(trips != 0), i32::from(odd))
+                } else {
+                    String::new()
+                };
+                let name = format!("{}.mx7_{tag}_{n}_{used_slots}{suffix}", body.name);
+                if emitted.insert((n, used_slots, steady, odd)) {
                     let dtype = if flag.is_empty() ^ on("l2.packing/wrong-layout") {
                         "mx7a"
                     } else {
@@ -320,7 +458,7 @@ impl Schedule<'_> {
                         image::Batch {
                             name: &name,
                             n,
-                            pitch,
+                            source_stride,
                             stride: dl[2].1,
                             incremental,
                             dtype,
@@ -331,6 +469,14 @@ impl Schedule<'_> {
                             valid_rows,
                             row_words,
                             overlap,
+                            classifier_overlap,
+                            pipeline,
+                            zero_classifier,
+                            fill_overlap,
+                            zero_reuse,
+                            classifier_banks,
+                            steady,
+                            odd,
                         }
                         .emit(),
                     );
@@ -368,7 +514,7 @@ impl Schedule<'_> {
                 } else {
                     inner.push(format!(
                     "    desc a0 = {sn} + {s} + {src_reg} walk=((32, {row_words}), ({pitch}, {valid_rows}), ({}, {n}))",
-                    if n == 1 { 0 } else { 4 * pitch }
+                    if n == 1 { 0 } else { source_stride }
                 ));
                 }
                 inner.push(format!(

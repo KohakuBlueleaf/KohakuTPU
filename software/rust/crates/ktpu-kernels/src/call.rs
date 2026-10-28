@@ -156,7 +156,22 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
                 Some("b") => matmul::Side::B,
                 _ => return fail("API.FORM.006", format!("a packing side in {a}")),
             };
-            matmul::quant_kernel_contract(
+            let schedule = matmul::QUANT_SCHEDULE
+                .iter()
+                .map(|&(key, default)| {
+                    let value = a.get("schedule").and_then(|s| s.get(key));
+                    match value {
+                        None => Ok((key, default)),
+                        Some(v) => match v.as_i64() {
+                            Some(v) => Ok((key, v)),
+                            None => {
+                                fail("API.OP.001", format!("quant schedule {key} is an integer"))
+                            }
+                        },
+                    }
+                })
+                .collect::<R<Vec<_>>>()?;
+            matmul::quant_kernel_scheduled(
                 &operand(arg(a, "src")?)?,
                 int(a, "rows")?,
                 int(a, "cols")?,
@@ -169,6 +184,7 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
                 m,
                 a.get("finite")
                     .map_or(Ok(false), |_| boolean(a, "finite"))?,
+                &schedule,
             )?
         }
         "matmul.mm_kernel" => {

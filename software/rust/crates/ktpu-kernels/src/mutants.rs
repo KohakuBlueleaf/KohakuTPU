@@ -28,6 +28,7 @@ pub const NAMES: &[&str] = &[
 /// unit facts read as the constants they replaced; a statistic packed in
 /// the [R, 32] form RUL.030 refuses; a reduction read twice taken twice.
 pub const LOCAL: &[&str] = &[
+    "kernels.quant/no-schedule",
     "kernels.hw/unit_constants",
     "kernels.vector/stat_rows_form",
     "kernels.expr/reduces_dup",

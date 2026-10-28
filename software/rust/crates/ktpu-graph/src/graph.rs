@@ -474,6 +474,8 @@ pub enum Node {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         classed: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        class_band: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         repeats: Option<i64>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         advances: Vec<i64>,

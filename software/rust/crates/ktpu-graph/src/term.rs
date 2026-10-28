@@ -349,6 +349,7 @@ fn stmt(g: &Stmt) -> KStmt {
             hi,
             unit: u,
             classed,
+            class_band,
             repeats,
             advances,
             body,
@@ -356,6 +357,9 @@ fn stmt(g: &Stmt) -> KStmt {
             let mut args = vec![span(var, lo, hi), name("on"), unit(u)];
             if *classed {
                 args.push(kw("classed", int(1)));
+            }
+            if let Some(band) = class_band {
+                args.push(kw("class_band", int(*band)));
             }
             if let Some(count) = repeats {
                 args.push(kw("repeats", int(*count)));

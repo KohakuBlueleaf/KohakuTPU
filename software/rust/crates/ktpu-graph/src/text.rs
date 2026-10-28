@@ -408,6 +408,7 @@ fn stmt(st: &Stmt) -> Line {
             hi,
             unit: u,
             classed,
+            class_band,
             repeats,
             advances,
             body,
@@ -418,6 +419,9 @@ fn stmt(st: &Stmt) -> Line {
                 } else {
                     vec![]
                 };
+                if let Some(band) = class_band {
+                    kw.push(("class_band".into(), band.to_string()));
+                }
                 if let Some(count) = repeats {
                     kw.push(("repeats".into(), count.to_string()));
                     kw.push((

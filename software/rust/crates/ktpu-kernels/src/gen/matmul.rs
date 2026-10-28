@@ -169,6 +169,17 @@ pub fn quant_kernel(
     )
 }
 
+pub const QUANT_SCHEDULE: &[(&str, i64)] = &[
+    ("finite_batch", 4),
+    ("overlap", 1),
+    ("classifier_overlap", 0),
+    ("pipeline", 1),
+    ("zero_classifier", 1),
+    ("stream_axes", 1),
+    ("fill_overlap", 1),
+    ("zero_reuse", 1),
+];
+
 /// The quant generator with a caller-validated finite input contract.
 #[allow(clippy::too_many_arguments)]
 pub fn quant_kernel_contract(
@@ -183,6 +194,37 @@ pub fn quant_kernel_contract(
     batches: i64,
     mach: &Machine,
     finite: bool,
+) -> R<Kernel> {
+    quant_kernel_scheduled(
+        src,
+        rows,
+        cols,
+        rp,
+        cp,
+        side,
+        groups,
+        nk,
+        batches,
+        mach,
+        finite,
+        QUANT_SCHEDULE,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn quant_kernel_scheduled(
+    src: &Operand,
+    rows: i64,
+    cols: i64,
+    rp: i64,
+    cp: i64,
+    side: Side,
+    groups: i64,
+    nk: i64,
+    batches: i64,
+    mach: &Machine,
+    finite: bool,
+    schedule: &[(&str, i64)],
 ) -> R<Kernel> {
     let hw = Hw::of(mach);
     let dtype = side.dtype();
@@ -228,12 +270,24 @@ pub fn quant_kernel_contract(
             Py::Int(groups),
             Py::Int(nk),
             Py::Int(batches),
+            Py::Bool(finite),
+            Py::Tuple(
+                schedule
+                    .iter()
+                    .map(|(k, v)| Py::Tuple(vec![Py::str(k), Py::Int(*v)]))
+                    .collect(),
+            ),
         ],
     );
     build(&key, mach, ports, given, |t, b| {
         let (x, q) = (&b[0], &b[1]);
         if direct {
-            return t.quant_finite(&q.whole(), &x.at(&[sl(0, batches * rp), ALL])?, finite);
+            return t.quant_scheduled(
+                &q.whole(),
+                &x.at(&[sl(0, batches * rp), ALL])?,
+                finite,
+                schedule,
+            );
         }
         let z = t.buffer(&[batches * rp, cp], g::Dtype::F16, vec![])?;
         t.fill_value(&z.whole(), 0, None, None)?;
@@ -244,7 +298,7 @@ pub fn quant_kernel_contract(
             let from = x.at(&[sl(lo, lo + rows), sl(c0, c0 + cols)])?;
             t.copy(&dst, &from, None, None)?;
         }
-        t.quant_finite(&q.whole(), &z.whole(), finite)
+        t.quant_scheduled(&q.whole(), &z.whole(), finite, schedule)
     })
 }
 

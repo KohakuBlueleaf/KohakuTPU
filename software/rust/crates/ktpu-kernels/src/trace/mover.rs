@@ -93,6 +93,22 @@ impl Trace {
         self.mover(g::MoverOp::Quant, dst, Some(src), &kw, here())
     }
 
+    /// Explicit quant scheduling attributes are part of the graph identity.
+    #[track_caller]
+    pub fn quant_scheduled(
+        &mut self,
+        dst: &View,
+        src: &View,
+        finite: bool,
+        schedule: &[(&str, i64)],
+    ) -> R<()> {
+        let mut kw = vec![("finite", Kw::Int(finite.then_some(1)))];
+        if !crate::mutants::on("kernels.quant/no-schedule") {
+            kw.extend(schedule.iter().map(|&(k, v)| (k, Kw::Int(Some(v)))));
+        }
+        self.mover(g::MoverOp::Quant, dst, Some(src), &kw, here())
+    }
+
     /// `gt4 DST <- SRC walk=.. dwalk=..` (DSL.MOV.004): whole buffers.
     #[track_caller]
     pub fn gt4(&mut self, dst: &View, src: &View, walk: &Walk, dwalk: &Walk) -> R<()> {

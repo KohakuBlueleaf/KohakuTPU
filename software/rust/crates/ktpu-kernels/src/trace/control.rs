@@ -30,6 +30,7 @@ fn par_node(v: &str, lo: &Idx, hi: &Idx, kind: g::UnitKind, at: Option<&Idx>) ->
             index: at.map(Idx::graph),
         },
         classed: false,
+        class_band: None,
         repeats: None,
         advances: vec![],
         body: vec![],
