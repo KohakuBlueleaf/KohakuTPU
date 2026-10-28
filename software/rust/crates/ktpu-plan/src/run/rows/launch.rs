@@ -8,8 +8,8 @@ use super::*;
 mod deletion;
 
 impl Runner<'_> {
-    /// `rows._based`: each offset moved into its bound address where whole
-    /// words.
+    /// `rows._based`: pitched views move whole rows; column offsets stay
+    /// in the kernel so covering-row ports cannot overrun their allocation.
     fn based(
         &self,
         ops: &[Operand],
@@ -25,7 +25,13 @@ impl Runner<'_> {
                 port.to_string()
             };
             let it = if o.dtype == "f32" { 4 } else { 2 };
-            let moved = if o.kind == "scalar" {
+            let moved = if o.kind == "full" || o.kind == "tile" {
+                if mutant::on("tg.rows/based_column") {
+                    o.offset
+                } else {
+                    o.offset.div_euclid(o.pitch) * o.pitch
+                }
+            } else if o.kind == "scalar" {
                 o.offset.div_euclid(h) * h
             } else {
                 o.offset

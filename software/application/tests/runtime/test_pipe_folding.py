@@ -15,6 +15,21 @@ from kohakutpu.stack import kernel as K
 
 
 def test_measured_cost_is_board_specific_and_layout_equivalent(tmp_path, monkeypatch):
+    # These costs were recorded with the original schedule, not today's defaults.
+    # Keep the measurement's provenance; never relabel stale costs as current.
+    for name in (
+        "KTPU_QUANT_CLASSIFIER_OVERLAP",
+        "KTPU_QUANT_PIPELINE",
+        "KTPU_QUANT_ZERO_CLASSIFIER",
+        "KTPU_QUANT_STREAM_AXES",
+        "KTPU_QUANT_FILL_OVERLAP",
+        "KTPU_QUANT_ZERO_REUSE",
+        "KTPU_PULL_TREE",
+    ):
+        monkeypatch.setenv(name, "0")
+    monkeypatch.setenv("KTPU_CLASS_BAND", "1")
+    monkeypatch.setenv("KTPU_PIPE_FINITE_BATCH", "4")
+    monkeypatch.setenv("KTPU_PIPE_OVERLAP", "1")
     step = Step(1000, 840, ((84, 1), (10, 84)), 0, ((84, 32), (10, 1)), 0, 2688)
     quant = costs.quant_recipe(Operand("full", pitch=32), 84, 16, 96, 32, "b", 8, 1, 1)
     recipe = dict(quant=quant, steps=costs.steps_recipe((step,)))
@@ -58,6 +73,21 @@ def test_measured_cost_is_board_specific_and_layout_equivalent(tmp_path, monkeyp
     assert costs.prepared_quant((prefix, dense), *args) == compound
     bad_prefix = Step(1000, 840, ((840, 0),), 0, ((840, 1),), 0, 840)
     assert costs.prepared_quant((bad_prefix, dense), *args) is None
+    # Reverse provenance witness: the same recipe must be rejected under a
+    # changed schedule, including every newly promoted default.
+    for name, value, previous in (
+        ("KTPU_QUANT_PIPELINE", "1", "0"),
+        ("KTPU_QUANT_ZERO_CLASSIFIER", "1", "0"),
+        ("KTPU_QUANT_STREAM_AXES", "1", "0"),
+        ("KTPU_QUANT_FILL_OVERLAP", "1", "0"),
+        ("KTPU_QUANT_ZERO_REUSE", "1", "0"),
+        ("KTPU_PULL_TREE", "1", "0"),
+        ("KTPU_CLASS_BAND", "4", "1"),
+    ):
+        monkeypatch.setenv(name, value)
+        assert costs.prepared_quant((dense,), *args) is None
+        assert not costs.choose("staged_padding", padding, "test")
+        monkeypatch.setenv(name, previous)
     monkeypatch.setenv("KTPU_PIPE_FINITE_BATCH", "1")
     assert not costs.choose("staged_padding", padding, "test")
 

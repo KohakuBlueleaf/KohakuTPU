@@ -30,8 +30,9 @@ Other walk pairs are `Unplanned` (`kernels.lanes` takes them). The index
 lists and masks are data; the kernel depends on the plan's shape only.
 """
 
+import os
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -65,6 +66,7 @@ class Hw:
     #: Bytes every scratch buffer starts on: lines and GT4 entries (an entry
     #: written off this boundary is wrong on the card model).
     grain: int
+    descriptors: int
 
     @property
     def row_words(self) -> int:
@@ -87,6 +89,7 @@ def hw_of(machine, cores: int) -> Hw:
         cores,
         machine.mover.levels,
         int(np.lcm(line * word, machine.get("mover.xform.gt4_rows") * word)),
+        machine.vc.descriptors,
     )
 
 
@@ -208,6 +211,7 @@ class Pull:
     pairs: tuple
     base: str
     zeros: bool
+    tree: tuple = ()
 
 
 #: Codes of a `Pull` lane: 0, or the destination's lane as it is.
@@ -550,21 +554,73 @@ def plan(
         hw,
         int(z0),
     )
-    got = _plans.get(key)
+    tree = os.environ.get("KTPU_PULL_TREE", "1") == "1"
+    cache_key = (key, tree)
+    got = _plans.get(cache_key)
     if got is None:
         try:
             got = _plan(*key)
+            if tree:
+                got = tree_pull(got, hw)
         except Unplanned as e:
             got = e
         if PLANS_KEPT > 0:
-            _plans[key] = got
+            _plans[cache_key] = got
             while len(_plans) > PLANS_KEPT:
                 _plans.popitem(last=False)
     else:
-        _plans.move_to_end(key)
+        _plans.move_to_end(cache_key)
     if isinstance(got, Unplanned):
         raise got
     return got
+
+
+def tree_pull(pl: Plan, hw: Hw) -> Plan:
+    """Predecode gather codes into shared selector bits for a balanced tree.
+
+    Original code rows remain the independent executor's source of truth. The
+    tree selects raw rotated payloads; it never adds or multiplies payloads.
+    """
+    masks = [pl.masks]
+    next_row = len(pl.masks)
+    parts = []
+    for part in pl.parts:
+        if not isinstance(part, Pull) or len(part.pairs) < 2:
+            parts.append(part)
+            continue
+        code = pl.masks[part.codes : part.codes + part.rows].astype(np.int64)
+        bits = (len(part.pairs) - 1).bit_length()
+        # Each source/mask/output view consumes a target descriptor. Retain
+        # serial selection when the additional mask streams do not fit.
+        views = (
+            len(part.slots)
+            + bits
+            + int((code < 0).any())
+            + int(part.zeros)
+            + int(part.base == "dst")
+            + 1
+        )
+        if views > hw.descriptors:
+            parts.append(part)
+            continue
+        index = np.searchsorted(part.pairs, code)
+        selectors = []
+        for bit in range((len(part.pairs) - 1).bit_length()):
+            masks.append(((index >> bit) & 1).astype(np.float16))
+            selectors.append(next_row)
+            next_row += part.rows
+        valid = -1
+        if (code < 0).any():
+            masks.append((code >= 0).astype(np.float16))
+            valid = next_row
+            next_row += part.rows
+        zero = -1
+        if part.zeros:
+            masks.append((code == ZERO).astype(np.float16))
+            zero = next_row
+            next_row += part.rows
+        parts.append(replace(part, tree=(tuple(selectors), valid, zero)))
+    return replace(pl, parts=tuple(parts), masks=np.concatenate(masks))
 
 
 def _plan(src_n, walk, at, dwalk, dat, m, keep, hw: Hw, z0) -> Plan:
@@ -1283,20 +1339,44 @@ def _emit_pull(p: Pull, bufs, index, mask, hw: Hw) -> None:
     for c in kt.par(ncore, on=kt.vc):
         for k in kt.range(n(c)):
             r = (start(c) + k) * ROWS
-            code = kt.unpack(kt.load(mask[p.codes + r : p.codes + r + ROWS, :]))
+            if not p.tree:
+                code = kt.unpack(kt.load(mask[p.codes + r : p.codes + r + ROWS, :]))
             acc = (
                 kt.unpack(kt.load(bufs["pd"][r : r + ROWS, :]))
                 if p.base == "dst"
                 else 0.0
             )
             vals: dict = {}
+            candidates = []
             for pair in p.pairs:
                 t, rot = divmod(pair, lanes)
                 if t not in vals:
                     vals[t] = kt.unpack(kt.load(bufs[f"ps{t}"][r : r + ROWS, :]))
                 x = kt.xrot(vals[t], rot) if rot else vals[t]
-                acc = kt.where(kt.math("cmpeq", code, float(pair)), x, acc)
-            if p.zeros:
+                if p.tree:
+                    candidates.append(x)
+                else:
+                    acc = kt.where(kt.math("cmpeq", code, float(pair)), x, acc)
+            if p.tree:
+                selectors, valid, zero = p.tree
+                candidates += [0.0] * ((1 << len(selectors)) - len(candidates))
+                for offset in selectors:
+                    bit = kt.unpack(kt.load(mask[offset + r : offset + r + ROWS, :]))
+                    candidates = [
+                        kt.where(bit, candidates[i + 1], candidates[i])
+                        for i in range(0, len(candidates), 2)
+                    ]
+                if valid >= 0:
+                    mask_valid = kt.unpack(
+                        kt.load(mask[valid + r : valid + r + ROWS, :])
+                    )
+                    acc = kt.where(mask_valid, candidates[0], acc)
+                else:
+                    acc = candidates[0]
+                if zero >= 0:
+                    mask_zero = kt.unpack(kt.load(mask[zero + r : zero + r + ROWS, :]))
+                    acc = kt.where(mask_zero, 0.0, acc)
+            elif p.zeros:
                 acc = kt.where(kt.math("cmpeq", code, float(ZERO)), 0.0, acc)
             kt.store(out[r : r + ROWS, :], acc)
     kt.copy(dst, out, walk=((p.out, word),), dwalk=((p.out, word),), dat=p.w0 * word)

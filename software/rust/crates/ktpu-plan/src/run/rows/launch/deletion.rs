@@ -26,16 +26,18 @@ fn offsets_preserved() -> bool {
     let m = Machine::named("multimesh_v9t8").unwrap();
     let runner = Runner::new(&m, Graph::default(), Exec::default());
     let cases = [
-        ("full", "f16", 96, 320, 10),
-        ("full", "f16", 48, 7, 4),
-        ("full", "f32", 64, 8, 4),
-        ("col", "f16", 0, 48, 0),
-        ("row", "f16", 0, 5, 9),
-        ("row", "f16", 0, 32, 40),
-        ("scalar", "f16", 0, 2, 0),
-        ("scalar", "f16", 0, 18, 0),
+        // Expected byte shift, retained element offset, remaining rows.
+        ("full", "f16", 96, 320, 10, 576, 32, 7),
+        ("tile", "f16", 96, 320, 10, 576, 32, 7),
+        ("full", "f16", 48, 7, 4, 0, 7, 4),
+        ("full", "f32", 64, 8, 4, 0, 8, 4),
+        ("col", "f16", 0, 48, 0, 96, 0, 0),
+        ("row", "f16", 0, 5, 9, 0, 5, 9),
+        ("row", "f16", 0, 32, 40, 64, 0, 8),
+        ("scalar", "f16", 0, 2, 0, 0, 2, 0),
+        ("scalar", "f16", 0, 18, 0, 32, 2, 0),
     ];
-    for (kind, dtype, pitch, offset, rows) in cases {
+    for (kind, dtype, pitch, offset, rows, shift, retained, remaining) in cases {
         let o = Operand {
             kind: kind.into(),
             dtype: dtype.into(),
@@ -52,25 +54,60 @@ fn offsets_preserved() -> bool {
                 return false;
             }
         }
-        if kind == "scalar" {
-            if got.offset != offset % 16 {
-                return false;
-            }
-        } else {
-            let whole = offset * if dtype == "f32" { 4 } else { 2 } % 32 == 0;
-            if (got.offset == 0) != whole {
-                return false;
-            }
-            if whole && matches!(kind, "full" | "row") {
-                let start = if kind == "full" {
-                    offset / pitch
-                } else {
-                    offset
-                };
-                if got.rows != rows - start {
+        if binds["in0"].offset != 4096 + shift || got.offset != retained || got.rows != remaining {
+            return false;
+        }
+    }
+    true
+}
+
+fn column_extent_preserved() -> bool {
+    let m = Machine::named("multimesh_v9t8").unwrap();
+    let mut runner = Runner::new(&m, Graph::default(), Exec::default());
+    // Three live rows, after two leading rows, end at the allocation's last byte.
+    let original = Operand {
+        pitch: 80,
+        offset: 176,
+        rows: 5,
+        ..Operand::new("full")
+    };
+    runner
+        .launch_rows(
+            &expr::load(0),
+            std::slice::from_ref(&original),
+            BTreeMap::from([("in0".into(), addr(4096)), ("out".into(), addr(8192))]),
+            3,
+            64,
+            &original,
+            Value::Null,
+        )
+        .unwrap();
+    let Step::Launch(launch) = runner.x.steps.last().unwrap() else {
+        return false;
+    };
+    let expected = Operand {
+        offset: 16,
+        rows: 3,
+        ..original.clone()
+    };
+    let call = launch.call.as_ref().unwrap();
+    if call.args["operands"][0] != expected.json() || call.args["out"] != expected.json() {
+        return false;
+    }
+    for (port, base) in [("in0", 4096), ("out", 8192)] {
+        let at = launch.binds[port].offset;
+        if at != base + 320 || at + 3 * 80 * 2 != base + 5 * 80 * 2 {
+            return false;
+        }
+        for r in 0..3 {
+            for c in 0..64 {
+                if byte(&expected, at, r, c) != byte(&original, base, r, c) {
                     return false;
                 }
             }
+        }
+        if byte(&expected, at, 2, 63) + 2 != base + 5 * 80 * 2 {
+            return false;
         }
     }
     true
@@ -142,6 +179,7 @@ fn statistic_runs() -> bool {
 #[test]
 fn an_offset_moves_into_the_address_reading_the_same_bytes() {
     assert!(offsets_preserved());
+    assert!(column_extent_preserved());
 }
 #[test]
 fn two_reductions_across_blocks_compile() {
@@ -151,6 +189,10 @@ fn two_reductions_across_blocks_compile() {
 #[test]
 fn rows_deletion_witnesses_kill_mutants() {
     assert!(!mutant::with("tg.rows/based_zero", offsets_preserved));
+    assert!(!mutant::with(
+        "tg.rows/based_column",
+        column_extent_preserved
+    ));
     assert!(!mutant::with("tg.rows/stat_first_skip", statistic_runs));
     assert!(!mutant::with("tg.rows/stat_continue_skip", statistic_runs));
 }

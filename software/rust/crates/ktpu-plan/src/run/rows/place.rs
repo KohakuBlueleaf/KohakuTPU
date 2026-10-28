@@ -45,9 +45,10 @@ impl Runner<'_> {
             self.window_ok(&tdst, &tplan)?;
             let o = o.unwrap();
             let pitch = if o.kind == "full" { o.pitch } else { wp };
-            let at = self.x.addr(&tdst, tdoff);
+            let at = self.x.addr(&tdst, 0);
             let out = Operand {
                 pitch,
+                offset: tdoff / 2,
                 ..Operand::new("full")
             };
             return Ok((at, out, Done::Direct(tdst, tplan, fin)));

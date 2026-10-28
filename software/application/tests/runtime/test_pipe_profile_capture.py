@@ -17,6 +17,19 @@ from kohakutpu.stack import rs
 
 
 def test_prebuild_retraces_profile_for_enumerated_runtime(tmp_path, monkeypatch):
+    # The fixture's measured costs belong to the legacy schedule. Prebuild and
+    # runtime must share that schedule; promoted defaults require new costs.
+    for name in (
+        "KTPU_QUANT_CLASSIFIER_OVERLAP",
+        "KTPU_QUANT_PIPELINE",
+        "KTPU_QUANT_ZERO_CLASSIFIER",
+        "KTPU_QUANT_STREAM_AXES",
+        "KTPU_QUANT_FILL_OVERLAP",
+        "KTPU_QUANT_ZERO_REUSE",
+        "KTPU_PULL_TREE",
+    ):
+        monkeypatch.setenv(name, "0")
+    monkeypatch.setenv("KTPU_CLASS_BAND", "1")
     offline = OfflineCard("multimesh_v9t6")
     mesh = SimpleNamespace(
         index=0,
@@ -116,3 +129,7 @@ def test_prebuild_retraces_profile_for_enumerated_runtime(tmp_path, monkeypatch)
     prebuild["main"]()
     assert observed == [expected]
     assert list(json.loads(target.read_text())["sources"]) == [expected["class"]]
+    # Reverse witness: no stale-profile reuse after changing the producer graph.
+    monkeypatch.setenv("KTPU_QUANT_STREAM_AXES", "1")
+    assert not costs.choose("staged_padding", recipe, runtime.machine.board)
+    assert source(runtime.machine, "staged") != expected

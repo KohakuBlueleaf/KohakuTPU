@@ -1,6 +1,7 @@
 """Machine-specific Rust kernel generation and the shared driver binding path."""
 
 import json
+import os
 from functools import lru_cache
 
 from kohakutpu.application.kernels.vector import Operand
@@ -21,6 +22,19 @@ def launch(dev, generator, arguments, bindings, kind="dsl", info=None):
     machine = rs.machine_json(dev.machine)
     if generator == "matmul.quant_kernel":
         arguments = dict(arguments)
+        arguments["schedule"] = {
+            name: int(os.environ.get(env, default))
+            for name, env, default in (
+                ("finite_batch", "KTPU_PIPE_FINITE_BATCH", "4"),
+                ("overlap", "KTPU_PIPE_OVERLAP", "1"),
+                ("classifier_overlap", "KTPU_QUANT_CLASSIFIER_OVERLAP", "0"),
+                ("pipeline", "KTPU_QUANT_PIPELINE", "1"),
+                ("zero_classifier", "KTPU_QUANT_ZERO_CLASSIFIER", "1"),
+                ("stream_axes", "KTPU_QUANT_STREAM_AXES", "1"),
+                ("fill_overlap", "KTPU_QUANT_FILL_OVERLAP", "1"),
+                ("zero_reuse", "KTPU_QUANT_ZERO_REUSE", "1"),
+            )
+        }
         arguments["finite"] = packing.finite_contract(
             dev,
             bindings["x"],

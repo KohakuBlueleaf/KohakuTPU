@@ -34,6 +34,27 @@ def _records(kind, board):
         finite_batch=int(os.environ.get("KTPU_PIPE_FINITE_BATCH", "4")),
         overlap=os.environ.get("KTPU_PIPE_OVERLAP", "1") == "1",
     )
+    if os.environ.get("KTPU_QUANT_CLASSIFIER_OVERLAP", "0") == "1":
+        schedule["classifier_overlap"] = True
+    if os.environ.get("KTPU_QUANT_PIPELINE", "1") == "1":
+        schedule["pipeline"] = True
+    if os.environ.get("KTPU_QUANT_ZERO_CLASSIFIER", "1") == "1":
+        schedule["zero_classifier"] = True
+    if os.environ.get("KTPU_QUANT_STREAM_AXES", "1") == "1":
+        schedule["stream_axes"] = True
+    if os.environ.get("KTPU_QUANT_FILL_OVERLAP", "1") == "1":
+        schedule["fill_overlap"] = True
+    if os.environ.get("KTPU_PULL_TREE", "1") == "1":
+        schedule["pull_tree"] = True
+    if os.environ.get("KTPU_QUANT_ZERO_REUSE", "1") == "1":
+        schedule["zero_reuse"] = True
+    if os.environ.get("KTPU_CLASS_ROWS_DIRECT", "0") == "1":
+        schedule["class_rows_direct"] = True
+    if os.environ.get("KTPU_CLASS_ROWS_ROUTE", "0") == "1":
+        schedule["class_rows_route"] = True
+    band = int(os.environ.get("KTPU_CLASS_BAND", "4"))
+    if band != 1:
+        schedule["class_band"] = band
     return admitted.get((kind, board), {}) if expected == schedule else {}
 
 
@@ -71,14 +92,13 @@ def prepared_quant(steps, src, rows, cols, rp, cp, side, g, nk, batches, board):
     candidates = []
     for recipe, cost in _records("prepared_quant", board).values():
         q = recipe["quant"]
-        if recipe["steps"][:-1] == requested[:-1] and all(
-            q[k] == v for k, v in match.items()
+        if (
+            recipe["steps"][:-1] == requested[:-1]
+            and all(q[k] == v for k, v in match.items())
+            and wanted is not None
+            and packing_map(recipe["steps"][-1], q["src"], q["cols"]) == wanted
         ):
-            if (
-                wanted is not None
-                and packing_map(recipe["steps"][-1], q["src"], q["cols"]) == wanted
-            ):
-                candidates.append((cost, recipe))
+            candidates.append((cost, recipe))
     return min(candidates, key=lambda x: x[0])[1] if candidates else None
 
 

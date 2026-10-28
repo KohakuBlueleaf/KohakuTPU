@@ -42,6 +42,7 @@ pub fn with<T>(name: &'static str, f: impl FnOnce() -> T) -> T {
 /// Every mutant ktpu-plan carries, by its Python name.
 pub const NAMES: &[&str] = &[
     "memory/unsafe-bounds",
+    "tg.rows/based_column",
     "tg.lower/envelope",
     "tg.lower/refused_other",
     "tg.lower/order",

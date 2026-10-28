@@ -14,6 +14,7 @@ from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import prepared as P
 from kohakutpu.application.kernels import relayout as RL
 from kohakutpu.application.kernels import vector as V
+from kohakutpu.application.kernels.classes.policy import ShapeClass
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import launch_reductions as LR
@@ -42,6 +43,32 @@ def _launch(dev, e, operands, binds, R, W, out, info, cores):
     operands, binds = _based(operands, binds, "in")
     if "out" in binds:
         (out,), binds = _based([out], binds, "out")
+    if os.environ.get("KTPU_CLASS_ROWS_ROUTE", "0") == "1" and (
+        os.environ.get("KTPU_CLASS_ROWS_DIRECT", "0") == "1"
+        and 0 < W <= V.MAX_BLOCK
+        and W % 32 == 0
+        and W & (W - 1) == 0
+        and out.dtype == "f16"
+        and all(o.dtype == "f16" and o.kind != "tile" for o in operands)
+        and V.class_rows.bands_fit(operands, out, W)
+        >= (V.STAT_ROWS // 4 if V.holds_stat(operands, out.kind) else 1)
+    ):
+        kernel, given, nblk = V.rows_kernel(
+            e,
+            tuple(operands),
+            R,
+            W,
+            out,
+            cores,
+            shape_class=ShapeClass(32, V.MAX_BLOCK),
+        )
+        disjoint = all(
+            binds[f"in{i}"] + given[f"in{i}"].nbytes() <= binds["out"]
+            or binds["out"] + given["out"].nbytes() <= binds[f"in{i}"]
+            for i in range(len(operands))
+        )
+        if kernel.class_info["direct"] and disjoint:
+            return FM.launch(dev, kernel, given, binds, info=info), given, nblk
     _, given, nblk = V.rows_kernel(e, tuple(operands), R, W, out, cores)
     run = FM.generated.launch(
         dev,
@@ -89,15 +116,22 @@ def _prepared(dev, e, operands, binds, R, W, out, out_at, info, cores):
 
 
 def _based(operands, binds: dict, port: str) -> tuple:
-    """Each operand's offset moved into its bound address where whole words
-    (the rows it holds past it kept): a kernel of one shape at any offset is
-    one compile. `port` "in" binds operand i as ``in{i}``, else one."""
+    """Rebase whole rows of pitched views, whole words of scalar views.
+
+    A pitched port declares complete rows. Its column offset must stay in the
+    kernel; moving that offset into the binding would extend the declared last
+    row beyond its allocation. `port` "in" binds operand i as ``in{i}``.
+    """
     binds, out = dict(binds), []
     for i, o in enumerate(operands):
         key = f"in{i}" if port == "in" else port
         item = 4 if o.dtype == "f32" else 2
-        # A scalar keeps its lane in its word; anything else moves whole.
-        moved = o.offset // 16 * 16 if o.kind == "scalar" else o.offset
+        if o.kind in ("full", "tile"):
+            moved = o.offset // o.pitch * o.pitch
+        elif o.kind == "scalar":
+            moved = o.offset // 16 * 16
+        else:
+            moved = o.offset
         shift = item * moved
         if o.kind in ("row", "scalar"):
             rows = max(o.rows - moved, 0)

@@ -13,8 +13,8 @@ import os
 from collections import OrderedDict
 from dataclasses import dataclass
 
-from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels import prepared as P
+from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes import mm as class_mm
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.language import dsl as kt
@@ -92,6 +92,12 @@ def quant_kernel(
     packing, tiles of `g` lane groups. Padding rows and columns are zero."""
     finite_batch = int(os.environ.get("KTPU_PIPE_FINITE_BATCH", "4"))
     overlap = os.environ.get("KTPU_PIPE_OVERLAP", "1") == "1"
+    classifier_overlap = os.environ.get("KTPU_QUANT_CLASSIFIER_OVERLAP", "0") == "1"
+    pipeline = os.environ.get("KTPU_QUANT_PIPELINE", "1") == "1"
+    zero_classifier = os.environ.get("KTPU_QUANT_ZERO_CLASSIFIER", "1") == "1"
+    stream_axes = os.environ.get("KTPU_QUANT_STREAM_AXES", "1") == "1"
+    fill_overlap = os.environ.get("KTPU_QUANT_FILL_OVERLAP", "1") == "1"
+    zero_reuse = os.environ.get("KTPU_QUANT_ZERO_REUSE", "1") == "1"
     dtype = "mx7a" if side == "a" else "mx7b"
     lay = dict(gm=g, nk=nk) if side == "a" else dict(gn=g, nk=nk)
     if cols % 16 or src.pitch % 16 or src.offset % 16:
@@ -118,6 +124,12 @@ def quant_kernel(
         finite,
         finite_batch,
         overlap,
+        classifier_overlap,
+        pipeline,
+        zero_classifier,
+        stream_axes,
+        fill_overlap,
+        zero_reuse,
         kt.Kernel.build,
     )
     hit = _kernels.get(kkey)
@@ -170,6 +182,12 @@ def quant_kernel(
                 z,
                 finite=finite,
                 finite_batch=batch_size,
+                classifier_overlap=classifier_overlap if vector else False,
+                pipeline=pipeline if vector else False,
+                zero_classifier=zero_classifier if vector else False,
+                stream_axes=stream_axes if vector else False,
+                fill_overlap=fill_overlap if vector else False,
+                zero_reuse=zero_reuse if vector else False,
                 overlap=drain_overlap,
                 node_loop=shape_class is not None,
             )
@@ -183,6 +201,12 @@ def quant_kernel(
                 x[r0 + b * span * rows : r0 + (b + 1) * span * rows, c0 : c0 + cols],
                 finite=finite,
                 finite_batch=batch_size,
+                classifier_overlap=classifier_overlap if vector else False,
+                pipeline=pipeline if vector else False,
+                zero_classifier=zero_classifier if vector else False,
+                stream_axes=stream_axes if vector else False,
+                fill_overlap=fill_overlap if vector else False,
+                zero_reuse=zero_reuse if vector else False,
                 overlap=drain_overlap,
                 node_loop=shape_class is not None,
                 pad=vector,
@@ -196,6 +220,12 @@ def quant_kernel(
             shape_class,
             *([tuple(p.shape() for p in prepared)] if prepared else []),
             *([pad_strategy] if pad_strategy != "native" else []),
+            *(["classifier_overlap"] if classifier_overlap else []),
+            *(["pipeline"] if pipeline else []),
+            *(["zero_classifier"] if zero_classifier else []),
+            *(["stream_axes"] if stream_axes else []),
+            *(["fill_overlap"] if fill_overlap else []),
+            *(["zero_reuse"] if zero_reuse else []),
         ),
         body,
         ports,
@@ -241,10 +271,22 @@ def quant_walk_kernel(
     sw = -(-src_bytes // 32)
     finite_batch = int(os.environ.get("KTPU_PIPE_FINITE_BATCH", "4"))
     overlap = os.environ.get("KTPU_PIPE_OVERLAP", "1") == "1"
+    classifier_overlap = os.environ.get("KTPU_QUANT_CLASSIFIER_OVERLAP", "0") == "1"
+    pipeline = os.environ.get("KTPU_QUANT_PIPELINE", "1") == "1"
+    zero_classifier = os.environ.get("KTPU_QUANT_ZERO_CLASSIFIER", "1") == "1"
+    stream_axes = os.environ.get("KTPU_QUANT_STREAM_AXES", "1") == "1"
+    fill_overlap = os.environ.get("KTPU_QUANT_FILL_OVERLAP", "1") == "1"
+    zero_reuse = os.environ.get("KTPU_QUANT_ZERO_REUSE", "1") == "1"
     kkey = (
         "quant_walk",
         finite_batch,
         overlap,
+        classifier_overlap,
+        pipeline,
+        zero_classifier,
+        stream_axes,
+        fill_overlap,
+        zero_reuse,
         sw,
         levels,
         at,
@@ -298,6 +340,12 @@ def quant_walk_kernel(
                     z[b * rows : (b + 1) * rows, :],
                     finite=finite,
                     finite_batch=finite_batch if vector else 1,
+                    classifier_overlap=classifier_overlap if vector else False,
+                    pipeline=pipeline if vector else False,
+                    zero_classifier=zero_classifier if vector else False,
+                    stream_axes=stream_axes if vector else False,
+                    fill_overlap=fill_overlap if vector else False,
+                    zero_reuse=zero_reuse if vector else False,
                     overlap=overlap if vector else False,
                     pad=vector,
                 )
@@ -318,6 +366,12 @@ def quant_walk_kernel(
             nk,
             batches,
             finite,
+            *(["classifier_overlap"] if classifier_overlap else []),
+            *(["pipeline"] if pipeline else []),
+            *(["zero_classifier"] if zero_classifier else []),
+            *(["stream_axes"] if stream_axes else []),
+            *(["fill_overlap"] if fill_overlap else []),
+            *(["zero_reuse"] if zero_reuse else []),
         ),
         body,
         ports,

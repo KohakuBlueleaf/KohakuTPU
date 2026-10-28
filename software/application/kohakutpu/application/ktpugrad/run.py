@@ -2066,7 +2066,7 @@ def _place(dev, plan: Plan, bufs, kind: str, rows, cols, Wp: int, tmps) -> tuple
             return []
 
         pitch = o.pitch if o.kind == "full" else Wp
-        return tdst.addr + tdoff, Operand("full", pitch=pitch), direct
+        return tdst.addr, Operand("full", pitch=pitch, offset=tdoff // 2), direct
     t = Storage(dev, max(32, 2 * R * Wp))
     tmps.append(t)
     t.dtype = np.float16
