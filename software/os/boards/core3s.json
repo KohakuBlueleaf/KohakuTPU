@@ -1,0 +1,13 @@
+{
+  "name": "core3s",
+  "description": "core-only model, no compute units (not a TPU): 3 system nodes on one chain sharing one RAM; 1 MB private each, 1 MB shared",
+  "nodes": 3,
+  "mesh_of": [0, 1, 2],
+  "clock_hz": 100000000,
+  "engine": false,
+  "dram": {"base": "0x10000000", "layout": "carved", "private": "0x100000", "shared": "0x100000"},
+  "spelling": "own",
+  "staging": "0x80000",
+  "units": [],
+  "model": {"kind": "core", "nodes": 3, "shared": 1, "build": "core3s"}
+}

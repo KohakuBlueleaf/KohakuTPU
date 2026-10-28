@@ -1,0 +1,13 @@
+{
+  "name": "core2",
+  "description": "core-only model: 2 system nodes on one interlink, each with its own 4 MB DRAM (pure AMP: no shared memory)",
+  "nodes": 2,
+  "mesh_of": [0, 1],
+  "clock_hz": 100000000,
+  "engine": true,
+  "dram": {"base": "0x10000000", "layout": "separate", "private": "0x400000", "shared": "0x0"},
+  "spelling": "own",
+  "staging": "0x80000",
+  "units": [],
+  "model": {"kind": "core", "nodes": 2, "shared": 0, "build": "core2"}
+}

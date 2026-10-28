@@ -1,0 +1,18 @@
+{
+  "name": "card_v9t6_1n",
+  "description": "KohakuTPU v9t6, one die (2 MG + 2 VC): one node, private and shared DRAM carved from its mesh",
+  "nodes": 1,
+  "mesh_of": [0],
+  "clock_hz": 100000000,
+  "engine": true,
+  "dram": {"base": "0x20000000", "layout": "carved", "private": "0x100000", "shared": "0x100000"},
+  "spelling": "own",
+  "staging": "0x80000",
+  "units": [
+    {"type": "MG", "mesh": 0, "x": 1, "y": 1, "depth": 512},
+    {"type": "MG", "mesh": 0, "x": 1, "y": 2, "depth": 512},
+    {"type": "VC", "mesh": 0, "x": 2, "y": 1, "depth": 512},
+    {"type": "VC", "mesh": 0, "x": 2, "y": 2, "depth": 512}
+  ],
+  "card": {"board": "vlt_v9t6_2n", "meshes": 1}
+}

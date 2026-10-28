@@ -1,0 +1,13 @@
+{
+  "name": "core4s",
+  "description": "core-only model: 4 system nodes on one chain sharing one 4 MB DRAM (the card's flat shared memory, coherent at the RAM)",
+  "nodes": 4,
+  "mesh_of": [0, 1, 2, 3],
+  "clock_hz": 100000000,
+  "engine": true,
+  "dram": {"base": "0x10000000", "layout": "carved", "private": "0x80000", "shared": "0x200000"},
+  "spelling": "own",
+  "staging": "0x80000",
+  "units": [],
+  "model": {"kind": "core", "nodes": 4, "shared": 1, "build": "core4s"}
+}
