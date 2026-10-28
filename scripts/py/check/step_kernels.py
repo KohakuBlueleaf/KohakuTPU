@@ -156,7 +156,7 @@ def main():
                     yb = Tensor(eye[y[indices]], device="KTPU").realize()
                     checker.active = step == args.check_step
                     t0 = time.monotonic()
-                    loss = run_step(xb, yb)
+                    loss, _logits = run_step(xb, yb)
                     dev.drain()
                     checker.active = False
                     record_loss(
