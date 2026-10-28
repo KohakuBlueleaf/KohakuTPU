@@ -1,0 +1,12 @@
+{
+ "clause": "API.REF.007",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "from kohakutpu.application.api.attention import attention\n\ndef facts():\n    sizes = (1, 63, 64, 65, 197, 256)\n    accepted = []\n    for n in sizes:\n        q = kp.tensor(np.zeros((3, n, 64), np.float16))\n        k = kp.tensor(np.zeros((3, n, 64), np.float16))\n        v = kp.tensor(np.zeros((3, 64, n), np.float16))\n        y = attention(q, k, v)\n        accepted.append(y.shape == (3, n, 64) and y.st.nbytes == 2*3*n*64)\n    texts = [r.info['compiled'].traced.text for r in DEV.runs if r.name == 'attention_partial']\n    return {'sizes': list(sizes), 'accepted': all(accepted), 'masked': bool(texts) and all('sel ' in t and '-inf' in t for t in texts)}\n"
+ },
+ "expect": {"sizes": [1, 63, 64, 65, 197, 256], "accepted": true, "masked": true},
+ "mutants": ["api.attention/no-key-mask"]
+}

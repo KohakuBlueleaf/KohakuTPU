@@ -1,0 +1,20 @@
+{
+  "clause": "L1.NODE.007",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[4] @dram)\n    r1 = set 1\n    store a <- 0x1234\n    store a + 8 <- r1\n    ctrl xf_sel <- 0x0104\n    store a + 16 <- -1\n",
+    "fn": "f",
+    "binds": {"a": 4096}
+  },
+  "expect": {"-": {"steps": [
+    ["alu", 1, "MOV", 0, 1, true],
+    ["store", [[4096, 4660]], false],
+    ["store", [[4104, 1]], true],
+    ["ctrl", [[464, 260]], false],
+    ["store", [[4112, 18446744073709551615]], false]
+  ]}},
+  "mutants": ["l1.node/ctrl-offsets"]
+}

@@ -1,0 +1,27 @@
+{
+ "clause": "ISA.VC.023",
+ "tier": 0,
+ "runner": "isa.vector.image",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image k()\n    ainc a1 += 512\n    vfill a0 -> l1[0] rel\n    vfill a1 -> l1[64] rel\n    halt\n",
+  "name": "k",
+  "args": [],
+  "entry": "unknown"
+ },
+ "expect": {
+  "words": [
+   "0x9c800000",
+   "0x9c900200",
+   "0xec000000",
+   "0xec200040",
+   "0xf8000000"
+  ],
+  "descs": {}
+ },
+ "mutants": [
+  "isa.vector/no_stale",
+  "isa.vector/dma_fields"
+ ]
+}

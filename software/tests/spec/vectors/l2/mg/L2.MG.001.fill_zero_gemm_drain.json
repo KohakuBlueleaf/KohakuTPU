@@ -1,0 +1,45 @@
+{
+ "clause": "L2.MG.001",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: mx7a[16, 96] @dram(gm=4, nk=1), w: mx7b[16, 96] @dram(gn=4, nk=1), y: f16[16, 16] @dram(tile=4x4))",
+   "    par u in 0..1 on mg[u]",
+   "        acc = zero                                   : f32[16, 16] @acc",
+   "        for k in 0..3",
+   "            a = fill x[0 : +16, k*32 : +32]          : mx7a[16, 32] @A",
+   "            b = fill w[0 : +16, k*32 : +32]          : mx7b[16, 32] @B",
+   "            acc = gemm a, b, acc                     : f32[16, 16] @acc",
+   "        drain acc -> y"
+  ],
+  "facts": {
+   "mg": {
+    "lines": "^(fill|gemm|drain)",
+    "in": "fn"
+   }
+  }
+ },
+ "expect": {
+  "mg": [
+   "fill A0 <- x+0 n=4",
+   "fill B0 <- w+0 n=4",
+   "gemm 4x4x1 a=A0 b=B0 acc=0",
+   "fill A1 <- x+512 n=4",
+   "fill B1 <- w+512 n=4",
+   "gemm 4x4x1 a=A1 b=B1 acc=1",
+   "fill A0 <- x+1024 n=4",
+   "fill B0 <- w+1024 n=4",
+   "gemm 4x4x1 a=A0 b=B0 acc=1 emit=y+0",
+   "drain y+0 fused n=16"
+  ]
+ },
+ "mutants": [
+  "l2.cluster/zero-ignored",
+  "l2.cluster/no-fuse"
+ ]
+}

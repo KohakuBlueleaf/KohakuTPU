@@ -1,0 +1,23 @@
+{
+  "clause": "L1.MOV.015",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(y8: u8[64] @dram, y32: u8[64] @dram)\n    move\n        fill w(y8, (2, 32)) value=0x12345678 ew=8\n        fill w(y32, (2, 32)) value=0x12345678 ew=32\n",
+    "fn": "f",
+    "binds": {"y8": 8192, "y32": 12288}
+  },
+  "expect": {"-": {"steps": [
+    ["move", [
+      "HDR sel=1 base=0x2000 ndim=1", "DIM sel=1 count=2 stride=32", "AXIS", "WIN sel=1", "WIN sel=1 axis=1",
+      "IMM 0x12345678",
+      "CTRL mode=4 flags=0x8 go=1",
+      "HDR sel=1 base=0x3000 ndim=1", "DIM sel=1 count=2 stride=32", "AXIS", "WIN sel=1", "WIN sel=1 axis=1",
+      "IMM 0x12345678",
+      "CTRL mode=4 ew=2 flags=0x8 go=1"
+    ]]
+  ]}},
+  "mutants": ["l1.mov/ew"]
+}

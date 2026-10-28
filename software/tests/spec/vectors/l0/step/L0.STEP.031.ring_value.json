@@ -1,0 +1,53 @@
+{
+ "clause": "L0.STEP.031",
+ "tier": 0,
+ "runner": "l0.pkg.lower",
+ "status": "frozen",
+ "input": {
+  "package": {
+   "steps": [
+    {
+     "op": "RING",
+     "unit": 1,
+     "count": 5,
+     "arg": 65836
+    }
+   ]
+  }
+ },
+ "expect": {
+  "steps": [
+   {
+    "op": "ENGINE",
+    "first": 0,
+    "entries": [
+     [
+      26,
+      "0x1012c0501"
+     ]
+    ],
+    "pad": [
+     [
+      255,
+      "0x0"
+     ],
+     [
+      255,
+      "0x0"
+     ]
+    ]
+   }
+  ],
+  "kept": true,
+  "units": [],
+  "buffers": 0,
+  "relocs": 0,
+  "signature": "0x0",
+  "ack_reserve": 0,
+  "checksum": false
+ },
+ "mutants": [
+  "l0.lower/ring_value",
+  "l0.lower/ring_code"
+ ]
+}

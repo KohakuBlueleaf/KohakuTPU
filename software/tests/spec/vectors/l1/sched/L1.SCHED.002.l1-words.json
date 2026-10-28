@@ -1,0 +1,22 @@
+{
+  "clause": "L1.SCHED.002",
+  "tier": 0,
+  "runner": "l1.block",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    vexp2 v1, v0\n    vexp2 v2, v1\n    vexp2 v3, v2\n    vpack v3 -> l1[0] f16\n    vunpk v5 <- l1[4] f16\n    vmul v6, v5, v5\n    vmul v7, v6, v6\n    vmul v8, v7, v7\n    halt\n",
+    "image": "k"
+  },
+  "expect": [
+    "vexp2 v1, v0",
+    "vexp2 v2, v1",
+    "vexp2 v3, v2",
+    "vpack v3 -> l1[0] f16",
+    "vunpk v5 <- l1[4] f16",
+    "vmul v6, v5, v5",
+    "vmul v7, v6, v6",
+    "vmul v8, v7, v7",
+    "halt"
+  ],
+  "mutants": ["l1.sched/l1-words"]
+}

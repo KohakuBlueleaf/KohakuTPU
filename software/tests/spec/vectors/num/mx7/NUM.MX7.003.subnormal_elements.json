@@ -1,0 +1,14 @@
+{
+  "clause": "NUM.MX7.003",
+  "tier": 0,
+  "runner": "num.mx7.quantise",
+  "status": "frozen",
+  "input": {"bits": [1023, 16, 1, 33280]},
+  "expect": {
+    "q": [57, 1, 0, -28],
+    "es": [-20],
+    "m8": [9],
+    "value": ["0x1.0080000000000p-14", "0x1.2000000000000p-20", "0x0.0p+0", "-0x1.f800000000000p-16"]
+  },
+  "mutants": ["num.mx7/e8m0-reciprocal", "num.mx7/recip-shift-13"]
+}

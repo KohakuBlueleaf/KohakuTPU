@@ -1,0 +1,27 @@
+{
+ "clause": "TG.FLT.001",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "from tinygrad.nn.state import get_state_dict\n\n\nclass Inner:\n    def __init__(self):\n        self.w = T(np.ones((4, 32), np.float32))\n\n\nclass Model:\n    def __init__(self):\n        self.inner = Inner()\n        self.b = T(np.zeros(32, np.float32))\n        self.i = Tensor(np.arange(4, dtype=np.int32), device=\"KTPU\")\n\n\ndef facts():\n    m = NN.place(Model())\n    return {k: [t.dtype.name, t.device] for k, t in get_state_dict(m).items()}\n"
+ },
+ "expect": {
+  "inner.w": [
+   "half",
+   "KTPU"
+  ],
+  "b": [
+   "half",
+   "KTPU"
+  ],
+  "i": [
+   "int",
+   "KTPU"
+  ]
+ },
+ "mutants": [
+  "tg.nn/place_f32"
+ ]
+}

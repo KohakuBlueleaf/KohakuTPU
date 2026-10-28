@@ -1,0 +1,30 @@
+{
+ "clause": "L2.PASS.003",
+ "tier": 0,
+ "runner": "l2.passes",
+ "machine": "sru_v9t7",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "fn k.l2(x: f16[64, 128] @dram, y: f16[64, 128] @dram)",
+   "    par c in 0..2 on vc[any]",
+   "        for t in 0..2",
+   "            xl = load x[c*32 + t*16 : +16, :] : f16[16, 128] @l1",
+   "    copy y <- x"
+  ],
+  "passes": [
+   "place"
+  ],
+  "facts": {
+   "on": {
+    "lines": "^par "
+   }
+  }
+ },
+ "expect": {
+  "error": "vc[any]: this machine has no VC units"
+ },
+ "mutants": [
+  "l2.passes/any-on-absent-kind"
+ ]
+}

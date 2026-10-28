@@ -1,0 +1,42 @@
+{
+ "clause": "TG.RUN.004",
+ "tier": 0,
+ "runner": "tg.run",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "CX": [
+    2,
+    3,
+    6,
+    6
+   ],
+   "CW": [
+    4,
+    3,
+    3,
+    3
+   ]
+  },
+  "make": "T(CX).conv2d(T(CW))",
+  "facts": [
+   "count"
+  ],
+  "count": [
+   "mm",
+   "quant",
+   "rows"
+  ]
+ },
+ "expect": {
+  "count": {
+   "mm": 1,
+   "quant": 2,
+   "rows": 0
+  }
+ },
+ "mutants": [
+  "tg.run/no_window"
+ ]
+}

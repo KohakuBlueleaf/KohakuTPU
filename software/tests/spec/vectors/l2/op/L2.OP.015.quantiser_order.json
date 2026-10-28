@@ -1,0 +1,61 @@
+{
+ "clause": "L2.OP.015",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[16, 32] @dram(tile=1x8), a: mx7a[16, 32] @dram(gm=4, nk=1))",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..4",
+   "            xl = load x[t*4 : +4, :]                 : f16[4, 32] @l1(gt4)",
+   "            v = unpack xl                            : f32[4, 32] @reg(gt4)",
+   "            o = mul v, 2.0                           : f32[4, 32] @reg(gt4)",
+   "            q = pack o                               : mx7a[4, 32] @l1",
+   "            store a[t*4 : +4, :] <- q"
+  ],
+  "passes": [],
+  "strategy": "band",
+  "facts": {
+   "ops": {
+    "lines": "^(vmul|vmov|vpack)",
+    "in": "images"
+   },
+   "desc": {
+    "lines": "^desc a1",
+    "in": "images"
+   }
+  }
+ },
+ "expect": {
+  "ops": [
+   "vmul v1[0 :], v0[0 :], s0 vl=16",
+   "vmul v1[1 :], v0[4 :], s0 vl=16",
+   "vmul v1[2 :], v0[1 :], s0 vl=16",
+   "vmul v1[3 :], v0[5 :], s0 vl=16",
+   "vmul v1[4 :], v0[2 :], s0 vl=16",
+   "vmul v1[5 :], v0[6 :], s0 vl=16",
+   "vmul v1[6 :], v0[3 :], s0 vl=16",
+   "vmul v1[7 :], v0[7 :], s0 vl=16",
+   "vpack v1 -> l1[16] mx7a",
+   "vmul v1[0 :], v0[0 :], s0 vl=16",
+   "vmul v1[1 :], v0[4 :], s0 vl=16",
+   "vmul v1[2 :], v0[1 :], s0 vl=16",
+   "vmul v1[3 :], v0[5 :], s0 vl=16",
+   "vmul v1[4 :], v0[2 :], s0 vl=16",
+   "vmul v1[5 :], v0[6 :], s0 vl=16",
+   "vmul v1[6 :], v0[3 :], s0 vl=16",
+   "vmul v1[7 :], v0[7 :], s0 vl=16",
+   "vpack v1 -> l1[20] mx7a"
+  ],
+  "desc": [
+   "desc a1=p_a1 walk=(32, 4)"
+  ]
+ },
+ "mutants": [
+  "l2.vector/no-quantiser-order"
+ ]
+}

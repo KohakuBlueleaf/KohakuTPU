@@ -1,0 +1,9 @@
+{
+  "clause": "RUL.004",
+  "tier": 0,
+  "runner": "l1.ruled",
+  "status": "frozen",
+  "input": {"check": "inst_depth"},
+  "expect": {"target_constant": false, "spec_default": false, "builder_default": false},
+  "mutants": ["l1.lower/credit"]
+}

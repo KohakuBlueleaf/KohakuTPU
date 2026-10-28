@@ -1,0 +1,1 @@
+{"clause":"L0.MEM.009","tier":0,"runner":"memory.packages","machine":"multimesh_v9t6","status":"frozen","input":{},"expect":{"shared_held":true,"freed":[8388608],"cache_empty":true},"mutants":["memory/no-package-retirement"]}

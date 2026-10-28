@@ -1,0 +1,65 @@
+{
+ "clause": "L0.NQ.034",
+ "tier": 0,
+ "runner": "l0.queue",
+ "status": "frozen",
+ "input": {
+  "geometry": {
+   "sq_n": 64,
+   "cq_n": 64,
+   "so_bytes": 4096,
+   "si_bytes": 256
+  },
+  "script": [
+   {
+    "do": "init"
+   },
+   {
+    "do": "offsets"
+   },
+   {
+    "do": "submit",
+    "length": 64,
+    "bindings": [
+     "0x1111",
+     "0x2222"
+    ]
+   },
+   {
+    "do": "words",
+    "at": "0x440",
+    "n": 8
+   },
+   {
+    "do": "words",
+    "at": "0x4d40",
+    "n": 2
+   }
+  ]
+ },
+ "expect": [
+  null,
+  {
+   "bind": "0x4d40",
+   "heap": "0xd000"
+  },
+  1,
+  [
+   "0x20001",
+   "0x1",
+   "0x800000d000",
+   "0x40",
+   "0x8000004d40",
+   "0x0",
+   "0x0",
+   "0x0"
+  ],
+  [
+   "0x1111",
+   "0x2222"
+  ]
+ ],
+ "mutants": [
+  "l0.queue/bindings"
+ ]
+}

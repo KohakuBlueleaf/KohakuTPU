@@ -1,0 +1,24 @@
+{
+ "clause": "ISA.VC.120",
+ "tier": 1,
+ "runner": "isa.card.kernel",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "body": [],
+  "check": "strided",
+  "x": {
+   "seed": 23
+  },
+  "tol": {
+   "exact": true
+  },
+  "text": "image t(x, y)\n    desc a0 = x walk=((64, 8), (32, 2))\n    desc a1 = y walk=(32, 8)\n    vfill a0 -> l1[0]\n    vbar\n    vunpk v2 <- l1[0] f16\n    vpack v2 -> l1[16] f16\n    vsync drain on=pack\n    vdrain a1 <- l1[16]\n    halt\n\nfn t.l1(x: f16[256] @dram, y: f16[128] @dram)\n    send vc[0]\n        run t(x, y)\n    barrier\n"
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.vector/dim_word"
+ ]
+}

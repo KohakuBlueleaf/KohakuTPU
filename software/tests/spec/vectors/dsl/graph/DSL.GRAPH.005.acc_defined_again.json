@@ -1,0 +1,50 @@
+{
+ "clause": "DSL.GRAPH.005",
+ "tier": 0,
+ "runner": "dsl.graph",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(\n    a=kt.In(64, 64, dtype=\"mx7a\", layout={\"gm\": 16, \"nk\": 1}),\n    b=kt.In(32, 64, dtype=\"mx7b\", layout={\"gn\": 8, \"nk\": 1}),\n    y=kt.Out(64, 32),\n):\n    h = kt.buffer((64, 32), \"f16\", tile=(16, 8))\n    for u in kt.par(1, on=kt.mg):\n        acc = kt.gemm(kt.fill(a[0:64, 0:32]), kt.fill(b[0:32, 0:32]))\n        acc = kt.gemm(kt.fill(a[0:64, 32:64]), kt.fill(b[0:32, 32:64]), acc)\n        kt.drain(acc, h)\n    kt.copy(y, h)\n",
+  "given": {
+   "a": {
+    "shape": [
+     64,
+     64
+    ],
+    "dtype": "mx7a",
+    "layout": {
+     "gm": 16,
+     "nk": 1
+    }
+   },
+   "b": {
+    "shape": [
+     32,
+     64
+    ],
+    "dtype": "mx7b",
+    "layout": {
+     "gn": 8,
+     "nk": 1
+    }
+   }
+  },
+  "keys": [
+   "targets"
+  ]
+ },
+ "expect": {
+  "targets": [
+   "a1",
+   "b1",
+   "acc1",
+   "a2",
+   "b2",
+   "acc1"
+  ]
+ },
+ "mutants": [
+  "dsl.ops/gemm_fresh"
+ ]
+}

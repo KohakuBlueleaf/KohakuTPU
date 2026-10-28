@@ -1,0 +1,17 @@
+{
+  "clause": "L1.TXT.002",
+  "tier": 0,
+  "runner": "l1.parse",
+  "status": "frozen",
+  "input": {
+    "text": "a\n    b\n        c\n    d\ne\n"
+  },
+  "expect": [
+    {"op": "a", "args": [], "body": [
+      {"op": "b", "args": [], "body": [{"op": "c", "args": []}]},
+      {"op": "d", "args": []}
+    ]},
+    {"op": "e", "args": []}
+  ],
+  "mutants": ["l1.text/flat-indent"]
+}

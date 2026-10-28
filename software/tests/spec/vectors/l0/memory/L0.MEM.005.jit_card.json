@@ -1,0 +1,1 @@
+{"clause":"L0.MEM.005","tier":1,"runner":"memory.jit_card","machine":"vlt_v9t6s_1n","status":"frozen","input":{},"expect":{"values":true,"replayed":true},"mutants":["memory/no-jit-replay","memory/no-stable-placement"]}

@@ -1,0 +1,31 @@
+{
+ "clause": "ISA.SR.023",
+ "tier": 0,
+ "runner": "isa.sru.words",
+ "machine": "sru_v9t7",
+ "status": "frozen",
+ "input": {
+  "g": {},
+  "fin": [
+   {
+    "OP": 6,
+    "DST": 3,
+    "A": 4,
+    "B": 5,
+    "C": 9
+   },
+   {
+    "OP": 11,
+    "DST": 0,
+    "A": 3
+   }
+  ]
+ },
+ "expect": {
+  "0x80": "0x4aa66",
+  "0x81": "0x18b"
+ },
+ "mutants": [
+  "isa.sru/map"
+ ]
+}

@@ -1,0 +1,6 @@
+{
+ "clause": "RUL.023", "tier": 0, "runner": "memory.handles",
+ "machine": "multimesh_v9t6", "status": "frozen", "input": {},
+ "expect": {"translated": true, "fresh": true, "stale_refused": true, "unbound_payload": [0]},
+ "mutants": ["memory/identity-translation"]
+}

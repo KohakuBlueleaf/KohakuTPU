@@ -1,0 +1,114 @@
+{
+ "clause": "TG.PLAN.013",
+ "tier": 0,
+ "runner": "tg.plan",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "Y": [
+    32,
+    64
+   ]
+  },
+  "make": "[Tensor.arange(64, dtype=dtypes.half).to('KTPU') * T(X), T(X).pad(((2, 2), (32, 32))).contiguous()]",
+  "keys": [
+   "expr",
+   "reads"
+  ]
+ },
+ "expect": [
+  {
+   "expr": "mul(add(sum(L0), -1.0), L1)",
+   "reads": [
+    [
+     "table",
+     "half",
+     [
+      [
+       "k0",
+       1
+      ],
+      [
+       "o1",
+       64
+      ]
+     ],
+     0
+    ],
+    [
+     "buf",
+     "half",
+     [
+      [
+       "o0",
+       64
+      ],
+      [
+       "o1",
+       1
+      ]
+     ],
+     0
+    ]
+   ]
+  },
+  {
+   "expr": "where(L0, where(L2, L1, 0.0), 0.0)",
+   "reads": [
+    [
+     "table",
+     "half",
+     [
+      [
+       "o0",
+       128
+      ],
+      [
+       "o1",
+       1
+      ]
+     ],
+     0
+    ],
+    [
+     "buf",
+     "half",
+     [
+      [
+       "o0",
+       64
+      ],
+      [
+       "o1",
+       1
+      ]
+     ],
+     -160
+    ],
+    [
+     "table",
+     "half",
+     [
+      [
+       "o0",
+       128
+      ],
+      [
+       "o1",
+       1
+      ]
+     ],
+     0
+    ]
+   ]
+  }
+ ],
+ "mutants": [
+  "tg.lower/no_tables"
+ ]
+}

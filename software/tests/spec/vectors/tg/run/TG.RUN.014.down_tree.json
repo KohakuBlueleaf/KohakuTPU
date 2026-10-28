@@ -1,0 +1,31 @@
+{
+ "clause": "TG.RUN.014",
+ "tier": 0,
+ "runner": "tg.run",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "Y": [
+    32,
+    64
+   ]
+  },
+  "make": "T(X).sum(axis=0)",
+  "facts": [
+   "viewset"
+  ]
+ },
+ "expect": {
+  "viewset": [
+   "down"
+  ]
+ },
+ "mutants": [
+  "tg.run/laid_free"
+ ]
+}

@@ -1,0 +1,29 @@
+{
+ "clause": "L2.MOV.011",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[16, 64] @dram, t: f16[16, 64] @dram)",
+   "    gt4 t <- x walk=((2, 512), (4, 64)) dwalk=((2, 128),) at=64"
+  ],
+  "facts": {
+   "fn": {
+    "lines": "^gt4",
+    "in": "fn"
+   }
+  }
+ },
+ "expect": {
+  "fn": [
+   "gt4 w(x+64, (2, 512), (4, 64)) -> w(t+0, (2, 128))"
+  ]
+ },
+ "mutants": [
+  "l2.mover/const-zero"
+ ]
+}

@@ -1,0 +1,25 @@
+{
+ "clause": "DSL.KERN.010",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "from kohakutpu.language.examples.dsl.vector.softmax import softmax\n\n\n@kt.kernel\ndef two(x=kt.In(4, 32), y=kt.Out(4, 32), *, a=kt.auto(1, 2), b=kt.auto(10, 20)):\n    kt.require(a + b in (12, 21), \"no\")\n    for c in kt.par(1, on=kt.vc):\n        kt.store(y[0:4, :], kt.load(x[0:4, :]))\n\n\ndef facts():\n    g = {\"x\": TY.TensorSpec.make((4, 32))}\n    sm = softmax.trace({\"x\": TY.TensorSpec.make((16, 128))}, machine=MACHINE)\n    first = two.trace(g, machine=MACHINE)\n    no21 = lambda t: kt.require(t.consts[\"a\"] + t.consts[\"b\"] != 21, \"21\")\n    checked = two.trace(g, machine=MACHINE, check=no21)\n    return {\n        \"softmax_rows\": sm.consts[\"rows\"],\n        \"first\": [first.consts[\"a\"], first.consts[\"b\"]],\n        \"checked\": [checked.consts[\"a\"], checked.consts[\"b\"]],\n    }\n"
+ },
+ "expect": {
+  "softmax_rows": 8,
+  "first": [
+   1,
+   20
+  ],
+  "checked": [
+   2,
+   10
+  ]
+ },
+ "mutants": [
+  "dsl.kernel/auto_reversed",
+  "dsl.kernel/require_off"
+ ]
+}

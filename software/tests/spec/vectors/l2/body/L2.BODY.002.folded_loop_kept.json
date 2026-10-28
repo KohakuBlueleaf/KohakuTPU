@@ -1,0 +1,64 @@
+{
+ "clause": "L2.BODY.002",
+ "tier": 0,
+ "runner": "l2.body",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[32, 128] @dram, y: f16[32, 128] @dram)",
+   "    par c in 0..2 - 1 on vc[c * 1]",
+   "        for t in 0..2*2",
+   "            xl = load x[t*(4+4) : +8, :]     : f16[8, 128] @l1",
+   "            v = unpack xl                    : f32[8, 128] @reg",
+   "            ol = pack v                      : f16[8, 128] @l1",
+   "            store y[t*8 : +8, :] <- ol"
+  ],
+  "want": [
+   "tree"
+  ]
+ },
+ "expect": {
+  "tree": [
+   {
+    "par": "c",
+    "span": "0..1",
+    "on": "vc[c * 1]",
+    "body": [
+     {
+      "for": "t",
+      "span": "0..4",
+      "pipe": null,
+      "body": [
+       {
+        "op": "load",
+        "target": "xl",
+        "type": "f16[8, 128] @l1"
+       },
+       {
+        "op": "unpack",
+        "target": "v",
+        "type": "f32[8, 128] @reg"
+       },
+       {
+        "op": "pack",
+        "target": "ol",
+        "type": "f16[8, 128] @l1"
+       },
+       {
+        "op": "store",
+        "target": null,
+        "type": null
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "mutants": [
+  "l2.body/loops-unrolled"
+ ]
+}

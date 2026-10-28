@@ -1,0 +1,1 @@
+{"clause":"RUL.020","tier":0,"runner":"memory.allocation_extents","machine":"multimesh_v9t6","status":"frozen","input":{},"expect":{"requested":33,"extent":64,"reserved":256},"mutants":["memory/add-allocation-tail"]}

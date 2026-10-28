@@ -1,0 +1,22 @@
+{
+ "clause": "DBG.TMO.010",
+ "tier": 1,
+ "runner": "dbg.late",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "bounds": [
+   100000,
+   200000
+  ],
+  "poll": 1000
+ },
+ "expect": {
+  "never_early": true,
+  "within_poll": true,
+  "fixed_overhead": true
+ },
+ "mutants": [
+  "dbg/bound_doubled"
+ ]
+}

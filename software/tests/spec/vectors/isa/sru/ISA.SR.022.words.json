@@ -1,0 +1,55 @@
+{
+ "clause": "ISA.SR.022",
+ "tier": 0,
+ "runner": "isa.sru.words",
+ "machine": "sru_v9t7",
+ "status": "frozen",
+ "input": {
+  "g": {
+   "NW": 2
+  },
+  "passes": [
+   {
+    "NOPS": 2,
+    "OPBASE": 1
+   }
+  ],
+  "ops": [
+   {},
+   {
+    "KIND": 0,
+    "B": "R",
+    "C": "C",
+    "NA": 1,
+    "RB": 2,
+    "CC": 1,
+    "KB": 4194304
+   },
+   {
+    "KIND": 1,
+    "A": [
+     "H",
+     0
+    ],
+    "B": "K",
+    "FIX": 1,
+    "PRE": 5
+   }
+  ],
+  "f_lanes": 16,
+  "h_taps": 2
+ },
+ "expect": {
+  "0x0": "0x2",
+  "0x10": "0x12",
+  "0x44": "0x11288",
+  "0x45": "0x1400000",
+  "0x48": "0x520007",
+  "0x49": "0xa000000",
+  "0x4b": "0x1"
+ },
+ "mutants": [
+  "isa.sru/map",
+  "isa.sru/schedule"
+ ]
+}

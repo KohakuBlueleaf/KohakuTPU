@@ -1,0 +1,14 @@
+{
+ "clause": "RUL.009",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    return {'dram': DEV.dram_bytes == MACHINE.get('card.dram.bytes')}\n"
+ },
+ "expect": {
+  "dram": true
+ },
+ "mutants": ["rul.009/constant-dram"]
+}

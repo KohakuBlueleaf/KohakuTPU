@@ -1,0 +1,21 @@
+{
+ "clause": "RUL.032",
+ "tier": 0,
+ "runner": "l0.table",
+ "status": "frozen",
+ "input": {
+  "need": "ENGINE"
+ },
+ "expect": {
+  "host_only": [],
+  "header_only": [],
+  "renamed": [],
+  "need": {
+   "host": true,
+   "header": true
+  }
+ },
+ "mutants": [
+  "l0.table/no_engine"
+ ]
+}

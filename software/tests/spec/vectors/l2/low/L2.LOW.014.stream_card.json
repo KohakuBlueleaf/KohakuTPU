@@ -1,0 +1,45 @@
+{
+ "clause": "L2.LOW.014",
+ "tier": 1,
+ "runner": "l2.card",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn stream.l2(x: mx7a[48, 64] @dram(gm=6, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[48, 64] @dram)",
+   "    par c in 0..1 on mg[c]",
+   "        for t in 0..2",
+   "            a = fill x[t*24 : +24, :]                 : mx7a[24, 64] @A",
+   "            b = fill w                                : mx7b[64, 64] @B",
+   "            acc = gemm a, b                           : f32[24, 64] @acc",
+   "            drain acc -> vc[c]",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..2",
+   "            h = recv mg[c]                            : f16[24, 64] @l1(gt4)",
+   "            v = unpack h                              : f32[24, 64] @reg(gt4)",
+   "            o = pack v                                : f16[24, 64] @l1(gt4)",
+   "            store y[t*24 : +24, :] <- o"
+  ],
+  "inputs": [
+   "x",
+   "w"
+  ],
+  "output": "y",
+  "ref": "mxmm",
+  "tol": 0.01,
+  "scale": 0.25
+ },
+ "expect": {
+  "match": true
+ },
+ "mutants": [
+  "l2.lower/spend-split-128"
+ ],
+ "hangs": {
+  "python": [
+   "l2.lower/spend-split-128"
+  ]
+ }
+}

@@ -1,0 +1,27 @@
+{
+ "clause": "RUL.051",
+ "tier": 0,
+ "runner": "isa.verify",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image k(x)\n    desc a0 = x walk=(32, 16)\n    seti s5 = 0\n    loop s5\n        vunpk v0 <- l1[7] f16 n=1\n    halt\n\nfn k.l1(x: f16[256] @dram)\n    send vc[0]\n        run k(x)\n    barrier\n",
+  "fn": "k",
+  "binds": {
+   "x": 1048576
+  },
+  "l1": true
+ },
+ "expect": {
+  "findings": [],
+  "l1": {
+   "vc0": {
+    "read": [
+     7
+    ],
+    "written": []
+   }
+  }
+ },
+ "mutants": ["rul.051/zero-skips"]
+}

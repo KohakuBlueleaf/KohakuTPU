@@ -1,0 +1,61 @@
+{
+ "clause": "L0.NQ.035",
+ "tier": 0,
+ "runner": "l0.queue",
+ "status": "frozen",
+ "input": {
+  "geometry": {
+   "sq_n": 64,
+   "cq_n": 64,
+   "so_bytes": 4096,
+   "si_bytes": 256
+  },
+  "script": [
+   {
+    "do": "init"
+   },
+   {
+    "do": "log"
+   },
+   {
+    "do": "upload",
+    "length": 96
+   },
+   {
+    "do": "upload",
+    "length": 32
+   },
+   {
+    "do": "log"
+   }
+  ]
+ },
+ "expect": [
+  null,
+  [
+   [
+    "w",
+    "0x0",
+    1088
+   ]
+  ],
+  "0xd000",
+  "0xd080",
+  [
+   [
+    "w",
+    "0xd000",
+    128
+   ],
+   [
+    "w",
+    "0xd080",
+    64
+   ]
+  ]
+ ],
+ "mutants": [
+  "l0.queue/line32",
+  "l0.queue/bindings"
+ ]
+}

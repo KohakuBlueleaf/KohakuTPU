@@ -1,0 +1,85 @@
+{
+ "clause": "L0.STEP.047",
+ "tier": 0,
+ "runner": "l0.pkg.build",
+ "status": "frozen",
+ "input": {
+  "builder": {
+   "types": [
+    [
+     1,
+     1,
+     "MG"
+    ]
+   ],
+   "credit": 512
+  },
+  "calls": [
+   [
+    "store",
+    [
+     [
+      "0x1000",
+      5
+     ],
+     [
+      "0x1008",
+      6
+     ],
+     [
+      "0x1010",
+      7
+     ]
+    ]
+   ],
+   [
+    "store",
+    [
+     [
+      "0x2000",
+      3
+     ]
+    ],
+    true
+   ]
+  ],
+  "keys": [
+   "package"
+  ]
+ },
+ "expect": {
+  "package": {
+   "units": [],
+   "buffers": [],
+   "steps": [
+    {
+     "op": "STORE",
+     "unit": 0,
+     "count": 2,
+     "arg": "0x0",
+     "flags": 0
+    },
+    {
+     "op": "STORE",
+     "unit": 0,
+     "count": 1,
+     "arg": "0x2",
+     "flags": 4
+    }
+   ],
+   "relocs": [],
+   "payloads": [
+    "0x6000000000000100800000000000000050000000000001000",
+    "0xffffffffffffffff00000000000000070000000000001010",
+    "0xffffffffffffffff00000000000000030000000000002000"
+   ],
+   "signature": "0x0",
+   "ack_reserve": 0,
+   "checksum": false
+  }
+ },
+ "mutants": [
+  "l0.build/pairs_unpadded",
+  "l0.build/flags_dropped"
+ ]
+}

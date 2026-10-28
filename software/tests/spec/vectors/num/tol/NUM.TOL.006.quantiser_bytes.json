@@ -1,0 +1,10 @@
+{
+  "clause": "NUM.TOL.006",
+  "tier": 1,
+  "runner": "num.card.example",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {"source": "l2", "name": "convert", "inputs": {"x": {"shape": [64, 128], "seed": 3}}},
+  "expect": {"exact": true},
+  "mutants": ["num.card/readback-corrupt"]
+}

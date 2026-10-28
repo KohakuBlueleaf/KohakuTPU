@@ -1,0 +1,1 @@
+{"clause":"L0.MEM.003","tier":0,"runner":"memory.pressure","status":"frozen","input":{},"expect":{"address":123,"collected":[1]},"mutants":["memory/drain-all"]}

@@ -1,0 +1,15 @@
+{
+ "clause": "RUL.031",
+ "tier": 0,
+ "runner": "l0.table",
+ "status": "frozen",
+ "input": {},
+ "expect": {
+  "host_only": [],
+  "header_only": [],
+  "renamed": []
+ },
+ "mutants": [
+  "l0.table/drop_wait"
+ ]
+}

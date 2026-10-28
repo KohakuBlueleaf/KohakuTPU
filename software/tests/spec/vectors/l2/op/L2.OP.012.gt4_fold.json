@@ -1,0 +1,57 @@
+{
+ "clause": "L2.OP.012",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[16, 32] @dram(tile=1x8), y: f16[16, 32] @dram(tile=1x8))",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..1",
+   "            xl = load x                        : f16[16, 32] @l1(gt4)",
+   "            v = unpack xl                      : f32[16, 32] @reg(gt4)",
+   "            m = rmax v                         : f32[16] @reg",
+   "            o = mul v, m[:, *]                 : f32[16, 32] @reg(gt4)",
+   "            ol = pack o                     : f16[16, 32] @l1(gt4)",
+   "            store y <- ol"
+  ],
+  "passes": [],
+  "facts": {
+   "xor": {
+    "lines": "^vmax .*xor\\(",
+    "in": "images"
+   },
+   "maxes": {
+    "count": "^vmax ",
+    "in": "images"
+   }
+  }
+ },
+ "expect": {
+  "xor": [
+   "vmax v4[1 :], v4[1 :], xor(v4[1 :], 8) vl=64",
+   "vmax v5[1 :], v5[1 :], xor(v5[1 :], 8) vl=64",
+   "vmax v6[1 :], v6[1 :], xor(v6[1 :], 8) vl=64",
+   "vmax v7[1 :], v7[1 :], xor(v7[1 :], 8) vl=64",
+   "vmax v4[1 :], v4[1 :], xor(v4[1 :], 4) vl=64",
+   "vmax v5[1 :], v5[1 :], xor(v5[1 :], 4) vl=64",
+   "vmax v6[1 :], v6[1 :], xor(v6[1 :], 4) vl=64",
+   "vmax v7[1 :], v7[1 :], xor(v7[1 :], 4) vl=64",
+   "vmax v4[1 :], v4[1 :], xor(v4[1 :], 2) vl=64",
+   "vmax v5[1 :], v5[1 :], xor(v5[1 :], 2) vl=64",
+   "vmax v6[1 :], v6[1 :], xor(v6[1 :], 2) vl=64",
+   "vmax v7[1 :], v7[1 :], xor(v7[1 :], 2) vl=64",
+   "vmax v4[1 :], v4[1 :], xor(v4[1 :], 1) vl=64",
+   "vmax v5[1 :], v5[1 :], xor(v5[1 :], 1) vl=64",
+   "vmax v6[1 :], v6[1 :], xor(v6[1 :], 1) vl=64",
+   "vmax v7[1 :], v7[1 :], xor(v7[1 :], 1) vl=64"
+  ],
+  "maxes": 20
+ },
+ "mutants": [
+  "l2.vector/reduce-swapped"
+ ]
+}

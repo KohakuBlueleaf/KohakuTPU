@@ -1,0 +1,74 @@
+{
+ "clause": "ISA.MV.037",
+ "tier": 0,
+ "runner": "isa.mover.l1",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "fn k.l1(x: f16[65536] @dram, y: f16[65536] @dram)\n    move\n        quant w(x + 0, (192, 32)) -> w(y + 0, (24, 128)) bpack\n",
+  "fn": "k",
+  "binds": {
+   "x": 1048576,
+   "y": 2097152
+  }
+ },
+ "expect": {
+  "steps": [
+   "move"
+  ],
+  "moves": [
+   [
+    [
+     [
+      "0x10",
+      "0x80900001000000"
+     ],
+     [
+      "0x18",
+      "0x2000c00"
+     ],
+     [
+      "0x20",
+      "0x0"
+     ],
+     [
+      "0x28",
+      "0x0"
+     ],
+     [
+      "0x28",
+      "0x2"
+     ],
+     [
+      "0x10",
+      "0x100002000001"
+     ],
+     [
+      "0x18",
+      "0x8000181"
+     ],
+     [
+      "0x20",
+      "0x0"
+     ],
+     [
+      "0x28",
+      "0x1"
+     ],
+     [
+      "0x28",
+      "0x3"
+     ],
+     [
+      "0x0",
+      "0x1080d"
+     ]
+    ]
+   ]
+  ]
+ },
+ "mutants": [
+  "isa.mover/modes",
+  "isa.mover/xform"
+ ]
+}

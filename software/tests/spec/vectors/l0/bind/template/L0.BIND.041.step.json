@@ -1,0 +1,14 @@
+{
+ "clause": "L0.BIND.041", "tier": 0, "runner": "l0.template.bind", "status": "frozen",
+ "input": {
+  "package": {"units": [{"type": "VC", "x": 0, "y": 0, "credit": 512}], "payloads": [0, 0, 0], "steps": [{"op": "REPEAT", "count": 1, "arg": "0x0001000100000001"}, {"op": "DISPATCH", "count": 1}]},
+  "bindings": [], "params": {"n": 2},
+  "table": {"parameters": {"n": {"lo": 1, "hi": 3}}, "sites": [
+   {"name": "repeats", "step": 0, "bit": 96, "width": 16, "constant": 1, "coefficients": {"n": 2}},
+   {"name": "words", "step": 1, "bit": 32, "width": 32, "coefficients": {"n": 1}}
+  ]},
+  "ordinary": {"units": [{"type": "VC", "x": 0, "y": 0, "credit": 512}], "payloads": [0, 0, 0], "steps": [{"op": "REPEAT", "count": 1, "arg": "0x0001000500000001"}, {"op": "DISPATCH", "count": 2}]}
+ },
+ "expect": {"payloads": ["0x0", "0x0", "0x0"], "bytes_equal": true, "buffers": 0, "relocs": 0},
+ "mutants": ["l0.template/step"]
+}

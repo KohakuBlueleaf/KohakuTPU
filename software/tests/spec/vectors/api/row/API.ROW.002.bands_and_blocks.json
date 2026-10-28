@@ -1,0 +1,36 @@
+{
+ "clause": "API.ROW.002",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    full = (KV.Operand(\"full\"),)\n    ps = [\n        KV.plan(full, \"full\", 64, 64),\n        KV.plan(full, \"full\", 64, 512),\n        KV.plan(full, \"row\", 40, 64, quantum=16),\n    ]\n    return [[p.wc, p.nblk, p.rows, p.nb, p.rp] for p in ps]\n"
+ },
+ "expect": [
+  [
+   64,
+   1,
+   16,
+   4,
+   64
+  ],
+  [
+   256,
+   2,
+   4,
+   16,
+   64
+  ],
+  [
+   64,
+   1,
+   16,
+   3,
+   48
+  ]
+ ],
+ "mutants": [
+  "api.vector/bands_one"
+ ]
+}

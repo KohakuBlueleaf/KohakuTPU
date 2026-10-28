@@ -1,0 +1,27 @@
+{
+ "clause": "ISA.VC.141",
+ "tier": 1,
+ "runner": "isa.card.kernel",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "body": [
+   "vmul v2, v0, v0",
+   "vadd v2, v2, v1",
+   "vmul v2, v2, k2"
+  ],
+  "check": "neg_sq_add",
+  "x": {
+   "seed": 26
+  },
+  "tol": {
+   "rtol": 0.002
+  }
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.vector/opcodes"
+ ]
+}

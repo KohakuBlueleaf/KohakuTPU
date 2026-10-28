@@ -1,0 +1,45 @@
+{
+ "clause": "TG.NN.002",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    w = T(np.ones((4, 32), np.float16))\n    b = T(np.zeros(32, np.float16))\n    opt = NN.Adam16([w, b])\n    w.grad, b.grad = T(np.ones((4, 32), np.float16)), T(np.ones(32, np.float16))\n    with Context(TRAINING=1):\n        step = opt.schedule_step()\n    return {\n        \"m\": [t.dtype.name for t in opt.m],\n        \"rms\": [t.dtype.name for t in opt.rms],\n        \"err\": [t.dtype.name for t in opt.err],\n        \"shapes\": [list(t.shape) for t in opt.m],\n        \"defaults\": [opt.b1, opt.b2, opt.eps, opt.wd, opt.loss_scale],\n        \"step\": len(step),\n        \"steps\": opt.steps,\n    }\n"
+ },
+ "expect": {
+  "m": [
+   "half",
+   "half"
+  ],
+  "rms": [
+   "half",
+   "half"
+  ],
+  "err": [
+   "half",
+   "half"
+  ],
+  "shapes": [
+   [
+    4,
+    32
+   ],
+   [
+    32
+   ]
+  ],
+  "defaults": [
+   0.9,
+   0.95,
+   1e-08,
+   0.0,
+   1024.0
+  ],
+  "step": 10,
+  "steps": 1
+ },
+ "mutants": [
+  "tg.nn/no_compensate"
+ ]
+}

@@ -1,0 +1,20 @@
+{
+ "clause": "ISA.MG.070",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "mg.tiles",
+   "m:mg.tiles"
+  ]
+ },
+ "expect": {
+  "mg.tiles": 4096,
+  "m:mg.tiles": 4096
+ },
+ "mutants": [
+  "isa.cluster/plan"
+ ]
+}

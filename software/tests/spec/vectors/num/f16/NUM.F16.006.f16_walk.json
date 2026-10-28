@@ -1,0 +1,9 @@
+{
+  "clause": "NUM.F16.006",
+  "tier": 0,
+  "runner": "num.image.walk",
+  "status": "frozen",
+  "input": {"stmt": "vunpk v3 <- l1[16] f16"},
+  "expect": {"op": "vunpk", "mode": 0, "n": 8, "cb": 0},
+  "mutants": ["num.image/modes-swapped"]
+}

@@ -1,0 +1,37 @@
+{
+ "clause": "ISA.VC.146",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "vmark",
+    "args": [
+     3,
+     0,
+     2
+    ]
+   },
+   {
+    "fn": "vsync",
+    "args": [
+     1
+    ],
+    "kw": {
+     "mark": 3
+    }
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0xb5011800",
+   "0xb1005800"
+  ]
+ },
+ "mutants": [
+  "isa.vector/sync_fields"
+ ]
+}

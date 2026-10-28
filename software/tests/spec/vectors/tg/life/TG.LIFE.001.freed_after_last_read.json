@@ -1,0 +1,31 @@
+{
+ "clause": "TG.LIFE.001",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "W": [
+    96,
+    64
+   ],
+   "W2": [
+    32,
+    96
+   ]
+  },
+  "source": "def facts():\n    events = []\n    keep_run, keep_free = R.execute, KD.KTPUAllocator._free\n\n    def execute(dev, plan, bufs):\n        events.append(\"run\")\n        return keep_run(dev, plan, bufs)\n\n    def free(self, opaque, options):\n        events.append(\"free\")\n        return keep_free(self, opaque, options)\n\n    t = (T(X).relu() @ T(W).T).relu() @ T(W2).T\n    R.execute, KD.KTPUAllocator._free = execute, free\n    try:\n        t.realize()\n    finally:\n        R.execute, KD.KTPUAllocator._free = keep_run, keep_free\n    last = len(events) - 1 - events[::-1].index(\"run\")\n    return {\"runs\": events.count(\"run\") >= 3, \"freed_mid\": \"free\" in events[:last]}\n"
+ },
+ "expect": {
+  "runs": true,
+  "freed_mid": true
+ },
+ "mutants": [
+  "tg.seam/run_linear_tinygrad"
+ ]
+}

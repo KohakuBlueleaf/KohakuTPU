@@ -1,0 +1,73 @@
+{
+ "clause": "L0.BIND.010",
+ "tier": 0,
+ "runner": "l0.pkg.bind",
+ "status": "frozen",
+ "input": {
+  "package": {
+   "units": [
+    {
+     "type": "MG",
+     "x": 1,
+     "y": 1,
+     "credit": 512,
+     "fetch": "0x10200"
+    }
+   ],
+   "buffers": [
+    {
+     "name": "a",
+     "size": 4096,
+     "default": "0x1000"
+    }
+   ],
+   "steps": [
+    {
+     "op": "DISPATCH",
+     "unit": 0,
+     "count": 1,
+     "arg": 0
+    }
+   ],
+   "relocs": [
+    {
+     "payload": 0,
+     "bit": 4,
+     "width": 8,
+     "buffer": 0,
+     "addend": 3
+    },
+    {
+     "payload": 0,
+     "bit": 200,
+     "width": 6,
+     "buffer": 0,
+     "addend": 0,
+     "shift": 34
+    }
+   ],
+   "payloads": [
+    "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+   ]
+  },
+  "bindings": [
+   "0x400000005"
+  ]
+ },
+ "expect": {
+  "payloads": [
+   "0xffffffffffffc1fffffffffffffffffffffffffffffffffffffffffffffff08f"
+  ],
+  "relocs": 0,
+  "buffers": 0,
+  "units_same": true,
+  "steps_same": true,
+  "signature": "0x0",
+  "ack_reserve": 0,
+  "checksum": false
+ },
+ "mutants": [
+  "l0.bind/no_shift",
+  "l0.bind/clobber"
+ ]
+}

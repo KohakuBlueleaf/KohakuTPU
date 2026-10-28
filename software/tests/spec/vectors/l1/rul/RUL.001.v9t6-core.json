@@ -1,0 +1,10 @@
+{
+  "clause": "RUL.001",
+  "tier": 0,
+  "runner": "l1.machine_of",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {"board": "multimesh_v9t6"},
+  "expect": {"vregs": 128, "vcopies": 2, "inst_depth": 512},
+  "mutants": ["rul.001/registers"]
+}

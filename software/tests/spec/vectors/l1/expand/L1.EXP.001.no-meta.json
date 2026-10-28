@@ -1,0 +1,13 @@
+{
+  "clause": "L1.EXP.001",
+  "tier": 0,
+  "runner": "l1.expand",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nmacro st(v)\n    store a + v <- v\nfn f.l1(a: u64[4] @dram)\n    for i in 0..2\n        when i == 1\n            expand st(i)\n    store a <- 7\n",
+    "fn": "f",
+    "binds": {"a": 4096}
+  },
+  "expect": {"-": ["store 4097 <- 1", "store 4096 <- 7"]},
+  "mutants": ["l1.expand/no-unroll", "l1.expand/drop-expand"]
+}

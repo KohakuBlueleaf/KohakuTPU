@@ -1,0 +1,56 @@
+{
+ "clause": "L0.BOOT.004",
+ "tier": 0,
+ "runner": "l0.pairs",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "host": [
+   "args.MAGIC",
+   "args.VERSION",
+   "args.MAX_UNITS",
+   "args.WORDS"
+  ],
+  "header": [
+   "boot/args.h:KA_BOOT_MAGIC",
+   "boot/args.h:KA_BOOT_VERSION",
+   "boot/args.h:KA_MAX_UNITS",
+   "boot/args.h:struct ka_bootargs"
+  ],
+  "machine": [
+   "fw.boot.version",
+   "fw.max_units"
+  ]
+ },
+ "expect": {
+  "args.MAGIC": 13884973467713867,
+  "args.VERSION": 3,
+  "args.MAX_UNITS": 16,
+  "args.WORDS": 37,
+  "boot/args.h:KA_BOOT_MAGIC": 13884973467713867,
+  "boot/args.h:KA_BOOT_VERSION": 3,
+  "boot/args.h:KA_MAX_UNITS": 16,
+  "boot/args.h:struct ka_bootargs": [
+   "magic",
+   "version",
+   "queue",
+   "mesh",
+   "scan",
+   "timeout",
+   "cq_depth",
+   "flags",
+   "nunits",
+   "units",
+   "base",
+   "size",
+   "use",
+   "regions"
+  ],
+  "fw.boot.version": 3,
+  "fw.max_units": 16
+ },
+ "mutants": [
+  "l0.boot/magic",
+  "l0.boot/max_units"
+ ]
+}

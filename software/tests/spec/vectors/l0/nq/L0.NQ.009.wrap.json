@@ -1,0 +1,116 @@
+{
+ "clause": "L0.NQ.009",
+ "tier": 0,
+ "runner": "l0.queue",
+ "status": "frozen",
+ "input": {
+  "geometry": {
+   "sq_n": 2,
+   "cq_n": 2,
+   "so_bytes": 64,
+   "si_bytes": 64
+  },
+  "script": [
+   {
+    "do": "init"
+   },
+   {
+    "do": "submit",
+    "length": 32
+   },
+   {
+    "do": "complete",
+    "tag": 1
+   },
+   {
+    "do": "submit",
+    "length": 64
+   },
+   {
+    "do": "complete",
+    "tag": 2
+   },
+   {
+    "do": "poll"
+   },
+   {
+    "do": "submit",
+    "length": 96
+   },
+   {
+    "do": "complete",
+    "tag": 3
+   },
+   {
+    "do": "poll"
+   },
+   {
+    "do": "words",
+    "at": "0x80",
+    "n": 1
+   },
+   {
+    "do": "words",
+    "at": "0x440",
+    "n": 2
+   },
+   {
+    "do": "words",
+    "at": "0x140",
+    "n": 1
+   }
+  ]
+ },
+ "expect": [
+  null,
+  1,
+  null,
+  2,
+  null,
+  [
+   {
+    "tag": 1,
+    "status": "0x0",
+    "detail": 0,
+    "step": 0,
+    "cycles": 0,
+    "value": "0x0"
+   },
+   {
+    "tag": 2,
+    "status": "0x0",
+    "detail": 0,
+    "step": 0,
+    "cycles": 0,
+    "value": "0x0"
+   }
+  ],
+  3,
+  null,
+  [
+   {
+    "tag": 3,
+    "status": "0x0",
+    "detail": 0,
+    "step": 0,
+    "cycles": 0,
+    "value": "0x0"
+   }
+  ],
+  [
+   "0x3"
+  ],
+  [
+   "0x1",
+   "0x3"
+  ],
+  [
+   "0x3"
+  ]
+ ],
+ "mutants": [
+  "l0.queue/sq_tail",
+  "l0.queue/cq_entry",
+  "l0.queue/sq_entry"
+ ]
+}

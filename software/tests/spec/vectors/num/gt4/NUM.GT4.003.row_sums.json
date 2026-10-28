@@ -1,0 +1,10 @@
+{
+  "clause": "NUM.GT4.003",
+  "tier": 1,
+  "runner": "num.card.rowsum",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {"shape": [64, 128], "seed": 9},
+  "expect": {"exact": true},
+  "mutants": ["num.card/readback-corrupt"]
+}

@@ -1,0 +1,17 @@
+{
+ "clause": "L0.BIND.043", "tier": 0, "runner": "l0.template.bind", "status": "frozen",
+ "input": {
+  "package": {"units": [{"type": "VC", "x": 0, "y": 0, "credit": 512}], "payloads": [0, 0], "steps": [{"op": "DISPATCH", "count": 1}, {"op": "END"}]},
+  "bindings": [], "params": {"n": 2}, "count_path": "register",
+  "table": {"parameters": {"n": {"lo": 1, "hi": 2}}, "sites": [
+   {"name": "words", "step": 0, "bit": 32, "width": 32, "coefficients": {"n": 1}}
+  ]},
+  "ordinary": {"units": [{"type": "VC", "x": 0, "y": 0, "credit": 512}], "payloads": [0, 0], "steps": [
+   {"op": "ALU", "unit": 15, "arg": 2, "flags": 2},
+   {"op": "PATCH", "unit": 15, "count": 2, "arg": "0x1002020"},
+   {"op": "DISPATCH"}, {"op": "END"}
+  ]}
+ },
+ "expect": {"payloads": ["0x0", "0x0"], "bytes_equal": true, "buffers": 0, "relocs": 0},
+ "mutants": ["l0.template/register_target"]
+}

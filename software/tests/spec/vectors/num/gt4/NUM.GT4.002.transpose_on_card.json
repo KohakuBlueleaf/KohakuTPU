@@ -1,0 +1,10 @@
+{
+  "clause": "NUM.GT4.002",
+  "tier": 1,
+  "runner": "num.card.tinygrad",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {"program": "transpose", "x": {"shape": [64, 128], "seed": 4}},
+  "expect": {"exact": true},
+  "mutants": ["num.card/readback-corrupt"]
+}

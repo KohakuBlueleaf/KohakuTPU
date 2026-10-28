@@ -1,0 +1,64 @@
+{
+ "clause": "L2.VC.013",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram)",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..1",
+   "            xl = load x[t*4 : +4, :]   : f16[4, 128] @l1",
+   "            v = unpack xl                      : f32[4, 128] @reg",
+   "            e = exp2 v                         : f32[4, 128] @reg",
+   "            e = add e, 1.0                     : f32[4, 128] @reg",
+   "            e = inv e                          : f32[4, 128] @reg",
+   "            o = mul v, e                       : f32[4, 128] @reg",
+   "            ol = pack o                     : f16[4, 128] @l1",
+   "            store y[t*4 : +4, :] <- ol"
+  ],
+  "passes": [],
+  "strategy": "band",
+  "schedule": false,
+  "facts": {
+   "ops": {
+    "lines": "^(vunpk|vexp2|vadd|vinv|vmul|vpack)",
+    "in": "images"
+   }
+  }
+ },
+ "expect": {
+  "ops": [
+   "vunpk v0[1:] <- l1[0] f16 n=8",
+   "vunpk v1[1:] <- l1[8] f16 n=8",
+   "vunpk v2[1:] <- l1[16] f16 n=8",
+   "vunpk v3[1:] <- l1[24] f16 n=8",
+   "vexp2 v4, v0[1:]",
+   "vexp2 v5, v1[1:]",
+   "vexp2 v6, v2[1:]",
+   "vexp2 v7, v3[1:]",
+   "vadd v4, v4, k1",
+   "vadd v5, v5, k1",
+   "vadd v6, v6, k1",
+   "vadd v7, v7, k1",
+   "vinv v4, v4",
+   "vinv v5, v5",
+   "vinv v6, v6",
+   "vinv v7, v7",
+   "vmul v0, v0[1:], v4",
+   "vmul v1, v1[1:], v5",
+   "vmul v2, v2[1:], v6",
+   "vmul v3, v3[1:], v7",
+   "vpack v0 -> l1[64] f16",
+   "vpack v1 -> l1[72] f16",
+   "vpack v2 -> l1[80] f16",
+   "vpack v3 -> l1[88] f16"
+  ]
+ },
+ "mutants": [
+  "l2.vector/unary-swapped"
+ ]
+}

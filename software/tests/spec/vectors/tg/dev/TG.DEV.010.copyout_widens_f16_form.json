@@ -1,0 +1,25 @@
+{
+ "clause": "TG.DEV.010",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    b = Buffer(\"KTPU\", 8, dtypes.float).allocate()\n    st = b._buf\n    vals = np.array([1.5, -2.25, 3, 4, 5, 6, 7, 0.5], np.float16)\n    DEV.write(st.form(FM.F16, 16).addr, vals.tobytes())\n    st.wrote(FM.F16)\n    st.dtype = np.dtype(np.float32)\n    out = np.empty(8, np.float32)\n    TinyDevice[\"KTPU\"].allocator._copyout(memoryview(out).cast(\"B\"), st)\n    b.deallocate()\n    return {\"values\": out.tolist()}\n"
+ },
+ "expect": {
+  "values": [
+   1.5,
+   -2.25,
+   3.0,
+   4.0,
+   5.0,
+   6.0,
+   7.0,
+   0.5
+  ]
+ },
+ "mutants": [
+  "api.forms/read_raw"
+ ]
+}

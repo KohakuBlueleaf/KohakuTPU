@@ -1,0 +1,24 @@
+{
+ "clause": "ISA.MG.002",
+ "tier": 0,
+ "runner": "isa.cluster.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "op": "Drain",
+  "args": [
+   8192,
+   32
+  ],
+  "kw": {
+   "fuse": true
+  }
+ },
+ "expect": {
+  "payload": "0x3000008000008000000128000000000000080000000000000000000000000000"
+ },
+ "mutants": [
+  "isa.cluster/fields",
+  "isa.cluster/opcodes"
+ ]
+}

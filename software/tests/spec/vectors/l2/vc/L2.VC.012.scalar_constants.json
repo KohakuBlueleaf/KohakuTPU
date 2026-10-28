@@ -1,0 +1,51 @@
+{
+ "clause": "L2.VC.012",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram)",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..1",
+   "            xl = load x[t*4 : +4, :]   : f16[4, 128] @l1",
+   "            v = unpack xl                      : f32[4, 128] @reg",
+   "            e = mul v, 3.0                     : f32[4, 128] @reg",
+   "            e = add e, 1.0                     : f32[4, 128] @reg",
+   "            e = mul e, 3.0                     : f32[4, 128] @reg",
+   "            e = max e, 0.0                     : f32[4, 128] @reg",
+   "            e = add e, -1.0                    : f32[4, 128] @reg",
+   "            e = mul e, 0.5                     : f32[4, 128] @reg",
+   "            ol = pack e                     : f16[4, 128] @l1",
+   "            store y[t*4 : +4, :] <- ol"
+  ],
+  "passes": [],
+  "facts": {
+   "seti": {
+    "lines": "^seti s\\d+ = ",
+    "in": "images"
+   },
+   "k": {
+    "set": "\\b(k[0-3])\\b",
+    "in": "images"
+   }
+  }
+ },
+ "expect": {
+  "seti": [
+   "seti s0 = 3.0",
+   "seti s1 = 0.5"
+  ],
+  "k": [
+   "k0",
+   "k1",
+   "k2"
+  ]
+ },
+ "mutants": [
+  "l2.vector/no-kreg"
+ ]
+}

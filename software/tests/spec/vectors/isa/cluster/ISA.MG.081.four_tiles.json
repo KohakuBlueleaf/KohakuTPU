@@ -1,0 +1,22 @@
+{
+ "clause": "ISA.MG.081",
+ "tier": 0,
+ "runner": "isa.cluster.mm",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "plan": [
+   1,
+   512,
+   512,
+   64
+  ]
+ },
+ "expect": {
+  "mg[0]": 2,
+  "mg[1]": 2
+ },
+ "mutants": [
+  "isa.cluster/plan"
+ ]
+}

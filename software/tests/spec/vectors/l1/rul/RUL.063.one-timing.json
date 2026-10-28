@@ -1,0 +1,9 @@
+{
+  "clause": "RUL.063",
+  "tier": 0,
+  "runner": "l1.ruled",
+  "status": "frozen",
+  "input": {"check": "timing"},
+  "expect": {"schedule_constants": []},
+  "mutants": ["l1.ruled/before"]
+}

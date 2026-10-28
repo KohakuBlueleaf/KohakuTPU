@@ -1,0 +1,65 @@
+{
+ "clause": "L2.VC.001",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[16, 128] @dram, g: f16[1, 128] @dram, y: f16[16, 128] @dram)",
+   "    par c in 0..1 on vc[c]",
+   "        gl = load g                                  : f16[1, 128] @l1",
+   "        gv = unpack gl                               : f32[1, 128] @reg",
+   "        for t in 0..2",
+   "            xl = load x[t*8 : +8, :]                 : f16[8, 128] @l1",
+   "            v = unpack xl                            : f32[8, 128] @reg",
+   "            o = mul v, gv                            : f32[8, 128] @reg",
+   "            ol = pack o                              : f16[8, 128] @l1",
+   "            store y[t*8 : +8, :] <- ol"
+  ],
+  "passes": [],
+  "strategy": "band",
+  "facts": {
+   "seq": {
+    "lines": "^(vfill|vunpk|vsync fe|loop|seti s15|halt)",
+    "in": "images"
+   }
+  }
+ },
+ "expect": {
+  "seq": [
+   "vfill a2 -> l1[504]",
+   "vsync fe on=unpack",
+   "vfill a0 -> l1[0] rel",
+   "seti s15 = 1",
+   "loop s15",
+   "vfill a0 -> l1[64] rel",
+   "vunpk v0 <- l1[0] f16",
+   "vunpk v1 <- l1[8] f16",
+   "vunpk v2 <- l1[16] f16",
+   "vunpk v3 <- l1[24] f16",
+   "vunpk v4[1 :] <- l1[504] f16 n=8",
+   "vunpk v0 <- l1[32] f16",
+   "vunpk v1 <- l1[40] f16",
+   "vunpk v2 <- l1[48] f16",
+   "vunpk v3 <- l1[56] f16",
+   "vunpk v4[1 :] <- l1[504] f16 n=8",
+   "vunpk v0 <- l1[64] f16",
+   "vunpk v1 <- l1[72] f16",
+   "vunpk v2 <- l1[80] f16",
+   "vunpk v3 <- l1[88] f16",
+   "vunpk v4[1 :] <- l1[504] f16 n=8",
+   "vunpk v0 <- l1[96] f16",
+   "vunpk v1 <- l1[104] f16",
+   "vunpk v2 <- l1[112] f16",
+   "vunpk v3 <- l1[120] f16",
+   "vunpk v4[1 :] <- l1[504] f16 n=8",
+   "halt"
+  ]
+ },
+ "mutants": [
+  "l2.vector/loop-s13"
+ ]
+}

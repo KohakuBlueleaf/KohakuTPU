@@ -1,0 +1,16 @@
+{
+  "clause": "L1.MOD.001",
+  "tier": 0,
+  "runner": "l1.module",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\n\nimage k(a)\n    halt\n\nmacro m(x)\n    halt\n\nfn f.l1(p: f16[64] @dram)\n    barrier\n"
+  },
+  "expect": {
+    "target": "ktpu.v9",
+    "fns": [["f", "l1", [["p", "f16[64] @dram"]], 1]],
+    "images": [["k", ["a"], 1]],
+    "macros": [["m", ["x"], 1]]
+  },
+  "mutants": ["l1.module/levels", "l1.module/target-name"]
+}

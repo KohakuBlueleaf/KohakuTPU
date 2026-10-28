@@ -1,0 +1,49 @@
+{
+ "clause": "L2.OP.005",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram)",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..1",
+   "            xl = load x[t*4 : +4, :]   : f16[4, 128] @l1",
+   "            v = unpack xl                      : f32[4, 128] @reg",
+   "            e = exp2 v                         : f32[4, 128] @reg",
+   "            m = cmpgt v, e                     : f32[4, 128] @reg",
+   "            o = mul v, m                       : f32[4, 128] @reg",
+   "            ol = pack o                     : f16[4, 128] @l1",
+   "            store y[t*4 : +4, :] <- ol"
+  ],
+  "passes": [],
+  "facts": {
+   "cmp": {
+    "lines": "^(vcmp|vmov)",
+    "in": "images"
+   }
+  }
+ },
+ "expect": {
+  "cmp": [
+   "vcmpgt p1, v0[1 :], v4",
+   "vmov v4, k0",
+   "vmov v4, k1 if=p1",
+   "vcmpgt p1, v1[1 :], v5",
+   "vmov v5, k0",
+   "vmov v5, k1 if=p1",
+   "vcmpgt p1, v2[1 :], v6",
+   "vmov v6, k0",
+   "vmov v6, k1 if=p1",
+   "vcmpgt p1, v3[1 :], v7",
+   "vmov v7, k0",
+   "vmov v7, k1 if=p1"
+  ]
+ },
+ "mutants": [
+  "l2.vector/cmp-swapped"
+ ]
+}

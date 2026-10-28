@@ -1,0 +1,23 @@
+{
+ "clause": "API.FORM.010",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    row = KV.Operand(\"row\")\n    k, g, _ = KV.rows_kernel(X.Reduce(\"sum\", X.Load(0)), (KV.Operand(\"full\", pitch=64, rows=40),), 40, 64, row, DEV.machine.count(\"VC\"))\n    return {\n        \"bytes\": [RW.stat_bytes(r) for r in (1, 16, 17, 40)],\n        \"out\": g[\"out\"].text(),\n        \"trip\": KV.plan((KV.Operand(\"full\"),), \"row\", 40, 64, quantum=16).rows,\n    }\n"
+ },
+ "expect": {
+  "bytes": [
+   32,
+   32,
+   64,
+   96
+  ],
+  "out": "f16[48] @dram",
+  "trip": 16
+ },
+ "mutants": [
+  "api.vector/stat_rows"
+ ]
+}

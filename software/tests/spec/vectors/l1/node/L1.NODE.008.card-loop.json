@@ -1,0 +1,15 @@
+{
+  "clause": "L1.NODE.008",
+  "tier": 1,
+  "runner": "l1.card",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn loop.l1(cnt: u64[4] @dram, x: f16[16, 256] @dram, y: f16[16, 256] @dram)\n    r1 = load cnt\n    r2 = set 0\n    label top\n    r3 = mul r2, 512\n    move\n        copy w(x + r3, (16, 32)) -> w(y + r3, (16, 32))\n    r2 = add r2, 1\n    goto top if r2 < r1\n    store cnt + 8 <- r2\n",
+    "fn": "loop",
+    "init": {"cnt": [3]},
+    "read": ["cnt"]
+  },
+  "expect": {"cnt": [3, 0, 3, 0, 0, 0, 0, 0]},
+  "mutants": ["l1.node/alu-table", "verify.lines/no-dynamic-full-lines"]
+}

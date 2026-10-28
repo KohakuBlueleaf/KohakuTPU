@@ -1,0 +1,1 @@
+{"clause":"RUL.020","tier":1,"runner":"memory.tail_sentinel","machine":"vlt_v9t6s_1n","status":"frozen","input":{"case":"cast"},"expect":{"values":true,"sentinel":true},"mutants":["memory/flat-overrun"]}

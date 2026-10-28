@@ -1,0 +1,29 @@
+{
+ "clause": "DSL.IDX.001",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "seen = {}\n\n\n@kt.kernel\ndef k(x=kt.In(16, 32), y=kt.Out(16, 32)):\n    for c in kt.par(2, on=kt.vc):\n        for t in kt.range(1):\n            r = (c + t) * 4 + 1\n            seen[\"r\"] = [\n                type(r).__name__,\n                r.const,\n                sorted([a.text(), v] for a, v in r.terms.items()),\n            ]\n            kt.store(y[r - 1 : r + 3, :], kt.load(x[r - 1 : r + 3, :]))\n\n\ndef facts():\n    k.trace({\"x\": TY.TensorSpec.make((16, 32))}, machine=MACHINE)\n    return seen\n"
+ },
+ "expect": {
+  "r": [
+   "Sym",
+   1,
+   [
+    [
+     "c1",
+     4
+    ],
+    [
+     "t1",
+     4
+    ]
+   ]
+  ]
+ },
+ "mutants": [
+  "dsl.expr/scale"
+ ]
+}

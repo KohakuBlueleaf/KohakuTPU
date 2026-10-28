@@ -1,0 +1,73 @@
+{
+ "clause": "L0.STEP.020",
+ "tier": 0,
+ "runner": "l0.pkg.lower",
+ "status": "frozen",
+ "input": {
+  "package": {
+   "units": [
+    {
+     "type": "MG",
+     "x": 1,
+     "y": 1,
+     "credit": 512,
+     "fetch": "0x10200"
+    }
+   ],
+   "steps": [
+    {
+     "op": "AWAIT",
+     "unit": 0,
+     "count": 2
+    },
+    {
+     "op": "AWAIT",
+     "unit": 0,
+     "count": 3
+    }
+   ]
+  }
+ },
+ "expect": {
+  "steps": [
+   {
+    "op": "ENGINE",
+    "first": 0,
+    "entries": [
+     [
+      32,
+      "0x2"
+     ],
+     [
+      32,
+      "0x5"
+     ],
+     [
+      32,
+      "0x5"
+     ]
+    ],
+    "pad": []
+   }
+  ],
+  "kept": true,
+  "units": [
+   {
+    "type": "MG",
+    "x": 1,
+    "y": 1,
+    "mesh": 0,
+    "credit": 512,
+    "fetch": "0x10200"
+   }
+  ],
+  "buffers": 0,
+  "relocs": 0,
+  "signature": "0x0",
+  "ack_reserve": 0,
+  "checksum": false
+ },
+ "mutants": [
+  "l0.lower/await_absolute"
+ ]
+}

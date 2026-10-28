@@ -1,0 +1,22 @@
+{
+ "clause": "ISA.SR.011",
+ "tier": 0,
+ "runner": "isa.sru.word",
+ "machine": "sru_v9t7",
+ "status": "frozen",
+ "input": {
+  "fmt": "LOAD",
+  "kw": {
+   "what": 1,
+   "first": 517,
+   "addr": 627943307392,
+   "words": 100
+  }
+ },
+ "expect": {
+  "word": "0x2605923456788006400000000000000000000000000000000000000000000000"
+ },
+ "mutants": [
+  "isa.sru/formats"
+ ]
+}

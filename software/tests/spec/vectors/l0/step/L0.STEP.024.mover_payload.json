@@ -1,0 +1,60 @@
+{
+ "clause": "L0.STEP.024",
+ "tier": 0,
+ "runner": "l0.pkg.build",
+ "status": "frozen",
+ "input": {
+  "builder": {
+   "types": [],
+   "credit": 512
+  },
+  "calls": [
+   [
+    "mover",
+    [
+     [
+      8,
+      "0x1234"
+     ],
+     [
+      120,
+      5
+     ],
+     [
+      16,
+      9
+     ]
+    ]
+   ]
+  ],
+  "keys": [
+   "package"
+  ]
+ },
+ "expect": {
+  "package": {
+   "units": [],
+   "buffers": [],
+   "steps": [
+    {
+     "op": "MOVER",
+     "unit": 0,
+     "count": 2,
+     "arg": "0x0",
+     "flags": 0
+    }
+   ],
+   "relocs": [],
+   "payloads": [
+    "0x5000000000000007800000000000012340000000000000008",
+    "0xffffffffffffffff00000000000000090000000000000010"
+   ],
+   "signature": "0x0",
+   "ack_reserve": 0,
+   "checksum": false
+  }
+ },
+ "mutants": [
+  "l0.build/mover_swapped"
+ ]
+}

@@ -1,0 +1,103 @@
+{
+ "clause": "L0.PKG.002",
+ "tier": 0,
+ "runner": "l0.pkg.parse",
+ "status": "frozen",
+ "input": {
+  "package": {
+   "units": [
+    {
+     "type": "MG",
+     "x": 1,
+     "y": 1,
+     "credit": 512,
+     "fetch": "0x10200"
+    },
+    {
+     "type": "VC",
+     "x": 2,
+     "y": 2,
+     "credit": 9,
+     "fetch": 0
+    }
+   ],
+   "steps": [
+    {
+     "op": "DISPATCH",
+     "unit": 1,
+     "count": 2,
+     "arg": 0
+    },
+    {
+     "op": "AWAIT",
+     "unit": 1,
+     "count": 2
+    },
+    {
+     "op": "BARRIER"
+    }
+   ],
+   "payloads": [
+    "0xabc",
+    "0xdef0123456789"
+   ],
+   "ack_reserve": 2
+  },
+  "reorder": true
+ },
+ "expect": {
+  "units": [
+   {
+    "type": "MG",
+    "x": 1,
+    "y": 1,
+    "mesh": 0,
+    "credit": 512,
+    "fetch": "0x10200"
+   },
+   {
+    "type": "VC",
+    "x": 2,
+    "y": 2,
+    "mesh": 0,
+    "credit": 9,
+    "fetch": "0x0"
+   }
+  ],
+  "buffers": [],
+  "steps": [
+   {
+    "op": "DISPATCH",
+    "unit": 1,
+    "count": 2,
+    "arg": "0x0",
+    "flags": 0
+   },
+   {
+    "op": "AWAIT",
+    "unit": 1,
+    "count": 2,
+    "arg": "0x0",
+    "flags": 0
+   },
+   {
+    "op": "BARRIER",
+    "unit": 0,
+    "count": 0,
+    "arg": "0x0",
+    "flags": 0
+   }
+  ],
+  "relocs": [],
+  "payloads": [
+   "0xabc",
+   "0xdef0123456789"
+  ],
+  "signature": "0x0",
+  "ack_reserve": 2,
+  "checksum": false
+ },
+ "mutants": [
+  "l0.pkg/reader_in_order"
+ ]
+}

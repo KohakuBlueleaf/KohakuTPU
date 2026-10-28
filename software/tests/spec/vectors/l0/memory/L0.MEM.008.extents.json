@@ -1,0 +1,1 @@
+{"clause":"L0.MEM.008","tier":0,"runner":"memory.tail_extents","machine":"multimesh_v9t6","status":"frozen","input":{"generator":"convert.cast_kernel","arguments":{"n":144,"src":"f32","dst":"f16"}},"expect":[576,288],"mutants":["memory/flat-overrun"]}

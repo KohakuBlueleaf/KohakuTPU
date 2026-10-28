@@ -1,0 +1,37 @@
+{
+ "clause": "L2.SPACE.002",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: mx7a[64, 128] @dram(gm=8, nk=2), w: mx7b[32, 128] @dram(gn=8, nk=2), y: f16[64, 64] @dram(tile=8x8))",
+   "    par u in 0..1 on mg[u]",
+   "        a = fill x[32 : +32, 64 : +64]               : mx7a[32, 64] @A",
+   "        b = fill w[0 : +32, 64 : +64]                : mx7b[32, 64] @B",
+   "        acc = gemm a, b                              : f32[32, 32] @acc",
+   "        drain acc -> y[32 : +32, 32 : +32]"
+  ],
+  "facts": {
+   "mg": {
+    "lines": "^(fill|gemm|drain)",
+    "in": "fn"
+   }
+  }
+ },
+ "expect": {
+  "mg": [
+   "fill A0 <- x+6144 n=16",
+   "fill B0 <- w+2048 n=16",
+   "gemm 8x8x2 a=A0 b=B0 acc=0 emit=y+6144",
+   "drain y+6144 fused n=64"
+  ]
+ },
+ "mutants": [
+  "l2.memory/kblock-16",
+  "l2.memory/subtile-16"
+ ]
+}

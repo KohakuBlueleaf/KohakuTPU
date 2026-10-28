@@ -1,0 +1,26 @@
+{
+ "clause": "ISA.VC.050",
+ "tier": 0,
+ "runner": "isa.vector.image",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image k()\n    vmul v20, s0, v4\n    vsel v13, v4, k0, v0\n    vmax v4, v10, s2\n    halt\n",
+  "name": "k",
+  "args": [],
+  "entry": "reset"
+ },
+ "expect": {
+  "words": [
+   "0x2d004020",
+   "0x53480018",
+   "0x41142008",
+   "0xf8000000"
+  ],
+  "descs": {}
+ },
+ "mutants": [
+  "isa.vector/src_sel",
+  "isa.vector/math_sel"
+ ]
+}

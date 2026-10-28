@@ -1,0 +1,99 @@
+{
+ "clause": "L0.BOOT.002",
+ "tier": 0,
+ "runner": "l0.boot",
+ "status": "frozen",
+ "input": {
+  "args": {
+   "queue": "0x8000000000",
+   "timeout": 2000000
+  },
+  "load": true,
+  "restart": true
+ },
+ "expect": {
+  "bytes": 296,
+  "words": [
+   "0x31544f4f42414b",
+   "0x3",
+   "0x8000000000",
+   "0x0",
+   "0x0",
+   "0x1e8480",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0"
+  ],
+  "load": [
+   [
+    "abi_check",
+    3
+   ],
+   [
+    "stop"
+   ],
+   [
+    "load_elf"
+   ],
+   [
+    "write_spad",
+    0,
+    296
+   ],
+   [
+    "boot"
+   ]
+  ],
+  "restart": [
+   [
+    "abi_check",
+    3
+   ],
+   [
+    "stop"
+   ],
+   [
+    "reload_spad"
+   ],
+   [
+    "write_spad",
+    0,
+    296
+   ],
+   [
+    "boot"
+   ]
+  ]
+ },
+ "mutants": [
+  "l0.boot/args_after_boot"
+ ]
+}

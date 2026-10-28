@@ -1,0 +1,36 @@
+{
+ "clause": "L2.MOV.001",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t5",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[64, 128] @dram, a: mx7a[64, 128] @dram(gm=8, nk=2), t: f16[64, 128] @dram(tile=8x8), y: f16[64, 128] @dram)",
+   "    copy y <- x",
+   "    fill x value=0",
+   "    quant a <- y",
+   "    gt4 t <- y"
+  ],
+  "facts": {
+   "ops": {
+    "set": "^(copy|fill|quant|gt4|move)\\b",
+    "in": "fn"
+   }
+  }
+ },
+ "expect": {
+  "ops": [
+   "copy",
+   "fill",
+   "gt4",
+   "move",
+   "quant"
+  ]
+ },
+ "mutants": [
+  "l2.mover/no-fill"
+ ]
+}

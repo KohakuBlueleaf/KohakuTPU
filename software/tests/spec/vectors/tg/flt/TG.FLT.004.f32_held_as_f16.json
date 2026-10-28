@@ -1,0 +1,37 @@
+{
+ "clause": "TG.FLT.004",
+ "tier": 0,
+ "runner": "tg.run",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "Y": [
+    32,
+    64
+   ]
+  },
+  "make": "Tensor(X.astype(np.float32), device='KTPU') * 3",
+  "facts": [
+   "runs",
+   "forms"
+  ]
+ },
+ "expect": {
+  "runs": [
+   "flat"
+  ],
+  "forms": [
+   [
+    "f16"
+   ]
+  ]
+ },
+ "mutants": [
+  "tg.run/out_flat"
+ ]
+}

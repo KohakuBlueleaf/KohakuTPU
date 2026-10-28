@@ -1,0 +1,19 @@
+{
+  "clause": "L1.NODE.020",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[64] @dram, b: u64[64] @dram)\n    p = move posted\n        fill w(a, (1, 32)) value=1\n    q = move posted\n        fill w(b, (1, 32)) value=2\n    wait moves p\n    wait moves q\n",
+    "fn": "f",
+    "binds": {"a": 4096, "b": 8192}
+  },
+  "expect": {"-": {"steps": [
+    ["post", ["HDR sel=1 base=0x1000 ndim=1", "DIM sel=1 count=1 stride=32", "AXIS", "WIN sel=1", "WIN sel=1 axis=1", "IMM 0x1", "CTRL mode=4 ew=2 flags=0x8 go=1"], 0],
+    ["post", ["HDR sel=1 base=0x2000 ndim=1", "DIM sel=1 count=1 stride=32", "AXIS", "WIN sel=1", "WIN sel=1 axis=1", "IMM 0x2", "CTRL mode=4 ew=2 flags=0x8 go=1"], 1],
+    ["wait_moves", 0],
+    ["wait_moves", 1]
+  ]}},
+  "mutants": ["l1.node/post-blocks"]
+}

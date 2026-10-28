@@ -1,0 +1,47 @@
+{
+ "clause": "TG.PLAN.005",
+ "tier": 0,
+ "runner": "tg.plan",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "Y": [
+    32,
+    64
+   ]
+  },
+  "make": "T(X)[8:24] * 2",
+  "keys": [
+   "reads"
+  ]
+ },
+ "expect": [
+  {
+   "reads": [
+    [
+     "buf",
+     "half",
+     [
+      [
+       "o0",
+       64
+      ],
+      [
+       "o1",
+       1
+      ]
+     ],
+     512
+    ]
+   ]
+  }
+ ],
+ "mutants": [
+  "tg.lower/offset"
+ ]
+}

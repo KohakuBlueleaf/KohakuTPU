@@ -1,0 +1,149 @@
+{
+ "clause": "DSL.GRAPH.013",
+ "tier": 0,
+ "runner": "dsl.graph",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(\n    a=kt.In(64, 64, dtype=\"mx7a\", layout={\"gm\": 16, \"nk\": 1}),\n    b=kt.In(32, 64, dtype=\"mx7b\", layout={\"gn\": 8, \"nk\": 1}),\n    x=kt.In(64, 32),\n    i=kt.In(64, dtype=\"f32\"),\n    y=kt.Out(64, 32),\n    m=kt.Out(8),\n):\n    h = kt.buffer((64, 32), \"f16\", tile=(16, 8))\n    kt.gather(y, x, i[0:64], fp=True)\n    for u in kt.par(2, on=kt.mg):\n        acc = kt.gemm(kt.fill(a[0:64, 0:32]), kt.fill(b[0:32, 0:32]))\n        with kt.when(u == 0):\n            kt.drain(acc, h)\n    for c in kt.par(1, on=kt.vc):\n        v = kt.unpack(kt.load(x[0:4, :], gt4=True))\n        kt.store(m[0:4], kt.rsum(v[:, 0:32]))\n",
+  "given": {
+   "a": {
+    "shape": [
+     64,
+     64
+    ],
+    "dtype": "mx7a",
+    "layout": {
+     "gm": 16,
+     "nk": 1
+    }
+   },
+   "b": {
+    "shape": [
+     32,
+     64
+    ],
+    "dtype": "mx7b",
+    "layout": {
+     "gn": 8,
+     "nk": 1
+    }
+   },
+   "x": [
+    [
+     64,
+     32
+    ],
+    "f16"
+   ],
+   "i": [
+    [
+     64
+    ],
+    "f32"
+   ]
+  },
+  "keys": [
+   "flat"
+  ]
+ },
+ "expect": {
+  "flat": [
+   [
+    "gather",
+    [
+     "y",
+     "<-",
+     "x",
+     "fp",
+     "index=i[0 : +64]"
+    ]
+   ],
+   [
+    "par",
+    [
+     "u1 in 0..2",
+     "on",
+     "mg[u1]"
+    ]
+   ],
+   [
+    "fill",
+    [
+     "a[0 : +64, 0 : +32]"
+    ]
+   ],
+   [
+    "fill",
+    [
+     "b[0 : +32, 0 : +32]"
+    ]
+   ],
+   [
+    "gemm",
+    [
+     "a1",
+     "b1"
+    ]
+   ],
+   [
+    "when",
+    [
+     "u1 == 0"
+    ]
+   ],
+   [
+    "drain",
+    [
+     "acc1",
+     "->",
+     "h1"
+    ]
+   ],
+   [
+    "par",
+    [
+     "c1 in 0..1",
+     "on",
+     "vc[c1]"
+    ]
+   ],
+   [
+    "load",
+    [
+     "x[0 : +4]"
+    ]
+   ],
+   [
+    "unpack",
+    [
+     "xl1"
+    ]
+   ],
+   [
+    "rsum",
+    [
+     "v1[:, 0:32]"
+    ]
+   ],
+   [
+    "pack",
+    [
+     "s1"
+    ]
+   ],
+   [
+    "store",
+    [
+     "m[0 : +4]",
+     "<-",
+     "p1"
+    ]
+   ]
+  ]
+ },
+ "mutants": [
+  "dsl.expr/cond",
+  "dsl.values/value_text"
+ ]
+}

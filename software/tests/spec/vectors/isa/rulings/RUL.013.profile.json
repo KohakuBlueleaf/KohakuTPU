@@ -1,0 +1,30 @@
+{
+ "clause": "RUL.013",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "sru_v9t7",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "m:sr.profile.F_LANES",
+   "m:sr.profile.H_TAPS",
+   "m:sr.profile.HAS_FN",
+   "m:sr.profile.TAB",
+   "m:sr.profile.HAS_MANT",
+   "m:sr.profile.FIN_RCP",
+   "m:sr.profile.HAS_MX7"
+  ]
+ },
+ "expect": {
+  "m:sr.profile.F_LANES": 16,
+  "m:sr.profile.H_TAPS": 2,
+  "m:sr.profile.HAS_FN": 1,
+  "m:sr.profile.TAB": "ram",
+  "m:sr.profile.HAS_MANT": 1,
+  "m:sr.profile.FIN_RCP": 1,
+  "m:sr.profile.HAS_MX7": 1
+ },
+ "mutants": [
+  "machine/fact_read"
+ ]
+}

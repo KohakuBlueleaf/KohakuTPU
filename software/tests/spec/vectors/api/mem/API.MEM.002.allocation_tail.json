@@ -1,0 +1,17 @@
+{
+ "clause": "API.MEM.002",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    used = DEV.dram.used\n    a = DEV.alloc(100)\n    grew = DEV.dram.used - used\n    DEV.free(a)\n    return {\"tail\": D.TAIL, \"covers\": grew >= 100 + 16384}\n"
+ },
+ "expect": {
+  "tail": 16384,
+  "covers": true
+ },
+ "mutants": [
+  "api.mem/tail"
+ ]
+}

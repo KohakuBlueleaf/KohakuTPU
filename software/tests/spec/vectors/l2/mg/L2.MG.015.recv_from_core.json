@@ -1,0 +1,46 @@
+{
+ "clause": "L2.MG.015",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: mx7a[16, 32] @dram(gm=4, nk=1), w1: mx7b[32, 32] @dram(gn=8, nk=1), w2: mx7b[16, 32] @dram(gn=4, nk=1), y: f16[16, 16] @dram(tile=4x4))",
+   "    par u in 0..1 on mg[u]",
+   "        a = fill x                                   : mx7a[16, 32] @A",
+   "        b = fill w1                                  : mx7b[32, 32] @B",
+   "        h = gemm a, b                                : f32[16, 32] @acc",
+   "        drain h -> vc[0]",
+   "    par c in 0..1 on vc[c]",
+   "        hl = recv mg[0]                              : f16[16, 32] @l1(gt4)",
+   "        for t in 0..4",
+   "            v = unpack hl[t*4 : +4, :]               : f32[4, 32] @reg(gt4)",
+   "            o = mul v, 2.0                           : f32[4, 32] @reg(gt4)",
+   "            q = pack o                               : mx7a[4, 32] @l1",
+   "            send q -> mg[1] side=A",
+   "    par u in 0..1 on mg[1 + u]",
+   "        a = recv vc[0]                               : mx7a[16, 32] @A",
+   "        b = fill w2                                  : mx7b[16, 32] @B",
+   "        o = gemm a, b                                : f32[16, 16] @acc",
+   "        drain o -> y"
+  ],
+  "facts": {
+   "mg1": {
+    "lines": "^(fill A\\d recv|gemm 4x4x1)",
+    "in": "fn"
+   }
+  }
+ },
+ "expect": {
+  "mg1": [
+   "fill A0 recv n=4",
+   "gemm 4x4x1 a=A0 b=B0 acc=0 emit=y+0"
+  ]
+ },
+ "mutants": [
+  "l2.lower/landing-bank1"
+ ]
+}

@@ -1,0 +1,1 @@
+{"clause":"RUL.020","tier":0,"runner":"memory.tail_extents","machine":"multimesh_v9t6","status":"frozen","input":{"generator":"transpose.reverse_kernel","arguments":{"src_bytes":288,"levels":[[9,32]],"at":0,"n":144}},"expect":[288,288],"mutants":["memory/reverse-overrun"]}

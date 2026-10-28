@@ -1,0 +1,72 @@
+{
+ "clause": "L0.STEP.053",
+ "tier": 1,
+ "runner": "l0.card.package",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "buffers": {
+   "a": {
+    "bytes": 64
+   }
+  },
+  "calls": [
+   [
+    "alu",
+    0,
+    0,
+    0,
+    1
+   ],
+   [
+    "patch",
+    0,
+    2,
+    32,
+    32,
+    0,
+    true
+   ],
+   [
+    "store",
+    [
+     [
+      "$a",
+      1
+     ],
+     [
+      "$a+8",
+      2
+     ],
+     [
+      "$a+16",
+      3
+     ],
+     [
+      "$a+24",
+      4
+     ]
+    ]
+   ]
+  ],
+  "read": {
+   "a": 32
+  },
+  "report": [
+   "status",
+   "steps"
+  ]
+ },
+ "expect": {
+  "status": "0x0",
+  "detail": 0,
+  "step": 3,
+  "n_steps": 3,
+  "reads": {
+   "a": "0100000000000000020000000000000000000000000000000000000000000000"
+  }
+ },
+ "mutants": [
+  "l0.build/patch_field_off"
+ ]
+}

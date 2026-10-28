@@ -1,0 +1,70 @@
+{
+ "clause": "ISA.SR.023",
+ "tier": 0,
+ "runner": "isa.sru.map",
+ "machine": "sru_v9t7",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "F.OP",
+   "F.DST",
+   "F.A",
+   "F.B",
+   "F.C",
+   "FIN_BASE",
+   "FIN_DEPTH",
+   "FOP",
+   "SRC"
+  ]
+ },
+ "expect": {
+  "F.OP": [
+   0,
+   5
+  ],
+  "F.DST": [
+   5,
+   2
+  ],
+  "F.A": [
+   7,
+   4
+  ],
+  "F.B": [
+   11,
+   4
+  ],
+  "F.C": [
+   15,
+   4
+  ],
+  "FIN_BASE": 128,
+  "FIN_DEPTH": 16,
+  "FOP": {
+   "mov": 0,
+   "add": 3,
+   "sub": 4,
+   "mul": 5,
+   "fma": 6,
+   "max": 8,
+   "min": 9,
+   "rcp": 10,
+   "rsqrt": 11
+  },
+  "SRC": {
+   "R0": 0,
+   "R1": 1,
+   "R2": 2,
+   "T": 3,
+   "ST1": 4,
+   "ST2": 5,
+   "K0": 6,
+   "K1": 7,
+   "K2": 8,
+   "K3": 9
+  }
+ },
+ "mutants": [
+  "isa.sru/map"
+ ]
+}

@@ -1,0 +1,10 @@
+{
+  "clause": "NUM.TOL.005",
+  "tier": 1,
+  "runner": "num.card.dsl",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {"name": "linear", "seed": 5, "rel": 0.02},
+  "expect": {"rel_below": true},
+  "mutants": ["num.card/readback-corrupt"]
+}

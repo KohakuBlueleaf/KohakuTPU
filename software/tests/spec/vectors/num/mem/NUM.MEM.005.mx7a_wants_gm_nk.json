@@ -1,0 +1,9 @@
+{
+  "clause": "NUM.MEM.005",
+  "tier": 0,
+  "runner": "num.buffer",
+  "status": "frozen",
+  "input": {"dtype": "mx7a", "shape": [8, 64], "layout": {"gn": 2, "nk": 1}},
+  "expect": {"refused": true},
+  "mutants": ["num.buffer/no-key-check"]
+}

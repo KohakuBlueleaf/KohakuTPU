@@ -1,0 +1,55 @@
+{
+ "clause": "L0.STEP.026",
+ "tier": 0,
+ "runner": "l0.pkg.lower",
+ "status": "frozen",
+ "input": {
+  "package": {
+   "steps": [
+    {
+     "op": "MOVER",
+     "count": 1,
+     "arg": 0,
+     "flags": 1
+    }
+   ],
+   "payloads": [
+    "0xffffffffffffffff00000000000100000000000000000000"
+   ]
+  }
+ },
+ "expect": {
+  "steps": [
+   {
+    "op": "ENGINE",
+    "first": 1,
+    "entries": [
+     [
+      8,
+      "0x10000"
+     ],
+     [
+      32,
+      "0x1000000000000001"
+     ]
+    ],
+    "pad": [
+     [
+      255,
+      "0x0"
+     ]
+    ]
+   }
+  ],
+  "kept": true,
+  "units": [],
+  "buffers": 0,
+  "relocs": 0,
+  "signature": "0x0",
+  "ack_reserve": 0,
+  "checksum": false
+ },
+ "mutants": [
+  "l0.lower/posted_flag"
+ ]
+}

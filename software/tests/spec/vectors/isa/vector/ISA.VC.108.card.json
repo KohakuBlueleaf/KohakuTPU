@@ -1,0 +1,25 @@
+{
+ "clause": "ISA.VC.108",
+ "tier": 1,
+ "runner": "isa.card.kernel",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "body": [
+   "vunpk v2 <- l1[0] gt4"
+  ],
+  "check": "gt4",
+  "x": {
+   "seed": 29
+  },
+  "tol": {
+   "exact": true
+  }
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.vector/modes"
+ ]
+}

@@ -1,0 +1,51 @@
+{
+ "clause": "L2.VC.009",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: mx7a[32, 32] @dram(gm=4, nk=1), w: mx7b[64, 32] @dram(gn=8, nk=1), y: f16[32, 64] @dram(tile=1x8))",
+   "    for q in 0..2 pipe=2",
+   "        par c in 0..2 on mg[c]",
+   "            a = fill x[q*16 : +16, :]                : mx7a[16, 32] @A",
+   "            b = fill w[c*32 : +32, :]                : mx7b[32, 32] @B",
+   "            acc = gemm a, b                          : f32[16, 32] @acc",
+   "            drain acc -> vc[c]",
+   "        par c in 0..2 on vc[c]",
+   "            h = recv mg[c]                           : f16[16, 32] @l1(gt4)",
+   "            for t in 0..4",
+   "                v = unpack h[t*4 : +4, :]            : f32[4, 32] @reg(gt4)",
+   "                e = exp2 v                           : f32[4, 32] @reg(gt4)",
+   "                ol = pack e                          : f16[4, 32] @l1(gt4)",
+   "                store y[q*16 + t*4 : +4, c*32 : +32] <- ol"
+  ],
+  "facts": {
+   "head": {
+    "lines": "^(vwait|uptr|uinc)",
+    "in": "images"
+   },
+   "unpacks": {
+    "count": "^vunpk .* gt4 rel$",
+    "in": "images"
+   }
+  }
+ },
+ "expect": {
+  "head": [
+   "vwait unpack rx n=32",
+   "uptr 256",
+   "uinc 8",
+   "vwait unpack rx n=32",
+   "uptr 288",
+   "uinc 8"
+  ],
+  "unpacks": 8
+ },
+ "mutants": [
+  "l2.lower/pool-128"
+ ]
+}

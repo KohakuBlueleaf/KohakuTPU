@@ -1,0 +1,113 @@
+{
+ "clause": "L2.BODY.019",
+ "tier": 0,
+ "runner": "l2.body",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[16, 128] @dram, y: f16[16, 128] @dram)",
+   "    par n in 0..2 on node[n]",
+   "        par c in 0..2 on vc[c]",
+   "            for t in 0..1",
+   "                xl = load x[n*8 + c*4 : +4, :]       : f16[4, 128] @l1",
+   "                v = unpack xl                        : f32[4, 128] @reg",
+   "                e = exp2 v                           : f32[4, 128] @reg",
+   "                ol = pack e                          : f16[4, 128] @l1",
+   "                store y[n*8 + c*4 : +4, :] <- ol",
+   "    copy x <- y"
+  ],
+  "want": [
+   "stages"
+  ]
+ },
+ "expect": {
+  "stages": [
+   {
+    "kind": "par",
+    "node": 0,
+    "phase": 0,
+    "units": [
+     "vc[0]",
+     "vc[1]"
+    ],
+    "items": [
+     [
+      "load",
+      "unpack",
+      "exp2",
+      "pack",
+      "store"
+     ],
+     [
+      "load",
+      "unpack",
+      "exp2",
+      "pack",
+      "store"
+     ]
+    ],
+    "env": [
+     {
+      "c": 0,
+      "n": 0
+     },
+     {
+      "c": 1,
+      "n": 0
+     }
+    ],
+    "group": null
+   },
+   {
+    "kind": "par",
+    "node": 1,
+    "phase": 0,
+    "units": [
+     "vc[0]",
+     "vc[1]"
+    ],
+    "items": [
+     [
+      "load",
+      "unpack",
+      "exp2",
+      "pack",
+      "store"
+     ],
+     [
+      "load",
+      "unpack",
+      "exp2",
+      "pack",
+      "store"
+     ]
+    ],
+    "env": [
+     {
+      "c": 0,
+      "n": 1
+     },
+     {
+      "c": 1,
+      "n": 1
+     }
+    ],
+    "group": null
+   },
+   {
+    "kind": "op",
+    "node": 0,
+    "phase": 1,
+    "op": "copy",
+    "env": {},
+    "group": null
+   }
+  ]
+ },
+ "mutants": [
+  "l2.body/phase-per-stage"
+ ]
+}

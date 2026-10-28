@@ -1,0 +1,11 @@
+{
+ "clause": "DBG.FAIL.006", "tier": 1, "runner": "dbg.snapshot",
+ "machine": "vlt_v9t6s_1n", "status": "frozen",
+ "input": {"debug": true, "fault": true, "timeout_cycles": 20000},
+ "expect": {
+  "snapshot": true, "persisted": true, "status": "MOVER_FAULT",
+  "enabled": true, "magic": 56833, "counters_present": true,
+  "consistent": true, "gos": 1, "fault": 4
+ },
+ "mutants": ["dbg/snapshot_after_clear"]
+}

@@ -1,0 +1,40 @@
+{
+ "clause": "L0.PKG.003",
+ "tier": 0,
+ "runner": "l0.pairs",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "host": [
+   "format.MAGIC",
+   "format.VERSION",
+   "format.HEADER_BYTES"
+  ],
+  "header": [
+   "package/format.h:KA_PKG_MAGIC",
+   "package/format.h:KA_PKG_VERSION",
+   "package/format.h:KA_PKG_HEADER"
+  ],
+  "machine": [
+   "fw.package.magic",
+   "fw.package.version",
+   "fw.package.header_bytes"
+  ]
+ },
+ "expect": {
+  "format.MAGIC": 1263550795,
+  "format.VERSION": 2,
+  "format.HEADER_BYTES": 96,
+  "package/format.h:KA_PKG_MAGIC": 1263550795,
+  "package/format.h:KA_PKG_VERSION": 2,
+  "package/format.h:KA_PKG_HEADER": 96,
+  "fw.package.magic": 1263550795,
+  "fw.package.version": 2,
+  "fw.package.header_bytes": 96
+ },
+ "mutants": [
+  "l0.pkg/magic",
+  "l0.pkg/version",
+  "l0.pkg/header_bytes"
+ ]
+}

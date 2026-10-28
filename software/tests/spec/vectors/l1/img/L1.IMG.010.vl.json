@@ -1,0 +1,20 @@
+{
+  "clause": "L1.IMG.010",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    vadd v1, v2, v3 vl=64\n    vmul v4, v5, v6\n    vmax v7, v8, v9 vl=1\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": [
+    "CHKVL vl1=63 d_stride=1 c_stride=1 b_stride=1 a_stride=1",
+    "vadd vd=1 va=2 vc=3",
+    "CHKVL vl1=127 d_stride=1 c_stride=1 b_stride=1 a_stride=1",
+    "vmul vd=4 va=5 vb=6",
+    "CHKVL d_stride=1 c_stride=1 b_stride=1 a_stride=1",
+    "vmax vd=7 va=8 vb=9",
+    "VHALT"
+  ]},
+  "mutants": ["l1.img/vl-default"]
+}

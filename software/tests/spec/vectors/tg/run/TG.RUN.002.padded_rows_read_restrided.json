@@ -1,0 +1,35 @@
+{
+ "clause": "TG.RUN.002",
+ "tier": 0,
+ "runner": "tg.run",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "W84": [
+    84,
+    64
+   ]
+  },
+  "make": "PR.sum(axis=1)",
+  "facts": [
+   "runs"
+  ],
+  "source": "PR = T(X) @ T(W84).T\n",
+  "before": [
+   "PR"
+  ]
+ },
+ "expect": {
+  "runs": [
+   "rows"
+  ]
+ },
+ "mutants": [
+  "tg.run/no_reform"
+ ]
+}

@@ -1,0 +1,26 @@
+{
+ "clause": "DBG.FAIL.005",
+ "tier": 1,
+ "runner": "dbg.fail",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "timeout_cycles": 200000,
+  "writes": 4,
+  "keys": [
+   "engine_report"
+  ]
+ },
+ "expect": {
+  "engine_report": {
+   "engine": true,
+   "step": 0,
+   "op": "ENGINE",
+   "issued": 4,
+   "issued_is_stat": true
+  }
+ },
+ "mutants": [
+  "dbg/issued_dropped"
+ ]
+}

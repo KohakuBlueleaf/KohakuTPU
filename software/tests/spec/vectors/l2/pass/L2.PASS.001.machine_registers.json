@@ -1,0 +1,29 @@
+{
+ "clause": "L2.PASS.001",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram, z: f16[8, 128] @dram)",
+   "    copy y <- x",
+   "    copy z <- x"
+  ],
+  "facts": {
+   "target": {
+    "lines": "^target"
+   }
+  }
+ },
+ "expect": {
+  "target": [
+   "target ktpu.v9 vregs=128 vcopies=2"
+  ]
+ },
+ "mutants": [
+  "l2.target/vregs-default"
+ ]
+}

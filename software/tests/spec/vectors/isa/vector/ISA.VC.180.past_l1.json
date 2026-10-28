@@ -1,0 +1,22 @@
+{
+ "clause": "ISA.VC.180",
+ "tier": 0,
+ "runner": "isa.verify",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image src(x)\n    desc a0 = x walk=(32, 16)\n    desc a1 = peer(500) walk=(32, 16)\n    vfill a0 -> l1[0]\n    vsync drain on=fill\n    vdrain a1 <- l1[0] to=vc[1]\n    halt\n\nfn k.l1(x: f16[256] @dram)\n    send vc[0]\n        run src(x)\n    barrier\n",
+  "fn": "k",
+  "binds": {
+   "x": 1048576
+  }
+ },
+ "expect": {
+  "findings": [
+   "bounds"
+  ]
+ },
+ "mutants": [
+  "isa.vector/model_peer"
+ ]
+}

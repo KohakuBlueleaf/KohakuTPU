@@ -1,0 +1,32 @@
+{
+ "clause": "TG.PIN.003",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "Y": [
+    32,
+    64
+   ],
+   "W": [
+    96,
+    64
+   ]
+  },
+  "source": "def facts():\n    xu = T(np.ones((32 + 4 * UNIQUE(), 64), np.float16))\n    return {\n        \"computed_into_reduction\": len(asts(xu.relu() @ T(W).T)),\n        \"buffer_into_reduction\": len(asts(T(X).sum(1))),\n        \"computed_into_elementwise\": len(asts(T(X) * 2 + T(Y))),\n    }\n"
+ },
+ "expect": {
+  "computed_into_reduction": 2,
+  "buffer_into_reduction": 1,
+  "computed_into_elementwise": 1
+ },
+ "mutants": [
+  "tg.seam/fuse_tinygrad"
+ ]
+}

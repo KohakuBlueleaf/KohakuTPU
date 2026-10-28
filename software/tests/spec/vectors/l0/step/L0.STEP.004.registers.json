@@ -1,0 +1,26 @@
+{
+ "clause": "L0.STEP.004",
+ "tier": 0,
+ "runner": "l0.pairs",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "host": [
+   "format.REGS"
+  ],
+  "header": [
+   "package/format.h:KA_PKG_REGS"
+  ],
+  "machine": [
+   "fw.package.regs"
+  ]
+ },
+ "expect": {
+  "format.REGS": 16,
+  "package/format.h:KA_PKG_REGS": 16,
+  "fw.package.regs": 16
+ },
+ "mutants": [
+  "l0.pkg/regs"
+ ]
+}

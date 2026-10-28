@@ -1,0 +1,81 @@
+{
+ "clause": "ISA.MV.003",
+ "tier": 0,
+ "runner": "isa.mover.move",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "fn": "move",
+  "args": [
+   0,
+   {
+    "base": 0,
+    "dims": [
+     [
+      3,
+      10368
+     ],
+     [
+      14,
+      576
+     ],
+     [
+      14,
+      32
+     ],
+     [
+      5,
+      -576
+     ],
+     [
+      5,
+      -32
+     ],
+     [
+      2,
+      64
+     ],
+     [
+      2,
+      32
+     ]
+    ],
+    "windows": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      0
+     ]
+    ]
+   },
+   {
+    "base": 0,
+    "dims": [
+     [
+      1,
+      32
+     ]
+    ],
+    "windows": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      0
+     ]
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "refused": "PackageError"
+ },
+ "mutants": [
+  "isa.mover/limits"
+ ]
+}

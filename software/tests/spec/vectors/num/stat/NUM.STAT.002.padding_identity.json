@@ -1,0 +1,9 @@
+{
+  "clause": "NUM.STAT.002",
+  "tier": 0,
+  "runner": "num.reduce.identity",
+  "status": "frozen",
+  "input": {"ops": ["sum", "max"]},
+  "expect": {"sum": 0.0, "max": -65504.0},
+  "mutants": ["num.reduce/max-identity-zero"]
+}

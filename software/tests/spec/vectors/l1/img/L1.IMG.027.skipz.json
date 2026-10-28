@@ -1,0 +1,21 @@
+{
+  "clause": "L1.IMG.027",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    vmul v1, v2, v3\n    skipz s4\n        vadd v5, v6, v7 vl=64\n    vmul v8, v9, v10\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": [
+    "CHKVL vl1=127 d_stride=1 c_stride=1 b_stride=1 a_stride=1",
+    "vmul vd=1 va=2 vb=3",
+    "VSKIPZ sreg=4 skip=2",
+    "CHKVL vl1=63 d_stride=1 c_stride=1 b_stride=1 a_stride=1",
+    "vadd vd=5 va=6 vc=7",
+    "CHKVL vl1=127 d_stride=1 c_stride=1 b_stride=1 a_stride=1",
+    "vmul vd=8 va=9 vb=10",
+    "VHALT"
+  ]},
+  "mutants": ["l1.img/skipz-meet"]
+}

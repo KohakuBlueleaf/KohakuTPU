@@ -12,16 +12,21 @@ transitively by induction:
 
 import ast
 import pathlib
+import subprocess
+import sys
+
+import pytest
 
 SOFTWARE = pathlib.Path(__file__).resolve().parents[1]
 MEMBERS = ("language", "compiler", "driver", "simulation", "application", "template")
 SIDES = ("kohakuaccel", "kohakutpu", "toyaccel")
-COMPONENTS = ("language", "compiler", "driver", "simulation", "application")
+COMPONENTS = ("language", "compiler", "stack", "driver", "simulation", "application")
 
 DEPENDS = {
     "language": {"language"},
-    "compiler": {"compiler", "language"},
-    "driver": {"driver"},
+    "compiler": {"compiler"},
+    "stack": {"stack", "compiler", "language", "application"},
+    "driver": {"driver", "language"},
     "simulation": {"simulation", "driver", "compiler", "language"},
     "application": set(COMPONENTS),
 }
@@ -110,6 +115,20 @@ def modules() -> list[tuple[str, pathlib.Path]]:
     return out
 
 
+@pytest.mark.parametrize("name", [name for name, _ in modules()])
+def test_every_remaining_module_imports(name):
+    template = str(SOFTWARE / "template")
+    code = f"import sys, importlib; sys.path.insert(0, {template!r}); importlib.import_module({name!r})"
+    got = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert got.returncode == 0, f"{name}: {got.stdout}\n{got.stderr}"
+
+
 def test_workspace_obeys_the_rules() -> None:
     found = modules()
     assert len(found) > 80, f"only {len(found)} modules found under {SOFTWARE}"
@@ -131,11 +150,11 @@ BREACHES = {
     ),
     "driver imports compiler": (
         "kohakuaccel.driver.x",
-        "from kohakuaccel.compiler.package import format",
+        "from kohakuaccel.compiler import isa",
     ),
     "language imports compiler": (
         "kohakutpu.language.x",
-        "from kohakutpu.compiler import target",
+        "from kohakutpu.stack import kernel",
     ),
     "anything imports application": (
         "kohakutpu.simulation.x",
@@ -143,7 +162,7 @@ BREACHES = {
     ),
     "relative import escapes the component": (
         "kohakuaccel.driver.x",
-        "from ..compiler import machine",
+        "from ..compiler import isa",
     ),
     "namespace root": ("kohakutpu.driver.x", "import kohakuaccel"),
     "component through its namespace root": (
@@ -161,13 +180,13 @@ ALLOWED = {
         "kohakutpu.driver.x",
         "from kohakuaccel.driver.device import mover",
     ),
-    "compiler imports language": (
-        "kohakutpu.compiler.x",
-        "from kohakutpu.language.l1 import ops",
+    "stack imports language": (
+        "kohakutpu.stack.x",
+        "from kohakutpu.language.text import module",
     ),
-    "simulation imports compiler and driver": (
+    "simulation imports native binding and driver": (
         "kohakutpu.simulation.x",
-        "import kohakuaccel.compiler.package\nimport kohakuaccel.driver.transport",
+        "from kohakutpu.compiler import _rs\nimport kohakuaccel.driver.transport",
     ),
     "third-party and stdlib": ("kohakuaccel.driver.x", "import numpy\nimport os"),
     "relative import inside the component": (

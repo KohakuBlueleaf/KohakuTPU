@@ -1,0 +1,41 @@
+{
+ "clause": "API.ROW.007",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    out = {}\n    for n in (1, 5, 6):\n        cores, start, trips = KV.split(n, len(MACHINE.die.units.vc))\n        out[str(n)] = [[start(c), trips(c)] for c in range(cores)]\n    return out\n"
+ },
+ "expect": {
+  "1": [
+   [
+    0,
+    1
+   ]
+  ],
+  "5": [
+   [
+    0,
+    3
+   ],
+   [
+    3,
+    2
+   ]
+  ],
+  "6": [
+   [
+    0,
+    3
+   ],
+   [
+    3,
+    3
+   ]
+  ]
+ },
+ "mutants": [
+  "api.vector/split_one"
+ ]
+}

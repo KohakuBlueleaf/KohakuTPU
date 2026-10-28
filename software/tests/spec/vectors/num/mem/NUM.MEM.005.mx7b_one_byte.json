@@ -1,0 +1,9 @@
+{
+  "clause": "NUM.MEM.005",
+  "tier": 0,
+  "runner": "num.buffer",
+  "status": "frozen",
+  "input": {"dtype": "mx7b", "shape": [16, 32], "layout": {"gn": 4, "nk": 1}},
+  "expect": {"nbytes": 512},
+  "mutants": ["num.buffer/mx7-two-bytes"]
+}

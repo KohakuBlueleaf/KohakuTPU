@@ -1,0 +1,27 @@
+{
+ "clause": "ISA.VC.143",
+ "tier": 0,
+ "runner": "isa.vector.image",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image k()\n    vsync fe on=fill\n    vsync unpack on=unpack\n    vsync pack on=drain slack=1\n    vsync fill on=pack\n    vsync drain on=pack\n    halt\n",
+  "name": "k",
+  "args": [],
+  "entry": "unknown"
+ },
+ "expect": {
+  "words": [
+   "0xb0000000",
+   "0xb1200000",
+   "0xb3808000",
+   "0xb4600000",
+   "0xb6600000",
+   "0xf8000000"
+  ],
+  "descs": {}
+ },
+ "mutants": [
+  "isa.vector/sync_codes"
+ ]
+}

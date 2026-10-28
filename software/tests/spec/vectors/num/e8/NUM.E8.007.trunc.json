@@ -1,0 +1,9 @@
+{
+  "clause": "NUM.E8.007",
+  "tier": 0,
+  "runner": "num.expr.lanes",
+  "status": "frozen",
+  "input": {"op": "trunc", "x": [2.5, -2.5, 2.75, -2.75, 100.0, -0.25, 9999.5]},
+  "expect": [2.0, -2.0, 2.0, -2.0, 100.0, 0.0, 9999.0],
+  "mutants": ["num.expr/round-constant-2-15"]
+}

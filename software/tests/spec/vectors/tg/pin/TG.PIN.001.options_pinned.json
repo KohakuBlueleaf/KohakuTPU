@@ -1,0 +1,23 @@
+{
+ "clause": "TG.PIN.001",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    return {v.key: v.value for v, _ in S._PINS}\n"
+ },
+ "expect": {
+  "NOOPT": 1,
+  "BEAM": 0,
+  "PARALLEL": 0,
+  "NO_MEMORY_PLANNER": 1,
+  "DEFAULT_FLOAT": "half",
+  "SPLIT_REDUCEOP": 0,
+  "WINO": 0,
+  "PCONTIG": 0
+ },
+ "mutants": [
+  "tg.seam/pins"
+ ]
+}

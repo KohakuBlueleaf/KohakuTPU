@@ -1,0 +1,32 @@
+{
+ "clause": "DBG.DUMP.002",
+ "tier": 0,
+ "runner": "dbg.drained",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "flags": [
+   0,
+   2
+  ],
+  "consoles": [
+   "PKGF u0 (1,1) sent 0 recv 0 want 1 inflight 0\nPKGF stray 0 outstanding 0\n",
+   "PKGF u0 (1,1) sent 3 recv 0 want 0 inflight 3\nPKGF stray 0 outstanding 3\n",
+   ""
+  ]
+ },
+ "expect": {
+  "report": [
+   false,
+   true
+  ],
+  "console": [
+   true,
+   false,
+   false
+  ]
+ },
+ "mutants": [
+  "dbg/always_drained"
+ ]
+}

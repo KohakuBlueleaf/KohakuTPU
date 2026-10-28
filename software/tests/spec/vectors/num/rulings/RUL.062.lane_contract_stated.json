@@ -1,0 +1,14 @@
+{
+  "clause": "RUL.062",
+  "tier": 0,
+  "runner": "num.doc",
+  "status": "frozen",
+  "input": {
+    "path": "software/language/kohakutpu/language/numerics/e8m15.py",
+    "lines": [1, 10],
+    "has": ["one ulp", "subtraction"],
+    "before": "\"\"\"E8M15, the vector core's lane format: FP32's exponent with a 15-bit\nmantissa (a 16-bit significand), no subnormals.\n\nA lane result is rounded to nearest even; a magnitude below the smallest\nnormal, 2^-126, flushes to zero; one at or above 2^128 is infinite. An `f32`\nin memory is an E8M15 value with its mantissa zero-extended, so it holds the\nsame values.\n\"\"\""
+  },
+  "expect": {"one ulp": true, "subtraction": true},
+  "mutants": ["num.doc/before"]
+}

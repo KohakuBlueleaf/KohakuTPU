@@ -1,0 +1,18 @@
+{
+ "clause": "RUL.011",
+ "tier": 0,
+ "runner": "tg.device_open",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "env": {
+   "KOHAKUTPU_DEVICE": "offline",
+   "KOHAKUTPU_BOARD": null,
+   "KOHAKUTPU_SIM_NODES": null
+  }
+ },
+ "expect": {
+  "refused": "ValueError"
+ },
+ "mutants": ["tg.device/default_board"]
+}

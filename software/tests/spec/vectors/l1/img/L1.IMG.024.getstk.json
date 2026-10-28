@@ -1,0 +1,12 @@
+{
+  "clause": "L1.IMG.024",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    getstk s3\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": ["GETSTK sreg=3", "VHALT"]},
+  "mutants": ["l1.img/getstk"]
+}

@@ -1,0 +1,21 @@
+{
+ "clause": "ISA.MG.030",
+ "tier": 0,
+ "runner": "isa.cluster.pairs",
+ "machine": "multimesh_v9t8",
+ "status": "frozen",
+ "input": {
+  "example": "matmul"
+ },
+ "expect": {
+  "emits": true,
+  "paired": true,
+  "plain": 0,
+  "first_acc": [
+   0
+  ]
+ },
+ "mutants": [
+  "isa.cluster/fields"
+ ]
+}

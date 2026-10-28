@@ -1,0 +1,77 @@
+{
+ "clause": "L0.BOOT.010",
+ "tier": 1,
+ "runner": "l0.card.package",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "buffers": {
+   "a": {
+    "bytes": 64
+   }
+  },
+  "calls": [
+   [
+    "store",
+    [
+     [
+      "$a",
+      1
+     ]
+    ]
+   ],
+   [
+    "store",
+    [
+     [
+      "$a",
+      "0x1234"
+     ]
+    ]
+   ],
+   [
+    "store",
+    [
+     [
+      "$a+8",
+      "0x5678"
+     ]
+    ]
+   ]
+  ],
+  "lower": true,
+  "repeat": 1,
+  "read": {
+   "a": 16
+  },
+  "report": [
+   "status",
+   "timing"
+  ]
+ },
+ "expect": {
+  "status": "0x0",
+  "detail": 0,
+  "step": 3,
+  "local": 0,
+  "reads": {
+   "a": "34120000000000007856000000000000"
+  },
+  "pkgt_keys": [
+   "head",
+   "copy",
+   "bind",
+   "steps",
+   "barrier",
+   "local",
+   "total",
+   "first",
+   "last",
+   "sent",
+   "idle"
+  ]
+ },
+ "mutants": [
+  "l0.pkg/version"
+ ]
+}

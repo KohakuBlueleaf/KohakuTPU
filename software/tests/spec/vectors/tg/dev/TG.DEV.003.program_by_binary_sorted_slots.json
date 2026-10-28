@@ -1,0 +1,21 @@
+{
+ "clause": "TG.DEV.003",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "class Obj:\n    lib = b\"spec-tg-dev\"\n    name = \"spec\"\n    signature = [(None, 3, None, None), (None, 1, None, None), (None, 2, None, None)]\n\n\ndef call(runs):\n    seen = {}\n\n    def execute(dev, plan, bufs):\n        seen[\"plan\"], seen[\"bufs\"] = plan.name, {k: b.name for k, b in bufs.items()}\n        return runs\n\n    class Plan:\n        name, out_slot = \"the plan\", 1\n\n    class Buf:\n        forms = {}\n        def __init__(self, name):\n            self.name = name\n\n    S.PLANS[Obj.lib] = Plan()\n    keep = R.execute\n    R.execute = execute\n    try:\n        p = KD.KTPUProgram(TinyDevice[\"KTPU\"], Obj)\n        seconds = p(Buf(\"a\"), Buf(\"b\"), Buf(\"c\"))\n    finally:\n        R.execute = keep\n        S.PLANS.pop(Obj.lib)\n    return seen, seconds, p.dev.last_runs\ndef facts():\n    seen, _, _ = call([])\n    return {\"plan\": seen[\"plan\"], \"bufs\": seen[\"bufs\"]}\n"
+ },
+ "expect": {
+  "plan": "the plan",
+  "bufs": {
+   "1": "a",
+   "2": "b",
+   "3": "c"
+  }
+ },
+ "mutants": [
+  "tg.device/slots_unsorted"
+ ]
+}

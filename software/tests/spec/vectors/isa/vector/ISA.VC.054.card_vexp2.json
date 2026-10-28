@@ -1,0 +1,27 @@
+{
+ "clause": "ISA.VC.054",
+ "tier": 1,
+ "runner": "isa.card.kernel",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "body": [
+   "vexp2 v2, v0"
+  ],
+  "check": "exp2",
+  "x": {
+   "seed": 6,
+   "lo": -4,
+   "hi": 4
+  },
+  "tol": {
+   "rtol": 0.002
+  }
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.vector/opcodes"
+ ]
+}

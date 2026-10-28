@@ -1,0 +1,25 @@
+{
+ "clause": "ISA.VC.071",
+ "tier": 1,
+ "runner": "isa.card.kernel",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "body": [
+   "vadd v2, k0, xor(v0, 8)"
+  ],
+  "check": "xor8c",
+  "x": {
+   "seed": 28
+  },
+  "tol": {
+   "exact": true
+  }
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.vector/xbar_c"
+ ]
+}

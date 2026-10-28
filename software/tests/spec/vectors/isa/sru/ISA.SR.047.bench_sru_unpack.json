@@ -1,0 +1,16 @@
+{
+ "clause": "ISA.SR.047",
+ "tier": 2,
+ "runner": "isa.bench",
+ "machine": "sru_v9t7",
+ "status": "frozen",
+ "input": {
+  "bench": "sru_unpack"
+ },
+ "expect": {
+  "pass": true
+ },
+ "mutants": [
+  "isa.bench/short"
+ ]
+}

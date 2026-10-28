@@ -1,0 +1,14 @@
+{
+  "clause": "RUL.059",
+  "tier": 0,
+  "runner": "num.doc",
+  "status": "frozen",
+  "input": {
+    "path": "docs/projects/kohakutpu/tinygrad.md",
+    "lines": [149, 158],
+    "has": ["1e-2", "quantis"],
+    "before": "`build/v9f/vlt_card_v9_1n_v2`; data movement bit-exact, the rest rel err\n< 2e-2 against float64 numpy). Every tensor is float: a loss reads its\nlabels as one-hot float values."
+  },
+  "expect": {"1e-2": true, "quantis": true},
+  "mutants": ["num.doc/before"]
+}

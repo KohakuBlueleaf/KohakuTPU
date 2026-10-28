@@ -1,0 +1,10 @@
+{
+  "clause": "L1.TIMING.008",
+  "tier": 2,
+  "runner": "vc.timing.measured",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {"parameter": "mx7_issue_gap"},
+  "expect": {"value": 1},
+  "mutants": ["vc.timing/machine-plus-one"]
+}

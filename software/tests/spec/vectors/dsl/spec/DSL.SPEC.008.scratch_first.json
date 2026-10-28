@@ -1,0 +1,34 @@
+{
+ "clause": "DSL.SPEC.008",
+ "tier": 0,
+ "runner": "dsl.trace",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(64, 32), y=kt.Out(64, 32)):\n    kt.copy(y, x)\n    s = kt.buffer((64, 32), \"f16\", name=\"scr\")\n    h = kt.buffer((64, 32), \"f16\", tile=(16, 8))\n    kt.gt4(h, x)\n    kt.copy(s, x)\n",
+  "given": {
+   "x": [
+    [
+     64,
+     32
+    ],
+    "f16"
+   ]
+  }
+ },
+ "expect": {
+  "body": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[64, 32] @dram, y: f16[64, 32] @dram)",
+   "    scr = buffer : f16[64, 32] @dram",
+   "    h1 = buffer : f16[64, 32] @dram(tile=16x8)",
+   "    copy y <- x",
+   "    gt4 h1 <- x",
+   "    copy scr <- x"
+  ]
+ },
+ "mutants": [
+  "dsl.trace/scratch_last"
+ ]
+}

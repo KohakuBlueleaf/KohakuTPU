@@ -1,0 +1,22 @@
+{
+ "clause": "L2.SEARCH.002",
+ "tier": 0,
+ "runner": "l2.timing",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9 vregs=128 vcopies=2",
+   "",
+   "image t(p)",
+   "    desc a0 = p walk=(32, 8)",
+   "    vfill a0 -> l1[0]",
+   "    halt"
+  ],
+  "name": "t"
+ },
+ "expect": 95,
+ "mutants": [
+  "l2.timing/fill-free"
+ ]
+}

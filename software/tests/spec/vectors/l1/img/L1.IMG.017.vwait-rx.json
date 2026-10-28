@@ -1,0 +1,12 @@
+{
+  "clause": "L1.IMG.017",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    vwait unpack rx n=128\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": ["VWAIT waiter=1 on=7 n=128", "VHALT"]},
+  "mutants": ["l1.img/waiters"]
+}

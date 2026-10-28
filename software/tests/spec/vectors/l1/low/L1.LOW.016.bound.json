@@ -1,0 +1,19 @@
+{
+  "clause": "L1.LOW.016",
+  "tier": 0,
+  "runner": "l1.package",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k(x)\n    desc a0 = x walk=(32, 2)\n    halt\nfn f.l1(a: f16[64] @dram)\n    node 0\n        send vc[0]\n            run k(a)\n    node 1\n        send vc[1]\n            run k(a + 64)\n",
+    "fn": "f",
+    "binds": {"a": 4096},
+    "nodes": 2,
+    "all": true
+  },
+  "expect": {
+    "0": {"ops": ["ENGINE"], "defaults": [], "relocs": 0, "bindings": []},
+    "1": {"ops": ["ENGINE"], "defaults": [], "relocs": 0, "bindings": []}
+  },
+  "mutants": ["l1.lower/no-bind"]
+}

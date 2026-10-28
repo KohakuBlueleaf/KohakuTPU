@@ -1,0 +1,9 @@
+{
+  "clause": "RUL.057",
+  "tier": 0,
+  "runner": "num.buffer",
+  "status": "frozen",
+  "input": {"dtype": "f16", "shape": [4], "values": [70000.0, -1000000.0, 65520.0, 65504.0]},
+  "expect": {"nbytes": 8, "hex": "ff7bfffbff7bff7b"},
+  "mutants": ["num.fp16/no-saturation"]
+}

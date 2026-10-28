@@ -1,0 +1,18 @@
+{
+ "clause": "RUL.012",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "sru_v9t7",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "m:sr.f16_ieee"
+  ]
+ },
+ "expect": {
+  "m:sr.f16_ieee": 0
+ },
+ "mutants": [
+  "machine/fact_read"
+ ]
+}

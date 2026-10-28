@@ -1,0 +1,14 @@
+{
+ "clause": "DBG.FAIL.006", "tier": 1, "runner": "dbg.snapshot",
+ "machine": "vlt_v9t6s_1n", "status": "frozen",
+ "input": {"debug": true, "timeout_cycles": 20000},
+ "expect": {
+  "snapshot": true, "persisted": true, "status": "TIMEOUT",
+  "enabled": true, "magic": 56833, "counters_present": true,
+  "consistent": true, "gos": 1, "fault": 0,
+  "blocked": true, "issued": 12, "expected_issued": 12, "done": 1,
+  "same_stat": true, "room": true, "busy": false,
+  "counters": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+ },
+ "mutants": ["dbg/snapshot_after_clear"]
+}

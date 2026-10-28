@@ -1,0 +1,18 @@
+{
+ "clause": "ISA.MG.024",
+ "tier": 1,
+ "runner": "isa.card.example",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "case": "tiles",
+  "reps": 1
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.cluster/fields",
+  "isa.cluster/opcodes"
+ ]
+}

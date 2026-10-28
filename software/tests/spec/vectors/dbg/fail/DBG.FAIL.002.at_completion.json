@@ -1,0 +1,19 @@
+{
+ "clause": "DBG.FAIL.002",
+ "tier": 1,
+ "runner": "dbg.fail",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "timeout_cycles": 200000,
+  "keys": [
+   "at_completion"
+  ]
+ },
+ "expect": {
+  "at_completion": true
+ },
+ "mutants": [
+  "dbg/no_region"
+ ]
+}

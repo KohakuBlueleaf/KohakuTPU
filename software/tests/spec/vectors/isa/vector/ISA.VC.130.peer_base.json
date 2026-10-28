@@ -1,0 +1,29 @@
+{
+ "clause": "ISA.VC.130",
+ "tier": 0,
+ "runner": "isa.vector.image",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image k()\n    desc a1 = peer(64, ack=(1, 2), count=1) walk=(32, 16)\n    vdrain a1 <- l1[8] to=(3, 1) buf=2\n    halt\n",
+  "name": "k",
+  "args": [],
+  "entry": "unknown"
+ },
+ "expect": {
+  "words": [
+   "0xf1262408",
+   "0xf8000000"
+  ],
+  "descs": {
+   "1,0": "0x400210040",
+   "1,1": "0x200010",
+   "1,2": "0x0",
+   "1,3": "0x0",
+   "1,4": "0x0"
+  }
+ },
+ "mutants": [
+  "isa.vector/dma_fields"
+ ]
+}

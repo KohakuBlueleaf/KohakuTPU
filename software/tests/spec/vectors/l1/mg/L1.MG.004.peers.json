@@ -1,0 +1,16 @@
+{
+  "clause": "L1.MG.004",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(b: u64[1024] @dram)\n    send mg[0]\n        fill B0 <- b n=8 peers=(mg[1],)\n",
+    "fn": "f",
+    "binds": {"b": 8192}
+  },
+  "expect": {"-": {"steps": [
+    ["send", [1, 1], ["FILL addr=0x2000 n=8 sel=1 nk=1 anchor=40 peers=0x21 npeer=1"]]
+  ]}},
+  "mutants": ["l1.mg/peer-bytes"]
+}

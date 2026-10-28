@@ -1,0 +1,21 @@
+{
+ "clause": "ISA.VC.030",
+ "tier": 0,
+ "runner": "isa.vector.cu",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "fn": "desc",
+  "args": [
+   1,
+   2,
+   4194313
+  ]
+ },
+ "expect": {
+  "payload": "0x2280040000900000000000000000000000000000000000000000000000000000"
+ },
+ "mutants": [
+  "isa.vector/cu_desc"
+ ]
+}

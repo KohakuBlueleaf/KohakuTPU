@@ -1,0 +1,70 @@
+{
+  "clause": "L1.LOW.011",
+  "expect": {
+    "-": {
+      "steps": [
+        [
+          "ALU",
+          1,
+          "MOV",
+          0
+        ],
+        [
+          "ALU",
+          1,
+          "ADD",
+          1
+        ],
+        [
+          "JUMP",
+          1,
+          "LTU",
+          1
+        ],
+        [
+          "DISPATCH",
+          [
+            2,
+            2
+          ],
+          [
+            [
+              "IMEM",
+              0,
+              "VHALT"
+            ],
+            [
+              "RUN",
+              0
+            ]
+          ]
+        ],
+        [
+          "AWAIT",
+          [
+            2,
+            2
+          ],
+          "sent"
+        ],
+        [
+          "BARRIER"
+        ]
+      ]
+    }
+  },
+  "input": {
+    "binds": {
+      "a": 4096
+    },
+    "fn": "f",
+    "text": "target ktpu.v9\nimage k()\n    halt\nfn f.l1(a: u64[4] @dram)\n    r1 = set 0\n    label top\n    r1 = add r1, 1\n    goto top if r1 < 3\n    send vc[1]\n        run k()\n"
+  },
+  "machine": "multimesh_v9t6",
+  "mutants": [
+    "l1.lower/jump-unresolved"
+  ],
+  "runner": "l1.build",
+  "status": "frozen",
+  "tier": 0
+}

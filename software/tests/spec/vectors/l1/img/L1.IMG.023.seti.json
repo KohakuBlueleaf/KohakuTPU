@@ -1,0 +1,17 @@
+{
+  "clause": "L1.IMG.023",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    seti s3 = 469\n    seti s0 = 0.95\n    seti s1 = -1\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": [
+    "VSETI sreg=3", "imm=0x1d5",
+    "VSETI", "imm=0x3f7333",
+    "VSETI sreg=1", "imm=0xffffff",
+    "VHALT"
+  ]},
+  "mutants": ["l1.img/e8m15"]
+}

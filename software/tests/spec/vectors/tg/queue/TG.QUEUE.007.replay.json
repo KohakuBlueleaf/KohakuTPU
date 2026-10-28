@@ -1,0 +1,1 @@
+{"clause":"TG.QUEUE.007","tier":1,"runner":"queue.card","machine":"vlt_v9t6s_1n","status":"frozen","input":{"case":"replay"},"expect":{"lazy":true,"values":true},"mutants":["queue/replay-waits"]}

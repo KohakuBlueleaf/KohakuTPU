@@ -1,0 +1,25 @@
+{
+ "clause": "ISA.VC.074",
+ "tier": 1,
+ "runner": "isa.card.kernel",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "body": [
+   "vmul v2, k1, bcast(v0[0], lane=2, sh=1)"
+  ],
+  "check": "bcast_sh1",
+  "x": {
+   "seed": 31
+  },
+  "tol": {
+   "exact": true
+  }
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.vector/cfg_fields"
+ ]
+}

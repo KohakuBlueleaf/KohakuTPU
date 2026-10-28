@@ -1,0 +1,35 @@
+{
+ "clause": "TG.RUN.019",
+ "tier": 0,
+ "runner": "tg.run",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "W": [
+    96,
+    64
+   ]
+  },
+  "make": "(XA @ WA.T).relu()",
+  "facts": [
+   "runs"
+  ],
+  "source": "XA, WA = T(X), T(W)\n",
+  "before": [
+   "XA @ WA.T"
+  ]
+ },
+ "expect": {
+  "runs": [
+   "mm"
+  ]
+ },
+ "mutants": [
+  "api.forms/made_drop"
+ ]
+}

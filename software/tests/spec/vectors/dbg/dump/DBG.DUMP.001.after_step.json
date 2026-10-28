@@ -1,0 +1,38 @@
+{
+ "clause": "DBG.DUMP.001",
+ "tier": 1,
+ "runner": "dbg.dump",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "example": "memops",
+  "after": 2,
+  "words": 2
+ },
+ "expect": {
+  "whole": {
+   "out": {
+    "bytes": 128,
+    "stable": true,
+    "words": [
+     "0x1234",
+     "0x1235"
+    ]
+   }
+  },
+  "read_back": true,
+  "cut": {
+   "out": {
+    "bytes": 128,
+    "stable": true,
+    "words": [
+     "0x1234",
+     "0x0"
+    ]
+   }
+  }
+ },
+ "mutants": [
+  "dbg/no_cut"
+ ]
+}

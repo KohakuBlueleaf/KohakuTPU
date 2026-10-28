@@ -1,0 +1,25 @@
+{
+ "clause": "L0.DE.010",
+ "tier": 1,
+ "runner": "l0.card.example",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "example": "silu",
+  "seed": 12,
+  "tolerance": 0.002
+ },
+ "expect": {
+  "within": true
+ },
+ "mutants": [
+  "l0.lower/no_rel",
+  "l0.lower/untyped_dst"
+ ],
+ "hangs": {
+  "python": [
+   "l0.lower/no_rel",
+   "l0.lower/untyped_dst"
+  ]
+ }
+}

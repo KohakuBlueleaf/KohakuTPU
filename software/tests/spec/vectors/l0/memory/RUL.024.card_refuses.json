@@ -1,0 +1,5 @@
+{
+ "clause": "RUL.024", "tier": 1, "runner": "memory.firmware_card",
+ "machine": "vlt_v9t6s_1n", "status": "frozen", "input": {"case": "opcodes"},
+ "expect": [64, 64, 64], "mutants": ["memory/firmware-refusals-disabled"]
+}

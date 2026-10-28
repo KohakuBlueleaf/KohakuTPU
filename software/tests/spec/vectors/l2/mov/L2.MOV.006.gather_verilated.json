@@ -1,0 +1,46 @@
+{
+ "clause": "L2.MOV.006",
+ "tier": 2,
+ "runner": "l2.verilated",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(t: f16[64, 64] @dram, idx: u32[16] @dram, y: f16[12, 64] @dram)",
+   "    gather y <- t index=idx"
+  ],
+  "inputs": [
+   "t"
+  ],
+  "ints": {
+   "idx": [
+    5,
+    0,
+    63,
+    7,
+    7,
+    12,
+    30,
+    1,
+    2,
+    3,
+    40,
+    50,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  "output": "y",
+  "ref": "gather"
+ },
+ "expect": {
+  "match": true
+ },
+ "mutants": [
+  "l2.mover/pitch-doubled"
+ ]
+}

@@ -1,0 +1,18 @@
+{
+  "clause": "L1.IMG.028",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    vmul v1, v2, v3\n    vadd v4, v5, v6\n    vmov v7, v8\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": [
+    "CHKVL vl1=127 d_stride=1 c_stride=1 b_stride=1 a_stride=1",
+    "vmul vd=1 va=2 vb=3",
+    "vadd vd=4 va=5 vc=6",
+    "vmov vd=7 va=8",
+    "VHALT"
+  ]},
+  "mutants": ["l1.img/no-tracking"]
+}

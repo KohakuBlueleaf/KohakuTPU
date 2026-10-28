@@ -1,0 +1,19 @@
+{
+ "clause": "ISA.VC.005",
+ "tier": 0,
+ "runner": "isa.vector.image",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image k()\n    vmul v1, s16, v2\n    halt\n",
+  "name": "k",
+  "args": [],
+  "entry": "reset"
+ },
+ "expect": {
+  "error": "TextError"
+ },
+ "mutants": [
+  "isa.vector/limits"
+ ]
+}

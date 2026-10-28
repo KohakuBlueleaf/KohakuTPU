@@ -1,0 +1,21 @@
+{
+  "clause": "L1.IMG.021",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    vfill a0 -> l1[0] rel\n    ainc a2 += 32\n    vfill a2 -> l1[8] rel\n    vdrain a3 <- l1[0] rel\n    ainc a3 += 32\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": [
+    "AINC",
+    "AINC ad=3",
+    "VFILL rel=1",
+    "AINC ad=2 inc=32",
+    "VFILL rel=1 ad=2 off=8",
+    "VDRAIN rel=1 ad=3",
+    "AINC ad=3 inc=32",
+    "VHALT"
+  ]},
+  "mutants": ["l1.img/no-stale"]
+}

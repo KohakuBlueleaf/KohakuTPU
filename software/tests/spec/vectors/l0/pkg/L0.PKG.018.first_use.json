@@ -1,0 +1,123 @@
+{
+ "clause": "L0.PKG.018",
+ "tier": 0,
+ "runner": "l0.pkg.build",
+ "status": "frozen",
+ "input": {
+  "builder": {
+   "types": [
+    [
+     1,
+     1,
+     "MG"
+    ],
+    [
+     2,
+     1,
+     "VC"
+    ]
+   ],
+   "credit": 512
+  },
+  "calls": [
+   [
+    "unit",
+    [
+     1,
+     1
+    ]
+   ],
+   [
+    "unit",
+    [
+     2,
+     1
+    ]
+   ],
+   [
+    "unit",
+    [
+     1,
+     1
+    ]
+   ],
+   [
+    "unit",
+    [
+     1,
+     1
+    ],
+    null,
+    1
+   ],
+   [
+    "dispatch",
+    1,
+    [
+     "0x5"
+    ]
+   ]
+  ],
+  "keys": [
+   "results",
+   "package"
+  ]
+ },
+ "expect": {
+  "results": [
+   0,
+   1,
+   0,
+   2,
+   null
+  ],
+  "package": {
+   "units": [
+    {
+     "type": "MG",
+     "x": 1,
+     "y": 1,
+     "mesh": 0,
+     "credit": 512,
+     "fetch": "0x0"
+    },
+    {
+     "type": "VC",
+     "x": 2,
+     "y": 1,
+     "mesh": 0,
+     "credit": 512,
+     "fetch": "0x0"
+    },
+    {
+     "type": "MG",
+     "x": 1,
+     "y": 1,
+     "mesh": 1,
+     "credit": 512,
+     "fetch": "0x0"
+    }
+   ],
+   "buffers": [],
+   "steps": [
+    {
+     "op": "DISPATCH",
+     "unit": 1,
+     "count": 1,
+     "arg": "0x0",
+     "flags": 0
+    }
+   ],
+   "relocs": [],
+   "payloads": [
+    "0x5"
+   ],
+   "signature": "0x0",
+   "ack_reserve": 0,
+   "checksum": false
+  }
+ },
+ "mutants": [
+  "l0.build/unit_per_use"
+ ]
+}

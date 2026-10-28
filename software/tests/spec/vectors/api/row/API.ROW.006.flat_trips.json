@@ -1,0 +1,18 @@
+{
+ "clause": "API.ROW.006",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    k, g = KV.flat_kernel(X.op(\"add\", X.Load(0), X.Load(1)), (\"f16\", \"f16\"), 21 * 128, \"f16\", DEV.machine.count(\"VC\"))\n    text = k.trace(g, machine=TMACHINE).text\n    return [ln.strip() for ln in text.splitlines() if ln.strip().startswith(\"store\")]\n"
+ },
+ "expect": [
+  "store out[c1*8 + t1*8 : +8] <- p1",
+  "store out[16 : +4] <- p2",
+  "store out[20 : +1] <- p3"
+ ],
+ "mutants": [
+  "api.vector/l1_small"
+ ]
+}

@@ -1,0 +1,15 @@
+{
+  "clause": "NUM.TOL.007",
+  "tier": 1,
+  "runner": "num.card.tinygrad",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "program": "chain",
+    "x": {"shape": [64, 128], "seed": 1},
+    "y": {"shape": [64, 128], "seed": 2},
+    "rel": 0.02
+  },
+  "expect": {"rel_below": true},
+  "mutants": ["num.card/readback-corrupt"]
+}

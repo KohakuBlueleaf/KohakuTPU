@@ -1,0 +1,24 @@
+{
+ "clause": "ISA.VC.112",
+ "tier": 1,
+ "runner": "isa.card.kernel",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "body": [
+   "vmov v2, v0"
+  ],
+  "check": "x0",
+  "x": {
+   "seed": 24
+  },
+  "pack": "mx7a"
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.vector/modes",
+  "isa.vector/opcodes"
+ ]
+}

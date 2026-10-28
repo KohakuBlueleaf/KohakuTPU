@@ -1,0 +1,21 @@
+{
+ "clause": "ISA.MG.052",
+ "tier": 0,
+ "runner": "isa.cluster.l1",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "fn k.l1(a: f16[65536] @dram)\n    send mg[0]\n        post n=4 to=mesh1.vc[0]\n",
+  "fn": "k",
+  "binds": {
+   "a": 1048576
+  },
+  "nodes": 2
+ },
+ "expect": {
+  "error": "TextError"
+ },
+ "mutants": [
+  "isa.cluster/node"
+ ]
+}

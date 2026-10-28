@@ -1,0 +1,19 @@
+{
+  "clause": "L1.IMG.012",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    vcmplt p3, v1, v2\n    vcmpgt p0, v3, v4\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": [
+    "CHKVL vl1=127 d_stride=1 c_stride=1 b_stride=1 a_stride=1",
+    "XB pr=3",
+    "vcmplt va=1 vb=2 om=1",
+    "XB",
+    "vcmpgt va=3 vb=4 om=1",
+    "VHALT"
+  ]},
+  "mutants": ["l1.img/compare-pred"]
+}

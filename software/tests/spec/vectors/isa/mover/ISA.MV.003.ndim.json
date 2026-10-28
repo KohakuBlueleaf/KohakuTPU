@@ -1,0 +1,20 @@
+{
+ "clause": "ISA.MV.003",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "mover.ndim",
+   "m:mover.levels"
+  ]
+ },
+ "expect": {
+  "mover.ndim": 6,
+  "m:mover.levels": 6
+ },
+ "mutants": [
+  "isa.mover/limits"
+ ]
+}

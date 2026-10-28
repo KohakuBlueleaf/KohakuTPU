@@ -1,0 +1,48 @@
+{
+ "clause": "TG.RUN.015",
+ "tier": 0,
+ "runner": "tg.run",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "A40": [
+    8,
+    40
+   ]
+  },
+  "make": "T(A40).sum(axis=1)",
+  "knobs": {
+   "PREPARED": false
+  },
+  "facts": [
+   "params"
+  ],
+  "params": [
+   "rows"
+  ]
+ },
+ "expect": {
+  "params": {
+   "rows": [
+    [
+     [
+      "in0",
+      "f16[8, 64] @dram"
+     ],
+     [
+      "in1",
+      "f16[64] @dram"
+     ],
+     [
+      "out",
+      "f16[16] @dram"
+     ]
+    ]
+   ]
+  }
+ },
+ "mutants": [
+  "tg.run/wide_exact"
+ ]
+}

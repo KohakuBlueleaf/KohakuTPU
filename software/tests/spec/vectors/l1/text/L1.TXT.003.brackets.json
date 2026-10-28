@@ -1,0 +1,21 @@
+{
+  "clause": "L1.TXT.003",
+  "tier": 0,
+  "runner": "l1.parse",
+  "status": "frozen",
+  "input": {
+    "text": "copy w(x,\n    (16, 32)) -> y\nz l1[0,\n    1] q{1 +\n  2}\n"
+  },
+  "expect": [
+    {"op": "copy", "args": [
+      ["Call", "w", [["Name", "x"], ["Tuple", [["Int", 16, "dec"], ["Int", 32, "dec"]]]]],
+      ["Arrow", "->"],
+      ["Name", "y"]
+    ]},
+    {"op": "z", "args": [
+      ["View", "l1", [["Int", 0, "dec"], ["Int", 1, "dec"]]],
+      ["Computed", "q", ["Offset", ["Int", 1, "dec"], ["Int", 2, "dec"]], null]
+    ]}
+  ],
+  "mutants": ["l1.text/newline-in-brackets"]
+}

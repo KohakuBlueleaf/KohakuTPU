@@ -1,0 +1,43 @@
+{
+ "clause": "L2.VC.016",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[16, 128] @dram, g: f16[1, 128] @dram, y: f16[16, 128] @dram)",
+   "    par c in 0..1 on vc[c]",
+   "        gl = load g                                  : f16[1, 128] @l1",
+   "        gv = unpack gl                               : f32[1, 128] @reg",
+   "        for t in 0..2",
+   "            xl = load x[t*8 : +8, :]                 : f16[8, 128] @l1",
+   "            v = unpack xl                            : f32[8, 128] @reg",
+   "            o = mul v, gv                            : f32[8, 128] @reg",
+   "            ol = pack o                              : f16[8, 128] @l1",
+   "            store y[t*8 : +8, :] <- ol"
+  ],
+  "passes": [],
+  "strategy": "band",
+  "facts": {
+   "seq": {
+    "lines": "^(vfill|vsync fe|loop)",
+    "in": "images"
+   }
+  }
+ },
+ "expect": {
+  "seq": [
+   "vfill a2 -> l1[504]",
+   "vsync fe on=unpack",
+   "vfill a0 -> l1[0] rel",
+   "loop s15",
+   "vfill a0 -> l1[64] rel"
+  ]
+ },
+ "mutants": [
+  "l2.vector/l1-384"
+ ]
+}

@@ -1,0 +1,19 @@
+{
+ "clause": "ISA.VC.183",
+ "tier": 1,
+ "runner": "isa.card.example",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "case": "tilesilu.l2",
+  "reps": 1
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.vector/cfg_fields",
+  "isa.vector/sync_fields",
+  "isa.vector/ctl_fields"
+ ]
+}

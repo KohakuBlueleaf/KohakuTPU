@@ -1,0 +1,13 @@
+{
+ "clause": "API.REF.007",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {"x": [3, 197, 197]},
+  "source": "def facts():\n    y = kp.tensor(x).softmax().realize()\n    return {'shape': list(y.shape), 'ran': bool(DEV.runs)}\n"
+ },
+ "expect": {"shape": [3, 197, 197], "ran": true},
+ "mutants": ["api.rows/flat_logical_rows"]
+}

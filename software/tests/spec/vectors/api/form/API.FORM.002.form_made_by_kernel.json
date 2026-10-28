@@ -1,0 +1,25 @@
+{
+ "clause": "API.FORM.002",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "Q": [
+    64,
+    64
+   ]
+  },
+  "source": "def facts():\n    s = CALL.upload(DEV, Q)\n    spec = kt.TensorSpec.make((64, 64), \"mx7a\", {\"gm\": 16, \"nk\": 1})\n    n0 = len(DEV.runs)\n    FM.for_port(DEV, s, np.float16, (64, 64), spec)\n    runs = [r.name.rsplit(\"_\", 1)[0] for r in DEV.runs[n0:]]\n    made = any(k[0] == \"mx7\" for k in s.valid)\n    s.free()\n    return {\"runs\": runs, \"made\": made}\n"
+ },
+ "expect": {
+  "runs": [
+   "quant"
+  ],
+  "made": true
+ },
+ "mutants": [
+  "api.forms/made_drop"
+ ]
+}

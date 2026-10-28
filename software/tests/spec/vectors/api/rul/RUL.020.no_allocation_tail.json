@@ -1,0 +1,14 @@
+{
+ "clause": "RUL.020",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    return {'tail': D.TAIL}\n"
+ },
+ "expect": {
+  "tail": 0
+ },
+ "mutants": ["memory/allocation-tail"]
+}

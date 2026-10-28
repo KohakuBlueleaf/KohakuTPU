@@ -1,0 +1,20 @@
+{
+  "clause": "L1.NODE.017",
+  "tier": 0,
+  "runner": "l1.build",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    halt\nfn f.l1(a: u64[4] @dram)\n    send vc[0]\n        run k()\n    t = mark vc[0]\n    send vc[0]\n        run k()\n    wait vc[0] upto=t\n",
+    "fn": "f",
+    "binds": {"a": 4096}
+  },
+  "expect": {"-": {"steps": [
+    ["DISPATCH", [2, 1], [["IMEM", 0, "VHALT"], ["RUN", 0]]],
+    ["DISPATCH", [2, 1], [["RUN", 0]]],
+    ["AWAIT", [2, 1], 2],
+    ["AWAIT", [2, 1], 1],
+    ["BARRIER"]
+  ]}},
+  "mutants": ["l1.node/wait-ignores-mark"]
+}

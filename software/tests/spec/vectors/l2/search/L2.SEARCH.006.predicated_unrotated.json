@@ -1,0 +1,22 @@
+{
+ "clause": "L2.SEARCH.006",
+ "tier": 0,
+ "runner": "l2.banks.choose",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "code": [
+   ["vmov {0}, k1 if=p1", ["%2"]],
+   ["vmov {0}, k1 if=p2", ["%3"]],
+   ["vmov {0}, k1 if=p3", ["%4"]],
+   ["vfma {0}, {1}, {2}, {3}", ["%1", "%2", "%3", "%4"]]
+  ],
+  "copies": 2
+ },
+ "expect": {
+  "rotated": []
+ },
+ "mutants": [
+  "l2.banks/rotates-predicated"
+ ]
+}

@@ -1,0 +1,26 @@
+{
+  "clause": "L1.MOV.004",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(x: f16[256] @dram, y: f16[272] @dram)\n    move\n        copy w(x - 32, (17, 32, 1, 1), win1=(-1, 16)) -> w(y, (17, 32)) pad=0x3c003c00\n    move\n        copy w(x, (16, 32)) -> w(y, (16, 32, 1, 1), win1=(-4, 8))\n",
+    "fn": "f",
+    "binds": {"x": 4096, "y": 8192}
+  },
+  "expect": {"-": {"steps": [
+    ["move", [
+      "HDR base=0xfe0 ndim=1", "DIM count=17 stride=32", "AXIS axis=1 astep=1", "WIN base=-1 extent=16", "WIN axis=1",
+      "HDR sel=1 base=0x2000 ndim=1", "DIM sel=1 count=17 stride=32", "AXIS", "WIN sel=1", "WIN sel=1 axis=1",
+      "IMM 0x3c003c00",
+      "CTRL ew=2 flags=0x8 go=1"
+    ]],
+    ["move", [
+      "HDR base=0x1000 ndim=1", "DIM count=16 stride=32", "AXIS", "WIN", "WIN axis=1",
+      "HDR sel=1 base=0x2000 ndim=1", "DIM sel=1 count=16 stride=32", "AXIS axis=1 astep=1", "WIN sel=1 base=-4 extent=8", "WIN sel=1 axis=1",
+      "CTRL ew=2 flags=0x8 go=1"
+    ]]
+  ]}},
+  "mutants": ["l1.mov/windows-dropped"]
+}

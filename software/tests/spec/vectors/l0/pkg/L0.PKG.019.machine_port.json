@@ -1,0 +1,57 @@
+{
+ "clause": "L0.PKG.019",
+ "tier": 0,
+ "runner": "l0.program",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "steps": [
+   [
+    "send",
+    [
+     1,
+     1
+    ],
+    2
+   ],
+   [
+    "send",
+    [
+     2,
+     1
+    ],
+    1
+   ],
+   [
+    "barrier"
+   ]
+  ],
+  "fetch": true,
+  "keys": [
+   "units"
+  ]
+ },
+ "expect": {
+  "units": [
+   {
+    "type": "MG",
+    "x": 1,
+    "y": 1,
+    "mesh": 0,
+    "credit": 512,
+    "fetch": "0x10200"
+   },
+   {
+    "type": "VC",
+    "x": 2,
+    "y": 1,
+    "mesh": 0,
+    "credit": 512,
+    "fetch": "0x10200"
+   }
+  ]
+ },
+ "mutants": [
+  "l0.build/port_swapped"
+ ]
+}

@@ -1,0 +1,27 @@
+{
+ "clause": "ISA.VC.002",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "chunks",
+   "vlmax",
+   "isa.vlmax",
+   "m:vc.chunks",
+   "m:vc.vlmax"
+  ]
+ },
+ "expect": {
+  "chunks": 8,
+  "vlmax": 128,
+  "isa.vlmax": 128,
+  "m:vc.chunks": 8,
+  "m:vc.vlmax": 128
+ },
+ "mutants": [
+  "isa.vector/consts",
+  "isa.vector/isa_cfg"
+ ]
+}

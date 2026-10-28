@@ -1,0 +1,29 @@
+{
+ "clause": "DBG.HOST.004",
+ "tier": 0,
+ "runner": "l0.card.parse",
+ "status": "frozen",
+ "input": {
+  "stdout": "PKGF stray 0 outstanding 7829\nPKGT head 549 copy 15 bind 820 steps 10741399 barrier 2025680 local 0 total 57376 first 0 last 0 sent 0\n",
+  "cycles": 7
+ },
+ "expect": {
+  "cycles": 7,
+  "phases": {
+   "head": 549,
+   "copy": 15,
+   "bind": 820,
+   "steps": 10741399,
+   "barrier": 2025680,
+   "local": 0,
+   "total": 57376,
+   "first": 0,
+   "last": 0,
+   "sent": 0
+  },
+  "steps": []
+ },
+ "mutants": [
+  "l0.card/phases"
+ ]
+}

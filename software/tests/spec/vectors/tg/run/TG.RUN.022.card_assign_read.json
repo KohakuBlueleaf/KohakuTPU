@@ -1,0 +1,26 @@
+{
+ "clause": "TG.RUN.022",
+ "tier": 1,
+ "runner": "tg.values",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ]
+  },
+  "make": "assigned()",
+  "ref": "[G0, f(P0) - f(G0)]",
+  "source": "def conv(x, w, pad=0):\n    xp = np.pad(f(x), ((0, 0), (0, 0), (pad, pad), (pad, pad)))\n    p = sliding_window_view(xp, w.shape[2:], axis=(2, 3))\n    return np.einsum(\"bchwij,ocij->bohw\", p, f(w))\n\n\ndef softmax(a):\n    a = f(a)\n    e = np.exp(a - a.max(-1, keepdims=True))\n    return e / e.sum(-1, keepdims=True)\nG0 = (np.random.default_rng(3).standard_normal((32, 32))).astype(np.float16)\nP0 = X[:, :32].copy()\n\n\ndef assigned():\n    m = Tensor.zeros(32, 32, dtype=dtypes.half, device=\"KTPU\").contiguous().realize()\n    p = T(P0)\n    m2 = m.assign(m * 0.5 + T(G0))\n    p.assign(p.detach() - m2)\n    Tensor.realize(m, p)\n    return [m, p]\n",
+  "rtol": 0.001,
+  "atol": 0.002
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "api.mem/upload_dropped"
+ ]
+}

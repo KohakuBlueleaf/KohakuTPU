@@ -1,0 +1,64 @@
+{
+ "clause": "L2.BODY.008",
+ "tier": 0,
+ "runner": "l2.body",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 32] @dram(tile=2x8), y: f16[8, 32] @dram(tile=2x8))",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..1",
+   "            xl = load x                      : f16[8, 32] @l1(gt4)",
+   "            v = unpack xl                    : f32[8, 32] @reg(gt4)",
+   "            ol = pack v                      : f16[8, 32] @l1(gt4)",
+   "            store y <- ol"
+  ],
+  "want": [
+   "tree"
+  ]
+ },
+ "expect": {
+  "tree": [
+   {
+    "par": "c",
+    "span": "0..1",
+    "on": "vc[c]",
+    "body": [
+     {
+      "for": "t",
+      "span": "0..1",
+      "pipe": null,
+      "body": [
+       {
+        "op": "load",
+        "target": "xl",
+        "type": "f16[8, 32] @l1(gt4)"
+       },
+       {
+        "op": "unpack",
+        "target": "v",
+        "type": "f32[8, 32] @reg(gt4)"
+       },
+       {
+        "op": "pack",
+        "target": "ol",
+        "type": "f16[8, 32] @l1(gt4)"
+       },
+       {
+        "op": "store",
+        "target": null,
+        "type": null
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "mutants": [
+  "l2.body/type-mode-dropped"
+ ]
+}

@@ -1,0 +1,21 @@
+{
+ "clause": "L0.NQ.002",
+ "tier": 0,
+ "runner": "l0.card.layout",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {},
+ "expect": {
+  "queues": [
+   "0x8000000000",
+   "0x9000000000",
+   "0xa000000000",
+   "0xb000000000"
+  ],
+  "size": "0x100000",
+  "rings": 64
+ },
+ "mutants": [
+  "l0.queue/region_size"
+ ]
+}

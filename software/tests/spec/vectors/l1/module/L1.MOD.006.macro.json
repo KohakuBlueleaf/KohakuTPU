@@ -1,0 +1,16 @@
+{
+  "clause": "L1.MOD.006",
+  "tier": 0,
+  "runner": "l1.module",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nmacro unpk(i, j)\n    vbar\n    vbar\n"
+  },
+  "expect": {
+    "target": "ktpu.v9",
+    "fns": [],
+    "images": [],
+    "macros": [["unpk", ["i", "j"], 2]]
+  },
+  "mutants": ["l1.module/no-params"]
+}

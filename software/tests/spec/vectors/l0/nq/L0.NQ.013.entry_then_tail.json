@@ -1,0 +1,81 @@
+{
+ "clause": "L0.NQ.013",
+ "tier": 0,
+ "runner": "l0.queue",
+ "status": "frozen",
+ "input": {
+  "geometry": {
+   "sq_n": 64,
+   "cq_n": 64,
+   "so_bytes": 4096,
+   "si_bytes": 256
+  },
+  "script": [
+   {
+    "do": "init"
+   },
+   {
+    "do": "log"
+   },
+   {
+    "do": "submit",
+    "length": 64
+   },
+   {
+    "do": "words",
+    "at": "0x440",
+    "n": 8
+   },
+   {
+    "do": "log"
+   }
+  ]
+ },
+ "expect": [
+  null,
+  [
+   [
+    "w",
+    "0x0",
+    1088
+   ]
+  ],
+  1,
+  [
+   "0x1",
+   "0x1",
+   "0x800000d000",
+   "0x40",
+   "0x0",
+   "0x0",
+   "0x0",
+   "0x0"
+  ],
+  [
+   [
+    "r",
+    "0xc0",
+    8
+   ],
+   [
+    "w",
+    "0xd000",
+    64
+   ],
+   [
+    "w",
+    "0x440",
+    64
+   ],
+   [
+    "w",
+    "0x80",
+    64
+   ]
+  ]
+ ],
+ "mutants": [
+  "l0.queue/sq_tail",
+  "l0.queue/sq_base"
+ ]
+}

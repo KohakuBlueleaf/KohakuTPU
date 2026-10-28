@@ -1,0 +1,17 @@
+{
+  "clause": "L1.IMG.008",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9 vregs=128\nimage k()\n    vmov v100, v1\n    vmul v127, v126, v32\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": [
+    "CHKVL vl1=127 d_stride=1 c_stride=1 b_stride=1 a_stride=1",
+    "vmov vd=4 va=1 hi=0xc0",
+    "vmul vd=31 va=30 hi=0xf4",
+    "VHALT"
+  ]},
+  "mutants": ["l1.img/regs32"]
+}

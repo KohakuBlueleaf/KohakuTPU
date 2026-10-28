@@ -1,0 +1,14 @@
+{
+  "clause": "L1.TXT.004",
+  "tier": 0,
+  "runner": "l1.parse",
+  "status": "frozen",
+  "input": {
+    "text": "# only a comment\na 1  # trailing\n    # an indented comment line\nb\n"
+  },
+  "expect": [
+    {"op": "a", "args": [["Int", 1, "dec"]]},
+    {"op": "b", "args": []}
+  ],
+  "mutants": ["l1.text/no-comment"]
+}

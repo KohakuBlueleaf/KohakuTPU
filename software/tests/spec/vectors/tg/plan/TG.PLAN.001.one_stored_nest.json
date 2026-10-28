@@ -1,0 +1,36 @@
+{
+ "clause": "TG.PLAN.001",
+ "tier": 0,
+ "runner": "tg.plan",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "Y": [
+    32,
+    64
+   ]
+  },
+  "make": "T(X) + T(Y)",
+  "keys": [
+   "kind",
+   "shape"
+  ]
+ },
+ "expect": [
+  {
+   "kind": "vector",
+   "shape": [
+    32,
+    64
+   ]
+  }
+ ],
+ "mutants": [
+  "tg.lower/envelope"
+ ]
+}

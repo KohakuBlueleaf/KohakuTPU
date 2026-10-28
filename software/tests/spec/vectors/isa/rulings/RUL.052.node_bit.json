@@ -1,0 +1,30 @@
+{
+ "clause": "RUL.052",
+ "tier": 0,
+ "runner": "isa.verify",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image k(x)\n    desc a0 = x walk=(32, 4)\n    word 0xf00aa000\n    halt\n\nfn k.l1(x: f16[256] @dram)\n    send vc[0]\n        run k(x)\n    barrier\n",
+  "fn": "k",
+  "binds": {
+   "x": 1048576
+  },
+  "l1": true
+ },
+ "expect": {
+  "findings": [],
+  "l1": {
+   "vc0": {
+    "read": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "written": []
+   }
+  }
+ },
+ "mutants": ["rul.052/dst-is-peer"]
+}

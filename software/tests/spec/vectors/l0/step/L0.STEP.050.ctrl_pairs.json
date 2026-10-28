@@ -1,0 +1,57 @@
+{
+ "clause": "L0.STEP.050",
+ "tier": 0,
+ "runner": "l0.pkg.build",
+ "status": "frozen",
+ "input": {
+  "builder": {
+   "types": [
+    [
+     1,
+     1,
+     "MG"
+    ]
+   ],
+   "credit": 512
+  },
+  "calls": [
+   [
+    "ctrl",
+    [
+     [
+      "0x1d0",
+      1
+     ]
+    ]
+   ]
+  ],
+  "keys": [
+   "package"
+  ]
+ },
+ "expect": {
+  "package": {
+   "units": [],
+   "buffers": [],
+   "steps": [
+    {
+     "op": "CTRL",
+     "unit": 0,
+     "count": 1,
+     "arg": "0x0",
+     "flags": 0
+    }
+   ],
+   "relocs": [],
+   "payloads": [
+    "0xffffffffffffffff000000000000000100000000000001d0"
+   ],
+   "signature": "0x0",
+   "ack_reserve": 0,
+   "checksum": false
+  }
+ },
+ "mutants": [
+  "l0.build/pairs_unpadded"
+ ]
+}

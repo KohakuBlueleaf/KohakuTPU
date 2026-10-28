@@ -1,0 +1,36 @@
+{
+ "clause": "DSL.VAL.005",
+ "tier": 0,
+ "runner": "dsl.trace",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(8, 64), m=kt.Out(8)):\n    for c in kt.par(1, on=kt.vc):\n        for t in kt.range(1):\n            h = kt.load(x[0:8, :], gt4=True)\n            v = kt.unpack(h[4:8, :])\n            kt.store(m[0:4], kt.rsum(v[:, 32:64]))\n",
+  "given": {
+   "x": [
+    [
+     8,
+     64
+    ],
+    "f16"
+   ]
+  }
+ },
+ "expect": {
+  "body": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 64] @dram, m: f16[8] @dram)",
+   "    par c1 in 0..1 on vc[c1]",
+   "        for t1 in 0..1",
+   "            xl1 = load x[0 : +8] : f16[8, 64] @l1(gt4)",
+   "            v1 = unpack xl1[4 : +4, :] : f32[4, 64] @reg(gt4)",
+   "            s1 = rsum v1[:, 32:64] : f32[4] @reg",
+   "            p1 = pack s1 : f16[4] @l1",
+   "            store m[0 : +4] <- p1"
+  ]
+ },
+ "mutants": [
+  "dsl.values/value_text"
+ ]
+}

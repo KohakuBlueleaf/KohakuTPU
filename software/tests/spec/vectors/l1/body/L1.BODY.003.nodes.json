@@ -1,0 +1,19 @@
+{
+  "clause": "L1.BODY.003",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[4] @dram)\n    node 0\n        store a <- 1\n    node 1\n        store a <- 2\n        t = mark mg[1]\n",
+    "fn": "f",
+    "binds": {"a": 4096},
+    "nodes": 2,
+    "mesh": true
+  },
+  "expect": {
+    "0": {"steps": [["store", [[4096, 1]], false]], "mesh": 0},
+    "1": {"steps": [["store", [[4096, 2]], false], ["mark", [1, 2], 0]], "mesh": 1}
+  },
+  "mutants": ["l1.body/one-mesh"]
+}

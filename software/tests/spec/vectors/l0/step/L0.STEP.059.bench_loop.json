@@ -1,0 +1,19 @@
+{
+ "clause": "L0.STEP.059",
+ "tier": 2,
+ "runner": "l0.bench",
+ "status": "frozen",
+ "input": {
+  "test": "test_l1_examples.py::test_loop_runs_a_count_from_memory",
+  "args": {
+   "n": 3
+  }
+ },
+ "expect": {
+  "outcome": "passed"
+ },
+ "mutants": [
+  "l0.pkg/version",
+  "l0.bind/clobber"
+ ]
+}

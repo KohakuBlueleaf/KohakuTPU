@@ -1,0 +1,25 @@
+{
+ "clause": "API.FORM.012",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "Q": [
+    2,
+    32,
+    64
+   ]
+  },
+  "source": "def facts():\n    s = CALL.upload(DEV, Q)\n    f16 = FM.for_port(DEV, s, np.float16, (2, 32, 64), kt.TensorSpec.make((2, 32, 64))) == s.addr\n    spec = kt.TensorSpec.make((64, 64), \"mx7a\", {\"gm\": 16, \"nk\": 1})\n    FM.for_port(DEV, s, np.float16, (2, 32, 64), spec)\n    key = next(k for k in s.valid if k[0] == \"mx7\")\n    s.free()\n    return {\"f16\": f16, \"rows\": key[3], \"cols\": key[4]}\n"
+ },
+ "expect": {
+  "f16": true,
+  "rows": 64,
+  "cols": 64
+ },
+ "mutants": [
+  "api.forms/f16_copy"
+ ]
+}

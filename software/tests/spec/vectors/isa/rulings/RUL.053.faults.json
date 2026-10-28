@@ -1,0 +1,36 @@
+{
+ "clause": "RUL.053",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "faults",
+   "m:vc.faults"
+  ]
+ },
+ "expect": {
+  "faults": [
+   5,
+   6,
+   7,
+   9,
+   10,
+   11,
+   12,
+   13
+  ],
+  "m:vc.faults": [
+   5,
+   6,
+   7,
+   9,
+   10,
+   11,
+   12,
+   13
+  ]
+ },
+ "mutants": ["rul.053/fault-dropped"]
+}

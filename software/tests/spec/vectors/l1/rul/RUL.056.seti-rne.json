@@ -1,0 +1,12 @@
+{
+  "clause": "RUL.056",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    seti s0 = 1.00002288818359375\n    seti s1 = 1e39\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": ["VSETI", "imm=0x3f8001", "VSETI sreg=1", "imm=0x7f8000", "VHALT"]},
+  "mutants": ["l1.img/e8m15"]
+}

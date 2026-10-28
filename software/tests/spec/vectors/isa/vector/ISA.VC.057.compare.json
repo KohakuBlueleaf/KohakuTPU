@@ -1,0 +1,26 @@
+{
+ "clause": "ISA.VC.057",
+ "tier": 0,
+ "runner": "isa.vector.image",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image k()\n    vcmpgt p1, v1, v2\n    halt\n",
+  "name": "k",
+  "args": [],
+  "entry": "reset"
+ },
+ "expect": {
+  "words": [
+   "0x98802000",
+   "0x60022001",
+   "0xf8000000"
+  ],
+  "descs": {}
+ },
+ "mutants": [
+  "isa.vector/compare",
+  "isa.vector/opcodes",
+  "isa.vector/cfg_fields"
+ ]
+}

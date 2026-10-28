@@ -1,0 +1,19 @@
+{
+ "clause": "DSL.VIEW.006",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    p = VA.Param(\"x\", TY.TensorSpec.make((8, 32)))\n    return [p[:, :].text(), p[2:6, :].text(), p[:, 0:16].text(), p[2:6, 0:16].text()]\n"
+ },
+ "expect": [
+  "x",
+  "x[2 : +4]",
+  "x[:, 0 : +16]",
+  "x[2 : +4, 0 : +16]"
+ ],
+ "mutants": [
+  "dsl.values/view_text"
+ ]
+}

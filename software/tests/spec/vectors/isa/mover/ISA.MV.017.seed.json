@@ -1,0 +1,68 @@
+{
+ "clause": "ISA.MV.017",
+ "tier": 0,
+ "runner": "isa.mover.move",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "fn": "generate",
+  "args": [
+   {
+    "base": 24576,
+    "dims": [
+     [
+      8,
+      32
+     ]
+    ],
+    "windows": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      0
+     ]
+    ]
+   },
+   1311768467463790320
+  ]
+ },
+ "expect": {
+  "writes": [
+   [
+    "0x10",
+    "0x100000060001"
+   ],
+   [
+    "0x18",
+    "0x2000081"
+   ],
+   [
+    "0x20",
+    "0x0"
+   ],
+   [
+    "0x28",
+    "0x1"
+   ],
+   [
+    "0x28",
+    "0x3"
+   ],
+   [
+    "0x38",
+    "0x123456789abcdef0"
+   ],
+   [
+    "0x0",
+    "0x10813"
+   ]
+  ]
+ },
+ "mutants": [
+  "isa.mover/regs",
+  "isa.mover/fields"
+ ]
+}

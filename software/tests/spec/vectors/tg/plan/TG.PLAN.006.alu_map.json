@@ -1,0 +1,38 @@
+{
+ "clause": "TG.PLAN.006",
+ "tier": 0,
+ "runner": "tg.plan",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "Y": [
+    32,
+    64
+   ]
+  },
+  "make": "[(XA * YA + 1.0).exp2().log2().reciprocal(), XA.rsqrt(), (XA > YA).where(XA, YA)]",
+  "keys": [
+   "expr"
+  ],
+  "source": "XA, YA = T(X), T(Y)\n"
+ },
+ "expect": [
+  {
+   "expr": "recip(log2(exp2(add(mul(L0, L1), 1.0))))"
+  },
+  {
+   "expr": "rsqrt(L0)"
+  },
+  {
+   "expr": "where(cmplt(L0, L1), L1, L0)"
+  }
+ ],
+ "mutants": [
+  "tg.lower/alu_renamed"
+ ]
+}

@@ -1,0 +1,35 @@
+{
+ "clause": "L2.SPACE.010",
+ "tier": 0,
+ "runner": "l2.body",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(z: f32[8, 16] @dram)",
+   "    copy z <- z"
+  ],
+  "want": [
+   "params"
+  ]
+ },
+ "expect": {
+  "params": [
+   [
+    "z",
+    "f32",
+    [
+     8,
+     16
+    ],
+    "dram",
+    {}
+   ]
+  ]
+ },
+ "mutants": [
+  "l2.buffer/no-f32"
+ ]
+}

@@ -1,0 +1,9 @@
+{
+ "clause": "API.REF.007", "tier": 1, "runner": "api.exec", "machine": "vlt_v9t6s_1n", "status": "frozen",
+ "input": {
+  "tol_reason": "Attention uses normalized max absolute error 0.03, as frozen L2.MG.005.attention_card: MXFP7 matmul operands; 0.02 belongs to softmax-only vectors.",
+  "arrays": {"q": [1, 197, 64], "k": [1, 197, 64], "vt": [1, 64, 197]},
+  "source": "from kohakutpu.application.api.attention import attention\n\ndef facts():\n    s = (q.astype(np.float32) @ k.astype(np.float32).swapaxes(-1, -2)) * np.float32(0.125)\n    e = np.exp(s-s.max(-1, keepdims=True))\n    want = (e/e.sum(-1, keepdims=True)) @ vt.astype(np.float32).swapaxes(-1, -2)\n    got = attention(kp.tensor(q), kp.tensor(k), kp.tensor(vt), precise_scores=True).numpy().astype(np.float32)\n    rel = float(np.abs(got-want).max()/np.abs(want).max())\n    print('DSL attention relative error', rel)\n    return {'ok': bool(np.isfinite(got).all() and rel < 0.03)}\n"
+ },
+ "expect": {"ok": true}, "mutants": ["api.attention/no-key-mask"]
+}

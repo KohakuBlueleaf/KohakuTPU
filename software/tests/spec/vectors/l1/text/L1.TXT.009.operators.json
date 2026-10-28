@@ -1,0 +1,21 @@
+{
+  "clause": "L1.TXT.009",
+  "tier": 0,
+  "runner": "l1.parse",
+  "status": "frozen",
+  "input": {
+    "text": "t a -b\nt c + 1\nt d * 2 - e / f % 3\nt -x, +y, !p\nt f16 @dram\n"
+  },
+  "expect": [
+    {"op": "t", "args": [["BinOp", "-", ["Name", "a"], ["Name", "b"]]]},
+    {"op": "t", "args": [["Offset", ["Name", "c"], ["Int", 1, "dec"]]]},
+    {"op": "t", "args": [
+      ["BinOp", "-",
+        ["BinOp", "*", ["Name", "d"], ["Int", 2, "dec"]],
+        ["BinOp", "%", ["BinOp", "/", ["Name", "e"], ["Name", "f"]], ["Int", 3, "dec"]]]
+    ]},
+    {"op": "t", "args": [["Neg", ["Name", "x"]], ["Pos", ["Name", "y"]], ["Not", ["Name", "p"]]], "commas": true},
+    {"op": "t", "args": [["Placed", ["Name", "f16"], ["Name", "dram"]]]}
+  ],
+  "mutants": ["l1.text/plus-binop"]
+}

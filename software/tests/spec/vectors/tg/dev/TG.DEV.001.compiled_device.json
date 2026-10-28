@@ -1,0 +1,22 @@
+{
+ "clause": "TG.DEV.001",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "from tinygrad.device import Compiled\n\n\ndef facts():\n    d = KD.KTPUDevice()\n    return {\n        \"compiled\": isinstance(d, Compiled),\n        \"allocator\": type(d.allocator).__name__,\n        \"renderer\": type(d.renderer).__name__,\n        \"runtime\": d.runtime_t.__name__,\n        \"graph\": d.graph.__name__,\n        \"rt\": d.rt is DEV,\n        \"sync\": d.synchronize() is None,\n    }\n"
+ },
+ "expect": {
+  "compiled": true,
+  "allocator": "KTPUAllocator",
+  "renderer": "KTPURenderer",
+  "runtime": "KTPUProgram",
+  "graph": "KTPUGraph",
+  "rt": true,
+  "sync": true
+ },
+ "mutants": [
+  "tg.device/allocator"
+ ]
+}

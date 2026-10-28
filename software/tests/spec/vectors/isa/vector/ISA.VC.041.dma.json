@@ -1,0 +1,52 @@
+{
+ "clause": "ISA.VC.041",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "vfill",
+    "args": [
+     5,
+     10940,
+     true
+    ]
+   },
+   {
+    "fn": "vdrain",
+    "args": [
+     3,
+     341,
+     true
+    ],
+    "kw": {
+     "node": [
+      9,
+      3
+     ],
+     "buf_id": 11,
+     "signal": true
+    }
+   },
+   {
+    "fn": "vdrain",
+    "args": [
+     2,
+     300
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0xeca02abc",
+   "0xf7727755",
+   "0xf040012c"
+  ]
+ },
+ "mutants": [
+  "isa.vector/dma_fields"
+ ]
+}

@@ -1,0 +1,28 @@
+{
+ "clause": "ISA.VC.010",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "m:vc.dualq",
+   "kind"
+  ]
+ },
+ "expect": {
+  "m:vc.dualq": 0,
+  "kind": {
+   "0": "F",
+   "1": "U",
+   "2": "M",
+   "3": "P",
+   "4": "D",
+   "5": "U",
+   "6": "P"
+  }
+ },
+ "mutants": [
+  "isa.vector/model_queues"
+ ]
+}

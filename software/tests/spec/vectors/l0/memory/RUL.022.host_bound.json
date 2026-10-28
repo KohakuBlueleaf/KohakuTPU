@@ -1,0 +1,6 @@
+{
+ "clause": "RUL.022", "tier": 0, "runner": "l0.pkg.bind", "status": "frozen",
+ "input": {"package": {"buffers": [{"name": "x", "size": 32}], "payloads": [0], "relocs": [{"payload": 0, "bit": 0, "width": 40, "buffer": 0, "addend": 0}]}, "bindings": [2048]},
+ "expect": {"payloads": ["0x800"], "relocs": 0, "buffers": 0, "units_same": true, "steps_same": true, "signature": "0x0", "ack_reserve": 0, "checksum": false},
+ "mutants": ["l0.bind/keeps_relocs"]
+}

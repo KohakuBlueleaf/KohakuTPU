@@ -1,0 +1,26 @@
+{
+  "clause": "L1.BODY.006",
+  "tier": 0,
+  "runner": "l1.build",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: f16[32] @dram, b: f16[32] @dram)\n    move\n        copy w(a, (2, 32)) -> w(b, (2, 32))\n",
+    "fn": "f",
+    "binds": {"a": 4096, "b": 8192},
+    "relocate": true
+  },
+  "expect": {"-": {
+    "steps": [
+      ["MOVER", [
+        "HDR ndim=1", "DIM count=2 stride=32", "AXIS", "WIN", "WIN axis=1",
+        "HDR sel=1 ndim=1", "DIM sel=1 count=2 stride=32", "AXIS", "WIN sel=1", "WIN sel=1 axis=1",
+        "CTRL ew=2 flags=0x8 go=1"
+      ], 0],
+      ["BARRIER"]
+    ],
+    "relocs": [[0, 68, 40, 0, 0, 0], [2, 196, 40, 1, 0, 0]],
+    "bindings": ["0x1000", "0x2000"]
+  }},
+  "mutants": ["l1.body/nbytes", "l1.lower/no-spans"]
+}

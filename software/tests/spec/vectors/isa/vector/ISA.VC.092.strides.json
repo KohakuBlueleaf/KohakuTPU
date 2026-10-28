@@ -1,0 +1,36 @@
+{
+ "clause": "ISA.VC.092",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "cfg_stride",
+    "args": [
+     4,
+     8,
+     1
+    ]
+   },
+   {
+    "fn": "cfg_stride",
+    "args": [
+     7,
+     2,
+     300
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0x9a000208",
+   "0x9b825802"
+  ]
+ },
+ "mutants": [
+  "isa.vector/cfg_fields"
+ ]
+}

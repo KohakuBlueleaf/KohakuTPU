@@ -1,0 +1,32 @@
+{
+ "clause": "API.CALL.004",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "XS": [
+    16,
+    128
+   ]
+  },
+  "source": "from kohakutpu.language.examples.dsl.vector.softmax import softmax\n\n\ndef facts():\n    used = DEV.dram.used\n    outs, run = CALL.call(DEV, softmax, {\"x\": XS})\n    return {\n        \"outs\": {n: [list(a.shape), str(a.dtype)] for n, a in outs.items()},\n        \"kind\": run.kind,\n        \"freed\": DEV.dram.used == used,\n    }\n"
+ },
+ "expect": {
+  "outs": {
+   "y": [
+    [
+     16,
+     128
+    ],
+    "float16"
+   ]
+  },
+  "kind": "call",
+  "freed": true
+ },
+ "mutants": [
+  "api.mem/leak"
+ ]
+}

@@ -1,0 +1,91 @@
+{
+ "clause": "RUL.046",
+ "tier": 0,
+ "runner": "l0.pkg.lower",
+ "status": "frozen",
+ "input": {
+  "package": {
+   "steps": [
+    {
+     "op": "RING",
+     "unit": 1,
+     "count": 0,
+     "arg": 65537
+    },
+    {
+     "op": "RING",
+     "unit": 1,
+     "count": 0,
+     "arg": 65537
+    },
+    {
+     "op": "RING",
+     "unit": 1,
+     "count": 0,
+     "arg": 65537
+    },
+    {
+     "op": "RING",
+     "unit": 1,
+     "count": 0,
+     "arg": 65537
+    },
+    {
+     "op": "RING",
+     "unit": 1,
+     "count": 0,
+     "arg": 65537
+    }
+   ]
+  }
+ },
+ "expect": {
+  "steps": [
+   {
+    "op": "RING",
+    "unit": 1,
+    "count": 0,
+    "arg": "0x10001",
+    "flags": 0
+   },
+   {
+    "op": "RING",
+    "unit": 1,
+    "count": 0,
+    "arg": "0x10001",
+    "flags": 0
+   },
+   {
+    "op": "RING",
+    "unit": 1,
+    "count": 0,
+    "arg": "0x10001",
+    "flags": 0
+   },
+   {
+    "op": "RING",
+    "unit": 1,
+    "count": 0,
+    "arg": "0x10001",
+    "flags": 0
+   },
+   {
+    "op": "RING",
+    "unit": 1,
+    "count": 0,
+    "arg": "0x10001",
+    "flags": 0
+   }
+  ],
+  "kept": true,
+  "units": [],
+  "buffers": 0,
+  "relocs": 0,
+  "signature": "0x0",
+  "ack_reserve": 0,
+  "checksum": false
+ },
+ "mutants": [
+  "l0.lower/rings_in_engine"
+ ]
+}

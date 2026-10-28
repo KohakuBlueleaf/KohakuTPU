@@ -1,0 +1,32 @@
+{
+ "clause": "L2.PASS.009",
+ "tier": 0,
+ "runner": "l2.retile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[64, 128] @dram, y: f16[64, 128] @dram)",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..8",
+   "            xl = load x[t*4 : +4, :]         : f16[4, 128] @l1",
+   "            e = unpack xl                    : f32[4, 128] @reg",
+   "            e = exp2 e                       : f32[4, 128] @reg",
+   "            e = exp2 e                       : f32[4, 128] @reg",
+   "            e = exp2 e                       : f32[4, 128] @reg",
+   "            ol = pack e                      : f16[4, 128] @l1",
+   "            store y[t*4 : +4, :] <- ol"
+  ],
+  "written": 4
+ },
+ "expect": {
+  "rows": 32,
+  "one_tile": true,
+  "allowed": true
+ },
+ "mutants": [
+  "l2.passes/retile-bounds-unscaled"
+ ]
+}

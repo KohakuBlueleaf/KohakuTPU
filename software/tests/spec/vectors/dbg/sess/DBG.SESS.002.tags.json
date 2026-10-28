@@ -1,0 +1,22 @@
+{
+ "clause": "DBG.SESS.002",
+ "tier": 1,
+ "runner": "dbg.tags",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "runs": 3
+ },
+ "expect": {
+  "one_package_each": [
+   1,
+   1,
+   1
+  ],
+  "tags_match": true,
+  "distinct": true
+ },
+ "mutants": [
+  "l0.queue/no_tags"
+ ]
+}

@@ -1,0 +1,53 @@
+{
+ "clause": "RUL.039",
+ "tier": 0,
+ "runner": "l0.pkg.bind",
+ "status": "frozen",
+ "input": {
+  "package": {
+   "units": [
+    {
+     "type": "MG",
+     "x": 1,
+     "y": 1,
+     "credit": 512,
+     "fetch": "0x10200"
+    }
+   ],
+   "buffers": [
+    {
+     "name": "a",
+     "size": 64,
+     "default": "0x1000"
+    }
+   ],
+   "steps": [
+    {
+     "op": "DISPATCH",
+     "unit": 0,
+     "count": 1,
+     "arg": 0
+    }
+   ],
+   "relocs": [
+    {
+     "payload": 0,
+     "bit": 0,
+     "width": 8,
+     "buffer": 0,
+     "addend": 0
+    }
+   ],
+   "payloads": [
+    "0x0"
+   ]
+  },
+  "bindings": [
+   "0x8000"
+  ]
+ },
+ "expect": {
+  "refused": "PackageError"
+ },
+ "mutants": ["l0.bind/unchecked"]
+}

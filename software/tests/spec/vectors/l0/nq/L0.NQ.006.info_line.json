@@ -1,0 +1,36 @@
+{
+ "clause": "L0.NQ.006",
+ "tier": 0,
+ "runner": "l0.queue",
+ "status": "frozen",
+ "input": {
+  "geometry": {
+   "sq_n": 64,
+   "cq_n": 64,
+   "so_bytes": 4096,
+   "si_bytes": 256
+  },
+  "script": [
+   {
+    "do": "init"
+   },
+   {
+    "do": "words",
+    "at": 0,
+    "n": 4
+   }
+  ]
+ },
+ "expect": [
+  null,
+  [
+   "0x314555455551414b",
+   "0x4",
+   "0x400040",
+   "0x10000001000"
+  ]
+ ],
+ "mutants": [
+  "l0.queue/magic"
+ ]
+}

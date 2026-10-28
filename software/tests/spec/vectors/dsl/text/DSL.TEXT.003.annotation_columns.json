@@ -1,0 +1,28 @@
+{
+ "clause": "DSL.TEXT.003",
+ "tier": 0,
+ "runner": "dsl.trace",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(8, 32), y=kt.Out(8, 32)):\n    for c in kt.par(2, on=kt.vc):\n        for t in kt.range(1):\n            r = c * 4 + t * 4\n            v = kt.load(x[r : r + 4, 0:32])\n            kt.store(y[r : r + 4, 0:32], v * 2.0)\n",
+  "given": {
+   "x": [
+    [
+     8,
+     32
+    ],
+    "f16"
+   ]
+  },
+  "facts": [
+   "text"
+  ]
+ },
+ "expect": {
+  "text": "target ktpu.v9\n\nfn k.l2(x: f16[8, 32] @dram, y: f16[8, 32] @dram)\n    par c1 in 0..2 on vc[c1]\n        for t1 in 0..1\n            xl1 = load x[c1*4 + t1*4 : +4, 0 : +32]  : f16[4, 32] @l1\n            v1 = unpack xl1                     : f32[4, 32] @reg\n            e1 = mul v1, 2.0                    : f32[4, 32] @reg\n            p1 = pack e1                        : f16[4, 32] @l1\n            store y[c1*4 + t1*4 : +4, 0 : +32] <- p1\n"
+ },
+ "mutants": [
+  "dsl.trace/annot_col"
+ ]
+}

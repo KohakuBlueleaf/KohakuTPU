@@ -1,0 +1,58 @@
+{
+ "clause": "ISA.SR.021",
+ "tier": 0,
+ "runner": "isa.sru.map",
+ "machine": "sru_v9t7",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "P.NOPS",
+   "P.OPBASE",
+   "P.R2EN",
+   "P.EMIT",
+   "P.FINLEN",
+   "P.FINBASE",
+   "PASS_BASE",
+   "PASS_STRIDE",
+   "NPASS"
+  ]
+ },
+ "expect": {
+  "P.NOPS": [
+   0,
+   0,
+   4
+  ],
+  "P.OPBASE": [
+   0,
+   4,
+   4
+  ],
+  "P.R2EN": [
+   0,
+   8,
+   1
+  ],
+  "P.EMIT": [
+   0,
+   9,
+   1
+  ],
+  "P.FINLEN": [
+   0,
+   10,
+   4
+  ],
+  "P.FINBASE": [
+   0,
+   14,
+   4
+  ],
+  "PASS_BASE": 16,
+  "PASS_STRIDE": 2,
+  "NPASS": 4
+ },
+ "mutants": [
+  "isa.sru/map"
+ ]
+}

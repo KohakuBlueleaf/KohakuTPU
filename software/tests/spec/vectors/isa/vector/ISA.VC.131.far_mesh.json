@@ -1,0 +1,29 @@
+{
+ "clause": "ISA.VC.131",
+ "tier": 0,
+ "runner": "isa.vector.image",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image k()\n    desc a1 = peer(16, mesh=2, fin=(2, 1)) walk=(32, 4)\n    halt\n",
+  "name": "k",
+  "args": [],
+  "entry": "unknown"
+ },
+ "expect": {
+  "words": [
+   "0xf8000000"
+  ],
+  "descs": {
+   "1,0": "0x4a000010",
+   "1,1": "0x200004",
+   "1,2": "0x0",
+   "1,3": "0x0",
+   "1,4": "0x0"
+  }
+ },
+ "mutants": [
+  "isa.vector/dim",
+  "isa.vector/desc_dims"
+ ]
+}

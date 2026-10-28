@@ -1,0 +1,37 @@
+{
+ "clause": "API.FORM.001",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    s = ST.Storage(DEV, 64)\n    new = form_keys(s)\n    s.host = bytes(64)\n    s.made(FM.F16)\n    made = form_keys(s)\n    s.wrote(FM.rows_key(16, 32))\n    wrote = form_keys(s)\n    host = s.host\n    s.free()\n    return {\"new\": new, \"made\": made, \"wrote\": wrote, \"host\": host}\n"
+ },
+ "expect": {
+  "new": [
+   [
+    "flat"
+   ]
+  ],
+  "made": [
+   [
+    "f16"
+   ],
+   [
+    "flat"
+   ]
+  ],
+  "wrote": [
+   [
+    "rows",
+    16,
+    32
+   ]
+  ],
+  "host": null
+ },
+ "mutants": [
+  "api.forms/wrote_keeps",
+  "api.forms/made_drop"
+ ]
+}

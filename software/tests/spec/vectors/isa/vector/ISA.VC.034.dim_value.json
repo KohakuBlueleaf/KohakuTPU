@@ -1,0 +1,20 @@
+{
+ "clause": "ISA.VC.034",
+ "tier": 0,
+ "runner": "isa.vector.cu",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "fn": "dim",
+  "args": [
+   -131072,
+   65535
+  ]
+ },
+ "expect": {
+  "payload": "0x20000ffff"
+ },
+ "mutants": [
+  "isa.vector/dim"
+ ]
+}

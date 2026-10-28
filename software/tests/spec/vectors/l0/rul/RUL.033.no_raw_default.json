@@ -1,0 +1,17 @@
+{
+ "clause": "RUL.033",
+ "tier": 0,
+ "runner": "l0.boot",
+ "status": "frozen",
+ "input": {
+  "args": {
+   "queue": "0x8000000000"
+  }
+ },
+ "expect": {
+  "refused": "TypeError"
+ },
+ "mutants": [
+  "l0.boot/raw_default"
+ ]
+}

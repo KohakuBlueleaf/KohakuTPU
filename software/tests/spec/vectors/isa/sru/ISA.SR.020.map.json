@@ -1,0 +1,130 @@
+{
+ "clause": "ISA.SR.020",
+ "tier": 0,
+ "runner": "isa.sru.map",
+ "machine": "sru_v9t7",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "G.NW",
+   "G.NPASS",
+   "G.BUF",
+   "G.USE_B",
+   "G.OUT",
+   "G.MASK",
+   "G.R1",
+   "G.NSR",
+   "G.ROW0",
+   "G.COL0",
+   "G.DHI",
+   "G.CLIM",
+   "G.MVAL",
+   "G.COLOFF",
+   "G.ROWOFF",
+   "G.K0",
+   "G.K1",
+   "G.K2",
+   "G.K3"
+  ]
+ },
+ "expect": {
+  "G.NW": [
+   0,
+   0,
+   12
+  ],
+  "G.NPASS": [
+   0,
+   12,
+   2
+  ],
+  "G.BUF": [
+   0,
+   14,
+   1
+  ],
+  "G.USE_B": [
+   0,
+   15,
+   1
+  ],
+  "G.OUT": [
+   0,
+   16,
+   2
+  ],
+  "G.MASK": [
+   0,
+   18,
+   1
+  ],
+  "G.R1": [
+   0,
+   19,
+   1
+  ],
+  "G.NSR": [
+   1,
+   0,
+   16
+  ],
+  "G.ROW0": [
+   1,
+   16,
+   9
+  ],
+  "G.COL0": [
+   2,
+   0,
+   9
+  ],
+  "G.DHI": [
+   2,
+   16,
+   16
+  ],
+  "G.CLIM": [
+   3,
+   0,
+   16
+  ],
+  "G.MVAL": [
+   4,
+   0,
+   24
+  ],
+  "G.COLOFF": [
+   5,
+   0,
+   16
+  ],
+  "G.ROWOFF": [
+   5,
+   16,
+   16
+  ],
+  "G.K0": [
+   8,
+   0,
+   24
+  ],
+  "G.K1": [
+   9,
+   0,
+   24
+  ],
+  "G.K2": [
+   10,
+   0,
+   24
+  ],
+  "G.K3": [
+   11,
+   0,
+   24
+  ]
+ },
+ "mutants": [
+  "isa.sru/map"
+ ]
+}

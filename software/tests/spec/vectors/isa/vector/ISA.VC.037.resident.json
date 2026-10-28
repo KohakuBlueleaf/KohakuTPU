@@ -1,0 +1,70 @@
+{
+ "clause": "ISA.VC.037",
+ "tier": 0,
+ "runner": "isa.vector.resident",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "text": "image a(x)\n    desc a0 = x walk=(32, 4)\n    halt\n\nfn k.l1(x: f16[256] @dram)\n    send vc[0]\n        run a(x)\n    barrier\n",
+    "fn": "k",
+    "binds": {
+     "x": 1048576
+    }
+   },
+   {
+    "text": "image a(x)\n    desc a0 = x walk=(32, 4)\n    halt\n\nfn k.l1(x: f16[256] @dram)\n    send vc[0]\n        run a(x)\n    barrier\n",
+    "fn": "k",
+    "binds": {
+     "x": 1048576
+    }
+   },
+   {
+    "text": "image b()\n    vbar\n    halt\n\nfn k.l1()\n    send vc[0]\n        run b()\n    barrier\n",
+    "fn": "k",
+    "binds": {}
+   },
+   {
+    "text": "image a(x)\n    desc a0 = x walk=(32, 4)\n    halt\n\nfn k.l1(x: f16[256] @dram)\n    send vc[0]\n        run a(x)\n    barrier\n",
+    "fn": "k",
+    "binds": {
+     "x": 2097152
+    }
+   }
+  ]
+ },
+ "expect": [
+  {
+   "imem": 1,
+   "desc": 5,
+   "run_pc": [
+    0
+   ]
+  },
+  {
+   "imem": 0,
+   "desc": 0,
+   "run_pc": [
+    0
+   ]
+  },
+  {
+   "imem": 2,
+   "desc": 0,
+   "run_pc": [
+    1
+   ]
+  },
+  {
+   "imem": 0,
+   "desc": 1,
+   "run_pc": [
+    0
+   ]
+  }
+ ],
+ "mutants": [
+  "isa.vector/resident"
+ ]
+}

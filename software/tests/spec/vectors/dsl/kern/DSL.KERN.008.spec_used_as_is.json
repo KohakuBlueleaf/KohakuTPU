@@ -1,0 +1,16 @@
+{
+ "clause": "DSL.KERN.008",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    s = TY.TensorSpec.make((4, 32))\n    return {\"same\": KM._spec_of(s) is s}\n"
+ },
+ "expect": {
+  "same": true
+ },
+ "mutants": [
+  "dsl.kernel/given_shape"
+ ]
+}

@@ -1,0 +1,18 @@
+{
+ "clause": "L0.DE.004",
+ "tier": 1,
+ "runner": "l0.card.example",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "example": "transpose",
+  "seed": 1
+ },
+ "expect": {
+  "equal": true
+ },
+ "mutants": [
+  "l0.lower/mover_code",
+  "isa.mover/ctrl"
+ ]
+}

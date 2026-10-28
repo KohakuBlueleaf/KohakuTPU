@@ -1,0 +1,70 @@
+{
+ "clause": "DSL.VAL.002",
+ "tier": 0,
+ "runner": "dsl.trace",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(\n    a=kt.In(64, 32, dtype=\"mx7a\", layout={\"gm\": 16, \"nk\": 1}),\n    b=kt.In(32, 32, dtype=\"mx7b\", layout={\"gn\": 8, \"nk\": 1}),\n    x=kt.In(8, 32),\n    y=kt.Out(8, 32),\n    m=kt.Out(8),\n):\n    h = kt.buffer((64, 32), \"f16\", tile=(16, 8))\n    for u in kt.par(1, on=kt.mg):\n        z = kt.zero(64, 32)\n        acc = kt.gemm(kt.fill(a), kt.fill(b))\n        kt.drain(acc, h)\n        kt.drain(z, h)\n    for c in kt.par(2, on=kt.vc):\n        for t in kt.range(1):\n            r = c * 4 + t * 4\n            v = kt.load(x[r : r + 4, :], gt4=True)\n            o = kt.where(v, v * 2.0, 0.0)\n            kt.store(y[r : r + 4, :], o)\n            kt.store(m[r : r + 4], kt.rsum(o))\n",
+  "given": {
+   "a": {
+    "shape": [
+     64,
+     32
+    ],
+    "dtype": "mx7a",
+    "layout": {
+     "gm": 16,
+     "nk": 1
+    }
+   },
+   "b": {
+    "shape": [
+     32,
+     32
+    ],
+    "dtype": "mx7b",
+    "layout": {
+     "gn": 8,
+     "nk": 1
+    }
+   },
+   "x": [
+    [
+     8,
+     32
+    ],
+    "f16"
+   ]
+  }
+ },
+ "expect": {
+  "body": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(a: mx7a[64, 32] @dram(gm=16, nk=1), b: mx7b[32, 32] @dram(gn=8, nk=1), x: f16[8, 32] @dram, y: f16[8, 32] @dram, m: f16[8] @dram)",
+   "    h1 = buffer : f16[64, 32] @dram(tile=16x8)",
+   "    par u1 in 0..1 on mg[u1]",
+   "        acc1 = zero : f32[64, 32] @acc",
+   "        a1 = fill a : mx7a[64, 32] @A",
+   "        b1 = fill b : mx7b[32, 32] @B",
+   "        acc2 = gemm a1, b1 : f32[64, 32] @acc",
+   "        drain acc2 -> h1",
+   "        drain acc1 -> h1",
+   "    par c1 in 0..2 on vc[c1]",
+   "        for t1 in 0..1",
+   "            xl1 = load x[c1*4 + t1*4 : +4] : f16[4, 32] @l1(gt4)",
+   "            v1 = unpack xl1 : f32[4, 32] @reg(gt4)",
+   "            e1 = mul v1, 2.0 : f32[4, 32] @reg(gt4)",
+   "            o1 = sel v1, e1, 0.0 : f32[4, 32] @reg(gt4)",
+   "            p1 = pack o1 : f16[4, 32] @l1(gt4)",
+   "            store y[c1*4 + t1*4 : +4] <- p1",
+   "            s1 = rsum o1 : f32[4] @reg",
+   "            p2 = pack s1 : f16[4] @l1",
+   "            store m[c1*4 + t1*4 : +4] <- p2"
+  ]
+ },
+ "mutants": [
+  "dsl.ops/value_prefix"
+ ]
+}

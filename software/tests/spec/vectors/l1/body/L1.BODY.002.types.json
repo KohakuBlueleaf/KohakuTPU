@@ -1,0 +1,18 @@
+{
+  "clause": "L1.BODY.002",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: f16[64] @dram, b: u64[4] @dram, c: f32[2, 8] @dram)\n    barrier\n",
+    "fn": "f",
+    "binds": {"a": 4096, "b": 8192, "c": 12288},
+    "spans": true
+  },
+  "expect": {"-": {
+    "steps": [["barrier"]],
+    "spans": [[4096, 128], [8192, 32], [12288, 64]]
+  }},
+  "mutants": ["l1.body/nbytes"]
+}

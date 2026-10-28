@@ -1,0 +1,43 @@
+{
+ "clause": "DBG.OUT.001",
+ "tier": 0,
+ "runner": "l0.queue",
+ "status": "frozen",
+ "input": {
+  "script": [
+   {
+    "do": "init"
+   },
+   {
+    "do": "geometry"
+   },
+   {
+    "do": "print",
+    "text": "PKGT head 1\n"
+   },
+   {
+    "do": "poll"
+   },
+   {
+    "do": "stdout"
+   }
+  ]
+ },
+ "expect": [
+  null,
+  {
+   "sq": "0x440",
+   "cq": "0x640",
+   "so": "0x840",
+   "si": "0x1840",
+   "rec": "0x1940",
+   "end": "0x2140"
+  },
+  null,
+  [],
+  "PKGT head 1\n"
+ ],
+ "mutants": [
+  "l0.queue/default_ring"
+ ]
+}

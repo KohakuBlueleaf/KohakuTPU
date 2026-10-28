@@ -1,0 +1,29 @@
+{
+ "clause": "L2.MOV.014",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(s: f16[12, 64] @dram, idx: u32[16] @dram, t: f16[64, 64] @dram)",
+   "    scatter t <- s index=idx fp"
+  ],
+  "facts": {
+   "fn": {
+    "lines": "^scatter",
+    "in": "fn"
+   }
+  }
+ },
+ "expect": {
+  "fn": [
+   "scatter w(s+0, (48, 32)) -> t+0 fp index=idx+0 n=12 pitch=128 words=4"
+  ]
+ },
+ "mutants": [
+  "l2.mover/max-index-8"
+ ]
+}

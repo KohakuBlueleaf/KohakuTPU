@@ -1,0 +1,12 @@
+{
+  "clause": "L1.IMG.042",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    vdrain a1 <- l1[0] to=(0, 1)\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": ["VDRAIN node=1 ad=1 dst_y=1", "VHALT"]},
+  "mutants": ["l1.img/peer-xy"]
+}

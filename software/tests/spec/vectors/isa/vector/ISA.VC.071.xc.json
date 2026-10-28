@@ -1,0 +1,26 @@
+{
+ "clause": "ISA.VC.071",
+ "tier": 0,
+ "runner": "isa.vector.image",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image k()\n    vadd v20, v19, xor(v18, 8) vl=64\n    halt\n",
+  "name": "k",
+  "args": [],
+  "entry": "reset"
+ },
+ "expect": {
+  "words": [
+   "0x9d3f1111",
+   "0x98800441",
+   "0x1d272901",
+   "0xf8000000"
+  ],
+  "descs": {}
+ },
+ "mutants": [
+  "isa.vector/xbar_c",
+  "isa.vector/math_regs"
+ ]
+}

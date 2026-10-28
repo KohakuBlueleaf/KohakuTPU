@@ -1,0 +1,26 @@
+{
+ "clause": "ISA.VC.009",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "depth",
+   "m:vc.queue_depth"
+  ]
+ },
+ "expect": {
+  "depth": {
+   "F": 4,
+   "D": 4,
+   "U": 8,
+   "M": 8,
+   "P": 8
+  },
+  "m:vc.queue_depth": 8
+ },
+ "mutants": [
+  "isa.vector/model_queues"
+ ]
+}

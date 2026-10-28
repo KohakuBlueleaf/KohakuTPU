@@ -1,0 +1,11 @@
+{
+ "clause": "L0.BIND.038", "tier": 0, "runner": "l0.template.bind", "status": "frozen",
+ "input": {
+  "package": {"payloads": [0]}, "bindings": [], "params": {"n": 17},
+  "table": {"parameters": {"n": {"lo": 1, "hi": 16}}, "sites": [
+   {"name": "count", "payload": 0, "bit": 0, "width": 8, "coefficients": {"n": 1}}
+  ]}
+ },
+ "expect": {"clause": "L0.BIND.038", "error": "site count, params {\"n\": 17}: parameter n=17 outside 1..16"},
+ "mutants": ["l0.template/class"]
+}

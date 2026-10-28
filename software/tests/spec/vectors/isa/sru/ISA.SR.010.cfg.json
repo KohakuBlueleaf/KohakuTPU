@@ -1,0 +1,20 @@
+{
+ "clause": "ISA.SR.010",
+ "tier": 0,
+ "runner": "isa.sru.word",
+ "machine": "sru_v9t7",
+ "status": "frozen",
+ "input": {
+  "fmt": "CFG",
+  "kw": {
+   "word": 65,
+   "value": 3735928559
+  }
+ },
+ "expect": {
+  "word": "0x14100000000000000000000000000000000000000000000000000000deadbeef"
+ },
+ "mutants": [
+  "isa.sru/formats"
+ ]
+}

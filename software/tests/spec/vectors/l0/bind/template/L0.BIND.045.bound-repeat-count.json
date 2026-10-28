@@ -1,0 +1,17 @@
+{
+ "clause": "L0.BIND.045", "tier": 0, "runner": "l0.template.bind", "status": "frozen",
+ "input": {
+  "refusal_only": true,
+  "package": {
+   "units": [{"type": "VC", "x": 0, "y": 0, "credit": 512}],
+   "buffers": [{"name": "a", "size": 8, "default": 0}],
+   "payloads": [0, "0x40000220000000000"],
+   "steps": [{"op": "REPEAT", "count": 1, "arg": "0x1000100000000"}],
+   "relocs": [{"payload": 0, "bit": 0, "width": 34, "shift": 0, "buffer": 0, "addend": 0}]
+  },
+  "bindings": ["0x3fffffffc"], "params": {},
+  "table": {"parameters": {}, "sites": [{"name": "trips", "step": 0, "bit": 96, "width": 16, "constant": 2}]}
+ },
+ "expect": {"refused": "L0.STEP.041"},
+ "mutants": ["l0.template/late-repeat-check"]
+}

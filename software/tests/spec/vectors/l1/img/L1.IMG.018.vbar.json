@@ -1,0 +1,12 @@
+{
+  "clause": "L1.IMG.018",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    vfill a0 -> l1[0]\n    vbar\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": ["VFILL", "VBAR", "VHALT"]},
+  "mutants": ["l1.img/vbar-q"]
+}

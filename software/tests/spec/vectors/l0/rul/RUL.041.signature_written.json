@@ -1,0 +1,26 @@
+{
+ "clause": "RUL.041",
+ "tier": 0,
+ "runner": "l0.program",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "steps": [
+   [
+    "send",
+    [
+     1,
+     1
+    ],
+    1
+   ]
+  ],
+  "keys": [
+   "signature"
+  ]
+ },
+ "expect": {
+  "signature": "0xc7f3fefb01ee41cd"
+ },
+ "mutants": ["l0.program/no_signature"]
+}

@@ -1,0 +1,59 @@
+{
+ "clause": "API.FORM.009",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    s = ST.Storage(DEV, 40)\n    DEV.write(s.addr, np.full(20, 7, np.float16).tobytes())\n    flat = np.frombuffer(FM.read(DEV, s, np.float16, 20), np.float16).tolist()\n    key = FM.rows_key(10, 32)\n    rows = np.zeros((2, 32), np.float16)\n    rows[:, :10] = np.arange(20).reshape(2, 10)\n    DEV.write(s.form(key, rows.nbytes).addr, rows.tobytes())\n    s.wrote(key)\n    padded = np.frombuffer(FM.read(DEV, s, np.float16, 20), np.float16).tolist()\n    s.free()\n    return {\"flat\": flat, \"padded\": padded}\n"
+ },
+ "expect": {
+  "flat": [
+   7.0,
+   7.0,
+   7.0,
+   7.0,
+   7.0,
+   7.0,
+   7.0,
+   7.0,
+   7.0,
+   7.0,
+   7.0,
+   7.0,
+   7.0,
+   7.0,
+   7.0,
+   7.0,
+   7.0,
+   7.0,
+   7.0,
+   7.0
+  ],
+  "padded": [
+   0.0,
+   1.0,
+   2.0,
+   3.0,
+   4.0,
+   5.0,
+   6.0,
+   7.0,
+   8.0,
+   9.0,
+   10.0,
+   11.0,
+   12.0,
+   13.0,
+   14.0,
+   15.0,
+   16.0,
+   17.0,
+   18.0,
+   19.0
+  ]
+ },
+ "mutants": [
+  "api.forms/read_raw"
+ ]
+}

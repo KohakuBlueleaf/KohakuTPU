@@ -1,0 +1,21 @@
+{
+  "clause": "L1.MG.013",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(c: u64[65536] @dram)\n    send mg[0]\n        gemm 64x8x1 a=A0 b=B0 acc=0 emit=c\n        gemm 32x8x1 a=A1 b=B1 acc=0 emit=c + 64K\n        drain c fused n=512\n        drain c + 64K fused n=256\n",
+    "fn": "f",
+    "binds": {"c": 12288}
+  },
+  "expect": {"-": {"steps": [
+    ["send", [1, 1], [
+      "GEMM addr=0x3000 gm=64 gn=8 nk=1 anchor=40 emit=1",
+      "GEMM addr=0x13000 gm=32 gn=8 nk=1 anchor=40 emit=1 abank=1 bbank=1",
+      "DRAIN addr=0x3000 n=512 nk=1 anchor=40 fuse=1",
+      "DRAIN addr=0x13000 n=256 nk=1 anchor=40 fuse=1"
+    ]]
+  ]}},
+  "mutants": ["l1.mg/collect-newest"]
+}

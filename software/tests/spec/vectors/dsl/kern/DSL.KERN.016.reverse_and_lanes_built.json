@@ -1,0 +1,39 @@
+{
+ "clause": "DSL.KERN.016",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "from kohakutpu.application.kernels import lanes as LN\nfrom kohakutpu.application.kernels import transpose as TP\n\n\ndef facts():\n    rk, rg = TP.reverse_kernel(4096, ((64, 64), (2, -32)), 32, 2048, MACHINE.vc)\n    pl = LN.plan(32, ((32, 1),), 0, ((32, 1),), 0, 32, False)\n    lk, lg = LN.relayout_kernel(pl, MACHINE.vc)\n    out = {}\n    for name, k, g in ((\"reverse\", rk, rg), (\"lanes\", lk, lg)):\n        t = k.trace(g, machine=MACHINE)\n        out[name] = {\n            \"type\": type(k).__name__,\n            \"prefix\": k.name.split(\"_\")[0],\n            \"parts\": len(k.name.split(\"_\")),\n            \"built\": k.source == \"\",\n            \"ports\": sorted(k.ports),\n            \"traced\": t.name == k.name,\n        }\n    return out\n"
+ },
+ "expect": {
+  "reverse": {
+   "type": "Kernel",
+   "prefix": "reverse",
+   "parts": 2,
+   "built": true,
+   "ports": [
+    "x",
+    "y"
+   ],
+   "traced": true
+  },
+  "lanes": {
+   "type": "Kernel",
+   "prefix": "lanes",
+   "parts": 2,
+   "built": true,
+   "ports": [
+    "dst",
+    "index",
+    "mask",
+    "src"
+   ],
+   "traced": true
+  }
+ },
+ "mutants": [
+  "dsl.kernel/name"
+ ]
+}

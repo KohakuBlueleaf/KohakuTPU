@@ -1,0 +1,29 @@
+{
+ "clause": "RUL.069",
+ "tier": 1,
+ "runner": "isa.card.kernel",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "body": [
+   "vcmplt p1, v0, v1",
+   "vmov v2, k0",
+   "vmov v2, k1 if=p1"
+  ],
+  "check": "lt",
+  "x": {
+   "seed": 31,
+   "zeros": [
+    5,
+    133
+   ]
+  },
+  "tol": {
+   "exact": true
+  }
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": ["isa.vector/pred", "isa.vector/compare"]
+}

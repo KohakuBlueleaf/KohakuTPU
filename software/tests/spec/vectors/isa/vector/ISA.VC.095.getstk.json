@@ -1,0 +1,26 @@
+{
+ "clause": "ISA.VC.095",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "getstk",
+    "args": [
+     14
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0x9c00000e"
+  ]
+ },
+ "mutants": [
+  "isa.vector/cfg_fields",
+  "isa.vector/cfg_sel"
+ ]
+}

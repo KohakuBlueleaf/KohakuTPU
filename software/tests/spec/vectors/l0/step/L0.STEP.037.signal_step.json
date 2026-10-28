@@ -1,0 +1,51 @@
+{
+ "clause": "L0.STEP.037",
+ "tier": 0,
+ "runner": "l0.pkg.build",
+ "status": "frozen",
+ "input": {
+  "builder": {
+   "types": [
+    [
+     1,
+     1,
+     "MG"
+    ]
+   ],
+   "credit": 512
+  },
+  "calls": [
+   [
+    "signal",
+    5,
+    6
+   ]
+  ],
+  "keys": [
+   "package"
+  ]
+ },
+ "expect": {
+  "package": {
+   "units": [],
+   "buffers": [],
+   "steps": [
+    {
+     "op": "SIGNAL",
+     "unit": 0,
+     "count": 5,
+     "arg": "0x6",
+     "flags": 0
+    }
+   ],
+   "relocs": [],
+   "payloads": [],
+   "signature": "0x0",
+   "ack_reserve": 0,
+   "checksum": false
+  }
+ },
+ "mutants": [
+  "l0.build/count_arg_swapped"
+ ]
+}

@@ -1,0 +1,56 @@
+{
+ "clause": "DBG.HOST.002",
+ "tier": 0,
+ "runner": "l0.queue",
+ "status": "frozen",
+ "input": {
+  "geometry": {
+   "sq_n": 64,
+   "cq_n": 64,
+   "so_bytes": 4096,
+   "si_bytes": 256
+  },
+  "script": [
+   {
+    "do": "init"
+   },
+   {
+    "do": "submit",
+    "length": 64
+   },
+   {
+    "do": "complete",
+    "tag": 1,
+    "status": 48,
+    "detail": 2,
+    "cycles": 12768463
+   },
+   {
+    "do": "wait",
+    "tag": 1
+   }
+  ]
+ },
+ "expect": [
+  null,
+  1,
+  null,
+  {
+   "error": "NodeError",
+   "message": "tag 0x1: TIMEOUT waiting on await at step 0 (12768463 cycles)",
+   "completion": {
+    "tag": 1,
+    "status": "0x30",
+    "detail": 2,
+    "step": 0,
+    "cycles": 12768463,
+    "value": "0x0"
+   },
+   "console": ""
+  }
+ ],
+ "mutants": [
+  "l0.queue/status_names",
+  "l0.queue/wait_names"
+ ]
+}

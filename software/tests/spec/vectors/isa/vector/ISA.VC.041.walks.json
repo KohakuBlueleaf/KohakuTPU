@@ -1,0 +1,44 @@
+{
+ "clause": "ISA.VC.041",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "vunpk",
+    "args": [
+     19,
+     1955,
+     3,
+     0,
+     5,
+     true,
+     1
+    ]
+   },
+   {
+    "fn": "vpack",
+    "args": [
+     2,
+     240,
+     8,
+     1,
+     0,
+     false,
+     0
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0xa4c577a3",
+   "0xa89e00f0"
+  ]
+ },
+ "mutants": [
+  "isa.vector/walk_fields"
+ ]
+}

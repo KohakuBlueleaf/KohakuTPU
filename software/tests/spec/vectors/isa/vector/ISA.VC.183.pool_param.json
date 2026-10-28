@@ -1,0 +1,20 @@
+{
+ "clause": "ISA.VC.183",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "pool",
+   "m:vc.l1_words"
+  ]
+ },
+ "expect": {
+  "pool": 256,
+  "m:vc.l1_words": 512
+ },
+ "mutants": [
+  "isa.vector/links"
+ ]
+}

@@ -1,0 +1,32 @@
+{
+ "clause": "TG.RUN.009",
+ "tier": 0,
+ "runner": "tg.run",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "Y": [
+    32,
+    64
+   ]
+  },
+  "make": "T(X).pad(((2, 2), (32, 32))).contiguous()",
+  "facts": [
+   "kinds"
+  ]
+ },
+ "expect": {
+  "kinds": [
+   "fill",
+   "walk"
+  ]
+ },
+ "mutants": [
+  "tg.run/no_boxes"
+ ]
+}

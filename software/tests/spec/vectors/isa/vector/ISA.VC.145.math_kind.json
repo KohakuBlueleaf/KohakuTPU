@@ -1,0 +1,25 @@
+{
+ "clause": "ISA.VC.145",
+ "tier": 0,
+ "runner": "isa.vector.image",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image k()\n    vsync fe on=math\n    vsync pack on=math slack=2\n    halt\n",
+  "name": "k",
+  "args": [],
+  "entry": "unknown"
+ },
+ "expect": {
+  "words": [
+   "0xb0400000",
+   "0xb3410000",
+   "0xf8000000"
+  ],
+  "descs": {}
+ },
+ "mutants": [
+  "isa.vector/sync_codes",
+  "isa.vector/sync_fields"
+ ]
+}

@@ -1,0 +1,17 @@
+{
+ "clause": "DSL.KERN.001",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef scale(x=kt.In(4, 32), y=kt.Out(4, 32)):\n    for c in kt.par(1, on=kt.vc):\n        kt.store(y, kt.load(x))\n\ndef facts():\n    return {\"type\": type(scale).__name__, \"name\": scale.name}\n"
+ },
+ "expect": {
+  "type": "Kernel",
+  "name": "scale"
+ },
+ "mutants": [
+  "dsl.kernel/name"
+ ]
+}

@@ -1,0 +1,29 @@
+{
+ "clause": "ISA.MG.028",
+ "tier": 0,
+ "runner": "isa.cluster.l1",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "fn k.l1(a: f16[65536] @dram)\n    send mg[0]\n        gemm 30x8x2 a=A0 b=B0 acc=0 emit=a\n        drain a n=240 fused\n",
+  "fn": "k",
+  "binds": {
+   "a": 1048576
+  }
+ },
+ "expect": [
+  {
+   "unit": [
+    1,
+    1
+   ],
+   "payloads": [
+    "0x200040000000001e080228000000000000100000000000000000000000000000",
+    "0x300040000003c000000128000000000000080000000000000000000000000000"
+   ]
+  }
+ ],
+ "mutants": [
+  "isa.cluster/fields"
+ ]
+}

@@ -1,0 +1,1 @@
+{"clause":"TG.QUEUE.008","tier":1,"runner":"queue.fault","machine":"vlt_v9t6s_1n","status":"frozen","input":{},"expect":{"exact":true,"discarded":true},"mutants":["queue/no-fault-attribution"]}

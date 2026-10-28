@@ -1,0 +1,26 @@
+{
+ "clause": "API.ROW.001",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    full = KV.Operand(\"full\", pitch=64, rows=8)\n    k, g, nblk = KV.rows_kernel(X.op(\"mul\", X.Load(0), 2.0), (full,), 8, 64, full, DEV.machine.count(\"VC\"))\n    t = k.trace(g, machine=TMACHINE)\n    return {\"params\": [[n, s.text()] for n, s in t.params], \"blocks\": nblk}\n"
+ },
+ "expect": {
+  "params": [
+   [
+    "in0",
+    "f16[8, 64] @dram"
+   ],
+   [
+    "out",
+    "f16[8, 64] @dram"
+   ]
+  ],
+  "blocks": 1
+ },
+ "mutants": [
+  "api.vector/port_pad"
+ ]
+}

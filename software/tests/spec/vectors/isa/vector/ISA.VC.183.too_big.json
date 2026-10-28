@@ -1,0 +1,18 @@
+{
+ "clause": "ISA.VC.183",
+ "tier": 0,
+ "runner": "isa.vector.links",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "sends": [
+   300
+  ]
+ },
+ "expect": {
+  "refused": "ValueError"
+ },
+ "mutants": [
+  "isa.vector/links"
+ ]
+}

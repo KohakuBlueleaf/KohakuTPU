@@ -1,0 +1,35 @@
+{
+ "clause": "TG.BRIDGE.001",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "XS": [
+    16,
+    128
+   ]
+  },
+  "source": "from kohakutpu.language.examples.dsl.vector.softmax import softmax\n\n\ndef facts():\n    x = T(XS)\n    n0 = len(DEV.runs)\n    y = BR.bridge(softmax)(x)\n    st = storage(y)\n    return {\n        \"shape\": list(y.shape),\n        \"dtype\": y.dtype.name,\n        \"runs\": [r.kind for r in DEV.runs[n0:]],\n        \"forms\": form_keys(st),\n        \"written_as\": str(FM.base_of(st)[0].dtype),\n    }\n"
+ },
+ "expect": {
+  "shape": [
+   16,
+   128
+  ],
+  "dtype": "half",
+  "runs": [
+   "bridge"
+  ],
+  "forms": [
+   [
+    "flat"
+   ]
+  ],
+  "written_as": "float16"
+ },
+ "mutants": [
+  "tg.bridge/flat_key"
+ ]
+}

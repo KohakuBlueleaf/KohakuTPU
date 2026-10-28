@@ -1,0 +1,15 @@
+{
+ "clause": "RUL.016",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    cores, start, trips = KV.split(12, 3)\n    covered = True\n    for vc in range(1, 5):\n        for n in range(34):\n            p, first, count = KV.split(n, vc)\n            rows = [first(c) + i for c in range(p) for i in range(count(c))]\n            covered &= p == max(1, min(n, vc)) and sorted(rows) == list(range(n))\n    return {\"cores\": cores, \"covered\": covered}\n"
+ },
+ "expect": {
+  "cores": 3,
+  "covered": true
+ },
+ "mutants": ["api.vector/split_two"]
+}

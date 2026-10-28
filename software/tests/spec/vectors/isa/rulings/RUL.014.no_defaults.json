@@ -1,0 +1,13 @@
+{
+ "clause": "RUL.014",
+ "tier": 0,
+ "runner": "isa.sru.defaults",
+ "machine": "sru_v9t7",
+ "status": "frozen",
+ "input": {},
+ "expect": {
+  "target.SRU": false,
+  "emit.PROFILE": false
+ },
+ "mutants": ["rul.014/profile-reloaded"]
+}

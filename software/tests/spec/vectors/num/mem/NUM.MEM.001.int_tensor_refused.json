@@ -1,0 +1,9 @@
+{
+  "clause": "NUM.MEM.001",
+  "tier": 0,
+  "runner": "num.api.dtype",
+  "status": "frozen",
+  "input": {"dtype": "int32"},
+  "expect": {"refused": true},
+  "mutants": ["num.api/int-tensor-accepted"]
+}

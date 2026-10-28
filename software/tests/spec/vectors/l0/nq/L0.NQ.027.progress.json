@@ -1,0 +1,72 @@
+{
+ "clause": "L0.NQ.027",
+ "tier": 0,
+ "runner": "l0.queue",
+ "status": "frozen",
+ "input": {
+  "geometry": {
+   "sq_n": 64,
+   "cq_n": 64,
+   "so_bytes": 4096,
+   "si_bytes": 256
+  },
+  "script": [
+   {
+    "do": "init"
+   },
+   {
+    "do": "submit",
+    "length": 64
+   },
+   {
+    "do": "complete",
+    "tag": 1,
+    "status": 1,
+    "detail": 5,
+    "step": 2,
+    "cycles": 10,
+    "value": 6
+   },
+   {
+    "do": "complete",
+    "tag": 1,
+    "step": 4,
+    "cycles": 99
+   },
+   {
+    "do": "wait",
+    "tag": 1
+   },
+   {
+    "do": "progress"
+   }
+  ]
+ },
+ "expect": [
+  null,
+  1,
+  null,
+  null,
+  {
+   "tag": 1,
+   "status": "0x0",
+   "detail": 0,
+   "step": 4,
+   "cycles": 99,
+   "value": "0x0"
+  },
+  [
+   {
+    "tag": 1,
+    "status": "0x1",
+    "detail": 5,
+    "step": 2,
+    "cycles": 10,
+    "value": "0x6"
+   }
+  ]
+ ],
+ "mutants": [
+  "l0.queue/progress_final"
+ ]
+}

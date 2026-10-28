@@ -1,0 +1,19 @@
+{
+  "clause": "L1.IMG.011",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    vmov v1, v2 if=p1\n    vmul v3, v4, v5 if=p3\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": [
+    "CHKVL vl1=127 d_stride=1 c_stride=1 b_stride=1 a_stride=1",
+    "XB pr=1 pm=1",
+    "vmov vd=1 va=2 om=1",
+    "XB pr=3 pm=1",
+    "vmul vd=3 va=4 vb=5 om=1",
+    "VHALT"
+  ]},
+  "mutants": ["l1.img/pred-unless"]
+}

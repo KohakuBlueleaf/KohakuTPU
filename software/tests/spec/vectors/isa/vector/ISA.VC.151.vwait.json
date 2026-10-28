@@ -1,0 +1,37 @@
+{
+ "clause": "ISA.VC.151",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "vwait",
+    "args": [
+     1,
+     0,
+     1023
+    ]
+   },
+   {
+    "fn": "vwait",
+    "args": [
+     0,
+     1,
+     64
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0xb1fff800",
+   "0xb0e20200"
+  ]
+ },
+ "mutants": [
+  "isa.vector/sync_fields",
+  "isa.vector/ctl_ops"
+ ]
+}

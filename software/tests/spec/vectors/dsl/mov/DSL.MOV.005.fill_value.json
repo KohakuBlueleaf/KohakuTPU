@@ -1,0 +1,24 @@
+{
+ "clause": "DSL.MOV.005",
+ "tier": 0,
+ "runner": "dsl.trace",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(y=kt.Out(64, 32), z=kt.Out(64, 32), w=kt.Out(64, 32)):\n    kt.fill_value(y, 0, ew=16)\n    kt.fill_value(z, 15360)\n    kt.fill_value(w, 7, walk=[(4, 64)], at=32)\n",
+  "given": {}
+ },
+ "expect": {
+  "body": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(y: f16[64, 32] @dram, z: f16[64, 32] @dram, w: f16[64, 32] @dram)",
+   "    fill y value=0 ew=16",
+   "    fill z value=15360",
+   "    fill w value=7 walk=((4, 64),) at=32"
+  ]
+ },
+ "mutants": [
+  "dsl.ops/mover_flags"
+ ]
+}

@@ -1,0 +1,120 @@
+{
+ "clause": "L0.STEP.007",
+ "tier": 0,
+ "runner": "l0.pkg.lower",
+ "status": "frozen",
+ "input": {
+  "package": {
+   "units": [
+    {
+     "type": "MG",
+     "x": 1,
+     "y": 1,
+     "credit": 4,
+     "fetch": "0x10200"
+    }
+   ],
+   "steps": [
+    {
+     "op": "DISPATCH",
+     "unit": 0,
+     "count": 10,
+     "arg": 0
+    }
+   ],
+   "payloads": 10
+  }
+ },
+ "expect": {
+  "steps": [
+   {
+    "op": "ENGINE",
+    "first": 10,
+    "entries": [
+     [
+      0,
+      "0x1000200"
+     ],
+     [
+      1,
+      "0x0"
+     ],
+     [
+      2,
+      "0x0"
+     ],
+     [
+      3,
+      "0x110040000000"
+     ],
+     [
+      68,
+      "0x6004"
+     ],
+     [
+      5,
+      "0x1"
+     ],
+     [
+      32,
+      "0x4"
+     ],
+     [
+      68,
+      "0x80006004"
+     ],
+     [
+      5,
+      "0x1"
+     ],
+     [
+      32,
+      "0x6"
+     ],
+     [
+      68,
+      "0x100006002"
+     ],
+     [
+      5,
+      "0x1"
+     ],
+     [
+      32,
+      "0xa"
+     ]
+    ],
+    "pad": [
+     [
+      255,
+      "0x0"
+     ],
+     [
+      255,
+      "0x0"
+     ]
+    ]
+   }
+  ],
+  "kept": true,
+  "units": [
+   {
+    "type": "MG",
+    "x": 1,
+    "y": 1,
+    "mesh": 0,
+    "credit": 4,
+    "fetch": "0x10200"
+   }
+  ],
+  "buffers": 0,
+  "relocs": 0,
+  "signature": "0x0",
+  "ack_reserve": 0,
+  "checksum": false
+ },
+ "mutants": [
+  "l0.lower/wait_always",
+  "l0.lower/run_cap"
+ ]
+}

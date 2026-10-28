@@ -1,0 +1,79 @@
+{
+ "clause": "L0.STEP.062",
+ "tier": 0,
+ "runner": "l0.program",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "steps": [
+   [
+    "send",
+    [
+     1,
+     1
+    ],
+    4
+   ],
+   [
+    "wait",
+    [
+     1,
+     1
+    ]
+   ],
+   [
+    "send",
+    [
+     1,
+     1
+    ],
+    2
+   ]
+  ],
+  "keys": [
+   "steps"
+  ]
+ },
+ "expect": {
+  "steps": [
+   {
+    "op": "DISPATCH",
+    "unit": 0,
+    "count": 4,
+    "arg": "0x0",
+    "flags": 0
+   },
+   {
+    "op": "AWAIT",
+    "unit": 0,
+    "count": 4,
+    "arg": "0x0",
+    "flags": 0
+   },
+   {
+    "op": "DISPATCH",
+    "unit": 0,
+    "count": 2,
+    "arg": "0x4",
+    "flags": 0
+   },
+   {
+    "op": "AWAIT",
+    "unit": 0,
+    "count": 2,
+    "arg": "0x0",
+    "flags": 0
+   },
+   {
+    "op": "BARRIER",
+    "unit": 0,
+    "count": 0,
+    "arg": "0x0",
+    "flags": 0
+   }
+  ]
+ },
+ "mutants": [
+  "l0.build/await_plus_one"
+ ]
+}

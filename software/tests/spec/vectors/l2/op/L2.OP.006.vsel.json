@@ -1,0 +1,41 @@
+{
+ "clause": "L2.OP.006",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram)",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..1",
+   "            xl = load x[t*4 : +4, :]   : f16[4, 128] @l1",
+   "            v = unpack xl                      : f32[4, 128] @reg",
+   "            e = exp2 v                         : f32[4, 128] @reg",
+   "            m = cmplt v, e                     : f32[4, 128] @reg",
+   "            o = sel m, v, e                    : f32[4, 128] @reg",
+   "            ol = pack o                     : f16[4, 128] @l1",
+   "            store y[t*4 : +4, :] <- ol"
+  ],
+  "passes": [],
+  "facts": {
+   "sel": {
+    "lines": "^vsel ",
+    "in": "images"
+   }
+  }
+ },
+ "expect": {
+  "sel": [
+   "vsel v8, v0[1 :], v4, v8",
+   "vsel v9, v1[1 :], v5, v9",
+   "vsel v10, v2[1 :], v6, v10",
+   "vsel v11, v3[1 :], v7, v11"
+  ]
+ },
+ "mutants": [
+  "l2.vector/sel-arms-swapped"
+ ]
+}

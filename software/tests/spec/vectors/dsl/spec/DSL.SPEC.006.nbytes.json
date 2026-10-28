@@ -1,0 +1,18 @@
+{
+ "clause": "DSL.SPEC.006",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    return {\n        \"f16\": TY.TensorSpec.make((6400, 32)).nbytes(),\n        \"mx7a\": TY.TensorSpec.make((6400, 416), \"mx7a\", {\"gm\": 64, \"nk\": 1}).nbytes(),\n        \"mx7b\": TY.TensorSpec.make((96, 416), \"mx7b\", {\"gn\": 8, \"nk\": 1}).nbytes(),\n    }\n"
+ },
+ "expect": {
+  "f16": 409600,
+  "mx7a": 2662400,
+  "mx7b": 39936
+ },
+ "mutants": [
+  "dsl.types/item"
+ ]
+}

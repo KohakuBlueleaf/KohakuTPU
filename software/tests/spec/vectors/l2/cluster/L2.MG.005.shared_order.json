@@ -1,0 +1,38 @@
+{
+  "clause": "L2.MG.005",
+  "tier": 0,
+  "runner": "l2.compile",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "passes": [],
+    "schedule": false,
+    "text": [
+      "target ktpu.v9",
+      "fn shared_order.l2(x: mx7a[8, 192] @dram(gm=1, nk=2), w: mx7b[4, 192] @dram(gn=1, nk=2), y: f16[8, 4] @dram(tile=1x1))",
+      "    par u in 0..2 on mg[u]",
+      "        c = zero : f32[4, 4] @acc",
+      "        for k in 0..3",
+      "            a = fill x[u*4 : +4, k*64 : +64] : mx7a[4, 64] @A",
+      "            b = fill w[0 : +4, k*64 : +64] share=all : mx7b[4, 64] @B",
+      "            c = gemm a, b, c : f32[4, 4] @acc",
+      "        drain c -> y[u*4 : +4, 0 : +4]"
+    ],
+    "facts": {"order": {"lines": "^(fill A|gemm)"}}
+  },
+  "expect": {"order": [
+    "fill A0 <- x + 0 n=2",
+    "fill A0 <- x + 768 n=2",
+    "gemm 1x1x2 a=A0 b=B0 acc=0",
+    "fill A1 <- x + 1024 n=2",
+    "gemm 1x1x2 a=A0 b=B0 acc=0",
+    "fill A1 <- x + 256 n=2",
+    "gemm 1x1x2 a=A1 b=B1 acc=1",
+    "fill A0 <- x + 1280 n=2",
+    "gemm 1x1x2 a=A1 b=B1 acc=1",
+    "fill A0 <- x + 512 n=2",
+    "gemm 1x1x2 a=A0 b=B0 acc=1 emit=y + 32",
+    "gemm 1x1x2 a=A0 b=B0 acc=1 emit=y + 0"
+  ]},
+  "mutants": ["l2.lower/share-hoist-fills"]
+}

@@ -1,0 +1,72 @@
+{
+ "clause": "DBG.RPT.002",
+ "tier": 1,
+ "runner": "l0.card.package",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   [
+    "unit",
+    [
+     1,
+     1
+    ]
+   ],
+   [
+    "await_",
+    0,
+    1
+   ]
+  ],
+  "lower": true,
+  "timeout_cycles": 200000,
+  "report": [
+   "status",
+   "stat",
+   "report",
+   "order",
+   "bounded"
+  ]
+ },
+ "expect": {
+  "status": "0x30",
+  "detail": 11,
+  "step": 0,
+  "stat": {
+   "magic": "0xde01",
+   "log2_depth": 6,
+   "log2_counters": 4,
+   "overflow": 0,
+   "clearing": 0,
+   "enabled": 1
+  },
+  "pkgf": [
+   "PKGF uN (N,N) sent N recv N want N inflight N",
+   "PKGF stray N outstanding N"
+  ],
+  "pkgt_keys": [
+   "head",
+   "copy",
+   "bind",
+   "steps",
+   "barrier",
+   "local",
+   "total",
+   "first",
+   "last",
+   "sent",
+   "idle"
+  ],
+  "ka": " status H detail H step H value H",
+  "at_completion": {
+   "pkgt": true,
+   "pkgf": true
+  },
+  "bounded": true
+ },
+ "mutants": [
+  "l0.pkg/version",
+  "l0.lower/wait_code"
+ ]
+}

@@ -1,0 +1,17 @@
+{
+  "clause": "L1.MG.016",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(x: u64[8192] @dram)\n    r3 = set 0\n    send mg[1]\n        fill A1 <- x + 32K + r3 n=8\n",
+    "fn": "f",
+    "binds": {"x": 65536}
+  },
+  "expect": {"-": {"steps": [
+    ["alu", 3, "MOV", 0, 0, true],
+    ["send", [1, 2], ["FILL addr=0x18000 n=8 nk=1 anchor=40 fbank=1"], [[0, [[218, 34, 0], [63, 6, 34]], 3, 98304]]]
+  ]}},
+  "mutants": ["l1.node/val-const-only"]
+}

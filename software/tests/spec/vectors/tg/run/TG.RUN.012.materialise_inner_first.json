@@ -1,0 +1,36 @@
+{
+ "clause": "TG.RUN.012",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "CH": [
+    2,
+    3,
+    4,
+    4
+   ]
+  },
+  "source": "def facts():\n    (p,) = [L.plan(a) for a in asts(T(CH).sum((0, 2, 3)))]\n    split = R._split_reduction(p)\n    leaf = R._leaf_reduce(split)\n    sub, outside, clusters = R._leaf(split, leaf)\n    return {\n        \"leaf\": [U.extent(r) for r in split.reductions[id(leaf)]],\n        \"outside\": [U.extent(r) for r in outside],\n        \"temporary\": list(sub.out_shape),\n        \"clusters\": clusters,\n    }\n"
+ },
+ "expect": {
+  "leaf": [
+   4,
+   4
+  ],
+  "outside": [
+   2,
+   3
+  ],
+  "temporary": [
+   2,
+   3
+  ],
+  "clusters": false
+ },
+ "mutants": [
+  "tg.run/no_split"
+ ]
+}

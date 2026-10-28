@@ -1,0 +1,23 @@
+{
+ "clause": "TG.DEV.006",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    b = Buffer(\"KTPU\", 32, dtypes.half).allocate()\n    st = b._buf\n    st.valid, st.dtype = {FM.F16}, np.dtype(np.float32)\n    raw = np.arange(32, dtype=np.float16).tobytes()\n    TinyDevice[\"KTPU\"].allocator._copyin(st, memoryview(raw))\n    out = {\n        \"valid\": form_keys(st),\n        \"host\": st.host == raw,\n        \"dtype\": st.dtype,\n        \"bytes\": DEV.read(st.addr, 64) == raw,\n    }\n    b.deallocate()\n    return out\n"
+ },
+ "expect": {
+  "valid": [
+   [
+    "flat"
+   ]
+  ],
+  "host": true,
+  "dtype": null,
+  "bytes": true
+ },
+ "mutants": [
+  "tg.device/copyin_no_host"
+ ]
+}

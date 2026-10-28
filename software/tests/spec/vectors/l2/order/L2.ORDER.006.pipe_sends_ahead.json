@@ -1,0 +1,60 @@
+{
+ "clause": "L2.ORDER.006",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: mx7a[32, 32] @dram(gm=4, nk=1), w: mx7b[64, 32] @dram(gn=8, nk=1), y: f16[32, 64] @dram(tile=1x8))",
+   "    for q in 0..2 pipe=2",
+   "        par c in 0..2 on mg[c]",
+   "            a = fill x[q*16 : +16, :]                : mx7a[16, 32] @A",
+   "            b = fill w[c*32 : +32, :]                : mx7b[32, 32] @B",
+   "            acc = gemm a, b                          : f32[16, 32] @acc",
+   "            drain acc -> vc[c]",
+   "        par c in 0..2 on vc[c]",
+   "            h = recv mg[c]                           : f16[16, 32] @l1(gt4)",
+   "            for t in 0..4",
+   "                v = unpack h[t*4 : +4, :]            : f32[4, 32] @reg(gt4)",
+   "                e = exp2 v                           : f32[4, 32] @reg(gt4)",
+   "                ol = pack e                          : f16[4, 32] @l1(gt4)",
+   "                store y[q*16 + t*4 : +4, c*32 : +32] <- ol"
+  ],
+  "facts": {
+   "fn": {
+    "lines": "^(send|wait|run|k\\d)",
+    "in": "fn"
+   }
+  }
+ },
+ "expect": {
+  "fn": [
+   "send mg[0]",
+   "send mg[1]",
+   "k0_mg0 = mark mg[0]",
+   "k0_mg1 = mark mg[1]",
+   "send mg[0]",
+   "send mg[1]",
+   "k2_mg0 = mark mg[0]",
+   "k2_mg1 = mark mg[1]",
+   "wait mg[0] upto=k0_mg0",
+   "wait mg[1] upto=k0_mg1",
+   "send vc[0]",
+   "run k_n0_vc0_0(y+0)",
+   "send vc[1]",
+   "run k_n0_vc0_0(y+256)",
+   "wait mg[0] upto=k2_mg0",
+   "wait mg[1] upto=k2_mg1",
+   "send vc[0]",
+   "run k_n0_vc0_1(y+2048)",
+   "send vc[1]",
+   "run k_n0_vc0_1(y+2304)"
+  ]
+ },
+ "mutants": [
+  "l2.sync/no-ahead"
+ ]
+}

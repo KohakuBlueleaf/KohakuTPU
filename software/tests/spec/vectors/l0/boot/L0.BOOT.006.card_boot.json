@@ -1,0 +1,53 @@
+{
+ "clause": "L0.BOOT.006",
+ "tier": 1,
+ "runner": "l0.card.boot",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {},
+ "expect": {
+  "state": "ready",
+  "abi": 3,
+  "units": [
+   [
+    "MG",
+    0,
+    1,
+    1
+   ],
+   [
+    "MG",
+    0,
+    1,
+    2
+   ],
+   [
+    "VC",
+    0,
+    2,
+    1
+   ],
+   [
+    "VC",
+    0,
+    2,
+    2
+   ]
+  ],
+  "banner_units": 4,
+  "banner_classes": [
+   "MG",
+   "VC"
+  ],
+  "queue_is_region": true,
+  "mesh": 0,
+  "timing": true
+ },
+ "mutants": [
+  "l0.queue/no_console",
+  "l0.boot/magic"
+ ],
+ "hangs": [
+  "l0.boot/magic"
+ ]
+}

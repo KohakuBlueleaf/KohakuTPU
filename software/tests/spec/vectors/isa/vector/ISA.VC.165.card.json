@@ -1,0 +1,28 @@
+{
+ "clause": "ISA.VC.165",
+ "tier": 1,
+ "runner": "isa.card.kernel",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "body": [
+   "seti s3 = 0",
+   "vmov v2, v0",
+   "skipz s3",
+   "    vmov v2, v1"
+  ],
+  "check": "x0",
+  "x": {
+   "seed": 32
+  },
+  "tol": {
+   "exact": true
+  }
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.vector/ctl_fields"
+ ]
+}

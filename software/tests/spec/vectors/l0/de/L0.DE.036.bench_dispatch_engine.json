@@ -1,0 +1,16 @@
+{
+ "clause": "L0.DE.036",
+ "tier": 2,
+ "runner": "l0.bench",
+ "status": "frozen",
+ "input": {
+  "vlt": "dispatch_engine"
+ },
+ "expect": {
+  "outcome": "passed"
+ },
+ "mutants": [
+  "l0.bench/neg_go",
+  "l0.bench/neg_wait"
+ ]
+}

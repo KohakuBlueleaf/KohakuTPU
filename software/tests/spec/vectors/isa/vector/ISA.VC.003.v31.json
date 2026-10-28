@@ -1,0 +1,33 @@
+{
+ "clause": "ISA.VC.003",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "math",
+    "args": [
+     "vadd",
+     31,
+     30,
+     0,
+     29
+    ],
+    "kw": {
+     "regs": 128
+    }
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0x1ffc0e80"
+  ]
+ },
+ "mutants": [
+  "isa.vector/math_fields",
+  "isa.vector/regs"
+ ]
+}

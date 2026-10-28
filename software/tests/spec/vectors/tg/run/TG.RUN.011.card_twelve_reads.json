@@ -1,0 +1,57 @@
+{
+ "clause": "TG.RUN.011",
+ "tier": 1,
+ "runner": "tg.values",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "A1": [
+    32,
+    64
+   ],
+   "A2": [
+    32,
+    64
+   ],
+   "A3": [
+    32,
+    64
+   ],
+   "A4": [
+    32,
+    64
+   ],
+   "A5": [
+    32,
+    64
+   ],
+   "A6": [
+    32,
+    64
+   ],
+   "A7": [
+    32,
+    64
+   ],
+   "A8": [
+    32,
+    64
+   ],
+   "A9": [
+    32,
+    64
+   ]
+  },
+  "make": "T(A1) + T(A2) * 0.5 + T(A3) * 0.5 + T(A4) * 0.5 + T(A5) * 0.5 + T(A6) * 0.5 + T(A7) * 0.5 + T(A8) * 0.5 + T(A9) * 0.5",
+  "ref": "f(A1) + sum(f(a) * 0.5 for a in (A2, A3, A4, A5, A6, A7, A8, A9))",
+  "source": "def conv(x, w, pad=0):\n    xp = np.pad(f(x), ((0, 0), (0, 0), (pad, pad), (pad, pad)))\n    p = sliding_window_view(xp, w.shape[2:], axis=(2, 3))\n    return np.einsum(\"bchwij,ocij->bohw\", p, f(w))\n\n\ndef softmax(a):\n    a = f(a)\n    e = np.exp(a - a.max(-1, keepdims=True))\n    return e / e.sum(-1, keepdims=True)\n",
+  "rel": 0.02
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "api.mem/upload_dropped"
+ ]
+}

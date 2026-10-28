@@ -1,0 +1,109 @@
+{
+ "clause": "L2.ORDER.004",
+ "tier": 0,
+ "runner": "l2.sync",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "stages": [
+   {
+    "lines": [
+     "S0"
+    ],
+    "units": [
+     "mg[0]"
+    ],
+    "accesses": [
+     [
+      "mg[0]",
+      1,
+      [
+       "mem",
+       "a"
+      ],
+      0,
+      64
+     ]
+    ],
+    "post": null
+   },
+   {
+    "lines": [
+     "S1"
+    ],
+    "units": [
+     "mg[1]"
+    ],
+    "accesses": [
+     [
+      "mg[1]",
+      1,
+      [
+       "mem",
+       "b"
+      ],
+      0,
+      64
+     ]
+    ],
+    "post": null
+   },
+   {
+    "lines": [
+     "S2"
+    ],
+    "units": [
+     "vc[0]"
+    ],
+    "accesses": [
+     [
+      "vc[0]",
+      0,
+      [
+       "mem",
+       "a"
+      ],
+      0,
+      64
+     ]
+    ],
+    "post": null
+   },
+   {
+    "lines": [
+     "S3"
+    ],
+    "units": [
+     "vc[1]"
+    ],
+    "accesses": [
+     [
+      "vc[1]",
+      0,
+      [
+       "mem",
+       "a"
+      ],
+      0,
+      64
+     ]
+    ],
+    "post": null
+   }
+  ]
+ },
+ "expect": [
+  "S0",
+  "k0_mg0 = mark mg[0]",
+  "S1",
+  "wait mg[0] upto=k0_mg0",
+  "S2",
+  "S3",
+  "barrier"
+ ],
+ "mutants": [
+  "l2.sync/never-clash",
+  "l2.sync/every-mark",
+  "l2.sync/forget-done"
+ ]
+}

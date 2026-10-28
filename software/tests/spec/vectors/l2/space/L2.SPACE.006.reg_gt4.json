@@ -1,0 +1,40 @@
+{
+ "clause": "L2.SPACE.006",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 32] @dram(tile=2x8), y: f16[8, 32] @dram(tile=2x8))",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..1",
+   "            xl = load x                      : f16[8, 32] @l1(gt4)",
+   "            v = unpack xl                    : f32[8, 32] @reg(gt4)",
+   "            e = exp2 v                       : f32[8, 32] @reg(gt4)",
+   "            ol = pack e                      : f16[8, 32] @l1(gt4)",
+   "            store y <- ol"
+  ],
+  "passes": [],
+  "facts": {
+   "exp2": {
+    "count": "^vexp2 "
+   },
+   "unpack": {
+    "lines": "^vunpk "
+   }
+  }
+ },
+ "expect": {
+  "exp2": 2,
+  "unpack": [
+   "vunpk v0 <- l1[0] gt4",
+   "vunpk v1 <- l1[8] gt4"
+  ]
+ },
+ "mutants": [
+  "l2.vector/row-64"
+ ]
+}

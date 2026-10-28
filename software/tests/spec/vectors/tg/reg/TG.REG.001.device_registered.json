@@ -1,0 +1,21 @@
+{
+ "clause": "TG.REG.001",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    mod = sys.modules[KD.MODULE]\n    return {\n        \"module\": KD.MODULE,\n        \"class\": mod.KTPUDevice is KD.KTPUDevice,\n        \"file\": getattr(mod, \"__file__\", None),\n        \"resolves\": type(TinyDevice[\"KTPU\"]).__name__,\n        \"routed\": realize.to_program is SEAM_TO,\n    }\n"
+ },
+ "expect": {
+  "module": "tinygrad.runtime.ops_ktpu",
+  "class": true,
+  "file": null,
+  "resolves": "KTPUDevice",
+  "routed": true
+ },
+ "mutants": [
+  "tg.device/module_class",
+  "tg.seam/route_other"
+ ]
+}

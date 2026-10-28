@@ -1,0 +1,29 @@
+{
+ "clause": "L0.NQ.028",
+ "tier": 0,
+ "runner": "l0.pairs",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "host": [
+   "layout.STATUS[0]",
+   "layout.OK"
+  ],
+  "header": [
+   "package/status.h:KA_ST_OK"
+  ],
+  "machine": [
+   "fw.status.KA_ST_OK"
+  ]
+ },
+ "expect": {
+  "layout.STATUS[0]": "OK",
+  "layout.OK": 0,
+  "package/status.h:KA_ST_OK": 0,
+  "fw.status.KA_ST_OK": 0
+ },
+ "mutants": [
+  "l0.queue/ok_status",
+  "l0.queue/status_names"
+ ]
+}

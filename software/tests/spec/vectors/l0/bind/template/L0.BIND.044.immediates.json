@@ -1,0 +1,14 @@
+{
+ "clause": "L0.BIND.044", "tier": 0, "runner": "l0.template.bind", "status": "frozen",
+ "input": {
+  "package": {"steps": [{"op": "ALU", "unit": 2, "count": 0, "arg": 1, "flags": 2}, {"op": "JUMP", "unit": 0, "count": 515, "arg": 1, "flags": 2}]},
+  "bindings": [], "params": {"n": 19},
+  "table": {"parameters": {"n": {"lo": 1, "hi": 100}}, "sites": [
+   {"name": "stride", "step": 0, "bit": 64, "width": 64, "coefficients": {"n": 32}},
+   {"name": "limit", "step": 1, "bit": 64, "width": 64, "coefficients": {"n": 1}}
+  ]},
+  "ordinary": {"steps": [{"op": "ALU", "unit": 2, "count": 0, "arg": 608, "flags": 2}, {"op": "JUMP", "unit": 0, "count": 515, "arg": 19, "flags": 2}]}
+ },
+ "expect": {"payloads": [], "bytes_equal": true, "buffers": 0, "relocs": 0},
+ "mutants": ["l0.template/step"]
+}

@@ -1,0 +1,26 @@
+{
+ "clause": "L0.BOOT.010",
+ "tier": 0,
+ "runner": "l0.pairs",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "host": [
+   "card.F_TIMING"
+  ],
+  "header": [
+   "boot/args.h:KA_BOOT_F_TIMING"
+  ],
+  "machine": [
+   "fw.boot.flags.TIMING"
+  ]
+ },
+ "expect": {
+  "card.F_TIMING": 2,
+  "boot/args.h:KA_BOOT_F_TIMING": 2,
+  "fw.boot.flags.TIMING": 2
+ },
+ "mutants": [
+  "l0.card/timing_flag"
+ ]
+}

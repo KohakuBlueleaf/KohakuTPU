@@ -1,0 +1,14 @@
+{
+  "clause": "NUM.F16.003",
+  "tier": 1,
+  "runner": "num.card.elementwise",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "op": "add",
+    "x": ["3c00", "3c01", "6800", "6800", "3c00"],
+    "y": ["1000", "1000", "3c00", "4200", "8c00"]
+  },
+  "expect": ["3c00", "3c02", "6800", "6802", "3c00"],
+  "mutants": ["num.card/readback-corrupt"]
+}

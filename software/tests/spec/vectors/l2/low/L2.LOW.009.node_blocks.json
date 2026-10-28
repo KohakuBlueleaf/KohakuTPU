@@ -1,0 +1,38 @@
+{
+ "clause": "L2.LOW.009",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[16, 128] @dram, y: f16[16, 128] @dram)",
+   "    par n in 0..2 on node[n]",
+   "        par c in 0..2 on vc[c]",
+   "            for t in 0..1",
+   "                xl = load x[n*8 + c*4 : +4, :]       : f16[4, 128] @l1",
+   "                v = unpack xl                        : f32[4, 128] @reg",
+   "                e = exp2 v                           : f32[4, 128] @reg",
+   "                ol = pack e                          : f16[4, 128] @l1",
+   "                store y[n*8 + c*4 : +4, :] <- ol"
+  ],
+  "passes": [],
+  "facts": {
+   "nodes": {
+    "lines": "^node ",
+    "in": "fn"
+   }
+  }
+ },
+ "expect": {
+  "nodes": [
+   "node 0",
+   "node 1"
+  ]
+ },
+ "mutants": [
+  "l2.body/no-node-kind"
+ ]
+}

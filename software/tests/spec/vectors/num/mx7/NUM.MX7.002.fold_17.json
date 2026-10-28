@@ -1,0 +1,14 @@
+{
+  "clause": "NUM.MX7.002",
+  "tier": 0,
+  "runner": "num.mx7.quantise",
+  "status": "frozen",
+  "input": {"bits": [16383, 15360, 45056]},
+  "expect": {
+    "q": [57, 28, -4],
+    "es": [-5],
+    "m8": [9],
+    "value": ["0x1.0080000000000p+1", "0x1.f800000000000p-1", "-0x1.2000000000000p-3"]
+  },
+  "mutants": ["num.mx7/scale-one-up"]
+}

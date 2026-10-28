@@ -1,0 +1,20 @@
+{
+  "clause": "L1.MG.002",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[1024] @dram, b: u64[1024] @dram)\n    send mg[1]\n        fill A1 <- a n=64\n        fill B1 <- b + 128 n=8\n        fill A0 <- a + 16K n=255\n",
+    "fn": "f",
+    "binds": {"a": 4096, "b": 8192}
+  },
+  "expect": {"-": {"steps": [
+    ["send", [1, 2], [
+      "FILL addr=0x1000 n=64 nk=1 anchor=40 fbank=1",
+      "FILL addr=0x2080 n=8 sel=1 nk=1 anchor=40 fbank=1",
+      "FILL addr=0x5000 n=255 nk=1 anchor=40"
+    ]]
+  ]}},
+  "mutants": ["l1.mg/side"]
+}

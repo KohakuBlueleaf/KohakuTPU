@@ -1,0 +1,48 @@
+{
+ "clause": "L0.NQ.028",
+ "tier": 0,
+ "runner": "l0.queue",
+ "status": "frozen",
+ "input": {
+  "geometry": {
+   "sq_n": 64,
+   "cq_n": 64,
+   "so_bytes": 4096,
+   "si_bytes": 256
+  },
+  "script": [
+   {
+    "do": "init"
+   },
+   {
+    "do": "submit",
+    "length": 64
+   },
+   {
+    "do": "complete",
+    "tag": 1,
+    "cycles": 5
+   },
+   {
+    "do": "wait",
+    "tag": 1
+   }
+  ]
+ },
+ "expect": [
+  null,
+  1,
+  null,
+  {
+   "tag": 1,
+   "status": "0x0",
+   "detail": 0,
+   "step": 0,
+   "cycles": 5,
+   "value": "0x0"
+  }
+ ],
+ "mutants": [
+  "l0.queue/ok_status"
+ ]
+}

@@ -1,0 +1,68 @@
+{
+ "clause": "L2.REL.001",
+ "tier": 0,
+ "runner": "l2.lanes",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "src_n": 32,
+  "walk": [
+   [
+    32,
+    -1
+   ]
+  ],
+  "at": 31,
+  "dwalk": [
+   [
+    32,
+    1
+   ]
+  ],
+  "dat": 0,
+  "m": 32,
+  "keep": false,
+  "want": [
+   "result"
+  ]
+ },
+ "expect": {
+  "result": [
+   31,
+   30,
+   29,
+   28,
+   27,
+   26,
+   25,
+   24,
+   23,
+   22,
+   21,
+   20,
+   19,
+   18,
+   17,
+   16,
+   15,
+   14,
+   13,
+   12,
+   11,
+   10,
+   9,
+   8,
+   7,
+   6,
+   5,
+   4,
+   3,
+   2,
+   1,
+   0
+  ]
+ },
+ "mutants": [
+  "l2.lanes/rot-negated"
+ ]
+}

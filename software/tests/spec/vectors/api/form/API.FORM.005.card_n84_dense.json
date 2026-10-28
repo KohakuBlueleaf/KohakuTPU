@@ -1,0 +1,33 @@
+{
+ "clause": "API.FORM.005",
+ "tier": 1,
+ "runner": "tg.values",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "W84": [
+    84,
+    64
+   ],
+   "H84": [
+    32,
+    84
+   ]
+  },
+  "make": "T(X) @ T(W84).T * T(H84)",
+  "ref": "f(X) @ f(W84).T * f(H84)",
+  "source": "def conv(x, w, pad=0):\n    xp = np.pad(f(x), ((0, 0), (0, 0), (pad, pad), (pad, pad)))\n    p = sliding_window_view(xp, w.shape[2:], axis=(2, 3))\n    return np.einsum(\"bchwij,ocij->bohw\", p, f(w))\n\n\ndef softmax(a):\n    a = f(a)\n    e = np.exp(a - a.max(-1, keepdims=True))\n    return e / e.sum(-1, keepdims=True)\n",
+  "rel": 0.02
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "api.mem/upload_dropped"
+ ]
+}

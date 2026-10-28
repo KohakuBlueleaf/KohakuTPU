@@ -1,0 +1,53 @@
+{
+ "clause": "DSL.GRAPH.004",
+ "tier": 0,
+ "runner": "dsl.graph",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(8, 32), y=kt.Out(8, 32), m=kt.Out(8)):\n    for c in kt.par(2, on=kt.vc):\n        for t in kt.range(1):\n            r = c * 4 + t * 4\n            v = kt.load(x[r : r + 4, :], gt4=True)\n            s = kt.rsum(v)\n            kt.store(y[r : r + 4, :], v * s)\n            kt.store(m[r : r + 4], s)\n",
+  "given": {
+   "x": [
+    [
+     8,
+     32
+    ],
+    "f16"
+   ]
+  },
+  "keys": [
+   "values"
+  ]
+ },
+ "expect": {
+  "values": [
+   [
+    "xl1",
+    "f16[4, 32] @l1(gt4)"
+   ],
+   [
+    "v1",
+    "f32[4, 32] @reg(gt4)"
+   ],
+   [
+    "s1",
+    "f32[4] @reg"
+   ],
+   [
+    "e1",
+    "f32[4, 32] @reg(gt4)"
+   ],
+   [
+    "p1",
+    "f16[4, 32] @l1(gt4)"
+   ],
+   [
+    "p2",
+    "f16[4] @l1"
+   ]
+  ]
+ },
+ "mutants": [
+  "dsl.ops/gt4_off"
+ ]
+}

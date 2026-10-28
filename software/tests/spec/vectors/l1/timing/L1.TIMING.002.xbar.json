@@ -1,0 +1,10 @@
+{
+  "clause": "L1.TIMING.002",
+  "tier": 2,
+  "runner": "vc.timing.measured",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {"parameter": "xbar"},
+  "expect": {"value": 0},
+  "mutants": ["vc.timing/machine-plus-one"]
+}

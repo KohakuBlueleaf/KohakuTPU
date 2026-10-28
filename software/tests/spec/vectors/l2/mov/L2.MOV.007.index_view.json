@@ -1,0 +1,29 @@
+{
+ "clause": "L2.MOV.007",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(t: f16[64, 64] @dram, idx: u32[32] @dram, y: f16[8, 64] @dram)",
+   "    gather y <- t index=idx[8 : +8] fp"
+  ],
+  "facts": {
+   "fn": {
+    "lines": "^gather",
+    "in": "fn"
+   }
+  }
+ },
+ "expect": {
+  "fn": [
+   "gather t+0 -> w(y+0, (32, 32)) fp index=idx+32 n=8 pitch=128 words=4"
+  ]
+ },
+ "mutants": [
+  "l2.memory/lo-ignored"
+ ]
+}

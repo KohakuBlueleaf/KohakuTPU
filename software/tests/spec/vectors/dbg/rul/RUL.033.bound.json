@@ -1,0 +1,21 @@
+{
+ "clause": "RUL.033",
+ "tier": 0,
+ "runner": "dbg.bound",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "seconds": 0.02,
+  "profiles": [
+   "low",
+   "mid"
+  ]
+ },
+ "expect": {
+  "low": 2000000,
+  "mid": 4000000
+ },
+ "mutants": [
+  "dbg/bound_khz"
+ ]
+}

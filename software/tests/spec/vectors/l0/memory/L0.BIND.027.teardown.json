@@ -1,0 +1,1 @@
+{"clause":"L0.BIND.027","tier":0,"runner":"memory.teardown","machine":"multimesh_v9t6","status":"frozen","input":{},"expect":{"used":0,"closed":true},"mutants":["memory/no-teardown"]}

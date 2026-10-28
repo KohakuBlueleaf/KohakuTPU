@@ -1,0 +1,71 @@
+{
+ "clause": "L2.OP.001",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram)",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..1",
+   "            xl = load x[t*4 : +4, :]   : f16[4, 128] @l1",
+   "            v = unpack xl                      : f32[4, 128] @reg",
+   "            e = exp2 v                         : f32[4, 128] @reg",
+   "            e = inv e                          : f32[4, 128] @reg",
+   "            e = rsqrt e                        : f32[4, 128] @reg",
+   "            e = log2 e                         : f32[4, 128] @reg",
+   "            e = add e, v                       : f32[4, 128] @reg",
+   "            e = mul e, v                       : f32[4, 128] @reg",
+   "            e = max e, v                       : f32[4, 128] @reg",
+   "            ol = pack e                     : f16[4, 128] @l1",
+   "            store y[t*4 : +4, :] <- ol"
+  ],
+  "passes": [],
+  "facts": {
+   "vexp2": {
+    "count": "^vexp2 ",
+    "in": "images"
+   },
+   "vinv": {
+    "count": "^vinv ",
+    "in": "images"
+   },
+   "vrsqrt": {
+    "count": "^vrsqrt ",
+    "in": "images"
+   },
+   "vlog2": {
+    "count": "^vlog2 ",
+    "in": "images"
+   },
+   "vadd": {
+    "count": "^vadd ",
+    "in": "images"
+   },
+   "vmul": {
+    "count": "^vmul ",
+    "in": "images"
+   },
+   "vmax": {
+    "count": "^vmax ",
+    "in": "images"
+   }
+  }
+ },
+ "expect": {
+  "vexp2": 4,
+  "vinv": 4,
+  "vrsqrt": 4,
+  "vlog2": 4,
+  "vadd": 4,
+  "vmul": 4,
+  "vmax": 4
+ },
+ "mutants": [
+  "l2.vector/unary-swapped",
+  "l2.vector/binary-swapped"
+ ]
+}

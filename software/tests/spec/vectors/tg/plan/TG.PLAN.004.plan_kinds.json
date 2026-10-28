@@ -1,0 +1,47 @@
+{
+ "clause": "TG.PLAN.004",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "Y": [
+    32,
+    64
+   ],
+   "W": [
+    96,
+    64
+   ]
+  },
+  "source": "def facts():\n    cases = {\n        \"const\": Tensor.zeros(4, 32, dtype=dtypes.half, device=\"KTPU\").contiguous(),\n        \"matmul\": T(X) @ T(W).T,\n        \"vector\": T(X) + T(Y),\n    }\n    out = {k: [L.plan(a).kind for a in asts(t)] for k, t in cases.items()}\n    out[\"copy\"] = [L.plan(a).kind for a in asts(T(X) * 1)]\n    (p,) = [L.plan(a) for a in asts(Tensor.full((4, 32), 3, dtype=dtypes.half, device=\"KTPU\").contiguous())]\n    out[\"const_value\"] = [np.unique(p.value).tolist(), str(p.value.dtype)]\n    return out\n"
+ },
+ "expect": {
+  "const": [
+   "const"
+  ],
+  "matmul": [
+   "matmul"
+  ],
+  "vector": [
+   "vector"
+  ],
+  "copy": [
+   "copy"
+  ],
+  "const_value": [
+   [
+    3.0
+   ],
+   "float16"
+  ]
+ },
+ "mutants": [
+  "tg.lower/no_matmul"
+ ]
+}

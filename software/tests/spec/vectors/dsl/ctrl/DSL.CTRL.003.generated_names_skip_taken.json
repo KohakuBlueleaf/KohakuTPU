@@ -1,0 +1,38 @@
+{
+ "clause": "DSL.CTRL.003",
+ "tier": 0,
+ "runner": "dsl.trace",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(c1=kt.In(8, 32), y=kt.Out(8, 32)):\n    s = kt.buffer((8, 32), \"f16\", name=\"u1\")\n    for u in kt.par(1, on=kt.mg):\n        kt.zero(4, 32)\n    for c in kt.par(2, on=kt.vc):\n        kt.store(s[c * 4 : c * 4 + 4, :], kt.load(c1[c * 4 : c * 4 + 4, :]))\n    for c in kt.par(2, on=kt.vc):\n        kt.store(y[c * 4 : c * 4 + 4, :], kt.load(s[c * 4 : c * 4 + 4, :]))\n",
+  "given": {
+   "c1": [
+    [
+     8,
+     32
+    ],
+    "f16"
+   ]
+  }
+ },
+ "expect": {
+  "body": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(c1: f16[8, 32] @dram, y: f16[8, 32] @dram)",
+   "    u1 = buffer : f16[8, 32] @dram",
+   "    par u2 in 0..1 on mg[u2]",
+   "        acc1 = zero : f32[4, 32] @acc",
+   "    par c2 in 0..2 on vc[c2]",
+   "        xl1 = load c1[c2*4 : +4] : f16[4, 32] @l1",
+   "        store u1[c2*4 : +4] <- xl1",
+   "    par c3 in 0..2 on vc[c3]",
+   "        xl2 = load u1[c3*4 : +4] : f16[4, 32] @l1",
+   "        store y[c3*4 : +4] <- xl2"
+  ]
+ },
+ "mutants": [
+  "dsl.ops/var_names"
+ ]
+}

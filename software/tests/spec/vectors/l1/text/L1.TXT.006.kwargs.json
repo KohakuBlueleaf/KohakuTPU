@@ -1,0 +1,18 @@
+{
+  "clause": "L1.TXT.006",
+  "tier": 0,
+  "runner": "l1.parse",
+  "status": "frozen",
+  "input": {
+    "text": "op a k=1 l1[0] = 3\n",
+    "split": true
+  },
+  "expect": [
+    {
+      "op": "op",
+      "positional": [["Name", "a"], ["Assign", ["View", "l1", [["Int", 0, "dec"]]], ["Int", 3, "dec"]]],
+      "kwargs": {"k": ["Int", 1, "dec"]}
+    }
+  ],
+  "mutants": ["l1.text/kwargs-any-lhs"]
+}

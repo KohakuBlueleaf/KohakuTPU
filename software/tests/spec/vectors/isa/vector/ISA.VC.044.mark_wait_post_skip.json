@@ -1,0 +1,68 @@
+{
+ "clause": "ISA.VC.044",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "vmark",
+    "args": [
+     5,
+     0,
+     3
+    ]
+   },
+   {
+    "fn": "vwait",
+    "args": [
+     6,
+     0,
+     300
+    ]
+   },
+   {
+    "fn": "vwait",
+    "args": [
+     1,
+     1,
+     8
+    ],
+    "kw": {
+     "q": 1
+    }
+   },
+   {
+    "fn": "vpost",
+    "args": [
+     [
+      3,
+      2
+     ],
+     40000
+    ]
+   },
+   {
+    "fn": "vskipz",
+    "args": [
+     14,
+     9
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0xb501a800",
+   "0xb6e96000",
+   "0xb1e04600",
+   "0xc9909c40",
+   "0xbb800009"
+  ]
+ },
+ "mutants": [
+  "isa.vector/sync_fields",
+  "isa.vector/ctl_fields"
+ ]
+}

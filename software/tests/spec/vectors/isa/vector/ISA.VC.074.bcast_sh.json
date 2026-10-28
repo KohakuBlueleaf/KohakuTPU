@@ -1,0 +1,25 @@
+{
+ "clause": "ISA.VC.074",
+ "tier": 0,
+ "runner": "isa.vector.image",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image k()\n    vmul v2, k1, bcast(v0[0], lane=2, sh=3)\n    halt\n",
+  "name": "k",
+  "args": [],
+  "entry": "reset"
+ },
+ "expect": {
+  "words": [
+   "0x9d7f1101",
+   "0x98800193",
+   "0x28820061",
+   "0xf8000000"
+  ],
+  "descs": {}
+ },
+ "mutants": [
+  "isa.vector/cfg_fields"
+ ]
+}

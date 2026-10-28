@@ -1,0 +1,28 @@
+{
+ "clause": "ISA.VC.108",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "vunpk",
+    "args": [
+     5,
+     8,
+     8,
+     1
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0xa15e0008"
+  ]
+ },
+ "mutants": [
+  "isa.vector/walk_fields"
+ ]
+}

@@ -1,0 +1,14 @@
+{
+  "clause": "NUM.E8.008",
+  "tier": 1,
+  "runner": "num.card.elementwise",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "op": "mul",
+    "x": ["8000", "0000", "8000", "0000", "3c00", "bc00", "8000", "0000"],
+    "y": ["3c00", "bc00", "bc00", "3c00", "8000", "0000", "8000", "8000"]
+  },
+  "expect": ["0000", "0000", "0000", "0000", "0000", "0000", "0000", "0000"],
+  "mutants": ["num.card/readback-corrupt"]
+}

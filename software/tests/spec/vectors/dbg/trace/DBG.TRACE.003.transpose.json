@@ -1,0 +1,17 @@
+{
+ "clause": "DBG.TRACE.003",
+ "tier": 1,
+ "runner": "dbg.same",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "seed": 0
+ },
+ "expect": {
+  "plain": true,
+  "traced": true
+ },
+ "mutants": [
+  "dbg/trace_drops_step"
+ ]
+}

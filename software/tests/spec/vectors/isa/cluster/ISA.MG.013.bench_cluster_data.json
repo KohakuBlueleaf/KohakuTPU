@@ -1,0 +1,16 @@
+{
+ "clause": "ISA.MG.013",
+ "tier": 2,
+ "runner": "isa.bench",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "bench": "cluster_data"
+ },
+ "expect": {
+  "pass": true
+ },
+ "mutants": [
+  "isa.bench/short"
+ ]
+}

@@ -1,0 +1,22 @@
+{
+  "clause": "L1.IMG.003",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k(x, n)\n    desc a0 = x walk=(32, 4)\n    seti s1 = n\n    halt\nfn f.l1(a: f16[64] @dram, b: f16[64] @dram)\n    send vc[0]\n        run k(a, 4)\n        run k(b, 4)\n",
+    "fn": "f",
+    "binds": {"a": 4096, "b": 8192}
+  },
+  "expect": {"-": {"steps": [
+    ["send", [2, 1], [
+      ["DESC", 0, 0, "0x1000"], ["DESC", 0, 1, 32, 4], ["DESC", 0, 2, 0, 0], ["DESC", 0, 3, 0, 0], ["DESC", 0, 4, 0, 0],
+      ["IMEM", 0, "VSETI sreg=1"], ["IMEM", 1, "imm=0x4"], ["IMEM", 2, "VHALT"],
+      ["RUN", 0],
+      ["DESC", 0, 0, "0x2000"], ["DESC", 0, 1, 32, 4], ["DESC", 0, 2, 0, 0], ["DESC", 0, 3, 0, 0], ["DESC", 0, 4, 0, 0],
+      ["RUN", 0]
+    ]]
+  ]}},
+  "mutants": ["l1.img/key-all-params"]
+}

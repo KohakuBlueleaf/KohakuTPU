@@ -1,0 +1,20 @@
+{
+ "clause": "ISA.VC.031",
+ "tier": 0,
+ "runner": "isa.vector.cu",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "fn": "imem_flit",
+  "args": [
+   511,
+   4160749568
+  ]
+ },
+ "expect": {
+  "payload": "0x1ff80000000000000000000000000000000000000000000000000000f8000000"
+ },
+ "mutants": [
+  "isa.vector/cu_imem"
+ ]
+}

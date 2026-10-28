@@ -1,0 +1,70 @@
+{
+ "clause": "L0.STEP.051",
+ "tier": 0,
+ "runner": "l0.pkg.build",
+ "status": "frozen",
+ "input": {
+  "builder": {
+   "types": [
+    [
+     1,
+     1,
+     "MG"
+    ]
+   ],
+   "credit": 512
+  },
+  "calls": [
+   [
+    "alu",
+    2,
+    1,
+    3,
+    7,
+    true
+   ],
+   [
+    "alu",
+    4,
+    3,
+    5,
+    6,
+    false
+   ]
+  ],
+  "keys": [
+   "package"
+  ]
+ },
+ "expect": {
+  "package": {
+   "units": [],
+   "buffers": [],
+   "steps": [
+    {
+     "op": "ALU",
+     "unit": 2,
+     "count": 769,
+     "arg": "0x7",
+     "flags": 2
+    },
+    {
+     "op": "ALU",
+     "unit": 4,
+     "count": 25859,
+     "arg": "0x0",
+     "flags": 0
+    }
+   ],
+   "relocs": [],
+   "payloads": [],
+   "signature": "0x0",
+   "ack_reserve": 0,
+   "checksum": false
+  }
+ },
+ "mutants": [
+  "l0.build/flags_dropped",
+  "l0.build/count_arg_swapped"
+ ]
+}

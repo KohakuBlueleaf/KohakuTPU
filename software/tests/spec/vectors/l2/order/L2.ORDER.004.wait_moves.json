@@ -1,0 +1,104 @@
+{
+ "clause": "L2.ORDER.004",
+ "tier": 0,
+ "runner": "l2.sync",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "stages": [
+   {
+    "lines": [
+     "S0"
+    ],
+    "units": [],
+    "accesses": [
+     [
+      "mover",
+      1,
+      [
+       "mem",
+       "a"
+      ],
+      0,
+      64
+     ]
+    ],
+    "post": "mv0"
+   },
+   {
+    "lines": [
+     "S1"
+    ],
+    "units": [],
+    "accesses": [
+     [
+      "mover",
+      1,
+      [
+       "mem",
+       "b"
+      ],
+      0,
+      64
+     ]
+    ],
+    "post": "mv1"
+   },
+   {
+    "lines": [
+     "S2"
+    ],
+    "units": [
+     "vc[0]"
+    ],
+    "accesses": [
+     [
+      "vc[0]",
+      0,
+      [
+       "mem",
+       "a"
+      ],
+      0,
+      64
+     ]
+    ],
+    "post": null
+   },
+   {
+    "lines": [
+     "S3"
+    ],
+    "units": [
+     "vc[1]"
+    ],
+    "accesses": [
+     [
+      "vc[1]",
+      0,
+      [
+       "mem",
+       "b"
+      ],
+      0,
+      64
+     ]
+    ],
+    "post": null
+   }
+  ]
+ },
+ "expect": [
+  "S0",
+  "S1",
+  "wait moves mv0",
+  "S2",
+  "wait moves mv1",
+  "S3",
+  "wait moves mv1",
+  "barrier"
+ ],
+ "mutants": [
+  "l2.sync/never-clash"
+ ]
+}

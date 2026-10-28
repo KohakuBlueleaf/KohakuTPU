@@ -1,0 +1,28 @@
+{
+ "clause": "ISA.VC.105",
+ "tier": 1,
+ "runner": "isa.card.kernel",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "body": [
+   "seti s0 = 1048576.0",
+   "vmul v2, v0, s0"
+  ],
+  "check": "scale2_20",
+  "x": {
+   "seed": 13,
+   "subnormal": true
+  },
+  "tol": {
+   "exact": true
+  }
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.vector/e8m15_f16",
+  "isa.vector/opcodes"
+ ]
+}

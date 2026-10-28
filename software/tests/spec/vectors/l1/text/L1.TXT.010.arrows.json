@@ -1,0 +1,15 @@
+{
+  "clause": "L1.TXT.010",
+  "tier": 0,
+  "runner": "l1.parse",
+  "status": "frozen",
+  "input": {
+    "text": "t a <- b\nt a < -b\nt a -> b\n"
+  },
+  "expect": [
+    {"op": "t", "args": [["Name", "a"], ["Arrow", "<-"], ["Name", "b"]]},
+    {"op": "t", "args": [["Compare", "<", ["Name", "a"], ["Neg", ["Name", "b"]]]]},
+    {"op": "t", "args": [["Name", "a"], ["Arrow", "->"], ["Name", "b"]]}
+  ],
+  "mutants": ["l1.text/no-left-arrow"]
+}

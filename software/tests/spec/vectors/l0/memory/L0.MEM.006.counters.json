@@ -1,0 +1,1 @@
+{"clause":"L0.MEM.006","tier":0,"runner":"memory.counters","status":"frozen","input":{},"expect":{"used":128,"requested":97,"peak":192,"allocations":3,"free":896,"largest":832,"free_spans":2,"fragmented":64,"owners":{"input":64,"output":64}},"mutants":["memory/no-peak"]}

@@ -1,0 +1,26 @@
+{
+ "clause": "TG.DEV.005",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    b = Buffer(\"KTPU\", 64, dtypes.half).allocate()\n    st = b._buf\n    v = Buffer(\"KTPU\", 16, dtypes.half, base=b, offset=32).allocate()\n    out = {\n        \"storage\": type(st).__name__,\n        \"nbytes\": st.nbytes,\n        \"view\": type(v._buf).__name__,\n        \"view_at\": v._buf.addr - st.addr,\n        \"view_base\": getattr(v._buf, \"base\", None) is st,\n    }\n    st.form(FM.F16, 64)\n    used = DEV.dram.used\n    v.deallocate()\n    b.deallocate()\n    out[\"freed\"] = [st.forms == {}, st.valid == set(), DEV.dram.used < used]\n    return out\n"
+ },
+ "expect": {
+  "storage": "Storage",
+  "nbytes": 128,
+  "view": "StorageView",
+  "view_at": 32,
+  "view_base": true,
+  "freed": [
+   true,
+   true,
+   true
+  ]
+ },
+ "mutants": [
+  "tg.device/offset_base",
+  "api.mem/forms_kept"
+ ]
+}

@@ -1,0 +1,17 @@
+{
+ "clause": "ISA.VC.123",
+ "tier": 0,
+ "runner": "isa.vector.descs",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "example": "add"
+ },
+ "expect": {
+  "descs": true,
+  "whole_words": true
+ },
+ "mutants": [
+  "isa.vector/dim"
+ ]
+}

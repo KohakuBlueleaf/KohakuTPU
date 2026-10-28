@@ -1,0 +1,50 @@
+{
+ "clause": "L2.LOW.003",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[16, 128] @dram, y: f16[16, 128] @dram)",
+   "    par c in 0..2 on vc[c]",
+   "        for t in 0..1",
+   "            xl = load x[c*8 : +8, :]     : f16[8, 128] @l1",
+   "            v = unpack xl                    : f32[8, 128] @reg",
+   "            e = exp2 v                       : f32[8, 128] @reg",
+   "            ol = pack e                  : f16[8, 128] @l1",
+   "            store y[c*8 : +8, :] <- ol"
+  ],
+  "passes": [],
+  "facts": {
+   "images": {
+    "count": "^image "
+   },
+   "runs": {
+    "lines": "^(send|run)",
+    "in": "fn"
+   },
+   "descs": {
+    "lines": "^desc"
+   }
+  }
+ },
+ "expect": {
+  "images": 1,
+  "runs": [
+   "send vc[0]",
+   "run k_n0_vc0_0(x+0, y+0)",
+   "send vc[1]",
+   "run k_n0_vc0_0(x+2048, y+2048)"
+  ],
+  "descs": [
+   "desc a0=p_a0 walk=(32, 64)",
+   "desc a1=p_a1 walk=(32, 64)"
+  ]
+ },
+ "mutants": [
+  "l2.lower/no-shared-image"
+ ]
+}

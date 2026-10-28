@@ -1,0 +1,17 @@
+{
+ "clause": "RUL.003",
+ "tier": 0,
+ "runner": "isa.vector.image",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image k()\n    vunpk v0 <- l1[0] f16 q=1\n    halt\n",
+  "name": "k",
+  "args": [],
+  "entry": "reset"
+ },
+ "expect": {
+  "error": "TextError"
+ },
+ "mutants": ["rul.003/q1"]
+}

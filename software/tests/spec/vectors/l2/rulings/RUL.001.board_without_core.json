@@ -1,0 +1,19 @@
+{
+ "clause": "RUL.001",
+ "tier": 0,
+ "runner": "l2.target",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "board": "multimesh_v9t6",
+  "drop": [
+   "vc",
+   "units"
+  ],
+  "refused_only": true
+ },
+ "expect": {
+  "refused": true
+ },
+ "mutants": ["rul.001/missing-core"]
+}

@@ -1,0 +1,17 @@
+{
+ "clause": "TG.TOL.002",
+ "tier": 1,
+ "runner": "tg.values",
+ "machine": "vlt_v9t6s_1n",
+ "status": "frozen",
+ "input": {
+  "arrays": {"x": [1, 65, 64], "wq": [192, 64], "wo": [64, 64], "w1": [256, 64], "w2": [64, 256]},
+  "scale": {"wq": 50, "wo": 50, "w1": 50, "w2": 50},
+  "source": "def card_block():\n    a = T(x)\n    z = (a.layernorm(eps=1e-6).realize() @ T(wq).T).realize().reshape(1,65,3,1,64)\n    q,k,v = [z[:,:,i].transpose(1,2).contiguous().realize() for i in range(3)]\n    s = ((q @ k.transpose(-1,-2))*0.125).realize()\n    p = s.softmax(-1).realize()\n    h = (p @ v).realize().transpose(1,2).contiguous().realize().reshape(1,65,64)\n    a = (a + h @ T(wo).T).realize()\n    h = (a.layernorm(eps=1e-6).realize() @ T(w1).T).gelu().realize()\n    return (a + h @ T(w2).T).realize()\n\ndef reference():\n    a = x.astype(np.float32)\n    def norm(z):\n        d = z - z.mean(-1, keepdims=True)\n        return d / np.sqrt((d*d).mean(-1, keepdims=True) + np.float32(1e-6))\n    z = (norm(a) @ wq.astype(np.float32).T).reshape(1,65,3,1,64)\n    q,k,v = [z[:,:,i].swapaxes(1,2) for i in range(3)]\n    s = (q @ k.swapaxes(-1,-2))*np.float32(0.125)\n    e = np.exp(s - s.max(-1, keepdims=True))\n    h = ((e / e.sum(-1,keepdims=True)) @ v).swapaxes(1,2).reshape(1,65,64)\n    a = a + h @ wo.astype(np.float32).T\n    h = norm(a) @ w1.astype(np.float32).T\n    h = np.float32(0.5)*h*(1 + np.tanh(np.float32(np.sqrt(2/np.pi))*(h + np.float32(0.044715)*h*h*h)))\n    return a + h @ w2.astype(np.float32).T\n",
+  "make": "card_block()",
+  "ref": "reference()",
+  "rel": 0.02
+ },
+ "expect": {"ok": true},
+ "mutants": ["api.mem/upload_dropped"]
+}

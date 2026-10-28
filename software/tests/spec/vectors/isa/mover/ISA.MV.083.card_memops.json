@@ -1,0 +1,17 @@
+{
+ "clause": "ISA.MV.083",
+ "tier": 1,
+ "runner": "isa.card.example",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "case": "memops",
+  "reps": 1
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "l1.node/ctrl-offsets"
+ ]
+}

@@ -1,0 +1,61 @@
+{
+ "clause": "API.FORM.005",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def padded(n, np_, rows, item):\n    s = ST.Storage(DEV, item * rows * n)\n    key = FM.rows_key(n, np_)\n    s.form(key, 2 * rows * np_)\n    s.wrote(key)\n    return s, key\n\n\ndef facts():\n    out = {}\n    for name, n, np_, item in ((\"whole\", 64, 96, 2), (\"part\", 10, 16, 2), (\"f32\", 10, 16, 4)):\n        s, key = padded(n, np_, 4, item)\n        n0 = len(DEV.runs)\n        FM.compact(DEV, s, key, item)\n        out[name] = {\"runs\": [r.name.rsplit(\"_\", 1)[0] for r in DEV.runs[n0:]], \"valid\": form_keys(s)}\n        s.free()\n    return out\n"
+ },
+ "expect": {
+  "whole": {
+   "runs": [
+    "walk"
+   ],
+   "valid": [
+    [
+     "flat"
+    ],
+    [
+     "rows",
+     64,
+     96
+    ]
+   ]
+  },
+  "part": {
+   "runs": [
+    "lanes"
+   ],
+   "valid": [
+    [
+     "flat"
+    ],
+    [
+     "rows",
+     10,
+     16
+    ]
+   ]
+  },
+  "f32": {
+   "runs": [
+    "lanes"
+   ],
+   "valid": [
+    [
+     "f16"
+    ],
+    [
+     "rows",
+     10,
+     16
+    ]
+   ]
+  }
+ },
+ "mutants": [
+  "api.forms/repitch_lanes",
+  "api.forms/made_drop"
+ ]
+}

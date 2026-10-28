@@ -1,0 +1,151 @@
+{
+  "clause": "L0.STEP.054",
+  "expect": {
+    "steps": [
+      {
+        "arg": "0x5",
+        "count": 769,
+        "flags": 2,
+        "op": "ALU",
+        "unit": 15
+      },
+      {
+        "arg": "0x1000",
+        "count": 0,
+        "flags": 0,
+        "op": "PATCH",
+        "unit": 15
+      },
+      {
+        "arg": "0x0",
+        "count": 1,
+        "flags": 0,
+        "op": "DISPATCH",
+        "unit": 0
+      },
+      {
+        "arg": "0x0",
+        "count": 0,
+        "flags": 2,
+        "op": "AWAIT",
+        "unit": 0
+      },
+      {
+        "arg": "0x5",
+        "count": 769,
+        "flags": 2,
+        "op": "ALU",
+        "unit": 15
+      },
+      {
+        "arg": "0x1000",
+        "count": 1,
+        "flags": 0,
+        "op": "PATCH",
+        "unit": 15
+      },
+      {
+        "arg": "0x1",
+        "count": 1,
+        "flags": 0,
+        "op": "DISPATCH",
+        "unit": 0
+      },
+      {
+        "arg": "0x4",
+        "count": 259,
+        "flags": 2,
+        "op": "JUMP",
+        "unit": 3
+      },
+      {
+        "arg": "0x0",
+        "count": 0,
+        "flags": 2,
+        "op": "AWAIT",
+        "unit": 0
+      },
+      {
+        "arg": "0x0",
+        "count": 0,
+        "flags": 0,
+        "op": "BARRIER",
+        "unit": 0
+      }
+    ]
+  },
+  "input": {
+    "keys": [
+      "steps"
+    ],
+    "steps": [
+      [
+        "send",
+        [
+          1,
+          1
+        ],
+        [
+          "0x0"
+        ],
+        [
+          [
+            0,
+            [
+              [
+                0,
+                16,
+                0
+              ]
+            ],
+            3,
+            5
+          ]
+        ]
+      ],
+      [
+        "label",
+        "top"
+      ],
+      [
+        "send",
+        [
+          1,
+          1
+        ],
+        [
+          "0x0"
+        ],
+        [
+          [
+            0,
+            [
+              [
+                0,
+                16,
+                0
+              ]
+            ],
+            3,
+            5
+          ]
+        ]
+      ],
+      [
+        "jump",
+        "top",
+        3,
+        1,
+        4,
+        true
+      ]
+    ]
+  },
+  "machine": "multimesh_v9t6",
+  "mutants": [
+    "l0.program/tmp_reg"
+  ],
+  "runner": "l0.program",
+  "status": "frozen",
+  "tier": 0
+}

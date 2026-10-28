@@ -1,0 +1,18 @@
+{
+  "clause": "L1.TXT.005",
+  "tier": 0,
+  "runner": "l1.parse",
+  "status": "frozen",
+  "input": {
+    "text": "vadd v1, v2, v3\nvadd v1 v2 v3\n",
+    "print": true
+  },
+  "expect": {
+    "stmts": [
+      {"op": "vadd", "args": [["Name", "v1"], ["Name", "v2"], ["Name", "v3"]], "commas": true},
+      {"op": "vadd", "args": [["Name", "v1"], ["Name", "v2"], ["Name", "v3"]]}
+    ],
+    "text": ["vadd v1, v2, v3", "vadd v1 v2 v3"]
+  },
+  "mutants": ["l1.text/no-commas"]
+}

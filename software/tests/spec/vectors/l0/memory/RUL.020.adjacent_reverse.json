@@ -1,0 +1,1 @@
+{"clause":"RUL.020","tier":1,"runner":"memory.adjacent_allocations","machine":"vlt_v9t6s_1n","status":"frozen","input":{"case":"reverse"},"expect":{"values":true,"sentinel":true,"distinct":true},"mutants":["memory/reverse-overrun"]}

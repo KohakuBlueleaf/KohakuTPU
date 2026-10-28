@@ -1,0 +1,9 @@
+{
+  "clause": "NUM.MEM.003",
+  "tier": 0,
+  "runner": "num.buffer",
+  "status": "frozen",
+  "input": {"dtype": "f32", "shape": [4], "values": [1.0, -2.5, 0.1, 1.00048828125]},
+  "expect": {"nbytes": 16, "hex": "0000803f000020c0cdcccc3d0010803f"},
+  "mutants": ["num.buffer/f32-as-f16"]
+}

@@ -1,0 +1,5 @@
+{
+ "clause": "API.MEM.005", "tier": 0, "runner": "memory.pressure",
+ "status": "frozen", "input": {},
+ "expect": {"address": 123, "collected": [1]}, "mutants": ["memory/drain-all"]
+}

@@ -1,0 +1,18 @@
+{
+  "clause": "L1.MG.011",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[4] @dram)\n    node 0\n        send mg[1]\n            drain n=4096 to=mesh1.mg[0] buf=2 l1=0\n    node 1\n        barrier\n",
+    "fn": "f",
+    "binds": {"a": 4096},
+    "nodes": 2
+  },
+  "expect": {
+    "0": {"steps": [["send", [1, 2], ["DRAIN n=4096 nk=1 anchor=40 dnode=1 dst_y=1 dbuf=2 dack_y=1 dmesh=1 dfin=17"]]]},
+    "1": {"steps": [["barrier"]]}
+  },
+  "mutants": ["l1.mg/port"]
+}

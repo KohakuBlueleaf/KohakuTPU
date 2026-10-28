@@ -1,0 +1,16 @@
+{
+ "clause": "L0.STEP.035",
+ "tier": 2,
+ "runner": "l0.bench",
+ "status": "frozen",
+ "input": {
+  "test": "test_l1_examples.py::test_remote_store",
+  "nodes": 2
+ },
+ "expect": {
+  "outcome": "passed"
+ },
+ "mutants": [
+  "l0.pkg/version"
+ ]
+}

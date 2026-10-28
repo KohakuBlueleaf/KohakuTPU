@@ -1,0 +1,117 @@
+{
+ "clause": "ISA.VC.054",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "math",
+    "args": [
+     "vmov",
+     1,
+     2,
+     3,
+     4
+    ]
+   },
+   {
+    "fn": "math",
+    "args": [
+     "vadd",
+     1,
+     2,
+     3,
+     4
+    ]
+   },
+   {
+    "fn": "math",
+    "args": [
+     "vmul",
+     1,
+     2,
+     3,
+     4
+    ]
+   },
+   {
+    "fn": "math",
+    "args": [
+     "vmax",
+     1,
+     2,
+     3,
+     4
+    ]
+   },
+   {
+    "fn": "math",
+    "args": [
+     "vsel",
+     1,
+     2,
+     3,
+     4
+    ]
+   },
+   {
+    "fn": "math",
+    "args": [
+     "vexp2",
+     1,
+     2,
+     3,
+     4
+    ]
+   },
+   {
+    "fn": "math",
+    "args": [
+     "vlog2",
+     1,
+     2,
+     3,
+     4
+    ]
+   },
+   {
+    "fn": "math",
+    "args": [
+     "vinv",
+     1,
+     2,
+     3,
+     4
+    ]
+   },
+   {
+    "fn": "math",
+    "args": [
+     "vrsqrt",
+     1,
+     2,
+     3,
+     4
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0x443200",
+   "0x18443200",
+   "0x28443200",
+   "0x40443200",
+   "0x50443200",
+   "0x70443200",
+   "0x78443200",
+   "0x80443200",
+   "0x88443200"
+  ]
+ },
+ "mutants": [
+  "isa.vector/opcodes"
+ ]
+}

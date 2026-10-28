@@ -1,0 +1,20 @@
+{
+  "clause": "L1.MOV.003",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u32[1024] @dram, b: u32[1024] @dram)\n    move\n        copy w(a, (2, 64), (2, 32)) -> w(b, (2, 32), (2, 64))\n",
+    "fn": "f",
+    "binds": {"a": 4096, "b": 8192}
+  },
+  "expect": {"-": {"steps": [
+    ["move", [
+      "HDR base=0x1000 ndim=2", "DIM count=2 stride=64", "AXIS", "DIM level=1 count=2 stride=32", "AXIS", "WIN", "WIN axis=1",
+      "HDR sel=1 base=0x2000 ndim=2", "DIM sel=1 count=2 stride=32", "AXIS", "DIM sel=1 level=1 count=2 stride=64", "AXIS", "WIN sel=1", "WIN sel=1 axis=1",
+      "CTRL ew=2 flags=0x8 go=1"
+    ]]
+  ]}},
+  "mutants": ["l1.mov/levels-reversed"]
+}

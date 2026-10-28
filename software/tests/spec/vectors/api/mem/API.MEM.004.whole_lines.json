@@ -1,0 +1,19 @@
+{
+ "clause": "API.MEM.004",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    a = DEV.alloc(64)\n    DEV.write(a, b\"\\xff\" * 32)\n    DEV.write(a, b\"\\x01\" * 10)\n    after = DEV.read(a, 32).hex()\n    short = len(DEV.read(a, 10))\n    DEV.free(a)\n    return {\"line\": DEV.card.line, \"granule\": MACHINE.card.host.write_granule, \"after\": after, \"short_read\": short}\n"
+ },
+ "expect": {
+  "line": 32,
+  "granule": 32,
+  "after": "0101010101010101010100000000000000000000000000000000000000000000",
+  "short_read": 10
+ },
+ "mutants": [
+  "api.mem/no_line"
+ ]
+}

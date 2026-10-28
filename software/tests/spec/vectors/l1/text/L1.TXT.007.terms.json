@@ -1,0 +1,27 @@
+{
+  "clause": "L1.TXT.007",
+  "tier": 0,
+  "runner": "l1.parse",
+  "status": "frozen",
+  "input": {
+    "text": "t name_1 a.b 1_000 0x10_00 16K 1M 1G 1.5 1e-05 inf nan 64x64x2 \"a file\"\n"
+  },
+  "expect": [
+    {"op": "t", "args": [
+      ["Name", "name_1"],
+      ["Name", "a.b"],
+      ["Int", 1000, "dec"],
+      ["Int", 4096, "hex"],
+      ["Int", 16384, "size"],
+      ["Int", 1048576, "size"],
+      ["Int", 1073741824, "size"],
+      ["Float", "1.5"],
+      ["Float", "1e-05"],
+      ["Float", "inf"],
+      ["Float", "nan"],
+      ["Dims", [64, 64, 2]],
+      ["Str", "a file"]
+    ]}
+  ],
+  "mutants": ["l1.text/size-decimal"]
+}

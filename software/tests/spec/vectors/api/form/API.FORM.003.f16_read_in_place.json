@@ -1,0 +1,24 @@
+{
+ "clause": "API.FORM.003",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "Q": [
+    4,
+    32
+   ]
+  },
+  "source": "def facts():\n    s = CALL.upload(DEV, Q)\n    n0 = len(DEV.runs)\n    own = FM.f16(DEV, s, np.float16, 128) == s.addr\n    view = FM.f16(DEV, ST.StorageView(s, 64, 64), np.float16, 32) == s.addr + 64\n    runs = len(DEV.runs) - n0\n    s.free()\n    return {\"own\": own, \"view\": view, \"runs\": runs}\n"
+ },
+ "expect": {
+  "own": true,
+  "view": true,
+  "runs": 0
+ },
+ "mutants": [
+  "api.forms/f16_copy"
+ ]
+}

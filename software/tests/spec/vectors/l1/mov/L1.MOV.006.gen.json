@@ -1,0 +1,20 @@
+{
+  "clause": "L1.MOV.006",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(y: u32[256] @dram)\n    move\n        gen w(y, (4, 32)) seed=5\n",
+    "fn": "f",
+    "binds": {"y": 8192}
+  },
+  "expect": {"-": {"steps": [
+    ["move", [
+      "HDR sel=1 base=0x2000 ndim=1", "DIM sel=1 count=4 stride=32", "AXIS", "WIN sel=1", "WIN sel=1 axis=1",
+      "SEED 0x5",
+      "CTRL mode=3 ew=2 flags=0x8 go=1"
+    ]]
+  ]}},
+  "mutants": ["l1.mov/gen-is-fill"]
+}

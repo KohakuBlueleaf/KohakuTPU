@@ -1,0 +1,23 @@
+{
+ "clause": "ISA.VC.001",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "lanes",
+   "isa.lanes",
+   "m:vc.lanes"
+  ]
+ },
+ "expect": {
+  "lanes": 16,
+  "isa.lanes": 16,
+  "m:vc.lanes": 16
+ },
+ "mutants": [
+  "isa.vector/consts",
+  "isa.vector/isa_cfg"
+ ]
+}

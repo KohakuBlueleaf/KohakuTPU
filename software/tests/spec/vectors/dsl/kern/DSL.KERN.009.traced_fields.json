@@ -1,0 +1,43 @@
+{
+ "clause": "DSL.KERN.009",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(\"R\", 32), y=kt.Out(\"R\", 32), *, scale=2.0, rows=kt.auto(8, 4)):\n    kt.require(x.shape[0] % (2 * rows) == 0, \"rows\")\n    for c in kt.par(2, on=kt.vc):\n        for t in kt.range(x.shape[0] // 2 // rows):\n            r = c * (x.shape[0] // 2) + t * rows\n            v = kt.unpack(kt.load(x[r : r + rows, :]))\n            kt.store(y[r : r + rows, :], v * scale)\n\ndef facts():\n    t = k.trace({\"x\": TY.TensorSpec.make((16, 32))}, machine=MACHINE)\n    return {\n        \"type\": type(t).__name__,\n        \"name\": t.name,\n        \"head\": t.text.split(\"\\n\")[2],\n        \"params\": [[n, type(s).__name__] for n, s in t.params],\n        \"roles\": t.roles,\n        \"consts\": t.consts,\n        \"machine\": [t.machine.mg, t.machine.vc, t.machine.nodes],\n        \"source\": t.source.splitlines()[0],\n    }\n"
+ },
+ "expect": {
+  "type": "Traced",
+  "name": "k",
+  "head": "fn k.l2(x: f16[16, 32] @dram, y: f16[16, 32] @dram)",
+  "params": [
+   [
+    "x",
+    "TensorSpec"
+   ],
+   [
+    "y",
+    "TensorSpec"
+   ]
+  ],
+  "roles": {
+   "x": "in",
+   "y": "out"
+  },
+  "consts": {
+   "scale": 2.0,
+   "rows": 8
+  },
+  "machine": [
+   2,
+   2,
+   1
+  ],
+  "source": "@kt.kernel"
+ },
+ "mutants": [
+  "dsl.kernel/name",
+  "dsl.kernel/auto_reversed"
+ ]
+}

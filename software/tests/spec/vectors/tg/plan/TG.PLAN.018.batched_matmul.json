@@ -1,0 +1,45 @@
+{
+ "clause": "TG.PLAN.018",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "BX": [
+    2,
+    32,
+    64
+   ],
+   "BY": [
+    2,
+    64,
+    48
+   ],
+   "W2": [
+    64,
+    48
+   ]
+  },
+  "source": "def facts():\n    out = {}\n    for name, t in ((\"batched\", T(BX) @ T(BY)), (\"shared\", T(BX) @ T(W2))):\n        (p,) = [L.plan(a) for a in asts(t)]\n        out[name] = {\n            \"kind\": p.kind,\n            \"batch\": [U.extent(r) for r in p.batch],\n            \"b_reads_batch\": p.kind == \"matmul\" and any(p.b.c(r) for r in p.batch),\n        }\n    return out\n"
+ },
+ "expect": {
+  "batched": {
+   "kind": "matmul",
+   "batch": [
+    2
+   ],
+   "b_reads_batch": true
+  },
+  "shared": {
+   "kind": "matmul",
+   "batch": [
+    2
+   ],
+   "b_reads_batch": false
+  }
+ },
+ "mutants": [
+  "tg.lower/no_matmul"
+ ]
+}

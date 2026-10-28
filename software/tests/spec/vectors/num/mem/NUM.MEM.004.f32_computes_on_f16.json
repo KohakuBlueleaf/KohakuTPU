@@ -1,0 +1,16 @@
+{
+  "clause": "NUM.MEM.004",
+  "tier": 1,
+  "runner": "num.card.tinygrad",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "program": "mul_ones",
+    "dtype": "float32",
+    "x": ["0x1.001p+0", "0x1.0018p+0", "0x1.99999ap-4"]
+  },
+  "expect": {
+    "values": ["0x1.0000000000000p+0", "0x1.0000000000000p+0", "0x1.9980000000000p-4"]
+  },
+  "mutants": ["num.card/readback-corrupt"]
+}

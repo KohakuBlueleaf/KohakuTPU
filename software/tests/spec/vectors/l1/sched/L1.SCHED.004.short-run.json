@@ -1,0 +1,12 @@
+{
+  "clause": "L1.SCHED.004",
+  "tier": 0,
+  "runner": "l1.cost",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage r()\n    vexp2 v2, v1\n    vunpk v8 <- l1[8] f16\n",
+    "image": "r"
+  },
+  "expect": {"cost": 21, "order": [0, 1]},
+  "mutants": ["l1.sched/cfg-cost"]
+}

@@ -1,0 +1,9 @@
+{
+  "clause": "NUM.F16.007",
+  "tier": 0,
+  "runner": "num.image.walk",
+  "status": "frozen",
+  "input": {"stmt": "vpack v2 -> l1[64] mx7a"},
+  "expect": {"op": "vpack", "mode": 3, "n": 8, "cb": 0},
+  "mutants": ["num.vector/mx7-mode-2", "num.vector/mx7-four-chunks"]
+}

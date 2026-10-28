@@ -1,0 +1,55 @@
+{
+ "clause": "RUL.049",
+ "tier": 0,
+ "runner": "isa.mover.move",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "fn": "move",
+  "args": [
+   7,
+   {
+    "base": 4096,
+    "dims": [
+     [
+      1,
+      32
+     ]
+    ],
+    "windows": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      0
+     ]
+    ]
+   },
+   {
+    "base": 8192,
+    "dims": [
+     [
+      1,
+      32
+     ]
+    ],
+    "windows": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      0
+     ]
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "refused": "PackageError"
+ },
+ "mutants": ["rul.049/reserved-copy"]
+}

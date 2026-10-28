@@ -1,0 +1,30 @@
+{
+  "clause": "L1.LOW.003",
+  "tier": 0,
+  "runner": "l1.build",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k(x)\n    desc a0 = x walk=(32, 4)\n    vmul v1, v2, v3\n    halt\nimage j()\n    vadd v1, v2, v3\n    halt\nfn f.l1(a: f16[64] @dram)\n    send vc[0]\n        run k(a)\n        run j()\n        run k(a)\n",
+    "fn": "f",
+    "binds": {"a": 4096},
+    "resident": true
+  },
+  "expect": {"-": {"steps": [
+    ["DISPATCH", [2, 1], [
+      ["DESC", 0, 0, "0x1000"], ["DESC", 0, 1, 32, 4], ["DESC", 0, 2, 0, 0], ["DESC", 0, 3, 0, 0], ["DESC", 0, 4, 0, 0],
+      ["IMEM", 0, "CHKVL vl1=127 d_stride=1 c_stride=1 b_stride=1 a_stride=1"],
+      ["IMEM", 1, "vmul vd=1 va=2 vb=3"],
+      ["IMEM", 2, "VHALT"],
+      ["RUN", 0],
+      ["IMEM", 3, "CHKVL vl1=127 d_stride=1 c_stride=1 b_stride=1 a_stride=1"],
+      ["IMEM", 4, "vadd vd=1 va=2 vc=3"],
+      ["IMEM", 5, "VHALT"],
+      ["RUN", 3],
+      ["RUN", 0]
+    ]],
+    ["AWAIT", [2, 1], 14],
+    ["BARRIER"]
+  ]}},
+  "mutants": ["l1.lower/no-hook", "l1.lower/desc-always"]
+}

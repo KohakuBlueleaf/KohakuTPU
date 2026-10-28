@@ -1,0 +1,9 @@
+{
+  "clause": "NUM.F16.006",
+  "tier": 0,
+  "runner": "num.image.walk",
+  "status": "frozen",
+  "input": {"stmt": "vpack v5[4:] -> l1[32] gt4 n=4"},
+  "expect": {"op": "vpack", "mode": 1, "n": 4, "cb": 4},
+  "mutants": ["num.image/modes-swapped"]
+}

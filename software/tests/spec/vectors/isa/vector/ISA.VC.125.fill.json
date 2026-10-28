@@ -1,0 +1,44 @@
+{
+ "clause": "ISA.VC.125",
+ "tier": 0,
+ "runner": "isa.verify",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image k(x)\n    desc a0 = x walk=(32, 16)\n    vfill a0 -> l1[505]\n    halt\n\nfn k.l1(x: f16[256] @dram)\n    send vc[0]\n        run k(x)\n    barrier\n",
+  "fn": "k",
+  "binds": {
+   "x": 1048576
+  },
+  "l1": true
+ },
+ "expect": {
+  "findings": [],
+  "l1": {
+   "vc0": {
+    "read": [],
+    "written": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     505,
+     506,
+     507,
+     508,
+     509,
+     510,
+     511
+    ]
+   }
+  }
+ },
+ "mutants": [
+  "isa.vector/model_walk"
+ ]
+}

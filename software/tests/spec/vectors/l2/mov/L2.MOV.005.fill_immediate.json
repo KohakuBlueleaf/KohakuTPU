@@ -1,0 +1,29 @@
+{
+ "clause": "L2.MOV.005",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(y: u8[64] @dram)",
+   "    fill y value=0x12345678 ew=16"
+  ],
+  "facts": {
+   "fn": {
+    "lines": "^fill",
+    "in": "fn"
+   }
+  }
+ },
+ "expect": {
+  "fn": [
+   "fill w(y+0, (2, 32)) value=305419896 ew=16"
+  ]
+ },
+ "mutants": [
+  "l2.mover/no-fill"
+ ]
+}

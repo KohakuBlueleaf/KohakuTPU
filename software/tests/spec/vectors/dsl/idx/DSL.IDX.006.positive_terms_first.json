@@ -1,0 +1,19 @@
+{
+ "clause": "DSL.IDX.006",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    t, c = E.var(\"t\"), E.var(\"c\")\n    return {\n        \"a\": (t * 16).text(),\n        \"b\": (c * 256 + t * 16).text(),\n        \"c\": (c * -2 + t * 16).text(),\n        \"d\": (t + 3).text(),\n    }\n"
+ },
+ "expect": {
+  "a": "t*16",
+  "b": "c*256 + t*16",
+  "c": "t*16 - c*2",
+  "d": "t + 3"
+ },
+ "mutants": [
+  "dsl.expr/text_order"
+ ]
+}

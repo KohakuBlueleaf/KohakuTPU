@@ -1,0 +1,22 @@
+{
+ "clause": "ISA.VC.012",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "imem_words",
+   "run_reach",
+   "m:vc.imem_words"
+  ]
+ },
+ "expect": {
+  "imem_words": 1024,
+  "run_reach": 512,
+  "m:vc.imem_words": 1024
+ },
+ "mutants": [
+  "isa.vector/consts"
+ ]
+}

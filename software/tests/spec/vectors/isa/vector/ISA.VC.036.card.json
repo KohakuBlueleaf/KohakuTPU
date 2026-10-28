@@ -1,0 +1,28 @@
+{
+ "clause": "ISA.VC.036",
+ "tier": 1,
+ "runner": "isa.card.kernel",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image a(x, y)\n    desc a0 = x walk=(32, 16)\n    desc a1 = y walk=(32, 8)\n    vfill a0 -> l1[0]\n    vbar\n    vunpk v0 <- l1[0] f16\n    vunpk v1 <- l1[8] f16\n    vadd v2, v0, v1\n    vpack v2 -> l1[16] f16\n    vsync drain on=pack\n    vdrain a1 <- l1[16]\n    halt\n\nimage b(x, z)\n    desc a0 = x walk=(32, 16)\n    desc a1 = z walk=(32, 8)\n    vfill a0 -> l1[0]\n    vbar\n    vunpk v0 <- l1[0] f16\n    vunpk v1 <- l1[8] f16\n    vmul v2, v0, v1\n    vpack v2 -> l1[16] f16\n    vsync drain on=pack\n    vdrain a1 <- l1[16]\n    halt\n\nfn t.l1(x: f16[256] @dram, y: f16[128] @dram, z: f16[128] @dram)\n    send vc[0]\n        run a(x, y)\n    send vc[0]\n        run b(x, z)\n    barrier\n",
+  "fn": "t",
+  "checks": {
+   "y": "add",
+   "z": "mul"
+  },
+  "x": {
+   "seed": 21
+  },
+  "tol": {
+   "rtol": 0.002
+  }
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.vector/cu_imem",
+  "isa.vector/opcodes"
+ ]
+}

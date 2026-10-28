@@ -1,0 +1,25 @@
+{
+ "clause": "ISA.VC.026",
+ "tier": 0,
+ "runner": "isa.lower",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "example": "lazysoftmax",
+  "name": "lazysoftmax",
+  "patterns": [
+   "^getstk s",
+   "^vexp2d "
+  ]
+ },
+ "expect": {
+  "found": [
+   true,
+   true
+  ],
+  "in_order": true
+ },
+ "mutants": [
+  "isa.vector/lower"
+ ]
+}

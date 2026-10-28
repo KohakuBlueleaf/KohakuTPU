@@ -1,0 +1,52 @@
+{
+ "clause": "ISA.VC.040",
+ "tier": 0,
+ "runner": "isa.vector.decode",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "words": [
+   "0x440000",
+   "0x98001111",
+   "0xa04e0000",
+   "0xa84e0000",
+   "0xb0000000",
+   "0xd0400000",
+   "0xd8020080",
+   "0xe0000000",
+   "0xe8000000",
+   "0xf0000000",
+   "0xf8000000",
+   "0xb5000800",
+   "0xb1e02000",
+   "0xb8400001",
+   "0xc8880001",
+   "0x9d3f1111",
+   "0x98800009"
+  ]
+ },
+ "expect": {
+  "formats": [
+   "VMOV",
+   "CHK",
+   "VUNPK",
+   "VPACK",
+   "VSYNC",
+   "VSETI",
+   "VLOOP",
+   "VBAR",
+   "VFILL",
+   "VDRAIN",
+   "VHALT",
+   "VMARK",
+   "VWAIT",
+   "VSKIPZ",
+   "VPOST",
+   "CHKVL",
+   "XB"
+  ]
+ },
+ "mutants": [
+  "isa.vector/decoder"
+ ]
+}

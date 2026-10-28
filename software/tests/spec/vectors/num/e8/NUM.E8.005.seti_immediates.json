@@ -1,0 +1,17 @@
+{
+  "clause": "NUM.E8.005",
+  "tier": 0,
+  "runner": "num.image.seti",
+  "status": "frozen",
+  "input": {
+    "stmts": [
+      "seti s1 = 1.0",
+      "seti s1 = -1.5",
+      "seti s1 = 1.0000228881835938",
+      "seti s2 = 5",
+      "seti s2 = 16777217"
+    ]
+  },
+  "expect": ["3f8000", "bfc000", "3f8001", "000005", "000001"],
+  "mutants": ["num.e8m15/truncate"]
+}

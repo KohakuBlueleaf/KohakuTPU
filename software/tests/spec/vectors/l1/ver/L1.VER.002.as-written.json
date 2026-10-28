@@ -1,0 +1,22 @@
+{
+  "clause": "L1.VER.002",
+  "tier": 0,
+  "runner": "l1.order",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    halt\nfn f.l1(a: u64[1024] @dram)\n    send vc[0]\n        run k()\n    send vc[1]\n        run k()\n    send mg[0]\n        fill A0 <- a n=1\n",
+    "fn": "f",
+    "binds": {"a": 4096}
+  },
+  "expect": {"0": [
+    ["DISPATCH", [2, 1], [["IMEM", 0, "VHALT"], ["RUN", 0]]],
+    ["DISPATCH", [2, 2], [["IMEM", 0, "VHALT"], ["RUN", 0]]],
+    ["DISPATCH", [1, 1], ["FILL addr=0x1000 n=1 nk=1 anchor=40"]],
+    ["AWAIT", [2, 1], 2],
+    ["AWAIT", [2, 2], 2],
+    ["AWAIT", [1, 1], 1],
+    ["BARRIER"]
+  ]},
+  "mutants": ["l1.verify/reverse-segment"]
+}

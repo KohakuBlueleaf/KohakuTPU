@@ -1,0 +1,46 @@
+{
+ "clause": "TG.PLAN.015",
+ "tier": 0,
+ "runner": "tg.plan",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "Y": [
+    32,
+    64
+   ]
+  },
+  "make": "[T(X).relu(), T(X).sqrt(), T(X).sin(), T(X).trunc(), (T(X) < T(Y)).where(1.0, 0.0).cast(dtypes.half), ((T(X) > 0) & (T(Y) > 0)).where(1.0, 0.0).cast(dtypes.half)]",
+  "keys": [
+   "expr"
+  ]
+ },
+ "expect": [
+  {
+   "expr": "max(0.0, L0)"
+  },
+  {
+   "expr": "sin(L0)"
+  },
+  {
+   "expr": "sqrt(L0)"
+  },
+  {
+   "expr": "trunc(L0)"
+  },
+  {
+   "expr": "where(and(cmplt(0.0, L0), cmplt(0.0, L1)), 1.0, 0.0)"
+  },
+  {
+   "expr": "where(cmplt(L0, L1), 1.0, 0.0)"
+  }
+ ],
+ "mutants": [
+  "tg.lower/alu_renamed"
+ ]
+}

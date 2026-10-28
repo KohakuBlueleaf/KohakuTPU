@@ -1,0 +1,17 @@
+{
+ "clause": "API.MEM.007",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(64, 32), y=kt.Out(64, 32)):\n    h = kt.buffer((64, 32), \"f16\")\n    kt.copy(h, x)\n    kt.copy(y, h)\n\n\ndef facts():\n    c = K.specialise(k, {\"x\": kt.TensorSpec.make((64, 32))}, machine=DEV.machine)\n    body = c.l1.body(c.name, \"l1\")\n    scratch = [p for p, _ in body.params if p not in (\"x\", \"y\")]\n    xs, ys = ST.Storage(DEV, 4096), ST.Storage(DEV, 4096)\n    used = DEV.dram.used\n    DEV.run(c, {\"x\": xs.addr, \"y\": ys.addr})\n    freed = DEV.dram.used == used\n    xs.free()\n    ys.free()\n    return {\"scratch\": len(scratch) > 0, \"freed\": freed}\n"
+ },
+ "expect": {
+  "scratch": true,
+  "freed": true
+ },
+ "mutants": [
+  "api.mem/leak"
+ ]
+}

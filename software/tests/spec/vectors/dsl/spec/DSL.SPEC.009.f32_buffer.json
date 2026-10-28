@@ -1,0 +1,23 @@
+{
+ "clause": "DSL.SPEC.009",
+ "tier": 0,
+ "runner": "dsl.spec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "shape": [
+   8
+  ],
+  "dtype": "f32"
+ },
+ "expect": {
+  "text": "f32[8] @dram",
+  "nbytes": 32,
+  "rowmajor": true,
+  "tiled": false,
+  "layout": []
+ },
+ "mutants": [
+  "dsl.types/item"
+ ]
+}

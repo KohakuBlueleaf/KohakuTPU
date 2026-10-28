@@ -1,0 +1,32 @@
+{
+ "clause": "L2.ORDER.005",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram, z: f16[8, 128] @dram)",
+   "    copy y <- x",
+   "    copy z <- x"
+  ],
+  "facts": {
+   "fn": {
+    "lines": "^(move|mv|copy|wait|barrier)",
+    "in": "fn"
+   }
+  }
+ },
+ "expect": {
+  "fn": [
+   "move",
+   "copy w(x+0, (64, 32)) -> w(y+0, (64, 32))",
+   "copy w(x+0, (64, 32)) -> w(z+0, (64, 32))"
+  ]
+ },
+ "mutants": [
+  "l2.lower/no-close"
+ ]
+}

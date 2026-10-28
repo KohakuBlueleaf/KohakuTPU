@@ -1,0 +1,25 @@
+{
+ "clause": "ISA.MG.020",
+ "tier": 0,
+ "runner": "isa.cluster.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "op": "Gemm",
+  "args": [
+   38,
+   8,
+   2
+  ],
+  "kw": {
+   "acc": true
+  }
+ },
+ "expect": {
+  "payload": "0x2000000000000126080228000000000000000000000000000000000000000000"
+ },
+ "mutants": [
+  "isa.cluster/fields",
+  "isa.cluster/opcodes"
+ ]
+}

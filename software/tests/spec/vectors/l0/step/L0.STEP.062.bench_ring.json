@@ -1,0 +1,17 @@
+{
+ "clause": "L0.STEP.062",
+ "tier": 2,
+ "runner": "l0.bench",
+ "status": "frozen",
+ "input": {
+  "test": "test_l1_examples.py::test_ring_slot_and_bell",
+  "nodes": 2
+ },
+ "expect": {
+  "outcome": "passed"
+ },
+ "mutants": [
+  "l0.pkg/version",
+  "l0.bind/clobber"
+ ]
+}

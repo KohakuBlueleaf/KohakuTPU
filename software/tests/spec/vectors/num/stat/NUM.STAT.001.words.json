@@ -1,0 +1,9 @@
+{
+  "clause": "NUM.STAT.001",
+  "tier": 0,
+  "runner": "num.stat.words",
+  "status": "frozen",
+  "input": {"rows": [1, 16, 17, 64, 100]},
+  "expect": {"per_word": 16, "words": [1, 1, 2, 4, 7]},
+  "mutants": ["num.stat/32-a-word"]
+}

@@ -1,0 +1,52 @@
+{
+ "clause": "TG.PLAN.002",
+ "tier": 0,
+ "runner": "tg.plan",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "Y": [
+    32,
+    64
+   ]
+  },
+  "make": "T(X).T.contiguous()",
+  "keys": [
+   "shape",
+   "reads"
+  ]
+ },
+ "expect": [
+  {
+   "shape": [
+    64,
+    32
+   ],
+   "reads": [
+    [
+     "buf",
+     "half",
+     [
+      [
+       "o0",
+       1
+      ],
+      [
+       "o1",
+       64
+      ]
+     ],
+     0
+    ]
+   ]
+  }
+ ],
+ "mutants": [
+  "tg.lower/order"
+ ]
+}

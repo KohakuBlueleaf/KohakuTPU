@@ -1,0 +1,27 @@
+{
+ "clause": "DSL.VIEW.001",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    p = VA.Param(\"x\", TY.TensorSpec.make((8, 32)))\n    v = p[2:6, :]\n    return {\"type\": type(v).__name__, \"axes\": [list(a) for a in v.axes], \"text\": v.text()}\n"
+ },
+ "expect": {
+  "type": "View",
+  "axes": [
+   [
+    "run",
+    2,
+    4
+   ],
+   [
+    "all"
+   ]
+  ],
+  "text": "x[2 : +4]"
+ },
+ "mutants": [
+  "dsl.values/view_text"
+ ]
+}

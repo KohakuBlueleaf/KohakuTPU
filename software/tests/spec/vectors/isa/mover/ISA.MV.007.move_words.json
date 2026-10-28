@@ -1,0 +1,18 @@
+{
+ "clause": "ISA.MV.007",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "mover.move_words"
+  ]
+ },
+ "expect": {
+  "mover.move_words": 16384
+ },
+ "mutants": [
+  "isa.mover/limits"
+ ]
+}

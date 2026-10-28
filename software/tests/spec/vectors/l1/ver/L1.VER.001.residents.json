@@ -1,0 +1,19 @@
+{
+  "clause": "L1.VER.001",
+  "tier": 0,
+  "runner": "l1.order",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    halt\nfn f.l1(a: u64[4] @dram)\n    send vc[0]\n        run k()\n",
+    "fn": "f",
+    "binds": {"a": 4096},
+    "runs": 2
+  },
+  "expect": {"0": [
+    ["DISPATCH", [2, 1], [["RUN", 0]]],
+    ["AWAIT", [2, 1], 1],
+    ["BARRIER"]
+  ]},
+  "mutants": ["l1.verify/no-residents"]
+}

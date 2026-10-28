@@ -1,0 +1,14 @@
+{
+  "clause": "L1.MOV.006",
+  "tier": 1,
+  "runner": "l1.card",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn generate.l1(y: u32[256] @dram, z: u32[256] @dram)\n    move\n        gen w(y, (32, 32)) seed=7\n        copy w(y, (32, 32)) -> w(z, (32, 32))\n        fill w(y, (32, 32)) value=0\n        gen w(y, (16, 32)) seed=7\n        gen w(y + 512, (16, 32)) seed=7\n",
+    "fn": "generate",
+    "same": [["y", "z"]]
+  },
+  "expect": {"y==z": true},
+  "mutants": ["l1.mov/seed-by-base"]
+}

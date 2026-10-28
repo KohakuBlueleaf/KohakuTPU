@@ -1,0 +1,16 @@
+{
+  "clause": "L1.NODE.013",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[256] @dram)\n    push vc[0] buf=1 at=64 <- a n=64 wait\n",
+    "fn": "f",
+    "binds": {"a": 4096}
+  },
+  "expect": {"-": {"steps": [
+    ["push", [2, 1], "0x100403f01000000000000000000000000000000000000000000000000000000", 4096, 64, true]
+  ]}},
+  "mutants": ["l1.node/push-len-bit"]
+}

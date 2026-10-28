@@ -1,0 +1,32 @@
+{
+ "clause": "API.ROW.004",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    full = KV.Operand(\"full\", pitch=32, rows=6)\n    pl = KV.plan((full,), \"full\", 6, 32)\n    st = [[s.rows, r0, n] for s, r0, n in KV.stages(pl, 6)]\n    k, g, _ = KV.rows_kernel(X.op(\"mul\", X.Load(0), 2.0), (full,), 6, 32, full, DEV.machine.count(\"VC\"))\n    text = k.trace(g, machine=TMACHINE).text\n    moves = [ln.strip() for ln in text.splitlines() if ln.strip().split(\" \")[0] in (\"copy\", \"fill\")]\n    return {\"stages\": st, \"moves\": moves}\n"
+ },
+ "expect": {
+  "stages": [
+   [
+    4,
+    0,
+    null
+   ],
+   [
+    4,
+    4,
+    2
+   ]
+  ],
+  "moves": [
+   "fill h1 value=0",
+   "copy h1[0 : +2] <- in0[4 : +2, 0 : +32]",
+   "copy out[4 : +2, 0 : +32] <- h2[0 : +2]"
+  ]
+ },
+ "mutants": [
+  "api.vector/stages_whole"
+ ]
+}

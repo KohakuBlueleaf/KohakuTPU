@@ -1,0 +1,14 @@
+{
+  "clause": "NUM.TOL.002",
+  "tier": 1,
+  "runner": "num.card.product",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "x": {"shape": [64, 128], "seed": 7},
+    "w": {"shape": [256, 128], "seed": 8, "div": 11.3},
+    "rel": 0.01
+  },
+  "expect": {"rel_below": true},
+  "mutants": ["num.card/readback-corrupt"]
+}

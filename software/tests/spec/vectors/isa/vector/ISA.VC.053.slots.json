@@ -1,0 +1,32 @@
+{
+ "clause": "ISA.VC.053",
+ "tier": 0,
+ "runner": "isa.vector.image",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image k()\n    vadd v8, v10, v12\n    vmul v1, v2, v3\n    vsel v13, v4, v5, v6\n    vmov v7, v9\n    vexp2 v1, v2\n    vlog2 v3, v4\n    vinv v5, v6\n    vrsqrt v7, v8\n    vmax v9, v10, v11\n    halt\n",
+  "name": "k",
+  "args": [],
+  "entry": "reset"
+ },
+ "expect": {
+  "words": [
+   "0x1a140600",
+   "0x28443000",
+   "0x53485300",
+   "0x1d20000",
+   "0x70440000",
+   "0x78c80000",
+   "0x814c0000",
+   "0x89d00000",
+   "0x4254b000",
+   "0xf8000000"
+  ],
+  "descs": {}
+ },
+ "mutants": [
+  "isa.vector/math_fields",
+  "isa.vector/opcodes"
+ ]
+}

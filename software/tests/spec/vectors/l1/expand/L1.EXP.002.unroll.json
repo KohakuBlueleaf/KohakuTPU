@@ -1,0 +1,13 @@
+{
+  "clause": "L1.EXP.002",
+  "tier": 0,
+  "runner": "l1.expand",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[8] @dram)\n    for i in 1..4\n        store a + i*8 <- i\n",
+    "fn": "f",
+    "binds": {"a": 4096}
+  },
+  "expect": {"-": ["store 4104 <- 1", "store 4112 <- 2", "store 4120 <- 3"]},
+  "mutants": ["l1.expand/no-unroll"]
+}

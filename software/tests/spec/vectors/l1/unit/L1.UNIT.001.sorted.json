@@ -1,0 +1,19 @@
+{
+  "clause": "L1.UNIT.001",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[4] @dram)\n    t = mark mg[1]\n    u = mark vc[1]\n    v = mark mg[0]\n    x = mark vc[0]\n",
+    "fn": "f",
+    "binds": {"a": 4096}
+  },
+  "expect": {"-": {"steps": [
+    ["mark", [1, 2], 0],
+    ["mark", [2, 2], 1],
+    ["mark", [1, 1], 2],
+    ["mark", [2, 1], 3]
+  ]}},
+  "mutants": ["l1.unit/unsorted"]
+}

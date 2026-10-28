@@ -1,0 +1,52 @@
+{
+ "clause": "DSL.KERN.017",
+ "tier": 0,
+ "runner": "dsl.trace",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(\n    x=kt.In(\"R\", \"W\"),\n    q=kt.In(\"R\", \"W\", dtype=\"mx7a\", layout=lambda ns: {\"gm\": ns.R // 4, \"nk\": ns.nk}),\n    y=kt.Out(\"R\", \"W\"),\n    *,\n    nk=1,\n):\n    for c in kt.par(1, on=kt.vc):\n        kt.store(y[0:4, :], kt.load(x[0:4, :]))\n",
+  "given": {
+   "x": [
+    [
+     16,
+     64
+    ],
+    "f16"
+   ],
+   "q": {
+    "shape": [
+     16,
+     64
+    ],
+    "dtype": "mx7a",
+    "layout": {
+     "gm": 2,
+     "nk": 1
+    }
+   }
+  },
+  "facts": [
+   "params"
+  ]
+ },
+ "expect": {
+  "params": [
+   [
+    "x",
+    "f16[16, 64] @dram"
+   ],
+   [
+    "q",
+    "mx7a[16, 64] @dram(gm=4, nk=1)"
+   ],
+   [
+    "y",
+    "f16[16, 64] @dram"
+   ]
+  ]
+ },
+ "mutants": [
+  "dsl.kernel/given_shape"
+ ]
+}

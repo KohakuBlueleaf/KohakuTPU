@@ -1,0 +1,24 @@
+{
+ "clause": "DBG.SESS.001",
+ "tier": 1,
+ "runner": "dbg.fail",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "timeout_cycles": 200000,
+  "keys": [
+   "next",
+   "restarts"
+  ]
+ },
+ "expect": {
+  "next": [
+   "0x1234",
+   "0x1235"
+  ],
+  "restarts": 0
+ },
+ "mutants": [
+  "dbg/restart_after_fail"
+ ]
+}

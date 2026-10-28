@@ -1,0 +1,27 @@
+{
+ "clause": "TG.RUN.008",
+ "tier": 0,
+ "runner": "tg.run",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "N10": [
+    24,
+    10
+   ]
+  },
+  "make": "T(N10).T.contiguous()",
+  "facts": [
+   "runs"
+  ]
+ },
+ "expect": {
+  "runs": [
+   "lanes"
+  ]
+ },
+ "mutants": [
+  "tg.run/no_gather"
+ ]
+}

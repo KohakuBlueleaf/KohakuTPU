@@ -1,0 +1,30 @@
+{
+ "clause": "ISA.VC.052",
+ "tier": 1,
+ "runner": "isa.card.kernel",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "body": [
+   "seti s0 = 2.0",
+   "vmul v3, v0, s0",
+   "seti s0 = 3.0",
+   "vmul v4, v1, s0",
+   "vadd v2, v3, v4"
+  ],
+  "check": "s_two_three",
+  "x": {
+   "seed": 27
+  },
+  "tol": {
+   "rtol": 0.002
+  }
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.vector/src_sel",
+  "isa.vector/e8m15_f16"
+ ]
+}

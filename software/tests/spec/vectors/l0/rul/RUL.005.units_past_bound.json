@@ -1,0 +1,118 @@
+{
+ "clause": "RUL.005",
+ "tier": 0,
+ "runner": "l0.pkg.bytes",
+ "status": "frozen",
+ "input": {
+  "package": {
+   "units": [
+    {
+     "type": "MG",
+     "x": 0,
+     "y": 0,
+     "credit": 512
+    },
+    {
+     "type": "MG",
+     "x": 1,
+     "y": 0,
+     "credit": 512
+    },
+    {
+     "type": "MG",
+     "x": 2,
+     "y": 0,
+     "credit": 512
+    },
+    {
+     "type": "MG",
+     "x": 3,
+     "y": 0,
+     "credit": 512
+    },
+    {
+     "type": "MG",
+     "x": 4,
+     "y": 0,
+     "credit": 512
+    },
+    {
+     "type": "MG",
+     "x": 5,
+     "y": 0,
+     "credit": 512
+    },
+    {
+     "type": "MG",
+     "x": 6,
+     "y": 0,
+     "credit": 512
+    },
+    {
+     "type": "MG",
+     "x": 7,
+     "y": 0,
+     "credit": 512
+    },
+    {
+     "type": "MG",
+     "x": 8,
+     "y": 0,
+     "credit": 512
+    },
+    {
+     "type": "MG",
+     "x": 9,
+     "y": 0,
+     "credit": 512
+    },
+    {
+     "type": "MG",
+     "x": 10,
+     "y": 0,
+     "credit": 512
+    },
+    {
+     "type": "MG",
+     "x": 11,
+     "y": 0,
+     "credit": 512
+    },
+    {
+     "type": "MG",
+     "x": 12,
+     "y": 0,
+     "credit": 512
+    },
+    {
+     "type": "MG",
+     "x": 13,
+     "y": 0,
+     "credit": 512
+    },
+    {
+     "type": "MG",
+     "x": 14,
+     "y": 0,
+     "credit": 512
+    },
+    {
+     "type": "MG",
+     "x": 15,
+     "y": 0,
+     "credit": 512
+    },
+    {
+     "type": "MG",
+     "x": 0,
+     "y": 1,
+     "credit": 512
+    }
+   ]
+  }
+ },
+ "expect": {
+  "refused": "PackageError"
+ },
+ "mutants": ["l0.pkg/unlimited_units"]
+}

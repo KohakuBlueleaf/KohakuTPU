@@ -1,0 +1,33 @@
+{
+ "clause": "L2.MG.004",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: mx7a[200, 128] @dram(gm=50, nk=4), w: mx7b[4, 128] @dram(gn=1, nk=4), y: f16[200, 4] @dram(tile=50x1))",
+   "    par u in 0..1 on mg[u]",
+   "        a = fill x                                   : mx7a[200, 128] @A",
+   "        b = fill w                                   : mx7b[4, 128] @B",
+   "        acc = gemm a, b                              : f32[200, 4] @acc",
+   "        drain acc -> y"
+  ],
+  "facts": {
+   "fills": {
+    "lines": "^fill A",
+    "in": "fn"
+   }
+  }
+ },
+ "expect": {
+  "fills": [
+   "fill A0 <- x+0 n=200"
+  ]
+ },
+ "mutants": [
+  "l2.cluster/max-fill-100"
+ ]
+}

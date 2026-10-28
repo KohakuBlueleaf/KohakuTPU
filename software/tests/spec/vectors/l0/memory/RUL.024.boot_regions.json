@@ -1,0 +1,1 @@
+{"clause":"RUL.024","tier":0,"runner":"memory.boot_regions","machine":"multimesh_v9t6","status":"frozen","input":{},"expect":{"reserved":true,"owner":"firmware:queue:0","overlap_refused":true,"table":true},"mutants":["memory/no-region-validation"]}

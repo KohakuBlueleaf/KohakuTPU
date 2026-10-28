@@ -1,0 +1,16 @@
+{
+ "clause": "ISA.MV.081",
+ "tier": 2,
+ "runner": "isa.bench",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "bench": "mm_mover"
+ },
+ "expect": {
+  "pass": true
+ },
+ "mutants": [
+  "isa.bench/short"
+ ]
+}

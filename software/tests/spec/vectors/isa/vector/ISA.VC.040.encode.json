@@ -1,0 +1,96 @@
+{
+ "clause": "ISA.VC.040",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "math",
+    "args": [
+     "vmov",
+     1,
+     2
+    ]
+   },
+   {
+    "fn": "chk"
+   },
+   {
+    "fn": "vunpk",
+    "args": [
+     1,
+     0
+    ]
+   },
+   {
+    "fn": "vpack",
+    "args": [
+     1,
+     0
+    ]
+   },
+   {
+    "fn": "vsync",
+    "args": [
+     0
+    ]
+   },
+   {
+    "fn": "vseti",
+    "args": [
+     1
+    ]
+   },
+   {
+    "fn": "vloop",
+    "args": [
+     1,
+     1
+    ]
+   },
+   {
+    "fn": "vbar"
+   },
+   {
+    "fn": "vfill",
+    "args": [
+     0,
+     0
+    ]
+   },
+   {
+    "fn": "vdrain",
+    "args": [
+     0,
+     0
+    ]
+   },
+   {
+    "fn": "vhalt"
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0x440000",
+   "0x98001111",
+   "0xa04e0000",
+   "0xa84e0000",
+   "0xb0000000",
+   "0xd0400000",
+   "0xd8020080",
+   "0xe0000000",
+   "0xe8000000",
+   "0xf0000000",
+   "0xf8000000"
+  ]
+ },
+ "mutants": [
+  "isa.vector/walk_ops",
+  "isa.vector/ctl_ops",
+  "isa.vector/dma_ops",
+  "isa.vector/opcodes"
+ ]
+}

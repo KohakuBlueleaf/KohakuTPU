@@ -1,0 +1,9 @@
+{
+  "clause": "RUL.060",
+  "tier": 0,
+  "runner": "num.expr.lanes",
+  "status": "frozen",
+  "input": {"op": "trunc", "x": [16384.5, -16384.5, 20000.5, 2.5]},
+  "expect": [16384.0, -16384.0, 20000.0, 2.0],
+  "mutants": ["num.expr/round-constant-2-15"]
+}

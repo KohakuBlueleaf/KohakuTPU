@@ -1,0 +1,37 @@
+{
+ "clause": "DSL.SCOPE.005",
+ "tier": 0,
+ "runner": "dsl.trace",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(64, 32), i=kt.In(64, dtype=\"f32\"), y=kt.Out(64, 32), z=kt.Out(64, 32)):\n    kt.gather(y, x, i, fp=True)\n    kt.scatter(z, x, i[0:32])\n",
+  "given": {
+   "x": [
+    [
+     64,
+     32
+    ],
+    "f16"
+   ],
+   "i": [
+    [
+     64
+    ],
+    "f32"
+   ]
+  }
+ },
+ "expect": {
+  "body": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[64, 32] @dram, i: f32[64] @dram, y: f16[64, 32] @dram, z: f16[64, 32] @dram)",
+   "    gather y <- x fp index=i",
+   "    scatter z <- x index=i[0 : +32]"
+  ]
+ },
+ "mutants": [
+  "dsl.ops/node_scope_vc"
+ ]
+}

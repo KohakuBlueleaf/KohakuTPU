@@ -1,0 +1,17 @@
+{
+  "clause": "L1.BODY.001",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[4] @dram)\n    store a <- 5\n    store a + 8 <- 6\n",
+    "fn": "f",
+    "binds": {"a": 8192}
+  },
+  "expect": {"-": {"steps": [
+    ["store", [[8192, 5]], false],
+    ["store", [[8200, 6]], false]
+  ]}},
+  "mutants": ["l1.body/unbound"]
+}

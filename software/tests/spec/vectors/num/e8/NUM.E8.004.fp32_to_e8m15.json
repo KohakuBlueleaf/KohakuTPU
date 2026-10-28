@@ -1,0 +1,31 @@
+{
+  "clause": "NUM.E8.004",
+  "tier": 0,
+  "runner": "num.e8m15.value",
+  "status": "frozen",
+  "input": {
+    "x": [
+      "0x1.0001p+0",
+      "0x1.0003p+0",
+      "0x1.000102p+0",
+      "0x1p-127",
+      "0x1.fffffep+127",
+      "-inf",
+      "0x1.fffep+127",
+      "nan",
+      "-0x1.0003p+0"
+    ]
+  },
+  "expect": [
+    "0x1.0000000000000p+0",
+    "0x1.0004000000000p+0",
+    "0x1.0002000000000p+0",
+    "0x0.0p+0",
+    "inf",
+    "-inf",
+    "0x1.fffe000000000p+127",
+    "nan",
+    "-0x1.0004000000000p+0"
+  ],
+  "mutants": ["num.e8m15/significand-17", "num.e8m15/subnormals", "num.e8m15/no-overflow"]
+}

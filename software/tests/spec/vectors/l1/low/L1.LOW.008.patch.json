@@ -1,0 +1,103 @@
+{
+  "clause": "L1.LOW.008",
+  "expect": {
+    "-": {
+      "steps": [
+        [
+          "LOAD",
+          15,
+          0,
+          2,
+          2
+        ],
+        [
+          "ALU",
+          15,
+          "ADD",
+          3
+        ],
+        [
+          "PATCH",
+          15,
+          0,
+          218,
+          34,
+          0
+        ],
+        [
+          "PATCH",
+          15,
+          0,
+          63,
+          6,
+          34
+        ],
+        [
+          "LOAD",
+          15,
+          0,
+          3,
+          2
+        ],
+        [
+          "ALU",
+          15,
+          "ADD",
+          3
+        ],
+        [
+          "PATCH",
+          15,
+          1,
+          218,
+          34,
+          0
+        ],
+        [
+          "PATCH",
+          15,
+          1,
+          63,
+          6,
+          34
+        ],
+        [
+          "DISPATCH",
+          [
+            1,
+            1
+          ],
+          [
+            "FILL addr=0x1000 n=4 nk=1 anchor=40",
+            "FILL n=4 nk=1 anchor=40 fbank=1"
+          ]
+        ],
+        [
+          "AWAIT",
+          [
+            1,
+            1
+          ],
+          2
+        ],
+        [
+          "BARRIER"
+        ]
+      ]
+    }
+  },
+  "input": {
+    "binds": {
+      "a": 4096
+    },
+    "fn": "f",
+    "text": "target ktpu.v9\nfn f.l1(a: u64[1024] @dram)\n    send mg[0]\n        fill A0 <- a + r3 n=4\n        fill A1 <- r3 n=4\n"
+  },
+  "machine": "multimesh_v9t6",
+  "mutants": [
+    "l1.lower/tmp-reg"
+  ],
+  "runner": "l1.build",
+  "status": "frozen",
+  "tier": 0
+}

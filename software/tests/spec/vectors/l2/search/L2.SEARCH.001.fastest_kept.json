@@ -1,0 +1,29 @@
+{
+ "clause": "L2.SEARCH.001",
+ "tier": 0,
+ "runner": "l2.search",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[64, 128] @dram, y: f16[64, 128] @dram)",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..4",
+   "            xl = load x[t*16 : +16, :]       : f16[16, 128] @l1",
+   "            v = unpack xl                    : f32[16, 128] @reg",
+   "            e = exp2 v                       : f32[16, 128] @reg",
+   "            e = mul e, v                     : f32[16, 128] @reg",
+   "            ol = pack e                      : f16[16, 128] @l1",
+   "            store y[t*16 : +16, :] <- ol"
+  ],
+  "passes": []
+ },
+ "expect": {
+  "fastest": true
+ },
+ "mutants": [
+  "l2.vector/slowest-first"
+ ]
+}

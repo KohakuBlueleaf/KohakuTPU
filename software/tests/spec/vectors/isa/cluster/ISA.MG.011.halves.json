@@ -1,0 +1,35 @@
+{
+ "clause": "ISA.MG.011",
+ "tier": 0,
+ "runner": "isa.cluster.fills",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "target ktpu.v9\n\nfn k.l2(x: mx7a[256, 128] @dram(gm=64, nk=4), w: mx7b[64, 128] @dram(gn=16, nk=4), y: f16[256, 64] @dram(tile=64x16))\n    par u in 0..1 on mg[u]\n        a = fill x[0 : +256, 0 : +128] : mx7a[256, 128] @A\n        b = fill w[0 : +64, 0 : +128] : mx7b[64, 128] @B\n        acc = gemm a, b : f32[256, 64] @acc\n        drain acc -> y[0 : +256, 0 : +64]\n",
+  "name": "k"
+ },
+ "expect": [
+  [
+   0,
+   0,
+   0,
+   128
+  ],
+  [
+   0,
+   0,
+   128,
+   128
+  ],
+  [
+   1,
+   0,
+   0,
+   64
+  ]
+ ],
+ "mutants": [
+  "isa.cluster/node",
+  "isa.cluster/fields"
+ ]
+}

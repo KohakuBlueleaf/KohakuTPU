@@ -1,0 +1,53 @@
+{
+ "clause": "L2.STAT.001",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[16, 32] @dram(tile=1x8), s: f16[16] @dram, y: f16[16, 32] @dram(tile=1x8))",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..1",
+   "            xl = load x                        : f16[16, 32] @l1(gt4)",
+   "            sl = load s                        : f16[16] @l1",
+   "            v = unpack xl                      : f32[16, 32] @reg(gt4)",
+   "            m = unpack sl                      : f32[16] @reg",
+   "            o = mul v, m[:, *]                 : f32[16, 32] @reg(gt4)",
+   "            ol = pack o                     : f16[16, 32] @l1(gt4)",
+   "            store y <- ol"
+  ],
+  "passes": [],
+  "facts": {
+   "unpack": {
+    "lines": "^vunpk .* n=1",
+    "in": "images"
+   },
+   "bcast": {
+    "lines": "bcast\\(.*sh=0\\)",
+    "in": "images"
+   },
+   "copies": {
+    "count": "^vmov ",
+    "in": "images"
+   }
+  }
+ },
+ "expect": {
+  "unpack": [
+   "vunpk v0 <- l1[64] f16 n=1"
+  ],
+  "bcast": [
+   "vmul v4[1 :], k1, bcast(v0[0], lane=0, sh=0) vl=64",
+   "vmul v5[1 :], k1, bcast(v0[0], lane=4, sh=0) vl=64",
+   "vmul v7[1 :], k1, bcast(v0[0], lane=8, sh=0) vl=64",
+   "vmul v8[1 :], k1, bcast(v0[0], lane=12, sh=0) vl=64"
+  ],
+  "copies": 4
+ },
+ "mutants": [
+  "l2.vector/broadcast-unread"
+ ]
+}

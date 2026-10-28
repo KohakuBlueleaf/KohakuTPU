@@ -1,0 +1,29 @@
+{
+ "clause": "ISA.VC.160",
+ "tier": 0,
+ "runner": "isa.vector.image",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image k()\n    seti s0 = 1.5\n    seti s15 = 469\n    seti k3 = -2.0\n    halt\n",
+  "name": "k",
+  "args": [],
+  "entry": "unknown"
+ },
+ "expect": {
+  "words": [
+   "0xd0000000",
+   "0x3fc000",
+   "0xd3c00000",
+   "0x1d5",
+   "0xd0000001",
+   "0xc00000",
+   "0xf8000000"
+  ],
+  "descs": {}
+ },
+ "mutants": [
+  "isa.vector/ctl_fields",
+  "isa.vector/e8m15"
+ ]
+}

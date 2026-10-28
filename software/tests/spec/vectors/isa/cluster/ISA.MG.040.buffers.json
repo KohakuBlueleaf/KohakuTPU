@@ -1,0 +1,26 @@
+{
+ "clause": "ISA.MG.040",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "mg.buffers",
+   "m:mg.l1_a_entries",
+   "m:mg.tiles"
+  ]
+ },
+ "expect": {
+  "mg.buffers": {
+   "0": 2048,
+   "1": 2048,
+   "2": 8192
+  },
+  "m:mg.l1_a_entries": 512,
+  "m:mg.tiles": 4096
+ },
+ "mutants": [
+  "isa.cluster/limits"
+ ]
+}

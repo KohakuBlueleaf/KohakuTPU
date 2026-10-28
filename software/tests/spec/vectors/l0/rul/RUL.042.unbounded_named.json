@@ -1,0 +1,19 @@
+{
+ "clause": "RUL.042",
+ "tier": 0,
+ "runner": "l0.named",
+ "status": "frozen",
+ "input": {
+  "module": "format",
+  "header": "package/format.h",
+  "like": "UNBOUNDED"
+ },
+ "expect": {
+  "host": true,
+  "header": true,
+  "equal": true
+ },
+ "mutants": [
+  "l0.format/unbounded_drift"
+ ]
+}

@@ -1,0 +1,22 @@
+{
+ "clause": "L2.PASS.001",
+ "tier": 0,
+ "runner": "l2.pipeline",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {},
+ "expect": [
+  "select",
+  "place",
+  "space",
+  "share",
+  "split",
+  "step",
+  "pipeline",
+  "retile",
+  "stage"
+ ],
+ "mutants": [
+  "l2.pipeline/reordered"
+ ]
+}

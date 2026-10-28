@@ -1,0 +1,37 @@
+{
+ "clause": "DSL.KERN.011",
+ "tier": 0,
+ "runner": "dsl.specialise",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(8, 32), y=kt.Out(8, 32)):\n    for c in kt.par(kt.machine().vc, on=kt.vc):\n        for t in kt.range(1):\n            r = c * 4 + t * 4\n            v = kt.load(x[r : r + 4, :], gt4=True)\n            kt.store(y[r : r + 4, :], v * 2.0)\n",
+  "given": {
+   "x": [
+    [
+     8,
+     32
+    ],
+    "f16"
+   ]
+  }
+ },
+ "expect": {
+  "machine": [
+   2,
+   2,
+   1
+  ],
+  "consts": {},
+  "l1": "fn k.l1",
+  "same": true,
+  "cached": 1024,
+  "store": [
+   "build",
+   "compile"
+  ]
+ },
+ "mutants": [
+  "dsl.compile/dsl_machine"
+ ]
+}

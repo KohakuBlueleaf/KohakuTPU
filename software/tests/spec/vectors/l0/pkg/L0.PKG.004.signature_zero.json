@@ -1,0 +1,71 @@
+{
+ "clause": "L0.PKG.004",
+ "tier": 0,
+ "runner": "l0.pkg.build",
+ "status": "frozen",
+ "input": {
+  "builder": {
+   "types": [
+    [
+     1,
+     1,
+     "MG"
+    ]
+   ],
+   "credit": 512
+  },
+  "calls": [
+   [
+    "unit",
+    [
+     1,
+     1
+    ]
+   ],
+   [
+    "dispatch",
+    0,
+    [
+     "0x7"
+    ]
+   ]
+  ],
+  "keys": [
+   "package"
+  ]
+ },
+ "expect": {
+  "package": {
+   "units": [
+    {
+     "type": "MG",
+     "x": 1,
+     "y": 1,
+     "mesh": 0,
+     "credit": 512,
+     "fetch": "0x0"
+    }
+   ],
+   "buffers": [],
+   "steps": [
+    {
+     "op": "DISPATCH",
+     "unit": 0,
+     "count": 1,
+     "arg": "0x0",
+     "flags": 0
+    }
+   ],
+   "relocs": [],
+   "payloads": [
+    "0x7"
+   ],
+   "signature": "0x0",
+   "ack_reserve": 0,
+   "checksum": false
+  }
+ },
+ "mutants": [
+  "l0.build/signature_default"
+ ]
+}

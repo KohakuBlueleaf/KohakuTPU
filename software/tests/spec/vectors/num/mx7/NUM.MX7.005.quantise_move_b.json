@@ -1,0 +1,9 @@
+{
+  "clause": "NUM.MX7.005",
+  "tier": 0,
+  "runner": "num.mover.convert",
+  "status": "frozen",
+  "input": {"op": "quant", "entries": 3, "b": true},
+  "expect": {"xform": 1, "mode": 1, "src": [[24, 32]], "dst": [[3, 128]]},
+  "mutants": ["num.mover/quant-b-dropped", "num.mover/quant-id"]
+}

@@ -1,0 +1,1 @@
+{"clause":"L0.MEM.005","tier":0,"runner":"memory.jit_drop","machine":"multimesh_v9t6","status":"frozen","input":{},"expect":{"held":true,"released":true,"closed":true},"mutants":["memory/no-jit-drop"]}

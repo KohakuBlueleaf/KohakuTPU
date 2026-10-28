@@ -1,0 +1,17 @@
+{
+  "clause": "L1.NODE.012",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[4] @dram)\n    signal 5 6\n    settle 100\n",
+    "fn": "f",
+    "binds": {"a": 4096}
+  },
+  "expect": {"-": {"steps": [
+    ["signal", 5, 6],
+    ["settle", 100]
+  ]}},
+  "mutants": ["l1.node/signal-swapped"]
+}

@@ -1,0 +1,21 @@
+{
+  "clause": "L1.MOV.010",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(x: f16[16, 256] @dram, y: f16[16, 256] @dram)\n    r3 = set 512\n    move\n        copy w(x + r3, (16, 32)) -> w(y + r3, (16, 32))\n",
+    "fn": "f",
+    "binds": {"x": 65536, "y": 131072}
+  },
+  "expect": {"-": {"steps": [
+    ["alu", 3, "MOV", 0, 512, true],
+    ["move", [
+      "HDR base=0x10000 ndim=1", "DIM count=16 stride=32", "AXIS", "WIN", "WIN axis=1",
+      "HDR sel=1 base=0x20000 ndim=1", "DIM sel=1 count=16 stride=32", "AXIS", "WIN sel=1", "WIN sel=1 axis=1",
+      "CTRL ew=2 flags=0x8 go=1"
+    ], [[0, [[4, 40, 0]], 3, 65536], [5, [[4, 40, 0]], 3, 131072]]]
+  ]}},
+  "mutants": ["l1.node/val-const-only"]
+}

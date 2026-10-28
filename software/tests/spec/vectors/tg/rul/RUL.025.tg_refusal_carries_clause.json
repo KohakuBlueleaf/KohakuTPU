@@ -1,0 +1,19 @@
+{
+ "clause": "RUL.025",
+ "tier": 0,
+ "runner": "tg.refusal",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "make": "Tensor.rand(32, 64, device='KTPU')",
+  "match": "TG.PLAN.010",
+  "clause": "TG.PLAN.010"
+ },
+ "expect": {
+  "type": "KTPUUnsupported",
+  "match": true,
+  "seam": true,
+  "clause": true
+ },
+ "mutants": ["tg.refusal/no_clause"]
+}

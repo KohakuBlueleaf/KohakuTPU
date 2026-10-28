@@ -1,0 +1,37 @@
+{
+ "clause": "DSL.SPEC.007",
+ "tier": 0,
+ "runner": "dsl.spec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "shape": [
+   512,
+   128
+  ],
+  "layout": {
+   "tile": [
+    64,
+    64
+   ]
+  }
+ },
+ "expect": {
+  "text": "f16[512, 128] @dram(tile=64x64)",
+  "nbytes": 131072,
+  "rowmajor": false,
+  "tiled": true,
+  "layout": [
+   [
+    "tile",
+    [
+     64,
+     64
+    ]
+   ]
+  ]
+ },
+ "mutants": [
+  "dsl.types/text"
+ ]
+}

@@ -1,0 +1,20 @@
+{
+ "clause": "DSL.GRAPH.007",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "seen = {}\n\n\n@kt.kernel\ndef k(x=kt.In(8, 32), y=kt.Out(8, 32)):\n    for c in kt.par(2, on=kt.vc):\n        for t in kt.range(2):\n            r = c * 4 + t * 2\n            seen[\"free\"] = sorted(r.free())\n            seen[\"affine\"] = all(isinstance(a, E.Var) for a in r.terms)\n            kt.store(y[r : r + 2, :], kt.load(x[r : r + 2, :]))\n\n\ndef facts():\n    k.trace({\"x\": TY.TensorSpec.make((8, 32))}, machine=MACHINE)\n    return seen\n"
+ },
+ "expect": {
+  "free": [
+   "c1",
+   "t1"
+  ],
+  "affine": true
+ },
+ "mutants": [
+  "dsl.expr/scale"
+ ]
+}

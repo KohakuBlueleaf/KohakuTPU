@@ -1,0 +1,26 @@
+{
+ "clause": "ISA.VC.024",
+ "tier": 0,
+ "runner": "isa.lower",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "example": "leaky",
+  "name": "leaky",
+  "strategy": "band",
+  "patterns": [
+   "^vcmpgt p1,",
+   "if=p1"
+  ]
+ },
+ "expect": {
+  "found": [
+   true,
+   true
+  ],
+  "in_order": true
+ },
+ "mutants": [
+  "isa.vector/lower"
+ ]
+}

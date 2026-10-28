@@ -1,0 +1,19 @@
+{
+  "clause": "L1.IMG.036",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    vmul v1, v2, rot(v3, 5)\n    vmul v4, v5, merge(v6, 3)\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": [
+    "CHKVL vl1=127 d_stride=1 c_stride=1 b_stride=1 a_stride=1",
+    "XB xk=5 xm=2",
+    "vmul vd=1 va=2 vb=3 om=1",
+    "XB xk=3 xm=4",
+    "vmul vd=4 va=5 vb=6 om=1",
+    "VHALT"
+  ]},
+  "mutants": ["l1.img/xmodes"]
+}

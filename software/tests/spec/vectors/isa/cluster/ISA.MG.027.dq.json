@@ -1,0 +1,18 @@
+{
+ "clause": "ISA.MG.027",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "mg.dq_room"
+  ]
+ },
+ "expect": {
+  "mg.dq_room": 4080
+ },
+ "mutants": [
+  "isa.cluster/limits"
+ ]
+}

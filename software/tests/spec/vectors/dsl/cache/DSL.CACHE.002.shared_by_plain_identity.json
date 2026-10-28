@@ -1,0 +1,20 @@
+{
+ "clause": "DSL.CACHE.002",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "RUNS = [0]\n\n\ndef make(scale, table):\n    def body(x, y):\n        RUNS[0] += 1\n        for c in kt.par(1, on=kt.vc):\n            v = kt.unpack(kt.load(x[0:4, :]))\n            kt.store(y[0:4, :], v * (scale + float(table[0])))\n\n    return kt.Kernel.build(\"g\", body, {\"x\": kt.In(4, 32), \"y\": kt.Out(4, 32)})\n\n\ndef facts():\n    g = {\"x\": TY.TensorSpec.make((4, 32))}\n    a = make(2.0, (0.0,)).trace(g, machine=MACHINE)\n    b = make(2.0, (0.0,)).trace(g, machine=MACHINE)\n    plain_runs = RUNS[0]\n    c = make(2.0, np.zeros(1)).trace(g, machine=MACHINE)\n    d = make(2.0, np.zeros(1)).trace(g, machine=MACHINE)\n    return {\n        \"plain_same\": a is b,\n        \"plain_runs\": plain_runs,\n        \"array_same\": c is d,\n        \"array_runs\": RUNS[0] - plain_runs,\n    }\n"
+ },
+ "expect": {
+  "plain_same": true,
+  "plain_runs": 1,
+  "array_same": false,
+  "array_runs": 2
+ },
+ "mutants": [
+  "dsl.kernel/plain_none",
+  "dsl.kernel/plain_all"
+ ]
+}

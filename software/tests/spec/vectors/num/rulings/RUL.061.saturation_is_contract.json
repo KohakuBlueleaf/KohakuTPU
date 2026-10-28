@@ -1,0 +1,14 @@
+{
+  "clause": "RUL.061",
+  "tier": 0,
+  "runner": "num.doc",
+  "status": "frozen",
+  "input": {
+    "path": "docs/projects/kohakutpu/accumulator.md",
+    "lines": [354, 386],
+    "has": ["open defect", "saturat"],
+    "before": "Until then, silent FP16 saturation is an open defect rather than a documented\nlimit, and nothing in the compiler mitigates it."
+  },
+  "expect": {"open defect": false, "saturat": true},
+  "mutants": ["num.doc/before"]
+}

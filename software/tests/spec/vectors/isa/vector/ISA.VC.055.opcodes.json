@@ -1,0 +1,62 @@
+{
+ "clause": "ISA.VC.055",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "math",
+    "args": [
+     "vsub",
+     1,
+     2,
+     3,
+     4
+    ]
+   },
+   {
+    "fn": "math",
+    "args": [
+     "vfma",
+     1,
+     2,
+     3,
+     4
+    ]
+   },
+   {
+    "fn": "math",
+    "args": [
+     "vfnma",
+     1,
+     2,
+     3,
+     4
+    ]
+   },
+   {
+    "fn": "math",
+    "args": [
+     "vexp2d",
+     1,
+     2,
+     3,
+     4
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0x20443200",
+   "0x30443200",
+   "0x38443200",
+   "0x90443200"
+  ]
+ },
+ "mutants": [
+  "isa.vector/opcodes"
+ ]
+}

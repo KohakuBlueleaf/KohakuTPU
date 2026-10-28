@@ -1,0 +1,26 @@
+{
+ "clause": "L0.NQ.029",
+ "tier": 0,
+ "runner": "l0.pairs",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "host": [
+   "layout.STATUS[48]"
+  ],
+  "header": [
+   "package/status.h:KA_ST_TIMEOUT"
+  ],
+  "machine": [
+   "fw.status.KA_ST_TIMEOUT"
+  ]
+ },
+ "expect": {
+  "layout.STATUS[48]": "TIMEOUT",
+  "package/status.h:KA_ST_TIMEOUT": 48,
+  "fw.status.KA_ST_TIMEOUT": 48
+ },
+ "mutants": [
+  "l0.queue/status_names"
+ ]
+}

@@ -1,0 +1,27 @@
+{
+ "clause": "API.ROW.003",
+ "tier": 0,
+ "runner": "tg.run",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "WIDE": [
+    8,
+    1184
+   ]
+  },
+  "make": "T(WIDE).sum(axis=1)",
+  "facts": [
+   "runs"
+  ]
+ },
+ "expect": {
+  "runs": [
+   "rows"
+  ]
+ },
+ "mutants": [
+  "api.rows/max_block"
+ ]
+}

@@ -1,0 +1,40 @@
+{
+ "clause": "ISA.VC.070",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "xb",
+    "args": [
+     3,
+     5,
+     2,
+     true,
+     1,
+     2
+    ]
+   },
+   {
+    "fn": "xb",
+    "args": [
+     4,
+     15,
+     7
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0x98804d2b",
+   "0x988003fc"
+  ]
+ },
+ "mutants": [
+  "isa.vector/cfg_fields",
+  "isa.vector/cfg_sel"
+ ]
+}

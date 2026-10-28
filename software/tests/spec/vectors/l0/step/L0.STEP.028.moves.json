@@ -1,0 +1,98 @@
+{
+ "clause": "L0.STEP.028",
+ "tier": 0,
+ "runner": "l0.program",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "steps": [
+   [
+    "move",
+    [
+     [
+      0,
+      65536
+     ]
+    ]
+   ],
+   [
+    "post",
+    [
+     [
+      0,
+      65536
+     ]
+    ]
+   ],
+   [
+    "post",
+    [
+     [
+      0,
+      65536
+     ],
+     [
+      0,
+      65536
+     ]
+    ]
+   ],
+   [
+    "wait_moves",
+    0
+   ]
+  ],
+  "keys": [
+   "steps"
+  ]
+ },
+ "expect": {
+  "steps": [
+   {
+    "op": "MOVER",
+    "unit": 0,
+    "count": 1,
+    "arg": "0x0",
+    "flags": 0
+   },
+   {
+    "op": "BARRIER",
+    "unit": 0,
+    "count": 0,
+    "arg": "0x0",
+    "flags": 0
+   },
+   {
+    "op": "MOVER",
+    "unit": 0,
+    "count": 1,
+    "arg": "0x1",
+    "flags": 1
+   },
+   {
+    "op": "MOVER",
+    "unit": 0,
+    "count": 1,
+    "arg": "0x2",
+    "flags": 1
+   },
+   {
+    "op": "MWAIT",
+    "unit": 0,
+    "count": 2,
+    "arg": "0x0",
+    "flags": 0
+   },
+   {
+    "op": "BARRIER",
+    "unit": 0,
+    "count": 0,
+    "arg": "0x0",
+    "flags": 0
+   }
+  ]
+ },
+ "mutants": [
+  "l0.build/never_posted"
+ ]
+}

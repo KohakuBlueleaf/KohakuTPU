@@ -1,0 +1,17 @@
+{
+ "clause": "DSL.KERN.023",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef pick(x=kt.In(4, 32), y=kt.Out(4, 32), *, rows=kt.auto(4, 2, 1)):\n    kt.require(rows != 1, \"one row\")\n    for c in kt.par(1, on=kt.vc):\n        kt.store(y[0:4, :], kt.load(x[0:4, :]))\n\n\ndef facts():\n    g = {\"x\": TY.TensorSpec.make((4, 32))}\n\n    def stale(t):\n        raise ValueError(\"unknown field `acc_bits`\")\n\n    try:\n        pick.trace(g, machine=MACHINE, check=stale)\n    except kt.DSLError as e:\n        lines = str(e).splitlines()\n        return {\"head\": lines[0], \"listed\": len(lines) - 1}\n    return {\"head\": None}\n"
+ },
+ "expect": {
+  "head": "pick: no kt.auto candidate traces and compiles (3 candidates: 2 x ValueError: unknown field `acc_bits`; 1 x DSLError: one row, at spec_kernel.py:3):",
+  "listed": 3
+ },
+ "mutants": [
+  "dsl.kernel/auto_causes_dropped"
+ ]
+}

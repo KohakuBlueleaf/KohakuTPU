@@ -1,0 +1,57 @@
+{
+ "clause": "L2.STAT.003",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[16, 32] @dram(tile=1x8), s: f16[16] @dram)",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..1",
+   "            xl = load x                              : f16[16, 32] @l1(gt4)",
+   "            v = unpack xl                            : f32[16, 32] @reg(gt4)",
+   "            m = rmax v                               : f32[16] @reg",
+   "            p = pack m                               : f16[16] @l1",
+   "            store s <- p"
+  ],
+  "passes": [],
+  "facts": {
+   "merges": {
+    "lines": "merge\\(",
+    "in": "images"
+   },
+   "pack": {
+    "lines": "^vpack ",
+    "in": "images"
+   }
+  }
+ },
+ "expect": {
+  "merges": [
+   "vmax v4[0 :], v0[1 :], merge(v2[0 :], 8) vl=16",
+   "vmax v4[1 :], v0[2 :], merge(v2[1 :], 8) vl=16",
+   "vmax v4[2 :], v0[3 :], merge(v2[2 :], 8) vl=16",
+   "vmax v4[3 :], v0[4 :], merge(v2[3 :], 8) vl=16",
+   "vmax v4[4 :], v1[1 :], merge(v3[0 :], 8) vl=16",
+   "vmax v4[5 :], v1[2 :], merge(v3[1 :], 8) vl=16",
+   "vmax v4[6 :], v1[3 :], merge(v3[2 :], 8) vl=16",
+   "vmax v4[7 :], v1[4 :], merge(v3[3 :], 8) vl=16",
+   "vmax v0[0 :], v4[0 :], merge(v4[4 :], 4) vl=16",
+   "vmax v0[1 :], v4[1 :], merge(v4[5 :], 4) vl=16",
+   "vmax v0[2 :], v4[2 :], merge(v4[6 :], 4) vl=16",
+   "vmax v0[3 :], v4[3 :], merge(v4[7 :], 4) vl=16",
+   "vmax v1[0 :], v0[0 :], merge(v0[2 :], 2) vl=16",
+   "vmax v1[1 :], v0[1 :], merge(v0[3 :], 2) vl=16",
+   "vmax v1[0 :], v1[0 :], merge(v1[1 :], 1) vl=16"
+  ],
+  "pack": [
+   "vpack v1 -> l1[64] f16 n=1"
+  ]
+ },
+ "mutants": [
+  "l2.vector/compact-reversed"
+ ]
+}

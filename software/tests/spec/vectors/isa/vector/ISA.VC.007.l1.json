@@ -1,0 +1,25 @@
+{
+ "clause": "ISA.VC.007",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "l1_words",
+   "isa.word_bytes",
+   "m:vc.l1_words",
+   "m:die.word_bytes"
+  ]
+ },
+ "expect": {
+  "l1_words": 512,
+  "isa.word_bytes": 32,
+  "m:vc.l1_words": 512,
+  "m:die.word_bytes": 32
+ },
+ "mutants": [
+  "isa.vector/consts",
+  "isa.vector/isa_cfg"
+ ]
+}

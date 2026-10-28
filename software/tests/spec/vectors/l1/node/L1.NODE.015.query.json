@@ -1,0 +1,17 @@
+{
+  "clause": "L1.NODE.015",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[16] @dram)\n    query mg[0] index=5 -> a\n",
+    "fn": "f",
+    "binds": {"a": 4096}
+  },
+  "expect": {"-": {"steps": [
+    ["send_raw", [1, 1], 7, ["0x5000000000000000000000000000000000000000000000000000000000000"], false],
+    ["recv", 4096, 1, [1, 1]]
+  ]}},
+  "mutants": ["l1.node/query-index-bit"]
+}

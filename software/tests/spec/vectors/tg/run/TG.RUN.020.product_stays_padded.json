@@ -1,0 +1,41 @@
+{
+ "clause": "TG.RUN.020",
+ "tier": 0,
+ "runner": "tg.run",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "W84": [
+    84,
+    64
+   ]
+  },
+  "make": "T(X) @ T(W84).T",
+  "facts": [
+   "runs",
+   "forms"
+  ]
+ },
+ "expect": {
+  "runs": [
+   "quant",
+   "quant",
+   "mm"
+  ],
+  "forms": [
+   [
+    "rows",
+    84,
+    96
+   ]
+  ]
+ },
+ "mutants": [
+  "tg.run/no_padded_out"
+ ]
+}

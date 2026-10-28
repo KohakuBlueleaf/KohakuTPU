@@ -1,0 +1,18 @@
+{
+ "clause": "ISA.MV.027",
+ "tier": 1,
+ "runner": "isa.card.example",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "case": "mask",
+  "reps": 1
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.mover/modes",
+  "isa.mover/fields"
+ ]
+}

@@ -1,0 +1,24 @@
+{
+ "clause": "RUL.025",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "XK": [
+    32,
+    64
+   ],
+   "WK": [
+    64,
+    96
+   ]
+  },
+  "source": "def facts():\n    try:\n        (kp.tensor(XK) @ kp.tensor(WK)).numpy()\n    except KT.Unsupported as e:\n        return {\"clause\": \"API.REF.001\" in str(e)}\n    return {\"clause\": None}\n"
+ },
+ "expect": {
+  "clause": true
+ },
+ "mutants": ["api.refusal/no_clause"]
+}

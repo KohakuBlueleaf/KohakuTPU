@@ -1,0 +1,33 @@
+{
+ "clause": "TG.RUN.011",
+ "tier": 0,
+ "runner": "tg.run",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "Y": [
+    32,
+    64
+   ]
+  },
+  "make": "YA[0:4] + YA[4:8] + YA[8:12] + YA[12:16] + YA[16:20] + YA[20:24] + YA[24:28] + YA[28:32]",
+  "facts": [
+   "runs"
+  ],
+  "source": "YA = T(Y)\n"
+ },
+ "expect": {
+  "runs": [
+   "flat",
+   "flat"
+  ]
+ },
+ "mutants": [
+  "tg.run/narrow_more"
+ ]
+}

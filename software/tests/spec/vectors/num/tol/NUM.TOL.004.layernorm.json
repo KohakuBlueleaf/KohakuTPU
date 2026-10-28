@@ -1,0 +1,19 @@
+{
+  "clause": "NUM.TOL.004",
+  "tier": 1,
+  "runner": "num.card.example",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "source": "l2",
+    "name": "layernorm",
+    "inputs": {
+      "x": {"shape": [1024, 128], "seed": 25},
+      "g": {"shape": [128], "seed": 26, "scale": 0.5, "offset": 1.0},
+      "b": {"shape": [128], "seed": 27, "scale": 0.5}
+    },
+    "rel": 0.004
+  },
+  "expect": {"rel_below": true},
+  "mutants": ["num.card/readback-corrupt"]
+}

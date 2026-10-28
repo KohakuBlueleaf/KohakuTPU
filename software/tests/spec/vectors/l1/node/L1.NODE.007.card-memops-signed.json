@@ -1,0 +1,15 @@
+{
+  "clause": "L1.NODE.007",
+  "tier": 1,
+  "runner": "l1.card",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn ms.l1(t: u64[8] @dram, out: u64[4] @dram)\n    r5 = set 16\n    r1 = load t + r5\n    store out <- r1\n    r3 = set 0\n    r2 = sub r3, 2\n    r4 = set 1\n    goto skip if r2 < r3 signed\n    r4 = set 7\n    label skip\n    store out + 8 <- r4\n",
+    "fn": "ms",
+    "init": {"t": [10, 0, 11, 0, 12, 0, 13, 0, 14, 0, 15, 0, 16, 0, 17, 0]},
+    "read": ["out"]
+  },
+  "expect": {"out": [12, 0, 1, 0, 0, 0, 0, 0]},
+  "mutants": ["l1.node/load-index-dropped", "l1.node/compare-unsigned"]
+}

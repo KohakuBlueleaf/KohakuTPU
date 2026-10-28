@@ -1,0 +1,39 @@
+{
+ "clause": "L0.DE.007",
+ "tier": 0,
+ "runner": "l0.pkg.inflight",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "package": {
+   "units": [
+    {
+     "type": "MG",
+     "x": 1,
+     "y": 1,
+     "credit": 512,
+     "fetch": "0x10200"
+    }
+   ],
+   "steps": [
+    {
+     "op": "DISPATCH",
+     "unit": 0,
+     "count": 5000,
+     "arg": 0
+    }
+   ],
+   "payloads": 5000
+  }
+ },
+ "expect": {
+  "most_in_flight": [
+   512
+  ],
+  "half_window": 2048
+ },
+ "mutants": [
+  "l0.lower/fetch_depth",
+  "l0.lower/run_cap"
+ ]
+}

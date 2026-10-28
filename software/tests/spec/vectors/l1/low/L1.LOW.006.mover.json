@@ -1,0 +1,25 @@
+{
+  "clause": "L1.LOW.006",
+  "tier": 0,
+  "runner": "l1.build",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[64] @dram, b: u64[64] @dram)\n    move\n        copy w(a, (1, 32)) -> w(b, (1, 32))\n    p = move posted\n        fill w(a, (1, 32)) value=1\n    q = move posted\n        fill w(b, (1, 32)) value=2\n    wait moves p\n",
+    "fn": "f",
+    "binds": {"a": 4096, "b": 8192}
+  },
+  "expect": {"-": {"steps": [
+    ["MOVER", [
+      "HDR base=0x1000 ndim=1", "DIM count=1 stride=32", "AXIS", "WIN", "WIN axis=1",
+      "HDR sel=1 base=0x2000 ndim=1", "DIM sel=1 count=1 stride=32", "AXIS", "WIN sel=1", "WIN sel=1 axis=1",
+      "CTRL ew=2 flags=0x8 go=1"
+    ], 0],
+    ["BARRIER"],
+    ["MOVER", ["HDR sel=1 base=0x1000 ndim=1", "DIM sel=1 count=1 stride=32", "AXIS", "WIN sel=1", "WIN sel=1 axis=1", "IMM 0x1", "CTRL mode=4 ew=2 flags=0x8 go=1"], 1],
+    ["MOVER", ["HDR sel=1 base=0x2000 ndim=1", "DIM sel=1 count=1 stride=32", "AXIS", "WIN sel=1", "WIN sel=1 axis=1", "IMM 0x2", "CTRL mode=4 ew=2 flags=0x8 go=1"], 1],
+    ["MWAIT", 2],
+    ["BARRIER"]
+  ]}},
+  "mutants": ["l1.lower/post-blocks"]
+}

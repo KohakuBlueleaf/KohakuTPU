@@ -1,0 +1,60 @@
+{
+ "clause": "L2.BODY.001",
+ "tier": 0,
+ "runner": "l2.body",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram)",
+   "    h = buffer : f16[8, 128] @dram",
+   "    copy h <- x",
+   "    copy y <- h"
+  ],
+  "want": [
+   "params",
+   "scratch"
+  ]
+ },
+ "expect": {
+  "params": [
+   [
+    "x",
+    "f16",
+    [
+     8,
+     128
+    ],
+    "dram",
+    {}
+   ],
+   [
+    "y",
+    "f16",
+    [
+     8,
+     128
+    ],
+    "dram",
+    {}
+   ]
+  ],
+  "scratch": [
+   [
+    "h",
+    "f16",
+    [
+     8,
+     128
+    ],
+    "dram",
+    {}
+   ]
+  ]
+ },
+ "mutants": [
+  "l2.body/scratch-dropped"
+ ]
+}

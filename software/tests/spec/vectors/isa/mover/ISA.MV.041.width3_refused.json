@@ -1,0 +1,39 @@
+{
+ "clause": "ISA.MV.041",
+ "tier": 0,
+ "runner": "isa.mover.move",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "fn": "fill",
+  "args": [
+   {
+    "base": 4096,
+    "dims": [
+     [
+      1,
+      32
+     ]
+    ],
+    "windows": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      0
+     ]
+    ]
+   },
+   0,
+   3
+  ]
+ },
+ "expect": {
+  "refused": "PackageError"
+ },
+ "mutants": [
+  "isa.mover/modes"
+ ]
+}

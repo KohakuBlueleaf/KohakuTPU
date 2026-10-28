@@ -1,0 +1,19 @@
+{
+  "clause": "L1.IMG.008",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    vmul v1, v2[4:], s3\n    vadd v5, v6[2], k1\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": [
+    "CHKVL vl1=127 d_stride=1 c_stride=1 b_stride=1 a_base=4 a_stride=1",
+    "XB",
+    "vmul vd=1 va=2 vb=3 sb=1 om=1",
+    "CHKVL vl1=127 d_stride=1 c_stride=1 b_stride=1 a_base=2",
+    "vadd vd=5 va=6 vc=1 sc=3 om=1",
+    "VHALT"
+  ]},
+  "mutants": ["l1.img/chunk-stride"]
+}

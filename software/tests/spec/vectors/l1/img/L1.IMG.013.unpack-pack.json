@@ -1,0 +1,22 @@
+{
+  "clause": "L1.IMG.013",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    vunpk v1 <- l1[16] f16\n    vunpk v2 <- l1[0] gt4 n=4 walk=(2, 8)\n    vpack v3 -> l1[32] f16\n    vunpk v4 <- l1[8] f16 n=1\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": [
+    "USTR s1=4 s0=1",
+    "VUNPK reg=1 n1=7 off=16",
+    "USTR s1=8 s0=2",
+    "VUNPK reg=2 mode=1 n1=3",
+    "PSTR s1=4 s0=1",
+    "VPACK reg=3 n1=7 off=32",
+    "USTR s1=4 s0=1",
+    "VUNPK reg=4 off=8",
+    "VHALT"
+  ]},
+  "mutants": ["l1.img/chunks"]
+}

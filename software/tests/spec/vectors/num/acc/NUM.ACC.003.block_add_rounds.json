@@ -1,0 +1,17 @@
+{
+  "clause": "NUM.ACC.003",
+  "tier": 1,
+  "runner": "num.card.linear",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "m": 64,
+    "n": 256,
+    "k": 128,
+    "x": [[0, 0, 31.5], [0, 2, 31.5], [0, 3, 16.5], [0, 32, 0.984375], [0, 34, 0.015625]],
+    "w": [[0, 1, 63], [0, 2, 32], [0, 3, 1], [0, 33, 63], [0, 34, 1]],
+    "read": [[0, 0]]
+  },
+  "expect": ["6400"],
+  "mutants": ["num.card/readback-corrupt"]
+}

@@ -1,0 +1,13 @@
+{
+  "clause": "NUM.MEM.002",
+  "tier": 0,
+  "runner": "num.buffer",
+  "status": "frozen",
+  "input": {
+    "dtype": "f16",
+    "shape": [2, 3],
+    "values": [[1.0, -2.0, 0.5], [65504.0, 6.103515625e-05, -0.0]]
+  },
+  "expect": {"nbytes": 12, "hex": "003c00c00038ff7b00040080"},
+  "mutants": ["num.buffer/f16-big-endian"]
+}

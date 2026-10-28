@@ -1,0 +1,34 @@
+{
+ "clause": "ISA.VC.078",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "xb",
+    "kw": {
+     "pm": 1,
+     "pr": 2
+    }
+   },
+   {
+    "fn": "xb",
+    "kw": {
+     "pm": 2,
+     "pr": 3
+    }
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0x98804800",
+   "0x98807000"
+  ]
+ },
+ "mutants": [
+  "isa.vector/cfg_fields"
+ ]
+}

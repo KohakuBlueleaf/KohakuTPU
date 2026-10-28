@@ -1,0 +1,16 @@
+{
+  "clause": "L1.TXT.001",
+  "tier": 0,
+  "runner": "l1.parse",
+  "status": "frozen",
+  "input": {
+    "text": "t = mark vc[0] : note\nsend vc[0]\n    run k(1)\n"
+  },
+  "expect": [
+    {"op": "mark", "args": [["View", "vc", [["Int", 0, "dec"]]]], "target": "t", "annot": ["Name", "note"]},
+    {"op": "send", "args": [["View", "vc", [["Int", 0, "dec"]]]], "body": [
+      {"op": "run", "args": [["Call", "k", [["Int", 1, "dec"]]]]}
+    ]}
+  ],
+  "mutants": ["l1.text/no-annotation", "l1.text/flat-indent"]
+}

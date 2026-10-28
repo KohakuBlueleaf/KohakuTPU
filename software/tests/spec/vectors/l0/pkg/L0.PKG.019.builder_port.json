@@ -1,0 +1,78 @@
+{
+ "clause": "L0.PKG.019",
+ "tier": 0,
+ "runner": "l0.pkg.build",
+ "status": "frozen",
+ "input": {
+  "builder": {
+   "types": [
+    [
+     1,
+     1,
+     "MG"
+    ],
+    [
+     2,
+     2,
+     "VC"
+    ]
+   ],
+   "credit": 512,
+   "fetch": [
+    0,
+    2
+   ]
+  },
+  "calls": [
+   [
+    "unit",
+    [
+     1,
+     1
+    ]
+   ],
+   [
+    "unit",
+    [
+     2,
+     2
+    ]
+   ]
+  ],
+  "keys": [
+   "package"
+  ]
+ },
+ "expect": {
+  "package": {
+   "units": [
+    {
+     "type": "MG",
+     "x": 1,
+     "y": 1,
+     "mesh": 0,
+     "credit": 512,
+     "fetch": "0x10200"
+    },
+    {
+     "type": "VC",
+     "x": 2,
+     "y": 2,
+     "mesh": 0,
+     "credit": 512,
+     "fetch": "0x10200"
+    }
+   ],
+   "buffers": [],
+   "steps": [],
+   "relocs": [],
+   "payloads": [],
+   "signature": "0x0",
+   "ack_reserve": 0,
+   "checksum": false
+  }
+ },
+ "mutants": [
+  "l0.build/port_swapped"
+ ]
+}

@@ -1,0 +1,27 @@
+{
+ "clause": "DSL.GRAPH.010",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "seen = {}\n\n\n@kt.kernel\ndef k(x=kt.In(8, 32), y=kt.Out(8, 32)):\n    for c in kt.par(2, on=kt.vc):\n        v = kt.load(x[c * 4 : c * 4 + 4, :])\n        e = v * 2.0\n        f = v * 3.0\n        seen[\"v\"] = [v.stmt.op, v.stmt.target, v.stmt.where, v.unpacked.name, v.block is e.block]\n        seen[\"e\"] = [e.stmt.op, e.stmt.where]\n        kt.store(y[c * 4 : c * 4 + 4, :], e + f)\n\n\ndef facts():\n    k.trace({\"x\": TY.TensorSpec.make((8, 32))}, machine=MACHINE)\n    return seen\n"
+ },
+ "expect": {
+  "v": [
+   "load",
+   "xl1",
+   "spec_kernel.py:7",
+   "v1",
+   true
+  ],
+  "e": [
+   "mul",
+   "spec_kernel.py:8"
+  ]
+ },
+ "mutants": [
+  "dsl.trace/no_where",
+  "dsl.ops/unpack_again"
+ ]
+}

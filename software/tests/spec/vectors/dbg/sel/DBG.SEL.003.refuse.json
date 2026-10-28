@@ -1,0 +1,16 @@
+{
+ "clause": "DBG.SEL.003",
+ "tier": 1,
+ "runner": "dbg.select",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {},
+ "expect": {
+  "trace": "DBG.SEL.003",
+  "load": "DBG.SEL.003",
+  "state": "ready"
+ },
+ "mutants": [
+  "dbg/debug_claim"
+ ]
+}

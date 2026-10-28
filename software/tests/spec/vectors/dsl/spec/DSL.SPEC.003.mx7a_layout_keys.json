@@ -1,0 +1,42 @@
+{
+ "clause": "DSL.SPEC.003",
+ "tier": 0,
+ "runner": "dsl.spec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "shape": [
+   64,
+   64
+  ],
+  "dtype": "mx7a",
+  "layout": {
+   "gm": 16,
+   "nk": 1,
+   "t": 1
+  }
+ },
+ "expect": {
+  "text": "mx7a[64, 64] @dram(gm=16, nk=1, t=1)",
+  "nbytes": 4096,
+  "rowmajor": false,
+  "tiled": false,
+  "layout": [
+   [
+    "gm",
+    16
+   ],
+   [
+    "nk",
+    1
+   ],
+   [
+    "t",
+    1
+   ]
+  ]
+ },
+ "mutants": [
+  "dsl.types/layout_keys"
+ ]
+}

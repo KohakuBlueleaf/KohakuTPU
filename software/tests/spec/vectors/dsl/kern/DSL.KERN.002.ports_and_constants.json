@@ -1,0 +1,23 @@
+{
+ "clause": "DSL.KERN.002",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(\"R\", 32), y=kt.Out(\"R\", 32), *, t=2.0, rows=4):\n    for c in kt.par(1, on=kt.vc):\n        kt.store(y[0:4, :], kt.load(x[0:4, :]))\n\ndef facts():\n    return {\"ports\": {n: p.role for n, p in k.ports.items()}, \"consts\": k.consts}\n"
+ },
+ "expect": {
+  "ports": {
+   "x": "in",
+   "y": "out"
+  },
+  "consts": {
+   "t": 2.0,
+   "rows": 4
+  }
+ },
+ "mutants": [
+  "dsl.kernel/in_is_out"
+ ]
+}

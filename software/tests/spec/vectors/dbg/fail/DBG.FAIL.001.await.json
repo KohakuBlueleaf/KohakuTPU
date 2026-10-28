@@ -1,0 +1,50 @@
+{
+ "clause": "DBG.FAIL.001",
+ "tier": 1,
+ "runner": "dbg.fail",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "timeout_cycles": 200000,
+  "keys": [
+   "report",
+   "rerun"
+  ]
+ },
+ "expect": {
+  "report": {
+   "status": "TIMEOUT",
+   "detail": "ENGINE",
+   "same_as_completion": true,
+   "op": "ENGINE",
+   "unit": null,
+   "unit_ref": [
+    "MG",
+    0,
+    1,
+    1
+   ],
+   "units": 1,
+   "engine": true,
+   "drained": true,
+   "mover_fault": "F_NONE"
+  },
+  "rerun": {
+   "engine": false,
+   "status": "TIMEOUT",
+   "op": "AWAIT",
+   "step": 0,
+   "counters": [
+    {
+     "expected": 1,
+     "inflight": 0,
+     "received": 0,
+     "sent": 0
+    }
+   ]
+  }
+ },
+ "mutants": [
+  "dbg/names_from_elsewhere"
+ ]
+}

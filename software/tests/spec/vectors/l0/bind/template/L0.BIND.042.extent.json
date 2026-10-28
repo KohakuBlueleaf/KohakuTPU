@@ -1,0 +1,12 @@
+{
+ "clause": "L0.BIND.042", "tier": 0, "runner": "l0.template.bind", "status": "frozen",
+ "input": {
+  "package": {"units": [{"type": "VC", "x": 0, "y": 0, "credit": 512}], "payloads": [0], "steps": [{"op": "DISPATCH", "count": 1}]},
+  "bindings": [], "params": {"n": 2},
+  "table": {"parameters": {"n": {"lo": 0, "hi": 3}}, "sites": [
+   {"name": "words", "step": 0, "bit": 32, "width": 32, "coefficients": {"n": 1}}
+  ]}
+ },
+ "expect": {"clause": "L0.BIND.042", "error": "site words, params {\"n\": 2}: invalid bound step count"},
+ "mutants": ["l0.template/step_extent"]
+}

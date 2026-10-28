@@ -1,0 +1,69 @@
+{
+ "clause": "L0.STEP.001",
+ "tier": 1,
+ "runner": "l0.card.package",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "buffers": {
+   "a": {
+    "bytes": 64
+   }
+  },
+  "calls": [
+   [
+    "store",
+    [
+     [
+      "$a",
+      1
+     ]
+    ]
+   ],
+   [
+    "store",
+    [
+     [
+      "$a",
+      "0x1234"
+     ]
+    ]
+   ],
+   [
+    "store",
+    [
+     [
+      "$a+8",
+      "0x5678"
+     ]
+    ]
+   ]
+  ],
+  "lower": true,
+  "repeat": 2,
+  "read": {
+   "a": 16
+  },
+  "report": [
+   "status",
+   "value",
+   "steps",
+   "done"
+  ]
+ },
+ "expect": {
+  "status": "0x0",
+  "detail": 0,
+  "step": 3,
+  "value": "0x0",
+  "n_steps": 3,
+  "done": 2,
+  "reads": {
+   "a": "34120000000000007856000000000000"
+  }
+ },
+ "mutants": [
+  "l0.pkg/version",
+  "l0.pkg/payload_order"
+ ]
+}

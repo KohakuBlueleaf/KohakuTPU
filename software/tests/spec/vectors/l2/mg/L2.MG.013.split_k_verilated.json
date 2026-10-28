@@ -1,0 +1,38 @@
+{
+ "clause": "L2.MG.013",
+ "tier": 2,
+ "runner": "l2.verilated",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: mx7a[16, 128] @dram(gm=4, nk=1), w: mx7b[16, 128] @dram(gn=4, nk=1), y: f16[16, 16] @dram(tile=4x4))",
+   "    par u in 0..2 on mg[u]",
+   "        acc = zero                                   : f32[16, 16] @acc",
+   "        for kk in 0..2",
+   "            a = fill x[:, (2*u + kk)*32 : +32]       : mx7a[16, 32] @A",
+   "            b = fill w[:, (2*u + kk)*32 : +32]       : mx7b[16, 32] @B",
+   "            acc = gemm a, b, acc                     : f32[16, 16] @acc",
+   "        when u == 1",
+   "            drain acc -> mg[0] add",
+   "        when u == 0",
+   "            drain acc -> y"
+  ],
+  "inputs": [
+   "x",
+   "w"
+  ],
+  "output": "y",
+  "ref": "mxmm",
+  "tol": 0.01,
+  "scale": 0.25
+ },
+ "expect": {
+  "match": true
+ },
+ "mutants": [
+  "l2.lower/added-into-ignored"
+ ]
+}

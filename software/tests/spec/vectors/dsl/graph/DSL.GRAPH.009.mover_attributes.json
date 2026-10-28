@@ -1,0 +1,49 @@
+{
+ "clause": "DSL.GRAPH.009",
+ "tier": 0,
+ "runner": "dsl.graph",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(64, 32), y=kt.Out(64, 32), z=kt.Out(64, 32)):\n    kt.copy(y, x, walk=[(2, -2048), (32, 64)], at=2048, dwalk=[(64, 64)], dat=0)\n    kt.fill_value(z, 0, ew=16)\n",
+  "given": {
+   "x": [
+    [
+     64,
+     32
+    ],
+    "f16"
+   ]
+  },
+  "keys": [
+   "flat"
+  ]
+ },
+ "expect": {
+  "flat": [
+   [
+    "copy",
+    [
+     "y",
+     "<-",
+     "x",
+     "walk=((2, -2048), (32, 64))",
+     "at=2048",
+     "dwalk=((64, 64),)",
+     "dat=0"
+    ]
+   ],
+   [
+    "fill",
+    [
+     "z",
+     "value=0",
+     "ew=16"
+    ]
+   ]
+  ]
+ },
+ "mutants": [
+  "dsl.ops/walk_text"
+ ]
+}

@@ -1,0 +1,35 @@
+{
+ "clause": "API.FORM.004",
+ "tier": 0,
+ "runner": "tg.run",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "W120": [
+    120,
+    64
+   ]
+  },
+  "make": "T(X) @ T(W120).T",
+  "facts": [
+   "forms"
+  ]
+ },
+ "expect": {
+  "forms": [
+   [
+    "rows",
+    120,
+    128
+   ]
+  ]
+ },
+ "mutants": [
+  "tg.run/no_padded_out"
+ ]
+}

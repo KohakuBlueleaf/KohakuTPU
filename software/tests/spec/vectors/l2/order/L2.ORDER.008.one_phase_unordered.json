@@ -1,0 +1,35 @@
+{
+ "clause": "L2.ORDER.008",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[16, 128] @dram)",
+   "    par n in 0..2 on node[n]",
+   "        copy x[n*8 : +8, :] <- x[(1 - n)*8 : +8, :]"
+  ],
+  "facts": {
+   "fn": {
+    "lines": "^(node|ring|wait|move|copy)",
+    "in": "fn"
+   }
+  }
+ },
+ "expect": {
+  "fn": [
+   "node 0",
+   "move",
+   "copy w(x+2048, (64, 32)) -> w(x+0, (64, 32))",
+   "node 1",
+   "move",
+   "copy w(x+0, (64, 32)) -> w(x+2048, (64, 32))"
+  ]
+ },
+ "mutants": [
+  "l2.body/phase-per-stage"
+ ]
+}

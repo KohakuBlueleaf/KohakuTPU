@@ -1,0 +1,10 @@
+{
+  "clause": "STACK.LIBRARY.001",
+  "tier": 1,
+  "runner": "library.lenet.card",
+  "machine": "vlt_v9t6s_1n",
+  "status": "frozen",
+  "input": {"seed": 0, "batch": 1, "tolerance": 0.03},
+  "expect": {"within": true, "zero_compiles": true, "library_used": true},
+  "mutants": ["library/output-offset"]
+}

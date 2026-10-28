@@ -1,0 +1,37 @@
+{
+ "clause": "L2.BODY.004",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: mx7a[16, 96] @dram(gm=4, nk=1), w: mx7b[16, 96] @dram(gn=4, nk=1), y: f16[16, 16] @dram(tile=4x4))",
+   "    par u in 0..1 on mg[u]",
+   "        acc = zero                                   : f32[16, 16] @acc",
+   "        for k in 0..3",
+   "            a = fill x[0 : +16, k*32 : +32]          : mx7a[16, 32] @A",
+   "            b = fill w[0 : +16, k*32 : +32]          : mx7b[16, 32] @B",
+   "            acc = gemm a, b, acc                     : f32[16, 16] @acc",
+   "        drain acc -> y"
+  ],
+  "facts": {
+   "fills": {
+    "lines": "^fill A",
+    "in": "fn"
+   }
+  }
+ },
+ "expect": {
+  "fills": [
+   "fill A0 <- x+0 n=4",
+   "fill A1 <- x+512 n=4",
+   "fill A0 <- x+1024 n=4"
+  ]
+ },
+ "mutants": [
+  "l2.body/span-reversed"
+ ]
+}

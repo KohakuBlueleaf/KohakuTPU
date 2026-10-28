@@ -1,0 +1,44 @@
+{
+ "clause": "L2.LOW.014",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "fn stream.l2(x: mx7a[48, 64] @dram(gm=6, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[48, 64] @dram)",
+   "    par c in 0..1 on mg[c]",
+   "        for t in 0..2",
+   "            a = fill x[t*24 : +24, :] : mx7a[24, 64] @A",
+   "            b = fill w : mx7b[64, 64] @B",
+   "            acc = gemm a, b : f32[24, 64] @acc",
+   "            drain acc -> vc[c]",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..2",
+   "            h = recv mg[c] : f16[24, 64] @l1(gt4)",
+   "            v = unpack h : f32[24, 64] @reg(gt4)",
+   "            o = pack v : f16[24, 64] @l1(gt4)",
+   "            store y[t*24 : +24, :] <- o"
+  ],
+  "nodes": 1,
+  "facts": {
+   "open": {
+    "lines": "^vpost mg\\[0\\] n=192"
+   },
+   "spend": {
+    "lines": "^drain credit n=\\d+ to=vc"
+   }
+  }
+ },
+ "expect": {
+  "open": [
+   "vpost mg[0] n=192"
+  ],
+  "spend": [
+   "drain credit n=192 to=vc[0] l1=320"
+  ]
+ },
+ "mutants": [
+  "l2.lower/spend-split-128"
+ ]
+}

@@ -1,0 +1,22 @@
+{
+ "clause": "ISA.MG.041",
+ "tier": 0,
+ "runner": "isa.verify",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image s(x)\n    desc a0 = x walk=(32, 2)\n    desc a1 = peer(3) walk=(32, 2)\n    vfill a0 -> l1[0]\n    vsync drain on=fill\n    vdrain a1 <- l1[0] to=mg[0] buf=2\n    halt\n\nfn k.l1(x: f16[65536] @dram)\n    send vc[0]\n        run s(x)\n    barrier\n",
+  "fn": "k",
+  "binds": {
+   "x": 1048576
+  }
+ },
+ "expect": {
+  "findings": [
+   "bounds"
+  ]
+ },
+ "mutants": [
+  "isa.cluster/checker"
+ ]
+}

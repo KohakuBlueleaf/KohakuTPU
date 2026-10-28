@@ -1,0 +1,29 @@
+{
+ "clause": "L2.MOV.013",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 256] @dram, y: f16[16, 128] @dram)",
+   "    copy y <- x perm=(1, 0)"
+  ],
+  "facts": {
+   "fn": {
+    "lines": "^copy",
+    "in": "fn"
+   }
+  }
+ },
+ "expect": {
+  "fn": [
+   "copy w(x+0, (16, 32), (8, 512)) -> w(y+0, (128, 32))"
+  ]
+ },
+ "mutants": [
+  "l2.mover/tuples-unread"
+ ]
+}

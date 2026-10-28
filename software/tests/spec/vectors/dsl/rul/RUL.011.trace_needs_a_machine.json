@@ -1,0 +1,16 @@
+{
+ "clause": "RUL.011",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(8, 32), y=kt.Out(8, 32)):\n    for c in kt.par(2, on=kt.vc):\n        kt.store(y[c * 4 : c * 4 + 4, :], kt.load(x[c * 4 : c * 4 + 4, :]))\n\n\ndef facts():\n    try:\n        k.trace({\"x\": TY.TensorSpec.make((8, 32))})\n    except kt.DSLError:\n        return {\"refused\": True}\n    return {\"refused\": False}\n"
+ },
+ "expect": {
+  "refused": true
+ },
+ "mutants": [
+  "dsl.kernel/machine_optional"
+ ]
+}

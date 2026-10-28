@@ -1,0 +1,19 @@
+{
+  "clause": "L1.TXT.008",
+  "tier": 0,
+  "runner": "l1.parse",
+  "status": "frozen",
+  "input": {
+    "text": "t f(1) v[0] v{1} MG (1, 0)\n"
+  },
+  "expect": [
+    {"op": "t", "args": [
+      ["Call", "f", [["Int", 1, "dec"]]],
+      ["View", "v", [["Int", 0, "dec"]]],
+      ["Computed", "v", ["Int", 1, "dec"], null],
+      ["Name", "MG"],
+      ["Tuple", [["Int", 1, "dec"], ["Int", 0, "dec"]]]
+    ]}
+  ],
+  "mutants": ["l1.text/call-spaced"]
+}

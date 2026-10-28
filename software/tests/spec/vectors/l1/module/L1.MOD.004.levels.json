@@ -1,0 +1,19 @@
+{
+  "clause": "L1.MOD.004",
+  "tier": 0,
+  "runner": "l1.module",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l2(x: f16[64] @dram, y: f16[64] @dram)\n    y = x\nfn f.l1(x: f16[64] @dram, y: f16[64] @dram)\n    barrier\n    barrier\n"
+  },
+  "expect": {
+    "target": "ktpu.v9",
+    "fns": [
+      ["f", "l2", [["x", "f16[64] @dram"], ["y", "f16[64] @dram"]], 1],
+      ["f", "l1", [["x", "f16[64] @dram"], ["y", "f16[64] @dram"]], 2]
+    ],
+    "images": [],
+    "macros": []
+  },
+  "mutants": ["l1.module/levels"]
+}

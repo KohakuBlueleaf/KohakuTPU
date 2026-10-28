@@ -1,0 +1,40 @@
+{
+ "clause": "API.FORM.011",
+ "tier": 0,
+ "runner": "tg.run",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "W": [
+    96,
+    64
+   ]
+  },
+  "make": "(T(X) @ T(W).T).relu()",
+  "facts": [
+   "grep"
+  ],
+  "grep": {
+   "mm": [
+    "= buffer +: f16\\[[0-9, ]+\\] @dram\\(tile=",
+    "load h1\\[.*@l1\\(gt4\\)"
+   ]
+  }
+ },
+ "expect": {
+  "grep": {
+   "mm": {
+    "= buffer +: f16\\[[0-9, ]+\\] @dram\\(tile=": true,
+    "load h1\\[.*@l1\\(gt4\\)": true
+   }
+  }
+ },
+ "mutants": [
+  "dsl.ops/gt4_off"
+ ]
+}

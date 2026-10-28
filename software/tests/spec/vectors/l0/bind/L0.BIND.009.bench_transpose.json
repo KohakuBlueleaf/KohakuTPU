@@ -1,0 +1,16 @@
+{
+ "clause": "L0.BIND.009",
+ "tier": 2,
+ "runner": "l0.bench",
+ "status": "frozen",
+ "input": {
+  "test": "test_l1_examples.py::test_transpose"
+ },
+ "expect": {
+  "outcome": "passed"
+ },
+ "mutants": [
+  "l0.pkg/version",
+  "l0.bind/clobber"
+ ]
+}

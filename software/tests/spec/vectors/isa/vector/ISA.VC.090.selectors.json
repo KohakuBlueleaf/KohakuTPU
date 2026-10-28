@@ -1,0 +1,59 @@
+{
+ "clause": "ISA.VC.090",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "chk"
+   },
+   {
+    "fn": "xb"
+   },
+   {
+    "fn": "cfg_stride",
+    "args": [
+     4,
+     1,
+     4
+    ]
+   },
+   {
+    "fn": "cfg_stride",
+    "args": [
+     7,
+     1,
+     4
+    ]
+   },
+   {
+    "fn": "ainc",
+    "args": [
+     0,
+     0
+    ]
+   },
+   {
+    "fn": "chkvl",
+    "args": [
+     128
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0x98001111",
+   "0x98800000",
+   "0x9a000801",
+   "0x9b800801",
+   "0x9c800000",
+   "0x9d7f1111"
+  ]
+ },
+ "mutants": [
+  "isa.vector/cfg_sel"
+ ]
+}

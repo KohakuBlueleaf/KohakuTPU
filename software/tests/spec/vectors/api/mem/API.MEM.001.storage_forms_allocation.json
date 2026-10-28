@@ -1,0 +1,20 @@
+{
+ "clause": "API.MEM.001",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    used = DEV.dram.used\n    s = ST.Storage(DEV, 64)\n    f1 = s.form(FM.F16, 32)\n    same = s.form(FM.F16, 32) is f1\n    s.made(FM.F16)\n    f3 = s.form(FM.F16, 128)\n    regrown = f3.nbytes == 128 and f3 is not f1 and FM.F16 not in s.valid\n    at = ST.StorageView(s, 32, 16).addr - s.addr\n    s.free()\n    return {\"same\": same, \"regrown\": regrown, \"view_at\": at, \"freed\": DEV.dram.used == used}\n"
+ },
+ "expect": {
+  "same": true,
+  "regrown": true,
+  "view_at": 32,
+  "freed": true
+ },
+ "mutants": [
+  "api.mem/forms_kept",
+  "api.mem/view_base"
+ ]
+}

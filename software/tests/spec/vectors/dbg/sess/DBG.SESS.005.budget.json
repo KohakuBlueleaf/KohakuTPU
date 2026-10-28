@@ -1,0 +1,38 @@
+{
+ "clause": "DBG.SESS.005",
+ "tier": 1,
+ "runner": "dbg.session",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "seconds": 60,
+  "timeout_cycles": 200000
+ },
+ "expect": {
+  "ok": [
+   true,
+   false,
+   true
+  ],
+  "values": [
+   [
+    "0x1234",
+    "0x1235"
+   ],
+   [
+    "0x1234",
+    "0x1235"
+   ]
+  ],
+  "failure": [
+   "TIMEOUT",
+   "AWAIT",
+   true
+  ],
+  "within_budget": true,
+  "image_after": "production"
+ },
+ "mutants": [
+  "dbg/session_stops"
+ ]
+}

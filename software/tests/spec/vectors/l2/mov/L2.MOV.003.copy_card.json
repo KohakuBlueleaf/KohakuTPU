@@ -1,0 +1,26 @@
+{
+ "clause": "L2.MOV.003",
+ "tier": 1,
+ "runner": "l2.card",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 32] @dram, y: f16[4, 32] @dram)",
+   "    copy y <- x[4 : +4, :]"
+  ],
+  "inputs": [
+   "x"
+  ],
+  "output": "y",
+  "ref": "rows4"
+ },
+ "expect": {
+  "match": true
+ },
+ "mutants": [
+  "l2.memory/lo-ignored"
+ ]
+}

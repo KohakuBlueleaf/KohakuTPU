@@ -1,0 +1,6 @@
+{
+ "clause": "RUL.024", "tier": 0, "runner": "memory.firmware_contract",
+ "status": "frozen", "input": {},
+ "expect": {"opcodes": ["OP_NOP", "OP_RUN", "OP_STOP"], "heap_sources": false},
+ "mutants": ["memory/heap-image"]
+}

@@ -1,0 +1,17 @@
+{
+ "clause": "API.FORM.016",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    a = FM.table(DEV, np.zeros((2, 2)), np.float32)\n    b = FM.table(DEV, np.zeros(4), np.float32)\n    c = FM.table(DEV, np.zeros(8), np.float16)\n    return {\"shape_keyed\": a != b, \"dtype_keyed\": b != c}\n"
+ },
+ "expect": {
+  "shape_keyed": true,
+  "dtype_keyed": true
+ },
+ "mutants": [
+  "api.forms/table_bytes"
+ ]
+}

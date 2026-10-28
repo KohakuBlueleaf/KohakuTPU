@@ -1,0 +1,73 @@
+# L0 boot block
+
+What the host tells a node's firmware before it starts: the block at the base
+of the node's scratchpad, its fields and flags, the unit table (given or found
+by the firmware), and the memory the firmware may use. The firmware copy is
+`software/firmware/kohakuaccel/include/ka/boot/args.h` and `boot/args.c`; the
+host copy is `software/driver/kohakuaccel/driver/node/boot/args.py`
+(`BootArgs`), placed by `boot/loader.py` (`NodeBoot`).
+
+**What the card ran.** The 2026-10-21 v9t6 runtime booted node 0 with
+`BootArgs(queue = the staging queue's address, mesh = 0, scan = grid_hi + 1,
+flags = TIMING)` plus `STEPS` on request, `timeout` = the host's wait seconds ×
+the sysnode clock when the clock was given (the logged runs `lenet_n1*.log` ran
+with the 2,000,000-cycle default), `cq_depth` 0 and an empty unit
+table, so the firmware enumerated its own units
+(software/application/kohakutpu/application/runtime/card.py:193-228). A given
+unit table, a nonzero `cq_depth`, the flags `SERIAL`, `NOFETCH`, `NOENGINE`
+and every refusal were not exercised there.
+
+**Version 3.** The block is KABOOT1 version 3: version 2's 25 words plus the
+region table (words 25-36). The v9t6 card booted version 3 on 2026-10-22
+(`CARD1` in [debug/firmware.md](../debug/firmware.md): node 0 over XDMA, the
+production image and the debug image with its `DEBUG` region, every session
+open through the ABI check).
+
+## Placement
+
+- **L0.BOOT.001** `silicon` The block is 37 little-endian 64-bit words (296 bytes) at the base of the node's scratchpad, `node.spad_base` [0x1_0000] (the load window's region 1, offset 0). The firmware image reserves the space as its first scratchpad section, zero-filled. (code: software/firmware/kohakuaccel/boot/args.c:6; software/firmware/kohakuaccel/arch/rv64/node.ld:20-23; software/driver/kohakuaccel/driver/node/boot/args.py:11-20; doc: docs/spec/node-queue.md:49-52; evidence: the placement ran at every card boot, 37 words since `CARD1`)
+- **L0.BOOT.002** `silicon` The host first reads the image's ABI words (L0.BOOT.027) and refuses an image of another boot block version; then it stops the core, writes the image, then writes the block over the image's zeroed section, then boots the core. (code: software/driver/kohakuaccel/driver/node/boot/loader.py:49-72; doc: docs/spec/node-queue.md:228-229; evidence: stop, image, block, boot ran at every card boot; the ABI check at every boot of `CARD1`)
+- **L0.BOOT.003** `unproven` To restart a node whose memories survived a reset, the host checks the image's ABI words as for a load, stops the core, rewrites the scratchpad's file bytes and the block, re-initialises the queue, and boots the image still in the instruction memory. (code: software/driver/kohakuaccel/driver/node/boot/loader.py:74-88; software/application/kohakutpu/application/runtime/card.py:273-290)
+
+## Fields
+
+- **L0.BOOT.004** `silicon` Words in order: 0 magic `0x31544F4F42414B` ("KABOOT1"), 1 version `3` (`fw.boot.version`), 2 `queue`, 3 `mesh`, 4 `scan`, 5 `timeout`, 6 `cq_depth`, 7 `flags`, 8 `nunits`, 9-24 the unit table (`fw.max_units` [16] unit words, unused ones 0), 25-36 the region table (L0.BOOT.026). (code: software/firmware/kohakuaccel/include/ka/boot/args.h:8-45; software/driver/kohakuaccel/driver/node/boot/args.py:11-20,56-82; doc: docs/spec/node-queue.md:54-65; evidence: words 0-24 at every card boot; version 3 and words 25-36 at every boot of `CARD1`)
+- **L0.BOOT.026** `silicon` The region table is `fw.boot.regions` [4] entries of three words, entry `i` at words `25 + 3i`: `base` (unit-global byte address), `size` (bytes), `use` (`fw.boot.region_uses`: 1 `DEBUG`, the debug image's record region; 0 an empty entry). The host fills entries in order and zeroes the rest; `BootArgs.pack` refuses more than 4 with `ValueError`. The firmware's `ka_boot_region(use)` returns the first entry of that use with a nonzero size, or 0 when there is none. The production image reads no region; the debug image reads its `DEBUG` region (RUL.081). (code: software/firmware/kohakuaccel/include/ka/boot/args.h:11-15,40-48; software/firmware/kohakuaccel/boot/args.c:30-39; software/driver/kohakuaccel/driver/node/boot/args.py:14-19,53-89; software/firmware/kohakuaccel/package/debug.c; evidence: `CARD1`, the debug image's records read from its `DEBUG` region on the card)
+- **L0.BOOT.027** `silicon` A dispatcher image carries four ABI words in its non-loaded ELF section `.ka_abi`: the boot magic, the boot block version it reads, its debug feature bits (`DEBUG_STEPS` 1, `DEBUG_FAIL` 2, `DEBUG_LAST` 4; 0 in the production image) and its completion words kept per unit (0 in the production image). The host's loader raises `AbiMismatch` before touching the core when the version differs from the one it writes (or the magic is wrong); the card runtime also refuses an image without the section. There is no silent field: a block of one version is never read by firmware of another. (code: software/firmware/kohakuaccel/apps/dispatcher/main.c; software/firmware/kohakuaccel/arch/rv64/node.ld; software/driver/kohakuaccel/driver/node/boot/abi.py:22-63; software/driver/kohakuaccel/driver/node/boot/loader.py:57,79; evidence: `CARD1`, every load checked, and DBG.SEL.003's refusal of a debug load of the production image)
+- **L0.BOOT.005** `silicon` `queue` is the unit-global address of the node's queue region ([node-queue.md](node-queue.md)). (code: software/firmware/kohakuaccel/queue/service.c:114; doc: docs/spec/node-queue.md:58; evidence: every card boot)
+- **L0.BOOT.006** `silicon` `mesh` is the node's mesh index: the firmware writes it into every unit word it enumerates and compares every package unit's mesh with it. (code: software/firmware/kohakuaccel/apps/dispatcher/main.c:29; software/firmware/kohakuaccel/unit/enumerate.c:53; software/firmware/kohakuaccel/package/interp.c:1516; doc: docs/spec/node-queue.md:59; evidence: every card boot (mesh 0))
+- **L0.BOOT.023** `unproven` A package unit of another mesh is foreign ([package.md](package.md) L0.PKG.022). (code: software/firmware/kohakuaccel/package/interp.c:1516-1518; evidence: every card package unit is on mesh 0)
+- **L0.BOOT.007** `silicon` `timeout` is the default bound, in node cycles, on any one wait of a package; it also bounds the quiesce after a failure. The card ran with the host's then default of 2,000,000; the host now has no default (RUL.033): `BootArgs` takes `timeout` by keyword and refuses its absence with `TypeError`, and every caller writes `args.bound(seconds, profile sys MHz)`. (code: software/driver/kohakuaccel/driver/node/boot/args.py; software/firmware/kohakuaccel/package/interp.c:1490; software/firmware/kohakuaccel/dispatch/engine.c:315-324; doc: docs/spec/node-queue.md:61; evidence: LOG:89 ([debug/firmware.md](../debug/firmware.md) `LOG`, the v9t6 card log): the failed package's `barrier` phase, its quiesce run out to one bound, is 2,025,680 cycles, the 2,000,000 default)
+- **L0.BOOT.024** `unproven` A `RUN` entry's nonzero timeout replaces the boot block's; the boot timeout also bounds a full stdout ring's wait; the card runtime writes the host's wait seconds × the sysnode clock in Hz when it knows the clock. (code: software/application/kohakutpu/application/runtime/card.py:222-225; software/firmware/kohakuaccel/package/interp.c:1490; software/firmware/kohakuaccel/queue/service.c:52; doc: docs/spec/node-queue.md:61; evidence: every card `RUN` carried timeout 0; no recorded card log shows a scaled bound (LOG:89 shows the 2,000,000 default); the only record of the scaled watchdog is a working note, not a log)
+- **L0.BOOT.008** `silicon` `cq_depth` 0 sets no node-wide bound on outstanding completions. (code: software/firmware/kohakuaccel/package/interp.c:1479-1480; doc: docs/spec/node-queue.md:62; evidence: every card boot)
+- **L0.BOOT.009** `unproven` A nonzero `cq_depth` bounds the node's outstanding completions to `cq_depth - ack_reserve` per package (L0.STEP.009). (code: software/firmware/kohakuaccel/package/interp.c:1505-1507; doc: docs/spec/node-queue.md:62)
+
+## Flags (word 7)
+
+- **L0.BOOT.010** `silicon` Bit 1 `TIMING`: after each run the firmware prints `PKGT head H copy C bind B steps S barrier E local L total T first F last A sent N`, the phase cycles of that run (and `idle I`, L0.NQ.055). The card runtime sets it only when `KOHAKUTPU_BOOT_FLAGS` asks (the spec's card session does); a run's timing otherwise comes in its run record (L0.NQ.056). (code: software/firmware/kohakuaccel/include/ka/boot/args.h:16; software/firmware/kohakuaccel/package/interp.c:1582-1589; software/application/kohakutpu/application/runtime/card.py:66,193-197; doc: docs/spec/node-queue.md:63; evidence: every card run's `PKGT` line)
+- **L0.BOOT.011** `unproven` Bit 3 `STEPS`: after each step (or round-robin run of steps) the firmware prints `PKGS first last cycles`, the cycles since the steps began with the printing excluded. (code: software/firmware/kohakuaccel/include/ka/boot/args.h:20; software/firmware/kohakuaccel/package/interp.c:1532,1548-1553; doc: docs/spec/node-queue.md:63; evidence: the runtime sets it only on request; no recorded card run names it)
+- **L0.BOOT.012** `unproven` Bit 0 `SERIAL` sends each `DISPATCH` step whole instead of round-robin; bit 2 `NOFETCH` ignores every fetch port and sends every word through the mailbox; bit 4 `NOENGINE` runs every package on the firmware path. (code: software/firmware/kohakuaccel/include/ka/boot/args.h:12-22; software/firmware/kohakuaccel/package/interp.c:66,902,1511,1530; doc: docs/spec/node-queue.md:63)
+
+## Checks
+
+- **L0.BOOT.013** `silicon` The firmware checks the block first: magic, version, `nunits <= 16`. (code: software/firmware/kohakuaccel/boot/args.c:10-28; software/firmware/kohakuaccel/apps/dispatcher/main.c:23-26; doc: docs/spec/node-queue.md:51-52; evidence: every card boot passed)
+- **L0.BOOT.014** `unproven` A wrong magic, a wrong version or more than 16 units makes the firmware print the reason to the console and exit with `KA_EXIT_BOOTARGS | reason` (`0xE100_0000_0000_0000 |` 1, 2 or 3). The host's `BootArgs.pack` refuses more than 16 units with `ValueError`. (code: software/firmware/kohakuaccel/boot/args.c:13-26; software/firmware/kohakuaccel/include/ka/hal/cpu.h:37; software/driver/kohakuaccel/driver/node/boot/args.py:44-47)
+- **L0.BOOT.015** `unproven` The other exit words: `KA_EXIT_BOOTARGS | 0x10` for a queue region the firmware refuses, `KA_EXIT_STOP | value` (`0x5701_0000_0000_0000 |` the low 32 bits) after `STOP`, `KA_EXIT_TRAP | mcause` (`0xE000...`) on a trap, `KA_EXIT_STACK` (`0xE200...`) on a task stack overrun. (code: software/firmware/kohakuaccel/include/ka/hal/cpu.h:35-38; software/firmware/kohakuaccel/include/ka/os/task.h:66-67; software/firmware/kohakuaccel/queue/service.c:199-201,268)
+
+## The unit table
+
+- **L0.BOOT.016** `silicon` With `nunits` 0 and `scan` nonzero the firmware finds its own units: it empties its RX queue, then for `y` from 0 to `scan` and, inside, `x` from 0 to `scan`, skipping its own `(0, 0)`, sends a `CU_CTRL` read of `CU_CAPS` (index 0) to `(x, y)` through its mailbox and keeps the coordinate when a reply of type `CU_CTRL`, op 2, index 0 arrives from that same coordinate within `fw.enum_wait` [1500] node cycles. A kept unit's word is `CU_CAPS [63:48] << 32 | mesh << 16 | y << 8 | x`. It then sets `nunits`. The card runtime passes `scan = grid_hi + 1`. (code: software/firmware/kohakuaccel/apps/dispatcher/main.c:27-35; software/firmware/kohakuaccel/unit/enumerate.c:7-62; software/firmware/kohakuaccel/include/ka/unit/enumerate.h:8; software/application/kohakutpu/application/runtime/card.py:219-221; doc: docs/spec/node-queue.md:60,67-73; evidence: the enumeration ran at every card boot (`nunits` 0, `scan` nonzero; main.c and enumerate.c unchanged since af7c1bb); its result is read by no card path: packages carry their own unit table, the signature is 0 and the runtime does not read the published units (L0.NQ.012))
+- **L0.BOOT.025** `unproven` The enumeration stops at 16 units. (code: software/firmware/kohakuaccel/unit/enumerate.c:47-48; evidence: a v9t6 mesh has 4 units)
+- **L0.BOOT.017** `unproven` With `nunits` nonzero the firmware serves the host's table as given and scans nothing; with `nunits` 0 and `scan` 0 it serves no unit. (code: software/firmware/kohakuaccel/apps/dispatcher/main.c:27; doc: docs/spec/node-queue.md:64,67-68)
+- **L0.BOOT.018** `unproven` The unit table, given or found, is what the firmware computes the machine signature over ([package.md](package.md) L0.PKG.031) and what it publishes in the queue region before it reports ready ([node-queue.md](node-queue.md) L0.NQ.012). (code: software/firmware/kohakuaccel/package/interp.c:108-130; software/firmware/kohakuaccel/queue/service.c:205-209; doc: docs/spec/node-queue.md:67,72-73)
+
+## Firmware memory
+
+- **L0.BOOT.019** `silicon` The firmware's code is linked into the node's instruction memory (`node.imem_bytes` [32768] at 0) and its data, stacks (the queue task's 4 KB among them), package copy into its scratchpad (`node.spad_bytes` [32768] at `node.spad_base`, the boot block first). (code: software/firmware/kohakuaccel/arch/rv64/node.ld:1-59; software/firmware/build.py:25-26; software/firmware/kohakuaccel/apps/dispatcher/main.c:9-10; evidence: the dispatcher image ran on every card boot)
+- **L0.BOOT.020** `unproven` Outside its instruction memory and scratchpad the firmware reads and writes only the queue region, the packages it is given and the memory those packages and the boot regions name. (code: software/firmware/kohakuaccel/queue/service.c; software/firmware/kohakuaccel/package/interp.c; evidence: no test watches the node's accesses)
+- **L0.BOOT.021** `unproven` The firmware uses only host-assigned boot regions and never allocates DRAM. The host allocator reserves QUEUE (use 2) and DEBUG (use 1) regions and supplies their base and extent in the region table. Firmware rejects missing, mismatched or undersized queue regions; boot validation rejects duplicate uses, overlaps and overflowing extents. Tier-0 RUL.024.boot_regions and tier-1 RUL.024.boot_region_card witness the contract. Dispatcher images exclude `os/heap`; queue opcodes 3..5 refuse. (tier-0 vector: RUL.024.host_contract; tier-1 vector: RUL.024.card_refuses; details: [memory.md](memory.md))
+- **L0.BOOT.022** `unproven` The card manages nothing while it has no MMU: every allocation of card memory is the host driver's ([binding.md](binding.md) L0.BIND.022). (doc: owner ruling 2026-10-21)
+
+## Rulings
+
+The disagreements found on this page are ruled in `../rulings.md`: RUL.005, RUL.024, RUL.033.

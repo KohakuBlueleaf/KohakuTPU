@@ -1,0 +1,43 @@
+{
+ "clause": "L0.BIND.012",
+ "tier": 0,
+ "runner": "l0.program",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "steps": [
+   [
+    "copy",
+    "0x100000",
+    "0x101000",
+    256
+   ]
+  ],
+  "fetch": true,
+  "spans": [
+   [
+    "0x100000",
+    256
+   ],
+   [
+    "0x101000",
+    256
+   ]
+  ],
+  "through": "packages"
+ },
+ "expect": {
+  "bindings": [],
+  "relocs": 0,
+  "buffers": 0,
+  "ops": [
+   "ENGINE"
+  ],
+  "same_as_absolute": true
+ },
+ "mutants": [
+  "l0.bind/keeps_relocs",
+  "l0.bind/clobber",
+  "l0.bind/default_wins"
+ ]
+}

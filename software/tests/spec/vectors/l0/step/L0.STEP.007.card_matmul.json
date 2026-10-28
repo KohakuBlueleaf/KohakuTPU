@@ -1,0 +1,23 @@
+{
+ "clause": "L0.STEP.007",
+ "tier": 1,
+ "runner": "l0.card.example",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "example": "tonode",
+  "seed": 11,
+  "tolerance": 0.01
+ },
+ "expect": {
+  "within": true
+ },
+ "mutants": [
+  "l0.lower/no_rel"
+ ],
+ "hangs": {
+  "python": [
+   "l0.lower/no_rel"
+  ]
+ }
+}

@@ -1,0 +1,68 @@
+{
+ "clause": "L0.NQ.033",
+ "tier": 0,
+ "runner": "l0.queue",
+ "status": "frozen",
+ "input": {
+  "geometry": {
+   "sq_n": 64,
+   "cq_n": 64,
+   "so_bytes": 4096,
+   "si_bytes": 256
+  },
+  "script": [
+   {
+    "do": "init"
+   },
+   {
+    "do": "print",
+    "text": "x"
+   },
+   {
+    "do": "log"
+   },
+   {
+    "do": "poll"
+   },
+   {
+    "do": "log"
+   },
+   {
+    "do": "stdout"
+   }
+  ]
+ },
+ "expect": [
+  null,
+  null,
+  [
+   [
+    "w",
+    "0x0",
+    1088
+   ]
+  ],
+  [],
+  [
+   [
+    "r",
+    "0x100",
+    192
+   ],
+   [
+    "r",
+    "0x1c40",
+    8
+   ],
+   [
+    "w",
+    "0x1c0",
+    64
+   ]
+  ],
+  "x"
+ ],
+ "mutants": [
+  "l0.queue/line32"
+ ]
+}

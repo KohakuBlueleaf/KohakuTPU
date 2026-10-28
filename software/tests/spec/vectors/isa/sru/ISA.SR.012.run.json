@@ -1,0 +1,34 @@
+{
+ "clause": "ISA.SR.012",
+ "tier": 0,
+ "runner": "isa.sru.word",
+ "machine": "sru_v9t7",
+ "status": "frozen",
+ "input": {
+  "fmt": "RUN",
+  "kw": {
+   "amem": 0,
+   "peer": 1,
+   "aaddr": 68719476768,
+   "astride": 8,
+   "oaddr": 137438953536,
+   "ostride": 4,
+   "baddr": 206158430304,
+   "bstride": 7,
+   "px": 2,
+   "py": 1,
+   "pbuf": 3,
+   "poff": 4660,
+   "count": 1,
+   "ax": 1,
+   "ay": 2,
+   "words": 1193046
+  }
+ },
+ "expect": {
+  "word": "0x344000000080002080000001000010c000000180001c84c48d2242468ac00000"
+ },
+ "mutants": [
+  "isa.sru/formats"
+ ]
+}

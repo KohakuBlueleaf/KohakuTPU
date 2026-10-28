@@ -1,0 +1,18 @@
+{
+  "clause": "NUM.ACC.006",
+  "tier": 1,
+  "runner": "num.card.example",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "source": "l1",
+    "name": "splitk",
+    "inputs": {
+      "x": {"shape": [256, 1024], "seed": 10},
+      "w": {"shape": [256, 1024], "seed": 11, "div": 32}
+    },
+    "rel": 0.01
+  },
+  "expect": {"rel_below": true},
+  "mutants": ["num.card/readback-corrupt"]
+}

@@ -1,0 +1,30 @@
+{
+ "clause": "ISA.VC.148",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "vbar"
+   },
+   {
+    "fn": "vbar",
+    "args": [
+     1
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0xe0000000",
+   "0xe0000400"
+  ]
+ },
+ "mutants": [
+  "isa.vector/ctl_fields",
+  "isa.vector/ctl_ops"
+ ]
+}

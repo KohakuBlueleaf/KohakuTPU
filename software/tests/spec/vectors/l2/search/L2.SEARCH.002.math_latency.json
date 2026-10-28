@@ -1,0 +1,22 @@
+{
+ "clause": "L2.SEARCH.002",
+ "tier": 0,
+ "runner": "l2.timing",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9 vregs=128 vcopies=2",
+   "",
+   "image t()",
+   "    vadd v1, v0, k1",
+   "    vadd v2, v1, k1",
+   "    halt"
+  ],
+  "name": "t"
+ },
+ "expect": 38,
+ "mutants": [
+  "l2.timing/lat-mm-19"
+ ]
+}

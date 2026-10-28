@@ -1,0 +1,17 @@
+{
+ "clause": "RUL.027",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    s = CALL.upload(DEV, np.array([1e6, -1e6], np.float32))\n    at = FM.f16(DEV, s, np.float32, 2)\n    got = np.frombuffer(DEV.read(at, 4), np.float16).tolist()\n    s.free()\n    return {\"values\": got}\n"
+ },
+ "expect": {
+  "values": [
+   65504.0,
+   -65504.0
+  ]
+ },
+ "mutants": ["num.fp16/no-saturation"]
+}

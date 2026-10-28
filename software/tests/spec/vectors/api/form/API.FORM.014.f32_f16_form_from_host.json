@@ -1,0 +1,33 @@
+{
+ "clause": "API.FORM.014",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    a = np.array([0.0, 0.1, -2.25, 1.5, 3.3, 0.001, 65504.0, -0.7], np.float32)\n    s = CALL.upload(DEV, a)\n    at = FM.f16(DEV, s, np.float32, 8)\n    got = np.frombuffer(DEV.read(at, 16), np.float16).tolist()\n    valid = form_keys(s)\n    s.free()\n    return {\"values\": got, \"valid\": valid}\n"
+ },
+ "expect": {
+  "values": [
+   0.0,
+   0.0999755859375,
+   -2.25,
+   1.5,
+   3.30078125,
+   0.0010004043579101562,
+   65504.0,
+   -0.7001953125
+  ],
+  "valid": [
+   [
+    "f16"
+   ],
+   [
+    "flat"
+   ]
+  ]
+ },
+ "mutants": [
+  "api.forms/no_host"
+ ]
+}

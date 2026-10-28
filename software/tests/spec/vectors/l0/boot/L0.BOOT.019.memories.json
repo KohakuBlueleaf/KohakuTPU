@@ -1,0 +1,37 @@
+{
+ "clause": "L0.BOOT.019",
+ "tier": 0,
+ "runner": "l0.firmware",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "keys": [
+   "link",
+   "build_memory",
+   "machine_memory"
+  ]
+ },
+ "expect": {
+  "link": {
+   "IMEM": [
+    0,
+    32768
+   ],
+   "SPAD": [
+    65536,
+    32768
+   ]
+  },
+  "build_memory": [
+   32768,
+   32768
+  ],
+  "machine_memory": [
+   32768,
+   32768
+  ]
+ },
+ "mutants": [
+  "l0.fw/memory_budget"
+ ]
+}

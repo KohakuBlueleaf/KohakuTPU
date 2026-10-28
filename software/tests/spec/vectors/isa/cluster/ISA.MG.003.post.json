@@ -1,0 +1,25 @@
+{
+ "clause": "ISA.MG.003",
+ "tier": 0,
+ "runner": "isa.cluster.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "op": "Post",
+  "args": [
+   [
+    3,
+    2
+   ],
+   100
+  ],
+  "kw": {}
+ },
+ "expect": {
+  "payload": "0x4000000000019000000128000000000000001900000000000000000000000000"
+ },
+ "mutants": [
+  "isa.cluster/fields",
+  "isa.cluster/opcodes"
+ ]
+}

@@ -1,0 +1,33 @@
+{
+ "clause": "ISA.MG.080",
+ "tier": 0,
+ "runner": "isa.cluster.plan",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "plan": {
+   "bt": 1,
+   "m": 6400,
+   "n": 416,
+   "k": 400,
+   "shared": true,
+   "quantum": 4
+  }
+ },
+ "expect": {
+  "bt": 1,
+  "m": 6400,
+  "n": 416,
+  "k": 400,
+  "mp": 6400,
+  "kp": 416,
+  "tm": 256,
+  "tn": 32,
+  "nk": 1,
+  "shared": true,
+  "quantum": 4
+ },
+ "mutants": [
+  "isa.cluster/plan"
+ ]
+}

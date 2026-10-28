@@ -1,0 +1,29 @@
+{
+ "clause": "RUL.030",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[16, 32] @dram(tile=1x8), s: f16[16, 32] @dram)",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..1",
+   "            xl = load x                              : f16[16, 32] @l1(gt4)",
+   "            v = unpack xl                            : f32[16, 32] @reg(gt4)",
+   "            m = rmax v                               : f32[16] @reg",
+   "            p = pack m                               : f16[16, 32] @l1(gt4)",
+   "            store s <- p"
+  ],
+  "native": true,
+  "passes": [],
+  "refused_only": true,
+  "facts": {}
+ },
+ "expect": {
+  "refused": true
+ },
+ "mutants": ["l2.vector/statistic-band-pack"]
+}

@@ -1,0 +1,22 @@
+{
+ "clause": "DSL.IDX.002",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    s = E.var(\"t\") * 4 + E.var(\"c\") * 8\n    return {\n        \"mul\": (s * 3).text(),\n        \"div\": (s // 4).text(),\n        \"div1\": (s // 1).text(),\n        \"atom\": (s // 3).text(),\n        \"mod1\": s % 1,\n        \"mod\": (s % 4).text(),\n    }\n"
+ },
+ "expect": {
+  "mul": "t*12 + c*24",
+  "div": "t + c*2",
+  "div1": "t*4 + c*8",
+  "atom": "((t*4 + c*8) / 3)",
+  "mod1": 0,
+  "mod": "((t*4 + c*8) % 4)"
+ },
+ "mutants": [
+  "dsl.expr/floordiv",
+  "dsl.expr/scale"
+ ]
+}

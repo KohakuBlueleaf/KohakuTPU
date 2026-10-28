@@ -1,0 +1,48 @@
+{
+ "clause": "DBG.API.001",
+ "tier": 0,
+ "runner": "dbg.decode",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "records": [
+   [
+    "0x10001",
+    "0x7"
+   ],
+   [
+    "0x2",
+    "0x7",
+    "0x4d4700000101"
+   ],
+   [
+    "0x20003",
+    "0x7",
+    "0x20030"
+   ],
+   [
+    "0x10001",
+    "0x8"
+   ]
+  ]
+ },
+ "expect": {
+  "packages": [
+   [
+    7,
+    1,
+    1,
+    true
+   ],
+   [
+    8,
+    1,
+    0,
+    false
+   ]
+  ]
+ },
+ "mutants": [
+  "dbg/decode_one_package"
+ ]
+}

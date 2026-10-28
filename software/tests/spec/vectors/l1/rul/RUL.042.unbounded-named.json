@@ -1,0 +1,9 @@
+{
+  "clause": "RUL.042",
+  "tier": 0,
+  "runner": "l1.ruled",
+  "status": "frozen",
+  "input": {"check": "unbounded"},
+  "expect": {"format_names_it": true},
+  "mutants": ["l1.ruled/before"]
+}

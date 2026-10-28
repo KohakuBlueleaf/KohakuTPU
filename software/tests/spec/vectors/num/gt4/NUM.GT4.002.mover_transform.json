@@ -1,0 +1,9 @@
+{
+  "clause": "NUM.GT4.002",
+  "tier": 0,
+  "runner": "num.mover.convert",
+  "status": "frozen",
+  "input": {"op": "gt4", "groups": 3},
+  "expect": {"xform": 2, "mode": 0, "src": [[12, 32]], "dst": [[3, 128]]},
+  "mutants": ["num.mover/gt4-id"]
+}

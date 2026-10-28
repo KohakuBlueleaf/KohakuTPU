@@ -1,0 +1,20 @@
+{
+ "clause": "DSL.CACHE.001",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "import dataclasses\n\nRUNS = [0]\n\n\n@kt.kernel\ndef k(x=kt.In(8, 32), y=kt.Out(8, 32), *, s=2.0):\n    RUNS[0] += 1\n    for c in kt.par(2, on=kt.vc):\n        v = kt.unpack(kt.load(x[c * 4 : c * 4 + 4, :]))\n        kt.store(y[c * 4 : c * 4 + 4, :], v * s)\n\n\ndef facts():\n    g = {\"x\": TY.TensorSpec.make((8, 32))}\n    a = k.trace(g, machine=MACHINE)\n    b = k.trace(g, machine=MACHINE)\n    runs = RUNS[0]\n    c = k.trace(g, machine=MACHINE, s=3.0)\n    two = dataclasses.replace(MACHINE, nodes=2)\n    d = k.trace(g, machine=two)\n    return {\n        \"same\": a is b,\n        \"runs\": runs,\n        \"other_const\": c is a,\n        \"other_machine\": d is a,\n        \"runs_after\": RUNS[0],\n    }\n"
+ },
+ "expect": {
+  "same": true,
+  "runs": 1,
+  "other_const": false,
+  "other_machine": false,
+  "runs_after": 3
+ },
+ "mutants": [
+  "dsl.kernel/no_cache"
+ ]
+}

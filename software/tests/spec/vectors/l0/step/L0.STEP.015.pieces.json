@@ -1,0 +1,96 @@
+{
+ "clause": "L0.STEP.015",
+ "tier": 0,
+ "runner": "l0.program",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "steps": [
+   [
+    "send",
+    [
+     1,
+     1
+    ],
+    600
+   ],
+   [
+    "send",
+    [
+     2,
+     1
+    ],
+    300
+   ],
+   [
+    "barrier"
+   ]
+  ],
+  "keys": [
+   "steps"
+  ]
+ },
+ "expect": {
+  "steps": [
+   {
+    "op": "DISPATCH",
+    "unit": 0,
+    "count": 256,
+    "arg": "0x0",
+    "flags": 0
+   },
+   {
+    "op": "DISPATCH",
+    "unit": 1,
+    "count": 256,
+    "arg": "0x100",
+    "flags": 0
+   },
+   {
+    "op": "DISPATCH",
+    "unit": 0,
+    "count": 256,
+    "arg": "0x200",
+    "flags": 0
+   },
+   {
+    "op": "DISPATCH",
+    "unit": 1,
+    "count": 44,
+    "arg": "0x300",
+    "flags": 0
+   },
+   {
+    "op": "DISPATCH",
+    "unit": 0,
+    "count": 88,
+    "arg": "0x32c",
+    "flags": 0
+   },
+   {
+    "op": "AWAIT",
+    "unit": 0,
+    "count": 600,
+    "arg": "0x0",
+    "flags": 0
+   },
+   {
+    "op": "AWAIT",
+    "unit": 1,
+    "count": 300,
+    "arg": "0x0",
+    "flags": 0
+   },
+   {
+    "op": "BARRIER",
+    "unit": 0,
+    "count": 0,
+    "arg": "0x0",
+    "flags": 0
+   }
+  ]
+ },
+ "mutants": [
+  "l0.program/inst_depth"
+ ]
+}

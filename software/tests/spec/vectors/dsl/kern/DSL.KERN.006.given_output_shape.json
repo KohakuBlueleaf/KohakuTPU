@@ -1,0 +1,44 @@
+{
+ "clause": "DSL.KERN.006",
+ "tier": 0,
+ "runner": "dsl.trace",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(\"R\", 32), y=kt.Out(\"S\", 32)):\n    for c in kt.par(1, on=kt.vc):\n        kt.store(y[0:4, :], kt.load(x[0:4, :]))\n",
+  "given": {
+   "x": [
+    [
+     8,
+     32
+    ],
+    "f16"
+   ],
+   "y": [
+    [
+     12,
+     32
+    ],
+    "f16"
+   ]
+  },
+  "facts": [
+   "params"
+  ]
+ },
+ "expect": {
+  "params": [
+   [
+    "x",
+    "f16[8, 32] @dram"
+   ],
+   [
+    "y",
+    "f16[12, 32] @dram"
+   ]
+  ]
+ },
+ "mutants": [
+  "dsl.kernel/given_shape"
+ ]
+}

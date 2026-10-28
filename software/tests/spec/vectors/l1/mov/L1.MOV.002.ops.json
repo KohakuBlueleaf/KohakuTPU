@@ -1,0 +1,29 @@
+{
+  "clause": "L1.MOV.002",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u32[1024] @dram, b: u32[1024] @dram)\n    move\n        copy w(a, (1, 32)) -> w(b, (1, 32))\n        quant w(a, (8, 32)) -> w(b, (1, 128))\n        gt4 w(a, (4, 32)) -> w(b, (4, 32))\n        fill w(b, (2, 32)) value=5\n",
+    "fn": "f",
+    "binds": {"a": 4096, "b": 8192}
+  },
+  "expect": {"-": {"steps": [
+    ["move", [
+      "HDR base=0x1000 ndim=1", "DIM count=1 stride=32", "AXIS", "WIN", "WIN axis=1",
+      "HDR sel=1 base=0x2000 ndim=1", "DIM sel=1 count=1 stride=32", "AXIS", "WIN sel=1", "WIN sel=1 axis=1",
+      "CTRL ew=2 flags=0x8 go=1",
+      "HDR base=0x1000 ndim=1 xid=1", "DIM count=8 stride=32", "AXIS", "WIN", "WIN axis=1",
+      "HDR sel=1 base=0x2000 ndim=1", "DIM sel=1 count=1 stride=128", "AXIS", "WIN sel=1", "WIN sel=1 axis=1",
+      "CTRL mode=5 ew=1 flags=0x8 go=1",
+      "HDR base=0x1000 ndim=1 xid=2", "DIM count=4 stride=32", "AXIS", "WIN", "WIN axis=1",
+      "HDR sel=1 base=0x2000 ndim=1", "DIM sel=1 count=4 stride=32", "AXIS", "WIN sel=1", "WIN sel=1 axis=1",
+      "CTRL mode=5 ew=1 flags=0x8 go=1",
+      "HDR sel=1 base=0x2000 ndim=1", "DIM sel=1 count=2 stride=32", "AXIS", "WIN sel=1", "WIN sel=1 axis=1",
+      "IMM 0x5",
+      "CTRL mode=4 ew=2 flags=0x8 go=1"
+    ]]
+  ]}},
+  "mutants": ["l1.mov/xform-ids"]
+}

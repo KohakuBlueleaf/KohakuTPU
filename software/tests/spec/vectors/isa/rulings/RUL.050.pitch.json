@@ -1,0 +1,44 @@
+{
+ "clause": "RUL.050",
+ "tier": 0,
+ "runner": "isa.mover.move",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "fn": "gather",
+  "args": [
+   4096,
+   [
+    32768,
+    4
+   ],
+   {
+    "base": 131072,
+    "dims": [
+     [
+      4,
+      32
+     ]
+    ],
+    "windows": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      0
+     ]
+    ]
+   },
+   [
+    48,
+    1
+   ]
+  ]
+ },
+ "expect": {
+  "refused": "PackageError"
+ },
+ "mutants": ["rul.050/unaligned"]
+}

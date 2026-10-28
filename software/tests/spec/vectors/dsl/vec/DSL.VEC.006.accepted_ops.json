@@ -1,0 +1,48 @@
+{
+ "clause": "DSL.VEC.006",
+ "tier": 0,
+ "runner": "dsl.trace",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(8, 32), y=kt.Out(8, 32)):\n    for c in kt.par(2, on=kt.vc):\n        for t in kt.range(1):\n            r = c * 4 + t * 4\n            v = kt.unpack(kt.load(x[r : r + 4, :], gt4=True))\n            a = v * v + v\n            b = kt.maximum(a, 0.5)\n            e = kt.exp2(kt.log2(kt.recip(kt.rsqrt(b))))\n            w = kt.where(v, e, v)\n            z = kt.xlane(w, 1)\n            s = kt.rmax(z)\n            u = kt.rsum(z)\n            kt.store(y[r : r + 4, :], z * s * u)\n",
+  "given": {
+   "x": [
+    [
+     8,
+     32
+    ],
+    "f16"
+   ]
+  }
+ },
+ "expect": {
+  "body": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 32] @dram, y: f16[8, 32] @dram)",
+   "    par c1 in 0..2 on vc[c1]",
+   "        for t1 in 0..1",
+   "            xl1 = load x[c1*4 + t1*4 : +4] : f16[4, 32] @l1(gt4)",
+   "            v1 = unpack xl1 : f32[4, 32] @reg(gt4)",
+   "            e1 = mul v1, v1 : f32[4, 32] @reg(gt4)",
+   "            e2 = add e1, v1 : f32[4, 32] @reg(gt4)",
+   "            e3 = max e2, 0.5 : f32[4, 32] @reg(gt4)",
+   "            e4 = rsqrt e3 : f32[4, 32] @reg(gt4)",
+   "            e5 = inv e4 : f32[4, 32] @reg(gt4)",
+   "            e6 = log2 e5 : f32[4, 32] @reg(gt4)",
+   "            e7 = exp2 e6 : f32[4, 32] @reg(gt4)",
+   "            o1 = sel v1, e7, v1 : f32[4, 32] @reg(gt4)",
+   "            e8 = xlane o1, 1.0 : f32[4, 32] @reg(gt4)",
+   "            s1 = rmax e8 : f32[4] @reg",
+   "            s2 = rsum e8 : f32[4] @reg",
+   "            e9 = mul e8, s1[:, *] : f32[4, 32] @reg(gt4)",
+   "            e10 = mul e9, s2[:, *] : f32[4, 32] @reg(gt4)",
+   "            p1 = pack e10 : f16[4, 32] @l1(gt4)",
+   "            store y[c1*4 + t1*4 : +4] <- p1"
+  ]
+ },
+ "mutants": [
+  "dsl.ops/op_names"
+ ]
+}

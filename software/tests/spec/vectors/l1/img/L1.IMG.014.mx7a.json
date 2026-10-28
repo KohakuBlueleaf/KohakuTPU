@@ -1,0 +1,16 @@
+{
+  "clause": "L1.IMG.014",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    vpack v5 -> l1[64] mx7a\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": [
+    "PSTR s1=4 s0=1",
+    "VPACK reg=5 mode=3 n1=7 off=64",
+    "VHALT"
+  ]},
+  "mutants": ["l1.img/chunks"]
+}

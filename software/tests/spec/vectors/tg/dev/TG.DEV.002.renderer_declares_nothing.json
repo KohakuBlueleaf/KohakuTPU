@@ -1,0 +1,32 @@
+{
+ "clause": "TG.DEV.002",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    r = TinyDevice[\"KTPU\"].renderer\n    try:\n        r.render([])\n        rendered = \"rendered\"\n    except NotImplementedError:\n        rendered = \"NotImplementedError\"\n    return {\n        \"float4\": r.supports_float4,\n        \"local\": r.has_local,\n        \"shared\": r.has_shared,\n        \"threads\": r.has_threads,\n        \"shared_max\": r.shared_max,\n        \"global_max\": list(r.global_max),\n        \"local_max\": list(r.local_max),\n        \"tensor_cores\": list(r.tensor_cores),\n        \"render\": rendered,\n    }\n"
+ },
+ "expect": {
+  "float4": false,
+  "local": false,
+  "shared": false,
+  "threads": false,
+  "shared_max": 0,
+  "global_max": [
+   1,
+   1,
+   1
+  ],
+  "local_max": [
+   1,
+   1,
+   1
+  ],
+  "tensor_cores": [],
+  "render": "NotImplementedError"
+ },
+ "mutants": [
+  "tg.device/renderer"
+ ]
+}

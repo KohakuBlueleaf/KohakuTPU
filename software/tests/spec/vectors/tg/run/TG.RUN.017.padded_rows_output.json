@@ -1,0 +1,37 @@
+{
+ "clause": "TG.RUN.017",
+ "tier": 0,
+ "runner": "tg.run",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "A40": [
+    8,
+    40
+   ],
+   "R40": [
+    40
+   ],
+   "S40": [
+    40
+   ]
+  },
+  "make": "T(A40) + T(R40) + T(S40)",
+  "facts": [
+   "forms"
+  ]
+ },
+ "expect": {
+  "forms": [
+   [
+    "rows",
+    40,
+    64
+   ]
+  ]
+ },
+ "mutants": [
+  "tg.run/no_padded_out"
+ ]
+}

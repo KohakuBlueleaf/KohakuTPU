@@ -1,0 +1,44 @@
+{
+ "clause": "L2.ORDER.005",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram, z: f16[8, 128] @dram)",
+   "    copy y <- x",
+   "    copy z <- x",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..1",
+   "            xl = load y[c*8 : +8, :]     : f16[8, 128] @l1",
+   "            v = unpack xl                    : f32[8, 128] @reg",
+   "            e = exp2 v                       : f32[8, 128] @reg",
+   "            ol = pack e                  : f16[8, 128] @l1",
+   "            store x[c*8 : +8, :] <- ol"
+  ],
+  "passes": [],
+  "facts": {
+   "fn": {
+    "lines": "^(move|mv|copy|wait|barrier|send)",
+    "in": "fn"
+   }
+  }
+ },
+ "expect": {
+  "fn": [
+   "mv0 = move posted",
+   "copy w(x+0, (64, 32)) -> w(y+0, (64, 32))",
+   "copy w(x+0, (64, 32)) -> w(z+0, (64, 32))",
+   "wait moves mv0",
+   "send vc[0]",
+   "wait moves mv0",
+   "barrier"
+  ]
+ },
+ "mutants": [
+  "l2.sync/never-clash"
+ ]
+}

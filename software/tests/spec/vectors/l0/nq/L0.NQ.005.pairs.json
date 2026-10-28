@@ -1,0 +1,26 @@
+{
+ "clause": "L0.NQ.005",
+ "tier": 0,
+ "runner": "l0.pairs",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "host": [
+   "layout.LINE"
+  ],
+  "header": [
+   "queue/layout.h:KA_Q_LINE"
+  ],
+  "machine": [
+   "fw.queue.line"
+  ]
+ },
+ "expect": {
+  "layout.LINE": 64,
+  "queue/layout.h:KA_Q_LINE": 64,
+  "fw.queue.line": 64
+ },
+ "mutants": [
+  "l0.queue/line32"
+ ]
+}

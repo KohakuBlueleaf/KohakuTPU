@@ -1,0 +1,41 @@
+{
+ "clause": "L2.ORDER.002",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[16, 128] @dram, y: f16[16, 128] @dram, z: f16[16, 128] @dram)",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..1",
+   "            xl = load x[0 : +8, :]     : f16[8, 128] @l1",
+   "            v = unpack xl                    : f32[8, 128] @reg",
+   "            e = exp2 v                       : f32[8, 128] @reg",
+   "            ol = pack e                  : f16[8, 128] @l1",
+   "            store y[0 : +8, :] <- ol",
+   "    par c in 0..1 on vc[1]",
+   "        for t in 0..1",
+   "            xl = load y[8 : +8, :]     : f16[8, 128] @l1",
+   "            v = unpack xl                    : f32[8, 128] @reg",
+   "            e = exp2 v                       : f32[8, 128] @reg",
+   "            ol = pack e                  : f16[8, 128] @l1",
+   "            store z[8 : +8, :] <- ol"
+  ],
+  "passes": [],
+  "facts": {
+   "waits": {
+    "lines": "^wait",
+    "in": "fn"
+   }
+  }
+ },
+ "expect": {
+  "waits": []
+ },
+ "mutants": [
+  "l2.sync/whole-buffer"
+ ]
+}

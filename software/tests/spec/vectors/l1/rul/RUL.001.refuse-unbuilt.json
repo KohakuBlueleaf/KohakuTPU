@@ -1,0 +1,9 @@
+{
+  "clause": "RUL.001",
+  "tier": 0,
+  "runner": "l1.machine_of",
+  "status": "frozen",
+  "input": {"units": {"MG": [[1, 1], [1, 2]], "VC": [[2, 1], [2, 2]]}},
+  "expect": {"refused": true},
+  "mutants": ["rul.001/unbuilt"]
+}

@@ -1,0 +1,83 @@
+{
+ "clause": "L0.STEP.056",
+ "tier": 0,
+ "runner": "l0.pkg.build",
+ "status": "frozen",
+ "input": {
+  "builder": {
+   "types": [
+    [
+     1,
+     1,
+     "MG"
+    ]
+   ],
+   "credit": 512
+  },
+  "calls": [
+   [
+    "unit",
+    [
+     1,
+     1
+    ]
+   ],
+   [
+    "recv",
+    "0x4000",
+    2,
+    0
+   ],
+   [
+    "recv",
+    "0x5000",
+    1
+   ]
+  ],
+  "keys": [
+   "package"
+  ]
+ },
+ "expect": {
+  "package": {
+   "units": [
+    {
+     "type": "MG",
+     "x": 1,
+     "y": 1,
+     "mesh": 0,
+     "credit": 512,
+     "fetch": "0x0"
+    }
+   ],
+   "buffers": [],
+   "steps": [
+    {
+     "op": "RECV",
+     "unit": 0,
+     "count": 2,
+     "arg": "0x0",
+     "flags": 0
+    },
+    {
+     "op": "RECV",
+     "unit": 65535,
+     "count": 1,
+     "arg": "0x1",
+     "flags": 0
+    }
+   ],
+   "relocs": [],
+   "payloads": [
+    "0x4000",
+    "0x5000"
+   ],
+   "signature": "0x0",
+   "ack_reserve": 0,
+   "checksum": false
+  }
+ },
+ "mutants": [
+  "l0.build/count_arg_swapped"
+ ]
+}

@@ -1,0 +1,28 @@
+{
+  "clause": "L1.SCHED.006",
+  "tier": 0,
+  "runner": "l1.schedule",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    vunpk v0 <- l1[0] f16\n    vexp2 v1, v0\n    vexp2 v2, v1\n    vexp2 v3, v2\n    vunpk v8 <- l1[8] f16\n    vmul v9, v8, v8\n    vmul v10, v8, v8\n    vsync pack on=drain\n    vpack v9 -> l1[24] f16\n    vpack v10 -> l1[32] f16\n    vpack v3 -> l1[16] f16\n    halt\n",
+    "twice": true
+  },
+  "expect": {
+    "k": [
+      "vunpk v0 <- l1[0] f16",
+      "vexp2 v1, v0",
+      "vunpk v8 <- l1[8] f16",
+      "vmul v9, v8, v8",
+      "vexp2 v2, v1",
+      "vmul v10, v8, v8",
+      "vexp2 v3, v2",
+      "vsync pack on=drain",
+      "vpack v9 -> l1[24] f16",
+      "vpack v10 -> l1[32] f16",
+      "vpack v3 -> l1[16] f16",
+      "halt"
+    ],
+    "same": true
+  },
+  "mutants": ["l1.sched/unstable"]
+}

@@ -1,0 +1,18 @@
+{
+ "clause": "DSL.VIEW.003",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    p = VA.Param(\"x\", TY.TensorSpec.make((64, 32)))\n    s = E.var(\"t\") * 4\n    v = p[s : s + 4, :]\n    return {\"size\": v.axes[0][2], \"start\": v.axes[0][1].text(), \"text\": v.text()}\n"
+ },
+ "expect": {
+  "size": 4,
+  "start": "t*4",
+  "text": "x[t*4 : +4]"
+ },
+ "mutants": [
+  "dsl.values/view_text"
+ ]
+}

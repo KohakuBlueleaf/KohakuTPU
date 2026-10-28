@@ -1,0 +1,14 @@
+{
+ "clause": "RUL.030",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(8, 32), y=kt.Out(8, 32)):\n    for c in kt.par(2, on=kt.vc):\n        s = kt.rmax(kt.load(x[c * 4 : c * 4 + 4, :], gt4=True))\n        kt.store(y[c * 4 : c * 4 + 4, :], kt.pack(s, gt4=True))\n\n\ndef facts():\n    try:\n        k.trace({\"x\": TY.TensorSpec.make((8, 32))}, machine=MACHINE)\n    except kt.DSLError:\n        return {\"r32_pack_refused\": True}\n    return {\"r32_pack_refused\": False}\n"
+ },
+ "expect": {
+  "r32_pack_refused": true
+ },
+ "mutants": ["dsl.ops/statistic-band-pack"]
+}

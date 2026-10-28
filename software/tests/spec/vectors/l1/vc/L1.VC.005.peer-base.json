@@ -1,0 +1,21 @@
+{
+  "clause": "L1.VC.005",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    halt\nfn f.l1(a: f16[64] @dram)\n    send vc[0]\n        desc a1 = peer(16, count=1, fin=mesh1.vc[1]) walk=(32, 4)\n        run k()\n",
+    "fn": "f",
+    "binds": {"a": 4096},
+    "nodes": 2
+  },
+  "expect": {"-": {"steps": [
+    ["send", [2, 1], [
+      ["DESC", 1, 0, "0x489000010"], ["DESC", 1, 1, 32, 4], ["DESC", 1, 2, 0, 0], ["DESC", 1, 3, 0, 0], ["DESC", 1, 4, 0, 0],
+      ["IMEM", 0, "VHALT"],
+      ["RUN", 0]
+    ]]
+  ]}},
+  "mutants": ["l1.vc/peer-count", "l1.unit/unsorted"]
+}

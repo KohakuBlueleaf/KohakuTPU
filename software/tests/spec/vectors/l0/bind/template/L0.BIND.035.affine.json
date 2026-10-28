@@ -1,0 +1,17 @@
+{
+ "clause": "L0.BIND.035", "tier": 0, "runner": "l0.template.bind", "status": "frozen",
+ "input": {
+  "package": {"payloads": [0, 0], "buffers": [{"name": "a", "size": 64, "default": 4096}]},
+  "bindings": [256], "params": {"n": 11, "tail": 4},
+  "table": {
+   "parameters": {"n": {"lo": 1, "hi": 16}, "tail": {"lo": 0, "hi": 8}},
+   "sites": [
+    {"name": "count", "payload": 0, "bit": 0, "width": 16, "constant": 7, "coefficients": {"n": 3, "tail": -2}},
+    {"name": "address", "payload": 1, "bit": 0, "width": 64, "constant": 7, "coefficients": {"n": 3, "tail": -2}, "buffer": 0}
+   ]
+  },
+  "ordinary": {"payloads": [32, 288]}
+ },
+ "expect": {"payloads": ["0x20", "0x120"], "bytes_equal": true, "buffers": 0, "relocs": 0},
+ "mutants": ["l0.template/affine"]
+}

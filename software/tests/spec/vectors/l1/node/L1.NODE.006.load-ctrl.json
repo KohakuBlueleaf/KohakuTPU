@@ -1,0 +1,18 @@
+{
+  "clause": "L1.NODE.006",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[4] @dram)\n    r1 = load a\n    r2 = ctrl xf_data\n    r3 = ctrl mvstat\n",
+    "fn": "f",
+    "binds": {"a": 4096}
+  },
+  "expect": {"-": {"steps": [
+    ["load", 1, 4096, null, false],
+    ["load", 2, 472, null, true],
+    ["load", 3, 32, null, true]
+  ]}},
+  "mutants": ["l1.node/ctrl-offsets"]
+}

@@ -1,0 +1,27 @@
+{
+ "clause": "L0.NQ.008",
+ "tier": 0,
+ "runner": "l0.queue.geometry",
+ "status": "frozen",
+ "input": {
+  "args": [
+   64,
+   64,
+   4096,
+   256
+  ]
+ },
+ "expect": {
+  "sq": "0x440",
+  "cq": "0x1440",
+  "so": "0x1c40",
+  "si": "0x2c40",
+  "rec": "0x2d40",
+  "end": "0x4d40"
+ },
+ "mutants": [
+  "l0.queue/sq_entry",
+  "l0.queue/cq_entry",
+  "l0.queue/sq_base"
+ ]
+}

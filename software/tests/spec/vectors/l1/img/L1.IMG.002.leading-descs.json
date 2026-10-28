@@ -1,0 +1,19 @@
+{
+  "clause": "L1.IMG.002",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k(x)\n    desc a0 = x walk=(32, 4)\n    desc a3 = x + 64 walk=((32, 2), (64, 2))\n    halt\n",
+    "image": "k",
+    "args": [8192]
+  },
+  "expect": {
+    "words": ["VHALT"],
+    "descs": [
+      [0, 0, "0x2000"], [0, 1, [32, 4]], [0, 2, [0, 0]], [0, 3, [0, 0]], [0, 4, [0, 0]],
+      [3, 0, "0x2040"], [3, 1, [32, 2]], [3, 2, [64, 2]], [3, 3, [0, 0]], [3, 4, [0, 0]]
+    ]
+  },
+  "mutants": ["l1.img/desc-none"]
+}

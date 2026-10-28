@@ -1,0 +1,43 @@
+{
+ "clause": "TG.FLT.002",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "W": [
+    96,
+    64
+   ]
+  },
+  "source": "def facts():\n    xa, wa = T(X), T(W)\n    (xa @ wa.T).realize()\n    return {\"x\": form_keys(storage(xa)), \"w\": form_keys(storage(wa))}\n"
+ },
+ "expect": {
+  "x": [
+   [
+    "flat"
+   ],
+   [
+    "mx7",
+    "a"
+   ]
+  ],
+  "w": [
+   [
+    "flat"
+   ],
+   [
+    "mx7",
+    "b"
+   ]
+  ]
+ },
+ "mutants": [
+  "api.forms/made_drop"
+ ]
+}

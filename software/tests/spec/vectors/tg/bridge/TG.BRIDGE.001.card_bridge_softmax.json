@@ -1,0 +1,25 @@
+{
+ "clause": "TG.BRIDGE.001",
+ "tier": 1,
+ "runner": "tg.values",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "XS": [
+    16,
+    128
+   ]
+  },
+  "make": "(BR.bridge(softmax_k)(T(XS) * 2, temperature=2.0) + 1).sum(axis=1)",
+  "ref": "(softmax(f(XS) * 2 / 2) + 1).sum(1)",
+  "source": "def conv(x, w, pad=0):\n    xp = np.pad(f(x), ((0, 0), (0, 0), (pad, pad), (pad, pad)))\n    p = sliding_window_view(xp, w.shape[2:], axis=(2, 3))\n    return np.einsum(\"bchwij,ocij->bohw\", p, f(w))\n\n\ndef softmax(a):\n    a = f(a)\n    e = np.exp(a - a.max(-1, keepdims=True))\n    return e / e.sum(-1, keepdims=True)\nfrom kohakutpu.language.examples.dsl.vector.softmax import softmax as softmax_k\n",
+  "rel": 0.02
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "tg.lower/reduce_all_max"
+ ]
+}

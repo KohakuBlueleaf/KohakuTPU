@@ -1,0 +1,56 @@
+{
+ "clause": "TG.RUN.015",
+ "tier": 0,
+ "runner": "tg.run",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "A40": [
+    8,
+    40
+   ]
+  },
+  "make": "T(A40).sum(axis=1)",
+  "facts": [
+   "params"
+  ],
+  "params": [
+   "rows"
+  ]
+ },
+ "expect": {
+  "params": {
+   "rows": [
+    [
+     [
+      "x0",
+      "f16[20, 16] @dram"
+     ],
+     [
+      "p0_index0",
+      "f32[48] @dram"
+     ],
+     [
+      "p0_mask0",
+      "f16[2, 128] @dram"
+     ],
+     [
+      "in1",
+      "f16[64] @dram"
+     ],
+     [
+      "out",
+      "f16[16] @dram"
+     ]
+    ]
+   ]
+  }
+ },
+ "mutants": [
+  "tg.run/wide_exact"
+ ],
+ "regold": [
+  "2026-10-26 owner approval (relayed by the lead): re-frozen for the fused form (the laid read made inside the rows kernel, forms.PREPARED); the separate form pinned by TG.RUN.015.padding_lanes_masked_separate"
+ ]
+}

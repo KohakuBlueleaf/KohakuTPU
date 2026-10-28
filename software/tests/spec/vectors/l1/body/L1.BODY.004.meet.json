@@ -1,0 +1,18 @@
+{
+  "clause": "L1.BODY.004",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[4] @dram)\n    node 0\n        store a <- 1\n        ring mesh=1 slot=2 amount=1\n    node 1\n        wait slot 2 n=1 consume\n        wait bell 0 n=1\n        r1 = load a\n",
+    "fn": "f",
+    "binds": {"a": 4096},
+    "nodes": 2
+  },
+  "expect": {
+    "0": {"steps": [["store", [[4096, 1]], false], ["ring", 1, 2, 1, true]]},
+    "1": {"steps": [["wait_slot", 2, 1, true], ["wait_bell", 0, 1], ["load", 1, 4096, null, false]]}
+  },
+  "mutants": ["l1.node/no-wait-slot", "l1.node/ring-unfenced"]
+}

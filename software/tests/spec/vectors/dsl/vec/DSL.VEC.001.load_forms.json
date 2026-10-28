@@ -1,0 +1,47 @@
+{
+ "clause": "DSL.VEC.001",
+ "tier": 0,
+ "runner": "dsl.trace",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(8, 64), b=kt.In(64), y=kt.Out(8, 64)):\n    h = kt.buffer((8, 64), \"f16\", tile=(4, 8))\n    kt.gt4(h, x)\n    for c in kt.par(2, on=kt.vc):\n        for t in kt.range(1):\n            r = c * 4 + t * 4\n            kt.load(x[r : r + 4, :])\n            kt.load(x[r : r + 4, :], gt4=True)\n            kt.load(x[r : r + 1, :], gt4=True)\n            kt.load(b[0:32], gt4=True)\n            d = kt.load(h[r : r + 4, :])\n            kt.store(y[r : r + 4, :], d)\n",
+  "given": {
+   "x": [
+    [
+     8,
+     64
+    ],
+    "f16"
+   ],
+   "b": [
+    [
+     64
+    ],
+    "f16"
+   ]
+  }
+ },
+ "expect": {
+  "body": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 64] @dram, b: f16[64] @dram, y: f16[8, 64] @dram)",
+   "    h1 = buffer : f16[8, 64] @dram(tile=4x8)",
+   "    gt4 h1 <- x",
+   "    par c1 in 0..2 on vc[c1]",
+   "        for t1 in 0..1",
+   "            xl1 = load x[c1*4 + t1*4 : +4] : f16[4, 64] @l1",
+   "            xl2 = load x[c1*4 + t1*4 : +4] : f16[4, 64] @l1(gt4)",
+   "            xl3 = load x[c1*4 + t1*4 : +1] : f16[4, 64] @l1(gt4)",
+   "            xl4 = load b[0 : +32] : f16[4, 32] @l1(gt4)",
+   "            xl5 = load h1[c1*4 + t1*4 : +4] : f16[4, 64] @l1(gt4)",
+   "            v1 = unpack xl5 : f32[4, 64] @reg(gt4)",
+   "            p1 = pack v1 : f16[4, 64] @l1(gt4)",
+   "            store y[c1*4 + t1*4 : +4] <- p1"
+  ]
+ },
+ "mutants": [
+  "dsl.ops/gt4_off"
+ ]
+}

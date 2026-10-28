@@ -1,0 +1,36 @@
+{
+ "clause": "DBG.BLD.001",
+ "tier": 0,
+ "runner": "l0.firmware",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "keys": [
+   "card_image",
+   "machine_image",
+   "parts",
+   "machine_classes"
+  ]
+ },
+ "expect": {
+  "card_image": "build/fw/kohakutpu_node.elf",
+  "machine_image": "kohakutpu_node",
+  "parts": [
+   "kohakuaccel/boot",
+   "kohakuaccel/os",
+   "kohakuaccel/queue",
+   "kohakuaccel/package",
+   "kohakuaccel/dispatch",
+   "kohakuaccel/unit",
+   "kohakuaccel/apps/dispatcher",
+   "kohakutpu/units"
+  ],
+  "machine_classes": [
+   "matmul",
+   "vector"
+  ]
+ },
+ "mutants": [
+  "l0.card/firmware"
+ ]
+}

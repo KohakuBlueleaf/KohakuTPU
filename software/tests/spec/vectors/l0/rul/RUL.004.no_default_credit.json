@@ -1,0 +1,22 @@
+{
+ "clause": "RUL.004",
+ "tier": 0,
+ "runner": "l0.pkg.build",
+ "status": "frozen",
+ "input": {
+  "builder": {
+   "types": [
+    [
+     1,
+     1,
+     "MG"
+    ]
+   ]
+  },
+  "calls": []
+ },
+ "expect": {
+  "refused": "TypeError"
+ },
+ "mutants": ["l0.build/default_credit"]
+}

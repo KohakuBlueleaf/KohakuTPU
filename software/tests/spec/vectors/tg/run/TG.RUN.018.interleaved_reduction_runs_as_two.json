@@ -1,0 +1,33 @@
+{
+ "clause": "TG.RUN.018",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "CH": [
+    2,
+    3,
+    4,
+    4
+   ]
+  },
+  "source": "def facts():\n    (p,) = [L.plan(a) for a in asts(T(CH).sum((0, 2, 3)))]\n    kind, rows, cols = R._view(p)\n    laid = R._laid(p, rows, cols, R._wide(cols), out=False)\n    split = R._split_reduction(p)\n    return {\n        \"laid\": laid > 0,\n        \"parts\": [[U.extent(r) for r in rs] for rs in split.reductions.values()],\n    }\n"
+ },
+ "expect": {
+  "laid": true,
+  "parts": [
+   [
+    4,
+    4
+   ],
+   [
+    2
+   ]
+  ]
+ },
+ "mutants": [
+  "tg.run/no_split"
+ ]
+}

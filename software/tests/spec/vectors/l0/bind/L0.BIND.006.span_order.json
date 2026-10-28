@@ -1,0 +1,135 @@
+{
+ "clause": "L0.BIND.006",
+ "tier": 0,
+ "runner": "l0.pkg.build",
+ "status": "frozen",
+ "input": {
+  "builder": {
+   "types": [
+    [
+     1,
+     1,
+     "MG"
+    ]
+   ],
+   "credit": 512
+  },
+  "calls": [
+   [
+    "spans_from",
+    [
+     [
+      "0x1000",
+      64
+     ],
+     [
+      "0x2000",
+      64
+     ]
+    ]
+   ],
+   [
+    "unit",
+    [
+     1,
+     1
+    ]
+   ],
+   [
+    "dispatch",
+    0,
+    [
+     "0x2008",
+     "0x1010"
+    ],
+    {
+     "addresses": [
+      [
+       [
+        0,
+        64,
+        0
+       ]
+      ]
+     ]
+    }
+   ]
+  ],
+  "build": {
+   "defaults": false
+  },
+  "keys": [
+   "bindings",
+   "package"
+  ]
+ },
+ "expect": {
+  "bindings": [
+   "0x2000",
+   "0x1000"
+  ],
+  "package": {
+   "units": [
+    {
+     "type": "MG",
+     "x": 1,
+     "y": 1,
+     "mesh": 0,
+     "credit": 512,
+     "fetch": "0x0"
+    }
+   ],
+   "buffers": [
+    {
+     "size": 64,
+     "default": "0x0",
+     "kind": "TEMP",
+     "mesh": 0
+    },
+    {
+     "size": 64,
+     "default": "0x0",
+     "kind": "TEMP",
+     "mesh": 0
+    }
+   ],
+   "steps": [
+    {
+     "op": "DISPATCH",
+     "unit": 0,
+     "count": 2,
+     "arg": "0x0",
+     "flags": 0
+    }
+   ],
+   "relocs": [
+    {
+     "payload": 0,
+     "bit": 0,
+     "width": 64,
+     "buffer": 0,
+     "addend": 8,
+     "shift": 0
+    },
+    {
+     "payload": 1,
+     "bit": 0,
+     "width": 64,
+     "buffer": 1,
+     "addend": 16,
+     "shift": 0
+    }
+   ],
+   "payloads": [
+    "0x0",
+    "0x0"
+   ],
+   "signature": "0x0",
+   "ack_reserve": 0,
+   "checksum": false
+  }
+ },
+ "mutants": [
+  "l0.build/bindings_reversed"
+ ]
+}

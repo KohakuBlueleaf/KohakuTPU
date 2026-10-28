@@ -1,0 +1,58 @@
+{
+ "clause": "L2.OP.002",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram)",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..1",
+   "            xl = load x[t*8 : +8, :]   : f16[8, 128] @l1",
+   "            v = unpack xl                      : f32[8, 128] @reg",
+   "            e = exp2 v                         : f32[8, 128] @reg",
+   "            d = sub e, v                       : f32[8, 128] @reg",
+   "            f = fma d, v, e                    : f32[8, 128] @reg",
+   "            p = exp2d f, 0.0                   : f32[8, 128] @reg",
+   "            s1 = rsum v                        : f32[8] @reg",
+   "            s2 = fnma s1, s1, s1               : f32[8] @reg",
+   "            o = mul p, s2[:, *]                : f32[8, 128] @reg",
+   "            ol = pack o                     : f16[8, 128] @l1",
+   "            store y[t*8 : +8, :] <- ol"
+  ],
+  "passes": [],
+  "facts": {
+   "vsub": {
+    "count": "^vsub ",
+    "in": "images"
+   },
+   "vfma": {
+    "count": "^vfma ",
+    "in": "images"
+   },
+   "vexp2d": {
+    "count": "^vexp2d ",
+    "in": "images"
+   },
+   "fnma": {
+    "lines": "^vfnma ",
+    "in": "images"
+   }
+  }
+ },
+ "expect": {
+  "vsub": 8,
+  "vfma": 8,
+  "vexp2d": 8,
+  "fnma": [
+   "vfnma v8[0 :], v9[0 :], v9[0 :], v9[0 :] vl=16"
+  ]
+ },
+ "mutants": [
+  "l2.vector/ternary-swapped",
+  "l2.vector/binary-swapped"
+ ]
+}

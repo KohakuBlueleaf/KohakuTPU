@@ -1,0 +1,17 @@
+{
+ "clause": "TG.PLAN.010",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    got = []\n    for a in asts(Tensor.rand(32, 64, device=\"KTPU\")):\n        try:\n            L.plan(a)\n        except REFUSED as e:\n            got.append(e.clause == \"TG.PLAN.010\")\n    return {\"refused\": len(got) > 0, \"named\": all(got)}\n"
+ },
+ "expect": {
+  "refused": true,
+  "named": true
+ },
+ "mutants": [
+  "tg.lower/refused_other"
+ ]
+}

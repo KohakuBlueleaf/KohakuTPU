@@ -1,0 +1,30 @@
+{
+ "clause": "DSL.VIEW.005",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    p = VA.Param(\"x\", TY.TensorSpec.make((4, 8, 32)))\n    return {\n        \"run_all\": list(p[1:3, :].shape),\n        \"run\": list(p[1:3].shape),\n        \"all_run\": list(p[:, 2:4].shape),\n    }\n"
+ },
+ "expect": {
+  "run_all": [
+   2,
+   8,
+   32
+  ],
+  "run": [
+   2,
+   8,
+   32
+  ],
+  "all_run": [
+   4,
+   2,
+   32
+  ]
+ },
+ "mutants": [
+  "dsl.values/view_shape"
+ ]
+}

@@ -1,0 +1,24 @@
+{
+  "clause": "L1.NODE.002",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    halt\nfn f.l1(a: u64[64] @dram, b: u64[64] @dram)\n    send vc[0]\n        run k()\n    t = mark vc[0]\n    wait vc[0] upto=t\n    move\n        copy w(a, (1, 32)) -> w(b, (1, 32))\n    barrier\n",
+    "fn": "f",
+    "binds": {"a": 4096, "b": 8192}
+  },
+  "expect": {"-": {"steps": [
+    ["send", [2, 1], [["IMEM", 0, "VHALT"], ["RUN", 0]]],
+    ["mark", [2, 1], 0],
+    ["wait", [2, 1], 0],
+    ["move", [
+      "HDR base=0x1000 ndim=1", "DIM count=1 stride=32", "AXIS", "WIN", "WIN axis=1",
+      "HDR sel=1 base=0x2000 ndim=1", "DIM sel=1 count=1 stride=32", "AXIS", "WIN sel=1", "WIN sel=1 axis=1",
+      "CTRL ew=2 flags=0x8 go=1"
+    ]],
+    ["barrier"]
+  ]}},
+  "mutants": ["l1.node/no-barrier", "l1.node/no-wait"]
+}

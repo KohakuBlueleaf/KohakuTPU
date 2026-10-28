@@ -1,0 +1,26 @@
+{
+ "clause": "ISA.VC.100",
+ "tier": 1,
+ "runner": "isa.card.kernel",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "body": [
+   "vmov v2, k0",
+   "vunpk v2[2:] <- l1[0] f16 n=3"
+  ],
+  "check": "walk3",
+  "x": {
+   "seed": 21
+  },
+  "tol": {
+   "exact": true
+  }
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.vector/walk_fields"
+ ]
+}

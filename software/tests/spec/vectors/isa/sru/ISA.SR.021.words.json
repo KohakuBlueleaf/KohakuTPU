@@ -1,0 +1,32 @@
+{
+ "clause": "ISA.SR.021",
+ "tier": 0,
+ "runner": "isa.sru.words",
+ "machine": "sru_v9t7",
+ "status": "frozen",
+ "input": {
+  "g": {
+   "NW": 4
+  },
+  "passes": [
+   {
+    "NOPS": 0,
+    "R2EN": 1
+   },
+   {
+    "NOPS": 0,
+    "EMIT": 1,
+    "FINLEN": 2,
+    "FINBASE": 3
+   }
+  ]
+ },
+ "expect": {
+  "0x0": "0x4",
+  "0x10": "0x100",
+  "0x12": "0xca00"
+ },
+ "mutants": [
+  "isa.sru/map"
+ ]
+}

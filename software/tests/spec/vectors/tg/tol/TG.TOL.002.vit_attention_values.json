@@ -1,0 +1,17 @@
+{
+ "clause": "TG.TOL.002",
+ "tier": 1,
+ "runner": "tg.values",
+ "machine": "vlt_v9t6s_1n",
+ "status": "frozen",
+ "input": {
+  "tol_reason": "Attention uses normalized max absolute error 0.03, as frozen L2.MG.005.attention_card: MXFP7 matmul operands; 0.02 belongs to softmax-only vectors.",
+  "arrays": {"q": [1, 65, 64], "k": [1, 65, 64], "v": [1, 65, 64]},
+  "source": "from kohakutpu.application.ktpugrad.attention import attention\n\ndef reference(q, k, v):\n    q, k, v = (a.astype(np.float32) for a in (q, k, v))\n    s = (q @ k.swapaxes(-1, -2)) * np.float32(0.125)\n    e = np.exp(s - s.max(-1, keepdims=True))\n    return (e / e.sum(-1, keepdims=True)) @ v\n",
+  "make": "attention(T(q), T(k), T(v))",
+  "ref": "reference(q, k, v)",
+  "rel": 0.03
+ },
+ "expect": {"ok": true},
+ "mutants": ["api.mem/upload_dropped", "tg.attention/quantized-scores"]
+}

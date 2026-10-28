@@ -1,0 +1,28 @@
+{
+ "clause": "DBG.TRACE.001",
+ "tier": 1,
+ "runner": "dbg.trace",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "example": "memops",
+  "runs": {
+   "engine": []
+  }
+ },
+ "expect": {
+  "engine": {
+   "records": 13,
+   "covers": true,
+   "ops": true,
+   "rising": true,
+   "clocks": [
+    "engine"
+   ],
+   "lost": 0
+  }
+ },
+ "mutants": [
+  "dbg/no_trace_flag"
+ ]
+}

@@ -1,0 +1,19 @@
+{
+  "clause": "L1.IMG.016",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    vsync fe on=fill\n    vsync unpack on=pack slack=3\n    vsync drain on=drain slack=63\n    vsync pack on=unpack\n    vsync fill on=drain\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": [
+    "VSYNC",
+    "VSYNC waiter=1 on=3 slack=3",
+    "VSYNC waiter=6 on=4 slack=63",
+    "VSYNC waiter=3 on=1",
+    "VSYNC waiter=4 on=4",
+    "VHALT"
+  ]},
+  "mutants": ["l1.img/waiters"]
+}

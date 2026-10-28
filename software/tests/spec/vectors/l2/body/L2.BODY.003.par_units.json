@@ -1,0 +1,84 @@
+{
+ "clause": "L2.BODY.003",
+ "tier": 0,
+ "runner": "l2.body",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: mx7a[32, 32] @dram(gm=4, nk=1), y: f16[32, 128] @dram)",
+   "    par u in 0..2 on mg[1 - u]",
+   "        a = fill x[u*16 : +16, :]                    : mx7a[16, 32] @A",
+   "    par c in 0..2 on vc[1 - c]",
+   "        for t in 0..1",
+   "            xl = load y[c*8 : +8, :]                 : f16[8, 128] @l1",
+   "            v = unpack xl                            : f32[8, 128] @reg"
+  ],
+  "want": [
+   "stages"
+  ]
+ },
+ "expect": {
+  "stages": [
+   {
+    "kind": "par",
+    "node": 0,
+    "phase": 0,
+    "units": [
+     "mg[1]",
+     "mg[0]"
+    ],
+    "items": [
+     [
+      "fill"
+     ],
+     [
+      "fill"
+     ]
+    ],
+    "env": [
+     {
+      "u": 0
+     },
+     {
+      "u": 1
+     }
+    ],
+    "group": null
+   },
+   {
+    "kind": "par",
+    "node": 0,
+    "phase": 1,
+    "units": [
+     "vc[1]",
+     "vc[0]"
+    ],
+    "items": [
+     [
+      "load",
+      "unpack"
+     ],
+     [
+      "load",
+      "unpack"
+     ]
+    ],
+    "env": [
+     {
+      "c": 0
+     },
+     {
+      "c": 1
+     }
+    ],
+    "group": null
+   }
+  ]
+ },
+ "mutants": [
+  "l2.body/span-short"
+ ]
+}

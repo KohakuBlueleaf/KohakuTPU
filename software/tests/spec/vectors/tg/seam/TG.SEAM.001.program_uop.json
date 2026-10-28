@@ -1,0 +1,38 @@
+{
+ "clause": "TG.SEAM.001",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "Y": [
+    32,
+    64
+   ]
+  },
+  "source": "def facts():\n    (ast,) = asts(T(X) + T(Y))\n    S.PLANS.pop(ast.key, None)\n    renderer = TinyDevice[\"KTPU\"].renderer\n    prog = S.to_program(ast, renderer)\n    sink, lin, source, binary = prog.src\n    est = sink.arg.estimates\n    params = [u for u in ast.toposort() if u.op is Ops.PARAM]\n    return {\n        \"op\": prog.op.name,\n        \"source\": source.arg.split(\" \")[:2],\n        \"binary\": binary.arg == ast.key,\n        \"estimates\": [est.ops, est.lds, est.mem],\n        \"params\": len(lin.src) == len(params),\n        \"filed\": S.PLANS[ast.key].kind,\n    }\n"
+ },
+ "expect": {
+  "op": "PROGRAM",
+  "source": [
+   "ktpu",
+   "vector"
+  ],
+  "binary": true,
+  "estimates": [
+   2048,
+   4096,
+   4096
+  ],
+  "params": true,
+  "filed": "vector"
+ },
+ "mutants": [
+  "tg.seam/kind"
+ ]
+}

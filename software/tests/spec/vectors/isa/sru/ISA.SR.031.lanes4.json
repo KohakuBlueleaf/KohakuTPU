@@ -1,0 +1,51 @@
+{
+ "clause": "ISA.SR.031",
+ "tier": 0,
+ "runner": "isa.sru.schedule",
+ "machine": "sru_v9t7",
+ "status": "frozen",
+ "input": {
+  "prog": [
+   {
+    "KIND": 0
+   },
+   {
+    "KIND": 0,
+    "A": [
+     "H",
+     0
+    ]
+   }
+  ],
+  "f_lanes": 4,
+  "h_taps": 2
+ },
+ "expect": {
+  "fields": [
+   {
+    "KIND": 0,
+    "A": 0,
+    "B": 0,
+    "C": 0,
+    "KW": 1
+   },
+   {
+    "KIND": 0,
+    "A": 3,
+    "HA": 0,
+    "B": 0,
+    "C": 0,
+    "D0": 2,
+    "KW": 3
+   }
+  ],
+  "ii": 8,
+  "sigma": [
+   0,
+   20
+  ]
+ },
+ "mutants": [
+  "isa.sru/schedule"
+ ]
+}

@@ -1,0 +1,22 @@
+{
+ "clause": "ISA.MG.053",
+ "tier": 0,
+ "runner": "isa.verify",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "fn k.l1(a: f16[65536] @dram)\n    send mg[0]\n        drain n=4 to=vc[0] l1=0 count\n    barrier\n",
+  "fn": "k",
+  "binds": {
+   "a": 1048576
+  }
+ },
+ "expect": {
+  "findings": [
+   "rest"
+  ]
+ },
+ "mutants": [
+  "isa.cluster/checker"
+ ]
+}

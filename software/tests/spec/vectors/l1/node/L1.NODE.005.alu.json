@@ -1,0 +1,18 @@
+{
+  "clause": "L1.NODE.005",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[4] @dram)\n    r1 = set 5\n    r2 = add r1, 3\n    r3 = mul r2, 4\n",
+    "fn": "f",
+    "binds": {"a": 4096}
+  },
+  "expect": {"-": {"steps": [
+    ["alu", 1, "MOV", 0, 5, true],
+    ["alu", 2, "ADD", 1, 3, true],
+    ["alu", 3, "MUL", 2, 4, true]
+  ]}},
+  "mutants": ["l1.node/alu-table"]
+}

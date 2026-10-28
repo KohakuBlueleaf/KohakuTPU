@@ -1,0 +1,18 @@
+{
+ "clause": "ISA.VC.165",
+ "tier": 1,
+ "runner": "isa.card.example",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "case": "lazysoftmax8.l2",
+  "reps": 2
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.vector/lower",
+  "isa.vector/ctl_fields"
+ ]
+}

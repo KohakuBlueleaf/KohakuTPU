@@ -1,0 +1,36 @@
+{
+ "clause": "L2.VC.008",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[16, 32] @dram(tile=1x8), y: f16[16, 32] @dram(tile=1x8))",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..1",
+   "            xl = load x                        : f16[16, 32] @l1(gt4)",
+   "            v = unpack xl                      : f32[16, 32] @reg(gt4)",
+   "            e = exp2 v                         : f32[16, 32] @reg(gt4)",
+   "            ol = pack e                     : f16[16, 32] @l1(gt4)",
+   "            store y <- ol"
+  ],
+  "passes": [],
+  "facts": {
+   "modes": {
+    "set": "^vunpk .* (gt4|f16)\\b",
+    "in": "images"
+   }
+  }
+ },
+ "expect": {
+  "modes": [
+   "gt4"
+  ]
+ },
+ "mutants": [
+  "l2.vector/tile-loads-rows"
+ ]
+}

@@ -1,0 +1,12 @@
+{
+  "clause": "L1.IMG.022",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    uptr 16\n    uinc 8\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": ["UPTR ptr=16", "UINC ptr=8", "VHALT"]},
+  "mutants": ["l1.img/pointers"]
+}

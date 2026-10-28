@@ -1,0 +1,82 @@
+{
+ "clause": "L0.BIND.011",
+ "tier": 0,
+ "runner": "l0.pkg.bind",
+ "status": "frozen",
+ "input": {
+  "package": {
+   "units": [
+    {
+     "type": "MG",
+     "x": 1,
+     "y": 1,
+     "credit": 512,
+     "fetch": "0x10200"
+    }
+   ],
+   "buffers": [
+    {
+     "name": "a",
+     "size": 4096,
+     "default": "0x1000"
+    },
+    {
+     "name": "b",
+     "size": 4096,
+     "default": "0x2000"
+    }
+   ],
+   "steps": [
+    {
+     "op": "DISPATCH",
+     "unit": 0,
+     "count": 2,
+     "arg": 0
+    }
+   ],
+   "relocs": [
+    {
+     "payload": 0,
+     "bit": 0,
+     "width": 40,
+     "buffer": 0,
+     "addend": 16
+    },
+    {
+     "payload": 1,
+     "bit": 64,
+     "width": 40,
+     "buffer": 1,
+     "addend": 32
+    }
+   ],
+   "payloads": [
+    "0x0",
+    "0x0"
+   ],
+   "signature": "0x77",
+   "ack_reserve": 4,
+   "checksum": true
+  },
+  "bindings": [
+   "0x80000",
+   "0x90000"
+  ]
+ },
+ "expect": {
+  "payloads": [
+   "0x80010",
+   "0x900200000000000000000"
+  ],
+  "relocs": 0,
+  "buffers": 0,
+  "units_same": true,
+  "steps_same": true,
+  "signature": "0x77",
+  "ack_reserve": 4,
+  "checksum": true
+ },
+ "mutants": [
+  "l0.bind/keeps_relocs"
+ ]
+}

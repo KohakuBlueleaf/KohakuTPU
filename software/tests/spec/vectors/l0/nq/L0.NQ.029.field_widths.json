@@ -1,0 +1,51 @@
+{
+ "clause": "L0.NQ.029",
+ "tier": 0,
+ "runner": "l0.queue",
+ "status": "frozen",
+ "input": {
+  "geometry": {
+   "sq_n": 64,
+   "cq_n": 64,
+   "so_bytes": 4096,
+   "si_bytes": 256
+  },
+  "script": [
+   {
+    "do": "init"
+   },
+   {
+    "do": "submit",
+    "length": 64
+   },
+   {
+    "do": "complete",
+    "tag": 1,
+    "status": 48,
+    "detail": 65535,
+    "step": 4294967295
+   },
+   {
+    "do": "poll"
+   }
+  ]
+ },
+ "expect": [
+  null,
+  1,
+  null,
+  [
+   {
+    "tag": 1,
+    "status": "0x30",
+    "detail": 65535,
+    "step": 4294967295,
+    "cycles": 0,
+    "value": "0x0"
+   }
+  ]
+ ],
+ "mutants": [
+  "l0.queue/cq_entry"
+ ]
+}

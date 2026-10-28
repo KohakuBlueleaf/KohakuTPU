@@ -1,0 +1,46 @@
+{
+ "clause": "TG.PLAN.008",
+ "tier": 0,
+ "runner": "tg.plan",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "X": [
+    32,
+    64
+   ],
+   "W": [
+    96,
+    64
+   ],
+   "B": [
+    96
+   ]
+  },
+  "make": "T(X) @ T(W).T + T(B)",
+  "keys": [
+   "kind",
+   "mnk",
+   "batch",
+   "expr"
+  ]
+ },
+ "expect": [
+  {
+   "kind": "matmul",
+   "mnk": [
+    32,
+    96,
+    [
+     64
+    ]
+   ],
+   "batch": [],
+   "expr": "add(L0, L1)"
+  }
+ ],
+ "mutants": [
+  "tg.lower/no_matmul"
+ ]
+}

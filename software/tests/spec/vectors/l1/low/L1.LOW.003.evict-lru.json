@@ -1,0 +1,16 @@
+{
+  "clause": "L1.LOW.003",
+  "tier": 0,
+  "runner": "l1.build",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k1()\n    for i in 0..398\n        vmov v1, v2\n    halt\nimage k2()\n    for i in 0..398\n        vmov v3, v4\n    halt\nimage k3()\n    for i in 0..398\n        vmov v5, v6\n    halt\nfn f.l1(a: f16[64] @dram)\n    send vc[0]\n        run k1()\n        run k2()\n        run k3()\n        run k2()\n        run k1()\n",
+    "fn": "f",
+    "binds": {"a": 4096},
+    "resident": true,
+    "only": ["RUN"]
+  },
+  "expect": {"-": {"steps": [["RUN", 0], ["RUN", 400], ["RUN", 0], ["RUN", 400], ["RUN", 0]]}},
+  "mutants": ["l1.lower/hit-evicted-first"]
+}

@@ -1,0 +1,16 @@
+{
+  "clause": "L1.MOD.005",
+  "tier": 0,
+  "runner": "l1.module",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage flat_n0(in0, out)\n    vbar\n    halt\n"
+  },
+  "expect": {
+    "target": "ktpu.v9",
+    "fns": [],
+    "images": [["flat_n0", ["in0", "out"], 2]],
+    "macros": []
+  },
+  "mutants": ["l1.module/no-params"]
+}

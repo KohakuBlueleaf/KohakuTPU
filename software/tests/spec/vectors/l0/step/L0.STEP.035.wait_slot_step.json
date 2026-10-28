@@ -1,0 +1,64 @@
+{
+ "clause": "L0.STEP.035",
+ "tier": 0,
+ "runner": "l0.pkg.build",
+ "status": "frozen",
+ "input": {
+  "builder": {
+   "types": [
+    [
+     1,
+     1,
+     "MG"
+    ]
+   ],
+   "credit": 512
+  },
+  "calls": [
+   [
+    "wait_slot",
+    3,
+    7,
+    true
+   ],
+   [
+    "wait_slot",
+    4,
+    1
+   ]
+  ],
+  "keys": [
+   "package"
+  ]
+ },
+ "expect": {
+  "package": {
+   "units": [],
+   "buffers": [],
+   "steps": [
+    {
+     "op": "WAIT_SLOT",
+     "unit": 3,
+     "count": 7,
+     "arg": "0x0",
+     "flags": 32
+    },
+    {
+     "op": "WAIT_SLOT",
+     "unit": 4,
+     "count": 1,
+     "arg": "0x0",
+     "flags": 0
+    }
+   ],
+   "relocs": [],
+   "payloads": [],
+   "signature": "0x0",
+   "ack_reserve": 0,
+   "checksum": false
+  }
+ },
+ "mutants": [
+  "l0.build/flags_dropped"
+ ]
+}

@@ -1,0 +1,6 @@
+{
+ "clause": "L0.BIND.030", "tier": 0, "runner": "memory.recording",
+ "machine": "multimesh_v9t6", "status": "frozen", "input": {},
+ "expect": {"initial": 0, "held": true, "released": true},
+ "mutants": ["memory/no-record-pins"]
+}

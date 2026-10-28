@@ -1,0 +1,30 @@
+{
+ "clause": "DSL.SPEC.005",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    a = TY.TensorSpec.make((64, 64), \"mx7a\", {\"nk\": 1, \"gm\": 16})\n    t = TY.TensorSpec.make((64, 32), \"f16\", {\"tile\": (16, 8)})\n    n = TY.TensorSpec.make((64, 32), \"f16\", {\"node\": 1})\n    plain = TY.TensorSpec.make((4, 32))\n    return {\n        \"sorted\": [k for k, _ in a.layout],\n        \"tiled\": [t.tiled, n.tiled],\n        \"rowmajor\": [t.rowmajor, n.rowmajor, a.rowmajor, plain.rowmajor],\n    }\n"
+ },
+ "expect": {
+  "sorted": [
+   "gm",
+   "nk"
+  ],
+  "tiled": [
+   true,
+   false
+  ],
+  "rowmajor": [
+   false,
+   true,
+   false,
+   true
+  ]
+ },
+ "mutants": [
+  "dsl.types/unsorted",
+  "dsl.types/rowmajor"
+ ]
+}

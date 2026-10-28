@@ -1,0 +1,37 @@
+{
+ "clause": "L0.DE.006",
+ "tier": 0,
+ "runner": "l0.pairs",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "host": [
+   "engine.CTR_MASK",
+   "engine.SRC_MOVER",
+   "engine.UNITS"
+  ],
+  "header": [
+   "dispatch/de.h:KA_DE_CTR_MASK",
+   "dispatch/de.h:KA_DE_MOVER",
+   "dispatch/de.h:KA_DE_UNITS"
+  ],
+  "machine": [
+   "node.engine.counter_bits",
+   "node.engine.counters"
+  ]
+ },
+ "expect": {
+  "engine.CTR_MASK": 4095,
+  "engine.SRC_MOVER": 16,
+  "engine.UNITS": 16,
+  "dispatch/de.h:KA_DE_CTR_MASK": 4095,
+  "dispatch/de.h:KA_DE_MOVER": 16,
+  "dispatch/de.h:KA_DE_UNITS": 16,
+  "node.engine.counter_bits": 12,
+  "node.engine.counters": 16
+ },
+ "mutants": [
+  "l0.lower/ctr_mask",
+  "l0.lower/src_mover"
+ ]
+}

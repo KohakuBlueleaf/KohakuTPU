@@ -1,0 +1,19 @@
+{
+  "clause": "L1.IMG.030",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    seti s2 = 4\n    loop s2\n        vmul v1, v2, v3\n        vadd v4, v5, v6\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": [
+    "VSETI sreg=2", "imm=0x4",
+    "CHKVL vl1=127 d_stride=1 c_stride=1 b_stride=1 a_stride=1",
+    "VLOOP sreg=2 body=2",
+    "vmul vd=1 va=2 vb=3",
+    "vadd vd=4 va=5 vc=6",
+    "VHALT"
+  ]},
+  "mutants": ["l1.img/no-hoist"]
+}

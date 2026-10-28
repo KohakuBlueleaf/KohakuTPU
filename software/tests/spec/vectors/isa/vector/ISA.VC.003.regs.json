@@ -1,0 +1,25 @@
+{
+ "clause": "ISA.VC.003",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "core.v21",
+   "m:vc.regs",
+   "m:vc.build"
+  ]
+ },
+ "expect": {
+  "core.v21": [
+   128,
+   2
+  ],
+  "m:vc.regs": 128,
+  "m:vc.build": "v21"
+ },
+ "mutants": [
+  "isa.vector/consts"
+ ]
+}

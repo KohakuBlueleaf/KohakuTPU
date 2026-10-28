@@ -1,0 +1,72 @@
+{
+ "clause": "DSL.GRAPH.002",
+ "tier": 0,
+ "runner": "dsl.graph",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(8, 32), y=kt.Out(8, 32)):\n    for c in kt.par(2, on=kt.vc):\n        for t in kt.range(1):\n            kt.store(y[c * 4 : c * 4 + 4, :], kt.load(x[c * 4 : c * 4 + 4, :]))\n",
+  "given": {
+   "x": [
+    [
+     8,
+     32
+    ],
+    "f16"
+   ]
+  }
+ },
+ "expect": {
+  "root": [
+   {
+    "op": "par",
+    "args": [
+     "c1 in 0..2",
+     "on",
+     "vc[c1]"
+    ],
+    "target": null,
+    "annot": null,
+    "where": "spec_kernel.py:3",
+    "body": [
+     {
+      "op": "for",
+      "args": [
+       "t1 in 0..1"
+      ],
+      "target": null,
+      "annot": null,
+      "where": "spec_kernel.py:4",
+      "body": [
+       {
+        "op": "load",
+        "args": [
+         "x[c1*4 : +4]"
+        ],
+        "target": "xl1",
+        "annot": "f16[4, 32] @l1",
+        "where": "spec_kernel.py:5",
+        "body": null
+       },
+       {
+        "op": "store",
+        "args": [
+         "y[c1*4 : +4]",
+         "<-",
+         "xl1"
+        ],
+        "target": null,
+        "annot": null,
+        "where": "spec_kernel.py:5",
+        "body": null
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "mutants": [
+  "dsl.ops/var_names"
+ ]
+}

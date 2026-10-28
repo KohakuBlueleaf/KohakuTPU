@@ -1,0 +1,135 @@
+{
+ "clause": "L0.DE.006",
+ "tier": 0,
+ "runner": "l0.pkg.lower",
+ "status": "frozen",
+ "input": {
+  "package": {
+   "units": [
+    {
+     "type": "MG",
+     "x": 1,
+     "y": 1,
+     "credit": 512,
+     "fetch": "0x10200"
+    },
+    {
+     "type": "MG",
+     "x": 1,
+     "y": 2,
+     "credit": 512,
+     "fetch": "0x10200"
+    },
+    {
+     "type": "VC",
+     "x": 2,
+     "y": 1,
+     "credit": 512,
+     "fetch": "0x10200"
+    },
+    {
+     "type": "VC",
+     "x": 2,
+     "y": 2,
+     "credit": 512,
+     "fetch": "0x10200"
+    }
+   ],
+   "steps": [
+    {
+     "op": "AWAIT",
+     "unit": 3,
+     "count": 7000
+    },
+    {
+     "op": "MOVER",
+     "count": 1,
+     "arg": 0
+    }
+   ],
+   "payloads": [
+    "0xffffffffffffffff00000000000100000000000000000000"
+   ]
+  }
+ },
+ "expect": {
+  "steps": [
+   {
+    "op": "ENGINE",
+    "first": 1,
+    "entries": [
+     [
+      32,
+      "0x300000000000b58"
+     ],
+     [
+      8,
+      "0x10000"
+     ],
+     [
+      32,
+      "0x1000000000000001"
+     ],
+     [
+      32,
+      "0x300000000000b58"
+     ],
+     [
+      32,
+      "0x1000000000000001"
+     ]
+    ],
+    "pad": [
+     [
+      255,
+      "0x0"
+     ]
+    ]
+   }
+  ],
+  "kept": true,
+  "units": [
+   {
+    "type": "MG",
+    "x": 1,
+    "y": 1,
+    "mesh": 0,
+    "credit": 512,
+    "fetch": "0x10200"
+   },
+   {
+    "type": "MG",
+    "x": 1,
+    "y": 2,
+    "mesh": 0,
+    "credit": 512,
+    "fetch": "0x10200"
+   },
+   {
+    "type": "VC",
+    "x": 2,
+    "y": 1,
+    "mesh": 0,
+    "credit": 512,
+    "fetch": "0x10200"
+   },
+   {
+    "type": "VC",
+    "x": 2,
+    "y": 2,
+    "mesh": 0,
+    "credit": 512,
+    "fetch": "0x10200"
+   }
+  ],
+  "buffers": 0,
+  "relocs": 0,
+  "signature": "0x0",
+  "ack_reserve": 0,
+  "checksum": false
+ },
+ "mutants": [
+  "l0.lower/ctr_mask",
+  "l0.lower/src_mover"
+ ]
+}

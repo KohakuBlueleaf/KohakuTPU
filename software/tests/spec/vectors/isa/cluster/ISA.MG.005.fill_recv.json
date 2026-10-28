@@ -1,0 +1,25 @@
+{
+ "clause": "ISA.MG.005",
+ "tier": 0,
+ "runner": "isa.cluster.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "op": "Fill",
+  "args": [
+   0,
+   16
+  ],
+  "kw": {
+   "recv": true,
+   "sel": 1
+  }
+ },
+ "expect": {
+  "payload": "0x1000000000004200000128000000200000000000000000000000000000000000"
+ },
+ "mutants": [
+  "isa.cluster/fields",
+  "isa.cluster/opcodes"
+ ]
+}

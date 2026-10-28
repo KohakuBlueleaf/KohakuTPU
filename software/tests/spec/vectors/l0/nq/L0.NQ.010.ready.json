@@ -1,0 +1,38 @@
+{
+ "clause": "L0.NQ.010",
+ "tier": 0,
+ "runner": "l0.queue",
+ "status": "frozen",
+ "input": {
+  "script": [
+   {
+    "do": "init"
+   },
+   {
+    "do": "state",
+    "words": [
+     1,
+     3,
+     0,
+     0
+    ]
+   },
+   {
+    "do": "wait_ready"
+   }
+  ]
+ },
+ "expect": [
+  null,
+  null,
+  {
+   "state": "ready",
+   "abi": 3,
+   "done": 0,
+   "fatal": 0
+  }
+ ],
+ "mutants": [
+  "l0.queue/states"
+ ]
+}

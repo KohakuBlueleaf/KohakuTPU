@@ -1,0 +1,15 @@
+{
+ "clause": "RUL.001",
+ "tier": 0,
+ "runner": "isa.vector.machine_of",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "board": "multimesh_v9t6"
+ },
+ "expect": {
+  "regs": 128,
+  "copies": 2
+ },
+ "mutants": ["rul.001/registers"]
+}

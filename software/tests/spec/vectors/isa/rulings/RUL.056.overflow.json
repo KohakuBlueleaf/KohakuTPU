@@ -1,0 +1,14 @@
+{
+ "clause": "RUL.056",
+ "tier": 0,
+ "runner": "isa.vector.e8m15",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "x": 1e+39
+ },
+ "expect": {
+  "e8m15": "0x7f8000"
+ },
+ "mutants": ["isa.vector/e8m15"]
+}

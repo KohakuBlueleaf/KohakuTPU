@@ -1,0 +1,87 @@
+{
+ "clause": "L0.BOOT.014",
+ "tier": 0,
+ "runner": "l0.queue",
+ "status": "frozen",
+ "input": {
+  "script": [
+   {
+    "do": "init"
+   },
+   {
+    "do": "state",
+    "words": [
+     3,
+     4,
+     0,
+     "0xe100000000000001"
+    ]
+   },
+   {
+    "do": "wait_ready"
+   },
+   {
+    "do": "state",
+    "words": [
+     3,
+     4,
+     0,
+     "0xe100000000000002"
+    ]
+   },
+   {
+    "do": "wait_ready"
+   },
+   {
+    "do": "state",
+    "words": [
+     3,
+     4,
+     0,
+     "0xe100000000000003"
+    ]
+   },
+   {
+    "do": "wait_ready"
+   },
+   {
+    "do": "state",
+    "words": [
+     3,
+     4,
+     0,
+     "0xe100000000000004"
+    ]
+   },
+   {
+    "do": "wait_ready"
+   }
+  ]
+ },
+ "expect": [
+  null,
+  null,
+  {
+   "error": "BootRefused",
+   "message": "firmware refused boot (no magic, code 0x1): {'state': 'fatal', 'abi': 4, 'done': 0, 'fatal': 16212958658533785601}"
+  },
+  null,
+  {
+   "error": "BootRefused",
+   "message": "firmware refused boot (version, code 0x2): {'state': 'fatal', 'abi': 4, 'done': 0, 'fatal': 16212958658533785602}"
+  },
+  null,
+  {
+   "error": "BootRefused",
+   "message": "firmware refused boot (units, code 0x3): {'state': 'fatal', 'abi': 4, 'done': 0, 'fatal': 16212958658533785603}"
+  },
+  null,
+  {
+   "error": "BootRefused",
+   "message": "firmware refused boot (regions, code 0x4): {'state': 'fatal', 'abi': 4, 'done': 0, 'fatal': 16212958658533785604}"
+  }
+ ],
+ "mutants": [
+  "l0.boot/ignore_refusal"
+ ]
+}

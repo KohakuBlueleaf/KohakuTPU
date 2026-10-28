@@ -1,0 +1,19 @@
+{
+ "clause": "TG.PIN.002",
+ "tier": 0,
+ "runner": "tg.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "def facts():\n    rows = 32 + 4 * UNIQUE()\n    xs = [T(np.full((rows, 64), i, np.float16)) for i in range(12)]\n    out = xs[0]\n    for x in xs[1:]:\n        out = out + x\n    n = [len([u for u in a.toposort() if u.op is Ops.PARAM]) for a in asts(out)]\n    return {\n        \"cap\": rangeify.DEVICE_MAX_BUFS[\"KTPU\"],\n        \"descriptors\": MACHINE.vc.descriptors,\n        \"fits\": max(n) <= MACHINE.vc.descriptors,\n        \"cut\": len(n) > 1,\n    }\n"
+ },
+ "expect": {
+  "cap": 8,
+  "descriptors": 8,
+  "fits": true,
+  "cut": true
+ },
+ "mutants": [
+  "tg.seam/max_bufs"
+ ]
+}

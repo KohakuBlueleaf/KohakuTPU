@@ -1,0 +1,27 @@
+{
+ "clause": "ISA.VC.112",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "vpack_mx7",
+    "args": [
+     6,
+     256
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0xa9be0100"
+  ]
+ },
+ "mutants": [
+  "isa.vector/modes",
+  "isa.vector/walk_fields"
+ ]
+}

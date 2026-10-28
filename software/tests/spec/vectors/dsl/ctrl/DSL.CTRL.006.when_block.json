@@ -1,0 +1,54 @@
+{
+ "clause": "DSL.CTRL.006",
+ "tier": 0,
+ "runner": "dsl.trace",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(\n    a=kt.In(64, 64, dtype=\"mx7a\", layout={\"gm\": 16, \"nk\": 1}),\n    b=kt.In(32, 64, dtype=\"mx7b\", layout={\"gn\": 8, \"nk\": 1}),\n    y=kt.Out(64, 32),\n):\n    h = kt.buffer((64, 32), \"f16\", tile=(16, 8))\n    for u in kt.par(2, on=kt.mg):\n        acc = kt.gemm(kt.fill(a[0:64, 0:32]), kt.fill(b[0:32, 0:32]))\n        with kt.when(u == 0):\n            kt.drain(acc, h)\n        with kt.when(u != 0):\n            kt.drain(acc, h)\n    kt.copy(y, h)\n",
+  "given": {
+   "a": {
+    "shape": [
+     64,
+     64
+    ],
+    "dtype": "mx7a",
+    "layout": {
+     "gm": 16,
+     "nk": 1
+    }
+   },
+   "b": {
+    "shape": [
+     32,
+     64
+    ],
+    "dtype": "mx7b",
+    "layout": {
+     "gn": 8,
+     "nk": 1
+    }
+   }
+  }
+ },
+ "expect": {
+  "body": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(a: mx7a[64, 64] @dram(gm=16, nk=1), b: mx7b[32, 64] @dram(gn=8, nk=1), y: f16[64, 32] @dram)",
+   "    h1 = buffer : f16[64, 32] @dram(tile=16x8)",
+   "    par u1 in 0..2 on mg[u1]",
+   "        a1 = fill a[0 : +64, 0 : +32] : mx7a[64, 32] @A",
+   "        b1 = fill b[0 : +32, 0 : +32] : mx7b[32, 32] @B",
+   "        acc1 = gemm a1, b1 : f32[64, 32] @acc",
+   "        when u1 == 0",
+   "            drain acc1 -> h1",
+   "        when u1 != 0",
+   "            drain acc1 -> h1",
+   "    copy y <- h1"
+  ]
+ },
+ "mutants": [
+  "dsl.expr/cond"
+ ]
+}

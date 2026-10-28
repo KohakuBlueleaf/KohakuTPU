@@ -1,0 +1,37 @@
+{
+ "clause": "L2.LOW.011",
+ "tier": 2,
+ "runner": "l2.verilated",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[16, 128] @dram, y: f16[16, 128] @dram)",
+   "    par c in 0..2 on vc[c]",
+   "        for t in 0..2",
+   "            xl = load x[c*8 + t*4 : +4, :]           : f16[4, 128] @l1",
+   "            v = unpack xl                            : f32[4, 128] @reg",
+   "            e = mul v, -1.4426950408889634           : f32[4, 128] @reg",
+   "            e = exp2 e                               : f32[4, 128] @reg",
+   "            e = add e, 1.0                           : f32[4, 128] @reg",
+   "            e = inv e                                : f32[4, 128] @reg",
+   "            o = mul v, e                             : f32[4, 128] @reg",
+   "            ol = pack o                              : f16[4, 128] @l1",
+   "            store y[c*8 + t*4 : +4, :] <- ol"
+  ],
+  "inputs": [
+   "x"
+  ],
+  "output": "y",
+  "ref": "silu",
+  "tol": 0.002
+ },
+ "expect": {
+  "match": true
+ },
+ "mutants": [
+  "l2.vector/unary-swapped"
+ ]
+}

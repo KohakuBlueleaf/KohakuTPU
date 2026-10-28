@@ -1,0 +1,12 @@
+{
+  "clause": "L1.IMG.020",
+  "tier": 0,
+  "runner": "l1.image",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nimage k()\n    ainc a2 += -64\n    ainc a0 += 2K\n    halt\n",
+    "image": "k"
+  },
+  "expect": {"words": ["AINC ad=2 inc=-64", "AINC inc=2048", "VHALT"]},
+  "mutants": ["l1.img/ainc-abs"]
+}

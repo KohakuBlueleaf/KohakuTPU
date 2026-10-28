@@ -1,0 +1,9 @@
+{
+  "clause": "RUL.057",
+  "tier": 0,
+  "runner": "num.fp16_values",
+  "status": "frozen",
+  "input": {"bits": [31744, 1, 31743], "consumer": "vector"},
+  "expect": ["inf", "0x1.0000000000000p-24", "0x1.ffc0000000000p+15"],
+  "mutants": ["num.fp16/consumer-ignored"]
+}

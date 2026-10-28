@@ -1,0 +1,24 @@
+{
+  "clause": "L1.NODE.001",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[64] @dram, b: u64[64] @dram)\n    t = mark mg[0]\n    send mg[0]\n        drain a n=1\n    wait mg[0] upto=t\n    p = move posted\n        copy w(a, (1, 32)) -> w(b, (1, 32))\n    wait moves p\n",
+    "fn": "f",
+    "binds": {"a": 4096, "b": 8192}
+  },
+  "expect": {"-": {"steps": [
+    ["mark", [1, 1], 0],
+    ["send", [1, 1], ["DRAIN addr=0x1000 n=1 nk=1 anchor=40"]],
+    ["wait", [1, 1], 0],
+    ["post", [
+      "HDR base=0x1000 ndim=1", "DIM count=1 stride=32", "AXIS", "WIN", "WIN axis=1",
+      "HDR sel=1 base=0x2000 ndim=1", "DIM sel=1 count=1 stride=32", "AXIS", "WIN sel=1", "WIN sel=1 axis=1",
+      "CTRL ew=2 flags=0x8 go=1"
+    ], 0],
+    ["wait_moves", 0]
+  ]}},
+  "mutants": ["l1.node/mark-token", "l1.node/post-blocks"]
+}

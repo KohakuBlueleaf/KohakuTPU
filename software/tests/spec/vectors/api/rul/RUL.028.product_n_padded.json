@@ -1,0 +1,27 @@
+{
+ "clause": "RUL.028",
+ "tier": 0,
+ "runner": "api.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "XK": [
+    32,
+    64
+   ],
+   "W10": [
+    10,
+    64
+   ]
+  },
+  "source": "def facts():\n    try:\n        y = kp.tensor(XK) @ kp.tensor(W10).T\n        y.realize()\n    except KT.Unsupported:\n        return {\"shape\": None}\n    return {\"shape\": list(y.shape)}\n"
+ },
+ "expect": {
+  "shape": [
+   32,
+   10
+  ]
+ },
+ "mutants": ["api.product/refuse_n"]
+}

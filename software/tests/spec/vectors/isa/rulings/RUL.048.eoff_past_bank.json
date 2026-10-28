@@ -1,0 +1,21 @@
+{
+ "clause": "RUL.048",
+ "tier": 0,
+ "runner": "isa.cluster.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "op": "Fill",
+  "args": [
+   4096,
+   100
+  ],
+  "kw": {
+   "eoff": 200
+  }
+ },
+ "expect": {
+  "refused": "ValueError"
+ },
+ "mutants": ["rul.048/fill-wraps"]
+}

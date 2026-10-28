@@ -1,0 +1,13 @@
+{
+ "clause": "API.REF.007",
+ "tier": 1,
+ "runner": "api.exec",
+ "machine": "vlt_v9t6s_1n",
+ "status": "frozen",
+ "input": {
+  "arrays": {"x": [1, 65, 197]},
+  "source": "def facts():\n    a = x.astype(np.float32)\n    ex = np.exp(a - a.max(-1, keepdims=True))\n    want = ex / ex.sum(-1, keepdims=True)\n    got = kp.tensor(x).softmax().numpy().astype(np.float32)\n    rel = float(np.abs(got - want).max() / np.abs(want).max())\n    print('VIT softmax max-relative-error', rel)\n    return {'ok': bool(np.isfinite(got).all() and rel < 0.02)}\n"
+ },
+ "expect": {"ok": true},
+ "mutants": ["api.rows/flat_logical_rows"]
+}

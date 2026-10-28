@@ -1,0 +1,25 @@
+{
+ "clause": "ISA.VC.140",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "queue"
+  ]
+ },
+ "expect": {
+  "queue": {
+   "VUNPK": "U",
+   "VPACK": "P",
+   "VFILL": "F",
+   "VDRAIN": "D",
+   "VPOST": "D",
+   "VBAR": "U"
+  }
+ },
+ "mutants": [
+  "isa.vector/model_queues"
+ ]
+}

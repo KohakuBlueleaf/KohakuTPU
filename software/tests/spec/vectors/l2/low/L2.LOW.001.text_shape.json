@@ -1,0 +1,40 @@
+{
+ "clause": "L2.LOW.001",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram)",
+   "    h = buffer : f16[8, 128] @dram",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..1",
+   "            xl = load x[c*8 : +8, :]     : f16[8, 128] @l1",
+   "            v = unpack xl                    : f32[8, 128] @reg",
+   "            e = exp2 v                       : f32[8, 128] @reg",
+   "            ol = pack e                  : f16[8, 128] @l1",
+   "            store h[c*8 : +8, :] <- ol",
+   "    copy y <- h"
+  ],
+  "passes": [],
+  "facts": {
+   "heads": {
+    "lines": "^(target|image|fn) "
+   }
+  }
+ },
+ "expect": {
+  "heads": [
+   "target ktpu.v9 vregs=128 vcopies=2",
+   "image k_n0_vc0_0(p_a0, p_a1)",
+   "fn k.l1(x: f16[8, 128] @dram, y: f16[8, 128] @dram, h: f16[8, 128] @dram)"
+  ]
+ },
+ "mutants": [
+  "l2.lower/scratch-dropped",
+  "l2.target/vregs-default"
+ ]
+}

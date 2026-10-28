@@ -1,0 +1,17 @@
+{
+  "clause": "L1.NODE.011",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[4] @dram)\n    wait slot 3 n=2 consume\n    wait bell 0 n=1\n",
+    "fn": "f",
+    "binds": {"a": 4096}
+  },
+  "expect": {"-": {"steps": [
+    ["wait_slot", 3, 2, true],
+    ["wait_bell", 0, 1]
+  ]}},
+  "mutants": ["l1.node/slot-keeps"]
+}

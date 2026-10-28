@@ -1,0 +1,58 @@
+{
+ "clause": "ISA.VC.143",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "vsync",
+    "args": [
+     0,
+     0
+    ]
+   },
+   {
+    "fn": "vsync",
+    "args": [
+     1,
+     1
+    ]
+   },
+   {
+    "fn": "vsync",
+    "args": [
+     3,
+     3
+    ]
+   },
+   {
+    "fn": "vsync",
+    "args": [
+     4,
+     4
+    ]
+   },
+   {
+    "fn": "vsync",
+    "args": [
+     6,
+     4
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0xb0000000",
+   "0xb1200000",
+   "0xb3600000",
+   "0xb4800000",
+   "0xb6800000"
+  ]
+ },
+ "mutants": [
+  "isa.vector/sync_fields"
+ ]
+}

@@ -1,0 +1,32 @@
+{
+ "clause": "ISA.VC.167",
+ "tier": 0,
+ "runner": "isa.vector.word",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "calls": [
+   {
+    "fn": "chkvl",
+    "args": [
+     128
+    ]
+   },
+   {
+    "fn": "chkvl",
+    "args": [
+     1
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "words": [
+   "0x9d7f1111",
+   "0x9d001111"
+  ]
+ },
+ "mutants": [
+  "isa.vector/chkvl_vl"
+ ]
+}

@@ -1,0 +1,20 @@
+{
+  "clause": "L1.NODE.008",
+  "tier": 0,
+  "runner": "l1.steps",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn f.l1(a: u64[4] @dram)\n    r1 = set 0\n    r2 = set 4\n    label top\n    r1 = add r1, 1\n    goto top if r1 < r2\n",
+    "fn": "f",
+    "binds": {"a": 4096}
+  },
+  "expect": {"-": {"steps": [
+    ["alu", 1, "MOV", 0, 0, true],
+    ["alu", 2, "MOV", 0, 4, true],
+    ["label", "top"],
+    ["alu", 1, "ADD", 1, 1, true],
+    ["jump", "top", "LTU", 1, 2, false]
+  ]}},
+  "mutants": ["l1.node/goto-signed"]
+}

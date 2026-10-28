@@ -1,0 +1,25 @@
+{
+ "clause": "ISA.MG.060",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "mg.bank",
+   "mg.l2_bank",
+   "m:mg.l1_bank_entries",
+   "m:mg.l1_a_entries"
+  ]
+ },
+ "expect": {
+  "mg.bank": 256,
+  "mg.l2_bank": 256,
+  "m:mg.l1_bank_entries": 256,
+  "m:mg.l1_a_entries": 512
+ },
+ "mutants": [
+  "isa.cluster/plan",
+  "isa.cluster/bank"
+ ]
+}

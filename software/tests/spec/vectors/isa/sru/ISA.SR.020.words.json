@@ -1,0 +1,30 @@
+{
+ "clause": "ISA.SR.020",
+ "tier": 0,
+ "runner": "isa.sru.words",
+ "machine": "sru_v9t7",
+ "status": "frozen",
+ "input": {
+  "g": {
+   "NW": 8,
+   "NPASS": 1,
+   "BUF": 1,
+   "OUT": 2,
+   "NSR": 4,
+   "ROW0": 3,
+   "DHI": -3,
+   "CLIM": 100,
+   "K1": 4177920
+  }
+ },
+ "expect": {
+  "0x0": "0x25008",
+  "0x1": "0x30004",
+  "0x2": "0xfffd0000",
+  "0x3": "0x64",
+  "0x9": "0x3fc000"
+ },
+ "mutants": [
+  "isa.sru/map"
+ ]
+}

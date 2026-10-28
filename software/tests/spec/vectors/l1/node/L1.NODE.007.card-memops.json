@@ -1,0 +1,14 @@
+{
+  "clause": "L1.NODE.007",
+  "tier": 1,
+  "runner": "l1.card",
+  "machine": "multimesh_v9t6",
+  "status": "frozen",
+  "input": {
+    "text": "target ktpu.v9\nfn m.l1(out: u64[4] @dram)\n    store out <- 0x1234\n    r1 = load out\n    r1 = add r1, 1\n    store out + 8 <- r1\n    store out + 16 <- -1\n",
+    "fn": "m",
+    "read": ["out"]
+  },
+  "expect": {"out": [4660, 0, 4661, 0, 4294967295, 4294967295, 0, 0]},
+  "mutants": ["l1.node/alu-table"]
+}

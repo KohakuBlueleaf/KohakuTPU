@@ -1,0 +1,29 @@
+{
+ "clause": "DSL.CTRL.008",
+ "tier": 0,
+ "runner": "dsl.trace",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(8, 32), y=kt.Out(8, 32), *, rows=4):\n    kt.require(rows % 4 == 0, f\"trips of whole 4-row bands, not {rows}\")\n    for c in kt.par(2, on=kt.vc):\n        kt.store(y[c * 4 : c * 4 + 4, :], kt.load(x[c * 4 : c * 4 + 4, :]))\n",
+  "given": {
+   "x": [
+    [
+     8,
+     32
+    ],
+    "f16"
+   ]
+  },
+  "consts": {
+   "rows": 6
+  }
+ },
+ "expect": {
+  "error": "DSLError",
+  "message": "trips of whole 4-row bands, not 6, at spec_kernel.py:3"
+ },
+ "mutants": [
+  "dsl.kernel/require_off"
+ ]
+}

@@ -1,0 +1,29 @@
+{
+ "clause": "ISA.VC.011",
+ "tier": 0,
+ "runner": "isa.vector.image",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": "image k()\n    desc a7 = 4096 walk=((32, 2), (64, 3), (-128, 4), (256, 0))\n    halt\n",
+  "name": "k",
+  "args": [],
+  "entry": "unknown"
+ },
+ "expect": {
+  "words": [
+   "0xf8000000"
+  ],
+  "descs": {
+   "7,0": "0x1000",
+   "7,1": "0x200002",
+   "7,2": "0x400003",
+   "7,3": "0x3ff800004",
+   "7,4": "0x1000000"
+  }
+ },
+ "mutants": [
+  "isa.vector/dim",
+  "isa.vector/desc_dims"
+ ]
+}

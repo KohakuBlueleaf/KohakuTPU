@@ -1,0 +1,35 @@
+{
+ "clause": "L2.PASS.011",
+ "tier": 1,
+ "runner": "l2.card",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[64, 128] @dram, y: f16[64, 128] @dram)",
+   "    par c in 0..1 on vc[c]",
+   "        for t in 0..8",
+   "            xl = load x[t*4 : +4, :]   : f16[4, 128] @l1",
+   "            v = unpack xl                      : f32[4, 128] @reg",
+   "            e = exp2 v                         : f32[4, 128] @reg",
+   "            e = exp2 e                         : f32[4, 128] @reg",
+   "            e = exp2 e                         : f32[4, 128] @reg",
+   "            ol = pack e                     : f16[4, 128] @l1",
+   "            store y[t*4 : +4, :] <- ol"
+  ],
+  "inputs": [
+   "x"
+  ],
+  "output": "y",
+  "against": "nopasses",
+  "scale": 0.25
+ },
+ "expect": {
+  "match": true
+ },
+ "mutants": [
+  "l2.passes/retile-bounds-unscaled"
+ ]
+}

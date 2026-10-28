@@ -1,0 +1,35 @@
+{
+ "clause": "ISA.MG.006",
+ "tier": 0,
+ "runner": "isa.vector.params",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "names": [
+   "mg.isa"
+  ]
+ },
+ "expect": {
+  "mg.isa": {
+   "payload_bits": 256,
+   "op_bits": 4,
+   "addr_bits": 34,
+   "addr_hi_bits": 6,
+   "n_bits": 16,
+   "grid_bits": 8,
+   "pos_bits": 4,
+   "peer_bits": 24,
+   "anchor": 40,
+   "kblock": 32,
+   "lanes": 4,
+   "mem_word_bytes": 32,
+   "max_fill": 255,
+   "max_peers": 3,
+   "kstep": 2
+  }
+ },
+ "mutants": [
+  "isa.cluster/cfg",
+  "isa.cluster/split"
+ ]
+}

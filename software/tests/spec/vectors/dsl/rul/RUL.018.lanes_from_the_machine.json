@@ -1,0 +1,16 @@
+{
+ "clause": "RUL.018",
+ "tier": 0,
+ "runner": "dsl.exec",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "source": "@kt.kernel\ndef k(x=kt.In(8, 32), s=kt.In(16), y=kt.Out(8, 32)):\n    for c in kt.par(2, on=kt.vc):\n        m = kt.unpack(kt.load(s[0:16]), lane=12)\n        v = kt.load(x[c * 4 : c * 4 + 4, :])\n        kt.store(y[c * 4 : c * 4 + 4, :], v * m)\n\n\nimport dataclasses\n\n\ndef facts():\n    eight = dataclasses.replace(MACHINE, lanes=8, chunk=8)\n    g = {\"x\": TY.TensorSpec.make((8, 32)), \"s\": TY.TensorSpec.make((16,))}\n    try:\n        k.trace(g, machine=eight)\n    except kt.DSLError:\n        return {\"lane_12_of_8_refused\": True}\n    return {\"lane_12_of_8_refused\": False}\n"
+ },
+ "expect": {
+  "lane_12_of_8_refused": true
+ },
+ "mutants": [
+  "dsl.trace/lanes_16"
+ ]
+}

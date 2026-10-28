@@ -1,0 +1,17 @@
+{
+ "clause": "L0.BIND.036", "tier": 0, "runner": "l0.template.bind", "status": "frozen",
+ "input": {
+  "package": {"payloads": ["0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"]},
+  "bindings": [], "params": {"n": 4660},
+  "table": {
+   "parameters": {"n": {"lo": 0, "hi": 65535}},
+   "sites": [
+    {"name": "low", "payload": 0, "bit": 60, "width": 8, "coefficients": {"n": 1}},
+    {"name": "high", "payload": 0, "bit": 200, "width": 8, "shift": 8, "coefficients": {"n": 1}}
+   ]
+  },
+  "ordinary": {"payloads": ["0xffffffffffff12fffffffffffffffffffffffffffffffff34fffffffffffffff"]}
+ },
+ "expect": {"payloads": ["0xffffffffffff12fffffffffffffffffffffffffffffffff34fffffffffffffff"], "bytes_equal": true, "buffers": 0, "relocs": 0},
+ "mutants": ["l0.template/split"]
+}
