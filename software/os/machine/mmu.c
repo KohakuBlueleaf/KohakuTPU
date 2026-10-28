@@ -201,9 +201,17 @@ int mmu_unmap(uint64_t va, uint64_t size)
     return KOS_OK;
 }
 
+/* The leaf PTE of va; inside a superpage, with the page number of va's 4 KB
+ * page (the leaf's own page number plus va's page within the leaf). */
 uint64_t mmu_query(uint64_t va)
 {
     int level = 0;
     volatile uint64_t *e = leaf(va, &level);
-    return e ? *e : 0;
+    if (!e) {
+        return 0;
+    }
+#if defined(KDS_MUT) && KDS_MUT == 8
+    return *e; /* mutant: the leaf's own page number (tests/host/test_kds.py) */
+#endif
+    return *e + (((va >> 12) & ((1UL << (9 * level)) - 1)) << 10);
 }
