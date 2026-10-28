@@ -15,6 +15,11 @@ instruction is four opaque 64-bit words.** Nothing in L0 or L1 knows what a
 unit computes. The one application that knows an instruction set is
 `apps/ktpu/mg.c` (KohakuTPU's matmul cluster).
 
+This page is the kernel's interface, one instruction or one copy per call.
+Graphs of unit instructions, copies and CPU work with dependencies, across
+nodes and with buffers bound at run time, go through the dispatcher
+([dispatcher.md](dispatcher.md)), which is built on it.
+
 ## The unit registry
 
 The board lists the units (`{type, mesh, x, y, depth}`,

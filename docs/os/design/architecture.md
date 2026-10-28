@@ -99,8 +99,9 @@ lives on.
 
 ### L2 — user (U, Sv39)
 
-`software/os/user/` (`libkos`), `utils/` (`init`, the shell, `ps`, `kstat`),
-`apps/`. Every node runs the same user image; each node has its own copy of
+`software/os/user/` (`libkos`), `dispatch/` (the dispatcher:
+[reference/dispatcher.md](../reference/dispatcher.md)), `utils/` (`init`, the
+shell, `ps`, `kstat`), `apps/`. Every node runs the same user image; each node has its own copy of
 its writable data. An application is a `main(argc, argv)` registered by name
 with `KOS_APP("name", fn)`; the kernel starts it by name on any node
 (`SYS_RUN`), with up to 40 bytes of argument text. Threads within an

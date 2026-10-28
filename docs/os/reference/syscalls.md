@@ -56,7 +56,7 @@ forever**.
 | 7 | `SYS_INFO` | key | value, or `EINVAL` | keys below |
 | 8 | `SYS_SLEEP` | cycles | 0 | |
 | 9 | `SYS_TIME` | — | global time in cycles | |
-| 10 | `SYS_MMAP` | size, flags | user address, or `ENOMEM` | physically contiguous zeroed pages on this node, mapped RW, cached |
+| 10 | `SYS_MMAP` | size, flags | user address, or `ENOMEM` | physically contiguous zeroed pages on this node, mapped RW, cached; `KOS_MMAP_UNCACHED` (1): through the uncached alias |
 | 11 | `SYS_WAIT` | addr, value, timeout | `OK` once `*addr != value`; `ETIME`; `EINVAL` | `addr` a shared word, 8-byte aligned; tested on its uncached view |
 | 12 | `SYS_ATOMIC` | addr, op, a, b | `OK` / old value; `EINVAL` | `addr` a shared word, 8-byte aligned; runs at the word's home node; ops below |
 | 13 | `SYS_CACHE` | `KOS_C_RELEASE` (1) or `KOS_C_ACQUIRE` (2) | 0 | release: write this node's L1 back; acquire: write back, then drop every line |
@@ -65,14 +65,17 @@ forever**.
 | 16 | `SYS_UNIT_WAIT` | unit, ticket, timeout | `OK`, `EFAULT` (the unit faulted), `ETIME`, `EINVAL`, `EAGAIN` (the unit's node has 32 requests pending) / the unit's fault count | waits until the unit has retired `ticket` instructions |
 | 17 | `SYS_UNIT_CTRL` | unit, index | `OK` / the 64-bit `CU_CTRL` word; `EBUSY`, `EINVAL` | reads `CU_CTRL[index]` (0 caps, 1 status, 2 counters, 3 debug) |
 | 18 | `SYS_MOVE` | src, dst, words, flags | `OK`; `−fault`; `EINVAL` | one mover copy of `words` 32-byte words; flags `KOS_MV_LAND(n)`: `dst` is an offset in node `n`'s landing zone |
-| 19 | `SYS_SEND` | node, chan, buf, len ≤ 40 | `OK`; `EINVAL` | a channel message to `node`; waits while there is no room |
-| 20 | `SYS_RECV` | chan, buf, timeout | length / source node; `ETIME`; `EFAULT` | the oldest message on `chan` from any node; `buf` must hold 40 bytes |
+| 19 | `SYS_SEND` | node, chan, buf, len ≤ 40 | `OK`; `EINVAL`; `EAGAIN` | a channel message to `node`; waits while there is no room, or with `len \| KOS_SEND_NOWAIT` (0x100) returns `EAGAIN` |
+| 20 | `SYS_RECV` | chan, buf, timeout | length / source node; `ETIME`; `EFAULT` | the oldest message on `chan` from any node; `buf` must hold 40 bytes; timeout `KOS_NOWAIT` (~0) returns `ETIME` at once when none is queued |
 | 21 | `SYS_STAT` | what, buf, max | bytes written; `EINVAL`; `EFAULT` | `KOS_S_THREADS` (0), `KOS_S_KERNEL` (1), `KOS_S_UNITS` (2) — `include/kos/stat.h` |
 | 22 | `SYS_RUN` | name, args, node | `OK` / tid; `ENOENT`, `EAGAIN`, `EFAULT` | starts a registered app; `name` ≤ 23 bytes, `args` ≤ 40 bytes |
 | 23 | `SYS_BARRIER` | id, parties | `OK`; `EAGAIN` | returns when `parties` threads (any nodes) have arrived at barrier `id` |
 | 24 | `SYS_ENGINE` | unit, words, count 1–8 | `OK` / ticket of the last; `EINVAL` | `count` instructions through this node's dispatch engine; the unit must be on this node's mesh |
 | 25 | `SYS_SHUTDOWN` | code | — | stops every node; this node last, with `code` |
 | 26 | `SYS_LAND` | node | this node's landing zone's user address; `EINVAL` | `node` must be this node |
+| 27 | `SYS_EVENT` | target, timeout, buf, `n \| chan << 32` | messages queued on `chan` (≥ 0) / the retirement count; `ETIME`; `EFAULT` | waits until this node's **retirement count** (every unit completion or fault counted, engine counters included) reaches `target` or `chan` has a message; then copies units [0, `n`)'s retired and fault counts to `buf` (two u64 each) |
+| 28 | `SYS_VTOP` | va, len | the physical address; `EINVAL` | of a user range that is one physically contiguous piece (shared region, `mmap` pages, the landing zone), as this node's units and mover name it |
+| 29 | `SYS_MUNMAP` | va, size | `OK`; `EINVAL` | unmaps a physically contiguous range of the `mmap` area (whole leaves) and frees its frames |
 
 ### `SYS_INFO` keys
 
@@ -90,6 +93,10 @@ forever**.
 | `KOS_I_L0RTT` (9) | cycles of one kernel → L0 call round trip, measured now over 16 calls |
 | `KOS_I_SHPA` (10) | the physical address units and the mover use for the shared region |
 | `KOS_I_LANDPA` (11) | the physical address units and the mover use for this node's landing zone |
+| `KOS_I_SPAN` (12) | with `a1` = node: that node's private span as this node's units and mover name it (`EINVAL` past the node count) |
+| `KOS_I_SPANSZ` (13) | with `a1` = node: its size |
+| `KOS_I_MESHOF` (14) | with `a1` = node: its mesh |
+| `KOS_I_PROF` (15) | kernels built with `-D KOS_PROF` only (`EINVAL` otherwise): `a1` = 0x100 + nr clears the trap-profile sums and selects system call nr; `a1` < 7 is the sum of stage `a1` over the selected calls since, 7 their count (stages: [performance](../hardware/performance.md#the-trap-path)) |
 
 ### `SYS_ATOMIC` operations
 
@@ -130,11 +137,14 @@ when shared memory is cached.
 | `kos_spawn(fn, arg, node)` | `SYS_SPAWN` | release before; the new thread acquires first and releases at exit |
 | `kos_join(tid, &code)` | `SYS_JOIN` | acquire after |
 | `kos_run(app, args, node)` | `SYS_RUN` | |
-| `kos_node()`, `kos_nodes()`, `kos_info(key)` | `SYS_INFO` | |
+| `kos_node()`, `kos_nodes()`, `kos_info(key)`, `kos_info_of(key, node)` | `SYS_INFO` | |
 | `kos_time()`, `kos_sleep(cycles)` | `SYS_TIME`, `SYS_SLEEP` | |
+| `kos_now()` | — | the same global time from the `time` CSR, no system call |
 | `kos_shutdown(code)` | `SYS_SHUTDOWN` | |
 | `kos_write(buf, len)`, `kos_read(buf, len)`, `kos_printf(fmt, …)` | `SYS_WRITE`, `SYS_READ` | `kos_printf` formats into 256 bytes |
-| `kos_mmap(size)` | `SYS_MMAP` | null on failure |
+| `kos_mmap(size)`, `kos_mmap_flags(size, flags)` | `SYS_MMAP` | null on failure |
+| `kos_munmap(p, size)` | `SYS_MUNMAP` | |
+| `kos_vtop(p, len)` | `SYS_VTOP` | |
 | `kos_shalloc(size)` | `SYS_ATOMIC` on the heap word | shared, 64-byte aligned, never freed; null when the board has no shared region or it is full |
 | `kos_shared_ok()` | `SYS_INFO` | the board has a shared region |
 | `kos_release()`, `kos_acquire()` | `SYS_CACHE` | |
@@ -143,8 +153,9 @@ when shared memory is cached.
 | `kos_wait(w, value, timeout)` | `SYS_WAIT` | |
 | `kos_barrier(id, parties)` | `SYS_BARRIER` | release before, acquire after |
 | `kos_lock(l)`, `kos_unlock(l)` | `SYS_ATOMIC` + `SYS_WAIT`, or plain uncached accesses (`lock_bakery`) | `kos_lock_t` lives in shared memory; acquire after lock, release before unlock |
-| `kos_send(node, chan, buf, len)` | `SYS_SEND` | release before |
+| `kos_send(node, chan, buf, len)`, `kos_send_nowait(…)` | `SYS_SEND` | release before |
 | `kos_recv(chan, buf, timeout, &src)` | `SYS_RECV` | acquire after a message |
+| `kos_event(seen, timeout, counts, n, chan, &now)` | `SYS_EVENT` | |
 | `kos_units(buf, max)` | `SYS_UNITS` | |
 | `kos_dispatch(unit, w)` | `SYS_DISPATCH` | returns the ticket |
 | `kos_unit_wait(unit, ticket, timeout, &faults)` | `SYS_UNIT_WAIT` | |
@@ -190,7 +201,7 @@ bounded; L0 never blocks.
 | 2 | `KOS_M_SET_TIMER` | absolute time | `OK` (programs `mtimecmp`; `~0` disables) |
 | 3 | `KOS_M_MAP` | va, pa, size, attr (`KOS_MAP_R/W/X/U/UNCACHED`) | `OK`; `EINVAL`, `EPERM`, `ENOMEM`, `EBUSY` |
 | 4 | `KOS_M_UNMAP` | va, size | `OK`; `EINVAL`, `ENOENT` |
-| 5 | `KOS_M_QUERY` | va | `OK` / the leaf PTE, 0 if none |
+| 5 | `KOS_M_QUERY` | va | `OK` / the leaf PTE, 0 if none; inside a superpage, with the page number of `va`'s 4 KB page |
 | 6 | `KOS_M_EXIT` | code | does not return: the node stops with `code` |
 | 7 | `KOS_M_INFO` | key: maps served (0), tables in use (1), traps taken (2), pool pages (3), user `satp` (4) | `OK` / value |
 | 8 | `KOS_M_NOP` | — | `OK` (its round trip is the cost of a call) |

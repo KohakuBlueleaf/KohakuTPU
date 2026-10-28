@@ -75,7 +75,11 @@ board). From its head:
 
 The host writes the user image at the span's base from the ELF's user
 segments (load address `1 << 40`, not a machine address; `tools/image.py`).
-Frames are 4 KB, handed out from a bitmap and zeroed when taken.
+Frames are 4 KB, handed out from a bitmap and zeroed when taken. `SYS_MMAP`
+takes a physically contiguous run (cached, or uncached with
+`KOS_MMAP_UNCACHED`), `SYS_VTOP` gives its physical address, `SYS_MUNMAP`
+returns it. The dispatcher's arenas are built on exactly these three
+([dispatcher.md](../reference/dispatcher.md#memory-arenas-and-references)).
 
 ## The staging store
 
@@ -113,7 +117,10 @@ PTE. Properties the design follows from:
   never the page-table pool. A mapping over an existing one is refused
   (`KOS_EBUSY`). Uncached DRAM mappings are made by setting bit 38 in the
   leaf. `UNMAP` removes whole leaves at or above 16 MB; `QUERY` returns the
-  leaf PTE of any address, 0 if none.
+  leaf PTE of any address, 0 if none — inside a superpage with the page
+  number of the address's own 4 KB page, so the kernel's translation of a
+  user address (`k_user_pa`, under every copy helper) is right in a 2 MB or
+  1 GB leaf too (the `core4s` shared region is one 2 MB leaf).
 
 There is one user table per node: every thread on a node runs in the same
 address space.
