@@ -16,7 +16,8 @@
 #define PTE_D 128UL
 #define PTE_LEAF (PTE_R | PTE_W | PTE_X)
 
-static uint64_t root;
+uint64_t l0_root, l0_table_alias;
+#define root l0_root
 static uint64_t used, maps;
 static uint8_t inuse[64];
 
@@ -51,6 +52,7 @@ void mmu_init(void)
     }
     used = 0;
     root = alloc_table();
+    l0_table_alias = l0_mem.pool_dram ? HW_UNC : 0;
 }
 
 uint64_t mmu_satp(void) { return (8UL << 60) | (root >> 12); }
@@ -203,6 +205,7 @@ int mmu_unmap(uint64_t va, uint64_t size)
 
 /* The leaf PTE of va; inside a superpage, with the page number of va's 4 KB
  * page (the leaf's own page number plus va's page within the leaf). */
+#ifndef KOS_L0_FAST
 uint64_t mmu_query(uint64_t va)
 {
     int level = 0;
@@ -215,3 +218,4 @@ uint64_t mmu_query(uint64_t va)
 #endif
     return *e + (((va >> 12) & ((1UL << (9 * level)) - 1)) << 10);
 }
+#endif

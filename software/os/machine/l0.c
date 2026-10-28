@@ -8,7 +8,8 @@
 volatile struct kos_boot *const l0_boot = (volatile struct kos_boot *)KOS_BOOT_PA;
 struct l0_mem l0_mem;
 
-static uint64_t traps;
+uint64_t l0_traps;
+#define traps l0_traps
 
 #define WATCHDOG 1000000 /* cycles the kernel runs under KOS_F_TRACE before L0 reports it */
 
@@ -161,16 +162,20 @@ static int64_t call(struct mframe *f, uint64_t *val)
         }
         return KOS_OK;
     }
+#ifndef KOS_L0_FAST
     case KOS_M_SET_TIMER:
         csr_write(CSR_MTIMECMP, a0);
         return KOS_OK;
+#endif
     case KOS_M_MAP:
         return mmu_map(a0, a1, a2, (unsigned)a3, 1);
     case KOS_M_UNMAP:
         return mmu_unmap(a0, a1);
+#ifndef KOS_L0_FAST
     case KOS_M_QUERY:
         *val = mmu_query(a0);
         return KOS_OK;
+#endif
     case KOS_M_EXIT:
         l0_halt(a0);
     case KOS_M_INFO:
@@ -193,8 +198,10 @@ static int64_t call(struct mframe *f, uint64_t *val)
         default:
             return KOS_EINVAL;
         }
+#ifndef KOS_L0_FAST
     case KOS_M_NOP:
         return KOS_OK;
+#endif
     default:
         return KOS_EINVAL;
     }
