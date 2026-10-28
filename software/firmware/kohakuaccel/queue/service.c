@@ -5,8 +5,8 @@
 #include <ka/hal/mem.h>
 #include <ka/hal/node.h>
 #include <ka/lib/stdio.h>
-#include <ka/os/mem.h>
 #include <ka/os/task.h>
+#include <ka/package/debug.h>
 #include <ka/package/interp.h>
 #include <ka/package/status.h>
 #include <ka/queue/layout.h>
@@ -16,7 +16,7 @@
 static struct {
     uint64_t q;
     uint32_t sq_n, cq_n, so_n, si_n;
-    uint64_t sq, cq, so, si;
+    uint64_t sq, cq, so, si, rec;
     uint64_t cq_tail, so_wr, so_lost, si_rd, si_wr_seen;
     uint64_t so_word; /* the stdout word being filled, as stored so far */
     uint64_t done;
@@ -24,10 +24,14 @@ static struct {
 
 static void fw_state(uint64_t state, uint64_t code)
 {
-    ka_st64(Q.q + KA_Q_FW, state);
-    ka_st64(Q.q + KA_Q_FW + 8, KA_Q_VERSION);
-    ka_st64(Q.q + KA_Q_FW + 16, Q.done);
-    ka_st64(Q.q + KA_Q_FW + 24, code);
+    uint64_t q = Q.q ? Q.q : ka_boot.queue;
+    if (!q || (q & (KA_Q_LINE - 1))) {
+        return;
+    }
+    ka_st64(q + KA_Q_FW + 8, KA_Q_VERSION);
+    ka_st64(q + KA_Q_FW + 16, Q.done);
+    ka_st64(q + KA_Q_FW + 24, code);
+    ka_st64(q + KA_Q_FW, state);
 }
 
 void ka_on_fatal(uint64_t code, uint64_t a, uint64_t b)
@@ -36,8 +40,8 @@ void ka_on_fatal(uint64_t code, uint64_t a, uint64_t b)
     (void)b;
     if (Q.q) {
         ka_flush();
-        fw_state(KA_Q_ST_FATAL, code);
     }
+    fw_state(KA_Q_ST_FATAL, code);
 }
 
 /* stdout: bytes into the ring, whole 8-byte words, then the produced count.
@@ -45,6 +49,8 @@ void ka_on_fatal(uint64_t code, uint64_t a, uint64_t b)
 static void so_sink(const char *buf, unsigned n)
 {
     uint64_t rd = ka_ld64(Q.q + KA_Q_SO_RD);
+    /* One divide a write, not one a byte (66 cycles each). */
+    uint64_t at = Q.so_wr % Q.so_n;
     for (unsigned i = 0; i < n; ++i) {
         if (Q.so_wr - rd >= Q.so_n) {
             uint64_t t0 = ka_cycles();
@@ -56,7 +62,6 @@ static void so_sink(const char *buf, unsigned n)
                 break;
             }
         }
-        uint64_t at = Q.so_wr % Q.so_n;
         unsigned lane = at & 7;
         if (!lane) {
             Q.so_word = 0;
@@ -64,6 +69,9 @@ static void so_sink(const char *buf, unsigned n)
         Q.so_word |= (uint64_t)(unsigned char)buf[i] << (8 * lane);
         ka_st64(Q.so + (at & ~7UL), Q.so_word);
         ++Q.so_wr;
+        if (++at == Q.so_n) {
+            at = 0;
+        }
     }
     ka_st64(Q.q + KA_Q_SO_WR, Q.so_wr);
     ka_st64(Q.q + KA_Q_SO_WR + 8, Q.so_lost);
@@ -84,13 +92,25 @@ static int si_source(void)
     return c;
 }
 
+_Static_assert(KA_QR_IDLE == KA_QR_HEAD + 8 * KA_PT_IDLE, "record words follow KA_PT_*");
+_Static_assert(KA_QR_HEAD + 8 * KA_PT_N <= KA_Q_REC_BYTES, "a record holds its words");
+
+/* The completion's record (L0.NQ.056), then its CQ entry, then the tail.
+ * `time` is a RUN's timing words, or 0. */
 static void push_cq(uint64_t tag, uint64_t status, uint64_t detail, uint64_t step,
-                    uint64_t cycles, uint64_t value)
+                    uint64_t cycles, uint64_t value, const uint64_t *time)
 {
     while (Q.cq_tail - ka_ld64(Q.q + KA_Q_CQ_HEAD) >= Q.cq_n) {
         ka_yield();
     }
-    uint64_t e = Q.cq + (Q.cq_tail % Q.cq_n) * KA_Q_CQ_BYTES;
+    uint64_t slot = Q.cq_tail % Q.cq_n;
+    uint64_t rec = Q.rec + slot * KA_Q_REC_BYTES;
+    ka_st64(rec + KA_QR_TAG, tag);
+    ka_st64(rec + KA_QR_SO_WR, Q.so_wr);
+    for (unsigned i = 0; i < KA_PT_N; ++i) {
+        ka_st64(rec + KA_QR_HEAD + 8 * i, time ? time[i] : 0);
+    }
+    uint64_t e = Q.cq + slot * KA_Q_CQ_BYTES;
     ka_st64(e, tag);
     ka_st64(e + 8, (status & 0xffff) | (detail & 0xffff) << 16 | step << 32);
     ka_st64(e + 16, cycles);
@@ -102,22 +122,48 @@ static void push_cq(uint64_t tag, uint64_t status, uint64_t detail, uint64_t ste
 
 static uint64_t run_tag;
 
+static uint64_t *entry(uint64_t at, uint64_t w[8])
+{
+    uint64_t e = Q.sq + (at % Q.sq_n) * KA_Q_SQ_BYTES;
+    for (int k = 0; k < 8; ++k) {
+        w[k] = ka_ld64(e + 8 * k);
+    }
+    return w;
+}
+
+static uint64_t head;
+
+/* The entry after the running one, when the host has queued it (L0.NQ.053). */
+static uint64_t peek(uint64_t w[8])
+{
+    if (head + 1 == ka_ld64(Q.q + KA_Q_SQ_TAIL)) {
+        return ~0UL;
+    }
+    entry(head + 1, w);
+    return head + 1;
+}
+
 static void on_signal(void *ctx, uint32_t step, uint32_t v32, uint64_t v64)
 {
     (void)ctx;
     ka_flush();
-    push_cq(run_tag, KA_ST_PROGRESS, v32, step, ka_cycles(), v64);
+    push_cq(run_tag, KA_ST_PROGRESS, v32, step, ka_cycles(), v64, 0);
 }
 
 static int setup(void)
 {
-    Q.q = ka_boot.queue;
-    if (ka_ld64(Q.q + KA_Q_INFO) != KA_Q_MAGIC ||
-        ka_ld64(Q.q + KA_Q_INFO + 8) != KA_Q_VERSION) {
-        ka_printf("[ka] no queue at %lx\n", Q.q);
+    uint64_t region_size = 0;
+    uint64_t q = ka_boot_region(KA_REGION_QUEUE, &region_size);
+#ifndef KA_SPEC_MEMORY_MUTANT
+    if (!region_size || q != ka_boot.queue || region_size < KA_Q_SQ || (q & (KA_Q_LINE - 1)))
+        return 3;
+#endif
+    if (ka_ld64(q + KA_Q_INFO) != KA_Q_MAGIC ||
+        ka_ld64(q + KA_Q_INFO + 8) != KA_Q_VERSION) {
+        ka_printf("[ka] no queue at %lx\n", q);
         return 1;
     }
-    uint64_t g = ka_ld64(Q.q + KA_Q_INFO + 16), s = ka_ld64(Q.q + KA_Q_INFO + 24);
+    uint64_t g = ka_ld64(q + KA_Q_INFO + 16), s = ka_ld64(q + KA_Q_INFO + 24);
     Q.sq_n = g & 0xffff;
     Q.cq_n = (g >> 16) & 0xffff;
     Q.so_n = (uint32_t)s;
@@ -127,11 +173,17 @@ static int setup(void)
         ka_printf("[ka] bad queue geometry %lx %lx\n", g, s);
         return 2;
     }
-    Q.sq = Q.q + KA_Q_SQ;
+    Q.sq = q + KA_Q_SQ;
     Q.cq = Q.sq + (uint64_t)Q.sq_n * KA_Q_SQ_BYTES;
     /* The rings start on a line: the host writes the stdin ring in whole lines. */
     Q.so = (Q.cq + (uint64_t)Q.cq_n * KA_Q_CQ_BYTES + KA_Q_LINE - 1) & ~(uint64_t)(KA_Q_LINE - 1);
     Q.si = Q.so + Q.so_n;
+    Q.rec = Q.si + Q.si_n;
+#ifndef KA_SPEC_MEMORY_MUTANT
+    if (Q.rec - q + (uint64_t)Q.cq_n * KA_Q_REC_BYTES > region_size)
+        return 3;
+#endif
+    Q.q = q;
 
     /* Resume the firmware-owned indices from the region. */
     Q.cq_tail = ka_ld64(Q.q + KA_Q_CQ_TAIL);
@@ -143,40 +195,6 @@ static int setup(void)
     }
     Q.done = 0;
     return 0;
-}
-
-/* Region r's line: free bytes, largest free block, live | table entries << 32, failures. */
-static void heap_line(unsigned r)
-{
-    struct ka_heap_stats s = {0};
-    struct ka_heap *h = ka_mem_heap(r);
-    if (h) {
-        ka_heap_stats(h, &s);
-    }
-    uint64_t at = Q.q + KA_Q_HEAPS + KA_Q_LINE * r;
-    ka_st64(at, s.free);
-    ka_st64(at + 8, s.largest);
-    ka_st64(at + 16, s.live | (uint64_t)s.blocks << 32);
-    ka_st64(at + 24, s.fails);
-}
-
-/* HEAP / ALLOC / FREE: status, and ALLOC's address in *value. */
-static int heap_op(unsigned op, const uint64_t w[8], uint64_t *value)
-{
-    unsigned r = (unsigned)w[2];
-    int rc;
-    *value = 0;
-    if (op == KA_SQ_HEAP) {
-        rc = ka_mem_configure(r, w[3], w[4], w[5] ? w[5] : 64);
-    } else if (op == KA_SQ_ALLOC) {
-        rc = ka_mem_alloc(r, w[3], w[4], (uint32_t)w[5], value);
-    } else {
-        rc = ka_mem_free(r, w[3]);
-    }
-    if (r < KA_MEM_REGIONS) {
-        heap_line(r);
-    }
-    return rc;
 }
 
 static int sq_moved(void *ctx) { return *(uint64_t *)ctx != ka_ld64(Q.q + KA_Q_SQ_TAIL); }
@@ -197,31 +215,33 @@ static void banner(void)
 uint64_t ka_queue_serve(void)
 {
     if (setup()) {
-        return KA_EXIT_BOOTARGS | 0x10;
+        ka_on_fatal(KA_EXIT_BOOTARGS | KA_BOOT_ERR_QUEUE, 0, 0);
+        return KA_EXIT_BOOTARGS | KA_BOOT_ERR_QUEUE;
     }
     ka_set_sink(so_sink);
     ka_set_source(si_source);
     ka_package_boot();
+#ifdef KA_DEBUG
+    ka_dbg_boot();
+#endif
     /* The units this node serves, given or found, before it says READY. */
     for (unsigned i = 0; i < ka_boot.nunits; ++i) {
         ka_st64(Q.q + KA_Q_UNITS + KA_Q_LINE + 8 * i, ka_boot.units[i]);
     }
     ka_st64(Q.q + KA_Q_UNITS, ka_boot.nunits);
-    for (unsigned r = 0; r < KA_MEM_REGIONS; ++r) {
-        heap_line(r);
-    }
     fw_state(KA_Q_ST_READY, 0);
     banner();
-    uint64_t head = ka_ld64(Q.q + KA_Q_SQ_HEAD);
+    head = ka_ld64(Q.q + KA_Q_SQ_HEAD);
     for (;;) {
         if (head == ka_ld64(Q.q + KA_Q_SQ_TAIL)) {
             ka_wait(sq_moved, &head, 0);
             continue;
         }
-        uint64_t e = Q.sq + (head % Q.sq_n) * KA_Q_SQ_BYTES, w[8];
-        for (int k = 0; k < 8; ++k) {
-            w[k] = ka_ld64(e + 8 * k);
-        }
+        /* `w` may be the read-ahead copy, which the run overwrites: past
+         * `ka_package_run` the tag is `run_tag`. */
+        uint64_t buf[8];
+        const uint64_t *w = ka_package_ahead(head);
+        w = w ? w : entry(head, buf);
         unsigned op = w[0] & 0xff;
         run_tag = w[1];
         if (op == KA_SQ_RUN) {
@@ -234,25 +254,27 @@ uint64_t ka_queue_serve(void)
                 .flags = (unsigned)w[6],
                 .signal = on_signal,
                 .ctx = 0,
+                .peek = (ka_boot.flags & KA_BOOT_F_SERIALQ) ? 0 : peek,
             };
+#ifdef KA_DEBUG
+            ka_dbg_begin(w[1], (unsigned)w[6]);
+#endif
             struct ka_pkg_result res;
             ka_package_run(&r, &res);
+            /* Every report line before the completion, so the record's stdout
+             * count ends this run's text (DBG.FAIL.002, L0.NQ.052). */
+            if (res.status) {
+                ka_printf("[ka] package %lx failed: status %x detail %x step %u value %lx\n",
+                          run_tag, res.status, res.detail, res.step, res.value);
+            }
             ka_flush();
-            push_cq(w[1], (uint64_t)res.status, res.detail, res.step, res.cycles,
-                    res.status ? res.value : res.sent);
+            push_cq(run_tag, (uint64_t)res.status, res.detail, res.step, res.cycles,
+                    res.status ? res.value : res.sent, res.time);
             if (r.flags & KA_RUN_F_IRQ) {
                 ka_ctrl_wr(KA_R_IRQ, 1);
             }
-            if (res.status) {
-                ka_printf("[ka] package %lx failed: status %x detail %x step %u value %lx\n",
-                          w[1], res.status, res.detail, res.step, res.value);
-            }
         } else if (op == KA_SQ_NOP) {
-            push_cq(w[1], KA_ST_OK, 0, 0, 0, 0);
-        } else if (op == KA_SQ_HEAP || op == KA_SQ_ALLOC || op == KA_SQ_FREE) {
-            uint64_t t0 = ka_cycles(), value;
-            int rc = heap_op(op, w, &value);
-            push_cq(w[1], (uint64_t)rc, w[2] & 0xffff, 0, ka_cycles() - t0, value);
+            push_cq(w[1], KA_ST_OK, 0, 0, 0, 0, 0);
         } else if (op == KA_SQ_STOP) {
             struct ka_task *me = ka_task_self();
             struct ka_sched_stats ss;
@@ -260,14 +282,19 @@ uint64_t ka_queue_serve(void)
             ka_printf("[ka] stop: %lu entries, task stack %u B used, %lu switches, "
                       "%lu idle passes\n",
                       Q.done, me ? ka_task_stack_used(me) : 0, ss.switches, ss.idle_passes);
-            push_cq(w[1], KA_ST_OK, 0, 0, 0, 0);
+            ka_flush();
+            push_cq(w[1], KA_ST_OK, 0, 0, 0, 0, 0);
             ++head;
             ka_st64(Q.q + KA_Q_SQ_HEAD, head);
             ka_flush();
             fw_state(KA_Q_ST_STOPPED, 0);
             return KA_EXIT_STOP | (w[2] & 0xffffffffUL);
         } else {
-            push_cq(w[1], KA_ST_BAD_OP, op, 0, 0, 0);
+#ifdef KA_SPEC_MEMORY_MUTANT
+            push_cq(w[1], op >= 3 && op <= 5 ? KA_ST_OK : KA_ST_BAD_OP, op, 0, 0, 0, 0);
+#else
+            push_cq(w[1], KA_ST_BAD_OP, op, 0, 0, 0, 0);
+#endif
         }
         ++Q.done;
         ka_st64(Q.q + KA_Q_FW + 16, Q.done);

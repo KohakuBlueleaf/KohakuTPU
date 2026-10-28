@@ -1,5 +1,4 @@
-/* The package interpreter (docs/spec/package-format.md): header, bindings,
- * relocation and steps, one package at a time. */
+/* The package interpreter: host-bound payloads and steps, one package at a time. */
 #include <stddef.h>
 
 #include <ka/boot/args.h>
@@ -11,24 +10,19 @@
 #include <ka/lib/stdio.h>
 #include <ka/os/task.h>
 #include <ka/package/format.h>
+#include <ka/package/debug.h>
 #include <ka/package/interp.h>
 #include <ka/package/status.h>
 
 static struct ka_engine eng;
-static uint64_t bind[KA_MAX_BUFFERS];
 
 /* The package being run, read once from its header. */
 static struct {
     uint64_t base, total;
     uint32_t npay, nrel, nbuf, nstep, nunit, ackres;
     uint64_t ounit, obuf, ostep, orel, opay;
-    /* relocation cursor: the next entry to look at, and its first word */
-    uint32_t rcur, rlast;
-    uint64_t rpeek;
-    int rpeek_ok;
     int cached;   /* read through the L1 */
-    int local;    /* copied whole into `pk_copy` */
-    int prereloc; /* every relocation already applied to `pk_copy` */
+    int local;    /* copied whole into `stage.copy` */
     uint32_t foreign; /* units of another mesh: in the table, never sent to */
 } pk;
 
@@ -41,17 +35,42 @@ static uint32_t pc_next;
  * target's FILL ended). A cached package that fits is copied here up front, a
  * line fill per 32 bytes; an uncached one stays where it is, since four 8-byte
  * round trips per word up front cost a small package more than it saves. */
-#define KA_PKG_COPY_WORDS 1344
-static uint64_t pk_copy[KA_PKG_COPY_WORDS];
+#ifndef KA_PKG_COPY_BYTES /* a build knob (build.py DEFINES): 0 compiles the copy out */
+#define KA_PKG_COPY_BYTES 10752
+#endif
+#define KA_PKG_COPY_WORDS (KA_PKG_COPY_BYTES / 8)
+/* Whether the running package is read from the copy. */
+#define LOCAL (KA_PKG_COPY_BYTES && pk.local)
+
+/* The copy, or the words of the queue entry after the running one, read
+ * ahead (L0.NQ.053) only while the running package is not local. */
+static union {
+    uint64_t copy[KA_PKG_COPY_WORDS + !KA_PKG_COPY_WORDS];
+    uint64_t next[8];
+} stage;
+static uint64_t entry_at = ~0UL, t_end;
+
+const uint64_t *ka_package_ahead(uint64_t seq)
+{
+    if (seq != entry_at) {
+        return 0;
+    }
+    entry_at = ~0UL;
+    return stage.next;
+}
 
 /* The file is built for size; the dispatch-engine path, what a v9 node runs
  * per step, is built for speed (all -Os: silu 14,211 node cycles, not 13,111). */
+#ifdef KA_DEBUG
+#define KA_HOT /* the debug image is built for size throughout */
+#else
 #define KA_HOT __attribute__((optimize("O2")))
+#endif
 
 static KA_HOT uint64_t rd(uint64_t off)
 {
-    if (pk.local) {
-        return pk_copy[off >> 3];
+    if (LOCAL) {
+        return stage.copy[off >> 3];
     }
     if (pk.cached) {
         return *(volatile uint64_t *)(uintptr_t)(pk.base + off);
@@ -77,11 +96,11 @@ static int any_fetch(void)
 static void localise(void)
 {
     pk.local = 0;
-    if (!pk.cached || pk.total > sizeof pk_copy || any_fetch()) {
+    if (!KA_PKG_COPY_BYTES || !pk.cached || pk.total > KA_PKG_COPY_BYTES || any_fetch()) {
         return;
     }
     for (uint64_t off = 0; off < pk.total; off += 8) {
-        pk_copy[off >> 3] = rd(off);
+        stage.copy[off >> 3] = rd(off);
     }
     pk.local = 1;
 }
@@ -142,49 +161,6 @@ static void insert(uint64_t w[4], unsigned bit, unsigned width, uint64_t v)
     }
 }
 
-/* Apply every relocation naming payload `idx`. Entries are sorted by payload,
- * so a forward walk needs one cursor; a backward step restarts it. Out of line:
- * inlined, its live values spilled 11 registers on every payload. */
-static __attribute__((noinline)) int relocate(uint32_t idx, uint64_t w[4])
-{
-    if (idx < pk.rlast) {
-        pk.rcur = 0;
-        pk.rpeek_ok = 0;
-    }
-    pk.rlast = idx;
-    while (pk.rcur < pk.nrel) {
-        uint64_t off = pk.orel + (uint64_t)pk.rcur * KA_PKG_REL_BYTES;
-        if (!pk.rpeek_ok) {
-            pk.rpeek = rd(off);
-            pk.rpeek_ok = 1;
-        }
-        uint64_t e0 = pk.rpeek;
-        uint32_t at = (uint32_t)e0;
-        if (at > idx) {
-            break;
-        }
-        ++pk.rcur;
-        pk.rpeek_ok = 0;
-        if (at < idx) {
-            continue;
-        }
-        unsigned bit = (e0 >> 32) & 0xff, width = (e0 >> 40) & 0xff;
-        unsigned shift = (e0 >> 48) & 0xff, buf = (unsigned)(e0 >> 56);
-        if (buf >= pk.nbuf || !width || width > 64 || bit + width > 256 || shift > 63) {
-            return ka_engine_fail(&eng, KA_ST_BAD_RELOC, pk.rcur - 1, e0);
-        }
-        insert(w, bit, width, (bind[buf] + rd(off + 8)) >> shift);
-    }
-    return 0;
-}
-
-/* Whether payload `idx` may carry a relocation: the cursor's peeked entry
- * names it or one before it, or the walk has to restart. */
-static inline int may_relocate(uint32_t idx)
-{
-    return pk.rcur < pk.nrel && (idx < pk.rlast || !pk.rpeek_ok || (uint32_t)pk.rpeek <= idx);
-}
-
 static KA_HOT int payload(uint32_t idx, uint64_t w[4])
 {
     if (idx >= pk.npay) {
@@ -194,27 +170,6 @@ static KA_HOT int payload(uint32_t idx, uint64_t w[4])
     for (int k = 0; k < 4; ++k) {
         w[k] = rd(off + 8 * k);
     }
-    return pk.prereloc ? 0 : relocate(idx, w);
-}
-
-/* Every relocation applied to the local copy in one forward pass, so a send
- * reads final words and the cursor never restarts on an out-of-order send. */
-static int prerelocate(void)
-{
-    for (uint32_t i = 0; i < pk.nrel; ++i) {
-        uint64_t off = pk.orel + (uint64_t)i * KA_PKG_REL_BYTES;
-        uint64_t e0 = rd(off);
-        uint32_t at = (uint32_t)e0;
-        unsigned bit = (e0 >> 32) & 0xff, width = (e0 >> 40) & 0xff;
-        unsigned shift = (e0 >> 48) & 0xff, buf = (unsigned)(e0 >> 56);
-        if (at >= pk.npay || buf >= pk.nbuf || !width || width > 64 || bit + width > 256 ||
-            shift > 63) {
-            return ka_engine_fail(&eng, KA_ST_BAD_RELOC, i, e0);
-        }
-        uint64_t *w = &pk_copy[(pk.opay + (uint64_t)at * KA_PKG_PAY_BYTES) >> 3];
-        insert(w, bit, width, (bind[buf] + rd(off + 8)) >> shift);
-    }
-    pk.prereloc = 1;
     return 0;
 }
 
@@ -237,7 +192,7 @@ static int fetch(unsigned unit, uint64_t at, uint32_t count)
     return 0;
 }
 
-/* One DISPATCH step: `count` payloads from `first`, each relocated and sent.
+/* One DISPATCH step: `count` payloads from `first`, each host-bound and sent.
  * MEASURED (RV_PC_PROF, card_v8t8_2n): through `payload` a word cost ~167 cycles
  * of interpreter around four ~7-cycle loads; this walks the pointer instead. */
 static int dispatch(unsigned unit, uint32_t first, uint32_t count)
@@ -252,8 +207,8 @@ static int dispatch(unsigned unit, uint32_t first, uint32_t count)
                      count);
     }
     uint64_t at = pk.base + pk.opay + (uint64_t)first * KA_PKG_PAY_BYTES;
-    if (pk.local) {
-        at = (uintptr_t)&pk_copy[(pk.opay + (uint64_t)first * KA_PKG_PAY_BYTES) >> 3];
+    if (LOCAL) {
+        at = (uintptr_t)&stage.copy[(pk.opay + (uint64_t)first * KA_PKG_PAY_BYTES) >> 3];
     }
     else if (!pk.cached) {
         at |= KA_UNCACHED;
@@ -261,48 +216,9 @@ static int dispatch(unsigned unit, uint32_t first, uint32_t count)
     for (uint32_t k = 0; k < count; ++k, at += KA_PKG_PAY_BYTES) {
         const volatile uint64_t *p = (const volatile uint64_t *)(uintptr_t)at;
         uint64_t w[4] = {p[0], p[1], p[2], p[3]};
-        if (!pk.prereloc && may_relocate(first + k) && relocate(first + k, w)) {
-            return eng.status;
-        }
-        pk.rlast = first + k;
         if (ka_engine_send_now(&eng, unit, w) && ka_engine_send(&eng, unit, w)) {
             return eng.status;
         }
-    }
-    return 0;
-}
-
-/* The first relocation entry naming payload `idx` or a later one. */
-static uint32_t rel_lower(uint32_t idx)
-{
-    uint32_t lo = 0, hi = pk.nrel;
-    while (lo < hi) {
-        uint32_t mid = lo + (hi - lo) / 2;
-        if ((uint32_t)rd(pk.orel + (uint64_t)mid * KA_PKG_REL_BYTES) < idx) {
-            lo = mid + 1;
-        }
-        else {
-            hi = mid;
-        }
-    }
-    return lo;
-}
-
-/* Apply the entries from `*rc` that name payload `idx`, advancing `*rc`. */
-static int rel_apply(uint32_t *rc, uint32_t idx, uint64_t w[4])
-{
-    for (; *rc < pk.nrel; ++*rc) {
-        uint64_t off = pk.orel + (uint64_t)*rc * KA_PKG_REL_BYTES;
-        uint64_t e0 = rd(off);
-        if ((uint32_t)e0 != idx) {
-            return 0;
-        }
-        unsigned bit = (e0 >> 32) & 0xff, width = (e0 >> 40) & 0xff;
-        unsigned shift = (e0 >> 48) & 0xff, buf = (unsigned)(e0 >> 56);
-        if (buf >= pk.nbuf || !width || width > 64 || bit + width > 256 || shift > 63) {
-            return ka_engine_fail(&eng, KA_ST_BAD_RELOC, *rc, e0);
-        }
-        insert(w, bit, width, (bind[buf] + rd(off + 8)) >> shift);
     }
     return 0;
 }
@@ -320,11 +236,11 @@ static uint64_t extract(const uint64_t w[4], unsigned bit, unsigned width)
 }
 
 /* One DISPATCH or REPEAT step as a source of words: template word `j` of
- * repetition `r`, relocated, with the repetition's increments added. */
+ * repetition `r`, with the repetition's increments added. */
 struct src {
     unsigned unit;
     uint32_t first, count, repeats, ninc;
-    uint32_t j, r, rc, ic;
+    uint32_t j, r, ic;
     uint64_t base;
 };
 
@@ -342,13 +258,12 @@ static int src_open(struct src *q, uint64_t w0, uint64_t arg)
     }
     q->j = q->r = q->ic = 0;
     q->base = pk.base + pk.opay + (uint64_t)q->first * KA_PKG_PAY_BYTES;
-    if (pk.local) {
-        q->base = (uintptr_t)&pk_copy[(pk.opay + (uint64_t)q->first * KA_PKG_PAY_BYTES) >> 3];
+    if (LOCAL) {
+        q->base = (uintptr_t)&stage.copy[(pk.opay + (uint64_t)q->first * KA_PKG_PAY_BYTES) >> 3];
     }
     else if (!pk.cached) {
         q->base |= KA_UNCACHED;
     }
-    q->rc = pk.prereloc ? 0 : rel_lower(q->first);
     uint32_t prev = 0;
     for (uint32_t k = 0; k < q->ninc; ++k) {
         uint64_t off = pk.opay + (uint64_t)(q->first + q->count) * KA_PKG_PAY_BYTES + 16 * k;
@@ -365,8 +280,8 @@ static int src_open(struct src *q, uint64_t w0, uint64_t arg)
 
 static int src_left(const struct src *q) { return q->r < q->repeats && q->count; }
 
-/* The next word into `w` from the relocated local copy: no relocation pass,
- * and each increment is one limb add with its carry (a REPEAT never wraps a
+/* The next word into `w` from the local copy: each increment is one limb
+ * add with its carry (a REPEAT never wraps a
  * field, so a field add is the plain 256-bit add). */
 static inline const uint64_t *src_next_local(struct src *q, uint64_t w[4])
 {
@@ -401,10 +316,10 @@ static inline const uint64_t *src_next_local(struct src *q, uint64_t w[4])
 }
 
 /* The next word: the template itself when nothing changes it, else built in
- * `w`. NULL on a bad relocation. */
+ * `w`. NULL on an invalid increment. */
 static const uint64_t *src_next(struct src *q, uint64_t w[4])
 {
-    if (pk.local && pk.prereloc) {
+    if (LOCAL) {
         return src_next_local(q, w);
     }
     const volatile uint64_t *p =
@@ -413,9 +328,6 @@ static const uint64_t *src_next(struct src *q, uint64_t w[4])
     w[1] = p[1];
     w[2] = p[2];
     w[3] = p[3];
-    if (!pk.prereloc && rel_apply(&q->rc, q->first + q->j, w)) {
-        return NULL;
-    }
     if (q->r) {
         const volatile uint64_t *inc =
             (const volatile uint64_t *)(uintptr_t)(q->base + (uint64_t)q->count * KA_PKG_PAY_BYTES);
@@ -435,7 +347,6 @@ static const uint64_t *src_next(struct src *q, uint64_t w[4])
     if (++q->j == q->count) {
         q->j = 0;
         ++q->r;
-        q->rc = pk.prereloc ? 0 : rel_lower(q->first);
     }
     return w;
 }
@@ -508,7 +419,7 @@ static uint32_t dispatch_group(uint32_t s0, uint64_t head)
         }
     }
     uint64_t w[4];
-    int fast = pk.local && pk.prereloc;
+    int fast = LOCAL;
     for (uint32_t live = n; live && !eng.status;) {
         live = 0;
         for (uint32_t j = 0; j < n; ++j) {
@@ -676,7 +587,7 @@ static int de_watch(uint64_t stat)
         de.t_moved = now;
     }
     else if (now - de.t_moved > eng.timeout) {
-        return ka_engine_fail(&eng, KA_ST_TIMEOUT, KA_WAIT_AWAIT, stat);
+        return ka_engine_fail(&eng, KA_ST_TIMEOUT, KA_WAIT_ENGINE, stat);
     }
     return 0;
 }
@@ -903,6 +814,11 @@ static int de_begin(void)
         eng.n > KA_DE_UNITS) {
         return 0;
     }
+#ifdef KA_DEBUG
+    if (ka_dbg_noengine()) {
+        return 0;
+    }
+#endif
     for (unsigned u = 0; u < eng.n; ++u) {
         if (!eng.u[u].plain) {
             return 0;
@@ -1091,6 +1007,13 @@ static KA_COLD int load(unsigned rd, uint32_t count, uint64_t arg, unsigned flag
     if (payload((uint32_t)arg, w)) {
         return eng.status;
     }
+    if ((flags & KA_STEP_F_IMM) && (flags != KA_STEP_F_IMM || count)) {
+        return ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_OP_LOAD, flags);
+    }
+    if (flags == KA_STEP_F_IMM) {
+        reg[rd] = w[0];
+        return 0;
+    }
     uint64_t at = w[0] + ((flags & KA_STEP_F_INDEXED) ? reg[count & (KA_PKG_REGS - 1)] : 0);
     if ((flags & KA_STEP_F_CTRL) && at < KA_CTRL_SPAN && !(at & 7)) {
         reg[rd] = ka_ctrl_rd((unsigned)at);
@@ -1159,8 +1082,8 @@ static KA_COLD int jump(unsigned target, uint32_t count, uint64_t arg, unsigned 
  * copy, and the package itself (a fetch port reads that). */
 static void pk_put(uint64_t off, uint64_t v)
 {
-    if (pk.local) {
-        pk_copy[off >> 3] = v;
+    if (LOCAL) {
+        stage.copy[off >> 3] = v;
     }
     if (pk.cached) {
         *(volatile uint64_t *)(uintptr_t)(pk.base + off) = v;
@@ -1299,6 +1222,11 @@ static KA_HOT int header(const struct ka_pkg_run *r)
     eng.keep_rx = ((size >> 32) & KA_PKG_F_RX) != 0;
     pk.npay = (uint32_t)c1;
     pk.nrel = (uint32_t)(c1 >> 32);
+#ifndef KA_SPEC_MEMORY_MUTANT
+    if (pk.nrel) {
+        return ka_engine_fail(&eng, KA_ST_BAD_RELOC, 0, pk.nrel);
+    }
+#endif
     pk.nbuf = c2 & 0xffff;
     pk.nstep = (c2 >> 16) & 0xffff;
     pk.nunit = (c2 >> 32) & 0xffff;
@@ -1335,15 +1263,6 @@ static KA_HOT int header(const struct ka_pkg_run *r)
     return 0;
 }
 
-static int bindings(const struct ka_pkg_run *r)
-{
-    for (uint32_t b = 0; b < pk.nbuf; ++b) {
-        uint64_t v = (r->bind && b < r->nbind) ? ka_ld64(r->bind + 8 * b) : 0;
-        bind[b] = v ? v : rd(pk.obuf + (uint64_t)b * KA_PKG_BUF_BYTES + 16);
-    }
-    return 0;
-}
-
 static int step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, int *end)
 {
     uint64_t arg = rd(pk.ostep + (uint64_t)s * KA_PKG_STEP_BYTES + 8);
@@ -1368,6 +1287,12 @@ static int step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, int *end)
         }
         return ka_engine_drain(&eng);
     case KA_OP_AWAIT:
+        if (flags == KA_STEP_F_IMM) {
+            if (unit >= eng.n || count || arg) {
+                return ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_OP_AWAIT, unit);
+            }
+            count = eng.u[unit].sent - eng.u[unit].expected;
+        }
         return ka_engine_await(&eng, unit, count);
     case KA_OP_BARRIER:
         return ka_engine_barrier(&eng) ? eng.status : moves_all_done();
@@ -1387,6 +1312,11 @@ static int step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, int *end)
         return ring(unit, count, arg);
     case KA_OP_WAIT_BELL:
         return wait_bell(unit, count);
+    case KA_OP_ASSERT_ZERO:
+        if (unit >= KA_PKG_REGS || flags || arg) {
+            return ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_OP_ASSERT_ZERO, unit);
+        }
+        return reg[unit] ? ka_engine_fail(&eng, KA_ST_CONTRACT, count, reg[unit]) : 0;
     case KA_OP_SIGNAL:
         if (r->signal) {
             r->signal(r->ctx, s, count, arg);
@@ -1440,7 +1370,14 @@ static KA_HOT int de_step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, i
     case KA_OP_REPEAT:
         return de_repeat(w0, arg);
     case KA_OP_AWAIT:
-        de.exp[unit] += count;
+        if (flags == KA_STEP_F_IMM) {
+            if (unit >= eng.n || count || arg) {
+                return ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_OP_AWAIT, unit);
+            }
+            de.exp[unit] = eng.u[unit].sent;
+        } else {
+            de.exp[unit] += count;
+        }
         return de_wait(unit, de.exp[unit]);
     case KA_OP_BARRIER:
         return de_barrier();
@@ -1475,15 +1412,13 @@ static KA_HOT int de_step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, i
 int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
 {
     uint64_t t0 = ka_cycles();
+    uint64_t idle = t_end ? t0 - t_end : 0;
 
     /* cq_depth 0: no node-wide bound. */
     uint32_t cap = ka_boot.cq_depth ? (uint32_t)ka_boot.cq_depth : 0xffffffffu;
     pk.base = r->pkg;
-    pk.rcur = pk.rlast = 0;
-    pk.rpeek_ok = 0;
     pk.cached = cacheable(r->pkg);
     pk.local = 0;
-    pk.prereloc = 0;
     if (pk.cached) {
         ka_dcache(KA_DCACHE_INVAL);
     }
@@ -1497,7 +1432,11 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
         reg[i] = 0;
     }
     uint32_t s = 0, at = 0;
-    uint64_t t_head = 0, t_copy = 0, t_bind = 0, t_steps = 0;
+    uint64_t t_head = t0, t_copy = t0, t_bind = t0, t_steps = t0;
+#ifdef KA_DEBUG
+    uint64_t fw0 = 0; /* the step word of `at` */
+    int de_was = 0;   /* the run was on the dispatch engine */
+#endif
     if (!header(r)) {
         t_head = ka_cycles();
         localise();
@@ -1518,22 +1457,26 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
             }
         }
         if (!eng.status) {
-            bindings(r);
-        }
-        if (!eng.status && pk.local) {
-            prerelocate();
-        }
-        if (!eng.status) {
             de_begin();
         }
+#ifdef KA_DEBUG
+        de_was = de.on;
+#endif
         t_bind = ka_cycles();
         int rr = !(ka_boot.flags & KA_BOOT_F_SERIAL);
         int end = 0;
+#ifdef KA_DEBUG
+        int trace = ka_dbg_traced();
+#else
         int trace = (ka_boot.flags & KA_BOOT_F_STEPS) != 0;
+#endif
         uint64_t skew = 0;
         while (s < pk.nstep && !eng.status && !end) {
             at = s;
             uint64_t w0 = step_word(s, 0);
+#ifdef KA_DEBUG
+            fw0 = w0;
+#endif
             pc_next = s + 1;
             uint32_t took = rr && !de.on && is_send(w0) ? dispatch_group(s, w0) : 0;
             if (took) {
@@ -1548,12 +1491,24 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
             if (trace) {
                 /* Steps at..pc_next-1 ended at this cycle, every earlier print removed. */
                 uint64_t t = ka_cycles();
+#ifdef KA_DEBUG
+                ka_dbg_step(w0, at, took ? pc_next - 1 : at, t - t_bind - skew, de.on, &eng);
+#else
                 ka_printf("PKGS %u %u %lu\n", at, took ? pc_next - 1 : at, t - t_bind - skew);
+#endif
                 skew += ka_cycles() - t;
             }
             s = pc_next;
         }
-        if (de.on && !eng.status && !de_barrier()) {
+        if (de.on && !eng.status) {
+            de_barrier();
+        }
+        /* Only while the engine drains on its own: on the firmware path the
+         * reading would delay this package's own completions. */
+        if (r->peek && de.on && !eng.status && !pk.local) {
+            entry_at = r->peek(stage.next);
+        }
+        if (de.on && !eng.status) {
             de_drain();
         }
         de_end();
@@ -1563,6 +1518,13 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
         }
     }
     if (eng.status) {
+        ka_engine_report(&eng);
+#ifdef KA_DEBUG
+        ka_dbg_units(&eng);
+        ka_engine_quiesce(&eng);
+        s = at;
+        ka_dbg_fail(fw0, s, de_was, &eng);
+#else
         /* Every unit's counters at the failure: which one stopped, and where. */
         for (unsigned i = 0; i < eng.n; ++i) {
             const struct ka_unit_state *u = &eng.u[i];
@@ -1572,6 +1534,7 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
         ka_printf("PKGF stray %u outstanding %u\n", eng.stray, eng.outstanding);
         ka_engine_quiesce(&eng);
         s = at;
+#endif
     }
     out->status = eng.status;
     out->detail = eng.detail;
@@ -1579,13 +1542,23 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
     out->step = s;
     out->sent = eng.sent;
     out->cycles = ka_cycles() - t0;
+    uint64_t *t = out->time;
+    t[KA_PT_HEAD] = t_head - t0;
+    t[KA_PT_COPY] = t_copy - t_head;
+    t[KA_PT_BIND] = t_bind - t_copy;
+    t[KA_PT_STEPS] = t_steps - t_bind;
+    t[KA_PT_BARRIER] = t0 + out->cycles - t_steps;
+    t[KA_PT_LOCAL] = (uint64_t)pk.local;
+    t[KA_PT_TOTAL] = pk.total;
+    t[KA_PT_FIRST] = eng.sent ? eng.t_first - t_bind : 0;
+    t[KA_PT_LAST] = eng.sent ? eng.t_last - t_bind : 0;
+    t[KA_PT_SENT] = eng.sent;
+    t[KA_PT_IDLE] = idle;
     if (ka_boot.flags & KA_BOOT_F_TIMING) {
-        ka_printf("PKGT head %lu copy %lu bind %lu steps %lu barrier %lu local %d total %lu "
-                  "first %lu last %lu sent %u\n",
-                  t_head - t0, t_copy - t_head, t_bind - t_copy, t_steps - t_bind,
-                  t0 + out->cycles - t_steps, pk.local, pk.total,
-                  eng.sent ? eng.t_first - t_bind : 0, eng.sent ? eng.t_last - t_bind : 0,
-                  eng.sent);
+        ka_printf("PKGT head %lu copy %lu bind %lu steps %lu barrier %lu local %lu total %lu "
+                  "first %lu last %lu sent %lu idle %lu\n",
+                  t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10]);
     }
+    t_end = t0 + out->cycles;
     return eng.status;
 }

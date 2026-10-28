@@ -66,17 +66,18 @@ int ka_getc(void)
     return c;
 }
 
-/* Digits of `v` in `base`, right-aligned in `width` with `pad`. */
+/* Digits of `v` in `base` (10 or 16), right-aligned in `width` with `pad`. */
 static int put_num(uint64_t v, unsigned base, int width, char pad, int neg)
 {
     char buf[24];
     int n = 0, out = 0;
 
-    /* Hex by shifts: a divide costs 66 cycles. */
+    /* Hex by shifts, decimal by the constant 10 (a multiply): a divide costs
+     * 66 cycles. */
     do {
-        unsigned d = base == 16 ? (unsigned)(v & 15) : (unsigned)(v % base);
+        unsigned d = base == 16 ? (unsigned)(v & 15) : (unsigned)(v % 10);
         buf[n++] = (char)(d < 10 ? '0' + d : 'a' + d - 10);
-        v = base == 16 ? v >> 4 : v / base;
+        v = base == 16 ? v >> 4 : v / 10;
     } while (v);
     if (neg) {
         buf[n++] = '-';

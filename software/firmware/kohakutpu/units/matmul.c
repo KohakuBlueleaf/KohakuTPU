@@ -3,15 +3,21 @@
 #include <ka/lib/stdio.h>
 #include <ka/unit/unit.h>
 
+#ifdef KA_DEBUG
+/* The debug image reports the raw word; the host decodes it (RUL.078). */
+#define DESCRIBE 0
+#else
 static void describe(unsigned code, uint32_t arg)
 {
     ka_printf("[MG] fault, signal %u arg %x\n", code, arg);
 }
+#define DESCRIBE describe
+#endif
 
 KA_UNIT_CLASS(kt_matmul_class) = {
     .type = 0x4D47, /* 'MG' */
     .name = "MG",
     .credit = 0,
     .classify = ka_unit_generic_classify,
-    .describe = describe,
+    .describe = DESCRIBE,
 };

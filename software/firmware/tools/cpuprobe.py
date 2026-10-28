@@ -28,6 +28,7 @@ import sys
 import time
 
 from kohakuaccel.driver.node.boot import BootArgs, NodeBoot
+from kohakuaccel.driver.node.boot.args import idle_bound
 from kohakuaccel.driver.transport.jtag import JtagTransport
 from kohakuaccel.driver.transport.rebase import UnitGlobal
 from kohakuaccel.driver.transport.verilator import VerilatorTransport
@@ -438,15 +439,20 @@ def bench(build: pathlib.Path, max_cycles: int) -> int:
 
 
 # ---- the card, one node at a time through its load window
-def card_run(t, m, node, mem, rounds, seed, idle, timeout) -> tuple[bool, dict]:
-    """Run cpuprobe on `node`; ``(ok, result block)``."""
+def card_run(
+    t, m, node, mem, rounds, seed, idle, timeout, wait: int
+) -> tuple[bool, dict]:
+    """Run cpuprobe on `node`, its boot block's bound `wait` cycles;
+    ``(ok, result block)``."""
     region = m["dram"][node] + CARD_REGION + node * 0x10000
     # Every line the run reads is painted first: never-written ECC memory is an
     # error, not zeros, and a cached store fills its line.
     mem.write_block(region, bytes(DRAM_OFF + DRAM_BYTES))
     mem.write_block(region, struct.pack("<4Q", MAGIC, rounds, seed, 0))
     boot = NodeBoot(t, m["ctrl"][node], node, sim=None)
-    boot.load(FW / "cpuprobe.elf", BootArgs(queue=region, mesh=node), "axi")
+    boot.load(
+        FW / "cpuprobe.elf", BootArgs(queue=region, mesh=node, timeout=wait), "axi"
+    )
     t0, st = time.monotonic(), {}
     while time.monotonic() - t0 < timeout:
         st = boot.status()
@@ -496,7 +502,17 @@ def card(a) -> int:
     mem = UnitGlobal(t, m["dram"], m["mem"], m["size"], staging=True)
     fails = 0
     for node in (int(x) for x in a.nodes.split(",")):
-        ok, r = card_run(t, m, node, mem, a.rounds, a.seed, idle, a.timeout)
+        ok, r = card_run(
+            t,
+            m,
+            node,
+            mem,
+            a.rounds,
+            a.seed,
+            idle,
+            a.timeout,
+            idle_bound(board, a.timeout),
+        )
         print(
             f"node {node}: {'ok' if ok else 'FAIL'} exit {r['status'].get('exit')} "
             f"{r['cycles']} cycles ({r['wall']:.1f}s); "

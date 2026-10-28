@@ -67,6 +67,18 @@ IMAGES = {
         "kohakuaccel/apps/dispatcher",
         "kohakutpu/units",
     ],
+    # The debug dispatcher (docs/spec/stack/debug/firmware.md, RUL.073): the
+    # same sources with KA_DEBUG, every file for size.
+    "kohakutpu_debug": [
+        "kohakuaccel/boot",
+        "kohakuaccel/os",
+        "kohakuaccel/queue",
+        "kohakuaccel/package",
+        "kohakuaccel/dispatch",
+        "kohakuaccel/unit",
+        "kohakuaccel/apps/dispatcher",
+        "kohakutpu/units",
+    ],
     # The same dispatcher with only the framework's generic unit class.
     "kohakuaccel_node": [
         "kohakuaccel/boot",
@@ -99,8 +111,34 @@ IMAGES = {
     "cpuprobe_m1": ["kohakuaccel/boot", "kohakuaccel/apps/cpuprobe"],
 }
 
-#: Extra compile defines per image.
-DEFINES = {"cpuprobe_m1": ["-DCPUPROBE_MESH=1"]}
+# A reversal witness image; never selected by a runtime or machine default.
+IMAGES["kohakutpu_memory_mutant"] = list(IMAGES["kohakutpu_node"])
+IMAGES["kohakutpu_snapshot_mutant"] = list(IMAGES["kohakutpu_node"])
+IMAGES["kohakutpu_snapshot_debug_mutant"] = list(IMAGES["kohakutpu_debug"])
+
+#: Extra compile defines per image. KA_DEBUG_LAST: completion words kept per
+#: package unit in the debug region (RUL.077). KA_PKG_COPY_BYTES 0: no copy
+#: of a cached package (L0.PKG.029); queue-heap packages are uncached.
+DEFINES = {
+    "cpuprobe_m1": ["-DCPUPROBE_MESH=1"],
+    "kohakutpu_node": ["-DKA_PKG_COPY_BYTES=0"],
+    "kohakutpu_debug": ["-DKA_DEBUG=1", "-DKA_DEBUG_LAST=4", "-DKA_PKG_COPY_BYTES=0"],
+    "kohakuaccel_node": ["-DKA_PKG_COPY_BYTES=0"],
+    "kohakutpu_memory_mutant": ["-DKA_PKG_COPY_BYTES=0", "-DKA_SPEC_MEMORY_MUTANT=1"],
+    "kohakutpu_snapshot_mutant": [
+        "-DKA_PKG_COPY_BYTES=0",
+        "-DKA_SPEC_SNAPSHOT_AFTER_CLEAR=1",
+    ],
+    "kohakutpu_snapshot_debug_mutant": [
+        "-DKA_DEBUG=1",
+        "-DKA_DEBUG_LAST=4",
+        "-DKA_PKG_COPY_BYTES=0",
+        "-DKA_SPEC_SNAPSHOT_AFTER_CLEAR=1",
+    ],
+}
+
+#: Images compiled for size throughout.
+ALL_SIZE = ("kohakutpu_debug", "kohakutpu_snapshot_debug_mutant")
 
 #: (link map, instruction bytes, scratchpad bytes) of an image not on node.ld.
 CPUPROBE_LD = FW / "kohakuaccel" / "apps" / "cpuprobe" / "cpuprobe.ld"
@@ -116,9 +154,9 @@ INCLUDES = ["kohakuaccel/include"]
 SIZE_OPT = ("kohakuaccel/package/", "kohakuaccel/os/", "kohakuaccel/queue/")
 
 
-def file_flags(src: pathlib.Path) -> list[str]:
+def file_flags(src: pathlib.Path, image: str) -> list[str]:
     rel = src.relative_to(FW).as_posix()
-    return ["-Os"] if rel.startswith(SIZE_OPT) else []
+    return ["-Os"] if image in ALL_SIZE or rel.startswith(SIZE_OPT) else []
 
 
 #: The two arrays an image must fit, and the sections each holds.
@@ -141,6 +179,10 @@ def wsl_path(p: pathlib.Path) -> str:
     return f"/mnt/{m.group(1).lower()}/{m.group(2)}" if m else s
 
 
+# Dispatcher images have no firmware allocator; the standalone probe is separate.
+DISPATCH_EXCLUDE = ("kohakuaccel/os/heap/",)
+
+
 def sources(parts: list[str]) -> list[pathlib.Path]:
     out: list[pathlib.Path] = []
     for part in CORE + parts:
@@ -151,6 +193,12 @@ def sources(parts: list[str]) -> list[pathlib.Path]:
         if not p.is_dir():
             raise SystemExit(f"image part {part!r} is neither a file nor a directory")
         out += sorted(q for q in p.rglob("*") if q.suffix in (".c", ".S"))
+    if "kohakuaccel/queue" in parts:
+        out = [
+            s
+            for s in out
+            if not s.relative_to(FW).as_posix().startswith(DISPATCH_EXCLUDE)
+        ]
     return out
 
 
@@ -174,7 +222,15 @@ def build_clang(name: str) -> dict:
         o = obj_dir / rel
         objs.append(o.as_posix())
         run(
-            ["clang", *flags, *file_flags(s), "-c", s.as_posix(), "-o", o.as_posix()],
+            [
+                "clang",
+                *flags,
+                *file_flags(s, name),
+                "-c",
+                s.as_posix(),
+                "-o",
+                o.as_posix(),
+            ],
             name,
         )
     elf = OUT / f"{name}.elf"
@@ -221,7 +277,7 @@ def build(name: str) -> dict:
         rel = s.relative_to(FW).with_suffix(".o").as_posix().replace("/", "__")
         o = obj_dir / rel
         objs.append(wsl_path(o))
-        extra = " ".join(file_flags(s))
+        extra = " ".join(file_flags(s, name))
         cmds.append(
             f"{CROSS}gcc {flags} {extra} {inc} -c {wsl_path(s)} -o {wsl_path(o)}"
         )
@@ -263,7 +319,17 @@ def main() -> int:
     ap.add_argument("images", nargs="*")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--toolchain", choices=("gcc", "clang"), default="gcc")
+    ap.add_argument(
+        "--size-opt",
+        action="append",
+        default=[],
+        help="also compile sources under this firmware path for size",
+    )
+    ap.add_argument("--out", help="the output directory (default build/fw)")
     a = ap.parse_args()
+    global OUT, SIZE_OPT
+    SIZE_OPT = SIZE_OPT + tuple(a.size_opt)
+    OUT = pathlib.Path(a.out) if a.out else OUT
     make = build_clang if a.toolchain == "clang" else build
     if a.list:
         for k, v in IMAGES.items():

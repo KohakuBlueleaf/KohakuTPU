@@ -3,6 +3,11 @@
 #include <ka/lib/stdio.h>
 #include <ka/unit/unit.h>
 
+#ifdef KA_DEBUG
+/* The debug image reports the raw word; the host decodes it (RUL.078). */
+#define DESCRIBE 0
+#else
+#define DESCRIBE describe
 static const char *const faults[] = {
     "?",       "F_DTYPE", "F_VSRC", "F_CHAIN", "F_OPCODE",
     "F_LEN",   "F_LOOP",  "F_VL",   "F_REDVL", "F_CUDATA",
@@ -14,11 +19,12 @@ static void describe(unsigned code, uint32_t arg)
     ka_printf("[VC] fault code %u (%s), signal %u\n", f,
               f < sizeof faults / sizeof faults[0] ? faults[f] : "?", code);
 }
+#endif
 
 KA_UNIT_CLASS(kt_vector_class) = {
     .type = 0x5643, /* 'VC' */
     .name = "VC",
     .credit = 0,
     .classify = ka_unit_generic_classify,
-    .describe = describe,
+    .describe = DESCRIBE,
 };

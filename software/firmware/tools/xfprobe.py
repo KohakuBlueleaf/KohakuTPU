@@ -18,12 +18,15 @@ import sys
 import time
 
 from kohakuaccel.driver.node.boot import BootArgs, NodeBoot
+from kohakuaccel.driver.node.boot.args import idle_bound
 from kohakuaccel.driver.transport.verilator import VerilatorTransport
 from kohakutpu.driver.clock.card import load_board
 from kohakutpu.driver.host import board_map
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 PROBE = 0x0030_0000
+#: Seconds of modeled time a firmware wait may take (the boot block's bound).
+WAIT = 0.02
 #: {8'd0, out words, in bits} per id: bypass, quantise, GT4, none.
 GEOMETRY = [4 << 16 | 1024, 4 << 16 | 2048, 4 << 16 | 1024, 0]
 
@@ -34,13 +37,15 @@ def main() -> int:
     ap.add_argument("--board", default="multimesh_v9")
     ap.add_argument("--load", choices=("burn", "axi"), default="burn")
     a = ap.parse_args()
-    m = board_map(load_board(a.board))
+    board = load_board(a.board)
+    m = board_map(board)
     host, glob = m["mem"][0] + PROBE, m["dram"][0] + PROBE
 
     t = VerilatorTransport(build_dir=a.build)
     t.write_block(host + 0x200, bytes(64))
     node = NodeBoot(t, m["ctrl"][0], 0, sim=t)
-    node.load(ROOT / "build/fw/xfprobe.elf", BootArgs(queue=glob, mesh=0), a.load)
+    args = BootArgs(queue=glob, mesh=0, timeout=idle_bound(board, WAIT))
+    node.load(ROOT / "build/fw/xfprobe.elf", args, a.load)
     text, t0 = "", time.monotonic()
     while time.monotonic() - t0 < 120:
         text += node.console()

@@ -55,5 +55,8 @@ SECTIONS
         __stack_top = .;
     } > SPAD
 
+    /* The image's ABI words for the host (apps/dispatcher/main.c); not loaded. */
+    .ka_abi 0 (INFO) : { KEEP(*(.ka_abi)) }
+
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) *(.riscv.attributes) }
 }

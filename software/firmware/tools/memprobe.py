@@ -17,11 +17,14 @@ import sys
 import time
 
 from kohakuaccel.driver.node.boot import BootArgs, NodeBoot
+from kohakuaccel.driver.node.boot.args import idle_bound
 from kohakuaccel.driver.transport.verilator import VerilatorTransport
 from kohakutpu.driver.clock.card import load_board
 from kohakutpu.driver.host import board_map
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
+#: Seconds of modeled time a firmware wait may take (the boot block's bound).
+WAIT = 0.02
 #: Below the model's 16 MB of DRAM, clear of card_run.py's 0x1_0000..0x22_0000.
 PROBE = 0x0030_0000
 
@@ -36,7 +39,8 @@ def main() -> int:
     ap.add_argument("--build", default=str(ROOT / "build/sw/vlt_card_v8t8_2n"))
     ap.add_argument("--load", choices=("burn", "axi"), default="burn")
     a = ap.parse_args()
-    m = board_map(load_board("multimesh_v8t8"))
+    board = load_board("multimesh_v8t8")
+    m = board_map(board)
     i = a.node
     host, glob = m["mem"][i] + PROBE, m["dram"][i] + PROBE
 
@@ -51,7 +55,9 @@ def main() -> int:
 
     node = NodeBoot(t, m["ctrl"][i], i, sim=t)
     info = node.load(
-        ROOT / "build/fw/memprobe.elf", BootArgs(queue=glob, mesh=i), a.load
+        ROOT / "build/fw/memprobe.elf",
+        BootArgs(queue=glob, mesh=i, timeout=idle_bound(board, WAIT)),
+        a.load,
     )
     print(
         f"  loaded ({info['mode']}, {info['load_seconds']:.1f}s): text {info['text']} B"

@@ -44,6 +44,10 @@ struct ka_engine {
     int status;
     unsigned detail;
     uint64_t value;
+    /* Read-only hardware state at the first failure, before clear or quiesce. */
+    uint64_t de_stat, de_moves, mvstat, xfdata;
+    uint64_t de_ctr[16];
+    unsigned snapshot_valid, snapshot_nctr;
 };
 
 void ka_engine_reset(struct ka_engine *e, uint32_t cap, uint64_t timeout);
@@ -106,6 +110,10 @@ int ka_engine_barrier(struct ka_engine *e);
 /* After a failure: let what is in flight retire (bounded), then empty the
  * mailbox, so the next package starts with nothing of this one's queued. */
 void ka_engine_quiesce(struct ka_engine *e);
+
+/* Capture once per package; print the retained snapshot in either image. */
+void ka_engine_snapshot(struct ka_engine *e);
+void ka_engine_report(struct ka_engine *e);
 
 /* Record the first error. Returns `status`. */
 int ka_engine_fail(struct ka_engine *e, int status, unsigned detail, uint64_t value);

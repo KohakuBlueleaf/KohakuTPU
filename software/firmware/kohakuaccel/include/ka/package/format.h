@@ -7,6 +7,8 @@
 
 #define KA_PKG_MAGIC   0x4B50414Bu /* "KAPK" */
 #define KA_PKG_VERSION 2
+/* ELF-advertised software extensions: ASSERT_ZERO and relocated immediate LOAD. */
+#define KA_PKG_FEATURES 1u
 #define KA_PKG_HEADER  96 /* bytes: twelve 64-bit words */
 
 /* Header words. */
@@ -27,6 +29,11 @@ enum {
 #define KA_PKG_F_CHECKSUM 1u
 /* The package RECVs: flits in the RX queue are its, not strays to drop. */
 #define KA_PKG_F_RX 2u
+
+/* RUL.042: a unit table credit meaning "no credit bound" (the host format's
+ * CREDIT_UNBOUNDED), and the in-flight bound it stands for (UNBOUNDED). */
+#define KA_PKG_CREDIT_UNBOUNDED 0u
+#define KA_PKG_UNBOUNDED (1UL << 32)
 
 /* Entry sizes in bytes. */
 #define KA_PKG_UNIT_BYTES 16 /* w0 type<<32|mesh<<16|y<<8|x, w1 [31:0] credit */
@@ -58,6 +65,7 @@ enum ka_step_op {
     KA_OP_SEND      = 19, /* unit, count flits of type arg >> 32 from payload arg */
     KA_OP_RECV      = 20, /* count RX flits from unit (0xffff any) to payload arg's address */
     KA_OP_CTRL      = 21, /* count (control offset, value) pairs from payload arg */
+    KA_OP_ASSERT_ZERO = 22, /* require reg[unit] == 0; count = contract code */
 };
 
 /* Package registers: LOAD writes one, ALU computes, JUMP tests, PATCH writes
@@ -80,7 +88,7 @@ enum ka_jump_cond {
 /* Step flags (w0 [15:8]). A MOVER step POSTED starts its moves and goes on:
  * the moves it starts are waited for by an MWAIT, a BARRIER or the end. */
 #define KA_STEP_F_POSTED  1u
-#define KA_STEP_F_IMM     2u   /* ALU / JUMP: operand b is arg, not rb */
+#define KA_STEP_F_IMM     2u   /* ALU/JUMP immediate; LOAD returns payload value without dereference */
 #define KA_STEP_F_REG     4u   /* STORE / CTRL: a pair's value names a register */
 #define KA_STEP_F_INDEXED 8u   /* LOAD: the address adds register count[3:0] */
 #define KA_STEP_F_CTRL    16u  /* LOAD: the address is a control-region offset */

@@ -1,20 +1,61 @@
 /* The dispatch engine over rv64_noc_mbox. */
 #include <ka/dispatch/engine.h>
+#include <ka/dispatch/de.h>
 #include <ka/hal/cpu.h>
 #include <ka/hal/node.h>
 #include <ka/lib/stdio.h>
 #include <ka/os/task.h>
+#include <ka/package/debug.h>
+#include <ka/package/format.h>
 #include <ka/package/status.h>
 
 /* Mailbox status reads before an offer wait yields to the scheduler. */
 #define KA_OFFER_SPIN 64
 
+/* dispatch_engine.v:235-246 is a read mux; rv64_syscore.v:632-660,
+ * 774-799 gates all control effects on stores, including MVSTAT's mirror. */
+void ka_engine_snapshot(struct ka_engine *e)
+{
+    if (e->snapshot_valid) {
+        return;
+    }
+    e->snapshot_valid = 1;
+    e->de_stat = ka_ctrl_rd(KA_R_DE_STAT);
+    e->de_moves = ka_ctrl_rd(KA_R_DE_CTL);
+    e->mvstat = ka_ctrl_rd(KA_R_MVSTAT);
+    e->xfdata = ka_ctrl_rd(KA_R_XF_DATA);
+    unsigned n = KA_DE_STAT_MAGIC(e->de_stat) == KA_DE_MAGIC
+                     ? 1u << ((e->de_stat >> 36) & 0xfu) : 0;
+    e->snapshot_nctr = n < KA_DE_UNITS ? n : KA_DE_UNITS;
+    for (unsigned i = 0; i < e->snapshot_nctr; ++i) {
+        e->de_ctr[i] = ka_ctrl_rd(KA_R_DE_CTR + 8 * i);
+    }
+}
+
+void ka_engine_report(struct ka_engine *e)
+{
+    ka_engine_snapshot(e);
+    ka_printf("PKGF de stat %lx moves %lx mvstat %lx xfdata %lx\n",
+              e->de_stat, e->de_moves, e->mvstat, e->xfdata);
+    ka_printf("PKGF de ctr");
+    for (unsigned i = 0; i < e->snapshot_nctr; ++i) {
+        ka_printf(" %lx", e->de_ctr[i]);
+    }
+    ka_printf("\n");
+}
+
 int ka_engine_fail(struct ka_engine *e, int status, unsigned detail, uint64_t value)
 {
     if (!e->status) {
+#ifndef KA_SPEC_SNAPSHOT_AFTER_CLEAR
+        ka_engine_snapshot(e);
+#endif
         e->status = status;
         e->detail = detail;
         e->value = value;
+#ifdef KA_DEBUG
+        ka_dbg_failed();
+#endif
     }
     return e->status;
 }
@@ -35,6 +76,7 @@ void ka_engine_reset(struct ka_engine *e, uint32_t cap, uint64_t timeout)
     e->dst = ~0UL;
     e->keep_rx = 0;
     e->status = 0;
+    e->snapshot_valid = 0;
     e->detail = 0;
     e->value = 0;
 }
@@ -51,7 +93,7 @@ int ka_engine_add(struct ka_engine *e, uint64_t word, uint32_t credit, uint32_t 
     s->type = (uint16_t)((word >> 32) & 0xffff);
     s->cls = ka_unit_class(s->type);
     s->plain = s->cls->classify == ka_unit_generic_classify;
-    uint32_t c = credit ? credit : e->cap;
+    uint32_t c = credit != KA_PKG_CREDIT_UNBOUNDED ? credit : e->cap;
     if (s->cls->credit && s->cls->credit < c) {
         c = s->cls->credit;
     }
@@ -94,6 +136,9 @@ static __attribute__((noinline)) unsigned drain_slow(struct ka_engine *e, uint64
         return 0;
     }
     struct ka_unit_state *s = &e->u[i];
+#ifdef KA_DEBUG
+    ka_dbg_completion((unsigned)i, w);
+#endif
     enum ka_verdict v = s->cls->classify(KA_CQ_CODE(w), KA_CQ_ARG(w));
     unsigned retired = 0;
     ++s->received;
@@ -103,9 +148,12 @@ static __attribute__((noinline)) unsigned drain_slow(struct ka_engine *e, uint64
         retired = 1;
     }
     if (v == KA_V_FAULT) {
+#ifndef KA_DEBUG
+        /* The debug image reports the raw word; the host decodes it (RUL.078). */
         if (s->cls->describe) {
             s->cls->describe(KA_CQ_CODE(w), KA_CQ_ARG(w));
         }
+#endif
         ka_engine_fail(e, KA_ST_UNIT_FAULT, (unsigned)i, w);
     }
     return retired;
@@ -134,6 +182,9 @@ int ka_engine_drain(struct ka_engine *e)
         uintptr_t at = e->at[KA_CQ_X(w)][KA_CQ_Y(w)];
         struct ka_unit_state *s = (struct ka_unit_state *)((uintptr_t)e->u + at * sizeof *s) - 1;
         if (at && s->plain && code != KA_SIG_FAULT) {
+#ifdef KA_DEBUG
+            ka_dbg_completion((unsigned)at - 1, w);
+#endif
             ++s->received;
             if (code == KA_SIG_DATA_RECEIVED) {
                 ++s->acks;
@@ -272,6 +323,10 @@ int ka_engine_fetch(struct ka_engine *e, unsigned u, unsigned port, uint64_t add
     while (ka_nm_rd(KA_NM_STAT) & KA_NM_STAT_OFFERED) {
     }
     ka_nm_wr(KA_NM_GO, 1);
+    e->t_last = ka_cycles();
+    if (!e->sent) {
+        e->t_first = e->t_last;
+    }
     s->inflight += n;
     s->sent += n;
     e->outstanding += n;

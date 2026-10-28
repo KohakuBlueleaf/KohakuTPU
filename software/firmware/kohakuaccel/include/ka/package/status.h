@@ -18,6 +18,7 @@ enum ka_status {
     KA_ST_UNIT_FAULT    = 0x20, /* detail: unit index; value: the signal word */
     KA_ST_MBOX_OVERFLOW = 0x21, /* reserved */
     KA_ST_MOVER_FAULT   = 0x22,
+    KA_ST_CONTRACT     = 0x24, /* detail: contract code; value: rejected status word */
     KA_ST_NO_REACH      = 0x23, /* a MOVER register outside the mover's window */
     KA_ST_TIMEOUT       = 0x30, /* detail: what was waited on */
     KA_ST_BAD_OP        = 0x40, /* an SQ entry with an unknown opcode */
@@ -40,6 +41,7 @@ enum ka_wait {
     KA_WAIT_RX     = 8,
     KA_WAIT_ACK    = 9,
     KA_WAIT_RING   = 10,
+    KA_WAIT_ENGINE = 11, /* the dispatch engine issued nothing; value: its raw STAT */
 };
 
 #endif

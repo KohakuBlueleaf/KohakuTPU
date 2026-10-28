@@ -6,10 +6,8 @@
    robin, sleep, waits and timeouts, spawn from a task, switch cost) and its
    heaps over DRAM and staging (churn with each block's ends re-read, every
    refusal), and exits 0 only when every check passed.
-2. The dispatcher (its queue service is a task) on both nodes: the host sets a
-   DRAM and a staging heap through the queue, checks each allocated address
-   against kohakuaccel.driver.node.heap, runs a MOVER package between two
-   allocated blocks, checks the bytes, frees all and reads the heap lines back.
+2. The dispatcher on both nodes: reserved memory-management opcodes refuse
+   with BAD_OP; its task exits through STOP.
 """
 
 import argparse
@@ -18,12 +16,9 @@ import struct
 import sys
 import time
 
-from kohakuaccel.compiler.package.build import PackageBuilder
-from kohakuaccel.driver.device import mover
 from kohakuaccel.driver.node.boot import BootArgs, NodeBoot
-from kohakuaccel.driver.node.heap import Heap
+from kohakuaccel.driver.node.boot.args import REGION_QUEUE, idle_bound
 from kohakuaccel.driver.node.queue import NodeError, NodeQueue
-from kohakuaccel.driver.node.queue import layout as L
 from kohakuaccel.driver.transport.rebase import UnitGlobal
 from kohakuaccel.driver.transport.verilator import VerilatorTransport
 from kohakutpu.driver.clock.card import load_board
@@ -34,9 +29,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[3]
 #: meshes), so each node's spans sit at their own offset. osprobe: results at
 #: the span, its DRAM heap at +64 KB for 1 MB.
 PROBE = (0x0030_0000, 0x0050_0000)
-#: The dispatcher's heaps: DRAM past every other script's spans, staging past the queue.
-HEAP_DRAM, HEAP_DRAM_BYTES = (0x0080_0000, 0x00A0_0000), 1 << 20
-HEAP_STAGE, HEAP_STAGE_BYTES = 0x0010_0000, 512 << 10
+#: Seconds of modeled time a firmware wait may take (the boot block's bound).
+WAIT = 0.02
 RESULTS = (
     "pass",
     "fail",
@@ -51,13 +45,13 @@ RESULTS = (
 )
 
 
-def osprobe(t, m, mem) -> int:
+def osprobe(t, m, mem, wait: int) -> int:
     nodes = []
     for i in (0, 1):
         n = NodeBoot(t, m["ctrl"][i], i, sim=t)
         n.load(
             ROOT / "build/fw/osprobe.elf",
-            BootArgs(queue=m["dram"][i] + PROBE[i], mesh=i),
+            BootArgs(queue=m["dram"][i] + PROBE[i], mesh=i, timeout=wait),
             "burn",
         )
         nodes.append(n)
@@ -105,97 +99,35 @@ def osprobe(t, m, mem) -> int:
     return fails
 
 
-def dispatcher(t, m, mem) -> int:
+def dispatcher(t, m, mem, wait: int) -> int:
     queues = []
     for i in (0, 1):
         q = NodeQueue(mem, 1 << 39 | i << 36, idle=lambda: t.run(600))
         q.init()
         NodeBoot(t, m["ctrl"][i], i, sim=t).load(
-            ROOT / "build/fw/kohakutpu_node.elf", BootArgs(queue=q.base, mesh=i), "burn"
+            ROOT / "build/fw/kohakutpu_node.elf",
+            BootArgs(
+                queue=q.base,
+                mesh=i,
+                timeout=wait,
+                regions=[(q.base, q.size, REGION_QUEUE)],
+            ),
+            "burn",
         )
         queues.append(q)
     for q in queues:
         q.wait_ready()
     fails = 0
     for i, q in enumerate(queues):
-        t0 = time.monotonic()
-        dram = m["dram"][i] + HEAP_DRAM[i]
-        stage = 1 << 39 | i << 36 | HEAP_STAGE
-        q.heap(L.MEM_DRAM, dram, HEAP_DRAM_BYTES)
-        q.heap(L.MEM_STAGING, stage, HEAP_STAGE_BYTES, granule=32)
-        ref = {
-            L.MEM_DRAM: Heap(dram, HEAP_DRAM_BYTES, 64, 64),
-            L.MEM_STAGING: Heap(stage, HEAP_STAGE_BYTES, 32, 64),
-        }
-        reqs = [
-            (L.MEM_DRAM, 4096, 0),
-            (L.MEM_DRAM, 100, 4096),
-            (L.MEM_STAGING, 1000, 0),
-            (L.MEM_DRAM, 70000, 256),
-            (L.MEM_STAGING, 33, 1024),
-        ]
-        got, match = [], True
-        for r, n, a in reqs:
-            addr = q.alloc(r, n, align=a, tag=len(got))
-            want = ref[r].alloc(n, a, len(got))[1]
-            match &= addr == want
-            got.append((r, addr, n))
-        print(
-            f"  node {i}: 5 allocs {'match' if match else 'DIFFER from'} the Python policy: "
-            + ", ".join(f"{a:#x}" for _, a, _ in got)
-        )
-        fails += not match
-
-        # A package moves 1 KB from a DRAM block into a staging block, both node-allocated.
-        src, dst = got[0][1], got[2][1]
-        blob = bytes((k * 29 + 3 * i + 1) & 0xFF for k in range(1024))
-        mem.write_block(src, blob)
-        mem.write_block(dst, bytes(1024))
-        pb = PackageBuilder()
-        walk = [(32, 32)]
-        pb.mover(
-            mover.copy(
-                mover.Walker(src, dims=walk),
-                mover.Walker(dst, dims=walk),
-                ewidth=mover.W32,
-            )
-        )
-        done = q.run(pb.build().to_bytes())
-        moved = mem.read_block(dst, 1024) == blob
-        print(
-            f"  node {i}: MOVER DRAM block -> staging block: {done.describe()}; "
-            f"bytes {'ok' if moved else 'WRONG'}"
-        )
-        fails += not (done.ok and moved)
-
-        errs = []
-        for name, call, args in (
-            ("BAD_FREE", q.free, (L.MEM_DRAM, src + 64)),
-            ("NO_MEMORY", q.alloc, (L.MEM_STAGING, 1 << 20)),
-            ("HEAP_BUSY", q.heap, (L.MEM_DRAM, dram, 4096)),
-        ):
+        for op in (3, 4, 5):
+            tag = q.submit(op=op, words=[0, 0x400000, 64, 32])
             try:
-                call(*args)
-                errs.append(f"{name}: accepted")
+                q.wait(tag)
+                fails += 1
+                print(f"  node {i}: reserved opcode {op} accepted")
             except NodeError as e:
-                if e.completion.name != name:
-                    errs.append(f"{name}: got {e.completion.name}")
-        for r, addr, _ in got:
-            q.free(r, addr)
-        st = [q.heap_stats(r) for r in (L.MEM_DRAM, L.MEM_STAGING)]
-        whole = (
-            st[0]["free"] == st[0]["largest"] == HEAP_DRAM_BYTES
-            and st[0]["blocks"] == 1
-            and st[1]["free"] == st[1]["largest"] == HEAP_STAGE_BYTES
-            and st[1]["blocks"] == 1
-            and st[0]["live"] == st[1]["live"] == 0
-            and st[1]["fails"] == 1
-        )
-        print(
-            f"  node {i}: refusals {'ok' if not errs else errs}; after freeing all: "
-            f"DRAM {st[0]}, staging {st[1]} ({time.monotonic() - t0:.1f}s)"
-        )
-        fails += bool(errs) + (not whole)
+                fails += e.completion.name != "BAD_OP"
+                print(f"  node {i}: reserved opcode {op}: {e.completion.name}")
     for i, q in enumerate(queues):
         q.stop()
         out = q.read_stdout().strip().splitlines()
@@ -209,7 +141,8 @@ def main() -> int:
     ap.add_argument("--build", default=str(ROOT / "build/sw/vlt_card_v8t8_2n"))
     ap.add_argument("--parts", default="osprobe,dispatcher")
     a = ap.parse_args()
-    m = board_map(load_board("multimesh_v8t8"))
+    board = load_board("multimesh_v8t8")
+    m = board_map(board)
     t0 = time.monotonic()
     t = VerilatorTransport(build_dir=a.build)
     mem = UnitGlobal(t, m["dram"], m["mem"], m["size"], staging=True)
@@ -218,7 +151,7 @@ def main() -> int:
     for name, part in (("osprobe", osprobe), ("dispatcher", dispatcher)):
         if name in a.parts.split(","):
             t1 = time.monotonic()
-            fails += part(t, m, mem)
+            fails += part(t, m, mem, idle_bound(board, WAIT))
             print(f"{name} {time.monotonic() - t1:.1f}s")
     s = t.status()
     print(
