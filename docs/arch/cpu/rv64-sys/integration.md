@@ -512,7 +512,7 @@ location outside DRAM at all.
 | `L1_LINES` | 64 | 32-byte lines, so 2 KB |
 | `TLB_ENTRIES` | 32 | direct-mapped |
 | `SPAD_BASE`, `CTRL_BASE` | `0x0001_0000`, `0x0002_0000` | honoured by the decode |
-| **`NODE_BASE`, `CACHE_LO`** | `2^28`, `2^31` | **not honoured.** The decode is `\|pa[39:28]` and `pa[31]` with the bit positions written literally, so changing either parameter changes nothing. Treat both as documentation and edit the tests |
+| **`NODE_BASE`** | `2^28` | **not honoured.** The decode is `\|pa[39:28]` with the bit positions written literally, so changing the parameter changes nothing. The cached test is `pa[39]` and `pa[38]` clear (`UNC_BIT`, a localparam) |
 | `XFORM_SLOTS`, `XID_W`, `XMODE_W`, `XFORM_IN_BITS`, `XFORM_OUT_WORDS` | 1, 4, 4, 2048, 4 | the transform slot's, on `rv64_mag_pe` only |
 
 `sysnode` selects between the two control complexes with **`CPU_RV64`, which

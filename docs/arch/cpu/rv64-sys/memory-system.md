@@ -282,9 +282,33 @@ the contract:
 2. **A "resolved" answer is qualified by same-request.** The MMU's answer
    describes the address presented a cycle ago. Carried forward unqualified, it
    released a *data* access on the *fetch*'s hit in the cycle the port switched
-   between them. A newcomer therefore never rides the previous requester's hit.
+   between them. A newcomer from the *other* requester therefore never rides
+   the previous requester's hit.
 3. **A fault is tagged with its owner and holds only that requester.** A fetch
    fault does not stall a data access, and a data fault does not stall fetch.
+
+> **A data access right after a data access does ride it.** The same-request
+> test is registered in the last cycle of access A, when the port still
+> carries A, so in the next cycle `busy` is low for a newly presented access
+> B, and `pa` (`{TLB row, q_off}`, both registered from A) is A's. When B's
+> own translation hits the TLB, B is issued to A's physical address: a load
+> returns A's location, a store writes it. It needs A to span more than one
+> memory cycle (a cached or uncached access) and B in the very next cycle;
+> one non-memory instruction between them removes it, and so does a TLB miss
+> on B (the walk re-issues it). Reproduced on `rv64_node_pair` and the
+> KohakuAccel OS core model by `software/os/tests/xlat`. The RTL chain:
+> `rv64_mmu.v:200` registers `resolved_q <= resolved && same_req` while the
+> port still carries A; `:206` `busy = enabled && req && !resolved_q` is then
+> 0 for B; `:207` `pa = {e_ppn, q_off}` is A's; `rv64_syscore.v:526` starts B
+> and `:542-547` latch `m_pa_q <= pa`. A register-only fix clears
+> `resolved_q` on the data access's completion
+> (`resolved_q <= resolved && same_req && !done`, `done` from the wrapper's
+> `dmem_req_c && mem_started && mem_done`), so `busy` stays register-only;
+> its cost is the one lookup cycle any new translated access waits. Software that runs
+> translated on this core puts an instruction between back-to-back memory
+> accesses (KohakuAccel OS `software/os/tools/memgap.py`). Fetch is not
+> affected: its translation waits two cycles after it requests the port
+> ([below](#fetch-is-translated-through-one-page-register)).
 
 ### Fetch is translated through one page register
 
@@ -511,8 +535,8 @@ address that decides which region an access lands in.
 | scratchpad | `pa[39:15]` equals 2 | one equality — 32 KB at `0x0001_0000` |
 | control region | `pa[39:8]` equals `0x200` | one equality — 256 B at `0x0002_0000` |
 | the node range | **any bit of `pa[39:28]` set** | one OR reduction — base 2²⁸ |
-| cached | in the node range **and `pa[31]` set** | one bit — base 2³¹ |
-| uncached | in the node range and `pa[31]` clear | the complement |
+| cached | in the node range, **`pa[39]` and `pa[38]` clear** | two bits (`in_cache`, `rv64_syscore.v`) |
+| uncached | in the node range with `pa[39]` or `pa[38]` set | the complement |
 
 Every range is power-of-two aligned and power-of-two sized on purpose, which is
 what lets each test be a single equality or a single bit rather than a pair of
@@ -521,14 +545,14 @@ what lets each test be a single equality or a single bit rather than a pair of
 | region | cached | why |
 |---|---|---|
 | the scratchpad and the control region | n/a | local arrays, one cycle |
-| the node range with `pa[31]` set | **yes** | DRAM: large, re-read, private to this core |
-| the node range with `pa[31]` clear | **no** | staging, the node's own registers, cross-mesh writes — the *home* of their addresses, and multi-writer |
-| the aperture, `pa[39]` set | **no** | it has bit 31 clear, so the same test excludes it |
+| DRAM, `pa[39:38]` clear | **yes** | large, re-read, private to this core |
+| the uncached alias, `pa[38]` set | **no** | the same DRAM bytes, every access to the fabric; the node port clears bit 38 (`rv64_nport.v`) |
+| the aperture, `pa[39]` set | **no** | staging, the node's own registers — multi-writer structures |
 
-**`pa[31]` is a bit test and reads literally.** An address at 4 GB with bit 31
-clear is uncached, and so is anything in the aperture. This is a convention of
-the wrapper rather than a property of the machine, and a design that wants a
-different split changes the test.
+**Bit 38 is the uncached alias** ([address map](../../../address-map.md#the-processors-view-bit-38-is-the-uncached-alias)):
+the fabric keeps it reserved-zero, so the processor uses it to name the same
+DRAM uncached. Code fetch follows the same rule (`fetch_cached`): DRAM text with
+`pa[39:38]` clear goes through the I-cache.
 
 ### Staging honours byte strobes
 
@@ -609,7 +633,11 @@ in the L1 and reaches DRAM when its line is evicted, or when software flushes:
 a store to control `0x1C8` with `[0]` writes every dirty line back, `[1]` drops
 every line, and the register reads busy until the sweep has its last write
 response. So a cached range is published to another agent by flush-then-poll,
-and read fresh after invalidate-then-poll.
+and read fresh after invalidate-then-poll. **Busy rises late:** it is the L1's
+sweep state, which the L1 enters some cycles after the store, so a poll read
+straight after the store can see 0 before the sweep has begun. Poll for busy
+to rise, then to fall (KohakuAccel OS `hw_dcache`). Measured on the core
+models with that poll: 64 dirty lines 920 cycles, clean 148, invalidate 74.
 
 > **Small cross-agent words go through the uncached range** (descriptors a
 > mover will fetch, doorbells, mailbox words, completion flags); **a buffer is

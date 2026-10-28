@@ -359,15 +359,13 @@ of these regions a virtual address lands in.
 | instruction window | fetch, `IMEM_WORDS × 4 B` — 32 KB | fetch only |
 | scratchpad | `pa[39:15] == 2` — 32 KB at `0x0001_0000` | ordinary read/write memory, byte-writable |
 | control region | `pa[39:8] == 0x200` — 256 B at `0x0002_0000` | word registers, some with side effects |
-| node, **uncached** | any of `pa[39:28]` set, and `pa[31]` **clear** | straight to the node port: staging, node registers, cross-mesh |
-| node, **cached** | any of `pa[39:28]` set, and `pa[31]` **set** | through the write-back L1 |
+| node, **uncached** | any of `pa[39:28]` set, and `pa[39]` or `pa[38]` **set** | straight to the node port: staging and node registers (`pa[39]`), or DRAM through its uncached alias (`pa[38]`, cleared on the way out) |
+| node, **cached** | any of `pa[39:28]` set, `pa[39]` and `pa[38]` **clear** | DRAM through the write-back L1 |
 
-**Read the cached test literally.** It is `pa[31]`, a single bit, not
-"at or above 2 GB" — the decode is bit tests rather than magnitude compares
-because it sits in the pipeline's stall path, and a 40-bit comparison there cost
-frequency across the whole core. An address at 4 GB with bit 31 clear is
-therefore **uncached**, and so is anything in the aperture. Lay a program's
-cached working set out accordingly; [memory-system](memory-system.md#what-is-cached-and-what-is-not)
+The decode is bit tests rather than magnitude compares because it sits in the
+pipeline's stall path, and a 40-bit comparison there cost frequency across the
+whole core. Every DRAM byte has two names: `pa` (cached) and `pa | 1 << 38`
+(uncached); [memory-system](memory-system.md#what-is-cached-and-what-is-not)
 carries the consequences.
 
 Nothing is linked into the node range. There is no image to place there, and

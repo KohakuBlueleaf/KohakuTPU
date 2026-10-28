@@ -426,12 +426,14 @@ readable after the core has gone back into reset.
 or 6, with the faulting address in `mtval`. There is no fixup. `-O2` will not
 produce one from correct C; a hand-written cast that misaligns will.
 
-**Anything another agent reads must be uncached.** On the node processor, the
-cached range is `pa[31]` set within the node range, and it is for this core's own
-working set. Descriptors a mover will fetch, doorbells, mailbox words and
-completion flags all go through the **uncached** range, which is what the
-aperture and the low node range are. There is **no cache flush and no
-invalidate** available to software, so a cached write may never reach memory —
+**Anything another agent reads is uncached or flushed.** On the node processor,
+DRAM is cached under its plain address and uncached under its alias
+`pa | 1 << 38`; the aperture (`pa[39]`) is always uncached. Descriptors a mover
+will fetch, doorbells, mailbox words and completion flags go through the
+**uncached** names. A cached buffer is published by a flush and read fresh after
+an invalidate: control `0x1C8`, `[0]` writes every dirty line back, `[1]` drops
+every line, and the register reads busy until the sweep is done — busy rises
+some cycles after the store, so poll for it to rise and then fall —
 [memory-system](memory-system.md#what-the-core-publishes-about-ordering).
 
 **`FENCE` is a NOP and cannot be made to mean anything.** One hart, in-order,

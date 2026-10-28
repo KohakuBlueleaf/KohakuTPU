@@ -153,7 +153,7 @@ map is in [address-map.md](../../address-map.md).
 | store | reach | width rules | proven by |
 |---|---|---|---|
 | scratchpad | load/store | any width | every program |
-| the mesh's DRAM | load/store via the node port, cached or uncached by bit 31 | any width; the L1 writes back whole 32-byte lines | `sys_hello.c` |
+| the mesh's DRAM | load/store via the node port, cached, or uncached through the bit-38 alias | any width; the L1 writes back whole 32-byte lines | `sys_hello.c` |
 | **staging** — the mesh's 2 MB on-chip store at aperture 0 | load/store, uncached | **any width: byte strobes are honoured**, so 8-byte page-table entries and mailbox words are safe | `ring_a.c`, `sv39.c` |
 | another mesh's staging or DRAM | **store only**, posted over the interlink (§7); loads stay local. Bulk data: the mover (§6) | 8-byte stores with their strobes; honoured in staging, not by the card's DRAM endpoint | `sig_a.c` |
 

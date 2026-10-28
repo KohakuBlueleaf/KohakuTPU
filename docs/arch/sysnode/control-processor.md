@@ -647,11 +647,9 @@ Four places where the source and its own stated intent do not line up.
   Pages describing occupant registers as processor-reachable —
   [simd-model](simd-model.md) and [transform-stage](transform-stage.md) — say
   which configuration they mean.
-- **`CACHE_LO` names a threshold and the RTL tests a bit.** The parameter's
-  comment reads "this and above is cached"; the decode is `address bit 31`,
-  which agrees with the comment only below 4 GB. The bit test is what makes the
-  decode cheap enough to sit in the stall path, so the name is the thing that is
-  wrong.
+- **Cached or not is two address bits.** DRAM with `pa[39:38]` clear is cached;
+  bit 38 set names the same bytes uncached (the node port clears it), and the
+  aperture, bit 39, is uncached ([address map](../../address-map.md#the-processors-view-bit-38-is-the-uncached-alias)).
 
 ## Where this is verified
 
