@@ -174,10 +174,13 @@ def quant_kernel(
                 node_loop=shape_class is not None,
             )
             return
-        for b in range(batches):
+        # unpadded row blocks stack contiguously: one quant over the stack
+        blocks = 1 if rows == rp else batches
+        span = batches // blocks
+        for b in range(blocks):
             kt.quant(
-                q[b * rp : (b + 1) * rp, :],
-                x[r0 + b * rows : r0 + (b + 1) * rows, c0 : c0 + cols],
+                q[b * span * rp : (b + 1) * span * rp, :],
+                x[r0 + b * span * rows : r0 + (b + 1) * span * rows, c0 : c0 + cols],
                 finite=finite,
                 finite_batch=batch_size,
                 overlap=drain_overlap,
