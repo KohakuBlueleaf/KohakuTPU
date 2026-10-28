@@ -1,7 +1,7 @@
 """Plain tinygrad on the KohakuTPU simulator: no KohakuTPU import at all.
 
     python -m kohakutpu.application.ktpugrad --autoload   # once per venv
-    DEV=KTPU python software/application/examples/tinygrad/quickstart.py
+    KOHAKUTPU_BOARD=multimesh_v9 DEV=KTPU python software/application/examples/tinygrad/quickstart.py
 
 With the autoload hook installed, ``DEV=KTPU`` makes the simulated card
 tinygrad's default device; every kernel tinygrad schedules runs there (a

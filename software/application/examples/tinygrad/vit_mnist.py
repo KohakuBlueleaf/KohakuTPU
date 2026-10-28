@@ -1,6 +1,6 @@
 """A pretrained vision transformer moved onto the KohakuTPU simulator.
 
-    python software/application/examples/tinygrad/vit_mnist.py
+    KOHAKUTPU_BOARD=multimesh_v9 python software/application/examples/tinygrad/vit_mnist.py
 
 The model is tinygrad modules (patch embedding, 2 encoder blocks of 2-head
 attention + GELU MLP, a mean-pooled classifier) over 64 patches of 4 x 4.

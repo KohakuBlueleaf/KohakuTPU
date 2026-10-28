@@ -1,7 +1,7 @@
 """Your own DSL kernel, then tinygrad around it, on the KohakuTPU simulator.
 
-    python software/application/examples/dsl/custom_kernels.py
-    KOHAKUTPU_SIM_NODES=2 python software/application/examples/dsl/custom_kernels.py --nodes 2
+    KOHAKUTPU_BOARD=multimesh_v9t8 python software/application/examples/dsl/custom_kernels.py
+    KOHAKUTPU_BOARD=multimesh_v9t8 KOHAKUTPU_SIM_NODES=2 python software/application/examples/dsl/custom_kernels.py --nodes 2
 
 1. `gated_rmsnorm` (``kt``): rmsnorm, weight and SiLU gate in one vector-core
    kernel; its L2 trace printed.
@@ -23,7 +23,9 @@ from kohakutpu.application import api as kp
 from kohakutpu.application import ktpugrad
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime.call import call
+from kohakutpu.language import machine as MF
 from kohakutpu.language.examples import dsl as ex
+from kohakutpu.stack.kernel import dsl_machine
 
 
 @kt.kernel
@@ -87,10 +89,12 @@ def main() -> None:
     g = (rng.standard_normal(W) * 0.5 + 1).astype(np.float16)
     z = rng.standard_normal((R, W)).astype(np.float16)
 
+    dev = D.device()
     print("== 1. the kernel's L2 trace ==")
     print(
         gated_rmsnorm.trace(
-            {"x": ((R, W), "f16"), "g": ((W,), "f16"), "z": ((R, W), "f16")}
+            {"x": ((R, W), "f16"), "g": ((W,), "f16"), "z": ((R, W), "f16")},
+            machine=dsl_machine(dev.machine),
         ).text
     )
 
@@ -116,7 +120,7 @@ def main() -> None:
     )
 
     print("== 4. several nodes ==")
-    two = kt.Machine(mg=4, vc=2, nodes=2)
+    two = kt.Machine.of(MF.load("multimesh_v9t8"), nodes=2)
     lin, spk = ex.EXAMPLES["linear"], ex.EXAMPLES["splitk"]
     print("-- linear on 2 nodes (memory shared through the Xache) --")
     print(lin.kernel.trace(lin.given, machine=two, **lin.consts).text)
