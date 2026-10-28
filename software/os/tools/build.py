@@ -51,6 +51,23 @@ CFLAGS = [
 
 LIB = ["lib/string.c", "lib/fmt.c"]
 
+# The hot-path build flags, in measurement order; every image gets them unless --plain.
+HOT = (
+    "KOS_SPLIT",
+    "KOS_SMALL_CALL",
+    "KOS_XLAT",
+    "KOS_L0_SPLIT",
+    "KOS_L0_FAST",
+    "KOS_FAST",
+    "KOS_LOCAL_LOG",
+    "KOS_POLL_EVENTS",
+    "KOS_CHAN_FIFO",
+    "KOS_REMOTE_BATCH",
+    "KOS_COMPACT_XLAT",
+    "KOS_EVENT_ASM",
+    "KOS_WAIT_ACTIVE",
+)
+
 
 def tree(*dirs: str) -> list[str]:
     out = []
@@ -202,6 +219,7 @@ def main() -> int:
     ap.add_argument(
         "--no-memgap", action="store_true", help="no memory-gap pass on translated code"
     )
+    ap.add_argument("--plain", action="store_true", help="without the HOT build flags")
     a = ap.parse_args()
     if a.list:
         for k, (ld, ks, us, gs) in IMAGES.items():
@@ -211,7 +229,7 @@ def main() -> int:
         return 0
     out = pathlib.Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    defines = [f"-D{d}" for d in a.defines]
+    defines = [f"-D{d}" for d in (*(() if a.plain else HOT), *a.defines)]
     for name in a.images or list(IMAGES):
         if name not in IMAGES:
             raise SystemExit(f"no image {name!r}; have {sorted(IMAGES)}")

@@ -1,8 +1,14 @@
 # Configurable kernel hot paths
 
-The kernel and machine layer have opt-in build definitions. Supply a definition
-with `software/os/tools/build.py kos -D NAME`; omit it to use the comparison
-implementation. Definitions apply to the complete image, including user code.
+The kernel and machine layer have build definitions for their hot paths.
+`software/os/tools/build.py` defines every one listed below (`HOT` in build.py);
+`--plain` builds the comparison implementation without them, and `-D NAME`
+adds one to a plain build. Definitions apply to the complete image, including
+user code. Silicon with all of them (v9t6 card, 4 nodes, 100/200): system call
+271 cycles (plain 624), L0 trap 75 (232), yield 2,970 (5,546), channel round
+trip 7,687 (11.7k), kdsbench hop 19.4k (23.0k), alloc 29.0k (38.1k), kdsmg
+round with engine batches 33.6k (32.8k), plain 37.9k (39.6k), remote rounds
+39–52k (50–64k).
 
 | Definition | Implementation |
 |---|---|

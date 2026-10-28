@@ -11,23 +11,8 @@ sys.path.insert(0, str(TOOLS))
 from boot import load, parse_flags
 from run_core import run
 
+from build import HOT as KNOBS
 from build import build
-
-KNOBS = (
-    "KOS_SPLIT",
-    "KOS_SMALL_CALL",
-    "KOS_XLAT",
-    "KOS_L0_SPLIT",
-    "KOS_L0_FAST",
-    "KOS_FAST",
-    "KOS_LOCAL_LOG",
-    "KOS_POLL_EVENTS",
-    "KOS_CHAN_FIFO",
-    "KOS_REMOTE_BATCH",
-    "KOS_COMPACT_XLAT",
-    "KOS_EVENT_ASM",
-    "KOS_WAIT_ACTIVE",
-)
 
 
 def main():

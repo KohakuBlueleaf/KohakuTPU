@@ -28,8 +28,11 @@ LLVM (clang, ld.lld, llvm-objcopy, llvm-objdump, llvm-size) for
 the tools from `$KOS_LLVM`, else `~/micromamba/envs/kos/bin`, else `PATH`.
 
 ```
-python software/os/tools/build.py [IMAGE ...] [--out DIR] [-D NAME=VALUE] [--no-memgap] [--list]
+python software/os/tools/build.py [IMAGE ...] [--out DIR] [-D NAME=VALUE] [--plain] [--no-memgap] [--list]
 ```
+
+Every image is built with the hot-path definitions (`HOT`,
+[hotpaths](../design/hotpaths.md)); `--plain` leaves them out.
 
 | image | what | runs translated |
 |---|---|---|
