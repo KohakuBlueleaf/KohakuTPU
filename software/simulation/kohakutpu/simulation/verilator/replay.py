@@ -60,6 +60,7 @@ def build_model(build: pathlib.Path = BUILD, defines=()) -> None:
         env["PATH"] = str(VLT_ENV / "bin") + os.pathsep + env["PATH"]
         env["VERILATOR_ROOT"] = str(VLT_ENV)
     defs = ["VEC_CORE_V2", *defines]
+    vsim(build).unlink(missing_ok=True)
     p = subprocess.run(
         [
             sys.executable,
@@ -67,6 +68,7 @@ def build_model(build: pathlib.Path = BUILD, defines=()) -> None:
             "vec2_replay",
             "--native",
             "--keep",
+            "--no-run",
             "--rtl",
             "-j",
             "16",
@@ -80,7 +82,7 @@ def build_model(build: pathlib.Path = BUILD, defines=()) -> None:
         env=env,
         check=False,
     )
-    if not vsim(build).exists():
+    if p.returncode or not vsim(build).exists():
         raise RuntimeError(
             f"vec2_replay did not build:\n{p.stdout[-4000:]}{p.stderr[-4000:]}"
         )
@@ -113,7 +115,7 @@ def replay(
     if rebuild or not vsim(build).exists():
         build_model(build, defines)
     args = [
-        f"+{k}={(run_dir / f'{k}.hex').resolve().as_posix()}"
+        f"+{k}={pathlib.Path(os.path.relpath(run_dir / f'{k}.hex', vsim(build).parent)).as_posix()}"
         for k in ("prog", "mem", "out")
     ]
     done = subprocess.run(

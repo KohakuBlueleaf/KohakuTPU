@@ -13,29 +13,31 @@ A Mailbox sends one payload and reports completions as they arrive:
 """
 
 from dataclasses import dataclass, field
+from enum import IntEnum
+from types import SimpleNamespace
 from typing import Protocol
 
-from kohakuaccel.compiler.package import engine
-from kohakuaccel.compiler.package.format import (
-    ANY_UNIT,
-    F_CTRL,
-    F_IMM,
-    F_INDEXED,
-    F_MEM,
-    F_POSTED,
-    F_REG,
-    MOVER_SKIP,
-    REGS,
-    Alu,
-    Cond,
-    Op,
-    Package,
-    PackageError,
-    Step,
-    apply_reloc,
-    bind_addresses,
-    signature,
-)
+PackageError = ValueError
+
+
+class Reader(Protocol):
+    """Package tables, format codes and unit signatures supplied by the caller."""
+
+    format: dict
+
+    def read(self, raw: bytes, bindings=None) -> dict: ...
+
+    def signature(self, units) -> int: ...
+
+
+@dataclass
+class Step:
+    op: int
+    unit: int
+    count: int
+    arg: int
+    flags: int = 0
+
 
 MASK32, MASK64 = (1 << 32) - 1, (1 << 64) - 1
 
@@ -58,7 +60,7 @@ def _step_word(s: Step) -> int:
     return w0 | (s.arg & MASK64) << 64
 
 
-def _word_step(w: int) -> Step:
+def _word_step(w: int, Op) -> Step:
     w0 = w & MASK64
     return Step(Op(w0 & 0xFF), (w0 >> 16) & 0xFFFF, w0 >> 32, w >> 64, (w0 >> 8) & 0xFF)
 
@@ -78,7 +80,7 @@ class Result:
     sent: int = 0
     signals: list = field(default_factory=list)
     #: The package's registers at its end.
-    regs: list = field(default_factory=lambda: [0] * REGS)
+    regs: list = field(default_factory=list)
     #: ``(step, op, unit, count, arg)`` of every interlink / control step, in
     #: the order the node reached them.
     events: list = field(default_factory=list)
@@ -86,7 +88,7 @@ class Result:
     flits: list = field(default_factory=list)
 
 
-def _alu(op: int, a: int, b: int) -> int:
+def _alu(op: int, a: int, b: int, Alu) -> int:
     m = (1 << 64) - 1
     return {
         Alu.MOV: b,
@@ -105,7 +107,7 @@ def _alu(op: int, a: int, b: int) -> int:
     }[Alu(op)] & m
 
 
-def _taken(cond: int, a: int, b: int) -> bool:
+def _taken(cond: int, a: int, b: int, Cond) -> bool:
     sa, sb = (a ^ 1 << 63) - (1 << 63), (b ^ 1 << 63) - (1 << 63)
     return {
         Cond.ALWAYS: True,
@@ -136,9 +138,15 @@ class Interpreter:
         store=None,
         ctrl=None,
         rx=None,
+        reader=None,
     ):
         self.mb = mailbox
-        self.machine_sig = signature(units) if units else 0
+        if hasattr(units, "read"):
+            reader, units = units, ()
+        if reader is None:
+            raise ValueError("a machine-bound package reader is required")
+        self.reader = reader
+        self.machine_sig = reader.signature(units) if units else 0
         self.cq_depth = cq_depth
         #: Called with a MOVER step's (register, value) writes; None refuses them.
         self.mover = mover
@@ -154,25 +162,36 @@ class Interpreter:
         return self.memory(addr, nbytes)
 
     def fetched(self, addr: int, n: int) -> list[int]:
-        raw = self.fetched_bytes(addr, n * engine.PAYLOAD)
+        raw = self.fetched_bytes(addr, n * self.reader.format["PAYLOAD"])
         return [
-            int.from_bytes(raw[k : k + engine.PAYLOAD], "little")
-            for k in range(0, len(raw), engine.PAYLOAD)
+            int.from_bytes(raw[k : k + self.reader.format["PAYLOAD"]], "little")
+            for k in range(0, len(raw), self.reader.format["PAYLOAD"])
         ]
 
-    def run(
-        self, pkg: Package | bytes, bindings=None, max_polls: int = 1_000_000
-    ) -> Result:
-        if isinstance(pkg, (bytes, bytearray)):
-            pkg = Package.from_bytes(bytes(pkg))
-        res = Result()
+    def run(self, pkg: bytes, bindings=None, max_polls: int = 1_000_000) -> Result:
+        raw = bytes(pkg) if isinstance(pkg, (bytes, bytearray)) else pkg.to_bytes()
+        tables = self.reader.read(raw, bindings)
+        f = self.reader.format
+        Op, Alu, Cond = (IntEnum(k, f[k]) for k in ("op", "alu", "cond"))
+        engine = SimpleNamespace(**f)
+        ANY_UNIT, MOVER_SKIP, REGS = (f[k] for k in ("ANY_UNIT", "MOVER_SKIP", "REGS"))
+        F_CTRL, F_IMM, F_INDEXED, F_MEM, F_POSTED, F_REG = (
+            f[k] for k in ("F_CTRL", "F_IMM", "F_INDEXED", "F_MEM", "F_POSTED", "F_REG")
+        )
+        pkg = SimpleNamespace(
+            signature=tables["signature"],
+            ack_reserve=tables["ack_reserve"],
+            units=[SimpleNamespace(**u) for u in tables["units"]],
+            steps=[
+                Step(Op(op), unit, count, arg, flags)
+                for op, flags, unit, count, arg in tables["steps"]
+            ],
+        )
+        res = Result(regs=[0] * REGS)
         if pkg.signature and self.machine_sig and pkg.signature != self.machine_sig:
             res.status, res.value = BAD_SIGNATURE, self.machine_sig
             return res
-        addrs = bind_addresses(pkg.buffers, bindings)
-        words = list(pkg.payloads)
-        for r in pkg.relocs:
-            words[r.payload] = apply_reloc(words[r.payload], r, addrs[r.buffer])
+        words = list(tables.get("bound", tables["payloads"]))
         cap = max(1, self.cq_depth - pkg.ack_reserve)
         credit = [max(1, min(u.credit or cap, cap)) for u in pkg.units]
         inflight = [0] * len(pkg.units)
@@ -305,10 +324,10 @@ class Interpreter:
                     self.mover(writes)
                     moves_done += gos
             elif s.op == Op.ENGINE:
-                regs: dict = {}
+                engine_regs: dict = {}
                 rel = False
                 moving: list = []
-                for code, value in engine.entries(pkg, s):
+                for code, value in dict(tables["engines"])[n]:
                     reg = code & 0x3F
                     if reg == engine.ARG3:
                         rel = bool(code & engine.REL)
@@ -322,23 +341,26 @@ class Interpreter:
                         ):
                             return res
                     elif reg < 8:
-                        regs[reg] = value
+                        engine_regs[reg] = value
                         if reg == engine.GO:
-                            dst = regs.get(engine.DST, 0)
+                            dst = engine_regs.get(engine.DST, 0)
                             if dst & engine.TYPED_MEM_RD_REQ:
-                                arg2, arg3 = regs[engine.ARG2], regs[engine.ARG3]
-                                yx, n = (arg2 >> 40) & 0xFF, arg3 & 0xFF
+                                arg2, arg3 = (
+                                    engine_regs[engine.ARG2],
+                                    engine_regs[engine.ARG3],
+                                )
+                                yx, count = (arg2 >> 40) & 0xFF, arg3 & 0xFF
                                 if rel:
                                     first = (arg3 >> 24) // engine.PAYLOAD
-                                    got = words[first : first + n]
+                                    got = words[first : first + count]
                                 else:
-                                    got = self.fetched(arg3 >> 24, n)
+                                    got = self.fetched(arg3 >> 24, count)
                                 for w in got:
                                     self.mb.send(yx & 0xF, yx >> 4, w)
                                     res.sent += 1
                             else:
                                 w = sum(
-                                    regs.get(engine.ARG0 + j, 0) << (64 * j)
+                                    engine_regs.get(engine.ARG0 + j, 0) << (64 * j)
                                     for j in range(4)
                                 )
                                 self.mb.send(dst & 0xF, (dst >> 8) & 0xF, w)
@@ -385,10 +407,10 @@ class Interpreter:
                     regs[s.unit] = int.from_bytes(self.fetched_bytes(at, 8), "little")
             elif s.op == Op.ALU:
                 b = s.arg if s.flags & F_IMM else regs[(s.count >> 12) & 15]
-                regs[s.unit] = _alu(s.count & 0xFF, regs[(s.count >> 8) & 15], b)
+                regs[s.unit] = _alu(s.count & 0xFF, regs[(s.count >> 8) & 15], b, Alu)
             elif s.op == Op.JUMP:
                 b = s.arg if s.flags & F_IMM else regs[(s.count >> 12) & 15]
-                if _taken(s.count & 0xFF, regs[(s.count >> 8) & 15], b):
+                if _taken(s.count & 0xFF, regs[(s.count >> 8) & 15], b, Cond):
                     pc = s.unit
             elif s.op == Op.PATCH:
                 bit, width = s.arg & 0xFF, (s.arg >> 8) & 0xFF
@@ -404,7 +426,7 @@ class Interpreter:
                     v += (old >> bit) & mask
                 new = (old & ~(mask << bit)) | (v & mask) << bit
                 if on_steps:
-                    steps[s.count] = _word_step(new)
+                    steps[s.count] = _word_step(new, Op)
                 else:
                     words[s.count] = new
             elif s.op == Op.SEND:
@@ -447,9 +469,18 @@ class LocalNode:
     """
 
     def __init__(
-        self, mailbox: Mailbox, units=(), cq_depth: int = 16, mover=None, memory=None
+        self,
+        mailbox: Mailbox,
+        units=(),
+        cq_depth: int = 16,
+        mover=None,
+        memory=None,
+        *,
+        reader: Reader,
     ) -> None:
-        self.interp = Interpreter(mailbox, units, cq_depth, mover, memory)
+        self.interp = Interpreter(
+            mailbox, units, cq_depth, mover, memory, reader=reader
+        )
         self.ran: list[tuple[bytes, list]] = []
 
     def run(self, package: bytes, bindings=None) -> Result:
