@@ -49,21 +49,27 @@ class Phases:
         return call
 
 
-def workload(name, blocks, image_size, width, features, hidden):
+def workload(name, blocks, image_size, width, features, hidden, batch=1):
     Tensor.manual_seed(17)
     with Context(DEV="CPU"):
         if name == "vit":
             model = seeded_model(blocks, 17, width, image_size)
-            shape = (1, 3, image_size, image_size)
+            shape = (batch, 3, image_size, image_size)
         else:
             model = LeNet() if name == "lenet" else MLP(hidden, features)
-            shape = (1, 784 if name == "lenet" else features)
+            shape = (batch, 784 if name == "lenet" else features)
     return model, shape
 
 
 def measure(args):
     model, shape = workload(
-        args.model, args.blocks, args.image_size, args.width, args.features, args.hidden
+        args.model,
+        args.blocks,
+        args.image_size,
+        args.width,
+        args.features,
+        args.hidden,
+        args.batch,
     )
     dev = D.Device(
         args.device,
@@ -249,6 +255,7 @@ def main():
     parser.add_argument("--replay", action="store_true")
     parser.add_argument("--warmup", type=int, default=6)
     parser.add_argument("--repeat", "--inputs", type=int, default=3)
+    parser.add_argument("--batch", type=int, default=1)
     parser.add_argument("--blocks", type=int, default=12)
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--width", type=int, default=192)

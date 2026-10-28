@@ -130,11 +130,13 @@ def mnist_model(
     return step_records
 
 
-def vit_tiny(batch, forward_only=True, steps=1, jit=False, churn=(), **recipe):
+def vit_tiny(
+    batch, forward_only=True, steps=1, jit=False, churn=(), width=192, **recipe
+):
     example = runpy.run_path(
         str(ROOT / "software/application/examples/tinygrad/vit_tiny.py")
     )
-    model = example["seeded_model"](blocks=12, seed=17, width=192, image_size=224)
+    model = example["seeded_model"](blocks=12, seed=17, width=width, image_size=224)
     place(model)
     inp = np.zeros((batch, 3, 224, 224), dtype=np.float16)
     if steps == 1:
@@ -169,6 +171,8 @@ def vit_tiny(batch, forward_only=True, steps=1, jit=False, churn=(), **recipe):
 
 MODELS = {name: partial(mnist_model, model_name=name) for name in MNIST_MODELS}
 MODELS["vit-tiny"] = vit_tiny
+MODELS["vit-small"] = partial(vit_tiny, width=384)
+MODELS["vit-base"] = partial(vit_tiny, width=768)
 lenet = MODELS["lenet"]
 #: Steps a training capture runs: the layout hints the first learns from its
 #: consumers (`forms.hints`) change the kernels of the next. The library
@@ -185,6 +189,7 @@ def capture(
     model="lenet",
     edge_events=None,
     eval_batch=None,
+    observe_kernel=None,
     **recipe,
 ):
     sources, launches = {}, []
@@ -217,6 +222,8 @@ def capture(
             sig = _alias_sig(binds)
             if sig not in entry["aliases"]:
                 entry["aliases"].append(sig)
+        if observe_kernel is not None:
+            observe_kernel(key, source, binds, kind, _CAPTURE_PHASE, _)
         launches.append(key)
         phases[_CAPTURE_PHASE] += 1
         if edge_events is not None:
