@@ -46,7 +46,7 @@ static uint64_t retired(unsigned u, int *fails)
 }
 
 /* One FILL, FILL, DRAIN round on unit u; through the engine if `engine`. */
-static void round(unsigned u, int engine, uint64_t round_no, int *fails)
+static void round(unsigned u, int engine, int retired_reply, uint64_t round_no, int *fails)
 {
     volatile uint64_t *land = kos_land();
     uint64_t pa = kos_info(KOS_I_LANDPA);
@@ -72,7 +72,8 @@ static void round(unsigned u, int engine, uint64_t round_no, int *fails)
         }
     }
     uint64_t faults = 0;
-    int st = ticket < 0 ? (int)ticket : kos_unit_wait(u, (uint64_t)ticket, 1UL << 24, &faults);
+    int st = ticket < 0 ? (int)ticket : retired_reply ? 0 :
+             kos_unit_wait(u, (uint64_t)ticket, 1UL << 24, &faults);
     t = kos_time() - t;
     uint64_t after = retired(u, fails);
     unsigned changed = 0;
@@ -90,20 +91,23 @@ static void round(unsigned u, int engine, uint64_t round_no, int *fails)
 
 static int mg(int argc, char **argv)
 {
-    (void)argc;
-    (void)argv;
+    unsigned selected = (unsigned)arg_u(argc, argv, 1, KOS_MAX_UNITS);
     int fails = 0;
     struct kos_unit u[KOS_MAX_UNITS];
     int64_t n = kos_units(u, KOS_MAX_UNITS);
     uint64_t mesh = kos_info(KOS_I_MESH), rounds = 0, seen = 0;
     for (int64_t i = 0; i < n; ++i) {
-        if (u[i].type != MG_TYPE) {
+        if (u[i].type != MG_TYPE || (selected != KOS_MAX_UNITS && (unsigned)i != selected)) {
             continue;
         }
         ++seen;
-        round((unsigned)i, 0, rounds++, &fails);
-        if (u[i].mesh == mesh && (kos_info(KOS_I_FLAGS) & KOS_F_ENGINE)) {
-            round((unsigned)i, 1, rounds++, &fails);
+        round((unsigned)i, 0, 0, rounds++, &fails);
+        if ((u[i].mesh == mesh
+#ifdef KOS_REMOTE_BATCH
+             || 1
+#endif
+            ) && (kos_info(KOS_I_FLAGS) & KOS_F_ENGINE)) {
+            round((unsigned)i, 1, u[i].mesh != mesh, rounds++, &fails);
         }
     }
     REPORT("mg.units", seen);

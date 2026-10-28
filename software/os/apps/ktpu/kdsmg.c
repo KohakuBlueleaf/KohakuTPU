@@ -148,9 +148,9 @@ static void rounds(unsigned u, unsigned node, uint64_t nr, int *fails)
 
 static int kdsmg(int argc, char **argv)
 {
-    uint64_t num[1] = {8};
+    uint64_t num[2] = {8, KOS_MAX_UNITS};
     unsigned nn;
-    unsigned flags = kds_args(argc, argv, num, 1, &nn);
+    unsigned flags = kds_args(argc, argv, num, 2, &nn);
     int fails = kds_start(flags, KDS_ARENA, KDS_ALL_NODES) != 0;
     struct kos_unit unit[KOS_MAX_UNITS];
     int64_t nu = kos_units(unit, KOS_MAX_UNITS);
@@ -160,7 +160,7 @@ static int kdsmg(int argc, char **argv)
     }
     unsigned first_done = 0;
     for (int64_t i = 0; i < nu && !fails; ++i) {
-        if (unit[i].type != MG_TYPE) {
+        if (unit[i].type != MG_TYPE || (num[1] != KOS_MAX_UNITS && (uint64_t)i != num[1])) {
             continue;
         }
         unsigned node = node_of_mesh[unit[i].mesh & 7];
