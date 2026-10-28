@@ -2,37 +2,134 @@
 
 A kernel reads f16: an f32 buffer has an f16 form (its values rounded
 once), made from the host bytes it was uploaded from (packed on the way in)
-or on the card from its f32 bytes. A row
-statistic is read in the [n, 32] form (`kernels.convert.expand_kernel`); a
-cluster operand in an MXFP7 packing of a 2-D view (`kernels.matmul.
-quant_kernel`), kept for the next call while the buffer is unwritten.
+or on the card from its f32 bytes; a row statistic is those f16 values (16
+a word). A cluster operand is read in an MXFP7 packing of a 2-D view
+(`kernels.matmul.quant_kernel`), kept for the next call while the buffer is
+unwritten. Elements move between layouts by `relayout` (`kernels.lanes`).
 """
 
 import hashlib
+import json
 import os
-import sys
-from dataclasses import replace
+import pathlib
+import weakref
+from collections import OrderedDict
+from dataclasses import dataclass, replace
 
 import numpy as np
 
 from kohakutpu.application.kernels import convert as C
+from kohakutpu.application.kernels import lanes as LN
 from kohakutpu.application.kernels import matmul as MM
-from kohakutpu.application.kernels import transpose as TP
+from kohakutpu.application.kernels import prepared as P
+from kohakutpu.application.kernels import relayout as RL
 from kohakutpu.application.kernels.vector import Operand
+from kohakutpu.application.runtime import costs, generated
 from kohakutpu.application.runtime.storage import FLAT, Storage, StorageView
-from kohakutpu.compiler import kernel as K
+from kohakutpu.language.numerics import fp16
 
-#: Set: each statistic-form transpose (`unexpand`) prints its size.
-TRACE_ENV = "KOHAKUTPU_TRACE_FORMS"
 F16 = ("f16",)
-ROWSTAT = ("rowstat",)
 #: ``("rows", n, np)``: rows of n f16 values held np apart (np whole 32-byte
 #: words) -- what a kernel writes when n * 2 bytes is not whole words.
 ROWS = "rows"
+#: ``("view", src_bytes, levels, at, shape, coef, off)``: a word-walk view of
+#: another f16 storage, read through by consumers without a materialising copy.
+VIEW = "view"
 
 
 def rows_key(n: int, np_: int) -> tuple:
     return (ROWS, n, np_)
+
+
+def view_key(
+    src_bytes: int,
+    levels: tuple,
+    at: int,
+    shape: tuple = (),
+    coef: tuple = (),
+    off: int = 0,
+) -> tuple:
+    return (
+        VIEW,
+        int(src_bytes),
+        tuple((int(c), int(s)) for c, s in levels),
+        int(at),
+        tuple(int(d) for d in shape),
+        tuple((int(e), int(s)) for e, s in coef),
+        int(off),
+    )
+
+
+#: Layout hints by device: producer site -> "rows" (its consumers read its
+#: rows padded to whole words: written so) or "flat" (a consumer needed its
+#: row-major bytes: written so for good). Learned from the consumers, so
+#: one model run makes the same choices offline and on the card.
+_hints: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+#: Whether producers follow their consumers' hints (else every one writes
+#: its row-major bytes).
+LAYOUT_HINTS = True
+#: The hints a library holds (`save_hints`), beside its classes: a device
+#: with that library starts from them, so a captured model's first step
+#: runs the layouts (and library classes) of its steady steps.
+HINTS_FILE = "layout_hints.json"
+
+
+class Hints(dict):
+    """Hints by site, a site keyed by its `repr` (what a hints file holds:
+    sites are shapes, dtypes and expressions, never addresses)."""
+
+    def __getitem__(self, site):
+        return super().__getitem__(repr(site))
+
+    def __setitem__(self, site, value) -> None:
+        super().__setitem__(repr(site), value)
+
+    def __contains__(self, site) -> bool:
+        return super().__contains__(repr(site))
+
+    def get(self, site, default=None):
+        return super().get(repr(site), default)
+
+    def setdefault(self, site, value):
+        return super().setdefault(repr(site), value)
+
+
+def hints(dev) -> dict:
+    """`dev`'s layout hints (`_hints`), first those of its library's hints
+    file (`seed_hints`); a scratch dict when they are off."""
+    if not LAYOUT_HINTS:
+        return {}
+    got = _hints.get(dev)
+    if got is None:
+        got = _hints[dev] = Hints()
+        seed_hints(dev, getattr(dev, "library", None))
+    return got
+
+
+def library_hints(library) -> dict:
+    """The hints `library`'s hints file (`HINTS_FILE`) holds, by site text."""
+    path = pathlib.Path(library) / HINTS_FILE if library else None
+    if path is None or not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def seed_hints(dev, library) -> None:
+    """`dev`'s hints start from `library`'s (a capture's from the library it
+    adds to, so its kernels are those a run of that library makes)."""
+    if LAYOUT_HINTS:
+        dict.update(hints(dev), library_hints(library))
+
+
+def save_hints(learned: dict, library) -> None:
+    """`learned` hints (a `hints` dict's items, by site text) merged into
+    `library`'s hints file: a site one model hints "flat" stays flat."""
+    held = library_hints(library)
+    for site, hint in learned.items():
+        held[site] = "flat" if "flat" in (hint, held.get(site)) else hint
+    path = pathlib.Path(library) / HINTS_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(held, indent=1, sort_keys=True), encoding="utf-8")
 
 
 def padded(st: Storage) -> tuple | None:
@@ -40,6 +137,29 @@ def padded(st: Storage) -> tuple | None:
     if FLAT in st.valid:
         return None
     return next((k for k in st.valid if k[0] == ROWS), None)
+
+
+def viewed(st: Storage) -> tuple | None:
+    """The valid word-walk view form's key, when the row-major bytes are not."""
+    if FLAT in st.valid:
+        return None
+    return next((k for k in st.valid if k[0] == VIEW), None)
+
+
+def materialize_view(dev, st: Storage, key: tuple, item: int = 2) -> int:
+    """Materialise a word-walk view form `key` into `st`'s flat (or f16) bytes."""
+    _, src_bytes, levels, at, _, _, _ = key
+    n = st.nbytes // item
+    nbytes = 2 * n
+    if item == 2:
+        dst_at, made = st.addr, FLAT
+    else:
+        dst_at, made = st.form(F16, nbytes).addr, F16
+    dlevels = ((-(-nbytes // 32), 32),)
+    k, given = C.walk_kernel(src_bytes, levels, at, nbytes, dlevels, 0)
+    launch(dev, k, given, {"src": st.forms[key].addr, "dst": dst_at}, kind="move")
+    st.made(made)
+    return dst_at
 
 
 class FormError(RuntimeError):
@@ -50,7 +170,7 @@ def launch(
     dev, kernel, given: dict, binds: dict, kind: str = "dsl", info=None, **consts
 ):
     """Compile `kernel` for `given` (cached) and run it with `binds`."""
-    compiled = K.specialise(kernel, given, machine=dev.machine, **consts)
+    compiled = dev.specialise(kernel, given, **consts)
     run = dev.run(compiled, binds, kind=kind, info=info)
     run.info.setdefault("compiled", compiled)
     return run
@@ -73,75 +193,51 @@ def f16(dev, s, dtype, n: int) -> int:
     if np.dtype(dtype) == np.float16:
         if FLAT in st.valid:
             return st.addr + off
-        if ROWSTAT in st.valid:
-            flatten(dev, st, st.nbytes // 2)
-            return st.addr + off
         key = padded(st)
-        if key is None:
-            raise FormError("an f16 buffer with no current form, read row-major")
-        compact(dev, st, key)
-        return st.addr + off
+        if key is not None:
+            compact(dev, st, key)
+            return st.addr + off
+        vkey = viewed(st)
+        if vkey is not None:
+            materialize_view(dev, st, vkey)
+            return st.addr + off
+        raise FormError("an f16 buffer with no current form, read row-major")
     if F16 in st.valid:
         return st.forms[F16].addr
     f = st.form(F16, 2 * n)
-    if ROWSTAT in st.valid:
-        unexpand(dev, st.forms[ROWSTAT].addr, n, f.addr)
-        st.made(F16)
-        return f.addr
     key = padded(st)
     if key is not None:
         return compact(dev, st, key, np.dtype(dtype).itemsize)
+    vkey = viewed(st)
+    if vkey is not None:
+        return materialize_view(dev, st, vkey, np.dtype(dtype).itemsize)
     if st.host is not None:
+        st.host_f16_dtype = dtype
         raw = np.frombuffer(st.host, dtype)[:n]
-        dev.write(f.addr, raw.astype(np.float16).tobytes())
+        dev.write(f.addr, fp16.write(raw).tobytes())
     elif FLAT in st.valid and np.dtype(dtype) == np.float32:
-        k, given = C.cast_kernel(n, "f32", "f16", dev.machine.count("VC"))
-        launch(dev, k, given, {"in0": st.addr, "out": f.addr}, kind="convert")
+        generated.launch(
+            dev,
+            "convert.cast_kernel",
+            {"n": n, "src": "f32", "dst": "f16"},
+            {"in0": st.addr, "out": f.addr},
+            kind="convert",
+        )
     else:
         raise FormError(f"{np.dtype(dtype)} values with no f16 form and no host bytes")
     st.made(F16)
     return f.addr
 
 
-def expand(dev, src: int, n: int, dst: int) -> None:
-    """n f16 values at `src` into their [n, 32] statistic form at `dst`
-    (ceil16(n) * 64 bytes): every value a 64-byte row of its own."""
-    k, given = C.expand_kernel(n, dev.machine.count("VC"))
-    launch(dev, k, given, {"x": src, "out": dst}, kind="convert")
+#: Relayout plans by walk (`kernels.lanes.plan`; their tables are each
+#: device's, `table`).
+PLANS_KEPT = 1024
+_plans: OrderedDict = OrderedDict()
 
 
-def unexpand(dev, src: int, n: int, dst: int) -> None:
-    """The n values of an [n, 32] statistic form at `src` row-major at `dst`:
-    the form transposed on card (`kernels.transpose`, exact) has them as its
-    first row, copied over (whole words; the allocation's tail takes the
-    rounding)."""
-    np_ = -(-n // 16) * 16
-    t = Storage(dev, np_ * 64)
-    if os.environ.get(TRACE_ENV):
-        print(
-            f"unexpand n={n} np={np_} src={src:#x} dst={dst:#x}",
-            file=sys.stderr,
-            flush=True,
-        )
-    try:
-        k, given = TP.transpose_kernel(1, np_, 32, dev.machine.count("VC"))
-        mask = table(dev, TP.masks())
-        launch(dev, k, given, {"x": src, "mask": mask, "y": t.addr}, kind="convert")
-
-        k, given = C.copy_kernel(np_ * 2)
-        launch(dev, k, given, {"src": t.addr, "dst": dst}, kind="convert")
-    finally:
-        t.free()
-
-
-def stat_bytes(n: int) -> int:
-    """Bytes of the [n, 32] statistic form of n values."""
-    return -(-n // 16) * 16 * 64
-
-
-def gather(
+def relayout(
     dev,
-    stat: int,
+    src: int,
     n: int,
     walk: tuple,
     at: int,
@@ -151,38 +247,44 @@ def gather(
     dat: int = 0,
     keep: bool = False,
 ) -> None:
-    """`m` f16 values row-major at `dst` from the statistic form of `n`
-    values at `stat` (`expand`): source element `at` walked by `walk`
-    (``(count, element stride)``, outermost first) into destination elements
-    walked by `dwalk` from element `dat`; a destination element no walk
-    reaches is 0, or with `keep` what `dst` held (`m` whole words of it).
-    One value is one 64-byte row there, so any strides are whole words."""
-    g = Storage(dev, stat_bytes(m))
+    """`m` f16 values row-major at `dst` from the `n` row-major f16 values
+    at `src`: source element `at` walked by `walk` (``(count, element
+    stride)``, outermost first) into destination elements walked by `dwalk`
+    from element `dat`; a destination element no walk reaches is 0, or with
+    `keep` what `dst` held (`m` values in whole words). One kernel of
+    `kernels.relayout`'s forms; a walk pair none takes, `kernels.lanes`."""
+    hw = RL.hw_for(dev)
+    # The destination port starts at its line (the words before kept).
+    pad = dst % (hw.line * hw.word) // 2
     try:
-        if keep:
-            expand(dev, dst, m, g.addr)
-        else:
-            k, given = C.fill_kernel(
-                g.nbytes, ((g.nbytes // 1024, 1024), (32, 32)), 0, 0, 16
-            )
-            launch(dev, k, given, {"dst": g.addr}, kind="convert")
-
-        levels = (*((c, 64 * s) for c, s in walk), (2, 32))
-        dlevels = (*((c, 64 * s) for c, s in dwalk), (2, 32))
-        k, given = C.walk_kernel(
-            stat_bytes(n), levels, 64 * at, g.nbytes, dlevels, 64 * dat
-        )
-        launch(dev, k, given, {"src": stat, "dst": g.addr}, kind="convert")
-
-        unexpand(dev, g.addr, m, dst)
-    finally:
-        g.free()
-
-
-def flatten(dev, st: Storage, n: int) -> None:
-    """A statistic's row-major bytes from its [n, 32] form (`unexpand`)."""
-    unexpand(dev, st.forms[ROWSTAT].addr, n, st.addr)
-    st.made(FLAT)
+        rp = RL.plan(n, walk, at, dwalk, dat + pad, m + pad, keep, hw, pad)
+    except RL.Unplanned:
+        rp = None
+    if rp is not None:
+        k, given = RL.relayout_kernel(rp, hw)
+        binds = {
+            "src": src,
+            "dst": dst - 2 * pad,
+            "index": table(dev, rp.index, np.float32),
+            "mask": table(dev, rp.masks),
+        }
+        launch(dev, k, given, binds, kind="convert")
+        return
+    key = (n, tuple(walk), at, tuple(dwalk), dat, m, keep)
+    pl = _plans.get(key)
+    if pl is None:
+        pl = _plans[key] = LN.plan(n, walk, at, dwalk, dat, m, keep)
+        if len(_plans) > PLANS_KEPT:
+            _plans.popitem(last=False)
+    _plans.move_to_end(key)
+    k, given = LN.relayout_kernel(pl, dev.machine.count("VC"))
+    binds = {
+        "src": src,
+        "dst": dst,
+        "index": table(dev, pl.index, np.float32),
+        "mask": table(dev, pl.masks),
+    }
+    launch(dev, k, given, binds, kind="convert")
 
 
 def repitch(
@@ -190,28 +292,23 @@ def repitch(
 ) -> None:
     """`rows` rows of `w` f16 values from `src_pitch` apart to `dst_pitch`
     apart (both addresses on words): the mover where rows and pitches are
-    whole 32-byte words, else through the statistic form (`gather`, exact;
-    the destination between its rows 0)."""
+    whole 32-byte words, else `relayout` (exact; the destination between its
+    rows 0)."""
     if not ((2 * w) % 32 or (2 * src_pitch) % 32 or (2 * dst_pitch) % 32):
         words = 2 * w // 32
         k, given = C.walk_kernel(
-            rows * 2 * src_pitch + 32,
+            ((rows - 1) * src_pitch + w) * 2,
             ((rows, 2 * src_pitch), (words, 32)),
             0,
-            rows * 2 * dst_pitch + 32,
+            ((rows - 1) * dst_pitch + w) * 2,
             ((rows, 2 * dst_pitch), (words, 32)),
             0,
         )
         launch(dev, k, given, {"src": src, "dst": dst}, kind="convert")
         return
-    n = (rows - 1) * src_pitch + w
-    e = Storage(dev, stat_bytes(n))
-    try:
-        expand(dev, src, n, e.addr)
-        walk, dwalk = ((rows, src_pitch), (w, 1)), ((rows, dst_pitch), (w, 1))
-        gather(dev, e.addr, n, walk, 0, dwalk, (rows - 1) * dst_pitch + w, dst)
-    finally:
-        e.free()
+    walk, dwalk = ((rows, src_pitch), (w, 1)), ((rows, dst_pitch), (w, 1))
+    n, m = (rows - 1) * src_pitch + w, (rows - 1) * dst_pitch + w
+    relayout(dev, src, n, walk, 0, dwalk, m, dst)
 
 
 def compact(dev, st: Storage, key: tuple, item: int = 2) -> int:
@@ -219,6 +316,9 @@ def compact(dev, st: Storage, key: tuple, item: int = 2) -> int:
     bytes of an f16 buffer, else (`item`-byte elements) its f16 form.
     Returns that address."""
     _, w, wp = key
+    if st.site is not None:
+        # A consumer wants the producer's row-major bytes after all.
+        hints(dev)[st.site[0]] = "flat"
     rows = st.nbytes // (item * w)
     if item == 2:
         at, made = st.addr, FLAT
@@ -227,20 +327,6 @@ def compact(dev, st: Storage, key: tuple, item: int = 2) -> int:
     repitch(dev, st.forms[key].addr, wp, at, w, rows, w)
     st.made(made)
     return at
-
-
-def rowstat(dev, s, dtype, n: int) -> int:
-    """The address of the [n, 32] row-statistic form of `s` (of its base for
-    a sub-buffer, whose values start ``offset / item`` rows in)."""
-    st, _ = base_of(s)
-    if ROWSTAT in st.valid:
-        return st.forms[ROWSTAT].addr
-    src = f16(dev, st, dtype, n)
-    np_ = -(-n // 16) * 16
-    f = st.form(ROWSTAT, np_ * 64)
-    expand(dev, src, n, f.addr)
-    st.made(ROWSTAT)
-    return f.addr
 
 
 def mx7(
@@ -261,40 +347,247 @@ def mx7(
     return packed(dev, s, dtype, src, rows, cols, rp, mm.kp, side, g, mm.nk, batches)
 
 
+@dataclass(frozen=True)
+class Step:
+    """One relayout making a `Pending` buffer: `n` f16 values at `src` (None:
+    the previous step's result) walked from element `at` by `walk` into the
+    `m` destination elements `dwalk` reaches from `dat`, the rest 0."""
+
+    src: int | None
+    n: int
+    walk: tuple
+    at: int
+    dwalk: tuple
+    dat: int
+    m: int
+
+
+class Pending:
+    """A dense f16 buffer of `nbytes` that one kernel reads, not made yet:
+    its `steps` run inside that kernel (a packing, `packed`; a rows kernel,
+    `rows.run`), or, when one is a walk pair `kernels.relayout` does not
+    plan or the kernel cannot take it, as their own relayouts (`made`)."""
+
+    def __init__(self, dev, nbytes: int, steps: tuple) -> None:
+        self.dev, self.nbytes, self.steps = dev, int(nbytes), tuple(steps)
+        #: holds the packings made of it, freed with it
+        self.holder = Storage(dev, 32)
+        self.storage: Storage | None = None
+
+    def made(self) -> Storage:
+        """The buffer itself, its steps run as relayouts."""
+        if self.storage is None:
+            prev, temps = None, []
+            for i, s in enumerate(self.steps):
+                last = i == len(self.steps) - 1
+                out = Storage(self.dev, self.nbytes if last else max(32, 2 * s.m))
+                src = prev.addr if s.src is None else s.src
+                relayout(
+                    self.dev, src, s.n, s.walk, s.at, s.dwalk, s.m, out.addr, s.dat
+                )
+                if prev is not None:
+                    temps.append(prev)
+                prev = out
+            for t in temps:
+                t.free()
+            prev.wrote(FLAT)
+            prev.dtype = np.float16
+            self.storage = prev
+        return self.storage
+
+    def free(self) -> None:
+        self.holder.free()
+        if self.storage is not None:
+            self.storage.free()
+
+
+#: Whether a `Pending` operand is made inside the kernel that reads it (else
+#: by its own relayouts first).
+PREPARED = os.environ.get("KTPU_PREPARED", "1") == "1"
+#: A pending packing folds only with a measured winning recipe.
+PREPARED_QUANT = os.environ.get("KTPU_PREPARED_QUANT", "1") == "1"
+
+
+def plans_of(dev, steps) -> tuple | None:
+    """The `kernels.relayout` plans of `steps`, None when one is not planned."""
+    hw = RL.hw_for(dev)
+    try:
+        return tuple(
+            RL.plan(s.n, s.walk, s.at, s.dwalk, s.dat, s.m, False, hw) for s in steps
+        )
+    except RL.Unplanned:
+        return None
+
+
+def step_binds(dev, plans, prefix: str) -> dict:
+    """The tables of `plans` uploaded (`table`), by `relayout.step_ports` name."""
+    out = {}
+    for i, pl in enumerate(plans):
+        out[f"{prefix}index{i}"] = table(dev, pl.index, np.float32)
+        out[f"{prefix}mask{i}"] = table(dev, pl.masks)
+    return out
+
+
+def _prepared_quant(dev, steps, src, rows, cols, rp, cp, side, g, nk, batches):
+    recipe = (
+        costs.prepared_quant(
+            steps, src, rows, cols, rp, cp, side, g, nk, batches, dev.machine.board
+        )
+        if PREPARED_QUANT
+        else None
+    )
+    if recipe is None:
+        return None
+    qs = recipe["quant"]
+    measured = tuple(
+        Step(
+            steps[0].src if i == 0 else None,
+            **{
+                **v,
+                "walk": tuple(map(tuple, v["walk"])),
+                "dwalk": tuple(map(tuple, v["dwalk"])),
+            },
+        )
+        for i, v in enumerate(recipe["steps"])
+    )
+    plans = plans_of(dev, measured)
+    if plans is None or not P.direct_destination(plans):
+        return None
+    folded_src = Operand("full", **qs["src"])
+    k, given = MM.quant_kernel(
+        folded_src,
+        rows,
+        qs["cols"],
+        rp,
+        cp,
+        side,
+        g,
+        nk,
+        batches,
+        prepared=plans,
+        hw=RL.hw_for(dev),
+        pad_strategy=recipe.get("pad_strategy", "native"),
+    )
+    return k, given, {"p_x": steps[0].src, **step_binds(dev, plans, "p_")}
+
+
 def packed(
     dev, s, dtype, src: Operand, rows, cols, rp, cp, side, g, nk, batches=1
 ) -> int:
     """The address of `batches` [rows, cols] blocks of `s` quantised into
     [batches * rp, cp] MXFP7 (A packing for `side` "a", else B; tiles of `g`
     lane groups, `nk` K-blocks a chunk), zero-padded; kept while `s` is
-    unwritten."""
+    unwritten. Pending inputs and non-word column padding are materialized
+    before packing."""
+    if isinstance(s, Pending):
+        prepared = _prepared_quant(
+            dev, s.steps, src, rows, cols, rp, cp, side, g, nk, batches
+        )
+        if prepared is not None:
+            key = ("prepared_mx7", side, src, rows, cols, rp, cp, g, nk, batches)
+            if key not in s.holder.valid:
+                f = s.holder.form(key, batches * rp * cp)
+                k, given, binds = prepared
+                launch(dev, k, given, dict(binds, q=f.addr), kind="quant")
+                s.holder.made(key)
+            return s.holder.forms[key].addr
+        s, dtype = s.made(), np.float16
     st, off = base_of(s)
     item = np.dtype(dtype).itemsize
     src = replace(src, offset=src.offset + off // item)
     key = ("mx7", side, src, rows, cols, rp, cp, g, nk, batches)
     if key in st.valid:
         return st.forms[key].addr
+    vkey = viewed(st) if not off else None
+    if (
+        vkey is not None
+        and src.kind == "full"
+        and src.offset == 0
+        and src.pitch == cols
+        and cols % 16 == 0
+        and cols == cp
+    ):
+        _, src_bytes, levels, at, _, _, _ = vkey
+        vbase = st.forms[vkey].addr
+        f = st.form(key, batches * rp * cp)
+        k, given = MM.quant_walk_kernel(
+            src_bytes,
+            levels,
+            at,
+            rows,
+            cols,
+            rp,
+            cp,
+            side,
+            g,
+            nk,
+            batches,
+        )
+        launch(dev, k, given, {"x": vbase, "q": f.addr}, kind="quant")
+        st.made(key)
+        return f.addr
     n = st.nbytes // item
-    base = f16(dev, st, dtype, n)
+    # Whole rows of the buffer read (what a producer's row layout serves).
+    whole_rows = src.kind == "full" and src.pitch == cols and src.offset % cols == 0
+    held = _held_rows(st, src, cols)
+    if held is not None:
+        # Whole rows of a padded-rows form: read where they are.
+        base, n, src, zero = held
+    else:
+        base, zero = f16(dev, st, dtype, n), False
     f = st.form(key, batches * rp * cp)
 
     tmps: list = []
     try:
+        whole = -(-cols // 16) * 16
+        if zero and cols % 16 and whole <= min(src.pitch, cp):
+            # The row's padding is zero: its last word read whole is the
+            # zero columns the packing pads with.
+            cols = whole
         if cols % 16 or src.pitch % 16 or src.offset % 16:
+            if st.site is not None and whole_rows and cols == st.site[1]:
+                # Its producer's rows, read whole: written zero-padded to
+                # whole words next time.
+                hints(dev).setdefault(st.site[0], "rows")
             # Rows not of whole words: laid out ceil16(cols) apart first,
-            # the extra columns zero (`gather`).
+            # the extra columns zero (`relayout`).
             R, dp = batches * rows, -(-cols // 16) * 16
-            e = Storage(dev, stat_bytes(n))
-            t = Storage(dev, 2 * -(-R * dp // 16) * 16)
-            tmps += [e, t]
-            expand(dev, base, n, e.addr)
             walk = ((R, src.pitch), (cols, 1))
-            gather(
-                dev, e.addr, n, walk, src.offset, ((R, dp), (cols, 1)), R * dp, t.addr
+            step = Step(base, n, walk, src.offset, ((R, dp), (cols, 1)), 0, R * dp)
+            prepared = _prepared_quant(
+                dev,
+                (step,),
+                Operand("full", pitch=dp),
+                rows,
+                dp,
+                rp,
+                cp,
+                side,
+                g,
+                nk,
+                batches,
+            )
+            if prepared is not None:
+                k, given, binds = prepared
+                launch(dev, k, given, dict(binds, q=f.addr), kind="quant")
+                st.made(key)
+                return f.addr
+            t = Storage(dev, 2 * R * dp)
+            tmps.append(t)
+            relayout(
+                dev, base, n, walk, src.offset, ((R, dp), (cols, 1)), R * dp, t.addr
             )
             base, src, cols = t.addr, Operand("full", pitch=dp, rows=R), dp
 
-        k, given = MM.quant_kernel(src, rows, cols, rp, cp, side, g, nk, batches)
+        recipe = costs.quant_recipe(src, rows, cols, rp, cp, side, g, nk, batches)
+        strategy = (
+            "staged"
+            if costs.choose("staged_padding", recipe, dev.machine.board)
+            else "native"
+        )
+        k, given = MM.quant_kernel(
+            src, rows, cols, rp, cp, side, g, nk, batches, pad_strategy=strategy
+        )
         launch(dev, k, given, {"x": base, "q": f.addr}, kind="quant")
     finally:
         for t in tmps:
@@ -302,6 +595,24 @@ def packed(
 
     st.made(key)
     return f.addr
+
+
+def _held_rows(st: Storage, src: Operand, cols: int) -> tuple | None:
+    """``(address, f16 values, operand, zero)`` of `src`'s rows (`cols` of
+    each) in `st`'s padded-rows form when its row-major bytes are not
+    current and each read row is one of its rows -- `zero` when what
+    follows the read columns to the row's pitch is zero (whole rows read,
+    zero padding); None otherwise."""
+    key = padded(st)
+    if key is None:
+        return None
+    _, w, wp = key
+    if src.kind != "full" or src.pitch != w or src.offset % w + cols > w:
+        return None
+    f = st.forms[key]
+    at = src.offset // w * wp + src.offset % w
+    zero = key in st.zeroed and src.offset % w == 0 and cols == w
+    return f.addr, f.nbytes // 2, replace(src, offset=at, pitch=wp), zero
 
 
 def for_port(dev, s, dtype, shape: tuple, spec) -> int:
@@ -338,10 +649,13 @@ def for_port(dev, s, dtype, shape: tuple, spec) -> int:
     raise FormError(f"a {np.dtype(dtype)} tensor for a {spec.text()} port")
 
 
-def table(dev, arr) -> int:
-    """A folded constant uploaded once to `dev` (by content: `dev.tables`)."""
-    a = np.ascontiguousarray(arr, np.float16)
-    key = hashlib.sha1(a.tobytes() + repr(a.shape).encode()).hexdigest()
+def table(dev, arr, dtype: type = np.float16) -> int:
+    """A constant uploaded once to `dev` as `dtype` (by content:
+    `dev.tables`)."""
+    a = np.ascontiguousarray(
+        fp16.write(arr) if np.dtype(dtype) == np.float16 else arr, dtype
+    )
+    key = hashlib.sha1(a.tobytes() + repr((a.shape, a.dtype)).encode()).hexdigest()
     got = dev.tables.get(key)
     if got is None:
         got = Storage(dev, max(a.nbytes, 32))
@@ -352,47 +666,68 @@ def table(dev, arr) -> int:
 
 def read(dev, s, dtype, n: int) -> bytes:
     """`s`'s contents as `n` `dtype` values, from whichever form is current:
-    row-major bytes, the f16 form, or column 0 of the statistic form."""
+    row-major bytes, the f16 form, or the padded-rows form."""
     st, off = base_of(s)
     dt = np.dtype(dtype)
-    if FLAT in st.valid or off:
+    if FLAT in st.valid:
         return dev.read(st.addr + off, n * dt.itemsize)
+    if off % dt.itemsize:
+        raise FormError("a view of a non-flat form must start at an element")
+    first = off // dt.itemsize
     if F16 in st.valid:
-        vals = np.frombuffer(dev.read(st.forms[F16].addr, 2 * n), np.float16)
+        vals = np.frombuffer(
+            dev.read(st.forms[F16].addr + 2 * first, 2 * n), np.float16
+        )
         return vals.astype(dt).tobytes()
-    if ROWSTAT in st.valid:
-        raw = np.frombuffer(dev.read(st.forms[ROWSTAT].addr, n * 64), np.float16)
-        return raw.reshape(n, 32)[:, 0].astype(dt).tobytes()
     key = padded(st)
     if key is not None:
         _, w, wp = key
-        rows = -(-n // w)
-        raw = np.frombuffer(dev.read(st.forms[key].addr, rows * wp * 2), np.float16)
-        return raw.reshape(rows, wp)[:, :w].reshape(-1)[:n].astype(dt).tobytes()
+        row, col = divmod(first, w)
+        rows = -(-(col + n) // w)
+        raw = np.frombuffer(
+            dev.read(st.forms[key].addr + row * wp * 2, rows * wp * 2), np.float16
+        )
+        return (
+            raw.reshape(rows, wp)[:, :w].reshape(-1)[col : col + n].astype(dt).tobytes()
+        )
+    vkey = viewed(st)
+    if vkey is not None:
+        _, src_bytes, levels, at, _, _, _ = vkey
+        raw = np.frombuffer(dev.read(st.forms[vkey].addr, src_bytes), np.float16)
+        idx = np.array([at // 2], dtype=np.int64)
+        for count, byte_stride in levels[:-1]:
+            step = (byte_stride // 2) * np.arange(count, dtype=np.int64)
+            idx = (idx[:, None] + step[None, :]).reshape(-1)
+        offs = np.arange(levels[-1][0] * 16, dtype=np.int64)
+        full_idx = (idx[:, None] + offs[None, :]).reshape(-1)[first : first + n]
+        return raw[full_idx].astype(dt).tobytes()
     raise FormError("a buffer with no current form")
 
 
 __all__ = [
     "F16",
+    "HINTS_FILE",
     "ROWS",
-    "ROWSTAT",
+    "VIEW",
     "FormError",
+    "Hints",
     "base_of",
     "compact",
-    "expand",
     "f16",
-    "flatten",
     "for_port",
-    "gather",
     "launch",
+    "library_hints",
+    "materialize_view",
     "mx7",
     "packed",
     "padded",
     "read",
+    "relayout",
     "repitch",
     "rows_key",
-    "rowstat",
-    "stat_bytes",
+    "save_hints",
+    "seed_hints",
     "table",
-    "unexpand",
+    "view_key",
+    "viewed",
 ]

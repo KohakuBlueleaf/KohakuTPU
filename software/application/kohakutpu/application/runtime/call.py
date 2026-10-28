@@ -9,7 +9,6 @@ import numpy as np
 
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime.storage import Storage
-from kohakutpu.compiler import kernel as K
 from kohakutpu.language import dsl as kt
 
 CODES = {np.dtype(np.float16): "f16", np.dtype(np.float32): "f32"}
@@ -47,7 +46,7 @@ def call(dev, kernel: kt.Kernel, arrays: dict, kind: str = "call", **consts) -> 
         n: kt.TensorSpec.make(np.shape(a), code(np.asarray(a).dtype))
         for n, a in arrays.items()
     }
-    compiled = K.specialise(kernel, given, machine=dev.machine, **consts)
+    compiled = dev.specialise(kernel, given, **consts)
     specs = dict(compiled.params)
     held, binds, outs = [], {}, {}
     try:

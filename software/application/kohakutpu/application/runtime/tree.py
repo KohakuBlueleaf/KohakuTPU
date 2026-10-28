@@ -14,8 +14,12 @@ from dataclasses import replace
 
 from kohakutpu.application.kernels import convert as C
 from kohakutpu.application.kernels import expr as X
+from kohakutpu.application.kernels import prepared as P
+from kohakutpu.application.kernels import relayout as RL
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import forms as FM
+from kohakutpu.application.runtime import costs
+from kohakutpu.application.runtime import launch_reductions as LR
 from kohakutpu.application.runtime import rows as RW
 
 OP = {"sum": "add", "max": "max", "prod": "mul"}
@@ -50,6 +54,49 @@ def column(
     reds = X.reduces(e)
     if len(reds) != 1:
         raise RW.RowsError("a reduction down the rows holds one reduction")
+    if R > 1 and RW.single_package_enabled():
+        pending = {int(k[2:]): v for k, v in binds.items() if isinstance(v, FM.Pending)}
+        recipe = dict(
+            e=FM.generated.expr(e),
+            operands=[vars(o) for o in operands],
+            R=R,
+            W=W,
+            out=vars(out),
+            steps={i: costs.steps_recipe(v.steps) for i, v in pending.items()},
+        )
+        if pending and costs.choose("prepared_tree", recipe, dev.machine.board):
+            plans = {i: FM.plans_of(dev, v.steps) for i, v in pending.items()}
+            if all(
+                ps is not None and P.direct_destination(ps) for ps in plans.values()
+            ):
+                plain = {
+                    k: v for k, v in binds.items() if not isinstance(v, FM.Pending)
+                }
+                plain["out"] = out_at
+                for i, v in pending.items():
+                    plain[f"p{i}_x"] = v.steps[0].src
+                    plain.update(FM.step_binds(dev, plans[i], f"p{i}_"))
+                k, given = column_tree_kernel(
+                    e,
+                    operands,
+                    R,
+                    W,
+                    out,
+                    dev.machine.count("VC"),
+                    made=plans,
+                    hw=RL.hw_for(dev),
+                )
+                return [FM.launch(dev, k, given, plain, info=info)]
+        binds = {
+            k: v.made().addr if isinstance(v, FM.Pending) else v
+            for k, v in binds.items()
+        }
+        info = dict(info or {})
+        cores = dev.machine.count("VC")
+        operands_b, binds_b = RW._based(operands, dict(binds, out=out_at), "in")
+        (out_b,), binds_b = RW._based([out], binds_b, "out")
+        k, given = column_tree_kernel(e, operands_b, R, W, out_b, cores)
+        return [FM.launch(dev, k, given, binds_b, info=info)]
     red = reds[0]
     op = OP[red.op]
     post, keep = RW.substitute(e, red, X.Load(0))
@@ -65,8 +112,19 @@ def column(
 
     try:
         n, ops, bnd = R, list(operands), dict(binds)
+        if R % 2 or 2 * len(ops) + 1 > VIEWS:
+            # A `forms.Pending` read is made inside the first level's kernel
+            # (both halves of it); a level reading it twice over, made first.
+            bnd = {
+                k: v.made().addr if isinstance(v, FM.Pending) else v
+                for k, v in bnd.items()
+            }
+            binds = {**binds, **{k: bnd[k] for k in binds}}
         cur = None  # once a level ran: the scratch rows
-        if n > 1 and 2 * len(ops) + 1 > VIEWS:
+        if n > 1 and (
+            2 * len(ops) + 1 > VIEWS
+            or (any(o.kind == "row" for o in ops) and ((n // 2) % 16 or n % 2))
+        ):
             # e's reads twice over pass a core's views: e into a scratch first.
             cur = alloc(n)
             runs += RW.run(dev, red.arg, ops, bnd, n, W, full, cur, info)
@@ -131,4 +189,8 @@ def _place(post, acc, base: int):
     return post
 
 
-__all__ = ["OP", "VIEWS", "column"]
+__all__ = ["OP", "VIEWS", "column", "column_tree_kernel"]
+
+
+def column_tree_kernel(*args, **kwargs):
+    return LR.column_tree_kernel(*args, **kwargs)

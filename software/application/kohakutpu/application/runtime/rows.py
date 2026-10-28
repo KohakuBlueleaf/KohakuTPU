@@ -1,17 +1,35 @@
 """Running a generated rows kernel: `e` over [R, W] into an [R, W] view or a
-row statistic. A reduction across a row wider than one column block runs
-as per-block partials, then folds them (recursively) under the expression
-around the reduction; any other reduction across such a row is computed
-first, as a statistic the rest reads."""
+row statistic (R f16 values). A reduction across a row wider than one column
+block runs as per-block partials, then folds them (statistics alone) under
+the expression around the reduction; any other reduction across such a row
+is computed first, as a statistic the rest reads."""
 
+import os
 from dataclasses import replace
 
 import numpy as np
 
+from kohakutpu.application.kernels import convert as C
 from kohakutpu.application.kernels import expr as X
+from kohakutpu.application.kernels import prepared as P
+from kohakutpu.application.kernels import relayout as RL
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import forms as FM
+from kohakutpu.application.runtime import launch_reductions as LR
+
+#: Whether a multi-stage AST (wide row reduction or column tree reduction) is
+#: compiled into a single kernel package rather than split across launches.
+SINGLE_PACKAGE_AST = True
+#: Optional mutant mode for witness testing ("drop_member", "wrong_order", "alias_members").
+MUTANT: str | None = None
+
+
+def single_package_enabled() -> bool:
+    return (
+        os.environ.get("KTPU_SINGLE_PACKAGE_AST", "1" if SINGLE_PACKAGE_AST else "0")
+        == "1"
+    )
 
 
 class RowsError(RuntimeError):
@@ -24,8 +42,50 @@ def _launch(dev, e, operands, binds, R, W, out, info, cores):
     operands, binds = _based(operands, binds, "in")
     if "out" in binds:
         (out,), binds = _based([out], binds, "out")
-    k, given, nblk = V.rows_kernel(e, tuple(operands), R, W, out, cores)
-    return FM.launch(dev, k, given, binds, info=info), given, nblk
+    _, given, nblk = V.rows_kernel(e, tuple(operands), R, W, out, cores)
+    run = FM.generated.launch(
+        dev,
+        "vector.rows_kernel",
+        {
+            "e": FM.generated.expr(e),
+            "operands": [vars(o) for o in operands],
+            "R": R,
+            "W": W,
+            "out": vars(out),
+        },
+        binds,
+        info=info,
+    )
+    return run, given, nblk
+
+
+def _prepared(dev, e, operands, binds, R, W, out, out_at, info, cores):
+    """One launch of `e` with each bound `forms.Pending` made inside it
+    (`kernels.prepared.rows_kernel`); None when a pending one's steps are
+    not planned (nothing run)."""
+    made, steps, alias, first = {}, {}, {}, {}
+    for i in range(len(operands)):
+        b = binds.get(f"in{i}")
+        if not isinstance(b, FM.Pending):
+            continue
+        if id(b) in first:
+            # The same buffer read again (another row range): made once.
+            alias[i] = first[id(b)]
+            continue
+        plans = FM.plans_of(dev, b.steps)
+        if plans is None:
+            return None
+        made[i], steps[i], first[id(b)] = plans, b.steps, i
+    plain = {k: v for k, v in binds.items() if not isinstance(v, FM.Pending)}
+    ops, plain = _based(list(operands), plain, "in")
+    ops = [operands[i] if i in made or i in alias else o for i, o in enumerate(ops)]
+    hw = RL.hw_for(dev)
+    k, given = P.rows_kernel(e, tuple(ops), R, W, out, cores, made, hw, alias)
+    plain["out"] = out_at
+    for i, plans in made.items():
+        plain[f"x{i}"] = steps[i][0].src
+        plain |= FM.step_binds(dev, plans, f"p{i}_")
+    return FM.launch(dev, k, given, plain, info=dict(info, prepared=sorted(made)))
 
 
 def _based(operands, binds: dict, port: str) -> tuple:
@@ -36,29 +96,51 @@ def _based(operands, binds: dict, port: str) -> tuple:
     for i, o in enumerate(operands):
         key = f"in{i}" if port == "in" else port
         item = 4 if o.dtype == "f32" else 2
+        # A scalar keeps its lane in its word; anything else moves whole.
+        moved = o.offset // 16 * 16 if o.kind == "scalar" else o.offset
+        shift = item * moved
         if o.kind in ("row", "scalar"):
-            shift, rows = 64 * item // 2 * o.offset, max(o.rows - o.offset, 0)
+            rows = max(o.rows - moved, 0)
         else:
-            shift = item * o.offset
             rows = max(o.rows - o.offset // o.pitch, 0) if o.pitch else o.rows
-        if not o.offset or shift % 32 or key not in binds:
+        if not moved or shift % 32 or key not in binds:
             out.append(o)
             continue
         binds[key] += shift
-        out.append(replace(o, offset=0, rows=rows))
+        out.append(replace(o, offset=o.offset - moved, rows=rows))
     return out, binds
+
+
+def _blocks(e, operands, rows, width, cores):
+    return V.rows_kernel(e, tuple(operands), rows, width, Operand("row"), cores)[2]
 
 
 def run(
     dev, e, operands, binds: dict, R: int, W: int, out: Operand, out_at: int, info=None
 ) -> list:
     """Compute `e` (`Load(i)` reading ``binds["in{i}"]`` as `operands[i]`)
-    into `out` at `out_at`; returns the runs."""
+    into `out` at `out_at`; returns the runs. A bound `forms.Pending` is
+    made inside the kernel when it is one launch (`kernels.prepared`),
+    else by its own relayouts first."""
     _whole_rows(operands, W)
     info = dict(info or {})
     cores = dev.machine.count("VC")
     reds = _reductions(e)
-    if W > V.MAX_BLOCK and reds and (out.kind != "row" or len(reds) > 1):
+    blocks = 1
+    if reds:
+        blocks = _blocks(reds[0], operands, R, W, cores)
+    pend = {k: v for k, v in binds.items() if isinstance(v, FM.Pending)}
+    # A reduction's partials across column blocks: one launch reads the
+    # operands (then folds of partials), so it makes the pending ones.
+    partials = blocks > 1 and out.kind == "row" and len(reds) == 1
+    if pend:
+        if FM.PREPARED and blocks == 1:
+            got = _prepared(dev, e, operands, binds, R, W, out, out_at, info, cores)
+            if got is not None:
+                return [got]
+        if not (FM.PREPARED and partials):
+            binds = {k: (v.made().addr if k in pend else v) for k, v in binds.items()}
+    if blocks > 1 and reds and (out.kind != "row" or len(reds) > 1):
         # A reduction across column blocks, not the one result: its
         # statistic first (an innermost one), read back as a row operand.
         return _stat_first(dev, e, operands, binds, R, W, out, out_at, info)
@@ -67,69 +149,78 @@ def run(
             dev, e, operands, dict(binds, out=out_at), R, W, out, info, cores
         )
         return [one]
-    if W <= V.MAX_BLOCK:
+    if blocks == 1:
         one, _, _ = _launch(
             dev, e, operands, dict(binds, out=out_at), R, W, Operand("row"), info, cores
         )
         return [one]
     red = reds[0]
     part = Operand("row")
+    if single_package_enabled():
+        binds = {
+            k: v.made().addr if isinstance(v, FM.Pending) else v
+            for k, v in binds.items()
+        }
+        _, keep = substitute(e, red, X.Load(0))
+        for i in keep:
+            if operands[i].kind not in ("row", "scalar"):
+                raise RowsError(
+                    "a row-wide operand outside a reduction whose result is a statistic"
+                )
+        one, _, _ = _launch_wide(
+            dev,
+            e,
+            operands,
+            dict(binds, out=out_at),
+            R,
+            W,
+            out,
+            dict(info, blocks=blocks),
+            cores,
+        )
+        return [one]
     _, given, nblk = V.rows_kernel(red, tuple(operands), R, W, part, cores)
+    rq = given["out"].shape[-1]  # a block's partials, whole words
     nbytes = given["out"].nbytes()
     parts = [dev.alloc(nbytes), dev.alloc(nbytes)]
     try:
-        one, _, _ = _launch(
-            dev,
-            red,
-            operands,
-            dict(binds, out=parts[0]),
-            R,
-            W,
-            part,
-            dict(info, blocks=nblk),
-            cores,
-        )
+        info1 = dict(info, blocks=nblk)
+        one = None
+        if pend:
+            one = _prepared(
+                dev, red, operands, binds, R, W, part, parts[0], info1, cores
+            )
+            if one is None:
+                binds = {
+                    k: (v.made().addr if k in pend else v) for k, v in binds.items()
+                }
+        if one is None:
+            one, _, _ = _launch(
+                dev, red, operands, dict(binds, out=parts[0]), R, W, part, info1, cores
+            )
         runs = [one]
-        # Each block's partial fills its 32 columns: blocks halved (first
-        # half with last, an odd middle one carried) until one is left.
-        pitch, width = 32 * nblk, nblk
+        # Blocks rq values apart, halved (an odd middle one carried) to one.
+        width = nblk
         both = X.op(FOLD[red.op], X.Load(0), X.Load(1))
         while width > 1:
             half = width // 2
             src, dst = parts
+            n = half * rq
             ops = [
-                Operand("full", pitch=pitch, rows=R),
-                Operand("full", pitch=pitch, rows=R, offset=32 * (width - half)),
+                Operand("row", rows=n),
+                Operand("row", rows=n, offset=(width - half) * rq),
             ]
-            if width - half > half:
-                # The middle block, carried over to the next round.
-                mid = Operand("full", pitch=pitch, rows=R, offset=32 * half)
-                runs += run(
-                    dev,
-                    X.Load(0),
-                    [mid],
-                    {"in0": src},
-                    R,
-                    32,
-                    Operand("full", pitch=pitch),
-                    dst + 64 * half,
-                    info,
-                )
             runs += run(
-                dev,
-                both,
-                ops,
-                {"in0": src, "in1": src},
-                R,
-                32 * half,
-                Operand("full", pitch=pitch),
-                dst,
-                info,
+                dev, both, ops, {"in0": src, "in1": src}, n, 32, part, dst, info
             )
+            if width - half > half:
+                k, given = C.copy_kernel(2 * rq)
+                at = {"src": src + 2 * half * rq, "dst": dst + 2 * half * rq}
+                runs.append(FM.launch(dev, k, given, at, kind="copy"))
             parts.reverse()
             width -= half
-        post, keep = substitute(e, red, _held())
-        ops2 = [Operand("full", pitch=pitch, rows=R)]
+        post, keep = substitute(e, red, X.Load(0))
+        ops2 = [Operand("row", rows=R)]
         b2 = {"in0": parts[0]}
         for j, i in enumerate(keep, start=1):
             if operands[i].kind not in ("row", "scalar"):
@@ -165,11 +256,6 @@ def _reductions(e) -> list:
 
     walk(e)
     return out
-
-
-def _held():
-    """A statistic's value from its 32 equal columns (Load 0): their max."""
-    return X.Reduce("max", X.Load(0))
 
 
 def _swap(e, red, new):
@@ -249,12 +335,41 @@ def substitute(e, red, fold, first: int = 1):
 
 
 def stat_bytes(R: int) -> int:
-    """Bytes of an [R, 32] statistic form, rows rounded to whole trips."""
-    return -(-R // 16) * 16 * 64
+    """Bytes of R statistic values in whole words (a rows kernel writes
+    them whole)."""
+    return V.stat_words(R) * 32
 
 
 def rows_of(shape) -> int:
     return int(np.prod(shape[:-1])) if len(shape) > 1 else 1
 
 
-__all__ = ["RowsError", "rows_of", "run", "stat_bytes", "substitute"]
+def _launch_wide(dev, e, operands, binds, R, W, out, info, cores):
+    operands, binds = _based(operands, binds, "in")
+    if "out" in binds:
+        (out,), binds = _based([out], binds, "out")
+    k, given, nblk = LR.wide_fold_kernel(e, tuple(operands), R, W, out, cores)
+    run_obj = FM.launch(dev, k, given, binds, info=info)
+    return run_obj, given, nblk
+
+
+__all__ = [
+    "MUTANT",
+    "SINGLE_PACKAGE_AST",
+    "RowsError",
+    "emit_rows_stages",
+    "rows_of",
+    "run",
+    "single_package_enabled",
+    "stat_bytes",
+    "substitute",
+    "wide_fold_kernel",
+]
+
+
+def emit_rows_stages(*args, **kwargs):
+    return LR.emit_rows_stages(*args, **kwargs)
+
+
+def wide_fold_kernel(*args, **kwargs):
+    return LR.wide_fold_kernel(*args, **kwargs)

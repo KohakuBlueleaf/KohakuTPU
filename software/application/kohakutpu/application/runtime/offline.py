@@ -9,17 +9,18 @@ nothing (compile only: the arrays keep what the host wrote), or a model.
     card.run(program)                              # checked, scheduled, encoded
 """
 
-from kohakuaccel.compiler.machine import STAGE_BYTES
-from kohakutpu.application.runtime.card import ARENA, Q_SIZE, NodeCard
+from kohakutpu.application.runtime import packages as B
+from kohakutpu.application.runtime.card import (
+    ARENA,
+    Q_SIZE,
+    NodeCard,
+)
+from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.application.runtime.memory import CardMemory
-from kohakutpu.compiler import build as B
-from kohakutpu.compiler import imem
-from kohakutpu.compiler import target as T
+from kohakutpu.compiler import _rs
 from kohakutpu.driver.clock.card import load_board
 from kohakutpu.driver.host import board_map
 
-#: The DRAM an offline card holds (the Verilated card's 256 MB).
-DRAM = 0x1000_0000
 PAGE = 1 << 20
 
 
@@ -75,29 +76,33 @@ class OfflineCard:
         self.board = load_board(board)
         mp = board_map(self.board)
         span = max(nodes) + 1
-        self.machine = T.machine_of(self.board, nodes=span if span > 1 else None)
+        self.machine = machine_of(self.board, nodes=span)
+        self.machine_json = self.machine.machine_json
         b = self.board
         self.fetch = tuple(b["fetch_port"]) if "fetch_port" in b else None
+        #: The sysnode clock a run's cycles count, at the board's idle profile.
+        self.sys_hz = b["profiles"][b["idle_profile"]]["sys"] * 1e6
         self.nodes = tuple(nodes)
         self.check = check
         self.checked: dict = {}
         self.execute = execute
+        self.dram_bytes = mp["size"]
         self.mem = HostMemory()
         self.line = mp["granule"] or 32
         self.paint = False
         self.memory = CardMemory(
-            (ARENA, DRAM - Q_SIZE),
+            (ARENA, mp["arena_limit"]),
             {
                 n: (
                     self.machine.stage_addr(0, mesh=n) + Q_SIZE,
-                    self.machine.stage_addr(0, mesh=n) + STAGE_BYTES,
+                    self.machine.stage_addr(0, mesh=n) + self.machine.stage_bytes,
                 )
                 for n in self.nodes
             },
         )
         self.log: list | None = None
         self.runs = 0
-        self.residents = {n: imem.Cores(imem.IMEM_WORDS) for n in self.nodes}
+        self.residents = {n: _rs.Cores(self.machine_json) for n in self.nodes}
         self.resident = self.residents[self.nodes[0]]
 
     # NodeCard's memory, logging and checker, as they are.
@@ -110,9 +115,12 @@ class OfflineCard:
     put = NodeCard.put
     write = NodeCard.write
     get = NodeCard.get
+    _forget_residents = NodeCard._forget_residents
     record = NodeCard.record
     recorded = NodeCard.recorded
     verify = NodeCard.verify
+    publication_epoch = NodeCard.publication_epoch
+    _publishing = NodeCard._publishing
 
     def drop_spilled(self) -> None:
         """No queue holds a package here."""
@@ -122,13 +130,20 @@ class OfflineCard:
         progs = {self.nodes[0]: program} if single else program
         progs = {self.nodes[0] if n is None else n: p for n, p in progs.items()}
         self.verify(progs)
-        built = B.packages(progs, self.machine, self.fetch, self.residents)
+        both = B.built(progs, self.machine, self.fetch, self.residents)
+        built = {n: (pkg, b) for n, (_, pkg, b) in both.items()}
         raw = {n: (pkg.to_bytes(), tuple(b)) for n, (pkg, b) in built.items()}
         if self.log is not None:
             self.log.append(("run", raw))
         self.runs += 1
         if self.execute is not None:
-            return self.execute(self, built)
+            self._publishing()
+            try:
+                return self.execute(self, built)
+            except Exception:
+                for n in progs:
+                    self.residents[n].forget()
+                raise
         if single:
             return {
                 "cycles": 0,
@@ -147,11 +162,14 @@ class OfflineCard:
         packages it holds (`execute` given them), each 0 cycles here."""
         if any(ev[0] == "read" for ev in log):
             raise ValueError("a log that reads the card cannot be replayed")
+        self._forget_residents(self.nodes)
         cycles = []
         for ev in log:
             if ev[0] == "write":
                 self.mem.write_block(ev[1], ev[2])
             elif ev[0] == "run":
+                for n, (raw, bindings) in ev[1].items():
+                    B.admit(raw, self.machine_json, n, tuple(bindings))
                 cycles.append(0)
         self.runs += sum(1 for ev in log if ev[0] == "run")
         return cycles
@@ -160,4 +178,4 @@ class OfflineCard:
         return {}
 
 
-__all__ = ["DRAM", "HostMemory", "OfflineCard"]
+__all__ = ["HostMemory", "OfflineCard"]

@@ -1,7 +1,6 @@
 """A card's memory with one owner: the host's DRAM arrays and each node's
-staging store past its queue. Every allocation -- arrays, a run's scratch, a
-package too large for its queue's heap, a recording's private spans -- is a
-span of these arenas, so no two users ever hold one address.
+staging store. Arrays, scratch, packages and firmware regions are spans of
+these arenas. Recording pins existing spans instead of reserving a child heap.
 
     mem = CardMemory((lo, hi), {node: (lo, hi)}, paint=write)
     a = mem.alloc(nbytes)          # DRAM, painted before it is handed out
@@ -31,18 +30,18 @@ class CardMemory:
         #: up to its end, so no live span lies past the mark.
         self.painted = self.dram.lo
 
-    def alloc(self, nbytes: int) -> int:
+    def alloc(self, nbytes: int, owner: str = "runtime") -> int:
         """`nbytes` of DRAM."""
-        at = self.dram.alloc(nbytes)
+        at = self.dram.alloc(nbytes, owner=owner)
         end = at + self.dram.live[at]
         if self.paint is not None and end > self.painted:
             _zero(self.paint, self.painted, end - self.painted)
             self.painted = end
         return at
 
-    def stage(self, nbytes: int, node: int) -> int:
+    def stage(self, nbytes: int, node: int, owner: str = "staging") -> int:
         """`nbytes` of `node`'s staging store."""
-        return self.staging[node].alloc(nbytes)
+        return self.staging[node].alloc(nbytes, owner=owner)
 
     def carve(self, nbytes: int, node: int | None = None) -> Arena:
         """An arena of its own over `nbytes` at the top of DRAM (zeroed now
@@ -66,12 +65,19 @@ class CardMemory:
         return (self.dram, *self.staging.values())
 
     def mark(self) -> tuple:
-        """What is held now: `release` frees everything allocated since."""
+        """What is held now: `release` frees scoped allocations placed since."""
         return tuple(frozenset(a.live) for a in self.arenas())
 
     def release(self, mark: tuple) -> None:
+        """Release scoped spans; queue-owned packages retire on completion/reset."""
         for arena, kept in zip(self.arenas(), mark, strict=True):
-            for at in [a for a in arena.live if a not in kept]:
+            for at in [
+                a
+                for a in arena.live
+                if a not in kept
+                and a not in arena.released
+                and arena.owners[a] != "package"
+            ]:
                 arena.release(at)
 
 
