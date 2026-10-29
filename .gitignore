@@ -102,6 +102,8 @@ docs/_build/
 # PyBuilder
 .pybuilder/
 target/
+# Spec runner package (Python source), not a build directory.
+!software/tests/spec/runners/target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
