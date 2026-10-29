@@ -384,6 +384,9 @@ fn run_case_review(
     let mut p = p.with_vregs(t.vregs, t.vcopies);
     let search = Search::new(Strategy::Auto);
     let want_passes = case["passes"].as_array().cloned().unwrap_or_default();
+    // A review regenerates every compared view, the schedule's included.
+    let scheduled = scheduled || review.is_some();
+    let mut fields: Vec<(String, String)> = Vec::new();
     for (k, name) in PASSES.iter().enumerate() {
         match passes::pass(name, &p, &t, &search) {
             Ok(q) => {
@@ -394,7 +397,10 @@ fn run_case_review(
                     ));
                 };
                 let want = w["text"].as_str().unwrap();
-                if q.text() != want {
+                if review.is_some() {
+                    review::Review::report(case, &format!("/passes/{k}/text"), q.text());
+                    fields.push((format!("/passes/{k}/text"), q.text().to_string()));
+                } else if q.text() != want {
                     return Err(format!(
                         "{name}: text differs, {}",
                         first_diff(want, q.text())
@@ -421,7 +427,6 @@ fn run_case_review(
         }
     }
     let search = Search::new(Strategy::Auto);
-    let compared;
     match lower::lower(&p, &t, &search) {
         Ok(text) => {
             let Some(want) = case["l1"].as_str() else {
@@ -434,9 +439,9 @@ fn run_case_review(
                 return Err(format!("lower: L1 differs, {}", first_diff(want, &text)));
             }
             if review.is_some() {
-                review::Review::report(case, "l1", &text);
+                review::Review::report(case, "/l1", &text);
             }
-            let mut fields = vec![("l1", text.clone())];
+            fields.push(("/l1".into(), text.clone()));
             if scheduled {
                 if let Some(ws) = case["l1_scheduled"].as_str() {
                     let read = ktpu_l1::text::read(&text, &format!("{FILE}:{}.l1", p.name))
@@ -450,12 +455,11 @@ fn run_case_review(
                         ));
                     }
                     if review.is_some() {
-                        review::Review::report(case, "l1_scheduled", &got.source);
+                        review::Review::report(case, "/l1_scheduled", &got.source);
                     }
-                    fields.push(("l1_scheduled", got.source));
+                    fields.push(("/l1_scheduled".into(), got.source));
                 }
             }
-            compared = fields;
         }
         Err(e) => {
             if review.is_some_and(|(r, _)| r.selected(case)) {
@@ -489,6 +493,10 @@ fn run_case_review(
         let got = passes::run(&p0, &ps, &t, &Search::new(strategy))
             .and_then(|q| lower::lower(&q, &t, &Search::new(strategy)));
         match (got, v.get("l1").and_then(Value::as_str), v.get("refusal")) {
+            (Ok(text), Some(_), _) if review.is_some() => {
+                review::Review::report(case, "/variant/l1", &text);
+                fields.push(("/variant/l1".into(), text));
+            }
             (Ok(text), Some(want), _) if text == want => {}
             (Ok(text), Some(want), _) => {
                 return Err(format!("variant: L1 differs, {}", first_diff(want, &text)))
@@ -504,7 +512,7 @@ fn run_case_review(
         }
     }
     if let Some((r, path)) = review {
-        r.compare(path, case, compared, &m)?;
+        r.compare(path, case, fields, &m)?;
     }
     Ok(())
 }

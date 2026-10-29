@@ -3,6 +3,7 @@
 use super::*;
 use crate::lower::vector::gen::{print, typed::Event};
 use crate::lower::vector::pat;
+use crate::mutant::{scoped, State};
 use ktpu_machine::Machine;
 
 fn body() -> Body {
@@ -133,6 +134,17 @@ fn locals(stat: bool) -> IndexMap<String, Val> {
 }
 
 fn run(o: &Op, per_band: i64, inplace: bool, present: bool) -> (Gen, Emitter, String) {
+    run_with(o, per_band, inplace, present, &[(3.5, "s0")])
+}
+
+/// `run` with the scalar file holding `scalars`.
+fn run_with(
+    o: &Op,
+    per_band: i64,
+    inplace: bool,
+    present: bool,
+    scalars: &[(f64, &str)],
+) -> (Gen, Emitter, String) {
     let b = body();
     let t = Target::of(&Machine::named("multimesh_v9t6").unwrap());
     let mut a = Ctx::new(&b, &t, &Env::new(), None).unwrap();
@@ -143,7 +155,9 @@ fn run(o: &Op, per_band: i64, inplace: bool, present: bool) -> (Gen, Emitter, St
         c.inplace = inplace;
         c.held.insert(FKey::of(9.25), "%81".into());
         c.pinned.insert("%81".into());
-        c.scalars.insert(FKey::of(3.5), "s0".into());
+        for &(f, s) in scalars {
+            c.scalars.insert(FKey::of(f), s.into());
+        }
     }
     let mut al = locals(o.ty.as_ref().unwrap().shape.len() == 1);
     if !present {
@@ -197,8 +211,154 @@ fn every_opcode_rows_statistics_and_inplace() {
                         .map(|s| Term::name(*s))
                         .collect();
                     let (_, _, text) = run(&op_for(op, args, stat), per, inplace, present);
-                    assert!(text.starts_with(code));
+                    let first = text.lines().find(|l| !l.starts_with("seti ")).unwrap();
+                    let guard = match op {
+                        "exp2" => "vmax ",
+                        "exp2d" => "vabs ",
+                        _ => code,
+                    };
+                    assert!(first.starts_with(guard), "{op}: {first}");
+                    assert!(text.lines().any(|l| l.starts_with(&format!("{code} "))));
                     assert_eq!(text.contains("vl=16"), stat && per == 0);
+                }
+            }
+        }
+    }
+}
+
+/// The ops of `z`, each with the value of every register a `seti` set before it.
+fn ops_and_settings(z: &Emitter) -> Vec<(Stmt, Vec<Symbol>, HashMap<String, f64>)> {
+    let mut set: HashMap<String, f64> = HashMap::new();
+    let mut out = Vec::new();
+    for e in &z.code {
+        match e {
+            Event::Fixed(st) if st.op == "seti" => {
+                let Term::Assign(reg, value) = &st.args[0] else {
+                    panic!("{st:?}")
+                };
+                let value = match value.as_ref() {
+                    Term::Neg(f) => -number(f).unwrap(),
+                    f => number(f).unwrap(),
+                };
+                set.insert(reg.as_name().unwrap().to_string(), value);
+            }
+            Event::Op { stmt, syms } => out.push((stmt.clone(), syms.clone(), set.clone())),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Each guard against the unguarded lowering (`l2.vector/exp2-wrapped-domain`):
+/// opcode order and every operand, predicate and constant it reads.
+#[test]
+fn exp2_domain_guard_order_and_wiring() {
+    let a = || Term::name("a");
+    for (op, guard) in [
+        ("exp2", ["vmax", "vcmplt", "vadd", "vexp2"].as_slice()),
+        (
+            "exp2d",
+            ["vabs", "vcmplt", "vadd", "vmov", "vexp2d"].as_slice(),
+        ),
+    ] {
+        let args = if op == "exp2" {
+            vec![a()]
+        } else {
+            vec![a(), Term::name("b")]
+        };
+        for (stat, per) in [(false, 0), (false, 2), (true, 0), (true, 2)] {
+            for (inplace, present) in [(false, false), (false, true), (true, true)] {
+                for scalars in [
+                    vec![(3.5, "s0")],
+                    vec![(3.5, "s0"), (EXP2_RANGE, "s1"), (EXP2_FLOOR, "s2")],
+                ] {
+                    let o = op_for(op, args.clone(), stat);
+                    let (_, z, _) = run_with(&o, per, inplace, present, &scalars);
+                    let plain = scoped(
+                        State {
+                            active: Some(crate::lower::vector::DOMAIN_MUTANT),
+                            ..State::default()
+                        },
+                        || run_with(&o, per, inplace, present, &scalars).1,
+                    );
+                    let value = |t: &Term, set: &HashMap<String, f64>| {
+                        let reg = t.as_name().unwrap();
+                        scalars
+                            .iter()
+                            .find(|(_, s)| *s == reg)
+                            .map(|(f, _)| *f)
+                            .unwrap_or_else(|| set[reg])
+                    };
+                    let stride = stat && per == 0;
+                    let sel = if stride {
+                        Select::Stride(0)
+                    } else {
+                        Select::Whole
+                    };
+                    let vl = stride.then(|| Term::int(16));
+
+                    let unguarded = ops_and_settings(&plain);
+                    let guarded = ops_and_settings(&z);
+                    assert_eq!(guarded.len(), unguarded.len() * guard.len());
+                    for (want, ops) in unguarded.iter().zip(guarded.chunks(guard.len())) {
+                        let names: Vec<&str> =
+                            ops.iter().map(|(st, _, _)| st.op.as_str()).collect();
+                        assert_eq!(names, guard, "{op}");
+                        let (math, math_syms, _) = ops.last().unwrap();
+                        assert_eq!(want.0.op, math.op);
+                        let src = &want.0.args[1];
+                        let t = &math_syms[1];
+                        let x = t.operand(sel);
+                        assert!(t.0 > 81 && math_syms[0] != *t, "a fresh temporary");
+                        let mut rewired = want.0.clone();
+                        rewired.args[0] = math.args[0].clone();
+                        rewired.args[1] = x.clone();
+                        assert_eq!(&rewired, math);
+                        if inplace {
+                            assert_eq!(want.0.args[0], math.args[0]);
+                        }
+                        for (st, syms, _) in &ops[..ops.len() - 1] {
+                            assert_eq!(
+                                st.args[0],
+                                if st.op == "vcmplt" {
+                                    Term::name("p1")
+                                } else {
+                                    x.clone()
+                                }
+                            );
+                            assert_eq!(syms[0], *t);
+                            assert_eq!(st.kw("vl"), vl.as_ref());
+                        }
+                        let src_syms = &want.1[1..2];
+                        let (abs_or_max, s0, set0) = &ops[0];
+                        let (cmp, s1, set1) = &ops[1];
+                        assert_eq!(cmp.positional()[1], &x);
+                        assert_eq!(value(cmp.positional()[2], set1), EXP2_RANGE);
+                        assert_eq!(s1.len(), 1);
+                        assert!(cmp.kw("if").is_none() && cmp.kw("unless").is_none());
+                        assert_eq!(abs_or_max.positional()[1], src);
+                        if op == "exp2" {
+                            assert_eq!(value(abs_or_max.positional()[2], set0), EXP2_FLOOR);
+                            assert_eq!(s0[1..], *src_syms);
+                            let (add, s2, _) = &ops[2];
+                            assert_eq!(add.positional()[1..], [&x, &x]);
+                            assert_eq!(add.kw("unless"), Some(&Term::name("p1")));
+                            assert!(add.kw("if").is_none());
+                            assert_eq!(s2, &vec![t.clone()]);
+                        } else {
+                            assert_eq!(abs_or_max.positional().len(), 2);
+                            assert_eq!(s0[1..], *src_syms);
+                            let (add, s2, _) = &ops[2];
+                            let (mov, s3, _) = &ops[3];
+                            assert_eq!(add.positional()[1..], [src, src]);
+                            assert!(add.kw("if").is_none() && add.kw("unless").is_none());
+                            assert_eq!(mov.positional()[1], src);
+                            assert_eq!(mov.kw("if"), Some(&Term::name("p1")));
+                            assert!(mov.kw("unless").is_none());
+                            assert_eq!(s2[1..], *src_syms);
+                            assert_eq!(s3[1..], *src_syms);
+                        }
+                    }
                 }
             }
         }

@@ -1908,7 +1908,9 @@ mod port {
             .collect();
         ensure!(bits == ['8', '4', '2', '1'], "{bits:?}");
         ensure!(lines[at + 5] == "vmov v4[4:], v4[0:] vl=64");
-        ensure!(lines.contains(&"vexp2d v0, v0, v4"));
+        ensure!(lines
+            .iter()
+            .any(|l| l.starts_with("vexp2d v0, v") && l.ends_with(", v4")));
         Ok(())
     }
 

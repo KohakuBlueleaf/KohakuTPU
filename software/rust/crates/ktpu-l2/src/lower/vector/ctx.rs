@@ -35,8 +35,9 @@ use super::gen::{Code, Gen};
 #[cfg(feature = "witness")]
 use super::tree::{compact, interleave, quantiser_order, tree, tree4, Steps};
 use super::{
-    banks, code_of, count_of, is_in, kreg, mode_of, number, numbers, ops_of, value_name, Desc,
-    FKey, Plan, PlanX, RPar, VErr, VResult, Val, Walk, BINARY, CMP, REDUCE, TERNARY, UNARY, XLANE,
+    banks, code_of, count_of, domain_constants, is_in, kreg, mode_of, number, numbers, ops_of,
+    value_name, Desc, FKey, Plan, PlanX, RPar, VErr, VResult, Val, Walk, BINARY, CMP, EXP2_FLOOR,
+    EXP2_RANGE, REDUCE, TERNARY, UNARY, XLANE,
 };
 use crate::ir::read::bind;
 use crate::ir::repr::repr;

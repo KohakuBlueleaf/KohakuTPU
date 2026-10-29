@@ -111,6 +111,33 @@ pub fn is_in(table: &[(&str, &str)], op: &str) -> bool {
     table.iter().any(|(k, _)| *k == op)
 }
 
+/// EXP2 and EXP2D reduce `a` to signed s8.17 fixed point, `[-128, 128)`, and
+/// decode specials only from `|a| >= 256` (v2_alu.v:374, 420-471): `a` in
+/// `[128, 256)` wraps negative, `(-256, -128)` wraps positive. Doubling such
+/// an `a` lands it on the special decode (+inf, or 0 below zero): the ALU as
+/// designed. For EXP2D that special holds whatever `b` is, so EXP2D's value
+/// at `|a| >= 128` is not `2^(a - floor b)` where `b` brings it back in range.
+pub const EXP2_RANGE: f64 = 128.0;
+/// EXP2's floor: `2^a` flushes to zero at and below it in E8M15, so a clamp
+/// there is exact (NaN passes `vmax` as its `a`, v2_alu.v:224; -0 survives).
+/// EXP2D's `a - floor(b)` can lift `a` back above it: EXP2D takes no clamp.
+pub const EXP2_FLOOR: f64 = -127.0;
+
+/// The mutant that drops every domain guard: the frozen ALU's wrapped domain.
+pub const DOMAIN_MUTANT: &str = "l2.vector/exp2-wrapped-domain";
+
+/// The constants op `op`'s domain guard reads (`ctx` math), in its order.
+pub fn domain_constants(op: &str) -> &'static [f64] {
+    if crate::mutant::on(DOMAIN_MUTANT) {
+        return &[];
+    }
+    match op {
+        "exp2" => &[EXP2_FLOOR, EXP2_RANGE],
+        "exp2d" => &[EXP2_RANGE],
+        _ => &[],
+    }
+}
+
 /// 0.0, 1.0 and -1.0 read the constant registers k0, k1, k2.
 pub fn kreg(f: f64) -> Option<&'static str> {
     if crate::mutant::on("l2.vector/no-kreg") {
@@ -340,7 +367,8 @@ pub fn number(a: &Term) -> Option<f64> {
     }
 }
 
-/// The numbers `ops` read as operands (not K registers), the most read first.
+/// The numbers `ops` read as operands (not K registers), domain guards'
+/// included, the most read first.
 pub fn numbers(ops: &[Arc<Node>]) -> Vec<f64> {
     let mut uses: IndexMap<FKey, (f64, i64)> = IndexMap::new();
     for n in ops {
@@ -348,11 +376,10 @@ pub fn numbers(ops: &[Arc<Node>]) -> Vec<f64> {
         if is_in(&XLANE, &op.op) {
             continue;
         }
-        for a in op.st.positional() {
-            if let Some(f) = number(a) {
-                if kreg(f).is_none() {
-                    uses.entry(FKey::of(f)).or_insert((f, 0)).1 += 1;
-                }
+        let read = op.st.positional().into_iter().filter_map(number);
+        for f in read.chain(domain_constants(&op.op).iter().copied()) {
+            if kreg(f).is_none() {
+                uses.entry(FKey::of(f)).or_insert((f, 0)).1 += 1;
             }
         }
     }

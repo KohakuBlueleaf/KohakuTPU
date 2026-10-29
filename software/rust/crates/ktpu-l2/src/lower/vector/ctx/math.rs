@@ -7,6 +7,49 @@ mod typed;
 
 #[cfg(feature = "witness")]
 impl<'a> Ctx<'a> {
+    /// `op`'s first source through its domain guard (`domain_typed`).
+    fn domain(
+        &mut self,
+        g: &mut Gen,
+        op: &str,
+        srcs: &mut Vec<String>,
+        syms: &mut Vec<String>,
+        sel: &str,
+        vl: &str,
+    ) -> VResult<()> {
+        if domain_constants(op).is_empty() {
+            return Ok(());
+        }
+        let a = srcs[0].clone();
+        let t = g.sym();
+        let mut reads = vec![t.clone()];
+        reads.extend(syms.iter().cloned());
+
+        if op == "exp2" {
+            let mut s = syms.clone();
+            let floor = self.constant(g, EXP2_FLOOR, &mut s, std::slice::from_ref(&a), sel)?;
+            s.insert(0, t.clone());
+            g.emit_owned(format!("vmax {{0}}{sel}, {a}, {floor}{vl}"), s);
+        } else {
+            g.emit_owned(format!("vabs {{0}}{sel}, {a}{vl}"), reads.clone());
+        }
+        let x = format!("{{0}}{sel}");
+        let mut s = Vec::new();
+        let range = self.constant(g, EXP2_RANGE, &mut s, std::slice::from_ref(&x), sel)?;
+        s.insert(0, t.clone());
+        g.emit_owned(format!("vcmplt p1, {x}, {range}{vl}"), s);
+        if op == "exp2" {
+            g.emit(format!("vadd {x}, {x}, {x} unless=p1{vl}"), &[t.as_str()]);
+        } else {
+            g.emit_owned(format!("vadd {x}, {a}, {a}{vl}"), reads.clone());
+            g.emit_owned(format!("vmov {x}, {a} if=p1{vl}"), reads);
+        }
+
+        *srcs = vec![format!("{{1}}{sel}")];
+        *syms = vec![t];
+        Ok(())
+    }
+
     /// `y = xlane x, K` / `y = xrot x, K` on a multiply by 1.0 (exact).
     fn xlane(
         &mut self,
@@ -122,15 +165,18 @@ impl<'a> Ctx<'a> {
             for grp in grs {
                 let mut syms: Vec<String> = Vec::new();
                 let mut srcs: Vec<String> = Vec::new();
-                for a in &pos {
+                for (j, a) in pos.iter().enumerate() {
                     if let Some(f) = number(a) {
                         let s = self.constant(g, f, &mut syms, &srcs, sel)?;
                         srcs.push(s);
-                        continue;
+                    } else {
+                        let v = self.get(o, a, Some("stat"), Some(local))?;
+                        syms.push(v.regs[&grp].clone());
+                        srcs.push(format!("{{{}}}{sel}", syms.len()));
                     }
-                    let v = self.get(o, a, Some("stat"), Some(local))?;
-                    syms.push(v.regs[&grp].clone());
-                    srcs.push(format!("{{{}}}{sel}", syms.len()));
+                    if j == 0 {
+                        self.domain(g, &o.op, &mut srcs, &mut syms, sel, vl)?;
+                    }
                 }
                 let d = if inplace {
                     local[&target].regs[&grp].clone()
@@ -166,39 +212,46 @@ impl<'a> Ctx<'a> {
             let mut syms: Vec<String> = Vec::new();
             let mut srcs: Vec<String> = Vec::new();
             for (j, a) in pos.iter().enumerate() {
-                if let Some(f) = number(a) {
-                    let s = self.constant(g, f, &mut syms, &srcs, "")?;
-                    srcs.push(s);
-                    continue;
-                }
-                if let Term::View(an, sl) = a {
-                    if matches!(sl.last(), Some(Term::NewAxis)) && !on("l2.vector/broadcast-unread")
-                    {
-                        let v = self.get(o, &Term::Name(an.clone()), Some("stat"), Some(local))?;
-                        if self.per_band != 0 {
-                            syms.push(v.regs[&(r / self.per_band)].clone());
-                            srcs.push(format!("{{{}}}", syms.len()));
-                            continue;
-                        }
-                        let lane = format!("bcast({{1}}[0], lane={}, sh=3)", r % 8);
-                        if j != on_b {
-                            let tsym = g.sym();
-                            g.emit(
-                                format!("vmul {{0}}, k1, {lane}"),
-                                &[&tsym, &v.regs[&(r / 8)]],
-                            );
-                            syms.push(tsym);
-                            srcs.push(format!("{{{}}}", syms.len()));
-                            continue;
-                        }
-                        syms.push(v.regs[&(r / 8)].clone());
-                        srcs.push(lane.replace("{1}", &format!("{{{}}}", syms.len())));
-                        continue;
+                'operand: {
+                    if let Some(f) = number(a) {
+                        let s = self.constant(g, f, &mut syms, &srcs, "")?;
+                        srcs.push(s);
+                        break 'operand;
                     }
+                    if let Term::View(an, sl) = a {
+                        if matches!(sl.last(), Some(Term::NewAxis))
+                            && !on("l2.vector/broadcast-unread")
+                        {
+                            let v =
+                                self.get(o, &Term::Name(an.clone()), Some("stat"), Some(local))?;
+                            if self.per_band != 0 {
+                                syms.push(v.regs[&(r / self.per_band)].clone());
+                                srcs.push(format!("{{{}}}", syms.len()));
+                                break 'operand;
+                            }
+                            let lane = format!("bcast({{1}}[0], lane={}, sh=3)", r % 8);
+                            if j != on_b {
+                                let tsym = g.sym();
+                                g.emit(
+                                    format!("vmul {{0}}, k1, {lane}"),
+                                    &[&tsym, &v.regs[&(r / 8)]],
+                                );
+                                syms.push(tsym);
+                                srcs.push(format!("{{{}}}", syms.len()));
+                                break 'operand;
+                            }
+                            syms.push(v.regs[&(r / 8)].clone());
+                            srcs.push(lane.replace("{1}", &format!("{{{}}}", syms.len())));
+                            break 'operand;
+                        }
+                    }
+                    let v = self.get(o, a, Some("row"), Some(local))?;
+                    syms.push(v.regs[&self.index(&v, r)?].clone());
+                    srcs.push(format!("{{{}}}", syms.len()));
                 }
-                let v = self.get(o, a, Some("row"), Some(local))?;
-                syms.push(v.regs[&self.index(&v, r)?].clone());
-                srcs.push(format!("{{{}}}", syms.len()));
+                if j == 0 {
+                    self.domain(g, &o.op, &mut srcs, &mut syms, "", "")?;
+                }
             }
             let d = if inplace {
                 local[&target].regs[&i].clone()

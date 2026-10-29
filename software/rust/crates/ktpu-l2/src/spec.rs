@@ -16,7 +16,7 @@ use crate::ir::{Body, Buffer, LayoutVal, Node, Program, StageX};
 use crate::lower::links::Links;
 use crate::lower::sync::{self, Access, Stage};
 use crate::lower::vector::search::Strategy;
-use crate::lower::vector::{encode, Search};
+use crate::lower::vector::{encode, Search, DOMAIN_MUTANT};
 use crate::mutant::State;
 use crate::passes;
 use crate::target::Target;
@@ -62,22 +62,28 @@ pub fn skipped_mutants() -> Vec<(&'static str, &'static str)> {
     out
 }
 
-/// A frozen vector an accepted ruling supersedes. Its input as written is
-/// refused under the ruling (the ruling's own vector witnesses that); it runs
-/// with the ruled input instead (`set`: JSON pointer -> JSON value), so its
-/// mutants still reach the code they mutate, and must give `expect` (JSON
-/// text), or the vector's own expect when none.
+/// A frozen vector a ruling or a legalization supersedes. It runs with its
+/// input changed by `set` (JSON pointer -> JSON value; empty where the
+/// written input still compiles) and must give `expect` (JSON text), or the
+/// vector's own expect when none; its mutants must still change that.
+/// `mutant` reverses the change that made `expect`: under it the same run
+/// gives the vector's own expect, so the two differ by that change alone.
 pub struct Superseded {
     pub vector: &'static str,
     pub ruling: &'static str,
     pub set: &'static [(&'static str, &'static str)],
     pub expect: Option<&'static str>,
+    pub mutant: Option<&'static str>,
 }
+
+/// The legalization of EXP2 / EXP2D's argument (`lower::vector::domain_constants`):
+/// its guard's registers and instructions move these vectors' L1.
+const EXP2_DOMAIN: &str = "EXP2 domain guard (v2_alu.v:374)";
 
 /// The vector files change when the Python harness retires (2p.7).
 pub const SUPERSEDED: &[Superseded] = &[
     // The band pack of a statistic is gone: the same rows store an
-    // elementwise result through the same row walk.
+    // elementwise result through the same row walk; its exp2 is guarded.
     Superseded {
         vector: "L2.STAT.004.band_subtiles",
         ruling: "RUL.030",
@@ -85,7 +91,85 @@ pub const SUPERSEDED: &[Superseded] = &[
             "/text/7",
             r#""            m = exp2 v                               : f32[16, 32] @reg(gt4)""#,
         )],
-        expect: None,
+        expect: Some(
+            r#"{"pack":["vpack v13 -> l1[64] f16 walk=(2, 1)","vpack v16 -> l1[72] f16 walk=(2, 1)","vpack v21 -> l1[80] f16 walk=(2, 1)","vpack v25 -> l1[88] f16 walk=(2, 1)"]}"#,
+        ),
+        mutant: Some(DOMAIN_MUTANT),
+    },
+    Superseded {
+        vector: "L2.OP.001.one_instruction_a_register",
+        ruling: EXP2_DOMAIN,
+        set: &[],
+        expect: Some(r#"{"vadd":8,"vexp2":4,"vinv":4,"vlog2":4,"vmax":8,"vmul":4,"vrsqrt":4}"#),
+        mutant: Some(DOMAIN_MUTANT),
+    },
+    Superseded {
+        vector: "L2.OP.002.sub_fma_exp2d_fnma",
+        ruling: EXP2_DOMAIN,
+        set: &[],
+        expect: Some(
+            r#"{"fnma":["vfnma v48[0 :], v9[0 :], v9[0 :], v9[0 :] vl=16"],"vexp2d":8,"vfma":8,"vsub":8}"#,
+        ),
+        mutant: Some(DOMAIN_MUTANT),
+    },
+    Superseded {
+        vector: "L2.OP.005.compare_mask",
+        ruling: EXP2_DOMAIN,
+        set: &[],
+        expect: Some(
+            r#"{"cmp":["vmov v1, k0","vmov v2, k0","vcmplt p1, v5, s1","vmov v10, k0","vcmplt p1, v7, s1","vcmplt p1, v8, s1","vcmplt p1, v9, s1","vmov v7, k0","vcmpgt p1, v0[1 :], v11","vmov v1, k1 if=p1","vcmpgt p1, v3[1 :], v5","vmov v2, k1 if=p1","vcmpgt p1, v4[1 :], v12","vmov v10, k1 if=p1","vcmpgt p1, v6[1 :], v8","vmov v7, k1 if=p1"]}"#,
+        ),
+        mutant: Some(DOMAIN_MUTANT),
+    },
+    Superseded {
+        vector: "L2.OP.006.vsel",
+        ruling: EXP2_DOMAIN,
+        set: &[],
+        expect: Some(
+            r#"{"sel":["vsel v14, v0[1 :], v11, v1","vsel v28, v3[1 :], v5, v2","vsel v30, v4[1 :], v12, v10","vsel v31, v6[1 :], v8, v7"]}"#,
+        ),
+        mutant: Some(DOMAIN_MUTANT),
+    },
+    Superseded {
+        vector: "L2.OP.007.stat_rows",
+        ruling: EXP2_DOMAIN,
+        set: &[],
+        expect: Some(r#"{"inv":["vinv v67[0 :], v39[0 :] vl=16"]}"#),
+        mutant: Some(DOMAIN_MUTANT),
+    },
+    Superseded {
+        vector: "L2.OP.014.unpack_pack_modes",
+        ruling: EXP2_DOMAIN,
+        set: &[],
+        expect: Some(
+            r#"{"pack":["vpack v13 -> l1[64] gt4","vpack v16 -> l1[72] gt4","vpack v21 -> l1[80] gt4","vpack v25 -> l1[88] gt4"],"unpack":["vunpk v0 <- l1[0] gt4","vunpk v1 <- l1[8] gt4","vunpk v2 <- l1[16] gt4","vunpk v4 <- l1[24] gt4"]}"#,
+        ),
+        mutant: Some(DOMAIN_MUTANT),
+    },
+    Superseded {
+        vector: "L2.SPACE.014.stat_chunk0",
+        ruling: EXP2_DOMAIN,
+        set: &[],
+        expect: Some(
+            r#"{"last":["vmax v10[0 :], v1, merge(v1[1 :], 1) vl=16","vadd v39[0 :], v0, merge(v0[1 :], 1) vl=16"]}"#,
+        ),
+        mutant: Some(DOMAIN_MUTANT),
+    },
+    Superseded {
+        vector: "L2.VC.013.band_order",
+        ruling: EXP2_DOMAIN,
+        set: &[],
+        expect: Some(
+            r#"{"ops":["vunpk v0[1:] <- l1[0] f16 n=8","vunpk v1[1:] <- l1[8] f16 n=8","vunpk v2[1:] <- l1[16] f16 n=8","vunpk v3[1:] <- l1[24] f16 n=8","vadd v4, v4, v4 unless=p1","vexp2 v4, v4","vadd v5, v5, v5 unless=p1","vexp2 v5, v5","vadd v6, v6, v6 unless=p1","vexp2 v6, v6","vadd v7, v7, v7 unless=p1","vexp2 v7, v7","vadd v4, v4, k1","vadd v5, v5, k1","vadd v6, v6, k1","vadd v7, v7, k1","vinv v4, v4","vinv v5, v5","vinv v6, v6","vinv v7, v7","vmul v0, v0[1:], v4","vmul v1, v1[1:], v5","vmul v2, v2[1:], v6","vmul v3, v3[1:], v7","vpack v0 -> l1[64] f16","vpack v1 -> l1[72] f16","vpack v2 -> l1[80] f16","vpack v3 -> l1[88] f16"]}"#,
+        ),
+        mutant: Some(DOMAIN_MUTANT),
+    },
+    Superseded {
+        vector: "L2.VC.014.modulo",
+        ruling: EXP2_DOMAIN,
+        set: &[],
+        expect: Some(r#"{"fill_ring":["0","256","64"],"slack63":true}"#),
+        mutant: Some(DOMAIN_MUTANT),
     },
 ];
 

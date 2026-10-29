@@ -59,6 +59,84 @@ fn result(
 }
 
 impl Ctx<'_> {
+    /// `op`'s first source through its domain guard ([`domain_constants`]);
+    /// `srcs` and `syms`, holding that source alone, become the guarded copy.
+    fn domain_typed(
+        &mut self,
+        g: &mut Emitter,
+        op: &str,
+        srcs: &mut Vec<Term>,
+        syms: &mut Vec<Symbol>,
+        sel: Select,
+    ) -> VResult<()> {
+        if domain_constants(op).is_empty() {
+            return Ok(());
+        }
+        let vl = if sel == Select::Stride(0) {
+            vec![ir::kw("vl", Term::int(16))]
+        } else {
+            vec![]
+        };
+        let predicated = |key: &str| {
+            let mut options = vec![ir::kw(key, Term::name("p1"))];
+            options.extend(vl.clone());
+            options
+        };
+        let a = srcs[0].clone();
+        let t = g.sym();
+        let x = t.operand(sel);
+        let mut reads = vec![t.clone()];
+        reads.extend(syms.iter().cloned());
+
+        if op == "exp2" {
+            let mut s = reads.clone();
+            let floor =
+                self.constant_typed(g, EXP2_FLOOR, &mut s, std::slice::from_ref(&a), sel)?;
+            g.op(
+                ir::math("vmax", x.clone(), vec![a.clone(), floor], vl.clone()),
+                s,
+            );
+        } else {
+            g.op(
+                ir::math("vabs", x.clone(), vec![a.clone()], vl.clone()),
+                reads.clone(),
+            );
+        }
+        let mut s = vec![t.clone()];
+        let range = self.constant_typed(g, EXP2_RANGE, &mut s, std::slice::from_ref(&x), sel)?;
+        g.op(
+            ir::math(
+                "vcmplt",
+                Term::name("p1"),
+                vec![x.clone(), range],
+                vl.clone(),
+            ),
+            s,
+        );
+        if op == "exp2" {
+            let doubled = ir::math(
+                "vadd",
+                x.clone(),
+                vec![x.clone(), x.clone()],
+                predicated("unless"),
+            );
+            g.op(doubled, vec![t.clone()]);
+        } else {
+            g.op(
+                ir::math("vadd", x.clone(), vec![a.clone(), a.clone()], vl.clone()),
+                reads.clone(),
+            );
+            g.op(
+                ir::math("vmov", x.clone(), vec![a], predicated("if")),
+                reads,
+            );
+        }
+
+        *srcs = vec![x];
+        *syms = vec![t];
+        Ok(())
+    }
+
     fn xlane_typed(
         &mut self,
         g: &mut Emitter,
@@ -184,16 +262,19 @@ impl Ctx<'_> {
             for grp in grs {
                 let mut syms = vec![];
                 let mut srcs = vec![];
-                for a in &pos {
+                for (j, a) in pos.iter().enumerate() {
                     if let Some(f) = number(a) {
                         let s = self.constant_typed(g, f, &mut syms, &srcs, sel)?;
                         srcs.push(s);
-                        continue;
+                    } else {
+                        let v = self.get(o, a, Some("stat"), Some(local))?;
+                        let s = symbol(&v.regs[&grp]);
+                        srcs.push(s.operand(sel));
+                        syms.push(s);
                     }
-                    let v = self.get(o, a, Some("stat"), Some(local))?;
-                    let s = symbol(&v.regs[&grp]);
-                    srcs.push(s.operand(sel));
-                    syms.push(s);
+                    if j == 0 {
+                        self.domain_typed(g, &o.op, &mut srcs, &mut syms, sel)?;
+                    }
                 }
                 let d = if inplace {
                     symbol(&local[&target].regs[&grp])
@@ -216,47 +297,54 @@ impl Ctx<'_> {
             let mut syms = vec![];
             let mut srcs = vec![];
             for (j, a) in pos.iter().enumerate() {
-                if let Some(f) = number(a) {
-                    let s = self.constant_typed(g, f, &mut syms, &srcs, Select::Whole)?;
-                    srcs.push(s);
-                    continue;
-                }
-                if let Term::View(an, sl) = a {
-                    if matches!(sl.last(), Some(Term::NewAxis)) && !on("l2.vector/broadcast-unread")
-                    {
-                        let v = self.get(o, &Term::Name(an.clone()), Some("stat"), Some(local))?;
-                        if self.per_band != 0 {
-                            let s = symbol(&v.regs[&(r / self.per_band)]);
-                            srcs.push(s.operand(Select::Whole));
-                            syms.push(s);
-                            continue;
-                        }
-                        let s = symbol(&v.regs[&(r / 8)]);
-                        let lane = ir::bcast(s.operand(Select::Chunk(0)), r % 8, 3);
-                        if j != on_b {
-                            let tsym = g.sym();
-                            g.op(
-                                ir::math(
-                                    "vmul",
-                                    tsym.operand(Select::Whole),
-                                    vec![Term::name("k1"), lane],
-                                    vec![],
-                                ),
-                                vec![tsym.clone(), s],
-                            );
-                            srcs.push(tsym.operand(Select::Whole));
-                            syms.push(tsym);
-                            continue;
-                        }
-                        srcs.push(lane);
-                        syms.push(s);
-                        continue;
+                'operand: {
+                    if let Some(f) = number(a) {
+                        let s = self.constant_typed(g, f, &mut syms, &srcs, Select::Whole)?;
+                        srcs.push(s);
+                        break 'operand;
                     }
+                    if let Term::View(an, sl) = a {
+                        if matches!(sl.last(), Some(Term::NewAxis))
+                            && !on("l2.vector/broadcast-unread")
+                        {
+                            let v =
+                                self.get(o, &Term::Name(an.clone()), Some("stat"), Some(local))?;
+                            if self.per_band != 0 {
+                                let s = symbol(&v.regs[&(r / self.per_band)]);
+                                srcs.push(s.operand(Select::Whole));
+                                syms.push(s);
+                                break 'operand;
+                            }
+                            let s = symbol(&v.regs[&(r / 8)]);
+                            let lane = ir::bcast(s.operand(Select::Chunk(0)), r % 8, 3);
+                            if j != on_b {
+                                let tsym = g.sym();
+                                g.op(
+                                    ir::math(
+                                        "vmul",
+                                        tsym.operand(Select::Whole),
+                                        vec![Term::name("k1"), lane],
+                                        vec![],
+                                    ),
+                                    vec![tsym.clone(), s],
+                                );
+                                srcs.push(tsym.operand(Select::Whole));
+                                syms.push(tsym);
+                                break 'operand;
+                            }
+                            srcs.push(lane);
+                            syms.push(s);
+                            break 'operand;
+                        }
+                    }
+                    let v = self.get(o, a, Some("row"), Some(local))?;
+                    let s = symbol(&v.regs[&self.index(&v, r)?]);
+                    srcs.push(s.operand(Select::Whole));
+                    syms.push(s);
                 }
-                let v = self.get(o, a, Some("row"), Some(local))?;
-                let s = symbol(&v.regs[&self.index(&v, r)?]);
-                srcs.push(s.operand(Select::Whole));
-                syms.push(s);
+                if j == 0 {
+                    self.domain_typed(g, &o.op, &mut srcs, &mut syms, Select::Whole)?;
+                }
             }
             let d = if inplace {
                 symbol(&local[&target].regs[&i])

@@ -81,7 +81,7 @@ fn spec_vectors() {
     let only = std::env::var("KTPU_SPEC").unwrap_or_default();
     let only_re = Regex::new(&only).expect("KTPU_SPEC is a regex");
     let runners = spec::runners();
-    let (mut pass, mut killed, mut skipped) = (0, 0, 0);
+    let (mut pass, mut killed, mut skipped, mut reversed) = (0, 0, 0, 0);
     let mut fails: Vec<String> = Vec::new();
     let (mut ruled, mut superseded): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
     for path in vectors() {
@@ -99,7 +99,16 @@ fn spec_vectors() {
         let m = Machine::named(v["machine"].as_str().unwrap_or("multimesh_v9t6")).unwrap();
         match spec::run(runner, &input, Some(&m), None) {
             Ok(got) if got == expect => {
-                if spec::SUPERSEDED.iter().any(|s| s.vector == name) {
+                if let Some(s) = spec::SUPERSEDED.iter().find(|s| s.vector == name) {
+                    if let (Some(mu), true) = (s.mutant, cfg!(feature = "mutants")) {
+                        match spec::run(runner, &input, Some(&m), Some(mu)) {
+                            Ok(old) if old == v["expect"] => reversed += 1,
+                            got => fails.push(format!(
+                                "{name}: under {mu} gives {got:?}, the frozen {}",
+                                v["expect"]
+                            )),
+                        }
+                    }
                     superseded.push(name.clone());
                 } else if v["status"] == "ruling" {
                     ruled.push(name.clone());
@@ -131,7 +140,7 @@ fn spec_vectors() {
         }
     }
     eprintln!(
-        "l2 spec: {pass} frozen pass, rulings followed {ruled:?}, superseded met with their ruled input {superseded:?}, {killed} mutants killed, {} fail, {skipped} not ported",
+        "l2 spec: {pass} frozen pass, rulings followed {ruled:?}, superseded met with their ruled input {superseded:?} ({reversed} frozen again under their mutant), {killed} mutants killed, {} fail, {skipped} not ported",
         fails.len()
     );
     for f in &fails {
@@ -140,5 +149,9 @@ fn spec_vectors() {
     assert!(fails.is_empty());
     if only.is_empty() {
         assert_eq!(superseded.len(), spec::SUPERSEDED.len());
+        if cfg!(feature = "mutants") {
+            let with = spec::SUPERSEDED.iter().filter(|s| s.mutant.is_some());
+            assert_eq!(reversed, with.count());
+        }
     }
 }

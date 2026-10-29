@@ -240,6 +240,7 @@ pub const NAMES: &[&str] = &[
     "l2.vector/compact-reversed",
     "l2.vector/pack-walk-plain",
     "l2.vector/send-uncounted",
+    crate::lower::vector::DOMAIN_MUTANT,
     "isa.vector/links",
     "isa.vector/lower",
 ];

@@ -1,9 +1,11 @@
-//! Reviewed, allowlisted regeneration of the lowering comparison only.
+//! Reviewed, allowlisted regeneration of the compiler-output views: each
+//! pass's text, the lowering's L1, its schedule and the variant's L1.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use ktpu_l2::mutant::{scoped, State, NAMES};
 use ktpu_l2::Program;
 use ktpu_machine::Machine;
 use serde_json::Value;
@@ -11,6 +13,8 @@ use serde_json::Value;
 pub struct Review {
     write: bool,
     cases: BTreeSet<String>,
+    /// `KTPU_L2_REGOLD_MUTANT`: the reverse mutant of the change under review.
+    mutant: Option<&'static str>,
 }
 
 impl Review {
@@ -39,9 +43,20 @@ impl Review {
                 "unknown L2 case {name}"
             );
         }
+        let mutant = std::env::var("KTPU_L2_REGOLD_MUTANT").ok().map(|name| {
+            assert!(
+                cfg!(feature = "mutants"),
+                "KTPU_L2_REGOLD_MUTANT needs --features mutants"
+            );
+            *NAMES
+                .iter()
+                .find(|n| **n == name)
+                .unwrap_or_else(|| panic!("unknown mutant {name}"))
+        });
         Some(Self {
             write: mode == "write",
             cases,
+            mutant,
         })
     }
 
@@ -49,8 +64,9 @@ impl Review {
         self.write && self.cases.contains(case["case"].as_str().unwrap())
     }
 
+    /// The first difference of the view at JSON pointer `field`.
     pub fn report(case: &Value, field: &str, text: &str) {
-        let want = case[field].as_str().unwrap();
+        let want = case.pointer(field).and_then(Value::as_str).unwrap();
         if want != text {
             eprintln!(
                 "L2 REGOLD {} {field}: {}",
@@ -60,32 +76,49 @@ impl Review {
         }
     }
 
+    /// `fields`: each compared view (JSON pointer, regenerated text). A case
+    /// whose views changed is verified; under the reverse mutant its golden
+    /// must compile as frozen; when selected, it is rewritten.
     pub fn compare(
         &self,
         path: &Path,
         case: &Value,
-        fields: Vec<(&str, String)>,
+        fields: Vec<(String, String)>,
         machine: &Machine,
     ) -> Result<(), String> {
         let changed: Vec<_> = fields
             .into_iter()
-            .filter(|(k, v)| case[*k].as_str() != Some(v.as_str()))
+            .filter(|(k, v)| case.pointer(k).and_then(Value::as_str) != Some(v.as_str()))
             .collect();
         if changed.is_empty() {
             return Ok(());
         }
-        let text = changed
-            .iter()
-            .find(|(k, _)| *k == "l1")
-            .map(|(_, v)| v.as_str())
-            .unwrap_or_else(|| case["l1"].as_str().unwrap());
-        verify(text, case, machine).map_err(|e| format!("REGOLD verifier refused: {e}"))?;
+        for (field, text) in &changed {
+            if field.ends_with("l1") {
+                verify(text, case, machine)
+                    .map_err(|e| format!("REGOLD verifier refused {field}: {e}"))?;
+            }
+        }
+        if let Some(mutant) = self.mutant {
+            let state = State {
+                active: Some(mutant),
+                ..State::default()
+            };
+            scoped(state, || super::run_case(case, true))
+                .map_err(|e| format!("REGOLD: the golden is not {mutant}'s output: {e}"))?;
+        }
+        let names: Vec<&str> = changed.iter().map(|(k, _)| k.as_str()).collect();
+        eprintln!(
+            "L2 REGOLD {} changes {}",
+            case["case"].as_str().unwrap(),
+            names.join(" ")
+        );
         if self.selected(case) {
             let backup = std::env::var("KTPU_L2_REGOLD_BACKUP").map_err(|_| {
                 "KTPU_L2_REGOLD_BACKUP: directory receiving the original goldens".to_string()
             })?;
             let backup = Path::new(&backup);
-            std::fs::create_dir_all(&backup).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(backup).map_err(|e| e.to_string())?;
             // Never destroy the pre-review original on a second invocation.
             let mut original = std::fs::OpenOptions::new()
                 .write(true)
@@ -97,7 +130,7 @@ impl Review {
                 .map_err(|e| e.to_string())?;
             let mut updated = case.clone();
             for (field, text) in changed {
-                updated[field] = Value::String(text);
+                *updated.pointer_mut(&field).unwrap() = Value::String(text);
             }
             std::fs::write(
                 path,
