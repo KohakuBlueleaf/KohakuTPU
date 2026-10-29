@@ -9,6 +9,11 @@ the ALU as designed, over inputs covering every argument class; the unguarded
 program on the frozen ALU must not, nor the guarded one with its predicates
 inverted or its compares' operands swapped. Mover copies are not modelled: a
 buffer word no image wrote holds the input set's word.
+
+Range analysis (`exp2_ranges`) drops the guard checks a proof covers: each
+setting must leave DRAM as designed on every input set (a NaN at every lane
+of a row included), drop guard ops exactly where it proves an argument, and
+each of its mutants must break a user.
 """
 
 import json
@@ -599,8 +604,12 @@ def classed(e, out):
     return json.dumps(kernel.trace(given, machine=K.dsl_machine(machine)).graph)
 
 
-def two_inputs(shape):
+def two_inputs(shape, body="o = exp2d v, u : f32[{r}, {c}] @reg"):
+    """`body` over `v` (from `x`) and `u` (from `w`), into `o`."""
     r, c = shape
+    lines = "\n".join(
+        "            " + ln.format(r=r, c=c) for ln in body.strip().splitlines()
+    )
     return (
         HEAD
         + f"fn k.l2(x: f16[{r}, {c}] @dram, w: f16[{r}, {c}] @dram, "
@@ -611,8 +620,8 @@ def two_inputs(shape):
         + f"            wl = load w[t*{r} : +{r}, :] : f16[{r}, {c}] @l1\n"
         + f"            v = unpack xl : f32[{r}, {c}] @reg\n"
         + f"            u = unpack wl : f32[{r}, {c}] @reg\n"
-        + f"            o = exp2d v, u : f32[{r}, {c}] @reg\n"
-        + f"            ol = pack o : f16[{r}, {c}] @l1\n"
+        + lines
+        + f"\n            ol = pack o : f16[{r}, {c}] @l1\n"
         + f"            store y[t*{r} : +{r}, :] <- ol\n"
     )
 
@@ -729,7 +738,9 @@ def source_of(src):
     return src
 
 
-def compile_l1(src, mutant):
+def compile_l1(src, mutant, ranges=None):
+    """L1 of `src` under `mutant`, the range analysis at `ranges` (None: the
+    compiler's default)."""
     machine = OfflineCard(MACHINE).machine
     got = rs._rs.compile(
         source_of(src),
@@ -737,6 +748,7 @@ def compile_l1(src, mutant):
         cache_dir="",
         fetch=True,
         mutant=mutant,
+        exp2_ranges=ranges,
     )
     assert not got["verdict"]["refused"], got["verdict"]
     return got["l1"]
@@ -823,6 +835,187 @@ def test_guarded_exp2_is_the_designed_alu_on_every_class(user):
     assert differing(plain, wants, sets) != []
     assert differing(inverted(guarded), wants, sets) != []
     assert differing(swapped(guarded), wants, sets) != []
+
+
+RANGES = ("off", "intervals", "rowmax")
+ROW = ": f32[{r}, {c}] @reg"
+STAT = ": f32[{r}] @reg"
+
+
+def body(*ops):
+    """Row ops, each typed as a row (a statistic for `rmax` / `rsum`)."""
+    return "\n".join(
+        f"{op} {STAT if ' rmax ' in op or ' rsum ' in op else ROW}" for op in ops
+    )
+
+
+#: `e - rmax e` into EXP2: normalised by the row sum, and stored as it is.
+SOFTMAX_HEAD = (
+    "e = mul v, 0.7213475204444817",
+    "s = rmax e",
+    "d = sub e, s[:, *]",
+    "p = exp2 d",
+)
+SOFTMAX = rows(
+    (8, 128),
+    "\n".join(
+        (
+            body(*SOFTMAX_HEAD, "l = rsum p"),
+            f"r = inv l {STAT}",
+            "o = mul p, r[:, *] " + ROW,
+        )
+    ),
+)
+UNNORMALISED = rows((8, 128), body(*SOFTMAX_HEAD, "o = mov p"))
+#: `c = max a, y`: a NaN `y` gives `a`, which reaches -200.
+NAN_SECOND = two_inputs(
+    (8, 128),
+    body(
+        "a = min v, -150.0",
+        "a = max a, -200.0",
+        "y = max u, 50.0",
+        "c = max a, y",
+        "d = min c, 100.0",
+        "o = exp2 d",
+    ),
+)
+#: `a` clamped only inside `if sticky`, which `u`'s EXP2D overflow sets.
+STICKY_REBOUND = two_inputs(
+    (8, 128),
+    f"""
+p = exp2d u, 0.0 {ROW}
+a = mul v, 2.0 {ROW}
+if sticky
+    b = min v, 10.0 {ROW}
+    a = max b, -10.0 {ROW}
+q = exp2 a {ROW}
+o = mul q, p {ROW}
+""",
+)
+
+#: (user, source, two-input buffer, the settings proving an argument).
+RANGED = [
+    ("unbounded", rows((8, 128), body("o = exp2 v")), None, ()),
+    (
+        "clamped",
+        rows((8, 128), body("b = min v, 100.0", "a = max b, -100.0", "o = exp2 a")),
+        None,
+        ("intervals", "rowmax"),
+    ),
+    (
+        "clamped above",
+        rows((8, 128), body("b = min v, 100.0", "o = exp2 b")),
+        None,
+        ("intervals", "rowmax"),
+    ),
+    (
+        "tanh bounded",
+        rows(
+            (8, 128),
+            body(
+                "a = mul v, -2.8853900817779268",
+                "b = exp2 a",
+                "c = add b, 1.0",
+                "d = inv c",
+                "f = fma d, 2.0, -1.0",
+                "g = mul f, 8.0",
+                "o = exp2 g",
+            ),
+        ),
+        None,
+        ("intervals", "rowmax"),
+    ),
+    (
+        "exp2d clamped above",
+        rows((8, 128), body("b = min v, 100.0", "o = exp2d b, 0.0")),
+        None,
+        ("intervals", "rowmax"),
+    ),
+    (
+        "exp2d clamped below",
+        rows((8, 128), body("b = max v, -100.0", "o = exp2d b, 0.0")),
+        None,
+        ("intervals", "rowmax"),
+    ),
+    ("nan second", NAN_SECOND, "w", ("intervals", "rowmax")),
+    ("sticky rebound", STICKY_REBOUND, "w", ()),
+    ("softmax", SOFTMAX, None, ("rowmax",)),
+    ("unnormalised softmax", UNNORMALISED, None, ()),
+]
+
+
+def guard_share(l1):
+    """Guard-like math lines over EXP2 / EXP2D lines: both scale with the
+    variant's row instances, the guard ops alone with the proofs."""
+    math_ = count(r"(vmax|vmin|vabs|vcmplt|vcmpgt|vadd|vmov)\b", l1)
+    return math_ / count(r"vexp2d? ", l1)
+
+
+def nan_rows():
+    """Row words with a NaN in lane `p` (each slot of every tree level) and
+    250 in lane `q`, else 0: input sets, every buffer word one of them."""
+    for p in range(LANES):
+        for q in (0, 5, 10, 15):
+            if p != q:
+                values = [0.0] * LANES
+                values[p], values[q] = math.nan, 250.0
+                word = word_of(values)
+                yield lambda buf, at, word=word: word
+
+
+@pytest.mark.parametrize("user", RANGED, ids=[u[0] for u in RANGED])
+def test_range_analysis_drops_only_proven_guards(user):
+    _, src, two, proven = user
+    plain = compile_l1(src, MUTANT)
+    sets = input_sets(two) + (list(nan_rows()) if two is None else [])
+    wants = [execute(plain, init, wrap=False)[0] for init in sets]
+    l1 = {r: compile_l1(src, None, r) for r in RANGES}
+    assert compile_l1(src, None) == l1["rowmax"], "the default is rowmax"
+    for r in RANGES:
+        if r in proven:
+            assert guard_share(l1[r]) < guard_share(l1["off"]), r
+        else:
+            assert l1[r] == l1["off"], r
+        assert differing(l1[r], wants, sets) == [], r
+
+
+def test_a_nan_row_breaks_the_row_maximum_bound_itself():
+    """`vmax a, NaN` keeps `a`: the lane tree drops a subtree and its maximum,
+    so `e - rmax e` reaches EXP2 at 128 and above on a row holding a NaN.
+    RowMax refuses the bound where `p` is stored as it is; taken anyway
+    (`l2.vector/exp2-rowmax-unpoisoned`), DRAM differs on such rows."""
+    plain = compile_l1(UNNORMALISED, MUTANT)
+    sets = list(nan_rows())
+    wants = [execute(plain, init, wrap=False)[0] for init in sets]
+    assert differing(compile_l1(UNNORMALISED, None), wants, sets) == []
+    taken = compile_l1(UNNORMALISED, "l2.vector/exp2-rowmax-unpoisoned")
+    assert differing(taken, wants, sets) != []
+
+
+#: Each range-analysis mutant and a user it must break.
+RANGE_MUTANTS = [
+    ("l2.vector/exp2-range-assumed", "clamped above"),
+    ("l2.vector/exp2-range-assumed", "exp2d clamped above"),
+    ("l2.vector/exp2-range-assumed", "exp2d clamped below"),
+    ("l2.vector/exp2-floor-everywhere", "unbounded"),
+    ("l2.vector/exp2-range-nan-blind", "nan second"),
+    ("l2.vector/exp2-range-stale", "sticky rebound"),
+]
+
+
+@pytest.mark.parametrize("mutant, user", RANGE_MUTANTS)
+def test_each_range_mutant_breaks_a_user(mutant, user):
+    _, src, two, _ = next(u for u in RANGED if u[0] == user)
+    plain = compile_l1(src, MUTANT)
+    sets = input_sets(two)
+    wants = [execute(plain, init, wrap=False)[0] for init in sets]
+    assert differing(compile_l1(src, None), wants, sets) == []
+    bad = differing(compile_l1(src, mutant), wants, sets)
+    assert bad != []
+    if mutant == "l2.vector/exp2-floor-everywhere":
+        # Every [128, 256) argument wraps past the floor alone.
+        wrapped = [n for n, v in enumerate(REPS) if arg_class(v) == "[128,256)"]
+        assert set(wrapped) <= set(bad)
 
 
 SELECT = HEAD + "image w()\n    seti s1 = {raw}\n    vsel v2, v0, v1, s1\n    halt\n"

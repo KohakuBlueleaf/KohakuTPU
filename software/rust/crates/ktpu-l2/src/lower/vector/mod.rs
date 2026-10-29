@@ -14,6 +14,7 @@ pub mod gen;
 pub mod modulo;
 #[cfg(feature = "witness")]
 pub mod pat;
+pub mod range;
 pub mod search;
 mod transfers;
 pub mod tree;
@@ -34,6 +35,7 @@ use crate::target::Target;
 #[cfg(feature = "witness")]
 use gen::Code;
 
+pub use range::{Guards, Ranges, Risk};
 pub use search::Search;
 pub use transfers::transfers;
 pub use views::{contiguous, mx7, tiled, view_offset, Walk};
@@ -124,18 +126,58 @@ pub const EXP2_RANGE: f64 = 128.0;
 /// EXP2D's `a - floor(b)` can lift `a` back above it: EXP2D takes no clamp.
 pub const EXP2_FLOOR: f64 = -127.0;
 
+/// EXP2D's bound below: `a > -128` keeps `a`.
+pub const EXP2D_LOW: f64 = -EXP2_RANGE;
+
 /// The mutant that drops every domain guard: the frozen ALU's wrapped domain.
 pub const DOMAIN_MUTANT: &str = "l2.vector/exp2-wrapped-domain";
 
-/// The constants op `op`'s domain guard reads (`ctx` math), in its order.
-pub fn domain_constants(op: &str) -> &'static [f64] {
+/// The instructions guarding an EXP2 / EXP2D argument `a` into `t`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Guard {
+    None,
+    /// EXP2 at risk below only: `vmax t, a, -127`.
+    Floor,
+    /// EXP2 at risk above: the floor, `vcmplt p1, t, 128`,
+    /// `vadd t, t, t unless=p1`.
+    Clamp,
+    /// EXP2D at risk both ways: `vabs t, a`, `vcmplt p1, t, 128`,
+    /// `vadd t, a, a`, `vmov t, a if=p1`.
+    Both,
+    /// EXP2D at risk above only: `vcmplt p1, a, 128`, then as [`Guard::Both`].
+    High,
+    /// EXP2D at risk below only: `vcmpgt p1, a, -128`, then as [`Guard::Both`].
+    Low,
+}
+
+/// The guard of op `op` (`ctx` math) at risk `r`.
+pub fn guard(op: &str, r: Risk) -> Guard {
     if crate::mutant::on(DOMAIN_MUTANT) {
-        return &[];
+        return Guard::None;
     }
-    match op {
-        "exp2" => &[EXP2_FLOOR, EXP2_RANGE],
-        "exp2d" => &[EXP2_RANGE],
-        _ => &[],
+    match (op, r.high, r.low) {
+        ("exp2", true, _) => Guard::Clamp,
+        ("exp2", false, true) => Guard::Floor,
+        ("exp2d", true, true) => Guard::Both,
+        ("exp2d", true, false) => Guard::High,
+        ("exp2d", false, true) => Guard::Low,
+        _ => Guard::None,
+    }
+}
+
+/// The risk `guards` gives op `o` (every risk when unproven).
+pub fn risk_of(guards: &Guards, o: &Op) -> Risk {
+    guards.get(&o.uid).copied().unwrap_or(Risk::ALL)
+}
+
+/// The constants op `op`'s guard at risk `r` reads, in its order.
+pub fn domain_constants(op: &str, r: Risk) -> &'static [f64] {
+    match guard(op, r) {
+        Guard::None => &[],
+        Guard::Floor => &[EXP2_FLOOR],
+        Guard::Clamp => &[EXP2_FLOOR, EXP2_RANGE],
+        Guard::Both | Guard::High => &[EXP2_RANGE],
+        Guard::Low => &[EXP2D_LOW],
     }
 }
 
@@ -297,12 +339,14 @@ pub enum PlanX {
 /// By op uid, in the order the instance's ops pair.
 pub type Plan = IndexMap<usize, PlanX>;
 
-/// A `par` resolved for one instance: its `when`s kept or dropped.
+/// A `par` resolved for one instance: its `when`s kept or dropped, and its
+/// EXP2 / EXP2D ops' risks (none proven until a search sets them).
 #[derive(Clone, Debug)]
 pub struct RPar {
     pub st: ktpu_l1::text::Stmt,
     pub index: Option<Term>,
     pub body: Vec<Arc<Node>>,
+    pub guards: Guards,
 }
 
 pub fn op_of(n: &Node) -> &Op {
@@ -368,9 +412,10 @@ pub fn number(a: &Term) -> Option<f64> {
     }
 }
 
-/// The numbers `ops` read as operands (not K registers), domain guards' and
-/// a paired pack's lift included, the most read first.
-pub fn numbers(ops: &[Arc<Node>], body: &Body) -> Vec<f64> {
+/// The numbers `ops` read as operands (not K registers), domain guards' (at
+/// their risk in `guards`) and a paired pack's lift included, the most read
+/// first.
+pub fn numbers(ops: &[Arc<Node>], body: &Body, guards: &Guards) -> Vec<f64> {
     let mut uses: IndexMap<FKey, (f64, i64)> = IndexMap::new();
     for n in ops {
         let Node::Op(op) = n.as_ref() else { continue };
@@ -379,10 +424,8 @@ pub fn numbers(ops: &[Arc<Node>], body: &Body) -> Vec<f64> {
         }
         let lift = mx7_pack(op, ops, body).then(zero_lift_value);
         let read = op.st.positional().into_iter().filter_map(number);
-        for f in read
-            .chain(domain_constants(&op.op).iter().copied())
-            .chain(lift)
-        {
+        let guard = domain_constants(&op.op, risk_of(guards, op));
+        for f in read.chain(guard.iter().copied()).chain(lift) {
             if kreg(f).is_none() {
                 uses.entry(FKey::of(f)).or_insert((f, 0)).1 += 1;
             }
@@ -473,6 +516,7 @@ pub fn resolve(body: &Body, par: &Par, env: &Env) -> Result<RPar> {
         st: par.st.clone(),
         index: par.index.clone(),
         body: go(body, &par.body, env)?,
+        guards: Guards::new(),
     })
 }
 

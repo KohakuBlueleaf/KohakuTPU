@@ -228,6 +228,8 @@ def compile(
     mutant: str | None = None,
     l1: bool = False,
     binds: dict[str, int] | None = None,
+    passes: bool = True,
+    exp2_ranges: str | None = None,
 ) -> Compiled:
     """`source` (L2 text, or the tracer's graph as JSON text) for the machine
     file `machine_json` (its text). `name`: the fn compiled (the first when
@@ -239,7 +241,11 @@ def compile(
     passes, no image scheduler; `name` required). `binds` (with `fetch`):
     the packages built at those parameter addresses, not relocatable; without
     it a build whose words hold an address outside its spans returns no
-    packages and `bound` saying why (STACK.RELOC). Raises `Refused`."""
+    packages and `bound` saying why (STACK.RELOC). `passes=False` (with
+    `fetch`): the L2 lowered with no L2 -> L2 pass. `exp2_ranges` (with
+    `fetch`): "off", "intervals" or "rowmax", what the vector search's range
+    analysis may prove of EXP2 / EXP2D arguments (None: its default,
+    "intervals"). Raises `Refused`."""
 
 def bind(
     package: bytes,

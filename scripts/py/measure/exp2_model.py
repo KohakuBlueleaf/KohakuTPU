@@ -1,13 +1,15 @@
-"""Every EXP2 / EXP2D user on the Verilated v9t6s model, compiled with the
-domain guard and under `l2.vector/exp2-wrapped-domain` (no guard): cycles and
-the error against a float64 reference.
+"""Every EXP2 / EXP2D user on the Verilated v9t6s model, compiled under
+`l2.vector/exp2-wrapped-domain` (no guard) and with the domain guard at each
+range-analysis setting (`exp2_ranges`): cycles and the error against a
+float64 reference.
 
     python scripts/py/measure/exp2_model.py compile --artifact A.pkl
     python scripts/py/measure/exp2_model.py execute --artifact A.pkl --output R.json
 
 `compile` runs the compiler; `execute` is one model session and runs none.
 "exp2d constant" is `exp2` written as `exp2d(x, 0)`: its guard is EXP2D's
-four ops where "kt.exp2" has EXP2's three, on the same rows.
+four ops where "kt.exp2" has EXP2's three, on the same rows. "clamped exp2"
+and "exp2 of tanh" have arguments interval analysis proves in range.
 """
 
 import argparse
@@ -34,6 +36,13 @@ from kohakutpu.stack import rs
 ROOT = Path(__file__).resolve().parents[3]
 BOARD = "vlt_v9t6s_1n"
 MUTANT = "l2.vector/exp2-wrapped-domain"
+#: (variant, mutant, exp2_ranges) each user compiles as.
+VARIANTS = [
+    ("unguarded", MUTANT, None),
+    ("off", None, "off"),
+    ("intervals", None, "intervals"),
+    ("rowmax", None, "rowmax"),
+]
 #: One argument of each class EXP2's domain splits, fp16-exact.
 CLASSES = [-math.inf, -300.0, -256.0, -255.5, -192.0, -128.5, -128.0, -127.5]
 CLASSES += [-127.0, -126.5, -126.0, -15.0, -0.0, 0.0, 15.0, 127.5, 128.0]
@@ -59,13 +68,26 @@ def rows(values, shape):
     return np.resize(np.array(values, dtype="<f2"), shape)
 
 
+def tanh(v):
+    """tanh as 2 sigmoid(2v) - 1, in [-1, 1]."""
+    return 2.0 * acts.sigmoid(2.0 * v) - 1.0
+
+
+#: `direct`'s ops on the loaded rows.
+DIRECT = {
+    "exp2": kt.exp2,
+    "exp2d": lambda v: kt.exp2d(v, 0.0),
+    "clamped": lambda v: kt.exp2(kt.maximum(kt.minimum(v, 100.0), -100.0)),
+    "tanh": lambda v: kt.exp2(8.0 * tanh(v)),
+}
+
+
 @kt.kernel
 def direct(x=ROWS_IN, y=ROWS_OUT, *, op="exp2"):
     for c in kt.par(1, on=kt.vc):
         for t in kt.range(1):
             v = kt.load(x[t * 16 : t * 16 + 16, :], gt4=True)
-            e = kt.exp2(v) if op == "exp2" else kt.exp2d(v, 0.0)
-            kt.store(y[t * 16 : t * 16 + 16, :], e)
+            kt.store(y[t * 16 : t * 16 + 16, :], DIRECT[op](v))
 
 
 @kt.kernel
@@ -117,8 +139,13 @@ def cases(machine):
     scaled = rows(SCALED, (16, 128))
     sf = scaled.astype(np.float64)
     out = []
-    for user, op in (("kt.exp2", "exp2"), ("exp2d constant", "exp2d")):
-        ref = e8_exp2(classes.astype(np.float64))
+    cf = classes.astype(np.float64)
+    for user, op, ref in (
+        ("kt.exp2", "exp2", e8_exp2(cf)),
+        ("exp2d constant", "exp2d", e8_exp2(cf)),
+        ("clamped exp2", "clamped", e8_exp2(np.clip(cf, -100.0, 100.0))),
+        ("exp2 of tanh", "tanh", e8_exp2(8.0 * np.tanh(cf))),
+    ):
         out.append(
             (user, direct.trace(x16, machine=dsl, op=op), {"x": classes}, "y", ref)
         )
@@ -189,36 +216,38 @@ def compile_cases(args):
     machine = machine_of(BOARD, packing_backend="vector_mx7")
     built = []
     for user, traced, inputs, output, ref in cases(machine):
-        for guarded in (True, False):
+        for variant, mutant, ranges in VARIANTS:
             got = rs._rs.compile(
                 json.dumps(traced.graph),
                 rs.machine_json(machine),
                 cache_dir="",
                 fetch=True,
-                mutant=None if guarded else MUTANT,
+                mutant=mutant,
+                exp2_ranges=ranges,
             )
             assert not got["verdict"]["refused"], (user, got["verdict"])
             l1 = got["l1"]
+            guard = ("vmax", "vcmplt", "vcmpgt", "vadd", "vabs", "vmov")
             built.append(
                 {
                     "user": user,
-                    "guarded": guarded,
+                    "variant": variant,
                     "graph": traced.graph,
                     "compiled": got,
                     "inputs": {k: v.tobytes() for k, v in inputs.items()},
                     "output": output,
                     "reference": fp16.write(ref).astype("<f2").tobytes(),
                     "math_lines": sum(
-                        ln.strip().split(" ")[0] in ("vmax", "vcmplt", "vadd", "vabs")
-                        for ln in l1.splitlines()
+                        ln.strip().split(" ")[0] in guard for ln in l1.splitlines()
                     ),
                     "exp2_lines": sum(
                         ln.strip().startswith(("vexp2 ", "vexp2d "))
                         for ln in l1.splitlines()
                     ),
+                    "l1_lines": len(l1.splitlines()),
                 }
             )
-            print(json.dumps({"user": user, "guarded": guarded}), flush=True)
+            print(json.dumps({"user": user, "variant": variant}), flush=True)
     args.artifact.parent.mkdir(parents=True, exist_ok=True)
     args.artifact.write_bytes(
         pickle.dumps({"machine": machine.machine_json, "cases": built})
@@ -272,9 +301,8 @@ def execute(args):
                 for addr in binds.values():
                     dev.free(addr)
             worst, classes = errors(got, case["reference"])
-            record = {
-                k: case[k] for k in ("user", "guarded", "math_lines", "exp2_lines")
-            }
+            keys = ("user", "variant", "math_lines", "exp2_lines", "l1_lines")
+            record = {k: case[k] for k in keys}
             record.update(cycles=cycles, max_abs_error=worst, class_mismatches=classes)
             records.append(record)
             print(json.dumps(record), flush=True)

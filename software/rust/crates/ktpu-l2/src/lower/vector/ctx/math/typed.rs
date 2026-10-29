@@ -59,17 +59,19 @@ fn result(
 }
 
 impl Ctx<'_> {
-    /// `op`'s first source through its domain guard ([`domain_constants`]);
-    /// `srcs` and `syms`, holding that source alone, become the guarded copy.
+    /// `o`'s first source through its domain guard ([`guard`] at the op's
+    /// risk); `srcs` and `syms`, holding that source alone, become the
+    /// guarded copy.
     fn domain_typed(
         &mut self,
         g: &mut Emitter,
-        op: &str,
+        o: &Op,
         srcs: &mut Vec<Term>,
         syms: &mut Vec<Symbol>,
         sel: Select,
     ) -> VResult<()> {
-        if domain_constants(op).is_empty() {
+        let form = guard(&o.op, risk_of(&self.guards, o));
+        if form == Guard::None {
             return Ok(());
         }
         let vl = if sel == Select::Stride(0) {
@@ -88,32 +90,38 @@ impl Ctx<'_> {
         let mut reads = vec![t.clone()];
         reads.extend(syms.iter().cloned());
 
-        if op == "exp2" {
-            let mut s = reads.clone();
-            let floor =
-                self.constant_typed(g, EXP2_FLOOR, &mut s, std::slice::from_ref(&a), sel)?;
-            g.op(
-                ir::math("vmax", x.clone(), vec![a.clone(), floor], vl.clone()),
-                s,
-            );
-        } else {
-            g.op(
+        match form {
+            Guard::Floor | Guard::Clamp => {
+                let mut s = reads.clone();
+                let floor =
+                    self.constant_typed(g, EXP2_FLOOR, &mut s, std::slice::from_ref(&a), sel)?;
+                g.op(
+                    ir::math("vmax", x.clone(), vec![a.clone(), floor], vl.clone()),
+                    s,
+                );
+            }
+            Guard::Both => g.op(
                 ir::math("vabs", x.clone(), vec![a.clone()], vl.clone()),
                 reads.clone(),
-            );
-        }
-        let mut s = vec![t.clone()];
-        let range = self.constant_typed(g, EXP2_RANGE, &mut s, std::slice::from_ref(&x), sel)?;
-        g.op(
-            ir::math(
-                "vcmplt",
-                Term::name("p1"),
-                vec![x.clone(), range],
-                vl.clone(),
             ),
+            _ => {}
+        }
+        let (cmp, bound, read, mut s) = match form {
+            Guard::Clamp | Guard::Both => ("vcmplt", EXP2_RANGE, x.clone(), vec![t.clone()]),
+            Guard::High => ("vcmplt", EXP2_RANGE, a.clone(), reads.clone()),
+            Guard::Low => ("vcmpgt", EXP2D_LOW, a.clone(), reads.clone()),
+            _ => {
+                *srcs = vec![x];
+                *syms = vec![t];
+                return Ok(());
+            }
+        };
+        let bound = self.constant_typed(g, bound, &mut s, std::slice::from_ref(&read), sel)?;
+        g.op(
+            ir::math(cmp, Term::name("p1"), vec![read, bound], vl.clone()),
             s,
         );
-        if op == "exp2" {
+        if form == Guard::Clamp {
             let doubled = ir::math(
                 "vadd",
                 x.clone(),
@@ -273,7 +281,7 @@ impl Ctx<'_> {
                         syms.push(s);
                     }
                     if j == 0 {
-                        self.domain_typed(g, &o.op, &mut srcs, &mut syms, sel)?;
+                        self.domain_typed(g, o, &mut srcs, &mut syms, sel)?;
                     }
                 }
                 let d = if inplace {
@@ -343,7 +351,7 @@ impl Ctx<'_> {
                     syms.push(s);
                 }
                 if j == 0 {
-                    self.domain_typed(g, &o.op, &mut srcs, &mut syms, Select::Whole)?;
+                    self.domain_typed(g, o, &mut srcs, &mut syms, Select::Whole)?;
                 }
             }
             let d = if inplace {

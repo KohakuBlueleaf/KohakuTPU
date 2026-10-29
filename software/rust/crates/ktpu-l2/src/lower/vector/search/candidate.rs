@@ -221,6 +221,7 @@ fn modulo_module(
     c.land = land.unwrap_or(t.l1_words);
     c.unit = crate::lower::vector::unit_of(body, par, env)?;
     c.pre = pre.clone();
+    c.guards = par.guards.clone();
     for n in &lp.body {
         if matches!(n.as_ref(), Node::For(_)) {
             return no("a nested loop");

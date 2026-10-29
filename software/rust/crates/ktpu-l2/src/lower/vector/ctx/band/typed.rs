@@ -86,6 +86,7 @@ fn flat_band<'a>(
     c.land = land.unwrap_or(t.l1_words);
     c.unit = crate::lower::vector::unit_of(body, par, env)?;
     c.pre = pre.clone();
+    c.guards = par.guards.clone();
     if let Some(lp) = &lp {
         for n in &lp.body {
             if let Node::For(f) = n.as_ref() {

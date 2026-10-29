@@ -253,6 +253,13 @@ pub const NAMES: &[&str] = &[
     "l2.vector/pack-walk-plain",
     "l2.vector/send-uncounted",
     crate::lower::vector::DOMAIN_MUTANT,
+    crate::lower::vector::range::OFF_MUTANT,
+    crate::lower::vector::range::ASSUMED_MUTANT,
+    crate::lower::vector::range::NAN_BLIND_MUTANT,
+    crate::lower::vector::range::STALE_MUTANT,
+    crate::lower::vector::range::MASKED_MUTANT,
+    crate::lower::vector::range::UNPOISONED_MUTANT,
+    crate::lower::vector::range::FLOOR_MUTANT,
     "isa.vector/links",
     "isa.vector/lower",
 ];

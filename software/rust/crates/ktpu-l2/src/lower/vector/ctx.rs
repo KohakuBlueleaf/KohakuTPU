@@ -35,9 +35,9 @@ use super::gen::{Code, Gen};
 #[cfg(feature = "witness")]
 use super::tree::{compact, interleave, quantiser_order, tree, tree4, Steps};
 use super::{
-    banks, code_of, count_of, domain_constants, is_in, kreg, mode_of, number, numbers, ops_of,
-    value_name, Desc, FKey, Plan, PlanX, RPar, VErr, VResult, Val, Walk, BINARY, CMP, EXP2_FLOOR,
-    EXP2_RANGE, REDUCE, TERNARY, UNARY, XLANE,
+    banks, code_of, count_of, guard, is_in, kreg, mode_of, number, numbers, ops_of, risk_of,
+    value_name, Desc, FKey, Guard, Guards, Plan, PlanX, RPar, VErr, VResult, Val, Walk, BINARY,
+    CMP, EXP2D_LOW, EXP2_FLOOR, EXP2_RANGE, REDUCE, TERNARY, UNARY, XLANE,
 };
 use crate::ir::read::bind;
 use crate::ir::repr::repr;
@@ -98,6 +98,8 @@ pub struct Ctx<'a> {
     /// GT4 rows: the registers of a 4-row band (0: rows are registers)
     pub per_band: i64,
     pub tile: i64,
+    /// the instance's EXP2 / EXP2D risks (`RPar::guards`)
+    pub guards: Guards,
 }
 
 fn op(n: &Node) -> &Op {
@@ -150,6 +152,7 @@ impl<'a> Ctx<'a> {
             inplace: false,
             per_band: 0,
             tile: 1,
+            guards: Guards::new(),
         })
     }
 

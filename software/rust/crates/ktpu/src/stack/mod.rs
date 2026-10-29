@@ -12,7 +12,7 @@ use crate::pipeline::stage::{Backend, Stage};
 use ktpu_l1::layout::scratch::Arena;
 use ktpu_l1::lower::imem::Cores;
 use ktpu_l1::text::Module as L1;
-use ktpu_l2::{Program, Search, Target};
+use ktpu_l2::{Program, Ranges, Search, Target};
 use ktpu_machine::{Machine, Refusal};
 use std::collections::BTreeMap;
 
@@ -37,11 +37,18 @@ pub struct CardStack {
     pub template_search: Option<std::sync::Arc<Search>>,
     /// All rotation operands belong to the template's bind-time domain.
     pub parameter_rotations: bool,
+    /// The search's EXP2 / EXP2D range analysis; none: its default.
+    pub ranges: Option<Ranges>,
 }
 
 impl CardStack {
     fn fetch(&self, m: &Machine) -> Option<ktpu_l0::Coord> {
         (!self.node_fed).then(|| fetch_port(m))
+    }
+
+    /// The search a stage without a template search runs.
+    fn search(&self) -> Search {
+        Search::default().ranged(self.ranges.unwrap_or(Ranges::DEFAULT))
     }
 }
 
@@ -176,11 +183,12 @@ impl Backend for CardStack {
             return None;
         }
         let v = Stack.version(stage)?;
-        Some(match stage {
-            Stage::Order | Stage::Verify => {
+        Some(match (stage, self.ranges) {
+            (Stage::Order | Stage::Verify, _) => {
                 format!("{v}+fetch:{}+{:?}", !self.node_fed, self.binds)
             }
-            Stage::Passes if self.no_passes => format!("{v}+none"),
+            (Stage::Passes, _) if self.no_passes => format!("{v}+none"),
+            (Stage::Passes | Stage::Lower, Some(r)) => format!("{v}+ranges:{r:?}"),
             _ => v,
         })
     }
@@ -206,9 +214,6 @@ impl Backend for CardStack {
     }
 
     fn passes(&self, l2: &Program, name: &str, m: &Machine) -> Result<Program, Refusal> {
-        if !self.no_passes && self.template_search.is_none() {
-            return Stack.passes(l2, name, m);
-        }
         let p = match l2.name == name {
             true => l2.clone(),
             false => Program::parse(l2.text(), L2_FILE, Some(name)).map_err(refusal)?,
@@ -218,25 +223,20 @@ impl Backend for CardStack {
         if self.no_passes {
             return Ok(p);
         }
-        ktpu_l2::passes::run(
-            &p,
-            &ktpu_l2::PASSES,
-            &t,
-            self.template_search.as_ref().expect("search set above"),
-        )
+        match &self.template_search {
+            Some(s) => ktpu_l2::passes::run(&p, &ktpu_l2::PASSES, &t, s),
+            None => ktpu_l2::passes::run(&p, &ktpu_l2::PASSES, &t, &self.search()),
+        }
         .map_err(refusal)
     }
 
     fn lower(&self, l2: &Program, name: &str, m: &Machine) -> Result<L1, Refusal> {
-        let Some(search) = &self.template_search else {
-            if self.parameter_rotations {
-                return Err(Refusal::new(
-                    "STACK.TEMPLATE",
-                    "parameter rotations require a pinned template search",
-                ));
-            }
-            return Stack.lower(l2, name, m);
-        };
+        if self.template_search.is_none() && self.parameter_rotations {
+            return Err(Refusal::new(
+                "STACK.TEMPLATE",
+                "parameter rotations require a pinned template search",
+            ));
+        }
         let p = if l2.name == name {
             l2.clone()
         } else {
@@ -244,7 +244,11 @@ impl Backend for CardStack {
         };
         let t = Target::of(m);
         let p = p.with_vregs(t.vregs, t.vcopies);
-        let text = ktpu_l2::lower::lower(&p, &t, search).map_err(refusal)?;
+        let text = match &self.template_search {
+            Some(s) => ktpu_l2::lower::lower(&p, &t, s),
+            None => ktpu_l2::lower::lower(&p, &t, &self.search()),
+        }
+        .map_err(refusal)?;
         let mut module = ktpu_l1::text::read(&text, L1_FILE).map_err(refusal)?;
         if self.parameter_rotations {
             crate::templates::configuration::rotations(&mut module);

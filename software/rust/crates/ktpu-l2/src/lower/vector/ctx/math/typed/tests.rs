@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::lower::vector::gen::{print, typed::Event};
-use crate::lower::vector::pat;
+use crate::lower::vector::{pat, Risk};
 use crate::mutant::{scoped, State};
 use ktpu_machine::Machine;
 
@@ -145,11 +145,24 @@ fn run_with(
     present: bool,
     scalars: &[(f64, &str)],
 ) -> (Gen, Emitter, String) {
+    run_at(o, per_band, inplace, present, scalars, Risk::ALL)
+}
+
+/// `run_with`, the op's EXP2 / EXP2D argument at `risk`.
+fn run_at(
+    o: &Op,
+    per_band: i64,
+    inplace: bool,
+    present: bool,
+    scalars: &[(f64, &str)],
+    risk: Risk,
+) -> (Gen, Emitter, String) {
     let b = body();
     let t = Target::of(&Machine::named("multimesh_v9t6").unwrap());
     let mut a = Ctx::new(&b, &t, &Env::new(), None).unwrap();
     let mut z = Ctx::new(&b, &t, &Env::new(), None).unwrap();
     for c in [&mut a, &mut z] {
+        c.guards.insert(o.uid, risk);
         c.per_band = per_band;
         c.tile = 16;
         c.inplace = inplace;
@@ -249,17 +262,45 @@ fn ops_and_settings(z: &Emitter) -> Vec<(Stmt, Vec<Symbol>, HashMap<String, f64>
     out
 }
 
-/// Each guard against the unguarded lowering (`l2.vector/exp2-wrapped-domain`):
-/// opcode order and every operand, predicate and constant it reads.
+/// Each guard form against the unguarded lowering
+/// (`l2.vector/exp2-wrapped-domain`): opcode order and every operand,
+/// predicate and constant it reads, at each risk range analysis leaves.
 #[test]
 fn exp2_domain_guard_order_and_wiring() {
     let a = || Term::name("a");
-    for (op, guard) in [
-        ("exp2", ["vmax", "vcmplt", "vadd", "vexp2"].as_slice()),
+    let low = Risk {
+        high: false,
+        low: true,
+    };
+    let high = Risk {
+        high: true,
+        low: false,
+    };
+    for (op, risk, guard) in [
+        (
+            "exp2",
+            Risk::ALL,
+            ["vmax", "vcmplt", "vadd", "vexp2"].as_slice(),
+        ),
+        ("exp2", high, ["vmax", "vcmplt", "vadd", "vexp2"].as_slice()),
+        ("exp2", low, ["vmax", "vexp2"].as_slice()),
+        ("exp2", Risk::NONE, ["vexp2"].as_slice()),
         (
             "exp2d",
+            Risk::ALL,
             ["vabs", "vcmplt", "vadd", "vmov", "vexp2d"].as_slice(),
         ),
+        (
+            "exp2d",
+            high,
+            ["vcmplt", "vadd", "vmov", "vexp2d"].as_slice(),
+        ),
+        (
+            "exp2d",
+            low,
+            ["vcmpgt", "vadd", "vmov", "vexp2d"].as_slice(),
+        ),
+        ("exp2d", Risk::NONE, ["vexp2d"].as_slice()),
     ] {
         let args = if op == "exp2" {
             vec![a()]
@@ -270,16 +311,21 @@ fn exp2_domain_guard_order_and_wiring() {
             for (inplace, present) in [(false, false), (false, true), (true, true)] {
                 for scalars in [
                     vec![(3.5, "s0")],
-                    vec![(3.5, "s0"), (EXP2_RANGE, "s1"), (EXP2_FLOOR, "s2")],
+                    vec![
+                        (3.5, "s0"),
+                        (EXP2_RANGE, "s1"),
+                        (EXP2_FLOOR, "s2"),
+                        (EXP2D_LOW, "s3"),
+                    ],
                 ] {
                     let o = op_for(op, args.clone(), stat);
-                    let (_, z, _) = run_with(&o, per, inplace, present, &scalars);
+                    let (_, z, _) = run_at(&o, per, inplace, present, &scalars, risk);
                     let plain = scoped(
                         State {
                             active: Some(crate::lower::vector::DOMAIN_MUTANT),
                             ..State::default()
                         },
-                        || run_with(&o, per, inplace, present, &scalars).1,
+                        || run_at(&o, per, inplace, present, &scalars, risk).1,
                     );
                     let value = |t: &Term, set: &HashMap<String, f64>| {
                         let reg = t.as_name().unwrap();
@@ -303,8 +349,12 @@ fn exp2_domain_guard_order_and_wiring() {
                     for (want, ops) in unguarded.iter().zip(guarded.chunks(guard.len())) {
                         let names: Vec<&str> =
                             ops.iter().map(|(st, _, _)| st.op.as_str()).collect();
-                        assert_eq!(names, guard, "{op}");
+                        assert_eq!(names, guard, "{op} at {risk:?}");
                         let (math, math_syms, _) = ops.last().unwrap();
+                        if guard.len() == 1 {
+                            assert_eq!((&want.0, &want.1), (math, math_syms));
+                            continue;
+                        }
                         assert_eq!(want.0.op, math.op);
                         let src = &want.0.args[1];
                         let t = &math_syms[1];
@@ -318,38 +368,49 @@ fn exp2_domain_guard_order_and_wiring() {
                             assert_eq!(want.0.args[0], math.args[0]);
                         }
                         for (st, syms, _) in &ops[..ops.len() - 1] {
-                            assert_eq!(
-                                st.args[0],
-                                if st.op == "vcmplt" {
-                                    Term::name("p1")
-                                } else {
-                                    x.clone()
-                                }
-                            );
+                            let cmp = st.op.starts_with("vcmp");
+                            assert_eq!(st.args[0], if cmp { Term::name("p1") } else { x.clone() });
                             assert_eq!(syms[0], *t);
                             assert_eq!(st.kw("vl"), vl.as_ref());
                         }
                         let src_syms = &want.1[1..2];
-                        let (abs_or_max, s0, set0) = &ops[0];
-                        let (cmp, s1, set1) = &ops[1];
-                        assert_eq!(cmp.positional()[1], &x);
-                        assert_eq!(value(cmp.positional()[2], set1), EXP2_RANGE);
-                        assert_eq!(s1.len(), 1);
-                        assert!(cmp.kw("if").is_none() && cmp.kw("unless").is_none());
-                        assert_eq!(abs_or_max.positional()[1], src);
-                        if op == "exp2" {
-                            assert_eq!(value(abs_or_max.positional()[2], set0), EXP2_FLOOR);
+                        let at = |name: &str| ops.iter().find(|(st, _, _)| st.op == name);
+                        if let Some((max, s0, set0)) = at("vmax") {
+                            assert_eq!(max.positional()[1], src);
+                            assert_eq!(value(max.positional()[2], set0), EXP2_FLOOR);
                             assert_eq!(s0[1..], *src_syms);
-                            let (add, s2, _) = &ops[2];
+                        }
+                        if let Some((abs, s0, _)) = at("vabs") {
+                            assert_eq!(abs.positional()[1..], [src]);
+                            assert_eq!(s0[1..], *src_syms);
+                        }
+                        let Some((cmp, s1, set1)) = at("vcmplt").or(at("vcmpgt")) else {
+                            assert_eq!(names, ["vmax", "vexp2"]);
+                            continue;
+                        };
+                        assert!(cmp.kw("if").is_none() && cmp.kw("unless").is_none());
+                        let bound = value(cmp.positional()[2], set1);
+                        if names[0] == "vcmplt" || names[0] == "vcmpgt" {
+                            // Only one side at risk: the compare reads `a` itself.
+                            assert_eq!(cmp.positional()[1], src);
+                            assert_eq!(s1[1..], *src_syms);
+                            let want_bound = if risk.high { EXP2_RANGE } else { EXP2D_LOW };
+                            assert_eq!(bound, want_bound);
+                            assert_eq!(cmp.op, if risk.high { "vcmplt" } else { "vcmpgt" });
+                        } else {
+                            assert_eq!(cmp.positional()[1], &x);
+                            assert_eq!(s1.len(), 1);
+                            assert_eq!(bound, EXP2_RANGE);
+                        }
+                        if op == "exp2" {
+                            let (add, s2, _) = at("vadd").unwrap();
                             assert_eq!(add.positional()[1..], [&x, &x]);
                             assert_eq!(add.kw("unless"), Some(&Term::name("p1")));
                             assert!(add.kw("if").is_none());
                             assert_eq!(s2, &vec![t.clone()]);
                         } else {
-                            assert_eq!(abs_or_max.positional().len(), 2);
-                            assert_eq!(s0[1..], *src_syms);
-                            let (add, s2, _) = &ops[2];
-                            let (mov, s3, _) = &ops[3];
+                            let (add, s2, _) = at("vadd").unwrap();
+                            let (mov, s3, _) = at("vmov").unwrap();
                             assert_eq!(add.positional()[1..], [src, src]);
                             assert!(add.kw("if").is_none() && add.kw("unless").is_none());
                             assert_eq!(mov.positional()[1], src);

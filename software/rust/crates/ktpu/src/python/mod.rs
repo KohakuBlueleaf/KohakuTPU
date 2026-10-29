@@ -341,9 +341,11 @@ fn debug_decode<'py>(
 /// in every stage crate for this compile, no stage cache (`MUTANTS` lists
 /// what the build carries; a build without the `mutants` feature raises
 /// `ValueError`). `passes=False`: the L2 lowered with no L2 -> L2 pass, a
-/// card's packages (`fetch=True`).
+/// card's packages (`fetch=True`). `exp2_ranges` ("off", "intervals",
+/// "rowmax"; None the default): what the vector search's range analysis may
+/// prove of EXP2 / EXP2D arguments (`ktpu_l2::Ranges`), a card's packages.
 #[pyfunction]
-#[pyo3(signature = (source, machine_json, name=None, cache_dir=None, fetch=false, mutant=None, l1=false, binds=None, passes=true))]
+#[pyo3(signature = (source, machine_json, name=None, cache_dir=None, fetch=false, mutant=None, l1=false, binds=None, passes=true, exp2_ranges=None))]
 #[allow(clippy::too_many_arguments)]
 fn compile<'py>(
     py: Python<'py>,
@@ -356,15 +358,24 @@ fn compile<'py>(
     l1: bool,
     binds: Option<std::collections::BTreeMap<String, i128>>,
     passes: bool,
+    exp2_ranges: Option<&str>,
 ) -> PyResult<Bound<'py, PyDict>> {
-    if (binds.is_some() || !passes) && !fetch {
+    if (binds.is_some() || !passes || exp2_ranges.is_some()) && !fetch {
         return Err(PyValueError::new_err(
-            "binds= and passes=False build a card's packages: fetch=True",
+            "binds=, passes=False and exp2_ranges= build a card's packages: fetch=True",
         ));
     }
+    let ranges = exp2_ranges
+        .map(|r| {
+            ktpu_l2::Ranges::parse(r).ok_or_else(|| {
+                PyValueError::new_err(format!("exp2_ranges is off, intervals or rowmax: {r}"))
+            })
+        })
+        .transpose()?;
     let card = CardStack {
         binds,
         no_passes: !passes,
+        ranges,
         ..CardStack::default()
     };
     let m = machine(machine_json)?;

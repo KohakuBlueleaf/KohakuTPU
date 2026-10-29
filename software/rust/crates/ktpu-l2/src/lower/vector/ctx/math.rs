@@ -7,17 +7,18 @@ mod typed;
 
 #[cfg(feature = "witness")]
 impl<'a> Ctx<'a> {
-    /// `op`'s first source through its domain guard (`domain_typed`).
+    /// `o`'s first source through its domain guard (`domain_typed`).
     fn domain(
         &mut self,
         g: &mut Gen,
-        op: &str,
+        o: &Op,
         srcs: &mut Vec<String>,
         syms: &mut Vec<String>,
         sel: &str,
         vl: &str,
     ) -> VResult<()> {
-        if domain_constants(op).is_empty() {
+        let form = guard(&o.op, risk_of(&self.guards, o));
+        if form == Guard::None {
             return Ok(());
         }
         let a = srcs[0].clone();
@@ -25,20 +26,31 @@ impl<'a> Ctx<'a> {
         let mut reads = vec![t.clone()];
         reads.extend(syms.iter().cloned());
 
-        if op == "exp2" {
-            let mut s = syms.clone();
-            let floor = self.constant(g, EXP2_FLOOR, &mut s, std::slice::from_ref(&a), sel)?;
-            s.insert(0, t.clone());
-            g.emit_owned(format!("vmax {{0}}{sel}, {a}, {floor}{vl}"), s);
-        } else {
-            g.emit_owned(format!("vabs {{0}}{sel}, {a}{vl}"), reads.clone());
+        match form {
+            Guard::Floor | Guard::Clamp => {
+                let mut s = syms.clone();
+                let floor = self.constant(g, EXP2_FLOOR, &mut s, std::slice::from_ref(&a), sel)?;
+                s.insert(0, t.clone());
+                g.emit_owned(format!("vmax {{0}}{sel}, {a}, {floor}{vl}"), s);
+            }
+            Guard::Both => g.emit_owned(format!("vabs {{0}}{sel}, {a}{vl}"), reads.clone()),
+            _ => {}
         }
         let x = format!("{{0}}{sel}");
-        let mut s = Vec::new();
-        let range = self.constant(g, EXP2_RANGE, &mut s, std::slice::from_ref(&x), sel)?;
+        let (cmp, bound, read, mut s) = match form {
+            Guard::Clamp | Guard::Both => ("vcmplt", EXP2_RANGE, x.clone(), Vec::new()),
+            Guard::High => ("vcmplt", EXP2_RANGE, a.clone(), syms.clone()),
+            Guard::Low => ("vcmpgt", EXP2D_LOW, a.clone(), syms.clone()),
+            _ => {
+                *srcs = vec![format!("{{1}}{sel}")];
+                *syms = vec![t];
+                return Ok(());
+            }
+        };
+        let bound = self.constant(g, bound, &mut s, std::slice::from_ref(&read), sel)?;
         s.insert(0, t.clone());
-        g.emit_owned(format!("vcmplt p1, {x}, {range}{vl}"), s);
-        if op == "exp2" {
+        g.emit_owned(format!("{cmp} p1, {read}, {bound}{vl}"), s);
+        if form == Guard::Clamp {
             g.emit(format!("vadd {x}, {x}, {x} unless=p1{vl}"), &[t.as_str()]);
         } else {
             g.emit_owned(format!("vadd {x}, {a}, {a}{vl}"), reads.clone());
@@ -175,7 +187,7 @@ impl<'a> Ctx<'a> {
                         srcs.push(format!("{{{}}}{sel}", syms.len()));
                     }
                     if j == 0 {
-                        self.domain(g, &o.op, &mut srcs, &mut syms, sel, vl)?;
+                        self.domain(g, o, &mut srcs, &mut syms, sel, vl)?;
                     }
                 }
                 let d = if inplace {
@@ -250,7 +262,7 @@ impl<'a> Ctx<'a> {
                     srcs.push(format!("{{{}}}", syms.len()));
                 }
                 if j == 0 {
-                    self.domain(g, &o.op, &mut srcs, &mut syms, "", "")?;
+                    self.domain(g, o, &mut srcs, &mut syms, "", "")?;
                 }
             }
             let d = if inplace {

@@ -19,6 +19,7 @@ use super::gen::{Code, Gen};
 #[cfg(feature = "witness")]
 use super::indent;
 use super::modulo as MO;
+use super::range::{self, Ranges};
 use super::{banks, encode, numbers, ops_of, renamed, split, Plan, RPar, VErr, VResult};
 use crate::ir::{Body, Node, Result};
 use crate::lower::sync::Access;
@@ -92,6 +93,9 @@ pub struct Search {
     /// when given; the search tries both where they apply when not.
     pub hold: Option<bool>,
     pub pin: Option<bool>,
+    /// What range analysis may prove of EXP2 / EXP2D arguments, dropping
+    /// the guard checks it covers.
+    pub ranges: Ranges,
     chosen: Mutex<IndexMap<Key, (String, i64)>>,
     recording: bool,
     frozen: AtomicBool,
@@ -129,6 +133,7 @@ impl Search {
             strategy,
             hold: None,
             pin: None,
+            ranges: Ranges::DEFAULT,
             chosen: Mutex::new(IndexMap::new()),
             recording: false,
             frozen: AtomicBool::new(false),
@@ -231,6 +236,12 @@ impl Search {
         self
     }
 
+    /// This search with range analysis `ranges`.
+    pub fn ranged(mut self, ranges: Ranges) -> Search {
+        self.ranges = ranges;
+        self
+    }
+
     fn pin_given(&self) -> Option<bool> {
         self.pin.filter(|_| !on("l2.vector/pin-unforced"))
     }
@@ -262,6 +273,10 @@ impl Search {
         land: Option<i64>,
         t: &Target,
     ) -> Result<Best> {
+        let par = &RPar {
+            guards: range::guards(par, self.ranges),
+            ..par.clone()
+        };
         if par.st.kw("classed").is_some() {
             let band = match par.st.kw("class_band") {
                 Some(value) => crate::ir::const_of(body, &par.st, value, env)?,
@@ -394,7 +409,7 @@ impl Search {
             if let Some(lp) = &lp {
                 all.extend(ops_of(&lp.body));
             }
-            let many = numbers(&all, body).len() as i64 > t.stk_s();
+            let many = numbers(&all, body, &par.guards).len() as i64 > t.stk_s();
             let rows = pre.iter().any(|u| {
                 matches!(u.as_ref(), Node::Op(o) if o.op == "unpack" && o.ty.as_ref().map(|x| x.shape.len() == 2).unwrap_or(false))
             });
@@ -680,6 +695,7 @@ fn modulo_legacy(
     c.land = land.unwrap_or(t.l1_words);
     c.unit = super::unit_of(body, par, env)?;
     c.pre = pre.clone();
+    c.guards = par.guards.clone();
     for n in &lp.body {
         if matches!(n.as_ref(), Node::For(_)) {
             return no("a nested loop");
