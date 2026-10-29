@@ -171,6 +171,34 @@ pub const SUPERSEDED: &[Superseded] = &[
         expect: Some(r#"{"fill_ring":["0","256","64"],"slack63":true}"#),
         mutant: Some(DOMAIN_MUTANT),
     },
+    // The mover quantiser cannot give an all-zero block E = 0, so it packs
+    // only nk = 1 destinations; the same walks pack unpaired operands.
+    Superseded {
+        vector: "L2.MOV.001.node_ops",
+        ruling: "RUL.099",
+        set: &[(
+            "/text/2",
+            r#""fn k.l2(x: f16[64, 128] @dram, a: mx7a[64, 128] @dram(gm=8, nk=1), t: f16[64, 128] @dram(tile=8x8), y: f16[64, 128] @dram)""#,
+        )],
+        expect: None,
+        mutant: None,
+    },
+    Superseded {
+        vector: "L2.MOV.010.quant_and_gt4",
+        ruling: "RUL.099",
+        set: &[(
+            "/text/2",
+            r#""fn k.l2(x: f16[64, 128] @dram, a: mx7a[64, 128] @dram(gm=8, nk=1), b: mx7b[64, 128] @dram(gn=16, nk=1), t: f16[64, 128] @dram(tile=8x8))""#,
+        )],
+        expect: Some(
+            r#"{"fn": [
+                "quant w(x+0, (2, 8192), (4, 64), (32, 256), (2, 32)) -> w(a+0, (64, 128))",
+                "quant w(x+0, (4, 64), (64, 256), (2, 32)) -> w(b+0, (64, 128)) bpack",
+                "gt4 w(x+0, (16, 1024), (8, 32), (4, 256)) -> w(t+0, (2, 8192), (8, 256), (4, 2048), (2, 128))"
+            ]}"#,
+        ),
+        mutant: None,
+    },
 ];
 
 /// `(input, expect)` vector `name` runs with: the ruled ones when a ruling

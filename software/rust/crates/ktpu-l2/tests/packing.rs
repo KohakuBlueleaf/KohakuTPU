@@ -3,14 +3,18 @@
 use ktpu_l2::{compile_l1, Program, Search};
 use ktpu_machine::Machine;
 
-fn source(options: &str) -> String {
-    format!("target ktpu.v9\n\nfn q.l2(x: f16[128, 64] @dram, q: mx7a[128, 64] @dram(gm=32,nk=2))\n    quant q <- x {options}\n")
+fn source(options: &str, nk: i64) -> String {
+    format!("target ktpu.v9\n\nfn q.l2(x: f16[128, 64] @dram, q: mx7a[128, 64] @dram(gm=32,nk={nk}))\n    quant q <- x {options}\n")
+}
+
+fn lower_nk(options: &str, nk: i64) -> Result<String, ktpu_l2::Error> {
+    let m = Machine::named("multimesh_v9t6").unwrap();
+    let p = Program::parse(&source(options, nk), "<packing>", None)?;
+    compile_l1(&p, &m, &[], false, &Search::default()).map(|c| c.l1_text)
 }
 
 fn lower(options: &str) -> Result<String, ktpu_l2::Error> {
-    let m = Machine::named("multimesh_v9t6").unwrap();
-    let p = Program::parse(&source(options), "<packing>", None)?;
-    compile_l1(&p, &m, &[], false, &Search::default()).map(|c| c.l1_text)
+    lower_nk(options, 2)
 }
 
 #[test]
@@ -34,7 +38,7 @@ fn unproven_vector_input_is_checked_on_device() {
 
 #[test]
 fn excluded_override_refuses_and_policy_mutant_is_killed() {
-    assert!(lower("backend=mover_quant").is_err());
+    assert!(lower_nk("backend=mover_quant", 1).is_err());
     #[cfg(feature = "mutants")]
     {
         let text = ktpu_l2::mutant::scoped(
@@ -42,10 +46,89 @@ fn excluded_override_refuses_and_policy_mutant_is_killed() {
                 active: Some("l2.packing/ignore-policy"),
                 ..Default::default()
             },
-            || lower("backend=mover_quant").unwrap(),
+            || lower_nk("backend=mover_quant", 1).unwrap(),
         );
         assert!(text.contains("quant w("));
     }
+}
+
+fn fused(nk: i64) -> String {
+    format!(
+        "target ktpu.v9\n\nfn zq.l2(x: f16[8, 64] @dram, q: mx7a[8, 64] @dram(gm=2, nk={nk}))\n    par c in 0..1 on vc[c]\n        for t in 0..2\n            xl = load x[t*4 : +4, 0 : +64] : f16[4, 64] @l1(gt4)\n            v = unpack xl : f32[4, 64] @reg(gt4)\n            p = pack v : mx7a[4, 64] @l1\n            store q[t*4 : +4, 0 : +64] <- p\n"
+    )
+}
+
+fn lower_on(text: &str, mutant: Option<&'static str>) -> String {
+    let m = Machine::named("multimesh_v9t6").unwrap();
+    let p = Program::parse(text, "<packing>", None).unwrap();
+    let state = ktpu_l2::mutant::State {
+        active: mutant,
+        ..Default::default()
+    };
+    ktpu_l2::mutant::scoped(state, || {
+        compile_l1(&p, &m, &[], false, &Search::default())
+            .unwrap()
+            .l1_text
+    })
+}
+
+/// NUM.MX7.008: a vector quant or pack into K pairs selects zeros to
+/// 2^-24 (`seti s4`, `vsel`) before VPACK; into nk = 1 it does not.
+#[test]
+fn packs_into_pairs_lift_their_zeros() {
+    let quant = |nk, mutant| lower_on(&source("finite=1", nk), mutant);
+    let paired = quant(2, None);
+    assert!(paired.contains("seti s4 = ") && paired.contains("vsel v0, v0, s4, v0"));
+    assert!(!quant(1, None).contains("vsel"));
+    let pack = |nk, mutant| lower_on(&fused(nk), mutant);
+    assert!(pack(2, None).contains("vsel"));
+    assert!(!pack(1, None).contains("vsel"));
+    #[cfg(feature = "mutants")]
+    {
+        assert!(!quant(2, Some("l2.packing/unit-scale-zero")).contains("vsel"));
+        assert!(!pack(2, Some("l2.vector/unit-scale-zero")).contains("vsel"));
+    }
+}
+
+/// RUL.099: mover QUANT into an nk >= 2 destination is refused even where
+/// the board's policy is ignored; `l2.packing/mover-paired` lifts it.
+#[test]
+fn mover_quant_into_pairs_refuses() {
+    #[cfg(feature = "mutants")]
+    {
+        let on = |name: &'static str| ktpu_l2::mutant::State {
+            active: Some(name),
+            ..Default::default()
+        };
+        let refused = ktpu_l2::mutant::scoped(on("l2.packing/ignore-policy"), || {
+            lower("backend=mover_quant").unwrap_err()
+        });
+        assert!(refused.message.contains("RUL.099"), "{}", refused.message);
+        let m = Machine::named("vlt_v9t6s_1n").unwrap();
+        let p = Program::parse(&source("backend=mover_quant", 2), "<packing>", None).unwrap();
+        let build = || compile_l1(&p, &m, &[], false, &Search::default());
+        assert!(build().is_err());
+        let text = ktpu_l2::mutant::scoped(on("l2.packing/mover-paired"), build)
+            .unwrap()
+            .l1_text;
+        assert!(text.contains("quant w("));
+    }
+}
+
+/// L2.MOV.018: on a mover-preferring board a quant into nk = 2 lowers on the
+/// vector cores and one into nk = 1 through mover QUANT.
+#[test]
+fn paired_destination_lowers_on_the_vector_cores() {
+    let m = Machine::named("vlt_v9t6s_1n").unwrap();
+    let text = |nk| {
+        let p = Program::parse(&source("finite=1", nk), "<packing>", None).unwrap();
+        compile_l1(&p, &m, &[], false, &Search::default())
+            .unwrap()
+            .l1_text
+    };
+    let (paired, single) = (text(2), text(1));
+    assert!(paired.contains("vpack") && !paired.contains("quant w("));
+    assert!(single.contains("quant w(") && !single.contains("vpack"));
 }
 
 #[test]

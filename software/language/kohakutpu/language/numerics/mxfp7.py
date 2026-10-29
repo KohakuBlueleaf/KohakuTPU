@@ -94,13 +94,33 @@ def _scale_field(peak_bits):
     # wrap would corrupt the block completely.
     es = np.clip(es, -SBIAS, (2**SEBITS - 1) - SBIAS)
 
-    # an all-zero block has no peak to scale from; unit scale keeps the field
-    # legal and every q is zero regardless
+    # an all-zero block has no peak to scale from: both quantisers give it unit
+    # scale (E=20); an operand of K pairs never carries that field (`lift`)
     zero = sig_p == 0
     return (
         np.where(zero, 0, es).astype(np.int64),
         np.where(zero, 8, m8).astype(np.int64),
     )
+
+
+# The zero of an operand packed in K pairs (nk >= 2) as quantised: 2**-24, q 0
+# under every scale, so only an all-zero block changes, to E=0 from the
+# quantisers' E=20, which mx_acu_fp_pump.v's K-pair merge aligns a live partner
+# to (LeNet conv1 dW: error 10.2% of the output peak against 1.7%). Same value
+# as ktpu-l1 `tensor::ZERO_LIFT`.
+ZERO_LIFT = 0x0001
+
+
+def lift(x, nk):
+    """FP16 `x` as an operand packed `nk` K-blocks an entry quantises it:
+    every zero (either sign) as ``ZERO_LIFT`` when ``nk >= 2``, else `x`."""
+    h = np.asarray(x)
+    if h.dtype != np.float16:
+        h = fp16.write(h)
+    if nk < 2:
+        return h
+    bits = h.view(np.uint16)
+    return np.where(bits & 0x7FFF == 0, np.uint16(ZERO_LIFT), bits).view(np.float16)
 
 
 def quantise_fp16(x):

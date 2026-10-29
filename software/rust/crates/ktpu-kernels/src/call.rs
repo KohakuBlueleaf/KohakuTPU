@@ -100,6 +100,13 @@ pub fn mm_plan(a: &Value, m: &Machine) -> R<matmul::Mm> {
         int(a, "k")?,
         a.get("shared").map_or(Ok(true), |_| boolean(a, "shared"))?,
         a.get("quantum").map_or(Ok(4), |_| int(a, "quantum"))?,
+        match a.get("pairing") {
+            None => ktpu_machine::PAIRING,
+            Some(p) => match p.as_str().and_then(ktpu_machine::Pairing::parse) {
+                Some(p) => p,
+                None => return fail("API.OP.001", format!("a pairing (vector, unpaired): {p}")),
+            },
+        },
         m,
     )
 }

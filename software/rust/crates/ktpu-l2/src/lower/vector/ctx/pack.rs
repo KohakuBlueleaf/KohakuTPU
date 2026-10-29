@@ -61,22 +61,44 @@ impl<'a> Ctx<'a> {
                     ));
                 }
                 let only = read_once(ops, o);
+                let lift = super::super::mx7_pack(o, ops, self.body);
                 for &r in rows {
                     let tsym = g.sym();
                     let reg = src.regs[&r].clone();
-                    if !(only && quantiser_order(g, &reg, &tsym)) {
+                    // Zeros lift in the move to quantiser order, or in place.
+                    let ordered = only && quantiser_order(g, &reg, &tsym);
+                    if !ordered {
                         for i in 0..4 {
                             for q in 0..2 {
-                                g.emit(
-                                    format!(
-                                        "vmov {{0}}[{}:], {{1}}[{}:] vl=16",
-                                        2 * i + q,
-                                        4 * q + i
-                                    ),
-                                    &[&tsym, &reg],
-                                );
+                                let (s, d) = (format!("[{}:]", 4 * q + i), 2 * i + q);
+                                let mut syms = vec![reg.clone()];
+                                let text = if lift {
+                                    let z = self.constant(
+                                        g,
+                                        super::super::zero_lift_value(),
+                                        &mut syms,
+                                        &[format!("{{1}}{s}")],
+                                        &s,
+                                    )?;
+                                    format!("vsel {{0}}[{d}:], {{1}}{s}, {z}, {{1}}{s} vl=16")
+                                } else {
+                                    format!("vmov {{0}}[{d}:], {{1}}{s} vl=16")
+                                };
+                                syms.insert(0, tsym.clone());
+                                g.emit_owned(text, syms);
                             }
                         }
+                    } else if lift {
+                        let mut syms = Vec::new();
+                        let z = self.constant(
+                            g,
+                            super::super::zero_lift_value(),
+                            &mut syms,
+                            &["{0}".to_string()],
+                            "",
+                        )?;
+                        syms.insert(0, tsym.clone());
+                        g.emit_owned(format!("vsel {{0}}, {{0}}, {z}, {{0}}"), syms);
                     }
                     for &d in &dests {
                         let at = self.descs[d].buf[parity] + r * 4;

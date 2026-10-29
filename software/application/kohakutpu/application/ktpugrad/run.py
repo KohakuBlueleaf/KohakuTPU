@@ -2533,7 +2533,13 @@ def _packing_plan(dev, plan: Plan):
         V.STAT_ROWS if any(o is not None and o.kind == "row" for o in reads) else 4
     )
     return MM.plan(
-        bt, U.extent(m), Np, _size(_ks(k)), not any(plan.b.c(r) for r in batch), quantum
+        bt,
+        U.extent(m),
+        Np,
+        _size(_ks(k)),
+        not any(plan.b.c(r) for r in batch),
+        quantum,
+        machine_json=dev.machine.machine_json,
     )
 
 
@@ -2864,6 +2870,7 @@ def _product_run(dev, plan, bufs, mm, binds, extras, bt, M, N, Np, batch, m, n) 
                         "k": mm.k,
                         "shared": mm.shared,
                         "quantum": mm.quantum,
+                        **MM.pairing_arg(),
                     },
                 }
             },

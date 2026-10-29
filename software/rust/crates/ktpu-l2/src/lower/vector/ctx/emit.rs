@@ -12,7 +12,7 @@ impl<'a> Ctx<'a> {
     /// past the scalar file held in a pinned register or set before a read.
     #[cfg(feature = "witness")]
     pub fn constants(&mut self, g: &mut Gen, ops: &[Arc<Node>]) {
-        let fs = numbers(ops);
+        let fs = numbers(ops, self.body);
         let stk = self.t.stk_s() as usize;
         let kept = if fs.len() <= stk { fs.len() } else { stk - 1 };
         for (i, f) in fs[..kept].iter().enumerate() {

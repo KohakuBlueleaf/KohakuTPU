@@ -17,6 +17,7 @@ from kohakutpu.application.kernels import prepared as P
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes import mm as class_mm
 from kohakutpu.application.kernels.vector import Operand
+from kohakutpu.compiler import _rs
 from kohakutpu.language import dsl as kt
 
 ACC_SUBTILES = 4096
@@ -48,15 +49,40 @@ class Mm:
         return 32 * self.nk
 
 
-def plan(bt: int, m: int, n: int, k: int, shared: bool = True, quantum: int = 4) -> Mm:
-    """The tiling for an [M, K] x [N, K] product, `bt` of them, each batch's
-    rows padded to `mp` (whole groups of `quantum`: the epilogue's operands
-    and output are [bt * mp, N]). Raises ValueError for an N that is not
-    whole 32-column blocks (the epilogue stores whole blocks)."""
+def stack_pairing() -> str:
+    """The pairing contractions are planned under (RUL.099): ``KTPU_MX7_PAIRING``,
+    else ktpu-machine's ``PAIRING``."""
+    return os.environ.get("KTPU_MX7_PAIRING", _rs.MX7_PAIRING)
+
+
+def pairing_arg() -> dict:
+    """`matmul.plan`'s recorded `pairing` argument: absent at the default."""
+    p = stack_pairing()
+    return {} if p == _rs.MX7_PAIRING else {"pairing": p}
+
+
+def plan(
+    bt: int,
+    m: int,
+    n: int,
+    k: int,
+    shared: bool = True,
+    quantum: int = 4,
+    pairing: str | None = None,
+    *,
+    machine_json: str,
+) -> Mm:
+    """The tiling for an [M, K] x [N, K] product on the machine, `bt` of them,
+    each batch's rows padded to `mp` (whole groups of `quantum`: the
+    epilogue's operands and output are [bt * mp, N]), K blocks paired as the
+    machine allows under `pairing` (`stack_pairing()` when None). Raises
+    ValueError for an N that is not whole 32-column blocks (the epilogue
+    stores whole blocks)."""
     if n % 32:
         raise ValueError(f"N = {n}: the product's columns are whole blocks of 32")
     kp = -(-k // 32) * 32
-    nk = 2 if kp % 64 == 0 else 1
+    pairs = _rs.pairs_blocks(machine_json, pairing or stack_pairing())
+    nk = 2 if pairs and kp % 64 == 0 else 1
     mp = -(-m // quantum) * quantum
     tm = next(
         t
@@ -167,7 +193,8 @@ def quant_kernel(
         )
         q = p["q"]
         r0, c0 = divmod(src.offset, src.pitch)
-        vector = kt.machine().packing_backend == "vector_mx7"
+        # L2.MOV.018: a destination of K pairs quantises on the vector cores.
+        vector = kt.machine().packing_backend == "vector_mx7" or nk >= 2
         batch_size, drain_overlap = (finite_batch, overlap) if vector else (1, False)
         if pad_strategy == "staged" or (not vector and (rows != rp or cols != cp)):
             z = kt.buffer((batches * rp, cp), "f16")
@@ -323,7 +350,7 @@ def quant_walk_kernel(
         kt.copy(
             z, x, walk=levels, at=at, dwalk=((batches * rows * cols // 16, 32),), dat=0
         )
-        vector = kt.machine().packing_backend == "vector_mx7"
+        vector = kt.machine().packing_backend == "vector_mx7" or nk >= 2
         if not vector and (rows != rp or cols != cp):
             padded = kt.buffer((batches * rp, cp), "f16")
             kt.fill_value(padded, 0)

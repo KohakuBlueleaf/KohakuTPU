@@ -47,4 +47,5 @@ pub const NAMES: &[&str] = &[
     "rul.001/registers",
     "rul.001/unbuilt",
     "rul.001/missing-core",
+    "machine.pairing/mover-paired",
 ];

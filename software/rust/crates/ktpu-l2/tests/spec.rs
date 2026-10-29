@@ -76,6 +76,29 @@ fn links_vectors() {
     }
 }
 
+/// RUL.099's superseded vectors (ruled by an nk=1 input): their own nk=2
+/// input gives their expect only under `l2.rul099/before`.
+#[cfg(feature = "mutants")]
+#[test]
+fn rul099_frozen_vectors_reverse() {
+    let mut seen = 0;
+    for s in spec::SUPERSEDED.iter().filter(|s| s.ruling == "RUL.099") {
+        let path = vectors()
+            .into_iter()
+            .find(|p| p.file_stem().unwrap() == s.vector)
+            .unwrap();
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let runner = v["runner"].as_str().unwrap();
+        let m = Machine::named(v["machine"].as_str().unwrap_or("multimesh_v9t6")).unwrap();
+        let now = spec::run(runner, &v["input"], Some(&m), None);
+        assert!(now.as_ref() != Ok(&v["expect"]), "{}: {now:?}", s.vector);
+        let before = spec::run(runner, &v["input"], Some(&m), Some("l2.rul099/before"));
+        assert_eq!(before, Ok(v["expect"].clone()), "{}", s.vector);
+        seen += 1;
+    }
+    assert_eq!(seen, 2);
+}
+
 #[test]
 fn spec_vectors() {
     let only = std::env::var("KTPU_SPEC").unwrap_or_default();

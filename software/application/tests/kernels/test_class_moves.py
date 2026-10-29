@@ -40,6 +40,7 @@ def compile_kernel(kernel, given, mutant=None, *, allow_line_refusal=False):
 @pytest.mark.parametrize("rows,cols", [(1, 16), (8, 64), (17, 80)])
 def test_quant_fixed_entry_loop(side, batches, rows, cols):
     rp, cp = -(-rows // 8) * 8, -(-cols // 64) * 64
+    # nk=1 entries: the mover quantises them (an nk >= 2 quant is RUL.099's).
     pair = matmul.quant_kernel(
         Operand("full", pitch=cols + 16, offset=16),
         rows,
@@ -48,7 +49,7 @@ def test_quant_fixed_entry_loop(side, batches, rows, cols):
         cp,
         side,
         2,
-        2,
+        1,
         batches,
         shape_class=ShapeClass(32, 256),
     )

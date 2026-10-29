@@ -1477,13 +1477,16 @@ mod port {
     }
 
     pub fn a_large_conversion_is_cut_into_whole_moves() -> Res {
-        let text = "target ktpu.v9\nfn k.l2(x: f16[1024, 1024] @dram, a: mx7a[1024, 1024] @dram(gm=64, nk=2))\n    quant a <- x\n";
+        let text = "target ktpu.v9\nfn k.l2(x: f16[1024, 1024] @dram, a: mx7a[1024, 1024] @dram(gm=64, nk=1))\n    quant a <- x\n";
         let l1 = lw(&read(text)?, &target(), Strategy::Auto)?;
         let lines: Vec<&str> = l1.lines().filter(|l| l.contains("quant")).collect();
-        ensure!(lines.len() == 4, "{}", lines.len());
-        ensure!(lines
-            .iter()
-            .all(|l| l.split("->").next().unwrap().contains("(16, 128)")));
+        ensure!(lines.len() == 4, "{lines:?}");
+        ensure!(
+            lines
+                .iter()
+                .all(|l| l.split("->").next().unwrap().contains("(256, 2048)")),
+            "{lines:?}"
+        );
         Ok(())
     }
 

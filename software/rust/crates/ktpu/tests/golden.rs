@@ -311,12 +311,17 @@ fn stages(case: &Value, m: &Machine) -> Vec<Step> {
         return out;
     }
     let python_l1 = case["l1"].as_str();
-    let want_l1 = ruled.as_deref().or(python_l1);
+    // Where RUL.099 changes the lowering, the reference is the ruled build's
+    // L1 (`ruled.l1`, written by `rul099_regold` once the predecessor
+    // lowering reproduced the Python text).
+    let lowered = case["ruled"]["l1"].as_str();
+    let want_l1 = lowered.or(ruled.as_deref()).or(python_l1);
     let (name, l1) = match (l1, want_l1) {
         (Ok((name, l1)), Some(want)) if b.print_l1(&l1) == want => {
-            out.push(Ok(match ruled.is_some() {
-                true => "L2 -> L1 agree [RUL.063: the ruled schedule]",
-                false => "L2 -> L1 agree",
+            out.push(Ok(match (lowered.is_some(), ruled.is_some()) {
+                (true, _) => "L2 -> L1 agree [RUL.099: the ruled lowering]",
+                (false, true) => "L2 -> L1 agree [RUL.063: the ruled schedule]",
+                (false, false) => "L2 -> L1 agree",
             }));
             (name, l1)
         }
@@ -386,16 +391,14 @@ fn stages(case: &Value, m: &Machine) -> Vec<Step> {
     };
     let ruled_tag = !std::ptr::eq(reference, case);
     // Which rulings make the reference: one table line each.
-    let rules = |id: &str| {
-        reference["rulings"]
-            .as_array()
-            .is_some_and(|r| r.iter().any(|x| x == id))
-    };
-    let rul = match (rules("RUL.056"), rules("RUL.063")) {
-        (true, true) => "RUL.056 + RUL.063",
-        (true, false) => "RUL.056",
-        _ => "RUL.063",
-    };
+    let mut rulings: Vec<&str> = reference["rulings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    rulings.sort();
+    let rul = rulings.join(" + ");
     // A table line: `base`, or `base [rulings: the ruled reference]`.
     let line = |base: &str| -> &'static str {
         match ruled_tag {
@@ -608,6 +611,249 @@ fn the_stack_agrees_with_the_python_goldens() {
     bad.extend(listings_hold(&names, &results));
     println!("{} disagree", bad.len());
     assert!(bad.is_empty(), "\n{}", bad.join("\n"));
+}
+
+/// Each mesh's package as a ruled reference records it: relocatable, its
+/// `binds` addresses, and the package bound there and lowered.
+fn package_json(
+    case: &Value,
+    got: &BTreeMap<u32, ktpu::PackageOut>,
+    m: &Machine,
+) -> Result<Value, String> {
+    let hex = ktpu::pipeline::cache::hex;
+    let mut out = serde_json::Map::new();
+    for (mesh, p) in got {
+        let bindings: Vec<u64> = p
+            .params
+            .iter()
+            .map(|n| case["binds"][n].as_u64().ok_or(format!("no binding {n}")))
+            .collect::<Result<_, _>>()?;
+        let f = ktpu_l0::Facts::of_mesh(m, *mesh).map_err(|e| e.to_string())?;
+        let bound = ktpu_l0::Package::from_bytes(&p.bytes, &f)
+            .and_then(|q| q.bind(&bindings))
+            .map_err(|e| e.to_string())?;
+        let lowered = ktpu_l0::engine::lower(&bound, &f).map_err(|e| e.to_string())?;
+        out.insert(
+            mesh.to_string(),
+            serde_json::json!({
+                "relocatable": hex(&p.bytes),
+                "bindings": bindings,
+                "bound": hex(&bound.to_bytes(&f).map_err(|e| e.to_string())?),
+                "lowered": hex(&lowered.to_bytes(&f).map_err(|e| e.to_string())?),
+            }),
+        );
+    }
+    Ok(Value::Object(out))
+}
+
+/// `binds` plus each `name.l1` parameter it lacks (a `__mx7_status_*`), in
+/// order past the highest bound buffer's end, at 4096-byte boundaries.
+fn placed(binds: &Value, l1: &ktpu_l1::text::Module, name: &str, m: &Machine) -> Value {
+    let body = &l1.fns[&(name.to_string(), "l1".to_string())];
+    let size = |term: &ktpu_l1::text::Term| {
+        ktpu_l1::layout::buffer::Buffer::of(term)
+            .and_then(|b| b.bytes(m))
+            .unwrap()
+    };
+    let mut out = binds.as_object().unwrap().clone();
+    let mut end = body
+        .params
+        .iter()
+        .filter_map(|(p, term)| out.get(p).map(|a| a.as_u64().unwrap() + size(term)))
+        .max()
+        .unwrap_or(0);
+    for (p, term) in &body.params {
+        if !out.contains_key(p) {
+            let at = end.div_ceil(4096) * 4096;
+            out.insert(p.clone(), at.into());
+            end = at + size(term);
+        }
+    }
+    Value::Object(out)
+}
+
+fn verdict_json(found: &[ktpu::Finding]) -> Value {
+    serde_json::json!({
+        "findings": found.iter().map(|f| serde_json::json!([f.kind, f.at, f.text])).collect::<Vec<_>>(),
+        "refused": found.iter().any(|f| Stack.refuses(f)),
+    })
+}
+
+/// RUL.099's regeneration of the e2e references it changes:
+/// `KTPU_RUL099_REGOLD=audit|write` (a `mutants` build; `write` also needs
+/// `KTPU_RUL099_REGOLD_BACKUP=<dir>`). A case is the ruling's when its L1
+/// under `l2.rul099/before` is the stored reference L1 (Python's, or
+/// RUL.063's ruled schedule) and differs without it; its `ruled` block then
+/// takes the current build's L1, packages and verdicts and the ruling. A case
+/// the predecessor lowering does not reproduce is listed, never written.
+#[test]
+fn rul099_regold() {
+    let Ok(mode) = std::env::var("KTPU_RUL099_REGOLD") else {
+        return;
+    };
+    let write = mode == "write";
+    let backup = write.then(|| {
+        std::path::PathBuf::from(
+            std::env::var("KTPU_RUL099_REGOLD_BACKUP").expect("KTPU_RUL099_REGOLD_BACKUP"),
+        )
+    });
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../golden/e2e");
+    let b = Stack;
+    let lowered = |case: &Value, l2: &str, m: &Machine| {
+        let p = b.parse_l2(l2)?;
+        let name = case["name"]
+            .as_str()
+            .map_or_else(|| p.name.clone(), str::to_string);
+        let l1 = b.schedule(&b.lower(&b.passes(&p, &name, m)?, &name, m)?, m)?;
+        Ok::<_, Refusal>((name, l1))
+    };
+    let mut report: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for (stem, case) in shard(goldens()) {
+        let Some(l2) = case["l2"].as_str() else {
+            continue;
+        };
+        if case.get("skipped").is_some()
+            || case.get("python-too-slow").is_some()
+            || case["case"] == line_layout::CASE
+            || ruled_refusal(&case).is_some()
+        {
+            continue;
+        }
+        let m = machine(
+            case["machine"].as_str().unwrap(),
+            case["nodes"].as_u64().unwrap() as u32,
+        );
+        let stored = ruled_schedule(&case).or(case["l1"].as_str().map(str::to_string));
+        let before = ktpu::mutant::with("l2.rul099/before", || {
+            lowered(&case, l2, &m).map(|(_, l1)| b.print_l1(&l1))
+        })
+        .expect("a mutants build");
+        let now = lowered(&case, l2, &m);
+        let now_text = now
+            .as_ref()
+            .map(|(_, l1)| b.print_l1(l1))
+            .map_err(|e| e.to_string());
+        match (&before, &now_text) {
+            (Ok(x), Ok(y)) if x == y => {
+                report.entry("unchanged").or_default().push(stem);
+                continue;
+            }
+            (Ok(x), _) if Some(x) != stored.as_ref() => {
+                report
+                    .entry("predecessor differs from the reference")
+                    .or_default()
+                    .push(stem);
+                continue;
+            }
+            (Err(e), _) => {
+                report
+                    .entry("predecessor refused")
+                    .or_default()
+                    .push(format!("{stem}: {e}"));
+                continue;
+            }
+            (Ok(_), Err(e)) => {
+                report
+                    .entry("refused under RUL.099")
+                    .or_default()
+                    .push(format!("{stem}: {e}"));
+                continue;
+            }
+            _ => {}
+        }
+        let (name, l1) = now.unwrap();
+        let mut case = case;
+        case["binds"] = placed(&case["binds"], &l1, &name, &m);
+        let progs = match b.programs(&l1, &name, None, &m) {
+            Ok(p) => p,
+            Err(e) => {
+                report
+                    .entry("programs refused")
+                    .or_default()
+                    .push(format!("{stem}: {e}"));
+                continue;
+            }
+        };
+        let bound = matches!(b.order(&progs, &m), Err(e) if e.clause == "STACK.RELOC");
+        let binds: Option<BTreeMap<String, i128>> = bound.then(|| {
+            case["binds"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(k, v)| (k.clone(), v.as_i64().unwrap_or(0) as i128))
+                .collect()
+        });
+        let plain = CardStack {
+            binds: binds.clone(),
+            node_fed: true,
+            ..CardStack::default()
+        };
+        let card = CardStack {
+            binds,
+            node_fed: false,
+            ..CardStack::default()
+        };
+        let progs = if bound {
+            plain.programs(&l1, &name, None, &m).unwrap()
+        } else {
+            progs
+        };
+        let built = (|| {
+            let e = |e: Refusal| e.to_string();
+            Ok::<_, String>(serde_json::json!({
+                "packages": package_json(&case, &plain.order(&progs, &m).map_err(e)?, &m)?,
+                "verdict": verdict_json(&plain.check(&progs, &m).map_err(e)?),
+                "card": {
+                    "fetch": [m.die.fetch_port.0, m.die.fetch_port.1],
+                    "packages": package_json(&case, &card.order(&progs, &m).map_err(e)?, &m)?,
+                    "verdict": verdict_json(&card.check(&progs, &m).map_err(e)?),
+                },
+            }))
+        })();
+        let mut ruled = match built {
+            Ok(r) => r,
+            Err(e) => {
+                report
+                    .entry("build refused")
+                    .or_default()
+                    .push(format!("{stem}: {e}"));
+                continue;
+            }
+        };
+        let mut rulings: Vec<Value> = case["ruled"]["rulings"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        if !rulings.iter().any(|r| r == "RUL.099") {
+            rulings.push("RUL.099".into());
+        }
+        ruled["rulings"] = Value::Array(rulings);
+        ruled["l1"] = Value::String(now_text.unwrap());
+        report.entry("ruled").or_default().push(stem.clone());
+        if let Some(backup) = &backup {
+            let path = dir.join(format!("{stem}.json"));
+            let original = std::fs::read(&path).unwrap();
+            std::fs::create_dir_all(backup).unwrap();
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(backup.join(format!("{stem}.json")))
+                .and_then(|mut f| std::io::Write::write_all(&mut f, &original))
+                .expect("a new backup");
+            let mut updated = case.clone();
+            updated["ruled"] = ruled;
+            let text = serde_json::to_string_pretty(&updated).unwrap() + "\n";
+            std::fs::write(&path, text).unwrap();
+        }
+    }
+    for (what, cases) in &report {
+        println!("{what}: {}", cases.len());
+        if *what != "unchanged" {
+            for c in cases {
+                println!("    {c}");
+            }
+        }
+    }
 }
 
 /// Migrated attention has no refusal exception; a wrong entry name is detected.

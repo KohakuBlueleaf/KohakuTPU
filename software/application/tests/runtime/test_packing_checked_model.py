@@ -179,8 +179,9 @@ def test_nonfinite_source_padding_is_overwritten_and_recording_replays(
     try:
         assert not any(event[0] == "read" for event in log)
         dev.replay(log)
-        # All live values zero: scale 0xa0 in each lane, zero signed slots.
-        assert dev.read(q, 512) == (bytes([0xA0]) * 4 + bytes(28)) * 16
+        # All live values zero: the E=0 field 0x01 in each lane (NUM.MX7.008),
+        # zero signed slots.
+        assert dev.read(q, 512) == (bytes([0x01]) * 4 + bytes(28)) * 16
         bits[0, 0] = 0xFC00
         dev.write(x, bits.tobytes())
         with pytest.raises(NonfinitePackingError, match="NONFINITE_FP16"):

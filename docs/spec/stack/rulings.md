@@ -134,6 +134,10 @@ settles.
 - **RUL.096** `unproven` IR levels: L2 is the top level: ir-text.md names both levels and the READMEs describe the tree as it is. (doc fix; from: l1/program.md #10; l2/program.md #2; ruling R-096)
 - **RUL.097** `unproven` L2 view axis forms: l2-program.md lists the LO : HI form the reader accepts. (doc fix; from: l2/program.md #6; ruling R-097)
 
+## All-zero MX blocks in K pairs (lead ruling, 2026-10-29)
+
+- **RUL.099** `RTL` Every all-zero MXFP7 block feeding an `nk` >= 2 accumulator carries the E=0 scale field (NUM.MX7.008, NUM.ACC.008). Mover QUANT cannot give it, so: an L2 `quant` into an `nk` >= 2 destination without `backend=` lowers through `vector_mx7` (refused by the board's policy when it does not allow it); `backend=mover_quant` into an `nk` >= 2 destination is refused (L2.MOV.018); and a contraction plans `nk` = 1 where its quantiser is mover QUANT under pairing `unpaired`, or keeps `nk` = 2 with vector quantisation under pairing `vector` (`ktpu_machine::Pairing`, default `PAIRING`; the `matmul.plan` argument `pairing`, Python `KTPU_MX7_PAIRING`). L2.MOV.010.quant_and_gt4 runs under this ruling with `nk=1` destinations (`ktpu_l2::spec::SUPERSEDED`). (code: `ktpu-machine/src/pairing.rs`; `ktpu-l2/src/lower/mover/packing.rs` `quant_backend`; `ktpu-kernels/src/gen/matmul.rs` `plan`; evidence: L2.MOV.018 vectors; `test_zero_block_model.py`)
+
 ## SRU accumulation precision (lead ruling, 2026-10-24)
 
 - **RUL.098** `RTL` R2 and every SRU row sum using `sru_red` with

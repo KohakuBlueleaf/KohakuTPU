@@ -172,7 +172,7 @@ fn ranked_constants_held_and_scalar_operands() {
                 "f16",
                 "f16",
             )));
-            let ns = numbers(&ops);
+            let ns = numbers(&ops, old.body);
             assert_eq!(ns[0], 3.25);
             assert!(!ns.contains(&999.0));
             assert!(!ns.contains(&0.0));

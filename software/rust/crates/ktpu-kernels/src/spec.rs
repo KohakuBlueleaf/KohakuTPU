@@ -124,6 +124,7 @@ fn cluster_plan(inp: &Value, m: Option<&Machine>) -> Result<Value, String> {
         int(p, "k")?,
         shared,
         int(p, "quantum")?,
+        ktpu_machine::PAIRING,
         m,
     ) {
         Ok(mm) => Ok(json!({

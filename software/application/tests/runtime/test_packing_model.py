@@ -19,7 +19,8 @@ from kohakutpu.stack import rs
 
 
 def reference(x, side, groups, nk):
-    """NUM.MX7.002/.003 oracle plus independent NUM.MX7.005 slot placement."""
+    """NUM.MX7.002/.003 oracle plus independent NUM.MX7.005 slot placement.
+    Callers pass the operand as quantised, `mxfp7.lift(x, nk)`."""
     q, es, m8 = mxfp7.quantise_fp16(x)
     rows, cols = x.shape
     fields = ((es + 20) << 3) | (m8 - 8)
@@ -95,11 +96,11 @@ def test_small_exact_bytes_and_guards(dev, side, tmp_path):
     bits[1] = 0x8000
     bits[2, :16] = np.arange(16, dtype=np.uint16)
     x = bits.view(np.float16)
-    want = reference(x, side, 2, 2)
     records = []
-    for backend in ("mover_quant", "vector_mx7"):
-        actual, metrics = trial(dev, x, side, 2, 2, backend)
-        assert actual == want
+    # mover QUANT only into unpaired destinations (RUL.099)
+    for backend, nk in (("mover_quant", 1), ("vector_mx7", 1), ("vector_mx7", 2)):
+        actual, metrics = trial(dev, x, side, 2, nk, backend)
+        assert actual == reference(mxfp7.lift(x, nk), side, 2, nk)
         records.append(metrics)
     # The metrics go to KTPU_PACKING_MODEL_OUT when set.
     path = (
@@ -117,7 +118,7 @@ def test_small_exact_bytes_and_guards(dev, side, tmp_path):
 def test_packed_byte_oracle_kills_mutants(dev, mutant):
     x = (np.arange(512, dtype=np.float16).reshape(8, 64) - 128) / 64
     actual, _ = trial(dev, x, "a", 2, 2, "vector_mx7", mutant)
-    assert actual != reference(x, "a", 2, 2)
+    assert actual != reference(mxfp7.lift(x, 2), "a", 2, 2)
 
 
 def test_exhaustive_finite_converter_identity(dev):
@@ -157,7 +158,7 @@ def test_tiles_chunks_and_batch_tails(dev, shape, groups, nk):
     x = bits.view(np.float16)
     for side in ("a", "b"):
         actual, _ = trial(dev, x, side, groups, nk, "vector_mx7")
-        assert actual == reference(x, side, groups, nk)
+        assert actual == reference(mxfp7.lift(x, nk), side, groups, nk)
 
 
 def test_runtime_unaligned_packed_form(dev, monkeypatch):
@@ -192,7 +193,7 @@ def test_rust_generated_checked_quant(dev, monkeypatch):
         generated.launch(dev, "matmul.quant_kernel", args, {"x": xa, "q": qa})
         expected = np.zeros((8, 64), np.float16)
         expected[:5, :48] = raw[:5, 16:64]
-        assert dev.read(qa, 512) == reference(expected, "a", 2, 2)
+        assert dev.read(qa, 512) == reference(mxfp7.lift(expected, 2), "a", 2, 2)
     finally:
         dev.free(xa)
         dev.free(qa)
@@ -236,7 +237,7 @@ def test_padded_scratch_full_readback_and_guards(dev, monkeypatch):
         dev.run(c, {"x": xa, "q": qa})
         expected = np.zeros((8, 64), np.float16)
         expected[:5, :48] = raw[:5, 16:64]
-        assert dev.read(qa, 512) == reference(expected, "a", 2, 2)
+        assert dev.read(qa, 512) == reference(mxfp7.lift(expected, 2), "a", 2, 2)
         assert dev.read(xa, raw.nbytes) == raw.tobytes()
         assert len(scratch) == 1
         for address, (base, nbytes) in scratch.items():

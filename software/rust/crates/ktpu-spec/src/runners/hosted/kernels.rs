@@ -52,8 +52,8 @@ fn cluster_mm(inp: &Value, m: Option<&Machine>) -> Result<Value, String> {
     let [bt, rows, n, k] = p[..] else {
         return Err(format!("a plan of 4, not {}", p.len()));
     };
-    let mm =
-        ktpu_kernels::gen::matmul::plan(bt, rows, n, k, true, 4, m).map_err(|e| e.to_string())?;
+    let mm = ktpu_kernels::gen::matmul::plan(bt, rows, n, k, true, 4, ktpu_machine::PAIRING, m)
+        .map_err(|e| e.to_string())?;
     let out = ktpu_kernels::Operand::full(mm.n, mm.bt * mm.m);
     let kernel = ktpu_kernels::mm_kernel(&mm, &ktpu_kernels::expr::load(0), &[], &out, m)
         .map_err(|e| e.to_string())?;

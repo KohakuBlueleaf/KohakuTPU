@@ -394,7 +394,7 @@ impl Search {
             if let Some(lp) = &lp {
                 all.extend(ops_of(&lp.body));
             }
-            let many = numbers(&all).len() as i64 > t.stk_s();
+            let many = numbers(&all, body).len() as i64 > t.stk_s();
             let rows = pre.iter().any(|u| {
                 matches!(u.as_ref(), Node::Op(o) if o.op == "unpack" && o.ty.as_ref().map(|x| x.shape.len() == 2).unwrap_or(false))
             });

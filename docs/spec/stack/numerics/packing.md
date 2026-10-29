@@ -20,10 +20,28 @@ libraries and bound packages. Receiving-board admission checks MOVER and ENGINE
 QUANT commands even when optional checks are off. A mover-only policy rejects
 vector MX7 instructions. A cached artifact cannot substitute its own policy.
 
+## K pairs and the quantiser (RUL.099)
+
+The cluster merges a K pair's block partials at the larger exponent sum, so an
+all-zero block feeding an `nk` >= 2 contraction needs the E=0 field
+(NUM.MX7.008, NUM.ACC.008), which only the vector packs give it. A `quant`
+into an `nk` >= 2 destination therefore lowers through `vector_mx7`; one naming
+`backend=mover_quant` is refused (L2.MOV.018). On a board preferring
+`mover_quant`, contractions are planned under the pairing
+`ktpu_machine::PAIRING`: `unpaired` plans them `nk` = 1 so mover QUANT feeds
+them, `vector` keeps `nk` = 2 and quantises their operands on the vector
+cores. `matmul.plan`'s argument `pairing` (Python `KTPU_MX7_PAIRING`) selects
+the other; a board preferring `vector_mx7` pairs under either. The pairing is a
+plan argument, not a machine fact: a new `conversion` fact changes the schema
+hash every machine file carries.
+
 ## Finite input contract
 
 FP16 unpack preserves every finite encoding, including signed zero and
-subnormals. MX7 packing uses NUM.MX7.002/.003 and NUM.MX7.005's A/B entry order.
+subnormals. MX7 packing uses NUM.MX7.002/.003 and NUM.MX7.005's A/B entry order;
+into an `nk` >= 2 destination, on the input with every zero as 2^-24
+(NUM.MX7.008): one `vsel` a 4x32 entry after its unpack, against a scalar
+register holding 2^-24 (`seti s4`).
 Version 2 checks unproven inputs **on the card**, without host input transfers.
 Each loaded lane is classified before packing; the original numerical register
 is not modified. Since this vector ISA has no integer mask operation, the

@@ -6,7 +6,7 @@
 use super::{card, text};
 use ktpu_kernels::expr;
 use ktpu_kernels::gen::{matmul, transpose, vector as v, Hw};
-use ktpu_machine::Machine;
+use ktpu_machine::{Machine, Pairing, PAIRING};
 use serde_json::json;
 
 fn with(fact: &str, value: i64) -> Machine {
@@ -15,7 +15,9 @@ fn with(fact: &str, value: i64) -> Machine {
 
 /// K chunks (`nk`) of a K = 128 product.
 fn nk(m: &Machine) -> i64 {
-    matmul::plan(1, 64, 64, 128, true, 4, m).unwrap().nk
+    matmul::plan(1, 64, 64, 128, true, 4, Pairing::Vector, m)
+        .unwrap()
+        .nk
 }
 
 /// Rows of a [64, 32] rows trip, or the refusal's clause.
@@ -36,15 +38,46 @@ fn trip_rows(m: &Machine) -> Result<i64, String> {
 fn kstep_from_the_machine() {
     assert_eq!(nk(&card()), 2);
     assert_eq!(nk(&with("mg.kstep", 1)), 1);
-    let k = matmul::plan(1, 64, 64, 128, true, 4, &with("mg.kstep", 4)).unwrap();
+    let k = matmul::plan(
+        1,
+        64,
+        64,
+        128,
+        true,
+        4,
+        Pairing::Vector,
+        &with("mg.kstep", 4),
+    )
+    .unwrap();
     assert_eq!(k.nk, 4);
+}
+
+/// RUL.099: a mover-quantised contraction pairs K blocks only under the
+/// vector pairing; a vector-quantised one pairs under either.
+#[test]
+fn pairing_follows_the_quantiser() {
+    let backend = |b: &str| {
+        card()
+            .with_fact(
+                "conversion.fp16_mx7.allowed_backends",
+                json!(["mover_quant", "vector_mx7"]),
+            )
+            .and_then(|m| m.with_fact("conversion.fp16_mx7.preferred_backend", json!(b)))
+            .unwrap()
+    };
+    let nk = |p: Pairing, m: &Machine| matmul::plan(1, 64, 64, 128, true, 4, p, m).unwrap().nk;
+    let (mover, vector) = (backend("mover_quant"), backend("vector_mx7"));
+    assert_eq!(nk(Pairing::Unpaired, &mover), 1);
+    assert_eq!(nk(Pairing::Vector, &mover), 2);
+    assert_eq!(nk(Pairing::Unpaired, &vector), 2);
+    assert_eq!(nk(Pairing::Vector, &vector), 2);
 }
 
 #[test]
 fn kblock_from_the_machine() {
     assert_eq!(trip_rows(&card()), Ok(16));
     assert_eq!(trip_rows(&with("mg.kblock", 64)), Err("API.ROW.008".into()));
-    let err = matmul::plan(1, 64, 96, 64, true, 4, &with("mg.kblock", 64)).unwrap_err();
+    let err = matmul::plan(1, 64, 96, 64, true, 4, PAIRING, &with("mg.kblock", 64)).unwrap_err();
     assert_eq!(err.clause, "API.OP.006");
 }
 

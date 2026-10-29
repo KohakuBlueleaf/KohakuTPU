@@ -9,6 +9,7 @@
 pub mod canon;
 pub mod card;
 pub mod mutant;
+pub mod pairing;
 pub mod refusal;
 pub mod schema;
 
@@ -18,6 +19,7 @@ use std::collections::BTreeMap;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
+pub use pairing::{Pairing, PAIRING};
 pub use refusal::{refuse, Refusal};
 pub use schema::*;
 

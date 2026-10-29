@@ -1,0 +1,38 @@
+{
+ "clause": "L2.MOV.018",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t5",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[64, 128] @dram, a: mx7a[64, 128] @dram(gm=8, nk=2), b: mx7b[64, 128] @dram(gn=16, nk=1))",
+   "    quant a <- x finite=1",
+   "    quant b <- x finite=1"
+  ],
+  "facts": {
+   "fn": {
+    "lines": "^quant",
+    "in": "fn"
+   },
+   "vpack": {
+    "set": "^vpack \\S+ -> l1\\[\\d+\\] (mx7[ab])",
+    "in": "images"
+   }
+  }
+ },
+ "expect": {
+  "fn": [
+   "quant w(x+0, (4, 64), (64, 256), (2, 32)) -> w(b+0, (64, 128)) bpack"
+  ],
+  "vpack": [
+   "mx7a"
+  ]
+ },
+ "mutants": [
+  "l2.packing/mover-paired",
+  "l2.rul099/before"
+ ]
+}

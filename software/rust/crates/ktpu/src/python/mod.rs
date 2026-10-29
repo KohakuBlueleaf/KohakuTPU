@@ -771,6 +771,25 @@ fn generate(
     serde_json::to_string(&kernel.graph).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
+/// pairs_blocks(machine_json, pairing=None, mutant=None) -> bool: whether a
+/// contraction on the machine pairs K blocks under `pairing` (`MX7_PAIRING`
+/// when None): `ktpu_machine::Machine::pairs_blocks`, RUL.099.
+#[pyfunction]
+#[pyo3(signature = (machine_json, pairing=None, mutant=None))]
+fn pairs_blocks(machine_json: &str, pairing: Option<&str>, mutant: Option<&str>) -> PyResult<bool> {
+    let m = machine(machine_json)?;
+    let p = match pairing {
+        None => ktpu_machine::PAIRING,
+        Some(name) => ktpu_machine::Pairing::parse(name).ok_or_else(|| {
+            PyValueError::new_err(format!("a pairing (vector, unpaired): {name}"))
+        })?,
+    };
+    match mutant {
+        Some(n) => crate::mutant::with(n, || m.pairs_blocks(p)).map_err(PyValueError::new_err),
+        None => Ok(m.pairs_blocks(p)),
+    }
+}
+
 #[pymodule]
 #[pyo3(name = "_rs")]
 fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -787,6 +806,8 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(debug_decode, m)?)?;
     m.add_function(wrap_pyfunction!(compile, m)?)?;
     m.add_function(wrap_pyfunction!(generate, m)?)?;
+    m.add_function(wrap_pyfunction!(pairs_blocks, m)?)?;
+    m.add("MX7_PAIRING", ktpu_machine::PAIRING.name())?;
     m.add_function(wrap_pyfunction!(bind, m)?)?;
     m.add_function(wrap_pyfunction!(bind_cache_stats, m)?)?;
     m.add_function(wrap_pyfunction!(bind_cache_configure, m)?)?;

@@ -1,6 +1,18 @@
 //! MX7 batch images and a device-side finite-exponent classifier.
 
+use ktpu_isa::numerics::e8m15;
+use ktpu_l1::layout::tensor::zero_lift_value;
+
 use crate::mutant::on;
+
+/// The S register a lifting batch image holds `tensor::ZERO_LIFT` in: every
+/// entry's zeros are selected to it before VPACK, so an all-zero block packs
+/// E=0.
+const LIFT: &str = "s4";
+
+fn lift_seti() -> String {
+    format!("    seti {LIFT} = {}", e8m15(zero_lift_value()))
+}
 
 pub fn clear(name: &str) -> String {
     format!("image {name}()\n    vsync fe on=math\n    getstk s14\n    vmov v31, k0\n    vsync fe on=math\n    halt")
@@ -32,6 +44,8 @@ pub struct Batch<'a> {
     pub classifier_banks: bool,
     pub steady: Option<bool>,
     pub odd: bool,
+    /// The destination pairs K blocks (`nk` >= 2): zeros pack as `ZERO_LIFT`.
+    pub lift: bool,
 }
 
 impl Batch<'_> {
@@ -79,6 +93,12 @@ impl Batch<'_> {
 
     fn input_words(&self) -> i64 {
         self.valid_rows * self.row_words
+    }
+
+    fn lift(&self, v: i64, ind: &str, lines: &mut Vec<String>) {
+        if self.lift {
+            lines.push(format!("{ind}vsel v{v}, v{v}, {LIFT}, v{v}"));
+        }
     }
 
     fn unpack(&self, v: i64, input: i64, ind: &str, lines: &mut Vec<String>) {
@@ -133,6 +153,9 @@ impl Batch<'_> {
         }
         if !self.pipeline {
             lines.push(format!("{ind}vsync fe on=unpack"));
+        }
+        for j in 0..n {
+            self.lift(base + step * j, ind, lines);
         }
         if self.checked {
             self.classify(n, base, step, ind, lines);
@@ -225,6 +248,7 @@ impl Batch<'_> {
             lines.push(format!("{ind}vunpk v{v} <- l1[{input}] f16{rel}"));
         }
         lines.push(format!("{ind}vsync fe on=unpack"));
+        self.lift(v, ind, lines);
         if self.checked && !on("l2.packing/drop-finite-check") {
             // Exact equivalence to raw FP16 exponent != 31, including sNaNs.
             // Predicate masks RF writes, not EXP2D sticky: materialize first.
@@ -267,7 +291,12 @@ impl Batch<'_> {
                     0
                 }
             ));
-            lines.push("    vmov v0, k0".into());
+            if self.lift {
+                lines.push(lift_seti());
+                lines.push(format!("    vmov v0, {LIFT}"));
+            } else {
+                lines.push("    vmov v0, k0".into());
+            }
             lines.push("    vsync fe on=math".into());
             for j in 0..self.n {
                 lines.push(format!(
@@ -317,6 +346,9 @@ impl Batch<'_> {
         ];
         if self.checked {
             lines.extend(["    seti s2 = 65536.0".into(), "    seti s3 = 16.0".into()]);
+        }
+        if self.lift {
+            lines.push(lift_seti());
         }
         if self.slots == 1 {
             lines.extend([

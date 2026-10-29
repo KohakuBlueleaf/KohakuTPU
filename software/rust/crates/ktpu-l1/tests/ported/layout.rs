@@ -99,8 +99,9 @@ fn mx7() -> Result<Mx7, String> {
     Mx7::of(&machine()).map_err(|e| e.to_string())
 }
 
-/// `pack` equals the slot-by-slot reference for A and B packings, and an
-/// all-zero block gets the zero scale.
+/// `pack` equals the slot-by-slot reference for A and B packings; an
+/// all-zero block gets the zero scale (field 0xA0), or in K pairs, its zeros
+/// quantised as 2^-24, field 0x01 (NUM.MX7.008).
 fn pack_places_every_slot_and_scale() -> Result<(), String> {
     let f = mx7()?;
     for (i, &(rows, k, gt, bc)) in [(8, 64, 1, 1), (16, 128, 2, 2), (32, 64, 4, 1)]
@@ -109,11 +110,19 @@ fn pack_places_every_slot_and_scale() -> Result<(), String> {
     {
         let mut x = fp16s(rows * k, i as u64 + 1);
         x[..32].fill(0);
+        x[40] = 0x8000;
+        let paired = bc >= 2;
+        let lifted: Vec<u16> = x
+            .iter()
+            .map(|&h| if paired && h & 0x7FFF == 0 { 0x0001 } else { h })
+            .collect();
+        let field = if paired { 0x01 } else { 0xA0 };
         for b in [false, true] {
             let got = pack(&x, rows, k, gt, bc, b, &f).map_err(|e| e.to_string())?;
+            eq((rows, k, gt, bc, b, got[3]), (rows, k, gt, bc, b, field))?;
             eq(
                 (rows, k, gt, bc, b, got),
-                (rows, k, gt, bc, b, by_slot(&x, rows, k, gt, bc, b)),
+                (rows, k, gt, bc, b, by_slot(&lifted, rows, k, gt, bc, b)),
             )?;
         }
         let (_, scales) = quantise(&x[..32], 32).map_err(|e| e.to_string())?;

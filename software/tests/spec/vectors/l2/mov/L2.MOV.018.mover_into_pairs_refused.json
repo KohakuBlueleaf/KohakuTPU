@@ -1,0 +1,22 @@
+{
+ "clause": "L2.MOV.018",
+ "tier": 0,
+ "runner": "l2.compile",
+ "machine": "multimesh_v9t5",
+ "status": "frozen",
+ "input": {
+  "text": [
+   "target ktpu.v9",
+   "",
+   "fn k.l2(x: f16[64, 128] @dram, a: mx7a[64, 128] @dram(gm=8, nk=2))",
+   "    quant a <- x finite=1 backend=mover_quant"
+  ],
+  "refused_only": true
+ },
+ "expect": {
+  "refused": true
+ },
+ "mutants": [
+  "l2.packing/mover-paired"
+ ]
+}

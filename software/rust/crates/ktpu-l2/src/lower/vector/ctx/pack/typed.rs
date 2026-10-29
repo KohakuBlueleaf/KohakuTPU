@@ -4,6 +4,7 @@ use super::*;
 use crate::lower::vector::ctx::emit::typed::{symbol, Emitter};
 use crate::lower::vector::gen::typed::{self as ir, Select, Symbol};
 use crate::lower::vector::tree::typed as tt;
+use crate::lower::vector::{mx7_pack, zero_lift_value};
 
 // Tree helpers retain their own generator; move events without cloning or parsing.
 fn with_tree<T>(g: &mut Emitter, f: impl FnOnce(&mut tt::Gen) -> T) -> T {
@@ -54,23 +55,54 @@ impl Ctx<'_> {
                     ));
                 }
                 let only = read_once(ops, o);
+                let lift = mx7_pack(o, ops, self.body);
                 for &r in rows {
                     let tsym = g.sym();
                     let reg = symbol(&src.regs[&r]);
-                    if !(only && with_tree(g, |g| tt::quantiser_order(g, &reg, &tsym))) {
+                    // Zeros lift in the move to quantiser order, or in place.
+                    let ordered = only && with_tree(g, |g| tt::quantiser_order(g, &reg, &tsym));
+                    if !ordered {
                         for i in 0..4 {
                             for q in 0..2 {
+                                let (s, d) = (Select::Stride(4 * q + i), Select::Stride(2 * i + q));
+                                let mut syms = vec![tsym.clone(), reg.clone()];
+                                let args = if lift {
+                                    let z = self.constant_typed(
+                                        g,
+                                        zero_lift_value(),
+                                        &mut syms,
+                                        &[reg.operand(s)],
+                                        s,
+                                    )?;
+                                    vec![reg.operand(s), z, reg.operand(s)]
+                                } else {
+                                    vec![reg.operand(s)]
+                                };
                                 g.op(
                                     ir::math(
-                                        "vmov",
-                                        tsym.operand(Select::Stride(2 * i + q)),
-                                        vec![reg.operand(Select::Stride(4 * q + i))],
+                                        if lift { "vsel" } else { "vmov" },
+                                        tsym.operand(d),
+                                        args,
                                         vec![ir::kw("vl", Term::int(16))],
                                     ),
-                                    vec![tsym.clone(), reg.clone()],
+                                    syms,
                                 );
                             }
                         }
+                    } else if lift {
+                        let mut syms = vec![tsym.clone()];
+                        let w = tsym.operand(Select::Whole);
+                        let z = self.constant_typed(
+                            g,
+                            zero_lift_value(),
+                            &mut syms,
+                            &[w.clone()],
+                            Select::Whole,
+                        )?;
+                        g.op(
+                            ir::math("vsel", w.clone(), vec![w.clone(), z, w], vec![]),
+                            syms,
+                        );
                     }
                     for &d in &dests {
                         let at = self.descs[d].buf[parity] + r * 4;

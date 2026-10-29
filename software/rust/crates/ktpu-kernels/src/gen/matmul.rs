@@ -16,7 +16,7 @@ use crate::trace::buffer::{sl, spec, ALL};
 use crate::trace::control::At;
 use crate::trace::{fail, Buf, Cond, Idx, Trace, R};
 use ktpu_graph as g;
-use ktpu_machine::Machine;
+use ktpu_machine::{Machine, Pairing};
 
 /// The widest product tile's rows: stack policy, below the bank bound
 /// (`(tm / mg.lanes) * nk <= mg.l1_bank_entries`) the plan also checks.
@@ -70,8 +70,19 @@ impl Mm {
 }
 
 /// The tiling of `bt` [M, K] x [N, K] products, each batch's rows padded
-/// to whole `quantum`s (API.OP.006: N whole `mg.kblock`-column blocks).
-pub fn plan(bt: i64, m: i64, n: i64, k: i64, shared: bool, quantum: i64, mach: &Machine) -> R<Mm> {
+/// to whole `quantum`s (API.OP.006: N whole `mg.kblock`-column blocks); K
+/// blocks paired as `pairing` allows on `mach` (RUL.099).
+#[allow(clippy::too_many_arguments)]
+pub fn plan(
+    bt: i64,
+    m: i64,
+    n: i64,
+    k: i64,
+    shared: bool,
+    quantum: i64,
+    pairing: Pairing,
+    mach: &Machine,
+) -> R<Mm> {
     let hw = Hw::of(mach);
     let (kb, band) = (hw.kblock, hw.band);
     if n % kb != 0 {
@@ -81,7 +92,7 @@ pub fn plan(bt: i64, m: i64, n: i64, k: i64, shared: bool, quantum: i64, mach: &
         );
     }
     let kp = cdiv(k, kb) * kb;
-    let nk = if kp % (hw.kstep * kb) == 0 {
+    let nk = if mach.pairs_blocks(pairing) && kp % (hw.kstep * kb) == 0 {
         hw.kstep
     } else {
         1

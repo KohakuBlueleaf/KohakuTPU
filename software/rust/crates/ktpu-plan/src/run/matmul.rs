@@ -60,7 +60,7 @@ impl Mm {
             ));
         }
         let kp = hw.whole_blocks(k);
-        let nk = if kp % (hw.kstep * hw.kblock) == 0 {
+        let nk = if hw.pairs && kp % (hw.kstep * hw.kblock) == 0 {
             hw.kstep
         } else {
             1

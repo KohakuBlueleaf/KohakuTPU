@@ -146,6 +146,7 @@ fn run(call: &Value, plans: &[&Value], m: &Machine) -> Result<Got, Refusal> {
                 int(&a["k"]),
                 a["shared"].as_bool().expect("a bool"),
                 int(&a["quantum"]),
+                ktpu_machine::PAIRING,
                 m,
             )?;
             Got::Result(serde_json::json!({"mm": {
@@ -283,7 +284,7 @@ fn check_all() -> Tally {
                     (Ok(_), Some(e)) => Some(format!("Python refused ({e}), Rust did not")),
                     (Err(e), None) => Some(format!("Rust refused: {e}")),
                     (Ok(Got::Result(v)), None) => {
-                        (*v != call["result"]).then(|| format!("result {v} vs {}", call["result"]))
+                        (*v != want["result"]).then(|| format!("result {v} vs {}", want["result"]))
                     }
                     (Ok(Got::Kernel(kern, nblk)), None) => {
                         let two = run(call, &plans, &m.with_nodes(2).expect("two nodes"));

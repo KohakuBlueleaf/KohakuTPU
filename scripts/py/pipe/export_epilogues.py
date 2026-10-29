@@ -63,7 +63,9 @@ def main():
             False,
             hw,
         )
-        mm = MM.plan(**metadata["mm"]["made_by"]["args"])
+        mm = MM.plan(
+            **metadata["mm"]["made_by"]["args"], machine_json=machine.machine_json
+        )
         expr = expression(metadata["e"])
         extras = tuple(Operand(**o) for o in metadata["extras"])
         out = Operand(**metadata["out"])

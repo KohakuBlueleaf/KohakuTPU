@@ -34,8 +34,23 @@ def test_board_default_and_override():
     with pytest.raises(ValueError, match="excludes"):
         K.compile(source(backend="mover_quant"), machine=m)
     model = machine_of("vlt_v9t6s_1n")
-    assert "quant w(" in K.compile(source(), machine=model).l1_text
+    assert "quant w(" in K.compile(source(nk=1), machine=model).l1_text
     assert "vpack v0" in K.compile(source(backend="vector_mx7"), machine=model).l1_text
+
+
+def test_paired_destination_takes_the_vector_quantiser():
+    """L2.MOV.018 / RUL.099: an nk=2 destination on a mover-preferring board
+    lowers through vector_mx7 and an explicit mover_quant into it refuses;
+    `l2.packing/mover-paired` restores the mover lowering."""
+    model = machine_of("vlt_v9t6s_1n")
+    text = K.compile(source(), machine=model).l1_text
+    assert "vpack v0" in text and "    quant w(" not in text
+    with pytest.raises(ValueError, match="RUL.099"):
+        K.compile(source(backend="mover_quant"), machine=model)
+    with rs.mutant("l2.packing/mover-paired"):
+        assert "    quant w(" in K.compile(source(), machine=model).l1_text
+        mover = K.compile(source(backend="mover_quant"), machine=model)
+        assert "    quant w(" in mover.l1_text
 
 
 def test_unproven_and_missing_mx_refuse():
@@ -135,7 +150,7 @@ def test_library_identity_includes_conversion_policy():
 
 def test_restrictive_admission_checks_mover_and_engine():
     permissive = machine_of("vlt_v9t6s_1n")
-    c = K.compile(source(), machine=permissive)
+    c = K.compile(source(nk=1), machine=permissive)
     p = c.programs({"x": 0x1000000, "q": 0x2000000})[None]
     doc = json.loads(permissive.machine_json)
     doc["machine"]["conversion"]["fp16_mx7"].update(
@@ -151,7 +166,7 @@ def test_restrictive_admission_checks_mover_and_engine():
 
 def test_replay_and_checker_off_still_use_receiving_policy():
     permissive = machine_of("vlt_v9t6s_1n")
-    c = K.compile(source(), machine=permissive)
+    c = K.compile(source(nk=1), machine=permissive)
     raw = c.programs({"x": 0x1000000, "q": 0x2000000})[None].bound(True)
     receiver = OfflineCard("multimesh_v9t6")
     receiver.check = "off"
@@ -230,7 +245,7 @@ def test_completion_wait_mutant_is_killed_by_ordering_property():
 def test_prepared_replay_admits_each_package_before_pinning_it():
     # Prepared submissions skip per-replay admission: preparation is the gate.
     permissive = machine_of("vlt_v9t6s_1n")
-    c = K.compile(source(), machine=permissive)
+    c = K.compile(source(nk=1), machine=permissive)
     raw = c.programs({"x": 0x1000000, "q": 0x2000000})[None].bound(True)
     pinned = []
     queue = SimpleNamespace(prepared_bytes=0, prepare=pinned.append)
@@ -244,7 +259,7 @@ def test_prepared_replay_admits_each_package_before_pinning_it():
 
 def test_build_admits_for_the_receiving_machine():
     # The card's eager path submits what `built` admitted, without a second check.
-    p = K.compile(source(), machine=machine_of("vlt_v9t6s_1n")).programs(
+    p = K.compile(source(nk=1), machine=machine_of("vlt_v9t6s_1n")).programs(
         {"x": 0x1000000, "q": 0x2000000}
     )[None]
     B.built({0: p}, machine_of("vlt_v9t6s_1n"), p.fetch)
@@ -256,7 +271,9 @@ def test_one_launch_binds_and_admits_once(monkeypatch):
     # The runtime validates a launch's bind and the card builds it again; the
     # card path admits it again with explicit empty bindings: one Rust call each.
     m = machine_of("vlt_v9t6s_1n")
-    p = K.compile(source(), machine=m).programs({"x": 0x1000000, "q": 0x2000000})[None]
+    p = K.compile(source(nk=1), machine=m).programs({"x": 0x1000000, "q": 0x2000000})[
+        None
+    ]
     # A compile cache can hand back a package other tests already bound.
     p.__dict__.pop("_bound", None)
     B._admit.cache_clear()

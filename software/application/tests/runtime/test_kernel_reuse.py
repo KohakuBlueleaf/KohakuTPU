@@ -18,6 +18,7 @@ from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime.device import Device
+from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.language import dsl as kt
 from kohakutpu.language.dsl import errors as DE
 from kohakutpu.language.dsl import trace as DT
@@ -213,7 +214,7 @@ def test_kernel_builders_are_memoized_and_bounded(monkeypatch):
         KM.quant_kernel(op, 8, 32, 8, 32, "a", 2, 1)[0]
         is KM.quant_kernel(op, 8, 32, 8, 32, "a", 2, 1)[0]
     )
-    mm = KM.plan(1, 8, 32, 32)
+    mm = KM.plan(1, 8, 32, 32, machine_json=machine_of("vlt_v9t6s_1n").machine_json)
     expr = X.op("add", X.Load(0), 1.0)
     assert (
         KM.mm_kernel(mm, expr, (), op, 2, 2)[0]

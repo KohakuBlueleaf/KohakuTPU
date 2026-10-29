@@ -5,6 +5,7 @@ use ktpu_graph as g;
 use ktpu_kernels::expr;
 use ktpu_kernels::gen::matmul::{self as mm, Side};
 use ktpu_kernels::gen::vector::Operand;
+use ktpu_machine::{Pairing, PAIRING};
 
 fn relu() -> expr::E {
     expr::op("max", vec![expr::load(0).into(), 0.0.into()]).unwrap()
@@ -12,15 +13,15 @@ fn relu() -> expr::E {
 
 #[test]
 fn api_op_006_product_columns_whole_blocks() {
-    let err = mm::plan(1, 64, 40, 64, true, 4, &card()).unwrap_err();
+    let err = mm::plan(1, 64, 40, 64, true, 4, PAIRING, &card()).unwrap_err();
     assert_eq!(err.clause, "API.OP.006");
-    let p = mm::plan(1, 64, 96, 40, true, 4, &card()).unwrap();
+    let p = mm::plan(1, 64, 96, 40, true, 4, Pairing::Vector, &card()).unwrap();
     assert_eq!((p.kp, p.nk, p.tn), (64, 2, 32));
 }
 
 #[test]
 fn api_op_007_product_and_epilogue_one_kernel() {
-    let p = mm::plan(1, 64, 128, 64, true, 4, &card()).unwrap();
+    let p = mm::plan(1, 64, 128, 64, true, 4, PAIRING, &card()).unwrap();
     let out = Operand::full(128, 64);
     let k = mm::mm_kernel(&p, &relu(), &[], &out, &card()).unwrap();
     let units: Vec<g::UnitKind> = stmts(&k.graph.body)
@@ -64,7 +65,7 @@ fn api_form_007_rows_not_whole_words_refused() {
 
 #[test]
 fn api_form_011_tile_scratch_read_gt4() {
-    let p = mm::plan(1, 64, 128, 64, true, 4, &card()).unwrap();
+    let p = mm::plan(1, 64, 128, 64, true, 4, PAIRING, &card()).unwrap();
     let k = mm::mm_kernel(&p, &relu(), &[], &Operand::full(128, 64), &card()).unwrap();
     let h = &k.graph.scratch[0];
     assert_eq!(

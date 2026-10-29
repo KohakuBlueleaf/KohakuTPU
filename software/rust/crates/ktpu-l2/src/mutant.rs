@@ -53,6 +53,14 @@ pub fn on(name: &str) -> bool {
     }
 }
 
+/// Whether the lowering is RUL.099's predecessor (`l2.rul099/before`): every
+/// switch the ruling adds off at once (`l2.packing/unit-scale-zero`,
+/// `l2.vector/unit-scale-zero`, `l2.packing/mover-paired`), as the goldens it
+/// supersedes were lowered.
+pub fn before_rul099() -> bool {
+    on("l2.rul099/before")
+}
+
 /// Whether register-file bank placement is off on this thread.
 pub fn banks_off() -> bool {
     STATE.with(|s| s.get().banks_off)
@@ -109,6 +117,10 @@ pub const NAMES: &[&str] = &[
     "l2.vector/no-line-mask-cycle",
     "l2.class/serial-band",
     "l2.packing/repeated-zero",
+    "l2.packing/unit-scale-zero",
+    "l2.packing/mover-paired",
+    "l2.vector/unit-scale-zero",
+    "l2.rul099/before",
     "l2.class/squeeze-walk",
     "l2.class/carry-init",
     "l2.cluster/no-idle-post",

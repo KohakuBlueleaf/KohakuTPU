@@ -8,9 +8,19 @@ mod image;
 mod padding;
 
 /// Select a permitted backend. An op override never widens board admission.
+/// A destination of K pairs (`nk` >= 2) takes vector_mx7 (L2.MOV.018, RUL.099).
 pub fn quant_backend(body: &Body, op: &Op, tg: &Target) -> Result<bool> {
     let policy = &tg.machine.conversion.fp16_mx7;
+    let paired = op
+        .st
+        .positional()
+        .first()
+        .and_then(|d| body.buffers.get(&view_name(&as_view(d))))
+        .is_some_and(|b| b.get("nk") >= 2)
+        && !on("l2.packing/mover-paired")
+        && !crate::mutant::before_rul099();
     let backend = match op.st.kw("backend") {
+        None if paired => PackingBackend::VectorMx7,
         None => policy.preferred_backend,
         Some(Term::Name(name)) if name == "mover_quant" => PackingBackend::MoverQuant,
         Some(Term::Name(name)) if name == "vector_mx7" => PackingBackend::VectorMx7,
@@ -39,6 +49,14 @@ pub fn quant_backend(body: &Body, op: &Op, tg: &Target) -> Result<bool> {
             &op.st,
             "L2.MOV.010",
             "conversion.fp16_mx7 excludes the requested backend",
+        ));
+    }
+    if paired && backend != PackingBackend::VectorMx7 {
+        return Err(fail(
+            body,
+            &op.st,
+            "L2.MOV.018",
+            "quant into an nk >= 2 destination needs vector_mx7 (RUL.099)",
         ));
     }
     Ok(backend == PackingBackend::VectorMx7)
@@ -477,6 +495,9 @@ impl Schedule<'_> {
                             classifier_banks,
                             steady,
                             odd,
+                            lift: db.get("nk") >= 2
+                                && !on("l2.packing/unit-scale-zero")
+                                && !crate::mutant::before_rul099(),
                         }
                         .emit(),
                     );

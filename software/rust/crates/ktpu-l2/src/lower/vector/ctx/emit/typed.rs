@@ -53,7 +53,7 @@ impl Ctx<'_> {
         g: &mut Emitter,
         ops: &[Arc<Node>],
     ) {
-        let fs = numbers(ops);
+        let fs = numbers(ops, self.body);
         let stk = self.t.stk_s() as usize;
         let kept = if fs.len() <= stk { fs.len() } else { stk - 1 };
         for (i, f) in fs[..kept].iter().enumerate() {

@@ -23,6 +23,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use indexmap::IndexMap;
+pub use ktpu_l1::layout::tensor::zero_lift_value;
 use ktpu_l1::text::{py_float, Env, Term};
 
 use super::links::{Links, Transfer};
@@ -367,17 +368,21 @@ pub fn number(a: &Term) -> Option<f64> {
     }
 }
 
-/// The numbers `ops` read as operands (not K registers), domain guards'
-/// included, the most read first.
-pub fn numbers(ops: &[Arc<Node>]) -> Vec<f64> {
+/// The numbers `ops` read as operands (not K registers), domain guards' and
+/// a paired pack's lift included, the most read first.
+pub fn numbers(ops: &[Arc<Node>], body: &Body) -> Vec<f64> {
     let mut uses: IndexMap<FKey, (f64, i64)> = IndexMap::new();
     for n in ops {
         let Node::Op(op) = n.as_ref() else { continue };
         if is_in(&XLANE, &op.op) {
             continue;
         }
+        let lift = mx7_pack(op, ops, body).then(zero_lift_value);
         let read = op.st.positional().into_iter().filter_map(number);
-        for f in read.chain(domain_constants(&op.op).iter().copied()) {
+        for f in read
+            .chain(domain_constants(&op.op).iter().copied())
+            .chain(lift)
+        {
             if kreg(f).is_none() {
                 uses.entry(FKey::of(f)).or_insert((f, 0)).1 += 1;
             }
@@ -386,6 +391,42 @@ pub fn numbers(ops: &[Arc<Node>]) -> Vec<f64> {
     let mut v: Vec<(f64, i64)> = uses.into_values().collect();
     v.sort_by_key(|(_, c)| -c);
     v.into_iter().map(|(f, _)| f).collect()
+}
+
+/// A `pack` into MXFP7 that a K pair can read (stored into a buffer of
+/// `nk` >= 2, or sent to a cluster): its zeros are selected to
+/// `tensor::ZERO_LIFT` first, so an all-zero block packs E=0 (RUL.099;
+/// `zero_lift_value`, a constant it reads).
+pub fn mx7_pack(op: &Op, ops: &[Arc<Node>], body: &Body) -> bool {
+    let target = op.target.as_deref();
+    let paired = |n: &Arc<Node>| {
+        let Node::Op(s) = n.as_ref() else {
+            return false;
+        };
+        let pos = s.st.positional();
+        match s.op.as_str() {
+            "send" => pos.first().and_then(|p| p.as_name()) == target,
+            "store" => {
+                pos.get(2).and_then(|p| p.as_name()) == target
+                    && pos
+                        .first()
+                        .and_then(|p| match p {
+                            Term::View(name, _) | Term::Name(name) => body.buffers.get(name),
+                            _ => None,
+                        })
+                        .is_some_and(|b| b.get("nk") >= 2)
+            }
+            _ => false,
+        }
+    };
+    op.op == "pack"
+        && op
+            .ty
+            .as_ref()
+            .is_some_and(|t| t.dtype == "mx7a" || t.dtype == "mx7b")
+        && !crate::mutant::on("l2.vector/unit-scale-zero")
+        && !crate::mutant::before_rul099()
+        && ops.iter().any(paired)
 }
 
 pub fn fmt_float(f: f64) -> String {

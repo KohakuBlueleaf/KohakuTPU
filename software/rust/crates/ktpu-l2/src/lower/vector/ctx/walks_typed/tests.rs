@@ -383,9 +383,15 @@ fn packs_modes_destinations_and_mx7_order() {
                                 let moves = ag
                                     .code
                                     .iter()
-                                    .filter(|e| matches!(e,Code::Op(s,_) if s.starts_with("vmov")))
+                                    .filter(|e| matches!(e,Code::Op(s,_) if s.starts_with("vmov") || s.starts_with("vsel")))
                                     .count();
-                                assert_eq!(moves, if producer && !extra_read { 0 } else { 24 });
+                                // A sent pack can feed a K pair: its zeros lift
+                                // (NUM.MX7.008), one whole-register vsel a row in order.
+                                let ordered = if send { rows.len() } else { 0 };
+                                assert_eq!(
+                                    moves,
+                                    if producer && !extra_read { ordered } else { 24 }
+                                );
                             }
                         }
                     }

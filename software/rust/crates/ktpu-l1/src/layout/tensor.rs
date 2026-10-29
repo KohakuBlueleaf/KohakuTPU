@@ -76,6 +76,25 @@ const QMAX: i64 = 63;
 const RECIP: [i64; 8] = [4096, 3641, 3277, 2979, 2731, 2520, 2341, 2185];
 const RECIP_SHIFT: i64 = 12;
 
+/// A contraction operand's zero as quantised: 2^-24, int7 0 under every
+/// scale, so only an all-zero block changes, to E=0 from the quantisers' E=20.
+/// `mx_acu_fp_pump.v` aligns a K pair to the larger exponent sum with no zero
+/// test: an E=20 zero block truncates a live partner below it.
+pub const ZERO_LIFT: u16 = 0x0001;
+
+/// [`ZERO_LIFT`]'s value, which a vector core selects for a zero lane
+/// before its MXFP7 pack.
+pub fn zero_lift_value() -> f64 {
+    ieee_f16(ZERO_LIFT)
+}
+
+/// `x` with every zero (either sign) as [`ZERO_LIFT`].
+pub fn lift(x: &[u16]) -> Vec<u16> {
+    x.iter()
+        .map(|&b| if b & 0x7FFF == 0 { ZERO_LIFT } else { b })
+        .collect()
+}
+
 fn sbias() -> i64 {
     match crate::mutant::on("num.mx7/scale-bias-21") {
         true => 21,
@@ -201,6 +220,7 @@ fn put(word: &mut [u8], at: usize, width: usize, v: u64) {
 /// carries K `[w*per, (w+1)*per)` as `lanes * per` int7 at slot
 /// `lane*per + kk` (B packing: `kk*lanes + lane`) from its top bit down, and
 /// the lanes' E5M3 scales in its low bits, lane 0 highest; little-endian.
+/// Entries of K pairs (`blocks` >= 2) quantise zeros as [`ZERO_LIFT`].
 pub fn pack(
     x: &[u16],
     lanes: usize,
@@ -226,6 +246,10 @@ pub fn pack(
             "pad the operand to whole tiles before packing",
         ));
     }
+    let x = match blocks >= 2 && !crate::mutant::on("num.mx7/unit-scale-zero") {
+        true => lift(x),
+        false => x.to_vec(),
+    };
     let mut q = vec![0i64; lanes * k];
     let mut field = vec![0i64; lanes * nk_total];
     for r in 0..lanes {

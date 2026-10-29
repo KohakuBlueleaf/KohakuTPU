@@ -23,6 +23,8 @@ pub struct Hw {
     pub kblock: i64,
     /// K blocks a cluster step takes (`mg.kstep`)
     pub kstep: i64,
+    /// whether a contraction pairs K blocks under the stack's pairing (RUL.099)
+    pub pairs: bool,
     /// accumulator subtiles of a cluster (`mg.tiles`)
     pub acc_subtiles: i64,
     /// entries of one cluster L1 bank (`mg.l1_bank_entries`)
@@ -41,6 +43,7 @@ impl Hw {
             band: f.mg.lanes as i64,
             kblock: f.mg.kblock as i64,
             kstep: f.mg.kstep as i64,
+            pairs: m.pairs_blocks(ktpu_machine::PAIRING),
             acc_subtiles: f.mg.tiles as i64,
             bank: f.mg.l1_bank_entries as i64,
         }

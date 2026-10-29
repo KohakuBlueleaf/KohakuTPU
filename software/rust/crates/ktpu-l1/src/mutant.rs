@@ -224,6 +224,7 @@ pub const NAMES: &[&str] = &[
     "num.mx7/e8m0-reciprocal",
     "num.mx7/recip-shift-13",
     "num.mx7/scale-power-of-two",
+    "num.mx7/unit-scale-zero",
     "num.layout/a-as-b",
     "num.layout/b-as-a",
     "num.layout/words-big-endian",
