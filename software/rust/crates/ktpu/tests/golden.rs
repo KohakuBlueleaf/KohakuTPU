@@ -538,41 +538,47 @@ fn shard(cases: Vec<(String, Value)>) -> Vec<(String, Value)> {
 #[test]
 fn the_stack_agrees_with_the_python_goldens() {
     let cases = shard(goldens());
-    let results: Vec<(String, f64, Vec<Step>)> = cases
-        .par_iter()
-        .map(|(name, case)| {
-            if case.get("skipped").is_some() {
-                return (name.clone(), 0.0, vec![Ok("skipped by the dump")]);
-            }
-            if case.get("python-too-slow").is_some() {
-                return (name.clone(), 0.0, vec![Ok("python too slow: no reference")]);
-            }
-            let m = machine(
-                case["machine"].as_str().unwrap(),
-                case["nodes"].as_u64().unwrap() as u32,
-            );
-            let t0 = Instant::now();
-            // Each case on a thread of its own: a stage that does not end
-            // is its case's finding (the thread is left to the process exit).
-            let (tx, rx) = std::sync::mpsc::channel();
-            let c = case.clone();
-            std::thread::spawn(move || {
-                let got = std::panic::catch_unwind(|| stages(&c, &m)).unwrap_or_else(|p| {
-                    let what = p
-                        .downcast_ref::<String>()
-                        .cloned()
-                        .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
-                        .unwrap_or_default();
-                    vec![Err(format!("panicked: {what}"))]
+    // A case waits for its stages on a pool of its own: the stages run on a
+    // thread of their own and fork onto the global pool (the lowering's
+    // search), which waiting cases would otherwise hold to the time limit.
+    let waiting = rayon::ThreadPoolBuilder::new().build().unwrap();
+    let results: Vec<(String, f64, Vec<Step>)> = waiting.install(|| {
+        cases
+            .par_iter()
+            .map(|(name, case)| {
+                if case.get("skipped").is_some() {
+                    return (name.clone(), 0.0, vec![Ok("skipped by the dump")]);
+                }
+                if case.get("python-too-slow").is_some() {
+                    return (name.clone(), 0.0, vec![Ok("python too slow: no reference")]);
+                }
+                let m = machine(
+                    case["machine"].as_str().unwrap(),
+                    case["nodes"].as_u64().unwrap() as u32,
+                );
+                let t0 = Instant::now();
+                // Each case on a thread of its own: a stage that does not end
+                // is its case's finding (the thread is left to the process exit).
+                let (tx, rx) = std::sync::mpsc::channel();
+                let c = case.clone();
+                std::thread::spawn(move || {
+                    let got = std::panic::catch_unwind(|| stages(&c, &m)).unwrap_or_else(|p| {
+                        let what = p
+                            .downcast_ref::<String>()
+                            .cloned()
+                            .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+                            .unwrap_or_default();
+                        vec![Err(format!("panicked: {what}"))]
+                    });
+                    let _ = tx.send(got);
                 });
-                let _ = tx.send(got);
-            });
-            let got = rx
-                .recv_timeout(CASE_SECONDS)
-                .unwrap_or_else(|_| vec![Err(format!("over {CASE_SECONDS:?}"))]);
-            (name.clone(), t0.elapsed().as_secs_f64(), got)
-        })
-        .collect();
+                let got = rx
+                    .recv_timeout(CASE_SECONDS)
+                    .unwrap_or_else(|_| vec![Err(format!("over {CASE_SECONDS:?}"))]);
+                (name.clone(), t0.elapsed().as_secs_f64(), got)
+            })
+            .collect()
+    });
     let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
     let mut bad = Vec::new();
     for (name, _, steps) in &results {
