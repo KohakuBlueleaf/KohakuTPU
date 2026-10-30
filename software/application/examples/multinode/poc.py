@@ -16,7 +16,8 @@ from kohakutpu.application.runtime.device import Device
 from kohakutpu.language import dsl as kt
 from kohakutpu.language.numerics import e8m15, mxfp7
 
-BUILD = "/home/kblueleaf/ktpu/build/t2s/vlt_card_v9t6_2n"
+#: The board the offline recipes compile for; a measurement runs on the
+#: device it is given (`runtime.device`'s environment).
 BOARD = "vlt_v9t6_2n"
 
 
@@ -198,9 +199,10 @@ def witness(arrays, actual, batch=32, nodes=2, lr=0.125):
     for node in range(nodes):
         np.testing.assert_array_equal(actual[f"reduced{node}"], mean)
         np.testing.assert_array_equal(actual[f"next{node}"], weights)
-    assert not np.array_equal(grads[0], grads[1])
+    for node in range(1, nodes):
+        assert not np.array_equal(grads[0], grads[node])
+        np.testing.assert_array_equal(actual["next0"], actual[f"next{node}"])
     assert np.any(weights != arrays["w0"])
-    np.testing.assert_array_equal(actual["next0"], actual["next1"])
 
 
 class Experiment:
@@ -256,10 +258,17 @@ class Experiment:
             self.dev.free(at)
 
 
-def measure(case="all", build=BUILD):
-    dev = Device(kind="sim", build=build, board=BOARD, nodes=2, queued=False)
+def measure(dev, case="all"):
+    """Every recipe on each of `dev`'s nodes; `dev` stays open."""
+    nodes = dev.nodes
     exp = Experiment(dev)
-    result = {"board": BOARD, "build": build, "case": case, "phases": exp.metrics}
+    result = {
+        "board": dev.card.board["name"],
+        "build": str(dev.build),
+        "nodes": nodes,
+        "case": case,
+        "phases": exp.metrics,
+    }
     try:
         if case in ("all", "matmul"):
             rng = np.random.default_rng(4)
@@ -267,7 +276,7 @@ def measure(case="all", build=BUILD):
             b = rng.choice([-0.125, 0.125], (32, 32)).astype(np.float16)
             exp.put("a", a)
             exp.put("b", b)
-            for count in (1, 2):
+            for count in range(1, nodes + 1):
                 out = f"mm{count}"
                 exp.output(out, (32, 32))
                 for repetition in range(2):
@@ -277,17 +286,16 @@ def measure(case="all", build=BUILD):
                         {"a": "a", "b": "b", "c": out},
                     )
                     np.testing.assert_array_equal(exp.read(out), contract_oracle(a, b))
-            np.testing.assert_array_equal(exp.read("mm1"), exp.read("mm2"))
             result["matmul_exact"] = True
         if case in ("all", "train"):
-            arrays = training_data()
+            arrays = training_data(nodes=nodes)
             for name, array in arrays.items():
                 exp.put(name, array)
-            for node in range(2):
+            for node in range(nodes):
                 for prefix in ("g", "reduced", "next"):
                     exp.output(f"{prefix}{node}", (32, 32))
-            grad, gs = local_gradient_kernel()
-            update, us = reduce_update_kernel()
+            grad, gs = local_gradient_kernel(nodes=nodes)
+            update, us = reduce_update_kernel(nodes=nodes)
             for repetition in range(2):
                 label = "cold" if repetition == 0 else "warm"
                 exp.launch(
@@ -299,38 +307,42 @@ def measure(case="all", build=BUILD):
             actual = {
                 f"{key}{node}": exp.read(f"{key}{node}")
                 for key in ("g", "reduced", "next")
-                for node in range(2)
+                for node in range(nodes)
             }
-            expected_grads, expected_mean, _ = oracle(arrays)
+            expected_grads, expected_mean, _ = oracle(arrays, nodes=nodes)
             print(
                 "MN_DIAGNOSTICS "
                 + json.dumps(
                     {
                         "gradient_mismatches": [
                             int(np.count_nonzero(actual[f"g{i}"] != expected_grads[i]))
-                            for i in range(2)
+                            for i in range(nodes)
                         ],
                         "reduction_mismatches": [
                             int(
                                 np.count_nonzero(actual[f"reduced{i}"] != expected_mean)
                             )
-                            for i in range(2)
+                            for i in range(nodes)
                         ],
-                        "weight_replicas_equal": bool(
-                            np.array_equal(actual["next0"], actual["next1"])
+                        "weight_replicas_equal": all(
+                            np.array_equal(actual["next0"], actual[f"next{i}"])
+                            for i in range(nodes)
                         ),
                     }
                 ),
                 flush=True,
             )
-            witness(arrays, actual)
+            witness(arrays, actual, nodes=nodes)
             result["training_exact"] = True
+            gradient_bytes = 32 * 32 * 2
             result["training"] = {
                 "model": "bias-free linear MSE (MLP building block)",
-                "global_batch": 64,
-                "parameters": 1024,
-                "gradient_bytes": 2048,
-                "shared_gradient_remote_read_bytes": 4096,
+                "global_batch": 32 * nodes,
+                "parameters": 32 * 32,
+                "gradient_bytes": gradient_bytes,
+                "shared_gradient_remote_read_bytes": gradient_bytes
+                * nodes
+                * (nodes - 1),
                 "weight_replicas_equal": True,
                 "changed_weights": int(
                     np.count_nonzero(actual["next0"] != arrays["w0"])
@@ -343,13 +355,15 @@ def measure(case="all", build=BUILD):
         return result
     finally:
         exp.close()
-        dev.close()
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__
+        + "\nThe measured device is runtime.device's: KOHAKUTPU_SIM_BUILD, "
+        "KOHAKUTPU_BOARD, KOHAKUTPU_SIM_NODES."
+    )
     parser.add_argument("--case", choices=("all", "matmul", "train"), default="all")
-    parser.add_argument("--build", default=BUILD)
     parser.add_argument("--output", type=pathlib.Path)
     parser.add_argument("--describe", action="store_true")
     args = parser.parse_args()
@@ -361,7 +375,11 @@ def main():
         print(compiled.l1_text)
         dev.close()
         return
-    result = measure(args.case, args.build)
+    dev = Device(queued=False)
+    try:
+        result = measure(dev, args.case)
+    finally:
+        dev.close()
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

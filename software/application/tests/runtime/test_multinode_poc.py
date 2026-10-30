@@ -1,4 +1,5 @@
-"""Bounded multi-node POC witnesses; model measurement is one explicit node id."""
+"""Bounded multi-node POC witnesses; the model measurement runs on the card
+tests' device (`conftest.card_device`) over each of its nodes."""
 
 import pathlib
 import runpy
@@ -68,6 +69,16 @@ def test_reduction_oracle_rounds_each_lane_add():
     assert unrounded[12, 3] != mean[12, 3]
 
 
-def test_two_node_model_measurement():
-    result = POC["measure"]()
+def test_two_node_model_measurement(dev):
+    result = POC["measure"](dev)
     assert result["training_exact"] and result["matmul_exact"]
+
+
+def test_model_measurement_rejects_a_negated_operand(dev, monkeypatch):
+    class Negated(POC["Experiment"]):
+        def put(self, name, array):
+            super().put(name, -array if name == "b" else array)
+
+    monkeypatch.setitem(POC["measure"].__globals__, "Experiment", Negated)
+    with pytest.raises(AssertionError, match="not equal"):
+        POC["measure"](dev, case="matmul")
