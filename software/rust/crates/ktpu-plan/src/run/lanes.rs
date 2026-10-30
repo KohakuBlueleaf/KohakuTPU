@@ -21,8 +21,7 @@ impl Runner<'_> {
     /// element `at` walked by `walk` into the elements `dwalk` reaches from
     /// `dat`; any other 0, or with `keep` as `dst` held it. One kernel of
     /// `gen::relayout`'s forms, its destination port from `dst`'s line (the
-    /// words before kept) when its lines end within the allocation's words
-    /// (API.MEM.002); else, and for a walk pair none takes, `gen::lanes`.
+    /// words before kept); for a walk pair none takes, `gen::lanes`.
     #[allow(clippy::too_many_arguments)]
     pub fn relayout(
         &mut self,
@@ -46,12 +45,7 @@ impl Runner<'_> {
         } else {
             relayout::plan(n, walk, at, dwalk, dat + pad, m + pad, keep, &hw, pad, tree)?
         };
-        let words = (self.x.allocated(&dst) + hw.word - 1) / hw.word * hw.word;
-        let fits = |rp: &relayout::Plan| {
-            dst.offset - 2 * pad + rp.dst_words / hw.line * hw.line * hw.word <= words
-                || ktpu_kernels::mutants::on(relayout::LINES_MUTANT)
-        };
-        if let Some(rp) = planned.ok().filter(fits) {
+        if let Ok(rp) = planned {
             let (index, mask) = self.relayout_tables(&rp);
             let call = Call {
                 gen: "relayout.relayout_kernel".into(),

@@ -147,8 +147,9 @@ fn every_recorded_launch_lies_in_its_storages_under_every_knob() {
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
-/// With the planner's line guard off, relayout kernels write destination
-/// lines past their allocations' words, and nothing else does.
+/// With relayout destination ports whole lines (`relayout/line-overrun`),
+/// relayout kernels write past their allocations' words, and nothing else
+/// does.
 #[cfg(feature = "mutants")]
 #[test]
 fn relayout_lines_past_the_allocation_are_overruns() {

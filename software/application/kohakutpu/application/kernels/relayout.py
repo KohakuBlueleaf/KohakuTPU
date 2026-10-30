@@ -28,6 +28,11 @@ one merged; the innermost destination axis picks the form:
 
 Other walk pairs are `Unplanned` (`kernels.lanes` takes them). The index
 lists and masks are data; the kernel depends on the plan's shape only.
+
+The destination port is the destination's words from its line (`dst_words`:
+a storage holds its word-rounded bytes, API.MEM.002). Where they end inside
+a line and runs write the destination, the parts write the lines of a
+scratch and one walk copies its words out (`_stage`).
 """
 
 import json
@@ -565,7 +570,7 @@ def plan(
     got = _plans.get(cache_key)
     if got is None:
         try:
-            got = _plan(*key)
+            got = _stage(_plan(*key), keep or z0 > 0, hw)
             if tree:
                 got = tree_pull(got, hw)
         except Unplanned as e:
@@ -629,10 +634,49 @@ def tree_pull(pl: Plan, hw: Hw) -> Plan:
     return replace(pl, parts=tuple(parts), masks=np.concatenate(masks))
 
 
+def dst_words(m: int, hw: Hw) -> int:
+    """Words of the destination port of `m` elements: their words, as the
+    storage holds them (API.MEM.002)."""
+    return -(-m // hw.lanes)
+
+
+def _stage(pl: Plan, kept: bool, hw: Hw) -> Plan:
+    """`pl` whose destination words end inside a line and runs write the
+    destination (as whole lines): its parts on the lines of scratch ``dx``,
+    then one walk copying the words out, the one move writing part of the
+    destination's last line (L1.VER.017). With `kept` (words the parts leave
+    as they are) the words are first copied in, the last line's read again
+    to its end so that the copy writes whole lines."""
+    dw, word, line = pl.dst_words, hw.word, hw.line
+    runs = any(isinstance(p, Runs) and p.dst == "dst" for p in pl.parts)
+    if not dw % line or not runs:
+        return pl
+    tail = dw % line
+    head, again = dw - tail, -(-line // tail)
+    parts = []
+    for p in pl.parts:
+        on = {f: "dx" for f in ("src", "dst") if getattr(p, f, None) == "dst"}
+        parts.append(replace(p, **on))
+    if kept:
+        head_in = Words("dst", "dx", ((head, word),), 0, ((head, word),), 0)
+        tail_in = Words(
+            "dst", "dx", ((again, 0), (tail, word)), head * word,
+            ((again * tail, word),), head * word,
+        )  # fmt: skip
+        parts[:0] = [head_in, tail_in] if head else [tail_in]
+    parts.append(Words("dx", "dst", ((dw, word),), 0, ((dw, word),), 0))
+    rows = -(-(head + again * tail) // line)
+    return replace(
+        pl,
+        parts=tuple(parts),
+        scratch=tuple(sorted((*pl.scratch, ("dx", rows, hw.line_values)))),
+    )
+
+
 def _plan(src_n, walk, at, dwalk, dat, m, keep, hw: Hw, z0) -> Plan:
     lanes, lv = hw.lanes, hw.line_values
     sw = -(-src_n // lanes)
-    dw = -(-m // lv) * hw.line
+    dw = dst_words(m, hw)
     axes = canon(walk, dwalk)
     spos, dpos = positions(axes, at, 1), positions(axes, dat, 2)
     if len(spos) and (spos.min() < 0 or spos.max() >= src_n):
@@ -785,7 +829,7 @@ def _pull(axes, at, dat, sw, z0, m, keep, t: _Tables, hw: Hw) -> Plan:
     zero range outside those rows filled."""
     lanes, rv, rw = hw.lanes, hw.row, hw.row_words
     spos, dpos = positions(axes, at, 1), positions(axes, dat, 2)
-    dw = -(-m // hw.line_values) * hw.line
+    dw = dst_words(m, hw)
     r0, r1 = int(dpos.min()) // rv, int(dpos.max()) // rv + 1
     w0, words = r0 * rw, (r1 - r0) * rw
     out = min(r1 * rw, dw) - w0
@@ -1187,25 +1231,24 @@ def _x_runs(r: Runs, bufs, index, masks, hw: Hw) -> None:
 
 # ----------------------------------------------------------- the kernel
 def relayout_kernel(pl: Plan, hw: Hw):
-    """Ports ``src`` (f16 as words), ``dst`` (f16 as words, from a line),
-    ``index`` (`pl.index`, fp32), ``mask`` (`pl.masks`). Returns
-    ``(kernel, given)``."""
+    """Ports ``src`` (f16 as words), ``dst`` (f16 as words from a line, the
+    destination's), ``index`` (`pl.index`, fp32), ``mask`` (`pl.masks`).
+    Returns ``(kernel, given)``."""
     kkey = (pl.shape(), hw, V.split, kt.Kernel.build)
     hit = _kernels.get(kkey)
     if hit is not None:
         _kernels.move_to_end(kkey)
         return hit
-    lanes, lines = hw.lanes, pl.dst_words // hw.line
-    # The destination's rows are lines: a scatter's rows provably own them.
+    lanes = hw.lanes
     ports = {
         "src": kt.In(pl.src_words, lanes),
-        "dst": kt.Out(lines, hw.line_values),
+        "dst": kt.Out(pl.dst_words, lanes),
         "index": kt.In(len(pl.index), dtype="f32"),
         "mask": kt.In(*pl.masks.shape),
     }
     given = {
         "src": kt.TensorSpec.make((pl.src_words, lanes)),
-        "dst": kt.TensorSpec.make((lines, hw.line_values)),
+        "dst": kt.TensorSpec.make((pl.dst_words, lanes)),
         "index": kt.TensorSpec.make((len(pl.index),), "f32"),
         "mask": kt.TensorSpec.make(tuple(pl.masks.shape)),
     }
@@ -1247,7 +1290,7 @@ def emit_steps(plans: tuple, src, tables: dict, prefix: str, hw: Hw, destination
         dst = (
             destination
             if destination is not None and i == len(plans) - 1
-            else scratch(p.dst_words // hw.line, hw.line_values)
+            else scratch(-(-p.dst_words // hw.line), hw.line_values)
         )
         bufs = {"src": cur, "dst": dst}
         for name, n, width in p.scratch:
@@ -1337,10 +1380,12 @@ def _emit_pull(p: Pull, bufs, index, mask, hw: Hw) -> None:
         if staged > p.words:
             kt.fill_value(ps, 0, walk=((staged - p.words, word),), at=p.words * word)
     if p.base == "dst":
-        pd = bufs["pd"]
+        # The padding from the line the words end in first: then the copy is
+        # the one move writing part of a line (L1.VER.017).
+        pd, head = bufs["pd"], p.out - p.out % hw.line
+        if staged > head:
+            kt.fill_value(pd, 0, walk=((staged - head, word),), at=head * word)
         kt.copy(pd, dst, walk=((p.out, word),), at=p.w0 * word, dwalk=((p.out, word),))
-        if staged > p.out:
-            kt.fill_value(pd, 0, walk=((staged - p.out, word),), at=p.out * word)
     ncore, start, n = V.split(p.rows // ROWS, hw.cores)
     for c in kt.par(ncore, on=kt.vc):
         for k in kt.range(n(c)):
@@ -1532,6 +1577,7 @@ __all__ = [
     "Unplanned",
     "Words",
     "canon",
+    "dst_words",
     "execute",
     "hw_for",
     "hw_of",

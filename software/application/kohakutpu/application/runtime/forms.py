@@ -253,9 +253,7 @@ def relayout(
     stride)``, outermost first) into destination elements walked by `dwalk`
     from element `dat`; a destination element no walk reaches is 0, or with
     `keep` what `dst` held (`m` values in whole words). One kernel of
-    `kernels.relayout`'s forms when its destination lines end within the
-    allocation's words (API.MEM.002); else, and for a walk pair none takes,
-    `kernels.lanes`."""
+    `kernels.relayout`'s forms; a walk pair none takes, `kernels.lanes`."""
     hw = RL.hw_for(dev)
     # The destination port starts at its line (the words before kept).
     pad = dst % (hw.line * hw.word) // 2
@@ -263,12 +261,7 @@ def relayout(
         rp = RL.plan(n, walk, at, dwalk, dat + pad, m + pad, keep, hw, pad)
     except RL.Unplanned:
         rp = None
-    entry, _ = dev.mmu.resolve(dst)
-    words = -(-entry.arena.requested[entry.physical] // hw.word) * hw.word
-    if rp is not None and (
-        dst - 2 * pad + rp.dst_words // hw.line * hw.line * hw.word
-        <= entry.virtual + words
-    ):
+    if rp is not None:
         k, given = RL.relayout_kernel(rp, hw)
         binds = {
             "src": src,

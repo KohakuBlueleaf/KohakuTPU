@@ -48,16 +48,16 @@ fn mask_shape(pl: &Plan) -> [i64; 2] {
     [pl.masks.len() as i64, pl.masks[0].len() as i64]
 }
 
-/// Ports `src` (f16 as words), `dst` (f16 as words, from a line), `index`
-/// (the plan's index lists, fp32), `mask` (its mask rows).
+/// Ports `src` (f16 as words), `dst` (f16 as words from a line, the
+/// destination's), `index` (the plan's index lists, fp32), `mask` (its mask
+/// rows).
 pub fn relayout_kernel(pl: &Plan, m: &Machine) -> R<Kernel> {
     let cx = Ctx {
         hw: Hw::of(m),
         gen: crate::gen::Hw::of(m),
     };
     let hw = &cx.hw;
-    let lines = pl.dst_words / hw.line;
-    let (ss, ds) = ([pl.src_words, hw.lanes], [lines, hw.line_values()]);
+    let (ss, ds) = ([pl.src_words, hw.lanes], [pl.dst_words, hw.lanes]);
     let (is, ms) = ([pl.index.len() as i64], mask_shape(pl));
     let ports = vec![
         Port::input("src", &ss, g::Dtype::F16),
@@ -125,7 +125,7 @@ pub fn emit_steps(
         }
         let dst = match destination {
             Some(d) if i == plans.len() - 1 => d.clone(),
-            _ => scratch(t, p.dst_words / hw.line, hw.line_values(), hw)?,
+            _ => scratch(t, cdiv(p.dst_words, hw.line), hw.line_values(), hw)?,
         };
         let mut bufs: Bufs = HashMap::new();
         bufs.insert("src".into(), cur.clone());
@@ -263,17 +263,20 @@ fn emit_pull(t: &mut Trace, p: &Pull, bufs: &Bufs, index: &Buf, mask: &Buf, hw: 
     }
     let outs = [(p.out, word)];
     if p.base == "dst" {
+        // The padding from the line the words end in first: then the copy is
+        // the one move writing part of a line (L1.VER.017).
         let pd = &bufs["pd"];
+        let head = p.out - p.out % hw.line;
+        if staged > head {
+            let walk = [(staged - head, word)];
+            t.fill_value(&pd.whole(), 0, None, Some((&walk, Some(head * word))))?;
+        }
         t.copy(
             &pd.whole(),
             &dst.whole(),
             Some((&outs, Some(p.w0 * word))),
             Some((&outs, None)),
         )?;
-        if staged > p.out {
-            let walk = [(staged - p.out, word)];
-            t.fill_value(&pd.whole(), 0, None, Some((&walk, Some(p.out * word))))?;
-        }
     }
     let s = split(p.rows / ROWS, hw.cores);
     t.par(s.cores, g::UnitKind::Vc, At::Var, |t, c| {

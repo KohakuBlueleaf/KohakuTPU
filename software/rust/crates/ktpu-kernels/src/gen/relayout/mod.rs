@@ -26,6 +26,11 @@
 //!
 //! Other walk pairs are [`Unplanned`] (`gen::lanes` takes them). The index
 //! lists and masks are data; the kernel depends on the plan's shape only.
+//!
+//! The destination port is the destination's words from its line
+//! ([`dst_words`]: a storage holds its word-rounded bytes, API.MEM.002).
+//! Where they end inside a line and runs write the destination, the parts
+//! write the lines of a scratch and one walk copies its words out.
 
 mod emit;
 mod forms;
@@ -33,7 +38,7 @@ mod repr;
 mod tables;
 
 pub use emit::{emit_steps, relayout_kernel, scratch_rows, step_ports};
-pub use forms::{canon, plan, positions, word_levels};
+pub use forms::{canon, dst_words, plan, positions, word_levels};
 pub use repr::shape_repr;
 
 use ktpu_machine::Machine;
@@ -53,8 +58,8 @@ pub const SHUFFLE: &[i64] = &[2];
 /// The planner's relayouts all `gen::lanes`', as before this module: the
 /// regold's reverse proof.
 pub const LANES_MUTANT: &str = "relayout/lanes-only";
-/// The planner takes this module's kernel even where its destination lines
-/// end past the allocation's words (API.MEM.002).
+/// The destination port as whole lines from the destination's line: past
+/// its words where they end inside a line (API.MEM.002).
 pub const LINES_MUTANT: &str = "relayout/line-overrun";
 /// Whether a [`Pull`]'s codes are predecoded into a selector tree
 /// ([`plan`]'s `tree`; Python's `KTPU_PULL_TREE` default).

@@ -336,7 +336,96 @@ pub fn plan(
     tree: bool,
 ) -> R<Result<Plan, Unplanned>> {
     let got = plan_forms(src_n, walk, at, dwalk, dat, m, keep, hw, z0)?;
-    Ok(got.map(|p| if tree { tree_pull(p, hw) } else { p }))
+    Ok(got.map(|p| {
+        let p = stage(p, keep || z0 > 0, hw);
+        if tree {
+            tree_pull(p, hw)
+        } else {
+            p
+        }
+    }))
+}
+
+/// Words of the destination port of `m` elements: their words, as the
+/// storage holds them (API.MEM.002); whole lines under [`LINES_MUTANT`].
+pub fn dst_words(m: i64, hw: &Hw) -> i64 {
+    if crate::mutants::on(LINES_MUTANT) {
+        return cdiv(m, hw.line_values()) * hw.line;
+    }
+    cdiv(m, hw.lanes)
+}
+
+fn on_lines(name: &mut String) {
+    if *name == "dst" {
+        *name = "dx".into();
+    }
+}
+
+fn copy(src: &str, dst: &str, levels: Levels, at: i64, dlevels: Levels, dat: i64) -> Part {
+    Part::Words(Words {
+        src: src.into(),
+        dst: dst.into(),
+        levels,
+        at,
+        dlevels,
+        dat,
+    })
+}
+
+/// `pl` whose destination words end inside a line and runs write the
+/// destination (as whole lines): its parts on the lines of scratch `dx`,
+/// then one walk copying the words out, the one move writing part of the
+/// destination's last line (L1.VER.017). With `kept` (words the parts leave
+/// as they are) the words are first copied in, the last line's read again
+/// to its end so that the copy writes whole lines.
+fn stage(mut pl: Plan, kept: bool, hw: &Hw) -> Plan {
+    let (dw, word, line) = (pl.dst_words, hw.word, hw.line);
+    let runs = pl
+        .parts
+        .iter()
+        .any(|p| matches!(p, Part::Runs(r) if r.dst == "dst"));
+    if dw % line == 0 || !runs {
+        return pl;
+    }
+    let tail = dw % line;
+    let (head, again) = (dw - tail, cdiv(line, tail));
+    for p in &mut pl.parts {
+        let (src, dst) = match p {
+            Part::Fill(f) => (None, &mut f.dst),
+            Part::Words(w) => (Some(&mut w.src), &mut w.dst),
+            Part::Runs(r) => (Some(&mut r.src), &mut r.dst),
+            Part::Splat(s) => (Some(&mut s.src), &mut s.dst),
+            Part::Pull(p) => (Some(&mut p.src), &mut p.dst),
+            Part::Exchange(x) => (Some(&mut x.src), &mut x.dst),
+            Part::Shuffle(s) => (Some(&mut s.src), &mut s.dst),
+        };
+        if let Some(src) = src {
+            on_lines(src);
+        }
+        on_lines(dst);
+    }
+    if kept {
+        let mut copy_in = vec![];
+        if head > 0 {
+            let lines = vec![(head, word)];
+            copy_in.push(copy("dst", "dx", lines.clone(), 0, lines, 0));
+        }
+        copy_in.push(copy(
+            "dst",
+            "dx",
+            vec![(again, 0), (tail, word)],
+            head * word,
+            vec![(again * tail, word)],
+            head * word,
+        ));
+        pl.parts.splice(0..0, copy_in);
+    }
+    let words = vec![(dw, word)];
+    pl.parts.push(copy("dx", "dst", words.clone(), 0, words, 0));
+    let rows = cdiv(head + again * tail, line);
+    pl.scratch.push(("dx".into(), rows, hw.line_values()));
+    pl.scratch.sort();
+    pl
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -353,7 +442,7 @@ fn plan_forms(
 ) -> R<Result<Plan, Unplanned>> {
     let (lanes, lv) = (hw.lanes, hw.line_values());
     let sw = cdiv(src_n, lanes);
-    let dw = cdiv(m, lv) * hw.line;
+    let dw = dst_words(m, hw);
     let axes = canon(walk, dwalk);
     let (spos, dpos) = (positions(&axes, at, 1), positions(&axes, dat, 2));
     if spos.iter().any(|&x| x < 0 || x >= src_n) {
@@ -592,7 +681,7 @@ fn pull(
 ) -> Result<Plan, Unplanned> {
     let (lanes, rv, rw) = (hw.lanes, hw.row, hw.row_words());
     let (spos, dpos) = (positions(axes, at, 1), positions(axes, dat, 2));
-    let dw = cdiv(m, hw.line_values()) * hw.line;
+    let dw = dst_words(m, hw);
     let r0 = dpos.iter().min().unwrap().div_euclid(rv);
     let r1 = dpos.iter().max().unwrap().div_euclid(rv) + 1;
     let (w0, words) = (r0 * rw, (r1 - r0) * rw);

@@ -15,9 +15,7 @@ written under that mutant too (`legacy_default/`, `legacy_before/`).
 
 Prediction, from `before/` and Python alone: each `lanes.relayout_kernel`
 launch whose walk pair `R.plan` plans (the destination's line pad in front,
-as `forms.relayout` plans it) and whose destination lines end within the
-allocation's words (API.MEM.002; the allocations from the state's records
-and the steps) becomes one `relayout.relayout_kernel` launch:
+as `forms.relayout` plans it) becomes one `relayout.relayout_kernel` launch:
 its call the plan's arguments, its graph and name `R.relayout_kernel`'s, its
 destination bound from the line, its index and mask tables `R.plan`'s
 (uploaded before it unless already uploaded in the run, as `forms.table`
@@ -68,10 +66,9 @@ class Mover:
         self.hw = R.hw_of(MF.load(machine.board), machine.count("VC"))
         self.moved = 0
 
-    def move(self, launch, allocated):
+    def move(self, launch):
         """The `relayout.relayout_kernel` launch and its two tables replacing
-        lanes launch `launch`, or None when `R.plan` does not plan it or its
-        destination lines end past the `allocated` bytes' words."""
+        lanes launch `launch`, or None when `R.plan` does not plan it."""
         a = launch["call"]["args"]["pl"]["made_by"]["args"]
         dst = launch["binds"]["dst"]
         hw = self.hw
@@ -84,9 +81,6 @@ class Mover:
                 a["keep"], hw, pad,
             )  # fmt: skip
         except R.Unplanned:
-            return None
-        end = dst["offset"] - 2 * pad + pl.dst_words // hw.line * hw.line * hw.word
-        if end > -(-allocated // hw.word) * hw.word:
             return None
         k, given = R.relayout_kernel(pl, hw)
         graph = json.loads(
@@ -124,23 +118,12 @@ class Mover:
         self.moved += 1
         return new, [index, mask]
 
-    def steps(self, old, buffers):
-        """`old`'s steps (run from `buffers`, the state's base records) with
-        each lanes relayout `move` moves: the table steps right before it
-        (its index and mask) replaced by its new tables'."""
-        flat = json.dumps(["flat"])
-        sizes = {}
-        for name, b in buffers.items():
-            sizes[name, flat] = b["nbytes"]
-            for key, nbytes in b["forms"]:
-                sizes[name, json.dumps(key)] = nbytes
+    def steps(self, old):
+        """`old`'s steps with each lanes relayout `move` moves: the table
+        steps right before it (its index and mask) replaced by its new
+        tables'."""
         out, tables = [], []
         for s in old:
-            if "alloc" in s:
-                sizes[s["alloc"]["buf"], flat] = s["alloc"]["nbytes"]
-            if "form" in s:
-                f = s["form"]
-                sizes[f["buf"], json.dumps(f["form"])] = f["nbytes"]
             if "table" in s:
                 tables.append(s)
                 continue
@@ -150,8 +133,7 @@ class Mover:
                 launch
                 and (launch.get("call") or {}).get("gen") == "lanes.relayout_kernel"
             ):
-                dst = launch["binds"]["dst"]
-                got = self.move(launch, sizes[dst["buf"], json.dumps(dst["form"])])
+                got = self.move(launch)
             if got is not None:
                 uploaded = sorted(t["table"]["at"]["buf"] for t in tables)
                 assert uploaded == sorted(tables_of(launch)), launch["name"]
@@ -167,8 +149,7 @@ def predict(before, machine):
     mover = Mover(machine)
     got = json.loads(json.dumps(before))
     for entry in PG.entries(got):
-        buffers = entry.get("state", {}).get("buffers", {})
-        entry["steps"] = mover.steps(entry["steps"], buffers)
+        entry["steps"] = mover.steps(entry["steps"])
     return got, mover.moved
 
 

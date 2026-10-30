@@ -96,6 +96,17 @@ CASES = {
         True,
         0,
     ),
+    # Kept words ending inside a line: the runs write scratch lines.
+    "runs_keep_odd_words": (
+        500,
+        ((7, 33), (21, 1)),
+        5,
+        ((7, 40), (21, 1)),
+        3,
+        272,
+        True,
+        0,
+    ),
     "runs_line_pad": (
         300,
         ((6, 40), (37, 1)),
@@ -436,6 +447,32 @@ def test_scatters_write_whole_lines_one_layer_a_line():
                     assert len({q + k for q, k in spans}) == len(spans), name
 
 
+@pytest.mark.parametrize("name", ["runs_keep_odd_words", "runs_dense_short"])
+def test_runs_into_part_of_a_line_write_scratch_lines(name):
+    """API.MEM.002, L1.VER.017: a destination whose words end inside a line,
+    written by runs: the parts write lines of scratch, one walk writes the
+    destination's words, the only part writing the destination."""
+    _, _, pl = run(CASES[name])
+    assert pl.dst_words % HW.line
+    writes = [p for p in pl.parts if p.dst == "dst"]
+    assert writes == [pl.parts[-1]] and isinstance(writes[0], R.Words)
+    assert writes[0].dlevels == ((pl.dst_words, HW.word),)
+
+
+def test_mutant_unstaged_runs_are_caught(monkeypatch):
+    """Runs scattering whole lines into a destination whose words end inside
+    a line: they write past its words."""
+    assert _caught(monkeypatch, "_stage", lambda pl, kept, hw: pl)
+
+
+def test_mutant_kept_words_not_copied_in_are_caught(monkeypatch):
+    orig = R._stage
+    monkeypatch.setattr(R, "_stage", lambda pl, kept, hw: orig(pl, False, hw))
+    monkeypatch.setattr(R, "_plans", type(R._plans)())
+    got, exp, _ = run(CASES["runs_keep_odd_words"])
+    assert not np.array_equal(got, exp)
+
+
 # ------------------------------------------------------------- mutants
 def _caught(monkeypatch, attr, value) -> bool:
     """Whether some case's execution differs from numpy with `attr` of
@@ -625,6 +662,8 @@ def test_mutant_unstaged_copy_rows_are_caught(monkeypatch):
     "name",
     [
         "runs_compact_shared_lines",
+        "runs_keep_odd_words",
+        "runs_dense_short",
         "splat_bias",
         "splat_pairs",
         "splat_lane_copies",
@@ -673,18 +712,33 @@ def compile_case(name):
     return got[0]
 
 
-@pytest.mark.parametrize("nbytes, kernels", [(512, 1), (480, 0)])
-def test_destination_lines_stay_in_the_allocation(monkeypatch, nbytes, kernels):
-    """API.MEM.002: an [8, 30] transpose into 480 bytes (its last line runs
-    past the allocation's words) takes `kernels.lanes`; into whole lines,
-    `kernels.relayout`."""
+@pytest.mark.parametrize("nbytes", [480, 512])
+def test_destination_lines_stay_in_the_allocation(monkeypatch, nbytes):
+    """API.MEM.002: an [8, 30] transpose into 480 bytes (its words end inside
+    a line) or 512 takes `kernels.relayout`, its destination port the 480
+    bytes of the values; compiled and accepted by the static checker."""
     made = []
     kernel = R.relayout_kernel
-    monkeypatch.setattr(R, "relayout_kernel", lambda *a: made.append(a) or kernel(*a))
+
+    def keep(*a):
+        made.append(kernel(*a))
+        return made[-1]
+
+    monkeypatch.setattr(R, "relayout_kernel", keep)
     dev = D.Device(kind="offline", board=BOARD)
     s, d = Storage(dev, 480), Storage(dev, nbytes)
     FM.relayout(dev, s.addr, 240, ((30, 1), (8, 30)), 0, ((30, 8), (8, 1)), 240, d.addr)
-    assert (len(made), dev.counters["runs"]) == (kernels, 1)
+    assert (len(made), dev.counters["runs"]) == (1, 1)
+    assert 2 * int(np.prod(made[0][1]["dst"].shape)) == 480
+
+
+def test_mutant_line_destination_is_caught(monkeypatch):
+    """The destination port as whole lines: 512 bytes, past the 480."""
+    monkeypatch.setattr(R, "dst_words", lambda m, hw: -(-m // hw.line_values) * hw.line)
+    monkeypatch.setattr(R, "_plans", type(R._plans)())
+    monkeypatch.setattr(R, "_kernels", type(R._kernels)())
+    with pytest.raises(AssertionError):
+        test_destination_lines_stay_in_the_allocation(monkeypatch, 480)
 
 
 GRAIN_CASES = ["transpose_two_margins", "transpose_window_channels", "spread"]
@@ -742,6 +796,8 @@ MODEL = [
     "runs_compact_shared_lines",
     "runs_offset_keep",
     "runs_buffer_ends",
+    "runs_keep_odd_words",
+    "runs_dense_short",
     "splat_bias",
     "splat_offset",
     "splat_pairs",

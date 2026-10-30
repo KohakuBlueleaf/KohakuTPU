@@ -234,20 +234,6 @@ impl Exec {
         }
     }
 
-    /// The bytes of the allocation `at` lies in: its storage's, or its side
-    /// form's.
-    pub fn allocated(&self, at: &Addr) -> i64 {
-        let s = self.store(&at.buf);
-        if at.form == flat() {
-            return s.nbytes;
-        }
-        s.forms
-            .iter()
-            .find(|(k, _)| *k == at.form)
-            .map(|f| f.1)
-            .expect("an allocated form")
-    }
-
     /// The address `offset` bytes into `buf`'s row-major bytes: an alias's
     /// are the form it stands over.
     pub fn addr(&self, buf: &str, offset: i64) -> Addr {
