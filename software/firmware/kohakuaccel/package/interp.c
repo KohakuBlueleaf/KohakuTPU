@@ -63,8 +63,10 @@ const uint64_t *ka_package_ahead(uint64_t seq)
  * per step, is built for speed (all -Os: silu 14,211 node cycles, not 13,111). */
 #ifdef KA_DEBUG
 #define KA_HOT /* the debug image is built for size throughout */
-#else
+#elif __has_attribute(optimize)
 #define KA_HOT __attribute__((optimize("O2")))
+#else
+#define KA_HOT /* clang has no per-function level: the file's level applies */
 #endif
 
 static KA_HOT uint64_t rd(uint64_t off)
@@ -891,7 +893,11 @@ static int wait_bell(unsigned mesh, uint32_t count)
 /* ------------------------------------------------------------------------
  * Interlink, memory, control-region and register steps (package-format.md
  * s4.9-4.14). Out of line and laid out cold: none sits in a dispatch loop. */
+#if __has_attribute(optimize)
 #define KA_COLD __attribute__((cold, noinline, optimize("Os")))
+#else
+#define KA_COLD __attribute__((cold, noinline))
+#endif
 
 /* Rings this node has queued, as the interlink's 16-bit sent count runs. */
 static uint16_t rings;
