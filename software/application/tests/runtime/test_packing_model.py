@@ -199,7 +199,8 @@ def test_rust_generated_checked_quant(dev, monkeypatch):
         dev.free(qa)
 
 
-def test_padded_scratch_full_readback_and_guards(dev, monkeypatch):
+@pytest.mark.parametrize("pad_strategy", ["staged", "native"])
+def test_padded_scratch_full_readback_and_guards(dev, monkeypatch, pad_strategy):
     machine = machine_of("vlt_v9t6s_1n", packing_backend="vector_mx7")
     raw = np.arange(384, dtype=np.float16).reshape(6, 64) / 64
     pair = matmul.quant_kernel(
@@ -212,6 +213,7 @@ def test_padded_scratch_full_readback_and_guards(dev, monkeypatch):
         2,
         2,
         finite=True,
+        pad_strategy=pad_strategy,
     )
     c = K.specialise(*pair, machine=machine)
     allocate, free = dev.alloc, dev.free
@@ -239,7 +241,9 @@ def test_padded_scratch_full_readback_and_guards(dev, monkeypatch):
         expected[:5, :48] = raw[:5, 16:64]
         assert dev.read(qa, 512) == reference(mxfp7.lift(expected, 2), "a", 2, 2)
         assert dev.read(xa, raw.nbytes) == raw.tobytes()
-        assert len(scratch) == 1
+        # L2 packing.md: native padding stages nothing in DRAM; staged fills
+        # one padded FP16 scratch.
+        assert len(scratch) == (pad_strategy == "staged")
         for address, (base, nbytes) in scratch.items():
             assert nbytes == expected.nbytes
             assert dev.read(address, nbytes) == expected.tobytes()
