@@ -54,7 +54,14 @@ def test_small_syscall_frame(tmp_path):
     sizes = []
     for small in (False, True):
         out = tmp_path / str(small)
-        args = [sys.executable, str(TOOLS / "build.py"), "kos", "--out", str(out)]
+        args = [
+            sys.executable,
+            str(TOOLS / "build.py"),
+            "kos",
+            "--plain",
+            "--out",
+            str(out),
+        ]
         if small:
             args += ["-D", "KOS_SMALL_CALL"]
         subprocess.run(args, check=True, capture_output=True, text=True)
@@ -69,7 +76,14 @@ def test_event_gather_size(tmp_path):
     sizes = []
     for asm in (False, True):
         out = tmp_path / str(asm)
-        args = [sys.executable, str(TOOLS / "build.py"), "kos", "--out", str(out)]
+        args = [
+            sys.executable,
+            str(TOOLS / "build.py"),
+            "kos",
+            "--plain",
+            "--out",
+            str(out),
+        ]
         if asm:
             args += ["-D", "KOS_EVENT_ASM"]
         subprocess.run(args, check=True, capture_output=True, text=True)

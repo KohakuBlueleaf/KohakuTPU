@@ -12,8 +12,8 @@ TOOLS = pathlib.Path(__file__).resolve().parents[2] / "tools"
 MODELS = pathlib.Path(
     os.environ.get("KOS_CARD_MODELS", pathlib.Path.home() / "ktpu/build")
 )
-IMAGE = pathlib.Path(
-    os.environ.get("KOS_HOT_IMAGE", "build/oshot/loop4/checked/13/kos.elf")
+IMAGE = (
+    pathlib.Path(os.environ.get("KOS_OUT", pathlib.Path.home() / "kos/out")) / "kos.elf"
 )
 
 

@@ -97,7 +97,7 @@ def passed(r: dict) -> bool:
 
 def must_pass(r: dict) -> dict:
     assert passed(r), "\n".join(r["fails"]) + r["output"][-4000:]
-    return r["measures"]["0"]
+    return r["measures"].get("0", {})
 
 
 # ---- the core models: graphs, the arena, refusals ----
