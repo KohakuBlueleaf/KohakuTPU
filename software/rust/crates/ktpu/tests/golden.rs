@@ -21,7 +21,7 @@ use std::path::Path;
 use std::time::Instant;
 
 fn goldens() -> Vec<(String, Value)> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../golden/e2e");
+    let dir = golden().join("e2e");
     let mut out: Vec<(String, Value)> = std::fs::read_dir(&dir)
         .expect("golden/e2e: run golden/dump.py")
         .flatten()
@@ -72,16 +72,11 @@ fn first_difference(got: &str, want: &str) -> String {
     )
 }
 
-/// The RUL.063 schedule of a case whose Python schedule the ruling changes
-/// (`golden/sched/e2e/<case>.json`: `rulings`, `scheduled_ruled`).
-fn ruled_schedule(case: &Value) -> Option<String> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../golden/sched/e2e");
-    let text =
-        std::fs::read_to_string(dir.join(format!("{}.json", case["case"].as_str()?))).ok()?;
-    let s: Value = serde_json::from_str(&text).ok()?;
-    let ruled = s["scheduled_ruled"].as_str()?;
-    let tagged = s["rulings"].as_array()?.iter().any(|r| r == "RUL.063");
-    (tagged && Some(ruled) != s["scheduled"].as_str()).then(|| ruled.to_string())
+#[path = "../../ktpu-l2/tests/golden/reference.rs"]
+mod reference;
+
+fn golden() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../golden")
 }
 
 /// Each node's package and buffer parameters against the reference's
@@ -294,9 +289,6 @@ fn stages(case: &Value, m: &Machine) -> Vec<Step> {
         let l1 = b.schedule(&b.lower(&b.passes(&p, &name, m)?, &name, m)?, m)?;
         Ok::<_, Refusal>((name, l1))
     })();
-    // Where RUL.063 changes the image schedule, the reference is the ruled
-    // schedule (golden/sched/e2e, an independent emulation), not Python's.
-    let ruled = ruled_schedule(case);
     // A case an accepted ruling refuses (golden/ruled.json): the reference
     // is that refusal at its stage, not Python's output.
     let refused = ruled_refusal(case);
@@ -310,25 +302,20 @@ fn stages(case: &Value, m: &Machine) -> Vec<Step> {
         });
         return out;
     }
-    let python_l1 = case["l1"].as_str();
-    // Where RUL.099 changes the lowering, the reference is the ruled build's
-    // L1 (`ruled.l1`, written by `rul099_regold` once the predecessor
-    // lowering reproduced the Python text).
-    let lowered = case["ruled"]["l1"].as_str();
-    let want_l1 = lowered.or(ruled.as_deref()).or(python_l1);
+    let want_l1 = reference::reference_l1(case, &golden());
     let (name, l1) = match (l1, want_l1) {
-        (Ok((name, l1)), Some(want)) if b.print_l1(&l1) == want => {
-            out.push(Ok(match (lowered.is_some(), ruled.is_some()) {
-                (true, _) => "L2 -> L1 agree [RUL.099: the ruled lowering]",
-                (false, true) => "L2 -> L1 agree [RUL.063: the ruled schedule]",
-                (false, false) => "L2 -> L1 agree",
+        (Ok((name, l1)), Some((want, source))) if b.print_l1(&l1) == want => {
+            out.push(Ok(match source {
+                reference::Source::Lowered => "L2 -> L1 agree [RUL.099: the ruled lowering]",
+                reference::Source::Scheduled => "L2 -> L1 agree [RUL.063: the ruled schedule]",
+                reference::Source::Python => "L2 -> L1 agree",
             }));
             (name, l1)
         }
-        (Ok((_, l1)), Some(want)) => {
+        (Ok((_, l1)), Some((want, _))) => {
             out.push(Err(format!(
                 "L1 {}",
-                first_difference(&b.print_l1(&l1), want)
+                first_difference(&b.print_l1(&l1), &want)
             )));
             return out;
         }
@@ -697,7 +684,7 @@ fn rul099_regold() {
             std::env::var("KTPU_RUL099_REGOLD_BACKUP").expect("KTPU_RUL099_REGOLD_BACKUP"),
         )
     });
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../golden/e2e");
+    let dir = golden().join("e2e");
     let b = Stack;
     let lowered = |case: &Value, l2: &str, m: &Machine| {
         let p = b.parse_l2(l2)?;
@@ -723,7 +710,8 @@ fn rul099_regold() {
             case["machine"].as_str().unwrap(),
             case["nodes"].as_u64().unwrap() as u32,
         );
-        let stored = ruled_schedule(&case).or(case["l1"].as_str().map(str::to_string));
+        let stored =
+            reference::ruled_schedule(&case, &golden()).or(case["l1"].as_str().map(str::to_string));
         let before = ktpu::mutant::with("l2.rul099/before", || {
             lowered(&case, l2, &m).map(|(_, l1)| b.print_l1(&l1))
         })

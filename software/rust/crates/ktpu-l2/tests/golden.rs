@@ -18,6 +18,9 @@ fn golden_dir() -> PathBuf {
 #[path = "golden/review.rs"]
 mod review;
 
+#[path = "golden/reference.rs"]
+mod reference;
+
 const FILE: &str = "<golden.l2>";
 
 /// A refusal as the golden holds it: `(message, line, col)`.
@@ -574,14 +577,14 @@ fn goldens() {
 
 /// The e2e goldens (`golden/e2e`, `dump.py`): `compile_l1` with one search
 /// for the passes and the lowering, then the image scheduler, against the
-/// Python L1. Run with `KTPU_E2E=REGEX`.
+/// case's reference L1 (`reference::reference_l1`). Run with `KTPU_E2E=REGEX`.
 #[test]
 fn e2e_l1() {
     let Ok(only) = std::env::var("KTPU_E2E") else {
         return;
     };
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../golden/e2e");
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../golden");
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(golden.join("e2e"))
         .unwrap()
         .flatten()
         .map(|e| e.path())
@@ -592,7 +595,9 @@ fn e2e_l1() {
     let (mut pass, mut fails) = (0, Vec::new());
     for path in &paths {
         let case: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-        let (Some(l2), Some(want)) = (case["l2"].as_str(), case["l1"].as_str()) else {
+        let (Some(l2), Some((want, _))) =
+            (case["l2"].as_str(), reference::reference_l1(&case, &golden))
+        else {
             continue;
         };
         let m = Machine::named(case["machine"].as_str().unwrap()).unwrap();
@@ -610,7 +615,7 @@ fn e2e_l1() {
             Ok(c) if c.l1.source == want => pass += 1,
             Ok(c) => fails.push(format!(
                 "{name}: scheduled L1 differs, {}",
-                first_diff(want, &c.l1.source)
+                first_diff(&want, &c.l1.source)
             )),
             Err(e) => fails.push(format!("{name}: refused {e}")),
         }
