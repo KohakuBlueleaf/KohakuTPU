@@ -42,8 +42,14 @@ from tinygrad.schedule import rangeify
 from tinygrad.uop import Ops
 from tinygrad.uop.ops import AxisType, PatternMatcher, ProgramInfo, UOp
 
+from kohakutpu.application.ktpugrad import (
+    auto_sequence,
+    call_capture,
+    eager_schedule,
+    graph_walk,
+    launch_eager,
+)
 from kohakutpu.application.ktpugrad import fold as F
-from kohakutpu.application.ktpugrad import launch_eager
 from kohakutpu.application.ktpugrad import lower as L
 from kohakutpu.application.ktpugrad import run as R
 from kohakutpu.application.ktpugrad.device import NAME, register
@@ -151,10 +157,44 @@ _PM_EARLIEST = PatternMatcher(
 #: The tensor module's global `realize` runs a schedule with.
 RUN = "run_linear"
 _RUN_LINEAR = getattr(tensor, RUN)
+_CREATE_LINEAR = tensor.create_linear_with_vars
+
+
+def create_linear_with_vars(sink):
+    if not eager_schedule.enabled(sink):
+        return _CREATE_LINEAR(sink)
+    rt = D.device()
+    if rt.eager_schedules is None:
+        rt.eager_schedules = eager_schedule.Schedules()
+    context = (
+        rt.machine,
+        rt.library,
+        rt.library_only,
+        FUSE_MODE,
+        tuple(v.value for v, _ in _PINS),
+        rangeify.pm_remove_bufferize,
+        rangeify.earliest_rewrites,
+        VALIDATE_WITH_CPU.value,
+        "1" if rt.eager_exec else "0",
+    )
+    compile_schedule = (
+        _compile_schedule
+        if context[-1] == "1" and not VALIDATE_WITH_CPU.value
+        else None
+    )
+    return rt.eager_schedules.run(sink, _CREATE_LINEAR, context, compile_schedule)
+
+
+def _compile_schedule(linear):
+    return realize.link_linear(
+        realize.compile_linear(linear, validate=bool(VALIDATE_WITH_CPU.value))
+    )
 
 
 def _held() -> set:
     """Ids of the base buffers some live Tensor's graph names."""
+    if graph_walk.ENABLED:
+        return graph_walk.held()
     roots = [t.uop for r in list(tensor.all_tensors) if (t := r()) is not None]
     return {
         id(b.base)
@@ -184,16 +224,25 @@ def run_linear(
     if not any(used):
         return _RUN_LINEAR(linear, var_vals, input_uops, update_stats, jit, wait)
     held = _held()
-    linear = realize.link_linear(
-        realize.compile_linear(
-            linear, validate=bool(VALIDATE_WITH_CPU.value), input_uops=list(inputs)
+    rt = D.device()
+    if not (
+        rt.eager_exec
+        and all(c.op is Ops.CALL and c.src[0].op is Ops.PROGRAM for c in linear.src)
+    ):
+        linear = realize.link_linear(
+            realize.compile_linear(
+                linear, validate=bool(VALIDATE_WITH_CPU.value), input_uops=list(inputs)
+            )
         )
-    )
     ctx = realize.ExecContext(
         var_vals or {}, inputs, update_stats, jit, wait or DEBUG >= 2
     )
-    rt = D.device()
 
+    with auto_sequence.scope(rt, linear, inputs):
+        _execute_eager(linear, ctx, used, inputs, held, rt)
+
+
+def _execute_eager(linear, ctx, used, inputs, held, rt):
     if launch_eager.try_group(linear, ctx, used, inputs, held, rt, _on_ktpu):
         return
 
@@ -251,6 +300,23 @@ def to_program(ast, renderer):
     )
 
 
+def refresh_knobs() -> None:
+    if not installed():
+        return
+    tensor.create_linear_with_vars = (
+        create_linear_with_vars if eager_schedule.refresh() else _CREATE_LINEAR
+    )
+    tensor._apply_map_to_tensors = (
+        graph_walk.apply_map if graph_walk.refresh() else graph_walk._ORIGINAL
+    )
+    tensor.transform_to_call = (
+        call_capture.transform if call_capture.refresh() else call_capture.ORIGINAL
+    )
+
+
+D.ON_DEVICE_INIT.append(refresh_knobs)
+
+
 def install() -> None:
     """Register KTPU and route lowering through the seam. Idempotent."""
     global _saved
@@ -268,6 +334,7 @@ def install() -> None:
     rangeify.earliest_rewrites = _PM_EARLIEST
     setattr(realize, SEAM, to_program)
     setattr(tensor, RUN, run_linear)
+    refresh_knobs()
 
 
 def uninstall() -> None:
@@ -283,6 +350,9 @@ def uninstall() -> None:
     rangeify.earliest_rewrites = _PM_EARLIEST_ORIG
     setattr(realize, SEAM, _TO_PROGRAM)
     setattr(tensor, RUN, _RUN_LINEAR)
+    tensor.create_linear_with_vars = _CREATE_LINEAR
+    tensor._apply_map_to_tensors = graph_walk._ORIGINAL
+    tensor.transform_to_call = call_capture.ORIGINAL
 
 
 def installed() -> bool:

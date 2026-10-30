@@ -18,6 +18,7 @@ from tinygrad.engine.jit import GraphRunner
 from tinygrad.renderer import Renderer
 
 from kohakutpu.application.ktpugrad import fold as F
+from kohakutpu.application.ktpugrad import recipe
 from kohakutpu.application.ktpugrad import run as R
 from kohakutpu.application.ktpugrad.lower import Refused
 from kohakutpu.application.ktpugrad.plans import PLANS, KTPUUnsupported
@@ -29,6 +30,7 @@ from kohakutpu.application.runtime.storage import FLAT, Storage, StorageView
 
 NAME = "KTPU"
 MODULE = f"tinygrad.runtime.ops_{NAME.lower()}"
+SUBMITTED = (D.Submitted, D.rs._rs.Submitted)
 
 
 def seconds(rt: D.Device, runs) -> float:
@@ -148,7 +150,7 @@ class KTPUProgram:
             with rt.submission_scope(
                 self.plan.name, readonly, lambda: [f.addr for f in out.forms.values()]
             ):
-                runs = R.execute(rt, self.plan, by_slot)
+                runs = recipe.execute(rt, self.plan, by_slot)
         except (Refused, RowsError, FM.FormError) as e:
             # Refused once the buffers are known (their forms, a sub-buffer, ...).
             raise KTPUUnsupported(
@@ -156,10 +158,10 @@ class KTPUProgram:
             ) from None
         if wait:
             runs = [
-                rt.collect_through(r) if isinstance(r, D.Submitted) else r for r in runs
+                rt.collect_through(r) if isinstance(r, SUBMITTED) else r for r in runs
             ]
         self.dev.last_runs = runs
-        if any(isinstance(r, D.Submitted) for r in runs):
+        if any(isinstance(r, SUBMITTED) for r in runs):
             return None
         return seconds(rt, runs)
 
@@ -329,7 +331,7 @@ class KTPUGraph(GraphRunner):
                     st.host = None
             for n, snap in held.items():
                 cores[n].restore(snap)
-            if any(isinstance(r, D.Submitted) for r in runs):
+            if any(isinstance(r, SUBMITTED) for r in runs):
                 return None
             return seconds(rt, runs)
         self.counts["recorded"] += 1
