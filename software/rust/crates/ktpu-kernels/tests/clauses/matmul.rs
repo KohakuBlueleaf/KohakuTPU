@@ -99,6 +99,57 @@ fn a_padded_k_tail_quantises_padded() {
     assert!(!text(&whole).contains("pad="), "{}", text(&whole));
 }
 
+/// Two batches of one product tile each: a batch at a time one cluster
+/// works, with batch_tiles both clusters work at once; a single batch's
+/// kernel is the same either way.
+#[test]
+fn batch_tiles_shares_out_every_batchs_tiles() {
+    let d = mm::defaults();
+    let on = mm::Knobs {
+        batch_tiles: true,
+        ..d
+    };
+    let p = mm::plan(2, 8, 32, 64, false, 4, PAIRING, &card(), &d).unwrap();
+    assert_eq!((p.mp / p.tm) * (p.n / p.tn), 1, "one tile a batch");
+    let kernel = |p: &mm::Mm, k: &mm::Knobs| {
+        let out = Operand::full(p.n, p.bt * p.mp);
+        mm::mm_kernel(p, &relu(), &[], &out, k, &card()).unwrap()
+    };
+    let mg = |k: &mm::Knobs| -> Vec<String> {
+        lines(&kernel(&p, k), "par")
+            .into_iter()
+            .filter(|l| l.contains(" on mg"))
+            .collect()
+    };
+    assert_eq!(mg(&d), vec!["par u1 in 0..1 on mg[u1]"]);
+    assert_eq!(mg(&on), vec!["par u1 in 0..2 on mg[u1]"]);
+    let one = mm::plan(1, 8, 32, 64, false, 4, PAIRING, &card(), &d).unwrap();
+    assert_eq!(kernel(&one, &d).graph, kernel(&one, &on).graph);
+    // A recorded call replays the knob it names, and none where it names none.
+    let mut call = serde_json::json!({
+        "mm": {"made_by": {"gen": "matmul.plan",
+            "args": {"bt": 2, "m": 8, "n": 32, "k": 64, "shared": false}}},
+        "e": {"nodes": [{"load": 0}], "root": 0},
+        "extras": [],
+        "out": {"kind": "full", "dtype": "f16", "offset": 0, "pitch": 32, "rows": 2 * p.mp},
+    });
+    let load = |k: &mm::Knobs| {
+        let out = Operand::full(p.n, p.bt * p.mp);
+        mm::mm_kernel(&p, &expr::load(0), &[], &out, k, &card())
+            .unwrap()
+            .graph
+    };
+    let replay = |c: &serde_json::Value| {
+        ktpu_kernels::call::call("matmul.mm_kernel", c, &card())
+            .unwrap()
+            .graph
+    };
+    assert_eq!(replay(&call), load(&d));
+    call["batch_tiles"] = true.into();
+    assert_eq!(replay(&call), load(&on));
+    assert_ne!(load(&on), load(&d));
+}
+
 /// The default quant schedule as the L2 text writes it.
 fn schedule() -> String {
     mm::QUANT_SCHEDULE
@@ -118,6 +169,7 @@ fn a_call_records_and_replays_its_knobs() {
         n_tiles: 2,
         dense_n: true,
         pad_k: true,
+        batch_tiles: true,
     };
     let args: serde_json::Map<String, serde_json::Value> = k
         .args(mm::Group::Plan)
@@ -128,7 +180,10 @@ fn a_call_records_and_replays_its_knobs() {
         serde_json::Value::Object(args.clone()),
         serde_json::json!({"pad_m": true, "n_tiles": 2, "dense_n": true, "pad_k": true})
     );
-    assert!(k.args(mm::Group::Kernel).is_empty());
+    assert_eq!(
+        k.args(mm::Group::Kernel),
+        vec![("batch_tiles", serde_json::json!(true))]
+    );
     let mut call = serde_json::json!({"bt": 1, "m": 1576, "n": 768, "k": 768});
     let bare = ktpu_kernels::call::mm_plan(&call, &card()).unwrap();
     assert_eq!(bare, tiling(1576, 768, &mm::unrecorded()));
@@ -142,7 +197,7 @@ fn a_call_records_and_replays_its_knobs() {
 fn api_op_007_product_and_epilogue_one_kernel() {
     let p = mm::plan(1, 64, 128, 64, true, 4, PAIRING, &card(), &mm::defaults()).unwrap();
     let out = Operand::full(128, 64);
-    let k = mm::mm_kernel(&p, &relu(), &[], &out, &card()).unwrap();
+    let k = mm::mm_kernel(&p, &relu(), &[], &out, &mm::defaults(), &card()).unwrap();
     let units: Vec<g::UnitKind> = stmts(&k.graph.body)
         .into_iter()
         .filter_map(|s| match &s.node {
@@ -185,7 +240,15 @@ fn api_form_007_rows_not_whole_words_refused() {
 #[test]
 fn api_form_011_tile_scratch_read_gt4() {
     let p = mm::plan(1, 64, 128, 64, true, 4, PAIRING, &card(), &mm::defaults()).unwrap();
-    let k = mm::mm_kernel(&p, &relu(), &[], &Operand::full(128, 64), &card()).unwrap();
+    let k = mm::mm_kernel(
+        &p,
+        &relu(),
+        &[],
+        &Operand::full(128, 64),
+        &mm::defaults(),
+        &card(),
+    )
+    .unwrap();
     let h = &k.graph.scratch[0];
     assert_eq!(
         h.spec.layout,

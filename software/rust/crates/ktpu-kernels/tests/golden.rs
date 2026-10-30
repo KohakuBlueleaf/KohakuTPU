@@ -88,6 +88,7 @@ fn run(call: &Value, plans: &[&Value], m: &Machine) -> Result<Got, Refusal> {
             &expr_of(&a["e"]),
             &operands_of(&a["extras"]),
             &operand_of(&a["out"]),
+            &matmul::unrecorded().read(a, matmul::Group::Kernel)?,
             m,
         )?),
         "convert.copy_kernel" => k(convert::copy_kernel(int(&a["nbytes"]), m)?),

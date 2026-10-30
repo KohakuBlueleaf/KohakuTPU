@@ -37,7 +37,7 @@ fn cluster_mm(inp: &Value, m: &Machine) -> Result<Value, String> {
         ktpu_kernels::gen::matmul::plan(bt, rows, n, k, true, 4, ktpu_machine::PAIRING, m, &knobs)
             .map_err(|e| e.to_string())?;
     let out = ktpu_kernels::Operand::full(mm.n, mm.bt * mm.m);
-    let kernel = ktpu_kernels::mm_kernel(&mm, &ktpu_kernels::expr::load(0), &[], &out, m)
+    let kernel = ktpu_kernels::mm_kernel(&mm, &ktpu_kernels::expr::load(0), &[], &out, &knobs, m)
         .map_err(|e| e.to_string())?;
     let graph = serde_json::to_string(&kernel.graph).map_err(|e| e.to_string())?;
     let b = Stack;

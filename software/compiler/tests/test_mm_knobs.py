@@ -7,6 +7,7 @@ import json
 import pytest
 
 from kohakutpu.application.kernels import matmul as MM
+from kohakutpu.application.runtime import generated
 from kohakutpu.compiler import _rs
 from kohakutpu.stack import rs
 
@@ -28,6 +29,43 @@ def test_the_knob_table_is_the_native_one():
         "dense_n": False,
         "pad_k": False,
     }
+    assert MM.kernel_knobs() == {"batch_tiles": False}
+
+
+def test_a_recorded_call_keeps_its_knobs(monkeypatch):
+    """`generated.launch` fills each kernel knob the call does not name from
+    the overrides, and a knob the call names stays as recorded."""
+    seen = []
+    monkeypatch.setattr(
+        generated, "graph", lambda g, a, m, mutant: seen.append(json.loads(a)) or ""
+    )
+
+    class Dev:
+        machine = "multimesh_v9t6"
+
+        def kernel(self, source):
+            return source
+
+        def run(self, compiled, bindings, kind, info):
+            raise RuntimeError("generated only")
+
+    monkeypatch.setattr(generated.rs, "machine_json", lambda m: MACHINE)
+    defaults = MM.kernel_knobs()
+    recorded = {"e": {}, **{k: away(v) for k, v in defaults.items()}}
+    for k, v in defaults.items():
+        monkeypatch.setenv(MM.KNOBS[k][0], str(int(v)))
+    with pytest.raises(RuntimeError):
+        generated.launch(Dev(), "matmul.mm_kernel", recorded, {})
+    assert {k: seen[0][k] for k in recorded} == recorded
+    monkeypatch.setenv(MM.KNOBS["batch_tiles"][0], "1")
+    with pytest.raises(RuntimeError):
+        generated.launch(Dev(), "matmul.mm_kernel", {"e": {}}, {})
+    assert seen[1]["batch_tiles"] is True
+
+
+def away(v):
+    """A knob value other than `v`."""
+    return not v if isinstance(v, bool) else v + 1
 
 
 def test_an_override_moves_the_plan_through_the_native_knobs(monkeypatch):

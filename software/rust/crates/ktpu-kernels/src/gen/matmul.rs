@@ -63,6 +63,11 @@ pub const KNOBS: &[Knob] = &[
         env: "KTPU_MM_PAD_K",
         group: Group::Plan,
     },
+    Knob {
+        name: "batch_tiles",
+        env: "KTPU_MM_BATCH_TILES",
+        group: Group::Kernel,
+    },
 ];
 
 /// A contraction's plan and kernel knobs: the one source the generators,
@@ -77,6 +82,8 @@ pub struct Knobs {
     pub dense_n: bool,
     /// K padded to whole block pairs where the machine pairs blocks.
     pub pad_k: bool,
+    /// The clusters share out every batch's product tiles at once.
+    pub batch_tiles: bool,
 }
 
 /// The knobs' defaults.
@@ -91,6 +98,7 @@ pub fn unrecorded() -> Knobs {
         n_tiles: 1,
         dense_n: false,
         pad_k: false,
+        batch_tiles: false,
     }
 }
 
@@ -120,6 +128,7 @@ impl Knobs {
             "n_tiles" => self.n_tiles.into(),
             "dense_n" => self.dense_n.into(),
             "pad_k" => self.pad_k.into(),
+            "batch_tiles" => self.batch_tiles.into(),
             _ => unreachable!("a knob: {name}"),
         }
     }
@@ -138,6 +147,7 @@ impl Knobs {
             "n_tiles" => self.n_tiles = int()?,
             "dense_n" => self.dense_n = flag()?,
             "pad_k" => self.pad_k = flag()?,
+            "batch_tiles" => self.batch_tiles = flag()?,
             _ => unreachable!("a knob: {name}"),
         }
         Ok(())
@@ -569,14 +579,22 @@ fn epilogue_bands(mm: &Mm, operands: &[Operand], out: &Operand, wc: i64, hw: &Hw
 }
 
 /// The kernel for `mm` (API.OP.005, .007): ports `a` (mx7a), `b` (mx7b),
-/// `in1..` the epilogue's operands (`Load(i)`), `out`.
-pub fn mm_kernel(mm: &Mm, e: &E, extras: &[Operand], out: &Operand, mach: &Machine) -> R<Kernel> {
+/// `in1..` the epilogue's operands (`Load(i)`), `out`. A batch's product
+/// tiles, then its epilogue, a batch at a time; with `knobs.batch_tiles`
+/// every batch's tiles at once, then each batch's epilogue.
+pub fn mm_kernel(
+    mm: &Mm,
+    e: &E,
+    extras: &[Operand],
+    out: &Operand,
+    knobs: &Knobs,
+    mach: &Machine,
+) -> R<Kernel> {
     let hw = Hw::of(mach);
     let (clusters, cores) = (hw.mg, hw.vc);
     let (ntm, ntn) = (mm.mp / mm.tm, mm.n / mm.tn);
     let tiles = ntm * ntn;
-    let ncl = clusters.min(tiles).max(1);
-    let per = cdiv(tiles, ncl);
+    let batched = knobs.batch_tiles && mm.bt > 1;
     let lay_a = Side::A.layout(mm.tm / hw.band, mm.nk);
     let lay_b = Side::B.layout(mm.tn / hw.band, mm.nk);
     let nb_rows = if mm.shared { mm.n } else { mm.bt * mm.n };
@@ -626,31 +644,44 @@ pub fn mm_kernel(mm: &Mm, e: &E, extras: &[Operand], out: &Operand, mach: &Machi
         "out".to_string(),
         spec(&os, out.dtype, vec![], g::BufSpace::Dram)?,
     ));
-    let key = name(
-        "mm",
-        vec![
-            mm.py(),
-            Py::Str(expr::py(e).repr()),
-            Py::Tuple(extras.iter().map(Operand::py).collect()),
-            out.py(),
-            Py::Int(clusters),
-            Py::Int(cores),
-        ],
-    );
-    let batch = |t: &mut Trace, b: &[Buf], h: &Buf, bt: &Idx| -> R<()> {
+    let mut key_args = vec![
+        mm.py(),
+        Py::Str(expr::py(e).repr()),
+        Py::Tuple(extras.iter().map(Operand::py).collect()),
+        out.py(),
+        Py::Int(clusters),
+        Py::Int(cores),
+    ];
+    if batched {
+        key_args.push(Py::str("batch_tiles"));
+    }
+    let key = name("mm", key_args);
+    // The product tiles of `nb` batches from batch `bt` (`nb` > 1: from
+    // batch 0) over the clusters.
+    let products = |t: &mut Trace, b: &[Buf], h: &Buf, bt: &Idx, nb: i64| -> R<()> {
+        let all = nb * tiles;
+        let ncl = clusters.min(all).max(1);
+        let per = cdiv(all, ncl);
         t.par(ncl, g::UnitKind::Mg, At::Var, |t, u| {
             t.range(per, |t, i| {
                 let tile = u.add(i.mul(ncl));
-                let (ti, tj) = (tile.div(ntn), tile.rem(ntn));
-                if per * ncl != tiles {
-                    t.when(Cond::new(&tile, g::CmpOp::Lt, tiles), |t| {
-                        product_tile(t, b, h, mm, bt, &ti, &tj, &hw)
+                let (bt, at) = if nb == 1 {
+                    (bt.clone(), tile.clone())
+                } else {
+                    (tile.div(tiles), tile.rem(tiles))
+                };
+                let (ti, tj) = (at.div(ntn), at.rem(ntn));
+                if per * ncl != all {
+                    t.when(Cond::new(&tile, g::CmpOp::Lt, all), |t| {
+                        product_tile(t, b, h, mm, &bt, &ti, &tj, &hw)
                     })
                 } else {
-                    product_tile(t, b, h, mm, bt, &ti, &tj, &hw)
+                    product_tile(t, b, h, mm, &bt, &ti, &tj, &hw)
                 }
             })
-        })?;
+        })
+    };
+    let epilogue = |t: &mut Trace, b: &[Buf], h: &Buf, bt: &Idx| -> R<()> {
         let mut ins = vec![h.clone()];
         ins.extend_from_slice(&b[2..2 + extras.len()]);
         let bufs = v::Bufs {
@@ -676,10 +707,17 @@ pub fn mm_kernel(mm: &Mm, e: &E, extras: &[Operand], out: &Operand, mach: &Machi
             g::LayoutValue::Ints(vec![mm.tm / hw.band, mm.tn / hw.band]),
         )];
         let h = t.buffer(&[mm.bt * mm.mp, mm.n], g::Dtype::F16, tile)?;
-        if mm.bt == 1 {
-            batch(t, b, &h, &Idx::Int(0))
+        let batch = |t: &mut Trace, bt: &Idx| -> R<()> {
+            products(t, b, &h, bt, 1)?;
+            epilogue(t, b, &h, bt)
+        };
+        if batched {
+            products(t, b, &h, &Idx::Int(0), mm.bt)?;
+            t.range(mm.bt, |t, bt| epilogue(t, b, &h, &bt))
+        } else if mm.bt == 1 {
+            batch(t, &Idx::Int(0))
         } else {
-            t.range(mm.bt, |t, bt| batch(t, b, &h, &bt))
+            t.range(mm.bt, |t, bt| batch(t, &bt))
         }
     })
 }

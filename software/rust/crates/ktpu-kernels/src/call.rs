@@ -198,7 +198,8 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
         "matmul.mm_kernel" => {
             let mm = mm_plan(made_by(arg(a, "mm")?, "matmul.plan")?, m)?;
             let extras = operands(arg(a, "extras")?)?;
-            matmul::mm_kernel(&mm, &e("e")?, &extras, &operand(arg(a, "out")?)?, m)?
+            let knobs = matmul::unrecorded().read(a, matmul::Group::Kernel)?;
+            matmul::mm_kernel(&mm, &e("e")?, &extras, &operand(arg(a, "out")?)?, &knobs, m)?
         }
         "convert.copy_kernel" => convert::copy_kernel(int(a, "nbytes")?, m)?,
         "convert.walk_kernel" => convert::walk_kernel(

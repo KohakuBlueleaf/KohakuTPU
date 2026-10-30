@@ -17,6 +17,7 @@ fn every_knob() -> Knobs {
         n_tiles: 2,
         dense_n: true,
         pad_k: true,
+        batch_tiles: true,
     }
 }
 
