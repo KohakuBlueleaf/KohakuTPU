@@ -9,7 +9,6 @@ from tinygrad import Tensor, TinyJit
 
 from kohakutpu.application.ktpugrad.device import KTPUGraph
 from kohakutpu.application.runtime import device as D
-from kohakutpu.application.runtime.placement import Placement
 
 
 def fragment(dev):
@@ -90,12 +89,16 @@ def test_fragmented_heap_replays(monkeypatch, seed):
 
 
 def test_no_stable_placement_mutant_is_killed(monkeypatch):
-    monkeypatch.setattr(
-        Placement,
-        "alloc",
-        lambda self, site, cursors, nbytes, space, node, owner: self.dev._alloc(
-            nbytes, space, node, owner
-        ),
-    )
-    with pytest.raises(AssertionError):
+    def replaced(self, key, nbytes):
+        """Scratch placed again each run, where the heap has room now."""
+        held = self.windows.pop(key, None)
+        if held is not None:
+            self.free(held[0])
+        space, node = key
+        at = self._alloc(nbytes, space, node, f"scratch:window:{space}:{node}")
+        self.windows[key] = (at, nbytes)
+        return at
+
+    monkeypatch.setattr(D.Device, "_window", replaced)
+    with pytest.raises(AssertionError, match="0 >= 3"):
         test_fragmented_heap_replays(monkeypatch, 0)
