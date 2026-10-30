@@ -2,13 +2,18 @@
 and write them: `planner_record`'s recordings, the tests' comparison
 (`ktpu-plan/tests/common`'s `normal`), each golden's own text layout."""
 
+import functools
+import hashlib
 import json
 import subprocess
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parents[3]
 RUST = ROOT / "software/rust"
 PLAN = RUST / "golden/plan"
+KERNELS = RUST / "golden/kernels"
 
 
 def record(output, select, *extra):
@@ -19,6 +24,19 @@ def record(output, select, *extra):
         cwd=RUST,
         check=True,
     )
+
+
+def table(arr) -> dict:
+    """`forms.table`'s upload of `arr` as the planner records it."""
+    a = np.ascontiguousarray(arr)
+    key = hashlib.sha1(a.tobytes() + repr((a.shape, a.dtype)).encode()).hexdigest()
+    at = {"buf": f"table:{key}", "form": ["flat"], "offset": 0}
+    array = {
+        "dtype": str(a.dtype),
+        "shape": list(a.shape),
+        "sha256": hashlib.sha256(a.tobytes()).hexdigest(),
+    }
+    return {"table": {"at": at, "array": array}}
 
 
 def bare(node):
@@ -63,6 +81,40 @@ def normal(rec):
             steps.append(s)
         entry["steps"] = steps
     return rec
+
+
+@functools.cache
+def ruled_graphs() -> dict:
+    """Kernel name -> its graph as RUL.060 rules a truncation
+    (`golden/kernels`, each call's `ruled`)."""
+    out = {}
+    for path in sorted(KERNELS.glob("*.json")):
+        for c in json.loads(path.read_text("utf-8")).get("calls", []):
+            r = c.get("ruled") or {}
+            if "graph" in r:
+                out[r["name"]] = r["graph"]
+    return out
+
+
+def ruled(rec):
+    """Golden `rec` as `ktpu-plan`'s tests take it (`common`'s `ruled`):
+    each launch whose expression truncates carries its RUL.060 graph, the
+    launch's machine kept."""
+    rec = json.loads(json.dumps(rec))
+    for entry in entries(rec):
+        for s in entry["steps"]:
+            launch = s.get("launch") or {}
+            call = json.dumps(launch.get("call"), separators=(",", ":"))
+            if '"op":"trunc"' not in call or "graph" not in launch:
+                continue
+            graph = ruled_graphs()[launch["graph"]["name"]]
+            launch["graph"] = dict(graph, machine=launch["graph"]["machine"])
+    return rec
+
+
+def want(golden):
+    """Golden `golden` as `ktpu-plan`'s tests compare a recording to it."""
+    return normal(ruled(golden))
 
 
 def keep_old(old, new):

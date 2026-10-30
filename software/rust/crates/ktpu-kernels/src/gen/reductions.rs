@@ -3,12 +3,13 @@
 //! to one) and a reduction down the rows (a halving tree), each one kernel
 //! whose every intermediate is an f16 scratch the next stage reads back.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use ktpu_graph as g;
 use ktpu_machine::Machine;
 
-use super::{vector as v, Hw};
+use super::{prepared, relayout, vector as v, Hw};
 use crate::expr::{self, Expr, OpName, RedOp, E};
 use crate::kernel::{build, Kernel, Port};
 use crate::mutants;
@@ -304,13 +305,15 @@ pub fn wide_fold_kernel(
 /// on both halves on the fly unless its reads, twice over, pass a core's
 /// memory views or a statistic operand's rows do not split in whole words,
 /// when it is computed into a scratch first. The expression around the
-/// reduction applies to the last row.
+/// reduction applies to the last row. Operand i of `made` is made inside
+/// the kernel by its plans (`prepared.input_buffer`).
 pub fn column_tree_kernel(
     e: &E,
     ops: &[v::Operand],
     r: i64,
     w: i64,
     out: &v::Operand,
+    made: &BTreeMap<usize, Vec<relayout::Plan>>,
     m: &Machine,
 ) -> R<Kernel> {
     let hw = Hw::of(m);
@@ -325,23 +328,30 @@ pub fn column_tree_kernel(
     } else {
         v::port_shape(out, 1, w, &hw)?
     };
-    let (ports, given) = ports(ops, r, w, &out_shape, &hw)?;
-    let key = name(
-        "rows",
-        vec![
-            Py::str("col_tree"),
-            Py::Str(expr::py(e).repr()),
-            Py::Tuple(ops.iter().map(v::Operand::py).collect()),
-            Py::Int(r),
-            Py::Int(w),
-            out.py(),
-            Py::Int(hw.vc),
-            mode_py(),
-        ],
-    );
+    let plain = ports(ops, r, w, &out_shape, &hw)?;
+    let names: Vec<String> = plain.0.iter().map(|p| p.name.clone()).collect();
+    let plans = made;
+    let made = prepared::made_inputs(plans);
+    let ((ports, given), shapes) = prepared::made_ports(plain, &made, m)?;
+    let built: Vec<String> = ports.iter().map(|p| p.name.clone()).collect();
+    let mut key = vec![
+        Py::str("col_tree"),
+        Py::Str(expr::py(e).repr()),
+        Py::Tuple(ops.iter().map(v::Operand::py).collect()),
+        Py::Int(r),
+        Py::Int(w),
+        out.py(),
+        Py::Int(hw.vc),
+        mode_py(),
+    ];
+    if !made.is_empty() {
+        key.push(prepared::made_key(plans));
+    }
+    let key = name("rows", key);
     let mode = mode();
     let views = m.facts().vc.descriptors as usize;
-    build(&key, m, ports, given, |t, p| {
+    build(&key, m, ports, given, |t, b| {
+        let p = &prepared::made_bufs(t, &names, &built, b, &made, &shapes, m)?;
         let k = ops.len();
         let inputs = p[..k].to_vec();
         let full = v::Operand::full(w, 0);

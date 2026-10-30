@@ -174,7 +174,7 @@ impl Runner<'_> {
         let mut tmps = Vec::new();
         let got = self.rows_bound(plan, bufs, (&kind, &rows, &cols, wp), e, &mut tmps);
         for t in tmps {
-            self.x.free(&t);
+            self.free_tmp(&t);
         }
         got
     }
@@ -204,7 +204,7 @@ impl Runner<'_> {
                 shape: vec![wp as usize],
                 bits,
             };
-            binds.insert(format!("in{k}"), self.table_of(&mask));
+            binds.insert(format!("in{k}"), Bound::At(self.table_of(&mask)));
             ops.push(Operand::new("col"));
             e = rebuild(
                 &e,

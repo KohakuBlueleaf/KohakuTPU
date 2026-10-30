@@ -146,7 +146,7 @@ pub fn rows_call<'a>(
     let got = r.rows_run(
         &expr_of(&a["e"]["expr"]),
         &ops,
-        &binds,
+        &run::bound(binds),
         a["R"].as_i64().unwrap(),
         a["W"].as_i64().unwrap(),
         &operand(&a["out"]),

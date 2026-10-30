@@ -31,7 +31,10 @@ pub const NAMES: &[&str] = &[
 /// Mutants no spec vector names, witnessed by this crate's own tests: the
 /// unit facts read as the constants they replaced; a statistic packed in
 /// the [R, 32] form RUL.030 refuses; a reduction read twice taken twice;
-/// the contraction knobs unrecorded; the reductions as separate launches.
+/// the contraction knobs unrecorded; the reductions as separate launches;
+/// every relayout `gen::lanes`'; a relayout's destination lines past its
+/// allocation (ktpu-plan's tests/bounds.rs); the forms made before their
+/// kernels.
 pub const LOCAL: &[&str] = &[
     crate::gen::matmul::UNRECORDED_MUTANT,
     "kernels.quant/no-schedule",
@@ -40,6 +43,9 @@ pub const LOCAL: &[&str] = &[
     "kernels.expr/reduces_dup",
     crate::expr::intern::UNORDERED_MUTANT,
     crate::gen::reductions::SEPARATE_MUTANT,
+    crate::gen::relayout::LANES_MUTANT,
+    crate::gen::relayout::LINES_MUTANT,
+    crate::gen::prepared::SEPARATE_MUTANT,
 ];
 
 #[cfg(feature = "mutants")]

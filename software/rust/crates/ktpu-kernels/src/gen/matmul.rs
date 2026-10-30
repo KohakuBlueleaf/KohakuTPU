@@ -8,7 +8,7 @@
 //! product) and store row-major f16 (API.FORM.011).
 
 use super::vector::{self as v, Kind, Operand, TRIP_BANDS};
-use super::{cdiv, Hw};
+use super::{cdiv, prepared, relayout, Hw};
 use crate::expr::{self, E};
 use crate::kernel::{build, layout, Kernel, Port};
 use crate::pyrepr::{name, Py};
@@ -20,6 +20,7 @@ mod ring;
 use ktpu_graph as g;
 use ktpu_machine::{Machine, Pairing};
 pub use ring::{resolve as ring_resolve, Ring};
+use std::collections::BTreeMap;
 
 /// The widest product tile's rows: stack policy, below the bank bound
 /// (`(tm / mg.lanes) * nk <= mg.l1_bank_entries`) the plan also checks.
@@ -527,9 +528,13 @@ pub fn quant_kernel_contract(
         mach,
         finite,
         QUANT_SCHEDULE,
+        &[],
+        false,
     )
 }
 
+/// [`quant_kernel_contract`] under `schedule`; `x` made from `prepared`'s
+/// steps (ports `p_*`), `staged` always copying into a zeroed scratch.
 #[allow(clippy::too_many_arguments)]
 pub fn quant_kernel_scheduled(
     src: &Operand,
@@ -544,6 +549,8 @@ pub fn quant_kernel_scheduled(
     mach: &Machine,
     finite: bool,
     schedule: &[(&str, i64)],
+    prepared: &[relayout::Plan],
+    staged: bool,
 ) -> R<Kernel> {
     let hw = Hw::of(mach);
     let dtype = side.dtype();
@@ -581,29 +588,48 @@ pub fn quant_kernel_scheduled(
     let k_live = cdiv(cols, hw.kblock) * hw.kblock;
     let pad = vector_packs(nk, mach) && cp > k_live;
     let zc = if pad { k_live } else { cp };
-    let direct = rows == rp && cols == zc && src.pitch == cols && src.offset == 0;
-    let key = name(
-        "quant",
-        vec![
-            src.py(),
-            Py::Int(rows),
-            Py::Int(cols),
-            Py::Int(rp),
-            Py::Int(cp),
-            Py::str(side.name()),
-            Py::Int(groups),
-            Py::Int(nk),
-            Py::Int(batches),
-            Py::Bool(finite),
-            Py::Tuple(
-                schedule
-                    .iter()
-                    .map(|(k, v)| Py::Tuple(vec![Py::str(k), Py::Int(*v)]))
-                    .collect(),
-            ),
-        ],
-    );
+    let direct = rows == rp && cols == zc && src.pitch == cols && src.offset == 0 && !staged;
+    let mut key = vec![
+        src.py(),
+        Py::Int(rows),
+        Py::Int(cols),
+        Py::Int(rp),
+        Py::Int(cp),
+        Py::str(side.name()),
+        Py::Int(groups),
+        Py::Int(nk),
+        Py::Int(batches),
+        Py::Bool(finite),
+        Py::Tuple(
+            schedule
+                .iter()
+                .map(|(k, v)| Py::Tuple(vec![Py::str(k), Py::Int(*v)]))
+                .collect(),
+        ),
+    ];
+    if !prepared.is_empty() {
+        key.push(Py::Tuple(
+            prepared.iter().map(relayout::shape_repr).collect(),
+        ));
+    }
+    if staged {
+        key.push(Py::str("staged"));
+    }
+    let key = name("quant", key);
+    let names: Vec<String> = ports.iter().map(|p| p.name.clone()).collect();
+    let made_in: Vec<prepared::MadeInput> = if prepared.is_empty() {
+        vec![]
+    } else {
+        vec![prepared::MadeInput {
+            port: "x".into(),
+            prefix: "p_".into(),
+            plans: prepared,
+        }]
+    };
+    let ((ports, given), shapes) = prepared::made_ports((ports, given), &made_in, mach)?;
+    let built: Vec<String> = ports.iter().map(|p| p.name.clone()).collect();
     build(&key, mach, ports, given, |t, b| {
+        let b = prepared::made_bufs(t, &names, &built, b, &made_in, &shapes, mach)?;
         let (x, q) = (&b[0], &b[1]);
         if direct {
             return t.quant_scheduled(
@@ -695,6 +721,20 @@ pub fn mm_kernel(
     knobs: &Knobs,
     mach: &Machine,
 ) -> R<Kernel> {
+    mm_kernel_made(mm, e, extras, out, knobs, mach, &BTreeMap::new())
+}
+
+/// [`mm_kernel`] with epilogue operand i of `made` made inside the kernel
+/// by its plans (ports `p{i}_*` for `in{i}`).
+pub fn mm_kernel_made(
+    mm: &Mm,
+    e: &E,
+    extras: &[Operand],
+    out: &Operand,
+    knobs: &Knobs,
+    mach: &Machine,
+    made: &BTreeMap<usize, Vec<relayout::Plan>>,
+) -> R<Kernel> {
     let cse = takes_cse(e, knobs);
     let e = &computed(e, knobs);
     let hw = Hw::of(mach);
@@ -784,7 +824,14 @@ pub fn mm_kernel(
     if cse {
         key_args.push(Py::str("expr_cse"));
     }
+    if !made.is_empty() {
+        key_args.push(prepared::made_key(made));
+    }
     let key = name("mm", key_args);
+    let names: Vec<String> = ports.iter().map(|p| p.name.clone()).collect();
+    let made_in = prepared::made_inputs(made);
+    let ((ports, given), shapes) = prepared::made_ports((ports, given), &made_in, mach)?;
+    let built: Vec<String> = ports.iter().map(|p| p.name.clone()).collect();
     // The product tiles of `nb` batches from batch `bt` (`nb` > 1: from
     // batch 0) over the clusters.
     let products = |t: &mut Trace, b: &[Buf], h: &Buf, bt: &Idx, nb: i64| -> R<()> {
@@ -831,14 +878,15 @@ pub fn mm_kernel(
         )
     };
     build(&key, mach, ports, given, |t, b| {
+        let canonical = prepared::made_bufs(t, &names, &built, b, &made_in, &shapes, mach)?;
         // An f16 A outside a quant ring: each batch quantised first.
-        let mut quantised = b.to_vec();
+        let mut quantised = canonical.clone();
         if f16 && ring.quant == 0 {
             let qa = t.buffer(&sa, g::Dtype::Mx7a, lay_a.clone())?;
             let padded = mm.m < mm.mp || mm.k < mm.kp;
             for bi in 0..mm.bt {
                 let dst = qa.at(&[sl(bi * mm.mp, (bi + 1) * mm.mp), ALL])?;
-                let src = b[0].at(&[sl(bi * mm.m, (bi + 1) * mm.m), ALL])?;
+                let src = canonical[0].at(&[sl(bi * mm.m, (bi + 1) * mm.m), ALL])?;
                 quant_a(t, &dst, &src, padded, None)?;
             }
             quantised[0] = qa;

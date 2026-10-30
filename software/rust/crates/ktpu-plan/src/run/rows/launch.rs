@@ -163,13 +163,15 @@ impl Runner<'_> {
         Ok(())
     }
 
-    /// `rows.run`: `e` over [R, W] into `out` at `out_at`.
+    /// `rows.run`: `e` over [R, W] into `out` at `out_at`. A pending bind is
+    /// made inside the kernel when it is one launch (`prepared_rows`), else
+    /// by its own relayouts first.
     #[allow(clippy::too_many_arguments)]
     pub fn rows_run(
         &mut self,
         e: &E,
         ops: &[Operand],
-        binds: &BTreeMap<String, Addr>,
+        binds: &BTreeMap<String, Bound>,
         r: i64,
         w: i64,
         out: &Operand,
@@ -189,15 +191,31 @@ impl Runner<'_> {
         } else {
             1
         };
+        let pend = binds.values().any(|b| matches!(b, Bound::Pend(_)));
+        // A reduction's partials across column blocks: one launch reads the
+        // operands (then folds of partials), so it makes the pending ones.
+        let partials = blocks > 1 && out.kind == "row" && reds.len() == 1;
+        let mut binds = binds.clone();
+        if pend {
+            if self.knobs.forms.prepared
+                && blocks == 1
+                && self.prepared_rows(e, ops, &binds, (r, w), out, out_at, info)?
+            {
+                return Ok(());
+            }
+            if !(self.knobs.forms.prepared && partials) {
+                binds = bound(self.made_all(&binds)?);
+            }
+        }
         if blocks > 1 && !reds.is_empty() && (out.kind != "row" || reds.len() > 1) {
-            return self.stat_first(e, ops, binds, r, w, out, out_at, info);
+            return self.stat_first(e, ops, &binds, r, w, out, out_at, info);
         }
-        let mut b = binds.clone();
-        b.insert("out".into(), out_at.clone());
-        if out.kind != "row" {
-            return self.launch_rows(e, ops, b, r, w, out, None, info.clone());
-        }
-        if blocks == 1 {
+        if out.kind != "row" || blocks == 1 {
+            let mut b = self.made_all(&binds)?;
+            b.insert("out".into(), out_at.clone());
+            if out.kind != "row" {
+                return self.launch_rows(e, ops, b, r, w, out, None, info.clone());
+            }
             let row = Operand::new("row");
             let stat = ktpu_kernels::gen::vector::port_shape(
                 &ktpu_kernels::call::operand(&row.json())?,
@@ -209,6 +227,8 @@ impl Runner<'_> {
         }
         let red = reds[0].clone();
         if self.knobs.rows.single_package_ast {
+            let mut b = self.made_all(&binds)?;
+            b.insert("out".into(), out_at.clone());
             let (_, keep) = substitute(e, Some(&red), Some(&expr::load(0)), 1);
             if keep
                 .iter()
@@ -231,7 +251,7 @@ impl Runner<'_> {
             e,
             &red,
             ops,
-            binds,
+            &binds,
             (r, w, nblk, rq),
             &mut parts,
             out,
@@ -252,7 +272,7 @@ impl Runner<'_> {
         e: &E,
         red: &E,
         ops: &[Operand],
-        binds: &BTreeMap<String, Addr>,
+        binds: &BTreeMap<String, Bound>,
         (r, w, nblk, rq): (i64, i64, i64, i64),
         parts: &mut [String; 2],
         out: &Operand,
@@ -260,11 +280,15 @@ impl Runner<'_> {
         info: &Value,
     ) -> Result<(), Refusal> {
         let part = Operand::new("row");
-        let mut b1 = binds.clone();
-        b1.insert("out".into(), self.x.addr(&parts[0], 0));
         let mut info1 = info.clone();
         info1["blocks"] = json!(nblk);
-        self.launch_rows(red, ops, b1, r, w, &part, Some(&[nblk, rq]), info1)?;
+        let first = self.x.addr(&parts[0], 0);
+        let pend = binds.values().any(|b| matches!(b, Bound::Pend(_)));
+        if !(pend && self.prepared_rows(red, ops, binds, (r, w), &part, &first, &info1)?) {
+            let mut b1 = self.made_all(binds)?;
+            b1.insert("out".into(), first);
+            self.launch_rows(red, ops, b1, r, w, &part, Some(&[nblk, rq]), info1)?;
+        }
         let Expr::Reduce(rop, _) = red.as_ref() else {
             unreachable!()
         };
@@ -285,10 +309,10 @@ impl Runner<'_> {
                     ..Operand::new("row")
                 },
             ];
-            let b2 = BTreeMap::from([
+            let b2 = bound(BTreeMap::from([
                 ("in0".to_string(), self.x.addr(&src, 0)),
                 ("in1".to_string(), self.x.addr(&src, 0)),
-            ]);
+            ]));
             let at = self.x.addr(&dst, 0);
             self.rows_run(&both, &o2, &b2, n, self.hw.kblock, &part, &at, info)?;
             if width - half > half {
@@ -310,7 +334,7 @@ impl Runner<'_> {
             rows: r,
             ..Operand::new("row")
         }];
-        let mut b2 = BTreeMap::from([("in0".to_string(), self.x.addr(&parts[0], 0))]);
+        let mut b2 = BTreeMap::from([("in0".to_string(), Bound::At(self.x.addr(&parts[0], 0)))]);
         for (j, i) in keep.iter().enumerate() {
             if ops[*i].kind != "row" && ops[*i].kind != "scalar" {
                 return row_err(
@@ -330,7 +354,7 @@ impl Runner<'_> {
         &mut self,
         e: &E,
         ops: &[Operand],
-        binds: &BTreeMap<String, Addr>,
+        binds: &BTreeMap<String, Bound>,
         r: i64,
         w: i64,
         out: &Operand,
@@ -350,7 +374,7 @@ impl Runner<'_> {
         };
         let stat = self.x.raw(self.stat_bytes(r));
         let at = self.x.addr(&stat, 0);
-        let b1: BTreeMap<String, Addr> = used
+        let b1: BTreeMap<String, Bound> = used
             .iter()
             .enumerate()
             .map(|(j, i)| (format!("in{j}"), binds[&format!("in{i}")].clone()))
@@ -364,12 +388,107 @@ impl Runner<'_> {
                 let n = ops.len();
                 let post = swap(e, &leaf, &expr::load(n));
                 let mut b2 = binds.clone();
-                b2.insert(format!("in{n}"), at.clone());
+                b2.insert(format!("in{n}"), Bound::At(at.clone()));
                 let mut o2 = ops.to_vec();
                 o2.push(held.clone());
                 self.rows_run(&post, &o2, &b2, r, w, out, out_at, info)
             });
         self.x.free(&stat);
         got
+    }
+
+    /// `rows._prepared`: one launch of `e` with each pending bind made
+    /// inside it (`prepared.rows_kernel`), a buffer bound twice made once;
+    /// false, nothing run, when a pending one's steps are not planned.
+    #[allow(clippy::too_many_arguments)]
+    fn prepared_rows(
+        &mut self,
+        e: &E,
+        ops: &[Operand],
+        binds: &BTreeMap<String, Bound>,
+        (r, w): (i64, i64),
+        out: &Operand,
+        out_at: &Addr,
+        info: &Value,
+    ) -> Result<bool, Refusal> {
+        let mut made: BTreeMap<usize, (usize, Vec<relayout::Plan>)> = BTreeMap::new();
+        let mut alias: BTreeMap<usize, usize> = BTreeMap::new();
+        for i in 0..ops.len() {
+            let Some(Bound::Pend(id)) = binds.get(&format!("in{i}")) else {
+                continue;
+            };
+            if let Some((j, _)) = made.iter().find(|(_, (p, _))| p == id) {
+                alias.insert(i, *j);
+                continue;
+            }
+            let steps = self.pending[*id].steps.clone();
+            let Some(plans) = self.plans_of(&steps)? else {
+                return Ok(false);
+            };
+            made.insert(i, (*id, plans));
+        }
+        let mut plain: BTreeMap<String, Addr> = binds
+            .iter()
+            .filter_map(|(k, b)| match b {
+                Bound::At(a) => Some((k.clone(), a.clone())),
+                Bound::Pend(_) => None,
+            })
+            .collect();
+        let based = self.based(ops, &mut plain, "in");
+        let ops: Vec<Operand> = (0..ops.len())
+            .map(|i| {
+                if made.contains_key(&i) || alias.contains_key(&i) {
+                    ops[i].clone()
+                } else {
+                    based[i].clone()
+                }
+            })
+            .collect();
+        let holds = out.kind == "row" || ops.iter().any(|o| o.kind == "row");
+        let quantum = if holds {
+            self.stat_rows()
+        } else {
+            self.hw.band
+        };
+        if self.sizing(&ops, &out.kind, r, w, quantum)?.nblk > 1 && expr::reduces(e).len() > 1 {
+            return Err(Refusal::new(
+                "API.ROW.009",
+                "several reductions over a row wider than one block",
+            ));
+        }
+        let mut made_arg = serde_json::Map::new();
+        for (i, (id, _)) in &made {
+            let steps: Vec<Value> = self.pending[*id].steps.iter().map(Step::made_by).collect();
+            made_arg.insert(i.to_string(), Value::Array(steps));
+        }
+        let alias_arg: serde_json::Map<String, Value> = alias
+            .iter()
+            .map(|(i, j)| (i.to_string(), json!(j)))
+            .collect();
+        let call = Call {
+            gen: "prepared.rows_kernel".into(),
+            args: json!({
+                "e": expr_arg(e),
+                "operands": ops.iter().map(Operand::json).collect::<Vec<_>>(),
+                "R": r,
+                "W": w,
+                "out": out.json(),
+                "made": made_arg,
+                "alias": alias_arg,
+            }),
+        };
+        plain.insert("out".into(), out_at.clone());
+        for (i, (id, plans)) in &made {
+            let src = self.pending[*id].steps[0]
+                .src
+                .clone()
+                .expect("a first step reads a source");
+            plain.insert(format!("x{i}"), src);
+            self.step_binds(plans, &format!("p{i}_"), &mut plain);
+        }
+        let mut info = info.clone();
+        info["prepared"] = json!(made.keys().collect::<Vec<_>>());
+        self.x.launch(call, "dsl", info, plain);
+        Ok(true)
     }
 }

@@ -185,19 +185,42 @@ impl Trace {
         self.mover(g::MoverOp::Fill, dst, None, &kw, at)
     }
 
-    /// `gather DST <- SRC [fp] index=IDX` (DSL.MOV.007).
+    /// `gather DST <- SRC [fp] index=IDX [table_stride=B]` (DSL.MOV.007):
+    /// `table_stride` bytes between the table's rows.
     #[track_caller]
-    pub fn gather(&mut self, dst: &View, src: &View, index: &View, fp: bool) -> R<()> {
+    pub fn gather(
+        &mut self,
+        dst: &View,
+        src: &View,
+        index: &View,
+        fp: bool,
+        table_stride: Option<i64>,
+    ) -> R<()> {
         let at = here();
-        let kw = [("index", Kw::Index(index)), ("fp", Kw::Flag(fp))];
+        let kw = [
+            ("index", Kw::Index(index)),
+            ("fp", Kw::Flag(fp)),
+            ("table_stride", Kw::Int(table_stride)),
+        ];
         self.mover(g::MoverOp::Gather, dst, Some(src), &kw, at)
     }
 
-    /// `scatter DST <- SRC [fp] index=IDX` (DSL.MOV.007).
+    /// `scatter DST <- SRC [fp] index=IDX [table_stride=B]` (DSL.MOV.007).
     #[track_caller]
-    pub fn scatter(&mut self, dst: &View, src: &View, index: &View, fp: bool) -> R<()> {
+    pub fn scatter(
+        &mut self,
+        dst: &View,
+        src: &View,
+        index: &View,
+        fp: bool,
+        table_stride: Option<i64>,
+    ) -> R<()> {
         let at = here();
-        let kw = [("index", Kw::Index(index)), ("fp", Kw::Flag(fp))];
+        let kw = [
+            ("index", Kw::Index(index)),
+            ("fp", Kw::Flag(fp)),
+            ("table_stride", Kw::Int(table_stride)),
+        ];
         self.mover(g::MoverOp::Scatter, dst, Some(src), &kw, at)
     }
 }

@@ -17,11 +17,13 @@ mod view;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
+use ktpu_kernels::gen::{prepared, relayout};
 use ktpu_machine::Refusal;
 use serde_json::{json, Value};
 use sha2::{Digest as _, Sha256};
 
-use super::{expr_arg, is_float, item, np_name, Bufs, Operand, Runner};
+use super::pending::{bound, form_error, Bound, Step};
+use super::{costs, expr_arg, is_float, item, np_name, Bufs, Operand, Runner};
 use crate::exec::{f16, flat, rows_key, View};
 use crate::expr::{self, Expr, E};
 use crate::lower::{self, hex, Access, Plan, Slot, Table};

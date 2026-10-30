@@ -30,6 +30,7 @@ Other walk pairs are `Unplanned` (`kernels.lanes` takes them). The index
 lists and masks are data; the kernel depends on the plan's shape only.
 """
 
+import json
 import os
 from collections import OrderedDict
 from dataclasses import dataclass, field, replace
@@ -38,6 +39,7 @@ import numpy as np
 
 from kohakutpu.application.kernels import transpose as TP
 from kohakutpu.application.kernels import vector as V
+from kohakutpu.compiler import _rs
 from kohakutpu.language import dsl as kt
 from kohakutpu.language import machine as MF
 
@@ -47,6 +49,10 @@ ROWS = 2
 ENTRIES = 8
 #: What `execute` starts scratch buffers with.
 POISON = 0x5A5A
+#: Whether a `Pull`'s codes are predecoded into a selector tree (`tree_pull`)
+#: unless `KTPU_PULL_TREE` says; the default is the native planner's
+#: (`ktpu_kernels::gen::relayout::PULL_TREE`).
+PULL_TREE = json.loads(_rs.RELAYOUT_DEFAULTS)["pull_tree"]
 PLANS_KEPT = 1024
 KERNELS_KEPT = 1024
 _plans: OrderedDict = OrderedDict()
@@ -554,7 +560,7 @@ def plan(
         hw,
         int(z0),
     )
-    tree = os.environ.get("KTPU_PULL_TREE", "1") == "1"
+    tree = os.environ.get("KTPU_PULL_TREE", "1" if PULL_TREE else "0") == "1"
     cache_key = (key, tree)
     got = _plans.get(cache_key)
     if got is None:

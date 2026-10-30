@@ -39,7 +39,8 @@ impl Runner<'_> {
             let key = self.key(&format!("win{}", keys.len()));
             let order: Vec<Id> = c.bt.iter().chain(outer.iter()).copied().collect();
             let is_a = std::ptr::eq(side, &c.a);
-            self.lay(c, &mut bufs, tmps, side, is_a, &order, lane, &key)?;
+            let defer = self.knobs.forms.prepared && self.knobs.forms.prepared_quant;
+            self.lay(c, &mut bufs, tmps, side, is_a, &order, lane, &key, defer)?;
             keys.push(key);
         }
         let side_read = |me: &Self, key: &Slot, r: Id, rows: i64| {
@@ -130,7 +131,10 @@ impl Runner<'_> {
     }
 
     /// `run._lay`: `side`'s read dense at `bufs[key]` as f16 [outer..,
-    /// K.., lane], walked by the mover from its padded source.
+    /// K.., lane], walked by the mover from its padded source; with `defer`
+    /// (`PREPARED` and `PREPARED_QUANT`) both steps a pending buffer for
+    /// the packing's kernel where a measured recipe takes them, else laid
+    /// out after all.
     #[allow(clippy::too_many_arguments)]
     fn lay(
         &mut self,
@@ -142,8 +146,9 @@ impl Runner<'_> {
         outer: &[Id],
         lane: Id,
         key: &Slot,
+        defer: bool,
     ) -> Result<(), Refusal> {
-        let (src, strides, off) = self.padded_side(c, bufs, tmps, side, is_a)?;
+        let (src, strides, off, step) = self.padded_side(c, bufs, tmps, side, is_a, defer)?;
         let order: Vec<Id> = outer.iter().chain(&c.ks).copied().chain([lane]).collect();
         let mut coef: Vec<(Id, i64)> = outer
             .iter()
@@ -151,11 +156,69 @@ impl Runner<'_> {
             .map(|r| (*r, side.mult(*r) * strides[&side.dim(*r)]))
             .collect();
         coef.push((lane, 1));
-        if same_map(&coef, &self.dense(&order)) && off == 0 {
-            let v = bufs[&src].clone();
-            bufs.insert(key.clone(), v);
+        if let (Some(src), None) = (&src, &step) {
+            if same_map(&coef, &self.dense(&order)) && off == 0 {
+                let v = bufs[src].clone();
+                bufs.insert(key.clone(), v);
+                return Ok(());
+            }
+        }
+        if defer {
+            let live = self.live(&order);
+            let dense = self.dense(&live);
+            let walk: Vec<(i64, i64)> = live
+                .iter()
+                .map(|r| (self.extent(*r), crate::run::coef_of(&coef, *r)))
+                .collect();
+            let dwalk: Vec<(i64, i64)> = live
+                .iter()
+                .map(|r| (self.extent(*r), crate::run::coef_of(&dense, *r)))
+                .collect();
+            let n = self.size(&live);
+            let steps = match (step, &src) {
+                (Some(step), _) if walk == dwalk && off == 0 && step.m == n => vec![step],
+                (Some(step), _) => {
+                    let then = Step {
+                        src: None,
+                        n: step.m,
+                        walk,
+                        at: off,
+                        dwalk,
+                        dat: 0,
+                        m: n,
+                    };
+                    vec![step, then]
+                }
+                (None, Some(src)) => {
+                    let (st, voff) = self.base(bufs, src);
+                    let nbytes = self.x.store(&st).nbytes;
+                    let whole = View {
+                        base: st,
+                        offset: 0,
+                        nbytes,
+                    };
+                    let at = self.f16_of(&whole, "half", nbytes / 2)?;
+                    vec![Step {
+                        src: Some(at),
+                        n: nbytes / 2,
+                        walk,
+                        at: off + voff.div_euclid(2),
+                        dwalk,
+                        dat: 0,
+                        m: n,
+                    }]
+                }
+                (None, None) => unreachable!("a deferred pad is a step"),
+            };
+            if !costs::has_steps(&steps, &self.m.name) {
+                return self.lay(c, bufs, tmps, side, is_a, outer, lane, key, false);
+            }
+            let id = self.pend(2 * n.max(16), steps);
+            tmps.push(self.holder(id));
+            self.pending_slots.insert(key.clone(), id);
             return Ok(());
         }
+        let src = src.expect("an undeferred pad is a slot");
         let nbytes = self.hw.f16_bytes(self.size(&order));
         let t = self.x.storage(nbytes);
         tmps.push(t.clone());
@@ -191,8 +254,10 @@ impl Runner<'_> {
     }
 
     /// `run._padded`: `(slot, {coordinate: element stride}, element of
-    /// coordinate 0)` of `side`'s source with its lane innermost in whole
-    /// words and zero outside its gate's box.
+    /// coordinate 0, step)` of `side`'s source with its lane innermost in
+    /// whole words and zero outside its gate's box: the buffer itself, or
+    /// gathered (`pad_copy`) -- with `defer`, that gather's step, nothing
+    /// run.
     #[allow(clippy::type_complexity)]
     fn padded_side(
         &mut self,
@@ -201,7 +266,8 @@ impl Runner<'_> {
         tmps: &mut Vec<String>,
         side: &Side,
         copies: bool,
-    ) -> Result<(Slot, HashMap<usize, i64>, i64), Refusal> {
+        defer: bool,
+    ) -> Result<(Option<Slot>, HashMap<usize, i64>, i64, Option<Step>), Refusal> {
         let acc = &side.acc;
         let axes: Vec<usize> = (0..side.dims.len())
             .filter(|d| Some(*d) != side.lane)
@@ -223,31 +289,32 @@ impl Runner<'_> {
                 let strides = (0..side.dims.len())
                     .map(|d| (d, side.dims[d].stride))
                     .collect();
-                return Ok((acc.slot.clone(), strides, acc.off));
+                return Ok((Some(acc.slot.clone()), strides, acc.off, None));
             }
         }
+        if defer {
+            let (strides, origin, step) =
+                self.pad_step(bufs, acc, &side.dims, &axes, side.lane, c.pad, copies)?;
+            return Ok((None, strides, origin, Some(step)));
+        }
         let key = self.key("pad");
-        self.pad_copy(
+        let (slot, strides, origin) = self.pad_copy(
             bufs, tmps, acc, &side.dims, &axes, &key, side.lane, c.pad, copies,
-        )
+        )?;
+        Ok((Some(slot), strides, origin, None))
     }
 
-    /// `run._pad_copy`: `acc`'s source over its coordinates (`axes`
-    /// outermost first, then the lane, `pad` wide) gathered dense as f16
-    /// into `bufs[key]`, every element outside the boxes zero.
-    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-    pub(super) fn pad_copy(
-        &mut self,
-        bufs: &mut Bufs,
-        tmps: &mut Vec<String>,
+    /// The coordinates' walk of `pad_copy`: `(strides, walk, first, dwalk,
+    /// dat, n, origin)`.
+    #[allow(clippy::type_complexity)]
+    fn pad_walk(
+        &self,
         acc: &Access,
         dims: &[Dim],
         axes: &[usize],
-        key: &Slot,
         lane: Option<usize>,
         pad: i64,
-        copies: bool,
-    ) -> Result<(Slot, HashMap<usize, i64>, i64), Refusal> {
+    ) -> (HashMap<usize, i64>, Walk, i64, Walk, i64, i64, i64) {
         let ext: Vec<i64> = axes
             .iter()
             .map(|d| self.span(&dims[*d]))
@@ -271,6 +338,75 @@ impl Runner<'_> {
             dat += strides[&d] * a;
         }
         let n: i64 = ext.iter().product();
+        let origin = -axes
+            .iter()
+            .map(|d| strides[d] * self.lo(&dims[*d]))
+            .sum::<i64>();
+        (strides, walk, first, dwalk, dat, n, origin)
+    }
+
+    /// `run._pad_copy(defer=True)`: the gather `pad_copy` runs as a step
+    /// from the source's f16 values (`_f16_walk`), nothing run.
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn pad_step(
+        &mut self,
+        bufs: &Bufs,
+        acc: &Access,
+        dims: &[Dim],
+        axes: &[usize],
+        lane: Option<usize>,
+        pad: i64,
+        copies: bool,
+    ) -> Result<(HashMap<usize, i64>, i64, Step), Refusal> {
+        let (strides, mut walk, first, mut dwalk, dat, n, origin) =
+            self.pad_walk(acc, dims, axes, lane, pad);
+        let (st, off) = self.base(bufs, &acc.slot);
+        if lane.is_none() && copies {
+            walk.push((self.hw.halves, 0));
+            dwalk.push((self.hw.halves, 1));
+        }
+        let first = first + off.div_euclid(crate::run::item(&acc.dtype));
+        let (src, total, w, first, dw) = match self.f16_walk(&st, &acc.dtype, &walk, first, &dwalk)
+        {
+            Ok(got) => got,
+            Err(e) if form_error(&e) => {
+                return Err(Refusal::new(
+                    "TG.RUN.004",
+                    "a padded operand with no f16 form",
+                ))
+            }
+            Err(e) => return Err(e),
+        };
+        let step = Step {
+            src: Some(src),
+            n: total,
+            walk: w,
+            at: first,
+            dwalk: dw,
+            dat,
+            m: self.hw.whole_halves(n),
+        };
+        Ok((strides, origin, step))
+    }
+
+    /// `run._pad_copy`: `acc`'s source over its coordinates (`axes`
+    /// outermost first, then the lane, `pad` wide) gathered dense as f16
+    /// into `bufs[key]`, every element outside the boxes zero.
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    pub(super) fn pad_copy(
+        &mut self,
+        bufs: &mut Bufs,
+        tmps: &mut Vec<String>,
+        acc: &Access,
+        dims: &[Dim],
+        axes: &[usize],
+        key: &Slot,
+        lane: Option<usize>,
+        pad: i64,
+        copies: bool,
+    ) -> Result<(Slot, HashMap<usize, i64>, i64), Refusal> {
+        let (strides, walk, first, dwalk, dat, n, origin) =
+            self.pad_walk(acc, dims, axes, lane, pad);
         let nbytes = 2 * self.hw.whole_halves(n);
         let s = self.x.storage(nbytes);
         tmps.push(s.clone());
@@ -293,11 +429,7 @@ impl Runner<'_> {
                 nbytes,
             },
         );
-        let off = -axes
-            .iter()
-            .map(|d| strides[d] * self.lo(&dims[*d]))
-            .sum::<i64>();
-        Ok((key.clone(), strides, off))
+        Ok((key.clone(), strides, origin))
     }
 
     /// `run._lane_copies`: each value `walk` reaches in every f16 lane of

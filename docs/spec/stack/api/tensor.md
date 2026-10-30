@@ -105,10 +105,15 @@ and a statistic word of `vc.lanes` values.
 ### Prepared operands and current-form reads
 
 A deferred operand (`forms.Pending`) holds relayout steps, not readable primary
-bytes. With `forms.PREPARED = True`, a rows consumer emits those
-steps inside its own kernel. Quant-side preparation is disabled separately
-(`forms.PREPARED_QUANT=False`). Unrepresentable steps fall back to explicit
-relayout launches. A repeated rows operand is prepared once; each reader retains
+bytes. With `forms.PREPARED` on, a rows consumer emits those
+steps inside its own kernel. Quant-side preparation (`forms.PREPARED_QUANT`)
+folds a pending packing only where the cost profile admits its recipe
+(`runtime.costs`); with no profile it never does. Both defaults have one
+source, `ktpu_kernels::gen::prepared::defaults()` (`_rs.PREPARED_DEFAULTS`;
+`KTPU_PREPARED`, `KTPU_PREPARED_QUANT` override them per process), read by
+`forms` and by the Rust planner (`ktpu_plan::run::Knobs::forms`), which takes
+the same prepared, made and profile-gated paths. Unrepresentable steps fall
+back to explicit relayout launches. A repeated rows operand is prepared once; each reader retains
 its own offset. The optional single-package reduction path materializes pending
 operands before entering its emitter.
 

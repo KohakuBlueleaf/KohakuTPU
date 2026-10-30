@@ -2,7 +2,8 @@
 //! (`golden/plan_dump.py`): `{"gen": "<module>.<fn>", "args": {python
 //! keyword: value}}`. An `Operand` is its field dict, an expression its node
 //! table ([`expr::from_table`]), an `Mm` / lanes plan `{"made_by": CALL}`
-//! (the `matmul.plan` / `lanes.plan` call, made again here), tuples lists.
+//! (the `matmul.plan` / `lanes.plan` call, made again here), tuples lists,
+//! a dict keyed by operand index an object of decimal keys.
 //! `cores` / `clusters` are the machine's (RUL.016); a recorded value is
 //! not read. An argument left out takes the Python generator's default
 //! (`shared` True, `quantum` 4, `batches` 1, `out_dtype` f16, `scalars` and
@@ -10,12 +11,13 @@
 
 use crate::expr;
 use crate::gen::vector::{Kind, Operand};
-use crate::gen::{convert, lanes, matmul, reductions, transpose, vector};
+use crate::gen::{convert, lanes, matmul, prepared, reductions, relayout, transpose, vector};
 use crate::kernel::Kernel;
 use crate::trace::{fail, R};
 use ktpu_graph as g;
 use ktpu_machine::Machine;
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 fn arg<'a>(a: &'a Value, k: &str) -> R<&'a Value> {
     match a.get(k) {
@@ -84,6 +86,19 @@ fn operands(v: &Value) -> R<Vec<Operand>> {
         .collect()
 }
 
+/// A dict keyed by operand index (JSON object keys), in index order.
+fn indexed(v: &Value) -> R<Vec<(usize, &Value)>> {
+    let mut out = vec![];
+    for (k, x) in v.as_object().into_iter().flatten() {
+        match k.parse::<usize>() {
+            Ok(i) => out.push((i, x)),
+            Err(_) => return fail("API.OP.001", format!("an operand index {k:?}")),
+        }
+    }
+    out.sort_by_key(|p| p.0);
+    Ok(out)
+}
+
 fn made_by<'a>(v: &'a Value, gen: &str) -> R<&'a Value> {
     match v.get("made_by") {
         Some(c) if c.get("gen").and_then(Value::as_str) == Some(gen) => arg(c, "args"),
@@ -149,6 +164,53 @@ pub fn lanes_plan(a: &Value, m: &Machine) -> R<lanes::Plan> {
     )
 }
 
+/// `relayout.plan`'s relayout from its call's arguments (`z0` 0 and `tree`
+/// [`relayout::PULL_TREE`] when left out): `Err(Unplanned)` inside for a
+/// walk pair no form takes.
+pub fn relayout_plan(a: &Value, m: &Machine) -> R<Result<relayout::Plan, relayout::Unplanned>> {
+    relayout::plan(
+        int(a, "src_n")?,
+        &walk(arg(a, "walk")?)?,
+        int(a, "at")?,
+        &walk(arg(a, "dwalk")?)?,
+        int(a, "dat")?,
+        int(a, "m")?,
+        boolean(a, "keep")?,
+        &relayout::Hw::of(m),
+        a.get("z0").map_or(Ok(0), |_| int(a, "z0"))?,
+        a.get("tree")
+            .map_or(Ok(relayout::PULL_TREE), |_| boolean(a, "tree"))?,
+    )
+}
+
+/// A list of `relayout.plan` calls, each planned (an unplanned one
+/// refused).
+fn plan_list(v: &Value, m: &Machine) -> R<Vec<relayout::Plan>> {
+    let mut out = vec![];
+    for p in v.as_array().map(Vec::as_slice).unwrap_or_default() {
+        match relayout_plan(made_by(p, "relayout.plan")?, m)? {
+            Ok(pl) => out.push(pl),
+            Err(relayout::Unplanned(why)) => {
+                return fail(
+                    "API.OP.001",
+                    format!("a relayout.plan call no form takes: {why}"),
+                )
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// `made`: operand index -> the `relayout.plan` calls making it (none when
+/// left out).
+fn made_plans(a: &Value, m: &Machine) -> R<BTreeMap<usize, Vec<relayout::Plan>>> {
+    let mut made = BTreeMap::new();
+    for (i, plans) in indexed(a.get("made").unwrap_or(&Value::Null))? {
+        made.insert(i, plan_list(plans, m)?);
+    }
+    Ok(made)
+}
+
 /// The kernel of one recorded generator call, built for `m`.
 pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
     let e = |k: &str| expr::from_table(arg(a, k)?);
@@ -161,7 +223,7 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
         "reductions.column_tree_kernel" => {
             let (out, r, w) = (operand(arg(a, "out")?)?, int(a, "R")?, int(a, "W")?);
             let ops = operands(arg(a, "operands")?)?;
-            reductions::column_tree_kernel(&e("e")?, &ops, r, w, &out, m)?
+            reductions::column_tree_kernel(&e("e")?, &ops, r, w, &out, &made_plans(a, m)?, m)?
         }
         "vector.rows_kernel" => {
             let bands = a.get("bands").and_then(Value::as_i64);
@@ -212,6 +274,11 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
                     }
                 })
                 .collect::<R<Vec<_>>>()?;
+            let staged = match a.get("pad_strategy").map(Value::as_str) {
+                None | Some(Some("native")) => false,
+                Some(Some("staged")) => true,
+                Some(_) => return fail("API.OP.001", format!("a pad strategy in {a}")),
+            };
             matmul::quant_kernel_scheduled(
                 &operand(arg(a, "src")?)?,
                 int(a, "rows")?,
@@ -226,13 +293,23 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
                 a.get("finite")
                     .map_or(Ok(false), |_| boolean(a, "finite"))?,
                 &schedule,
+                &plan_list(a.get("prepared").unwrap_or(&Value::Null), m)?,
+                staged,
             )?
         }
         "matmul.mm_kernel" => {
             let mm = mm_plan(made_by(arg(a, "mm")?, "matmul.plan")?, m)?;
             let extras = operands(arg(a, "extras")?)?;
             let knobs = matmul::unrecorded().read(a, matmul::Group::Kernel)?;
-            matmul::mm_kernel(&mm, &e("e")?, &extras, &operand(arg(a, "out")?)?, &knobs, m)?
+            matmul::mm_kernel_made(
+                &mm,
+                &e("e")?,
+                &extras,
+                &operand(arg(a, "out")?)?,
+                &knobs,
+                m,
+                &made_plans(a, m)?,
+            )?
         }
         "convert.copy_kernel" => convert::copy_kernel(int(a, "nbytes")?, m)?,
         "convert.walk_kernel" => convert::walk_kernel(
@@ -271,6 +348,38 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
         "lanes.relayout_kernel" => {
             let pl = lanes_plan(made_by(arg(a, "pl")?, "lanes.plan")?, m)?;
             lanes::relayout_kernel(&pl, m)?
+        }
+        "relayout.relayout_kernel" => {
+            match relayout_plan(made_by(arg(a, "pl")?, "relayout.plan")?, m)? {
+                Ok(pl) => relayout::relayout_kernel(&pl, m)?,
+                Err(relayout::Unplanned(why)) => {
+                    return fail(
+                        "API.OP.001",
+                        format!("a relayout.plan call no form takes: {why}"),
+                    )
+                }
+            }
+        }
+        "prepared.rows_kernel" => {
+            let (out, r, w) = (operand(arg(a, "out")?)?, int(a, "R")?, int(a, "W")?);
+            let made = made_plans(a, m)?;
+            let mut alias = BTreeMap::new();
+            for (i, j) in indexed(a.get("alias").unwrap_or(&Value::Null))? {
+                match j.as_u64() {
+                    Some(j) => alias.insert(i, j as usize),
+                    None => return fail("API.OP.001", format!("an alias operand {j}")),
+                };
+            }
+            prepared::rows_kernel(
+                &e("e")?,
+                &operands(arg(a, "operands")?)?,
+                r,
+                w,
+                &out,
+                &made,
+                &alias,
+                m,
+            )?
         }
         other => return fail("API.OP.001", format!("no kernel generator {other:?}")),
     })

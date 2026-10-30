@@ -6,7 +6,8 @@ use super::*;
 
 impl Runner<'_> {
     /// `_bind`: read `a` as it is where the kernel takes it, else laid out
-    /// over every row it reads and every column, rows W' apart.
+    /// over every row it reads and every column, rows W' apart -- pending,
+    /// made inside the rows kernel, where `_laid_pending` takes it.
     pub(super) fn bind(
         &mut self,
         plan: &Plan,
@@ -14,14 +15,15 @@ impl Runner<'_> {
         (rows, cols, wp): (&[Id], &[Id], i64),
         bufs: &Bufs,
         tmps: &mut Vec<String>,
-    ) -> Result<(Addr, Operand), Refusal> {
+    ) -> Result<(Bound, Operand), Refusal> {
         let o = self.classify(a, rows, cols);
         let off = bufs.get(&a.slot).map(|v| v.offset).unwrap_or(0);
         let padded_column = o.as_ref().is_some_and(|o| o.kind == "col")
             && self.size(cols) < wp
             && !mutant::on("memory/unsafe-bounds");
         if !padded_column && self.takes(o.as_ref(), wp, off.div_euclid(item(&a.dtype))) {
-            return self.addr_of(a, o.as_ref().unwrap(), bufs);
+            let (at, o) = self.addr_of(a, o.as_ref().unwrap(), bufs)?;
+            return Ok((Bound::At(at), o));
         }
         let (lr, lc) = (self.live(rows), self.live(cols));
         let over_r = if lr.iter().any(|r| a.c(*r) != 0) {
@@ -36,8 +38,6 @@ impl Runner<'_> {
         };
         let pitch = if over_c.is_empty() { 1 } else { wp };
         let key = self.key("laid");
-        let t = self.laid_read(plan, a, (&over_r, &over_c, pitch), bufs, &key)?;
-        tmps.push(t.clone());
         let mut coef: Vec<(Id, i64)> = self
             .dense(&over_r)
             .into_iter()
@@ -57,6 +57,23 @@ impl Runner<'_> {
         let o = self
             .classify(&laid, rows, cols)
             .expect("a laid read is a row form");
+        if !self.takes(Some(&o), wp, 0) {
+            return Err(Refusal::new(
+                "TG.RUN.016",
+                format!(
+                    "a laid read the rows kernel does not take: {}",
+                    py_operand(&o)
+                ),
+            ));
+        }
+        let n = self.size(&over_r) * pitch;
+        let order: Vec<Id> = over_r.iter().chain(&over_c).copied().collect();
+        if let Some(id) = self.laid_pending(a, &order, &laid.coef, n, bufs)? {
+            tmps.push(self.holder(id));
+            return Ok((Bound::Pend(id), o));
+        }
+        let t = self.laid_read(plan, a, (&over_r, &over_c, pitch), bufs, &key)?;
+        tmps.push(t.clone());
         let nbytes = self.x.store(&t).nbytes;
         let b2: Bufs = HashMap::from([(
             key,
@@ -66,7 +83,53 @@ impl Runner<'_> {
                 nbytes,
             },
         )]);
-        self.addr_of(&laid, &o, &b2)
+        let (at, o) = self.addr_of(&laid, &o, &b2)?;
+        Ok((Bound::At(at), o))
+    }
+
+    /// `_laid_pending`: read `a` as f16 over the ranges `order` into `n`
+    /// values at the element strides `coef`, as a pending buffer of one
+    /// step; None unprepared or for a read that is not a buffer's float
+    /// values.
+    fn laid_pending(
+        &mut self,
+        a: &Access,
+        order: &[Id],
+        coef: &[(Id, i64)],
+        n: i64,
+        bufs: &Bufs,
+    ) -> Result<Option<usize>, Refusal> {
+        if !self.knobs.forms.prepared || a.slot == Slot::Table || a.gate || !is_float(&a.dtype) {
+            return Ok(None);
+        }
+        let (st, off) = self.base(bufs, &a.slot);
+        let first = a.off + off.div_euclid(item(&a.dtype));
+        let live = self.live(order);
+        if first < 0 || live.is_empty() {
+            return Ok(None);
+        }
+        let walk: Vec<(i64, i64)> = live.iter().map(|r| (self.extent(*r), a.c(*r))).collect();
+        let dwalk: Vec<(i64, i64)> = live
+            .iter()
+            .map(|r| (self.extent(*r), crate::run::coef_of(coef, *r)))
+            .collect();
+        let (src, total, walk, first, dwalk) =
+            match self.f16_walk(&st, &a.dtype, &walk, first, &dwalk) {
+                Ok(got) => got,
+                Err(e) if form_error(&e) => return Ok(None),
+                Err(e) => return Err(e),
+            };
+        let m = self.hw.whole_halves(n);
+        let step = Step {
+            src: Some(src),
+            n: total,
+            walk,
+            at: first,
+            dwalk,
+            dat: 0,
+            m,
+        };
+        Ok(Some(self.pend((2 * m).max(32), vec![step])))
     }
 
     /// `_table_over`: a table's f16 values over `order`, each range it does

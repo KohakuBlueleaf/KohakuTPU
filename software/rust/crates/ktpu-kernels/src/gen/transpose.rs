@@ -15,7 +15,7 @@ use super::vector::split;
 use super::{cdiv, Hw};
 use crate::kernel::{build, Kernel, Port};
 use crate::pyrepr::{name, Py};
-use crate::trace::buffer::{f16, sl, ALL};
+use crate::trace::buffer::{f16, sl, Buf, ALL};
 use crate::trace::control::At;
 use crate::trace::mover::Walk;
 use crate::trace::{fail, Arg, Trace, R};
@@ -63,7 +63,7 @@ pub fn masks(m: &Machine) -> R<Vec<u16>> {
 /// [nb, B, A] as words).
 pub fn transpose_kernel(nb: i64, a: i64, b: i64, m: &Machine) -> R<Kernel> {
     let hw = Hw::of(m);
-    let (lanes, vl, wb, band) = (hw.lanes, hw.vlmax, hw.word_bytes, hw.band);
+    let (lanes, vl) = (hw.lanes, hw.vlmax);
     let s = swaps(&hw)?;
     if a % lanes != 0 || b % lanes != 0 {
         return fail(
@@ -72,12 +72,6 @@ pub fn transpose_kernel(nb: i64, a: i64, b: i64, m: &Machine) -> R<Kernel> {
         );
     }
     let words = nb * a * b / lanes;
-    let per_row = vl / lanes;
-    let lines = words / per_row;
-    let (p, rg, cw) = (2 * b, a / band, b / lanes);
-    let sub = b / band;
-    let al = a / lanes;
-    let trips = cdiv(lines, ROWS);
     let (xs, ms) = ([words, lanes], [s, vl]);
     let ports = vec![
         Port::input("x", &xs, g::Dtype::F16),
@@ -90,52 +84,77 @@ pub fn transpose_kernel(nb: i64, a: i64, b: i64, m: &Machine) -> R<Kernel> {
         ("y".to_string(), f16(&xs)?),
     ];
     let key = name("transpose", vec![Py::Int(nb), Py::Int(a), Py::Int(b)]);
+    build(&key, m, ports, given, |t, bufs| {
+        emit(t, &bufs[0], &bufs[1], 0, &bufs[2], nb, a, b, &hw)
+    })
+}
+
+/// The transpose's statements in the kernel being traced: `x` (f16 [nb, A,
+/// B] as words) into `y` ([nb, B, A]), the lane masks at rows `m0`.. of
+/// `mask` ([`masks`]); its trips split over the cores ([`split`]).
+#[allow(clippy::too_many_arguments)]
+pub fn emit(
+    t: &mut Trace,
+    x: &Buf,
+    mask: &Buf,
+    m0: i64,
+    y: &Buf,
+    nb: i64,
+    a: i64,
+    b: i64,
+    hw: &Hw,
+) -> R<()> {
+    let (lanes, vl, wb, band) = (hw.lanes, hw.vlmax, hw.word_bytes, hw.band);
+    let s = swaps(hw)?;
+    let words = nb * a * b / lanes;
+    let lines = words / (vl / lanes);
+    let (p, rg, cw) = (2 * b, a / band, b / lanes);
+    let sub = b / band;
+    let al = a / lanes;
+    let trips = cdiv(lines, ROWS);
     // A GT4 group: a band's consecutive words.
     let sw = band * wb;
-    build(&key, m, ports, given, |t, bufs| {
-        let (x, mask, y) = (&bufs[0], &bufs[1], &bufs[2]);
-        let st = t.buffer(&[trips * ROWS, vl], g::Dtype::F16, vec![])?;
-        let tt = t.buffer(&[trips * ROWS, vl], g::Dtype::F16, vec![])?;
-        let z = t.buffer(&[words, lanes], g::Dtype::F16, vec![])?;
-        let walk: &Walk = &[(nb, a * p), (rg, band * p), (cw, wb), (band, p)];
-        let dwalk: &Walk = &[(nb, rg * cw * sw), (rg, cw * sw), (cw, sw)];
-        t.gt4(&st.whole(), &x.whole(), walk, dwalk)?;
-        let sp = split(trips, hw.vc);
-        t.par(sp.cores, g::UnitKind::Vc, At::Var, |t, c| {
-            let mut ms = vec![];
-            for i in 0..s {
-                let l = t.load(&mask.at(&[sl(i, i + 1), ALL])?, false)?;
-                ms.push(t.unpack(l, None)?);
+    let st = t.buffer(&[trips * ROWS, vl], g::Dtype::F16, vec![])?;
+    let tt = t.buffer(&[trips * ROWS, vl], g::Dtype::F16, vec![])?;
+    let z = t.buffer(&[words, lanes], g::Dtype::F16, vec![])?;
+    let walk: &Walk = &[(nb, a * p), (rg, band * p), (cw, wb), (band, p)];
+    let dwalk: &Walk = &[(nb, rg * cw * sw), (rg, cw * sw), (cw, sw)];
+    t.gt4(&st.whole(), &x.whole(), walk, dwalk)?;
+    let sp = split(trips, hw.vc);
+    t.par(sp.cores, g::UnitKind::Vc, At::Var, |t, c| {
+        let mut ms = vec![];
+        for i in m0..m0 + s {
+            let l = t.load(&mask.at(&[sl(i, i + 1), ALL])?, false)?;
+            ms.push(t.unpack(l, None)?);
+        }
+        let first = sp.start(&c);
+        t.range(sp.trips(&c), |t, k| {
+            let r = first.add(k).mul(ROWS);
+            let lv = t.load(&st.at(&[sl(&r, r.add(ROWS)), ALL])?, false)?;
+            let mut v = t.unpack(lv, None)?;
+            for (i, mi) in ms.iter().enumerate() {
+                let x = t.xlane(Arg::Val(v), (1i64 << i) | (1i64 << (i as i64 + s)))?;
+                v = t.math(g::ValueOp::Sel, &[Arg::Val(*mi), Arg::Val(x), Arg::Val(v)])?;
             }
-            let first = sp.start(&c);
-            t.range(sp.trips(&c), |t, k| {
-                let r = first.add(k).mul(ROWS);
-                let lv = t.load(&st.at(&[sl(&r, r.add(ROWS)), ALL])?, false)?;
-                let mut v = t.unpack(lv, None)?;
-                for (i, mi) in ms.iter().enumerate() {
-                    let x = t.xlane(Arg::Val(v), (1i64 << i) | (1i64 << (i as i64 + s)))?;
-                    v = t.math(g::ValueOp::Sel, &[Arg::Val(*mi), Arg::Val(x), Arg::Val(v)])?;
-                }
-                t.store(&tt.at(&[sl(&r, r.add(ROWS)), ALL])?, Arg::Val(v))
-            })
-        })?;
-        let walk: &Walk = &[
-            (nb, rg * sub * wb),
-            (sub, wb),
-            (al, band * sub * wb),
-            (band, sub * wb),
-        ];
-        let dwalk: &Walk = &[(nb, sub * al * sw), (sub, al * sw), (al, sw)];
-        t.gt4(&z.whole(), &tt.whole(), walk, dwalk)?;
-        let walk: &Walk = &[(nb, sub * al * sw), (sub, al * sw), (band, wb), (al, sw)];
-        let dwalk: &Walk = &[(words, wb)];
-        t.copy(
-            &y.whole(),
-            &z.whole(),
-            Some((walk, None)),
-            Some((dwalk, None)),
-        )
-    })
+            t.store(&tt.at(&[sl(&r, r.add(ROWS)), ALL])?, Arg::Val(v))
+        })
+    })?;
+    let walk: &Walk = &[
+        (nb, rg * sub * wb),
+        (sub, wb),
+        (al, band * sub * wb),
+        (band, sub * wb),
+    ];
+    let dwalk: &Walk = &[(nb, sub * al * sw), (sub, al * sw), (al, sw)];
+    t.gt4(&z.whole(), &tt.whole(), walk, dwalk)?;
+    let walk: &Walk = &[(nb, sub * al * sw), (sub, al * sw), (band, wb), (al, sw)];
+    let dwalk: &Walk = &[(words, wb)];
+    t.copy(
+        &y.whole(),
+        &z.whole(),
+        Some((walk, None)),
+        Some((dwalk, None)),
+    )
 }
 
 /// `y` (`n` f16, row-major, word-exact) := `x` walked by `levels` from byte `at`

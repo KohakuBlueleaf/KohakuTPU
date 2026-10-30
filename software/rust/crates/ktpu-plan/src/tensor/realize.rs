@@ -223,7 +223,10 @@ impl Session<'_> {
             pitch: w,
             ..Operand::new("full")
         };
-        match self.r.rows_run(e, &ops, &binds, r, w, &full, &out, &info) {
+        match self
+            .r
+            .rows_run(e, &ops, &crate::run::bound(binds), r, w, &full, &out, &info)
+        {
             Ok(()) => Ok(st),
             Err(err) => Err(self.rows_refused(&st, err)),
         }
@@ -255,10 +258,16 @@ impl Session<'_> {
             let (b, o) = self.bind(ls, view, false)?;
             (b, o, w)
         };
-        match self
-            .r
-            .rows_run(e, &ops, &binds, r, w, &Operand::new("row"), &out, &info)
-        {
+        match self.r.rows_run(
+            e,
+            &ops,
+            &crate::run::bound(binds),
+            r,
+            w,
+            &Operand::new("row"),
+            &out,
+            &info,
+        ) {
             Ok(()) => Ok(st),
             Err(err) => Err(self.rows_refused(&st, err)),
         }

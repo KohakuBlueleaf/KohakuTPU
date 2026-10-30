@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use ktpu_kernels::gen::reductions;
+use ktpu_kernels::gen::{prepared, reductions};
 use ktpu_machine::{Machine, Refusal, UnitKind};
 use serde_json::{json, Value};
 use sha2::{Digest as _, Sha256};
@@ -23,14 +23,39 @@ use crate::uop::{Graph, Id};
 
 mod bare;
 mod boxes;
+pub mod costs;
 pub mod exec;
 mod lanes;
 pub mod matmul;
 mod narrow;
+pub mod pending;
 pub mod rows;
 mod window;
 
+pub use pending::{bound, Bound, Step};
+
 pub type Bufs = HashMap<Slot, View>;
+
+/// The planner knobs a run takes (Python's module values): the
+/// contraction's, the rows reductions', the forms'.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Knobs {
+    pub matmul: ktpu_kernels::gen::matmul::Knobs,
+    pub rows: reductions::Knobs,
+    pub forms: prepared::Knobs,
+}
+
+impl Knobs {
+    /// The contraction knobs the environment resolves
+    /// (`matmul::Knobs::resolve`), the others' defaults.
+    pub fn resolve() -> Self {
+        Self {
+            matmul: ktpu_kernels::gen::matmul::Knobs::resolve(),
+            rows: reductions::defaults(),
+            forms: prepared::defaults(),
+        }
+    }
+}
 
 /// A stride's coefficient on range `r` (0 when it does not walk it).
 pub fn coef_of(coef: &[(Id, i64)], r: Id) -> i64 {
@@ -118,6 +143,10 @@ pub struct Runner<'a> {
     /// the knobs its products and rows reductions are planned under
     pub knobs: Knobs,
     keys: usize,
+    /// the pending buffers made so far, by `Bound::Pend` index
+    pub pending: Vec<pending::Pending>,
+    /// the slots a pending buffer stands at (a packing's deferred read)
+    pub pending_slots: HashMap<Slot, usize>,
 }
 
 impl<'a> Runner<'a> {
@@ -126,6 +155,8 @@ impl<'a> Runner<'a> {
         Runner {
             m,
             hw: Hw::of(m),
+            pending: Vec::new(),
+            pending_slots: HashMap::new(),
             g,
             x,
             knobs: Knobs::resolve(),
@@ -882,24 +913,6 @@ fn raw_bytes(a: &fold::Arr) -> Vec<u8> {
 #[allow(clippy::result_large_err)]
 pub fn execute(l: Lowered, state: &State, m: &Machine) -> Result<Exec, (Refusal, Exec)> {
     execute_with(l, state, m, Knobs::resolve())
-}
-
-/// The knobs a plan runs under: the contraction's and the rows reductions'.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Knobs {
-    pub matmul: ktpu_kernels::gen::matmul::Knobs,
-    pub rows: reductions::Knobs,
-}
-
-impl Knobs {
-    /// The contraction knobs the environment resolves
-    /// (`matmul::Knobs::resolve`), the rows reductions' defaults.
-    pub fn resolve() -> Self {
-        Self {
-            matmul: ktpu_kernels::gen::matmul::Knobs::resolve(),
-            rows: reductions::defaults(),
-        }
-    }
 }
 
 /// [`execute`] under `knobs`.

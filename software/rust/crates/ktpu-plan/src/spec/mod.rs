@@ -279,6 +279,8 @@ pub fn knobs(input: &Value) -> Result<run::Knobs, String> {
     for (name, v) in input["knobs"].as_object().into_iter().flatten() {
         match (name.as_str(), v.as_bool()) {
             ("rows.SINGLE_PACKAGE_AST", Some(on)) => k.rows.single_package_ast = on,
+            ("PREPARED", Some(on)) => k.forms.prepared = on,
+            ("PREPARED_QUANT", Some(on)) => k.forms.prepared_quant = on,
             _ => return Err(format!("knob {name} = {v} is not a planner knob")),
         }
     }

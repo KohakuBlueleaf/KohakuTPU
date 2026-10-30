@@ -1,6 +1,7 @@
 //! The rows packaging knob (`rows.SINGLE_PACKAGE_AST`) as the frozen vectors
 //! name it: API.ROW.003 at the default, with the knob off and with the
-//! default reversed, and its max-block witness.
+//! default reversed, and its max-block witness; `forms.PREPARED` as
+//! TG.RUN.015's two plan goldens record it.
 use ktpu_kernels::gen::reductions::SEPARATE_MUTANT;
 use ktpu_plan::spec;
 use serde_json::Value;
@@ -45,4 +46,25 @@ fn reversed_default_takes_the_separate_launches() {
     });
     assert_eq!(got.unwrap(), separate["expect"]);
     assert_ne!(single["expect"], separate["expect"]);
+}
+
+/// `PREPARED` on makes the pending operand inside a `prepared.rows_kernel`
+/// launch; off (the `_separate` vector's knob), no launch makes one.
+#[test]
+fn prepared_on_and_off_goldens_differ() {
+    let made = |name: &str| -> usize {
+        let text = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../golden/plan")
+                .join(format!("{name}.json")),
+        )
+        .unwrap();
+        let doc: Value = serde_json::from_str(&text).unwrap();
+        doc["runs"]
+            .to_string()
+            .matches("\"prepared.rows_kernel\"")
+            .count()
+    };
+    assert!(made("TG.RUN.015.padding_lanes_masked") > 0);
+    assert_eq!(made("TG.RUN.015.padding_lanes_masked_separate"), 0);
 }

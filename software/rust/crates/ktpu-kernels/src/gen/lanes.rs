@@ -338,11 +338,11 @@ fn class(
     for &(j, n) in &blocks {
         for (k, s) in taps.iter().enumerate() {
             let v = s.at(&zero, &Idx::Int(n), cols(j))?;
-            t.gather(&v, &src.whole(), &lists(k as i64, j)?, true)?;
+            t.gather(&v, &src.whole(), &lists(k as i64, j)?, true, None)?;
         }
         if c.keep {
             let v = out.at(&zero, &Idx::Int(n), cols(j))?;
-            t.gather(&v, &dst.whole(), &lists(nt, j)?, true)?;
+            t.gather(&v, &dst.whole(), &lists(nt, j)?, true, None)?;
         }
     }
     let group = (hw.descriptors - 2) / 2;
@@ -353,7 +353,7 @@ fn class(
     }
     for &(j, n) in &blocks {
         let v = out.at(&zero, &Idx::Int(n), cols(j))?;
-        t.scatter(&dst.whole(), &v, &lists(nt, j)?, true)?;
+        t.scatter(&dst.whole(), &v, &lists(nt, j)?, true, None)?;
     }
     Ok(())
 }

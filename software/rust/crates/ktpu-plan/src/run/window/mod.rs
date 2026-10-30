@@ -20,8 +20,9 @@ use std::rc::Rc;
 use ktpu_machine::Refusal;
 
 use super::boxes::Axes;
+use super::pending::{form_error, Walk};
 use super::rows::{all_reduces, prune, reductions_of};
-use super::{Bufs, Runner};
+use super::{costs, Bufs, Runner, Step};
 use crate::exec::{flat, View};
 use crate::expr::{self, Expr, E};
 use crate::fold;

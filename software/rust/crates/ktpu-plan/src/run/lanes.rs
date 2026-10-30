@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use ktpu_kernels::gen::relayout;
 use ktpu_machine::Refusal;
 use serde_json::json;
 
@@ -18,7 +19,10 @@ use crate::uop::Id;
 impl Runner<'_> {
     /// `forms.relayout`: `m` f16 values at `dst` from the `n` at `src`,
     /// element `at` walked by `walk` into the elements `dwalk` reaches from
-    /// `dat`; any other 0, or with `keep` as `dst` held it.
+    /// `dat`; any other 0, or with `keep` as `dst` held it. One kernel of
+    /// `gen::relayout`'s forms, its destination port from `dst`'s line (the
+    /// words before kept) when its lines end within the allocation's words
+    /// (API.MEM.002); else, and for a walk pair none takes, `gen::lanes`.
     #[allow(clippy::too_many_arguments)]
     pub fn relayout(
         &mut self,
@@ -32,6 +36,46 @@ impl Runner<'_> {
         dat: i64,
         keep: bool,
     ) -> Result<(), Refusal> {
+        let hw = relayout::Hw::of(self.m);
+        // Buffers start on a line: the offset's place in its line is the
+        // address's.
+        let pad = dst.offset.rem_euclid(hw.line * hw.word) / 2;
+        let tree = relayout::PULL_TREE;
+        let planned = if ktpu_kernels::mutants::on(relayout::LANES_MUTANT) {
+            Err(relayout::Unplanned("the lanes-only mutant".into()))
+        } else {
+            relayout::plan(n, walk, at, dwalk, dat + pad, m + pad, keep, &hw, pad, tree)?
+        };
+        let words = (self.x.allocated(&dst) + hw.word - 1) / hw.word * hw.word;
+        let fits = |rp: &relayout::Plan| {
+            dst.offset - 2 * pad + rp.dst_words / hw.line * hw.line * hw.word <= words
+                || ktpu_kernels::mutants::on(relayout::LINES_MUTANT)
+        };
+        if let Some(rp) = planned.ok().filter(fits) {
+            let (index, mask) = self.relayout_tables(&rp);
+            let call = Call {
+                gen: "relayout.relayout_kernel".into(),
+                args: json!({
+                    "pl": {"made_by": {"gen": "relayout.plan", "args": {
+                        "src_n": n, "walk": walk, "at": at, "dwalk": dwalk,
+                        "dat": dat + pad, "m": m + pad, "keep": keep, "z0": pad,
+                        "tree": tree,
+                    }}},
+                }),
+            };
+            let line_start = Addr {
+                offset: dst.offset - 2 * pad,
+                ..dst
+            };
+            let binds = BTreeMap::from([
+                ("src".to_string(), src),
+                ("dst".to_string(), line_start),
+                ("index".to_string(), index),
+                ("mask".to_string(), mask),
+            ]);
+            self.x.launch(call, "convert", json!({}), binds);
+            return Ok(());
+        }
         let pl = ktpu_kernels::gen::lanes::plan(n, walk, at, dwalk, dat, m, keep, self.m)?;
         let mut ibytes = Vec::with_capacity(4 * pl.index.len());
         for v in &pl.index {
@@ -62,6 +106,23 @@ impl Runner<'_> {
         ]);
         self.x.launch(call, "convert", json!({}), binds);
         Ok(())
+    }
+
+    /// A `gen::relayout` plan's tables uploaded (`forms.table`): its index
+    /// lists (f32), then its mask rows (f16).
+    pub fn relayout_tables(&mut self, rp: &relayout::Plan) -> (Addr, Addr) {
+        let mut ibytes = Vec::with_capacity(4 * rp.index.len());
+        for v in &rp.index {
+            ibytes.extend(v.to_le_bytes());
+        }
+        let index = self.table_bytes(&ibytes, &[rp.index.len()], "float32");
+        let mut mbytes = Vec::with_capacity(2 * rp.masks.len() * rp.masks[0].len());
+        for v in rp.mask_bits() {
+            mbytes.extend(v.to_le_bytes());
+        }
+        let shape = [rp.masks.len(), rp.masks[0].len()];
+        let mask = self.table_bytes(&mbytes, &shape, "float16");
+        (index, mask)
     }
 
     /// `run._gather_to`: `n` f16 values at `dst` from `acc`'s buffer as f16,

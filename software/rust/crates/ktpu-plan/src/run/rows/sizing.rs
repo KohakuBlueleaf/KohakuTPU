@@ -86,7 +86,7 @@ impl Runner<'_> {
     }
 
     /// `vector.plan`.
-    fn sizing(
+    pub(super) fn sizing(
         &self,
         ops: &[Operand],
         out_kind: &str,

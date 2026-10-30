@@ -147,6 +147,20 @@ fn every_recorded_launch_lies_in_its_storages_under_every_knob() {
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
+/// With the planner's line guard off, relayout kernels write destination
+/// lines past their allocations' words, and nothing else does.
+#[cfg(feature = "mutants")]
+#[test]
+fn relayout_lines_past_the_allocation_are_overruns() {
+    let bad = ktpu_kernels::mutants::with(ktpu_kernels::gen::relayout::LINES_MUTANT, || {
+        recorded(defaults())
+    });
+    assert!(!bad.is_empty());
+    for o in &bad {
+        assert!(o.contains("relayout.relayout_kernel port dst"), "{o}");
+    }
+}
+
 /// `bt` [m, k] activations times a [n, k] weight plus a [bt, m, n]
 /// residual, realised in a session under `knobs`.
 fn product(m: &Machine, knobs: Knobs, (bt, rows, n, k): (i64, i64, i64, i64)) -> Session<'_> {

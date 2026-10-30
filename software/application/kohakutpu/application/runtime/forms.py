@@ -26,6 +26,7 @@ from kohakutpu.application.kernels import relayout as RL
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import costs, generated
 from kohakutpu.application.runtime.storage import FLAT, Storage, StorageView
+from kohakutpu.compiler import _rs
 from kohakutpu.language.numerics import fp16
 
 F16 = ("f16",)
@@ -252,7 +253,9 @@ def relayout(
     stride)``, outermost first) into destination elements walked by `dwalk`
     from element `dat`; a destination element no walk reaches is 0, or with
     `keep` what `dst` held (`m` values in whole words). One kernel of
-    `kernels.relayout`'s forms; a walk pair none takes, `kernels.lanes`."""
+    `kernels.relayout`'s forms when its destination lines end within the
+    allocation's words (API.MEM.002); else, and for a walk pair none takes,
+    `kernels.lanes`."""
     hw = RL.hw_for(dev)
     # The destination port starts at its line (the words before kept).
     pad = dst % (hw.line * hw.word) // 2
@@ -260,7 +263,12 @@ def relayout(
         rp = RL.plan(n, walk, at, dwalk, dat + pad, m + pad, keep, hw, pad)
     except RL.Unplanned:
         rp = None
-    if rp is not None:
+    entry, _ = dev.mmu.resolve(dst)
+    words = -(-entry.arena.requested[entry.physical] // hw.word) * hw.word
+    if rp is not None and (
+        dst - 2 * pad + rp.dst_words // hw.line * hw.line * hw.word
+        <= entry.virtual + words
+    ):
         k, given = RL.relayout_kernel(rp, hw)
         binds = {
             "src": src,
@@ -415,11 +423,20 @@ class Pending:
             self.storage.free()
 
 
+_PREPARED_DEFAULTS = json.loads(_rs.PREPARED_DEFAULTS)
 #: Whether a `Pending` operand is made inside the kernel that reads it (else
 #: by its own relayouts first).
-PREPARED = os.environ.get("KTPU_PREPARED", "1") == "1"
+PREPARED = (
+    os.environ.get("KTPU_PREPARED", "1" if _PREPARED_DEFAULTS["prepared"] else "0")
+    == "1"
+)
 #: A pending packing folds only with a measured winning recipe.
-PREPARED_QUANT = os.environ.get("KTPU_PREPARED_QUANT", "1") == "1"
+PREPARED_QUANT = (
+    os.environ.get(
+        "KTPU_PREPARED_QUANT", "1" if _PREPARED_DEFAULTS["prepared_quant"] else "0"
+    )
+    == "1"
+)
 
 
 def plans_of(dev, steps) -> tuple | None:

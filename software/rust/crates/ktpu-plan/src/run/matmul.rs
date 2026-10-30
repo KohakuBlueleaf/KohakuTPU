@@ -10,7 +10,8 @@ use ktpu_kernels::gen::matmul::{self, Group, Knobs};
 use ktpu_machine::{Machine, Refusal, PAIRING};
 use serde_json::{json, Value};
 
-use super::{expr_arg, is_float, item, np_name, Bufs, Operand, Runner};
+use super::pending::form_error;
+use super::{bound, costs, expr_arg, is_float, item, np_name, Bound, Bufs, Operand, Runner, Step};
 use crate::exec::{rows_key, View};
 use crate::hw::Hw;
 use crate::lower::{Access, Plan, Slot};
@@ -123,7 +124,19 @@ impl Mm {
             args,
         }
     }
+
+    /// Python's `vars(mm)`.
+    pub fn vars(&self) -> Value {
+        json!({
+            "bt": self.bt, "m": self.m, "n": self.n, "k": self.k, "mp": self.mp,
+            "kp": self.kp, "tm": self.tm, "tn": self.tn, "nk": self.nk,
+            "shared": self.shared, "quantum": self.quantum,
+        })
+    }
 }
+
+/// A kernel call's `made` argument and its binds.
+type MadeBinds = (Value, BTreeMap<String, Addr>);
 
 /// `coef` without the ranges of extent one.
 fn live_coef(r: &Runner, coef: &[(Id, i64)]) -> Vec<(Id, i64)> {
@@ -182,6 +195,139 @@ impl Runner<'_> {
             .enumerate()
             .map(|(i, n)| self.g.range(*n, top + i as i64, &kind))
             .collect()
+    }
+
+    /// [`packed`](Self::packed) of `acc`'s buffer, or of the pending buffer
+    /// at its slot: packed by its measured recipe inside the quant kernel,
+    /// else made by its own relayouts first.
+    #[allow(clippy::too_many_arguments)]
+    fn packed_read(
+        &mut self,
+        bufs: &Bufs,
+        acc: &Access,
+        src: &Operand,
+        dims: (i64, i64, i64, i64),
+        side: &str,
+        groups: (i64, i64, i64),
+    ) -> Result<Addr, Refusal> {
+        let Some(&id) = self.pending_slots.get(&acc.slot) else {
+            return self.packed(&bufs[&acc.slot], &acc.dtype, src, dims, side, groups);
+        };
+        if let Some(at) = self.prepared_packing(id, src, dims, side, groups)? {
+            return Ok(at);
+        }
+        let at = self.made(id)?;
+        let view = View {
+            nbytes: self.x.store(&at.buf).nbytes,
+            base: at.buf,
+            offset: 0,
+        };
+        self.packed(&view, "half", src, dims, side, groups)
+    }
+
+    /// `forms._prepared_quant` kept on the pending buffer's holder: its
+    /// packing by the measured recipe's steps inside the quant kernel; None
+    /// when no recipe is admitted or its steps do not plan straight into
+    /// the destination.
+    fn prepared_packing(
+        &mut self,
+        id: usize,
+        src: &Operand,
+        (rows, cols, rp, cp): (i64, i64, i64, i64),
+        side: &str,
+        (g, nk, batches): (i64, i64, i64),
+    ) -> Result<Option<Addr>, Refusal> {
+        if !self.knobs.forms.prepared_quant {
+            return Ok(None);
+        }
+        let steps = self.pending[id].steps.clone();
+        let Some(recipe) = costs::prepared_quant(
+            &steps,
+            (src.pitch, src.offset),
+            (rows, cols, rp, cp),
+            side,
+            (g, nk, batches),
+            &self.m.name,
+        ) else {
+            return Ok(None);
+        };
+        let level = |v: &Value| -> Vec<(i64, i64)> {
+            v.as_array()
+                .unwrap()
+                .iter()
+                .map(|l| (l[0].as_i64().unwrap(), l[1].as_i64().unwrap()))
+                .collect()
+        };
+        let measured: Vec<Step> = recipe["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .map(|(i, v)| Step {
+                src: if i == 0 { steps[0].src.clone() } else { None },
+                n: v["n"].as_i64().unwrap(),
+                walk: level(&v["walk"]),
+                at: v["at"].as_i64().unwrap(),
+                dwalk: level(&v["dwalk"]),
+                dat: v["dat"].as_i64().unwrap(),
+                m: v["m"].as_i64().unwrap(),
+            })
+            .collect();
+        let Some(plans) = self.plans_of(&measured)? else {
+            return Ok(None);
+        };
+        if !ktpu_kernels::gen::prepared::direct_destination(&plans) {
+            return Ok(None);
+        }
+        // The tables go up with the kernel's making, whether or not the
+        // holder keeps this packing already.
+        let mut binds = BTreeMap::from([(
+            "p_x".to_string(),
+            steps[0].src.clone().expect("a first step reads a source"),
+        )]);
+        self.step_binds(&plans, "p_", &mut binds);
+        let key = json!([
+            "prepared_mx7",
+            side,
+            src.json(),
+            rows,
+            cols,
+            rp,
+            cp,
+            g,
+            nk,
+            batches
+        ]);
+        let holder = self.holder(id);
+        if !self.x.store(&holder).has(&key) {
+            let q = &recipe["quant"];
+            let folded = json!({
+                "kind": "full",
+                "dtype": q["src"].get("dtype").cloned().unwrap_or(json!("f16")),
+                "offset": q["src"]["offset"],
+                "pitch": q["src"]["pitch"],
+                "rows": 0,
+            });
+            let made: Vec<Value> = measured.iter().map(|s| s.made_by()).collect();
+            let call = Call {
+                gen: "matmul.quant_kernel".into(),
+                args: json!({
+                    "src": folded, "rows": rows, "cols": q["cols"], "rp": rp, "cp": cp,
+                    "side": side, "g": g, "nk": nk, "batches": batches,
+                    "prepared": made,
+                    "pad_strategy": recipe.get("pad_strategy").cloned().unwrap_or(json!("native")),
+                }),
+            };
+            let f = self.x.form(&holder, &key, batches * rp * cp);
+            binds.insert("q".into(), f);
+            self.x.launch(call, "quant", json!({}), binds);
+            self.x.made(&holder, &key);
+        }
+        Ok(Some(Addr {
+            buf: holder,
+            form: key,
+            offset: 0,
+        }))
     }
 
     /// `forms.packed` (`forms.mx7`): `batches` [rows, cols] blocks of the
@@ -302,23 +448,15 @@ impl Runner<'_> {
                 if same_map(&live_coef(self, &acc.coef), &live_coef(self, &dense)) {
                     continue;
                 }
-                let t = self.x.storage(self.hw.f16_bytes(self.size(&order)));
-                tmps.push(t.clone());
                 let key = self.key(&format!("mm{side}"));
-                let nbytes = self.x.store(&t).nbytes;
-                bufs.insert(
-                    key.clone(),
-                    View {
-                        base: t,
-                        offset: 0,
-                        nbytes,
-                    },
-                );
-                let sub = Plan {
-                    name: format!("{}_{side}", plan.name),
-                    ..self.laid_plan(plan, key.clone(), acc, &order, None)
-                };
-                self.vector(&sub, &bufs)?;
+                let acc = acc.clone();
+                if let Some(id) = self.quant_pending(plan, &acc, &order, &bufs, side)? {
+                    // Made inside the packing's kernel.
+                    tmps.push(self.holder(id));
+                    self.pending_slots.insert(key.clone(), id);
+                } else {
+                    self.laid_side(plan, &acc, &order, &mut bufs, &mut tmps, &key, side)?;
+                }
                 let new = Access {
                     slot: key,
                     dtype: "half".into(),
@@ -341,9 +479,40 @@ impl Runner<'_> {
             self.product(&p, &bufs)
         })();
         for t in tmps {
-            self.x.free(&t);
+            self.free_tmp(&t);
         }
         got
+    }
+
+    /// `_matmul`'s side laid out: `acc` as f16 dense over `order` into a
+    /// temporary at `key`.
+    #[allow(clippy::too_many_arguments)]
+    fn laid_side(
+        &mut self,
+        plan: &Plan,
+        acc: &Access,
+        order: &[Id],
+        bufs: &mut Bufs,
+        tmps: &mut Vec<String>,
+        key: &Slot,
+        side: &str,
+    ) -> Result<(), Refusal> {
+        let t = self.x.storage(self.hw.f16_bytes(self.size(order)));
+        tmps.push(t.clone());
+        let nbytes = self.x.store(&t).nbytes;
+        bufs.insert(
+            key.clone(),
+            View {
+                base: t,
+                offset: 0,
+                nbytes,
+            },
+        );
+        let sub = Plan {
+            name: format!("{}_{side}", plan.name),
+            ..self.laid_plan(plan, key.clone(), acc, order, None)
+        };
+        self.vector(&sub, bufs)
     }
 
     /// `_reordered`: a product whose output is not dense [batch.., m, n]
@@ -380,12 +549,103 @@ impl Runner<'_> {
         got
     }
 
+    /// `_packing_plan`: the product's tiling, one decision shared by a
+    /// deferred read's admission and the product.
+    fn packing_plan(&self, plan: &Plan) -> Result<Mm, Refusal> {
+        let (m, n, ks) = plan.mnk.clone().unwrap();
+        let b = plan.b.as_ref().unwrap();
+        let batch: Vec<Id> = plan
+            .out_ranges
+            .iter()
+            .copied()
+            .filter(|r| plan.batch.contains(r))
+            .collect();
+        let shared = !batch.iter().any(|r| b.c(*r) != 0);
+        let rows = plan.out_ranges[..plan.out_ranges.len() - 1].to_vec();
+        let stat = plan.accesses.iter().any(|acc| {
+            self.classify(acc, &rows, &[n])
+                .is_some_and(|o| o.kind == "row")
+        });
+        let q = if stat { self.stat_rows() } else { self.hw.band };
+        let np = self.hw.whole_blocks(self.extent(n));
+        let (bt, em, k) = (self.size(&batch), self.extent(m), self.size(&ks));
+        Mm::plan(self.m, &self.knobs.matmul, bt, em, np, k, shared, Some(q))
+    }
+
+    /// `_pending`: `acc` as f16 dense over `order` for a packing alone to
+    /// read, a pending buffer of one relayout step from the buffer's f16
+    /// values, where a measured recipe (`costs.prepared_quant`) takes it;
+    /// None for a table, a gated read, or no recipe.
+    fn quant_pending(
+        &mut self,
+        plan: &Plan,
+        acc: &Access,
+        order: &[Id],
+        bufs: &Bufs,
+        side: &str,
+    ) -> Result<Option<usize>, Refusal> {
+        if !(self.knobs.forms.prepared && self.knobs.forms.prepared_quant)
+            || acc.slot == Slot::Table
+            || acc.gate
+            || !is_float(&acc.dtype)
+        {
+            return Ok(None);
+        }
+        let live = self.live(order);
+        let (st, off) = self.base(bufs, &acc.slot);
+        let first = acc.off + off.div_euclid(item(&acc.dtype));
+        if first < 0 {
+            return Ok(None);
+        }
+        let dense = self.dense(&live);
+        let walk: Vec<(i64, i64)> = live.iter().map(|r| (self.extent(*r), acc.c(*r))).collect();
+        let dwalk: Vec<(i64, i64)> = live
+            .iter()
+            .map(|r| (self.extent(*r), super::coef_of(&dense, *r)))
+            .collect();
+        let (src, total, walk, first, dwalk) =
+            match self.f16_walk(&st, &acc.dtype, &walk, first, &dwalk) {
+                Ok(got) => got,
+                Err(e) if form_error(&e) => return Ok(None),
+                Err(e) => return Err(e),
+            };
+        let n = self.size(&live);
+        let steps = vec![Step {
+            src: Some(src),
+            n: total,
+            walk,
+            at: first,
+            dwalk,
+            dat: 0,
+            m: n,
+        }];
+        let mm = self.packing_plan(plan)?;
+        let (rows, rp, group, batches) = if side == "a" {
+            (mm.m, mm.mp, mm.tm / self.hw.band, mm.bt)
+        } else {
+            let en = self.extent(plan.mnk.as_ref().unwrap().1);
+            let batches = if mm.shared { 1 } else { mm.bt };
+            (en, mm.n, mm.tn / self.hw.band, batches)
+        };
+        let recipe = costs::prepared_quant(
+            &steps,
+            (mm.k, 0),
+            (rows, mm.k, rp, mm.kp),
+            side,
+            (group, mm.nk, batches),
+            &self.m.name,
+        );
+        if recipe.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(self.pend(2 * n, steps)))
+    }
+
     /// `_product`: both sides packed, the epilogue's operands bound.
     pub(super) fn product(&mut self, plan: &Plan, bufs: &Bufs) -> Result<(), Refusal> {
-        let (m, n, ks) = plan.mnk.clone().unwrap();
+        let (m, n, _) = plan.mnk.clone().unwrap();
         let (a, b) = (plan.a.clone().unwrap(), plan.b.clone().unwrap());
         let (em, en) = (self.extent(m), self.extent(n));
-        let k = self.size(&ks);
         let batch: Vec<Id> = plan
             .out_ranges
             .iter()
@@ -401,37 +661,47 @@ impl Runner<'_> {
         }
         let np = self.hw.whole_blocks(en);
         let rows = plan.out_ranges[..plan.out_ranges.len() - 1].to_vec();
-        let stat = plan.accesses.iter().any(|acc| {
-            self.classify(acc, &rows, &[n])
-                .is_some_and(|o| o.kind == "row")
-        });
         let hw = self.hw;
-        let q = if stat { self.stat_rows() } else { hw.band };
-        let mut mm = Mm::plan(self.m, &self.knobs.matmul, bt, em, np, k, shared, Some(q))?;
+        let mut mm = self.packing_plan(plan)?;
+        let k = mm.k;
         let src_a = Operand {
             pitch: pa,
             offset: a.off,
             ..Operand::new("full")
         };
-        let f16 = match mm.takes_f16(self.m) {
-            true => self.f16_rows(&bufs[&a.slot], &a.dtype, &src_a, k)?,
-            false => None,
+        // `forms.f16_rows`: a pending A is made first.
+        let f16 = if mm.takes_f16(self.m) {
+            let (view, dtype) = match self.pending_slots.get(&a.slot) {
+                Some(&id) => {
+                    let at = self.made(id)?;
+                    let view = View {
+                        nbytes: self.x.store(&at.buf).nbytes,
+                        base: at.buf,
+                        offset: 0,
+                    };
+                    (view, "half".to_string())
+                }
+                None => (bufs[&a.slot].clone(), a.dtype.clone()),
+            };
+            self.f16_rows(&view, &dtype, &src_a, k)?
+        } else {
+            None
         };
         mm.knobs.activation_fp16 = f16.is_some();
         let qa = match f16 {
             Some(at) => at,
-            None => self.packed(
-                &bufs[&a.slot],
-                &a.dtype,
+            None => self.packed_read(
+                bufs,
+                &a,
                 &src_a,
                 (em, k, mm.mp, mm.kp),
                 "a",
                 (mm.tm / hw.band, mm.nk, bt),
             )?,
         };
-        let qb = self.packed(
-            &bufs[&b.slot],
-            &b.dtype,
+        let qb = self.packed_read(
+            bufs,
+            &b,
             &Operand {
                 pitch: pb,
                 offset: b.off,
@@ -441,7 +711,10 @@ impl Runner<'_> {
             "b",
             (mm.tn / hw.band, mm.nk, if shared { 1 } else { bt }),
         )?;
-        let mut binds = BTreeMap::from([("a".to_string(), qa), ("b".to_string(), qb)]);
+        let mut binds = bound(BTreeMap::from([
+            ("a".to_string(), qa),
+            ("b".to_string(), qb),
+        ]));
         let mut extras = Vec::new();
         let mut lays = Vec::new();
         let got = self
@@ -458,7 +731,7 @@ impl Runner<'_> {
                 self.product_run(plan, &bufs, &mm, binds, &extras, (&batch, m, n, np))
             });
         for t in lays {
-            self.x.free(&t);
+            self.free_tmp(&t);
         }
         got
     }
@@ -472,7 +745,7 @@ impl Runner<'_> {
         bufs: &Bufs,
         mm: &Mm,
         (batch, m, n, np, rows): (&[Id], Id, Id, i64, &[Id]),
-        binds: &mut BTreeMap<String, Addr>,
+        binds: &mut BTreeMap<String, Bound>,
         extras: &mut Vec<Operand>,
         lays: &mut Vec<String>,
     ) -> Result<Bufs, Refusal> {
@@ -556,7 +829,7 @@ impl Runner<'_> {
                         ..Operand::new("full")
                     }
                 };
-                binds.insert(format!("in{i}"), self.x.addr(&t, 0));
+                binds.insert(format!("in{i}"), Bound::At(self.x.addr(&t, 0)));
                 extras.push(o2);
                 continue;
             }
@@ -564,6 +837,32 @@ impl Runner<'_> {
             if o.kind == "col"
                 && (o.offset % h != 0 || (np != en && !crate::mutant::on("memory/unsafe-bounds")))
             {
+                if self.knobs.forms.prepared && acc.slot != Slot::Table {
+                    // Made inside the product's kernel, or at its launch.
+                    let (st, off) = self.base(&bufs, &acc.slot);
+                    let it = item(&acc.dtype);
+                    let nbytes = self.x.store(&st).nbytes;
+                    let whole = View {
+                        base: st,
+                        offset: 0,
+                        nbytes,
+                    };
+                    let at = self.f16_of(&whole, &acc.dtype, nbytes / it)?;
+                    let step = Step {
+                        src: Some(at),
+                        n: nbytes / it,
+                        walk: vec![(en, 1)],
+                        at: o.offset + off.div_euclid(it),
+                        dwalk: vec![(en, 1)],
+                        dat: 0,
+                        m: np,
+                    };
+                    let id = self.pend(2 * np, vec![step]);
+                    lays.push(self.holder(id));
+                    binds.insert(format!("in{i}"), Bound::Pend(id));
+                    extras.push(Operand::new("col"));
+                    continue;
+                }
                 let t = self.x.storage(2 * np);
                 lays.push(t.clone());
                 let at = self.x.addr(&t, 0);
@@ -589,7 +888,7 @@ impl Runner<'_> {
                         format!("an epilogue row of {en} with no f16 form"),
                     ));
                 }
-                binds.insert(format!("in{i}"), at);
+                binds.insert(format!("in{i}"), Bound::At(at));
                 extras.push(Operand::new("col"));
                 continue;
             }
@@ -642,7 +941,7 @@ impl Runner<'_> {
                     ..Operand::new("full")
                 };
             }
-            binds.insert(format!("in{i}"), at);
+            binds.insert(format!("in{i}"), Bound::At(at));
             extras.push(o);
         }
         Ok(bufs)
@@ -725,7 +1024,7 @@ impl Runner<'_> {
         plan: &Plan,
         bufs: &Bufs,
         mm: &Mm,
-        mut binds: BTreeMap<String, Addr>,
+        binds: BTreeMap<String, Bound>,
         extras: &[Operand],
         (batch, m, n, np): (&[Id], Id, Id, i64),
     ) -> Result<(), Refusal> {
@@ -754,13 +1053,24 @@ impl Runner<'_> {
             key = Some(k);
             at
         };
-        binds.insert("out".into(), out_at);
-        let call = mm.kernel_call(
+        let mut call = mm.kernel_call(
             expr_arg(plan.expr.as_ref().unwrap()),
             extras,
             np,
             (self.clusters(), self.cores()),
         );
+        let binds = match self.prepared_mm(mm, &call.args, &binds)? {
+            Some((made, mut plain)) => {
+                call.args["made"] = made;
+                plain.insert("out".into(), out_at);
+                plain
+            }
+            None => {
+                let mut binds = self.made_all(&binds)?;
+                binds.insert("out".into(), out_at);
+                binds
+            }
+        };
         self.x.launch(
             call,
             "matmul",
@@ -779,6 +1089,66 @@ impl Runner<'_> {
         let got = self.product_out(plan, bufs, &tmp, (batch, m, n, np, mp), in_form);
         self.x.free(&tmp);
         got
+    }
+
+    /// `_product_run`'s `prepared_mm` branch: the `made` argument and the
+    /// binds (`p{i}_*` for `in{i}`) when a measured recipe wins.
+    fn prepared_mm(
+        &mut self,
+        mm: &Mm,
+        args: &Value,
+        binds: &BTreeMap<String, Bound>,
+    ) -> Result<Option<MadeBinds>, Refusal> {
+        let pending: BTreeMap<usize, usize> = binds
+            .iter()
+            .filter_map(|(k, b)| match b {
+                Bound::Pend(id) => Some((k[2..].parse().unwrap(), *id)),
+                Bound::At(_) => None,
+            })
+            .collect();
+        let steps: serde_json::Map<String, Value> = pending
+            .iter()
+            .map(|(i, id)| (i.to_string(), costs::steps_recipe(&self.pending[*id].steps)))
+            .collect();
+        let recipe = json!({
+            "mm": mm.vars(),
+            "e": args["e"],
+            "extras": args["extras"],
+            "out": args["out"],
+            "steps": steps,
+        });
+        // The kernel's depth as it resolves it: a ring past the staging room
+        // is the DRAM product (`call::mm_resolved`).
+        let resolved = ktpu_kernels::call::mm_resolved(args, self.m)?;
+        if pending.is_empty()
+            || resolved["knobs"]["ring_depth"] != 0
+            || !costs::choose("prepared_mm", &recipe, &self.m.name)
+        {
+            return Ok(None);
+        }
+        let mut plans = BTreeMap::new();
+        for (i, id) in &pending {
+            let Some(p) = self.plans_of(&self.pending[*id].steps.clone())? else {
+                return Ok(None);
+            };
+            plans.insert(*i, p);
+        }
+        let mut plain: BTreeMap<String, Addr> = binds
+            .iter()
+            .filter_map(|(k, b)| match b {
+                Bound::At(a) => Some((k.clone(), a.clone())),
+                Bound::Pend(_) => None,
+            })
+            .collect();
+        let mut made = serde_json::Map::new();
+        for (i, id) in &pending {
+            let steps = &self.pending[*id].steps;
+            made.insert(i.to_string(), steps.iter().map(Step::made_by).collect());
+            let src = steps[0].src.clone().expect("a first step reads a source");
+            plain.insert(format!("p{i}_x"), src);
+            self.step_binds(&plans[i], &format!("p{i}_"), &mut plain);
+        }
+        Ok(Some((Value::Object(made), plain)))
     }
 
     /// The [.., M, N] window of the [.., mp, Np] product in `tmp` into the

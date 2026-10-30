@@ -153,7 +153,7 @@ fn statistic_runs() -> bool {
         .rows_run(
             &e,
             std::slice::from_ref(&o),
-            &BTreeMap::from([("in0".into(), addr(0))]),
+            &BTreeMap::from([("in0".into(), Bound::At(addr(0)))]),
             8,
             w,
             &o,

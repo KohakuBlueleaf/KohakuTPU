@@ -782,6 +782,28 @@ fn generate(
     serde_json::to_string(&kernel.graph).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
+/// relayout_plan(args_json, machine_json) -> str: `relayout.plan`'s plan of
+/// the call's arguments as JSON `{"shape": repr(Plan.shape()), "index":
+/// [..], "masks": [[..], ..]}`, or `{"unplanned": why}`; a refusal raises
+/// `ValueError`.
+#[pyfunction]
+fn relayout_plan(args_json: &str, machine_json: &str) -> PyResult<String> {
+    let m = machine(machine_json)?;
+    let args = serde_json::from_str(args_json)
+        .map_err(|e| PyValueError::new_err(format!("relayout.plan arguments: {e}")))?;
+    let got = ktpu_kernels::call::relayout_plan(&args, &m)
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(match got {
+        Ok(pl) => serde_json::json!({
+            "shape": ktpu_kernels::gen::relayout::shape_repr(&pl).repr(),
+            "index": pl.index,
+            "masks": pl.masks,
+        }),
+        Err(u) => serde_json::json!({"unplanned": u.0}),
+    }
+    .to_string())
+}
+
 /// pairs_blocks(machine_json, pairing=None, mutant=None) -> bool: whether a
 /// contraction on the machine pairs K blocks under `pairing` (`MX7_PAIRING`
 /// when None): `ktpu_machine::Machine::pairs_blocks`, RUL.099.
@@ -891,6 +913,19 @@ fn rows_defaults() -> String {
     serde_json::json!({"single_package_ast": d.single_package_ast}).to_string()
 }
 
+/// The pending-operand knobs' defaults (`ktpu_kernels::gen::prepared`), a
+/// JSON object: Python's `forms.PREPARED` / `forms.PREPARED_QUANT`.
+fn prepared_defaults() -> String {
+    let d = ktpu_kernels::gen::prepared::defaults();
+    serde_json::json!({"prepared": d.prepared, "prepared_quant": d.prepared_quant}).to_string()
+}
+
+/// The relayout knobs' defaults (`ktpu_kernels::gen::relayout`), a JSON
+/// object: Python's `relayout.PULL_TREE`.
+fn relayout_defaults() -> String {
+    serde_json::json!({"pull_tree": ktpu_kernels::gen::relayout::PULL_TREE}).to_string()
+}
+
 #[pymodule]
 #[pyo3(name = "_rs")]
 fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -908,6 +943,7 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compile, m)?)?;
     m.add_function(wrap_pyfunction!(generate, m)?)?;
     m.add_function(wrap_pyfunction!(pairs_blocks, m)?)?;
+    m.add_function(wrap_pyfunction!(relayout_plan, m)?)?;
     m.add("MX7_PAIRING", ktpu_machine::PAIRING.name())?;
     m.add_function(wrap_pyfunction!(mm_knobs, m)?)?;
     m.add_function(wrap_pyfunction!(mm_plan, m)?)?;
@@ -916,6 +952,8 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("MM_KNOBS", mm_knob_table())?;
     m.add("VECTOR_DEFAULTS", vector_defaults())?;
     m.add("ROWS_DEFAULTS", rows_defaults())?;
+    m.add("RELAYOUT_DEFAULTS", relayout_defaults())?;
+    m.add("PREPARED_DEFAULTS", prepared_defaults())?;
     m.add_function(wrap_pyfunction!(bind, m)?)?;
     m.add_function(wrap_pyfunction!(bind_cache_stats, m)?)?;
     m.add_function(wrap_pyfunction!(bind_cache_configure, m)?)?;

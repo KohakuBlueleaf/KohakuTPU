@@ -6,10 +6,15 @@ misaligned, short, long, kept, line-padded), splats, transposes, spreads
 and whole-word walks; each named mutant of the planning is caught; the
 kernels compile and pass the static checker (L1.VER.017 line ownership).
 On the card model (``dev``): the production path (`forms.relayout`) per
-form, bit-exact.
+form, bit-exact. The Rust port (`gen::relayout`) plans and traces as this
+module does: every case here, every relayout the plan goldens record and
+random walk pairs.
 """
 
+import json
+import re
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -18,9 +23,12 @@ from kohakutpu.application.kernels import lanes as LN
 from kohakutpu.application.kernels import relayout as R
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
+from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.application.runtime.packages import Refused
 from kohakutpu.application.runtime.storage import Storage
 from kohakutpu.language import machine as MF
+from kohakutpu.stack import kernel as K
+from kohakutpu.stack import rs
 
 BOARD = "multimesh_v9t6"
 HW = R.hw_of(MF.load(BOARD), 2)
@@ -665,6 +673,20 @@ def compile_case(name):
     return got[0]
 
 
+@pytest.mark.parametrize("nbytes, kernels", [(512, 1), (480, 0)])
+def test_destination_lines_stay_in_the_allocation(monkeypatch, nbytes, kernels):
+    """API.MEM.002: an [8, 30] transpose into 480 bytes (its last line runs
+    past the allocation's words) takes `kernels.lanes`; into whole lines,
+    `kernels.relayout`."""
+    made = []
+    kernel = R.relayout_kernel
+    monkeypatch.setattr(R, "relayout_kernel", lambda *a: made.append(a) or kernel(*a))
+    dev = D.Device(kind="offline", board=BOARD)
+    s, d = Storage(dev, 480), Storage(dev, nbytes)
+    FM.relayout(dev, s.addr, 240, ((30, 1), (8, 30)), 0, ((30, 8), (8, 1)), 240, d.addr)
+    assert (len(made), dev.counters["runs"]) == (kernels, 1)
+
+
 GRAIN_CASES = ["transpose_two_margins", "transpose_window_channels", "spread"]
 
 
@@ -769,3 +791,217 @@ def test_relayout_on_the_card_is_exact(dev, name):
     exp = want(src, CASES[name], before)[:m]
     ok = (got == exp) | ((exp == NEG_ZERO) & (got == 0))
     assert ok.all(), f"{name}: {np.flatnonzero(~ok)[:8]}"
+
+
+# ------------------------------------------------------ the Rust port
+#: The machine both sides plan for; Rust's `Hw::of` takes its vector cores.
+MACHINE = machine_of(BOARD, nodes=1)
+PHW = R.hw_of(MF.load(BOARD), MACHINE.count("VC"))
+GOLDEN_PLANS = Path(__file__).resolve().parents[3] / "rust" / "golden" / "plan"
+
+
+def golden_launches(node):
+    if isinstance(node, dict):
+        if "launch" in node and node["launch"].get("call"):
+            yield node["launch"]
+        for v in node.values():
+            yield from golden_launches(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from golden_launches(v)
+
+
+def golden_cases() -> dict:
+    """Every relayout walk pair the plan goldens record, as `forms.relayout`
+    plans it: a `relayout.plan` call's own arguments, a `lanes.plan` call's
+    with the destination's line pad in front."""
+    out = {}
+    for path in sorted(GOLDEN_PLANS.glob("*.json")):
+        case = json.loads(path.read_text())
+        for i, launch in enumerate(golden_launches(case)):
+            call = launch["call"]
+            if call["gen"] == "relayout.relayout_kernel":
+                a, pad = call["args"]["pl"]["made_by"]["args"], 0
+                z0 = a["z0"]
+            elif call["gen"] == "lanes.relayout_kernel":
+                a = call["args"]["pl"]["made_by"]["args"]
+                pad = launch["binds"]["dst"]["offset"] % (PHW.line * PHW.word) // 2
+                z0 = pad
+            else:
+                continue
+            out[f"{path.stem}#{i}"] = (
+                a["src_n"],
+                tuple(map(tuple, a["walk"])),
+                a["at"],
+                tuple(map(tuple, a["dwalk"])),
+                a["dat"] + pad,
+                a["m"] + pad,
+                a["keep"],
+                z0,
+            )
+    return out
+
+
+GOLDEN_CASES = golden_cases()
+
+
+def plan_args(case, tree) -> dict:
+    n, walk, at, dwalk, dat, m, keep, z0 = case
+    return {
+        "src_n": n,
+        "walk": [list(w) for w in walk],
+        "at": at,
+        "dwalk": [list(w) for w in dwalk],
+        "dat": dat,
+        "m": m,
+        "keep": keep,
+        "z0": z0,
+        "tree": tree,
+    }
+
+
+def rust_plan(case, tree) -> dict:
+    got = rs._rs.relayout_plan(
+        json.dumps(plan_args(case, tree)), rs.machine_json(MACHINE)
+    )
+    return json.loads(got)
+
+
+def python_plan(case, tree, monkeypatch):
+    """`R.plan`'s plan of `case` (`KTPU_PULL_TREE` set to `tree`) as
+    `rust_plan` gives it, and the plan (None when `Unplanned`)."""
+    monkeypatch.setenv("KTPU_PULL_TREE", "1" if tree else "0")
+    n, walk, at, dwalk, dat, m, keep, z0 = case
+    try:
+        pl = R.plan(n, walk, at, dwalk, dat, m, keep, PHW, z0)
+    except R.Unplanned as e:
+        return {"unplanned": str(e)}, None
+    got = {
+        "shape": repr(pl.shape()),
+        "index": pl.index.astype(np.float64).tolist(),
+        "masks": pl.masks.astype(np.float64).tolist(),
+    }
+    return got, pl
+
+
+def bare(node):
+    if isinstance(node, dict):
+        return {k: bare(v) for k, v in node.items() if k != "where"}
+    if isinstance(node, list):
+        return [bare(v) for v in node]
+    return node
+
+
+def rust_graph(case, tree) -> dict:
+    call = {"pl": {"made_by": {"gen": "relayout.plan", "args": plan_args(case, tree)}}}
+    got = rs._rs.generate(
+        "relayout.relayout_kernel", json.dumps(call), rs.machine_json(MACHINE)
+    )
+    return bare(json.loads(got))
+
+
+def python_graph(pl) -> dict:
+    k, given = R.relayout_kernel(pl, PHW)
+    return bare(json.loads(k.trace(given, machine=K.dsl_machine(MACHINE)).graph_json))
+
+
+ALL_CASES = {**CASES, **GOLDEN_CASES}
+
+
+def test_golden_walk_pairs_are_read():
+    """Every relayout launch the plan goldens' text names is a case."""
+    gen = re.compile(r'"gen":\s*"(relayout|lanes)\.relayout_kernel"')
+    want = sum(len(gen.findall(p.read_text())) for p in GOLDEN_PLANS.glob("*.json"))
+    assert len(GOLDEN_CASES) == want > 0
+
+
+@pytest.mark.parametrize("tree", [True, False], ids=["tree", "serial"])
+@pytest.mark.parametrize("name", sorted(ALL_CASES))
+def test_rust_plan_is_python_plan(name, tree, monkeypatch):
+    """`gen::relayout::plan` against `R.plan`: the same parts, scratch and
+    sizes (the kernel's shape, as Python prints it), index lists and mask
+    rows -- or the same `Unplanned`."""
+    want, _ = python_plan(ALL_CASES[name], tree, monkeypatch)
+    assert rust_plan(ALL_CASES[name], tree) == want
+
+
+@pytest.mark.parametrize("tree", [True, False], ids=["tree", "serial"])
+@pytest.mark.parametrize("name", sorted(ALL_CASES))
+def test_rust_kernel_is_python_kernel(name, tree, monkeypatch):
+    """`gen::relayout::relayout_kernel` against `R.relayout_kernel`: the
+    same graph, name and statements; an unplanned walk pair refused."""
+    _, pl = python_plan(ALL_CASES[name], tree, monkeypatch)
+    if pl is None:
+        with pytest.raises(ValueError, match="no form takes"):
+            rust_graph(ALL_CASES[name], tree)
+        return
+    assert rust_graph(ALL_CASES[name], tree) == python_graph(pl)
+
+
+def test_parity_reaches_every_form_and_unplanned(monkeypatch):
+    """The compared cases plan every part kind, both pull trees, and some
+    walk pairs no form takes."""
+    kinds, unplanned, trees = set(), 0, set()
+    for case in ALL_CASES.values():
+        _, pl = python_plan(case, True, monkeypatch)
+        if pl is None:
+            unplanned += 1
+            continue
+        kinds |= {type(p).__name__ for p in pl.parts}
+        trees |= {bool(p.tree) for p in pl.parts if isinstance(p, R.Pull)}
+    assert kinds == {"Fill", "Words", "Runs", "Splat", "Pull", "Exchange", "Shuffle"}
+    assert unplanned and trees == {True, False}
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        (40, ((5, 10),), 0, ((5, 1),), 0, 48, False, 0),
+        (40, ((5, 1),), 0, ((5, 1),), 46, 48, False, 0),
+        (40, ((5, 1),), 0, ((5, 1),), 2, 48, False, 4),
+    ],
+    ids=["source", "destination", "below-z0"],
+)
+def test_rust_refuses_what_python_refuses(case, monkeypatch):
+    """Elements outside the source or ``[z0, m)``: a `ValueError` on both
+    sides, not `Unplanned`."""
+    with pytest.raises(ValueError, match="elements outside"):
+        python_plan(case, True, monkeypatch)
+    with pytest.raises(ValueError, match="elements outside"):
+        rust_plan(case, True)
+
+
+def test_random_walk_pairs_plan_alike(monkeypatch):
+    """Random runs, transposes and broadcasts: Rust's plans are Python's."""
+    rng = np.random.default_rng(23)
+    for _ in range(40):
+        rows, L = int(rng.integers(1, 9)), int(rng.integers(2, 300))
+        sp, dp = L + int(rng.integers(0, 40)), L + int(rng.integers(0, 40))
+        at, dat = int(rng.integers(0, 40)), int(rng.integers(0, 40))
+        keep, z0 = bool(rng.integers(0, 2)), 16 * int(rng.integers(0, 2))
+        dat += z0
+        n = at + (rows - 1) * sp + L
+        m = -(-(dat + (rows - 1) * dp + L) // 16) * 16
+        case = (n, ((rows, sp), (L, 1)), at, ((rows, dp), (L, 1)), dat, m, keep, z0)
+        assert rust_plan(case, True) == python_plan(case, True, monkeypatch)[0], case
+    for _ in range(20):
+        A, B, nb = (int(x) for x in rng.integers((2, 2, 1), (70, 70, 4)))
+        n = nb * A * B
+        m = -(-n // 16) * 16
+        case = (
+            n,
+            ((nb, A * B), (B, 1), (A, B)),
+            0,
+            ((nb, A * B), (B, A), (A, 1)),
+            0,
+            m,
+            False,
+            0,
+        )
+        assert rust_plan(case, True) == python_plan(case, True, monkeypatch)[0], case
+    for _ in range(20):
+        v, c = int(rng.integers(1, 40)), int(rng.integers(2, 40))
+        at = int(rng.integers(0, 8))
+        m = -(-(v * c) // 16) * 16
+        case = (at + v, ((v, 1), (c, 0)), at, ((v, c), (c, 1)), 0, m, False, 0)
+        assert rust_plan(case, True) == python_plan(case, True, monkeypatch)[0], case
