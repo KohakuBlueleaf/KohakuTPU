@@ -9,7 +9,7 @@ each opens.
     dev = runtime.device()              # opened once, shared
     a = dev.alloc(nbytes)               # an address in the card's DRAM
     dev.write(a, raw); dev.read(a, n)
-    dev.run(compiled, {"x": a, ...})    # scratch allocated and freed here
+    dev.run(compiled, {"x": a, ...})    # scratch in its space's window
 
 Every run is checked by the static verifier before the card sees it (the
 card's `run` schedules each package through `verify.schedule`).
@@ -108,13 +108,13 @@ class Recorded(list):
 
 @dataclass
 class Submitted:
-    """A kernel run queued on the card (`Device.submit`): its scratch spans,
-    held until it is collected, and the card's pending run or result."""
+    """A kernel run queued on the card (`Device.submit`): the spans it
+    references (its scratch windows among them), held until it is collected,
+    and the card's pending run or result."""
 
     name: str
     kind: str
     info: dict
-    scratch: list
     t0: float
     pending: object = None
     result: dict | None = None
@@ -245,6 +245,8 @@ class Device:
         self.queue_bytes = capacity if budget is None else budget
         self._scope = None
         self._placement = None
+        #: (space, node) -> (address, bytes) of a scratch window (`_window`)
+        self.windows: dict = {}
         self._failure = None
         self.library_only = library_only
         self.library = (
@@ -430,6 +432,49 @@ class Device:
             arena.release(physical)
             raise
 
+    def _window(self, key: tuple, nbytes: int) -> int:
+        """The scratch window of `key`, `(space, node)`, at least `nbytes`:
+        where every kernel run lays out its scratch in that space, a node's
+        staging store each, DRAM one (`node` None). A node runs its queue in
+        order and `_fence` keeps the runs in flight on one node, a run over
+        several alone, so no two runs' scratch is live at once, eager or
+        replayed, and a graph pins one window a space, not a span a site. A window too small is freed to
+        whatever still pins it (runs in flight, recordings)."""
+        held = self.windows.get(key)
+        if held is not None and held[1] >= nbytes:
+            return held[0]
+        if held is not None:
+            self.free(held[0])
+        space, node = key
+        at = self._alloc(nbytes, space, node, f"scratch:window:{space}:{node}")
+        self.windows[key] = (at, nbytes)
+        return at
+
+    def _release_windows(self) -> None:
+        """Every scratch window no recording pins freed, once no run is in
+        flight (API.MEM.007: a collected run's scratch is not kept)."""
+        for key, (at, _) in list(self.windows.items()):
+            entry, physical = self.mmu.resolve(at, owner=True)
+            if not entry.arena.references[physical]:
+                self.free(at)
+                del self.windows[key]
+
+    def _windowed(self, spans) -> dict:
+        """Each scratch span of one run, `(name, bytes, space, node,
+        members)`, at its address in its window: laid out from the window's
+        start in order, each at a whole line."""
+        line = max(self.line_bytes, 256)
+        offsets, ends = {}, {}
+        for name, nbytes, space, node, _ in spans:
+            if space == "stage":
+                key = (space, self.card.nodes[0] if node is None else node)
+            else:
+                key = (space, None)
+            offsets[name] = (key, ends.get(key, 0))
+            ends[key] = offsets[name][1] + -(-int(nbytes) // line) * line
+        bases = {key: self._window(key, end) for key, end in ends.items()}
+        return {name: bases[key] + off for name, (key, off) in offsets.items()}
+
     def _take(self, alloc) -> int:
         """Retry after each oldest completion, then evict unused packages."""
         while True:
@@ -567,6 +612,16 @@ class Device:
             refs.discard((entry.arena, entry.physical))
         return [r for r in references if r not in refs]
 
+    def _fence(self, nodes) -> None:
+        """Every run in flight collected before a run on `nodes` is queued,
+        where it is a run over more than one node or the runs in flight are
+        on other nodes: one node's queue orders its runs, and nothing orders
+        two nodes' queues. So the runs in flight are always on one node, in
+        that node's order, and a run over several nodes runs alone; the
+        scratch windows rest on this (`_window`)."""
+        if len(nodes) > 1 or any(s.nodes != nodes for s in self.inflight):
+            self.drain()
+
     def _admit(self, nodes, references):
         """Bound each node's uncollected runs and the union of pinned spans."""
         queues = getattr(self.card, "queues", {})
@@ -601,10 +656,12 @@ class Device:
         """`compiled` queued on the card with each parameter at the address
         in `binds`, not waited for: the card runs its queue in order, so the
         next kernel is queued while this one runs (L0.NQ.047). The L1 body's
-        other parameters (scratch the L2 pipeline kept) get spans held until
-        :meth:`collect`: one block per scratch arena the Rust stack laid out
-        (`Compiled.scratch`), bound under the arena's name and each member
-        at its offset, else one per parameter. At most `max_inflight` runs
+        other parameters (scratch the L2 pipeline kept) are laid out in the
+        scratch window of their space (`_window`), held until :meth:`collect`:
+        one block per scratch arena the Rust stack laid out
+        (`Compiled.scratch`) and not bound in `binds`, bound under the
+        arena's name and each member at its offset, else one per parameter.
+        At most `max_inflight` runs
         are held; past that the oldest is collected first, and when memory
         pressure collects the oldest and retries after each completion."""
         launch_boundary.before_submit(self)
@@ -614,7 +671,7 @@ class Device:
         if self.max_inflight is not None and self.max_inflight < 1:
             raise ValueError("max_inflight must be positive or None")
         params = compiled.l1.params(compiled.name, "l1")
-        full, scratch = dict(binds), []
+        full = dict(binds)
         references = self._retain(binds.values())
         record_mark = len(self._record_pins)
         submitting = False
@@ -624,30 +681,33 @@ class Device:
                 and len(self.inflight) >= self.max_inflight
             ):
                 self.collect(self.inflight[0])
-            for a in getattr(compiled, "scratch", None) or ():
-                at = self.alloc(
+            arenas = getattr(compiled, "scratch", None) or ()
+            named = set(full)
+            for a in arenas:
+                named.add(arena_name(a))
+                named.update(p for p, _ in a.get("members", ()))
+            # An arena the caller bound stays where it was bound.
+            spans = [
+                (
+                    arena_name(a),
                     a["bytes"],
                     a["space"],
                     a.get("node"),
-                    owner=f"scratch:{compiled.name}",
+                    a.get("members", ()),
                 )
-                scratch.append(at)
-                full[arena_name(a)] = at
-                for p, off in a.get("members", ()):
-                    full.setdefault(p, at + off)
+                for a in arenas
+                if arena_name(a) not in full
+            ]
             for p, t in params:
-                if p in full:
-                    continue
-                b = Buffer.of(t, self.card.machine_json)
-                at = self.alloc(
-                    b.nbytes,
-                    b.space,
-                    b.layout.get("node"),
-                    owner=f"scratch:{compiled.name}",
-                )
-                scratch.append(at)
-                full[p] = at
-            references.extend(self._retain(scratch))
+                if p not in named:
+                    b = Buffer.of(t, self.card.machine_json)
+                    spans.append((p, b.nbytes, b.space, b.layout.get("node"), ()))
+            windowed = self._windowed(spans)
+            full.update(windowed)
+            for a in arenas:
+                for p, off in a.get("members", ()):
+                    full.setdefault(p, full[arena_name(a)] + off)
+            references.extend(self._retain(windowed.values()))
             self._pin_record(full.values())
             t0 = time.monotonic()
             apart = any(
@@ -743,16 +803,13 @@ class Device:
                 if hasattr(self.card, "nodes")
                 else tuple(progs)
             )
-            # Different node sets cannot rely on one FIFO for memory ordering.
-            if len(nodes) > 1 or any(s.nodes != nodes for s in self.inflight):
-                self.drain()
+            self._fence(nodes)
             self._admit(nodes, references)
             card = progs[None] if single else progs
             s = Submitted(
                 compiled.name,
                 kind,
                 dict(info or {}),
-                scratch,
                 t0,
                 references=references,
                 writes=self._write_refs(references),
@@ -776,8 +833,6 @@ class Device:
             for arena, at in self._record_pins[record_mark:]:
                 arena.unretain(at)
             del self._record_pins[record_mark:]
-            for at in scratch:
-                self.free(at)
             for arena, at in references:
                 arena.unretain(at)
             raise
@@ -829,9 +884,8 @@ class Device:
         for arena, at in s.references:
             arena.unretain(at)
         s.references = []
-        for at in s.scratch:
-            self.free(at)
-        s.scratch = []
+        if not self.inflight and not self.recording:
+            self._release_windows()
         wall = time.monotonic() - s.t0
         s.run = Run(s.name, int(got["cycles"]), wall, s.kind, s.info)
         self.runs.append(s.run)
@@ -895,7 +949,6 @@ class Device:
                         "replay",
                         "replay",
                         {},
-                        [],
                         time.monotonic(),
                         references=references,
                     )
@@ -952,8 +1005,7 @@ class Device:
                 self.card.write(ev[1], ev[2])
                 continue
             name, kind, info, refs, writes, nodes = next(metadata)
-            if len(nodes) > 1 or any(s.nodes != nodes for s in self.inflight):
-                self.drain()
+            self._fence(nodes)
             while (
                 self.max_inflight is not None
                 and len(self.inflight) >= self.max_inflight
@@ -966,7 +1018,6 @@ class Device:
                 name,
                 kind,
                 dict(info),
-                [],
                 time.monotonic(),
                 references=list(refs),
                 writes=list(writes),

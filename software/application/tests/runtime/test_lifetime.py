@@ -81,7 +81,8 @@ def test_failed_wait_keeps_scratch_and_dependencies_until_completion():
         dev.collect(pending)
     assert dev.dram.used == used
     assert dev.inflight == [pending]
-    assert pending.scratch and pending.references
+    window = dev.mmu.resolve(dev.windows["dram", None][0])
+    assert (window[0].arena, window[1]) in pending.references
     dev.card.fail = False
     dev.collect(pending)
     assert not dev.mmu.entries[at].live
@@ -125,9 +126,10 @@ def test_failed_compile_rolls_back_retains_and_scratch():
     k.programs = fail
     with pytest.raises(ValueError, match="compile"):
         dev.submit(k, {"x": at})
-    assert (
-        dev.dram.used == used and dev.dram.references[dev.mmu.entries[at].physical] == 0
-    )
+    # The scratch window stays the device's, holding no reference.
+    window = dev.mmu.resolve(dev.windows["dram", None][0])[1]
+    assert dev.dram.used == used + 1024 and dev.dram.references[window] == 0
+    assert dev.dram.references[dev.mmu.entries[at].physical] == 0
     dev.free(at)
 
 
@@ -142,7 +144,7 @@ def test_partial_publication_failure_quarantines_all_references():
     with pytest.raises(TimeoutError):
         dev.submit(kernel(1024), {"x": at})
     dev.free(at)
-    assert dev.mmu.entries[at].live and dev._uncertain[0].scratch
+    assert dev.mmu.entries[at].live and dev._uncertain[0].references
     with pytest.raises(RuntimeError, match="publication"):
         dev.submit(kernel(), {})
 
@@ -277,8 +279,6 @@ def test_failed_wait_fix_has_a_reversal_witness(monkeypatch):
         try:
             return collect(self, pending)
         except TimeoutError:
-            for at in pending.scratch:
-                self.free(at)
             for arena, at in pending.references:
                 arena.unretain(at)
             raise

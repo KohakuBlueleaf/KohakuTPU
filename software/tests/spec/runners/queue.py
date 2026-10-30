@@ -137,8 +137,6 @@ def fault_card(inp, ctx):
             # Restart halts every node before this test releases quarantined pins.
             dev.card.restart()
             for s in dev.inflight:
-                for at in s.scratch:
-                    dev.free(at)
                 for arena, at in s.references:
                     arena.unretain(at)
             dev.inflight.clear()

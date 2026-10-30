@@ -4,10 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from kohakutpu.application.runtime.arena import Arena
+from kohakutpu.application.runtime.arena import Arena, OutOfMemory
 from kohakutpu.application.runtime.device import Device
 from kohakutpu.application.runtime.placement import Placement
 from kohakutpu.application.runtime.storage import Storage
+from kohakutpu.stack.kernel import arena_name
 
 
 @pytest.fixture
@@ -132,32 +133,127 @@ def test_sites_signatures_live_forms_and_graphs_are_disjoint(dev):
     assert dev.dram.used == 0
 
 
-def test_reuse_waits_for_the_last_access_and_scratch_owner(dev):
+def test_reuse_waits_for_the_last_access(dev):
     pool = Placement(dev)
     collected = []
     dev.card.submit = lambda program: object()
     dev.card.collect = lambda pending: collected.append(pending) or {"cycles": 0}
     compiled = SimpleNamespace(
-        name="scratch",
+        name="reader",
         l1=SimpleNamespace(params=lambda *args: []),
-        scratch=[{"bytes": 1024, "space": "dram"}],
+        scratch=[],
         programs=lambda binds: {None: object()},
     )
     with dev.placement_scope(pool, 0):
-        first = dev.submit(compiled, {})
-    old = first.scratch[0]
+        old = dev.alloc(1024)
+    first = dev.submit(compiled, {"x": old})
     physical = dev.mmu.resolve(old)[1]
+    dev.free(old)
     assert not collected
     with dev.placement_scope(pool, 0):
-        second = dev.submit(compiled, {})
+        new = dev.alloc(1024)
     assert collected == [first.pending]
-    assert dev.mmu.resolve(second.scratch[0])[1] == physical
+    assert dev.mmu.resolve(new)[1] == physical
     with pytest.raises(ValueError, match="live owner"):
         dev.mmu.resolve(old)
     pool.close()
     assert physical in dev.dram.live
-    dev.collect(second)
+    dev.free(new)
     assert dev.dram.used == 0
+
+
+def per_site(dev):
+    """`Device._windowed` as a span a run: each through `alloc` (a graph
+    site's own pinned span), never freed."""
+    return lambda spans: {
+        name: dev.alloc(nbytes, space, node, owner="scratch")
+        for name, nbytes, space, node, _ in spans
+    }
+
+
+def arena_of(dev, space):
+    return dev.memory.staging[0] if space == "stage" else dev.dram
+
+
+def key_of(space):
+    return (space, 0 if space == "stage" else None)
+
+
+@pytest.mark.parametrize("space", ["stage", "dram"])
+@pytest.mark.parametrize("window", [True, False])
+def test_a_graph_pins_one_scratch_window_a_space(dev, monkeypatch, space, window):
+    """Eight sites of scratch, a quarter of the space's arena each, recorded
+    as one graph call: every site's run binds the space's one window. With a
+    span a site instead (no window), the fifth does not fit."""
+    arena = arena_of(dev, space)
+    room = arena.hi - arena.lo
+    dev.card.submit = lambda program: object()
+    dev.card.collect = lambda pending: {"cycles": 0}
+    bound = []
+    scratch = {
+        "bytes": room // 4,
+        "space": space,
+        "node": 0 if space == "stage" else None,
+    }
+    name = arena_name(scratch)
+    compiled = SimpleNamespace(
+        name="ring",
+        l1=SimpleNamespace(params=lambda *args: []),
+        scratch=[scratch],
+        programs=lambda binds: bound.append(binds[name]) or {None: object()},
+    )
+    if not window:
+        monkeypatch.setattr(dev, "_windowed", per_site(dev))
+    pool = Placement(dev)
+    dev.record()
+    try:
+        for site in range(8):
+            with dev.placement_scope(pool, site):
+                dev.submit(compiled, {})
+    except OutOfMemory:
+        assert not window and len(bound) == 4
+        return
+    finally:
+        log = dev.recorded()
+        dev.drain()
+    assert window and len(bound) == 8 and set(bound) == {dev.windows[key_of(space)][0]}
+    assert arena.used == room // 4
+    log.close()
+    pool.close()
+    assert arena.used == room // 4
+
+
+@pytest.mark.parametrize("space", ["stage", "dram"])
+def test_a_grown_window_stays_pinned_by_the_graph_that_recorded_it(dev, space):
+    """A run that outgrows the window takes a larger one; the smaller stays
+    live while a recording holds it and is freed when it closes. With no run
+    in flight the window a recording holds is kept, the one none holds
+    freed."""
+    dev.card.submit = lambda program: object()
+    dev.card.collect = lambda pending: {"cycles": 0}
+
+    def compiled(nbytes):
+        return SimpleNamespace(
+            name="ring",
+            l1=SimpleNamespace(params=lambda *args: []),
+            scratch=[{"bytes": nbytes, "space": space, "node": 0}],
+            programs=lambda binds: {None: object()},
+        )
+
+    arena = arena_of(dev, space)
+    dev.record()
+    dev.submit(compiled(4096), {})
+    log = dev.recorded()
+    dev.drain()
+    small = dev.mmu.resolve(dev.windows[key_of(space)][0])[1]
+    dev.submit(compiled(8192), {})
+    large = dev.mmu.resolve(dev.windows[key_of(space)][0])[1]
+    assert large != small and small in arena.live and small in arena.released
+    dev.drain()
+    assert key_of(space) not in dev.windows and large not in arena.live
+    assert small in arena.live
+    log.close()
+    assert small not in arena.live and arena.used == 0
 
 
 def test_generation_mutant_is_killed(dev, monkeypatch):

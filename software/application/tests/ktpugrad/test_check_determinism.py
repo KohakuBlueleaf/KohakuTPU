@@ -127,10 +127,10 @@ def test_package_loop_inplace_alias_restored_and_stops(monkeypatch, mode):
             raise NodeError(
                 Completion(1, 0x30 if mode == "stall" else 0x20, 0, 0, 0, 0)
             )
-        scratch_at = device.alloc(64, "dram", owner=f"scratch:{compiled.name}")
+        # A bound arena is where the run's scratch is, restored each repeat.
+        scratch_at = bindings["scratch:dram"]
         assert scratch_at == borrowed and device.read(scratch_at, 64) == bytes(64)
         device.write(scratch_at, bytes([7]) * 64)
-        device.free(scratch_at)  # ordinary collection must not free caller-owned arena
         raw = bytearray(inputs[-1])
         raw[0] = 10
         raw[8] = 17 + (len(inputs) % 2 if mode == "variable" else 0)

@@ -16,7 +16,16 @@ The v4 queue's run record supplies the timing phases for that exact tag.
 `Device.submit(compiled, bindings)` returns `Submitted`. Bindings map kernel
 parameter names to runtime allocation handles (including offsets). The runtime
 resolves handles through its software MMU and retains the underlying arena
-allocations. Scratch is allocated and pinned by the same path.
+allocations. A run's scratch (the arenas and buffers the compiler kept that
+the bindings do not name) is laid out in the scratch **window** of its space:
+one per node's staging store and one in DRAM, each grown to the largest run's
+need and pinned by the same path. One window a space is sound because the runs
+in flight are always on one node in that node's queue order (below), so no two
+runs' scratch is live at once; a replayed graph therefore pins one window a
+space, not a span per site. A window outgrown while a run or a recording still
+pins it stays alive for them and the next run takes a new one. Once no run is
+in flight, every window no recording pins is freed: a collected run keeps no
+scratch.
 `Device.collect(submission)` collects its predecessors first and returns a
 `Run`; collecting a completed submission again returns the same result.
 `Device.drain()` collects oldest first.
@@ -36,8 +45,9 @@ access contract conservatively treat all bindings as writable.
 `write` waits through the last pending use. tinygrad applies these hazards to
 all forms of its logical storage. Waits collect the submission prefix so an
 earlier fault cannot be attributed to the kernel whose read exposed it.
-Same-node kernels rely on FIFO ordering. Multiple nodes, or a change of node
-set, require a barrier before publication.
+Same-node kernels rely on FIFO ordering. A run over several nodes, or a run on
+a node other than the runs in flight, first collects every run in flight: the
+runs in flight are on one node, and a run over several nodes runs alone.
 
 ## Working-set limits
 
@@ -51,8 +61,8 @@ run fits. A single run larger than the byte budget is refused before publication
 Allocation pressure also collects oldest completions before retrying.
 
 `free` releases allocation ownership. An allocation is not reused while a
-submission or recording retains it. Successful collection releases scratch
-ownership and completion references; a failed wait does not establish that
+submission or recording retains it. Successful collection releases the run's
+references (its scratch windows among them); a failed wait does not establish that
 DMA has stopped and does not release those references.
 
 ## Capture and TinyJit replay

@@ -266,9 +266,6 @@ class DeterminismChecker:
                         )
                         binds[name] = at
                         allocated.append(at)
-                protected = set(allocated) | {
-                    binds[arena_name(a)] for a in compiled.scratch or ()
-                }
                 ports = self._ports(compiled, binds)
                 row["ports"] = [
                     dict(name=name, address=at, nbytes=n, dtype=np.dtype(dt).str)
@@ -288,51 +285,12 @@ class DeterminismChecker:
                         if repeat:
                             for at, raw in saved.items():
                                 device.write(at, raw)
-                        # Keep descriptor metadata intact (alias fallback consults
-                        # scratch). Reuse its explicitly allocated scratch arenas;
-                        # defer their ordinary collect-time frees until this loop ends.
-                        arenas = iter(compiled.scratch or ())
-                        underlying_alloc, underlying_free = (
-                            D.Device.alloc,
-                            D.Device.free,
+                        # Every scratch arena is bound in `binds`, so the run
+                        # uses them where they are and a repeat restores them.
+                        result = original_submit(
+                            device, compiled, binds, kind=kind, info=info
                         )
-
-                        def fixed_alloc(
-                            dev,
-                            nbytes,
-                            space="dram",
-                            node=None,
-                            owner="tensor",
-                            *,
-                            _arenas=arenas,
-                            _alloc=underlying_alloc,
-                        ):
-                            if dev is device and owner == f"scratch:{compiled.name}":
-                                arena = next(_arenas)
-                                if (nbytes, space, node) != (
-                                    arena["bytes"],
-                                    arena["space"],
-                                    arena.get("node"),
-                                ):
-                                    raise ValueError(
-                                        "scratch allocation sequence changed"
-                                    )
-                                return binds[arena_name(arena)]
-                            return _alloc(dev, nbytes, space, node, owner)
-
-                        def deferred_free(dev, at, _free=underlying_free):
-                            if dev is not device or at not in protected:
-                                return _free(dev, at)
-                            return None
-
-                        with (
-                            patch.object(D.Device, "alloc", fixed_alloc),
-                            patch.object(D.Device, "free", deferred_free),
-                        ):
-                            result = original_submit(
-                                device, compiled, binds, kind=kind, info=info
-                            )
-                            device.collect(result)
+                        device.collect(result)
                         outputs = {
                             name: (device.read(at, n), dt) for name, at, n, dt in ports
                         }
