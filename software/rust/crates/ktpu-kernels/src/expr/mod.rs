@@ -6,6 +6,7 @@
 
 pub mod emit;
 pub mod eval;
+pub mod intern;
 
 pub use emit::emit;
 pub use eval::{evaluate, fold};

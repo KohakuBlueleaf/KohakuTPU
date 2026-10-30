@@ -142,6 +142,40 @@ def test_the_ring_computes_the_product_without_it(dev, name):
         assert got[:, :m].tobytes() == want[:, :m].tobytes(), (name, knobs)
 
 
+@pytest.mark.parametrize("knobs", [dict(), dict(ring_depth=2)])
+def test_expr_cse_computes_the_epilogue_without_it(dev, knobs):
+    """(x + c)^2 (x - c)(c - x), each term built anew: with expr_cse the
+    kernel computes each distinct subexpression once and the output rows
+    below M hold the bytes the kernel without it computes."""
+    mt = rs.machine_json(dev.machine)
+    bt, m, n = 1, 20, 64
+    mm = MM.plan(bt, m, n, 64, True, machine_json=mt, pad_m=True)
+    _, _, data = operands(dev, mm, 13)
+    data["in1"] = np.full(n, 0.25, np.float16).tobytes()
+
+    def plus():
+        return X.op("add", X.Load(0), X.Load(1))
+
+    e = X.op(
+        "mul",
+        X.op("mul", plus(), plus()),
+        X.op(
+            "mul",
+            X.op("sub", X.Load(0), X.Load(1)),
+            X.op("sub", X.Load(1), X.Load(0)),
+        ),
+    )
+    extras = [Operand("col")]
+    out = Operand("full", pitch=n, rows=bt * mm.mp)
+    rows = bt * mm.mp
+    want = product(dev, call(mm, e, extras, out, **knobs), data, rows, n)
+    args = call(mm, e, extras, out, expr_cse=True, **knobs)
+    assert MM.resolved(args, mt)["knobs"]["expr_cse"]
+    got = product(dev, args, data, rows, n)
+    got, want = (np.frombuffer(x, "<f2").reshape(mm.mp, n) for x in (got, want))
+    assert got[:m].tobytes() == want[:m].tobytes(), knobs
+
+
 #: An f16 A's knob sets: quantised first, and each quant ring.
 F16 = {
     "first": dict(),

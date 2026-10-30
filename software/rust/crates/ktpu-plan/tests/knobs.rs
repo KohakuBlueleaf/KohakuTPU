@@ -24,6 +24,7 @@ fn every_knob() -> Knobs {
         tail_bands: true,
         activation_fp16: true,
         quant_ring: 2,
+        expr_cse: true,
     }
 }
 

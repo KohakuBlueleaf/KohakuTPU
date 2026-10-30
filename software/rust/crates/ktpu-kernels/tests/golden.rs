@@ -392,3 +392,24 @@ fn each_mutant_breaks_golden_calls() {
         assert!(!t.fails.is_empty(), "mutant {name} breaks no golden call");
     }
 }
+
+/// expr_cse's mutant merges (x - 1) and (1 - x): no golden call takes
+/// expr_cse, so a product that does is its witness.
+#[cfg(feature = "mutants")]
+#[test]
+fn the_cse_mutant_merges_unordered_operands() {
+    let m = machine("multimesh_v9t6", 1);
+    let args = serde_json::json!({
+        "mm": {"made_by": {"gen": "matmul.plan",
+            "args": {"bt": 1, "m": 8, "n": 32, "k": 64, "shared": true}}},
+        "e": {"nodes": [{"load": 0}, {"const": 1.0}, {"op": "sub", "args": [0, 1]},
+            {"op": "sub", "args": [1, 0]}, {"op": "mul", "args": [2, 3]}], "root": 4},
+        "extras": [],
+        "out": {"kind": "full", "dtype": "f16", "offset": 0, "pitch": 32, "rows": 8},
+        "expr_cse": true
+    });
+    let make = || ktpu_kernels::call::call("matmul.mm_kernel", &args, &m).unwrap();
+    let plain = make();
+    let broken = ktpu_kernels::mutants::with(ktpu_kernels::expr::intern::UNORDERED_MUTANT, make);
+    assert_ne!(plain.graph.body, broken.graph.body);
+}

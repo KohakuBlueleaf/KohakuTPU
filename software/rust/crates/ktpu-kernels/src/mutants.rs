@@ -34,6 +34,7 @@ pub const LOCAL: &[&str] = &[
     "kernels.hw/unit_constants",
     "kernels.vector/stat_rows_form",
     "kernels.expr/reduces_dup",
+    crate::expr::intern::UNORDERED_MUTANT,
 ];
 
 #[cfg(feature = "mutants")]

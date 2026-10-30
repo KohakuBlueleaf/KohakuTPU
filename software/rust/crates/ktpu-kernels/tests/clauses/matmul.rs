@@ -175,6 +175,7 @@ fn a_call_records_and_replays_its_knobs() {
         tail_bands: true,
         activation_fp16: true,
         quant_ring: 2,
+        expr_cse: true,
     };
     let args: serde_json::Map<String, serde_json::Value> = k
         .args(mm::Group::Plan)
@@ -194,6 +195,7 @@ fn a_call_records_and_replays_its_knobs() {
             ("tail_bands", serde_json::json!(true)),
             ("activation_fp16", serde_json::json!(true)),
             ("quant_ring", serde_json::json!(2)),
+            ("expr_cse", serde_json::json!(true)),
         ]
     );
     let mut call = serde_json::json!({"bt": 1, "m": 1576, "n": 768, "k": 768});
@@ -222,6 +224,35 @@ fn api_op_007_product_and_epilogue_one_kernel() {
     for op in ["= fill a", "= gemm a", "drain acc", "= max v"] {
         assert!(t.contains(op), "no {op} in\n{t}");
     }
+}
+
+/// Under expr_cse an epilogue's structurally equal subexpressions are one
+/// value: (x + 1)(x + 1) built twice computes like (x + 1) shared, and an
+/// epilogue with nothing to merge takes the knob as off.
+#[test]
+fn expr_cse_computes_equal_subexpressions_once() {
+    let d = mm::defaults();
+    let cse = mm::Knobs {
+        expr_cse: true,
+        ..d
+    };
+    let p = mm::plan(1, 64, 128, 64, true, 4, PAIRING, &card(), &d).unwrap();
+    let out = Operand::full(128, 64);
+    let inc = || expr::op("add", vec![expr::load(0).into(), 1.0.into()]).unwrap();
+    let twice = expr::op("mul", vec![inc().into(), inc().into()]).unwrap();
+    let a = inc();
+    let shared = expr::op("mul", vec![a.clone().into(), a.into()]).unwrap();
+    let kernel = |e: &expr::E, k: &mm::Knobs| mm::mm_kernel(&p, e, &[], &out, k, &card()).unwrap();
+    let adds = |k: &ktpu_kernels::kernel::Kernel| text(k).matches("= add v").count();
+    assert_eq!(adds(&kernel(&twice, &d)), 2);
+    assert_eq!(adds(&kernel(&twice, &cse)), 1);
+    assert_eq!(
+        kernel(&twice, &cse).graph.body,
+        kernel(&shared, &d).graph.body
+    );
+    assert!(mm::effective(&p, &twice, &out, &cse, &card()).expr_cse);
+    assert!(!mm::effective(&p, &shared, &out, &cse, &card()).expr_cse);
+    assert_eq!(kernel(&shared, &cse).graph, kernel(&shared, &d).graph);
 }
 
 #[test]

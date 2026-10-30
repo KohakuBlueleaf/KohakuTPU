@@ -96,6 +96,11 @@ pub const KNOBS: &[Knob] = &[
         env: "KTPU_MM_QUANT_RING",
         group: Group::Kernel,
     },
+    Knob {
+        name: "expr_cse",
+        env: "KTPU_MM_EXPR_CSE",
+        group: Group::Kernel,
+    },
 ];
 
 /// A contraction's plan and kernel knobs: the one source the generators,
@@ -127,6 +132,9 @@ pub struct Knobs {
     /// slots as the waves reach it (1), or a wave ahead with its finite
     /// check deferred (2); 0 quantises the whole A first.
     pub quant_ring: i64,
+    /// The epilogue's structurally equal subexpressions computed once
+    /// ([`expr::intern`]).
+    pub expr_cse: bool,
 }
 
 /// The knobs' defaults.
@@ -147,6 +155,7 @@ pub fn unrecorded() -> Knobs {
         tail_bands: false,
         activation_fp16: false,
         quant_ring: 0,
+        expr_cse: false,
     }
 }
 
@@ -182,6 +191,7 @@ impl Knobs {
             "tail_bands" => self.tail_bands.into(),
             "activation_fp16" => self.activation_fp16.into(),
             "quant_ring" => self.quant_ring.into(),
+            "expr_cse" => self.expr_cse.into(),
             _ => unreachable!("a knob: {name}"),
         }
     }
@@ -206,6 +216,7 @@ impl Knobs {
             "tail_bands" => self.tail_bands = flag()?,
             "activation_fp16" => self.activation_fp16 = flag()?,
             "quant_ring" => self.quant_ring = int()?,
+            "expr_cse" => self.expr_cse = flag()?,
             _ => unreachable!("a knob: {name}"),
         }
         Ok(())
@@ -675,6 +686,7 @@ fn epilogue_bands(mm: &Mm, operands: &[Operand], out: &Operand, wc: i64, hw: &Hw
 /// every batch's tiles at once, then each batch's epilogue; with a ring
 /// ([`ring::resolve`]) through `@stage` slots. Where it takes A as f16
 /// ([`takes_f16`]) port `a` is the f16 [bt * m, K], quantised in the kernel.
+/// With `knobs.expr_cse` the epilogue is `e` interned ([`takes_cse`]).
 pub fn mm_kernel(
     mm: &Mm,
     e: &E,
@@ -683,6 +695,8 @@ pub fn mm_kernel(
     knobs: &Knobs,
     mach: &Machine,
 ) -> R<Kernel> {
+    let cse = takes_cse(e, knobs);
+    let e = &computed(e, knobs);
     let hw = Hw::of(mach);
     let (clusters, cores) = (hw.mg, hw.vc);
     let (ntm, ntn) = (mm.mp / mm.tm, mm.n / mm.tn);
@@ -766,6 +780,9 @@ pub fn mm_kernel(
     }
     if f16 {
         key_args.push(Py::str("activation_fp16"));
+    }
+    if cse {
+        key_args.push(Py::str("expr_cse"));
     }
     let key = name("mm", key_args);
     // The product tiles of `nb` batches from batch `bt` (`nb` > 1: from
@@ -853,7 +870,7 @@ pub fn mm_kernel(
 /// `knobs` as the kernel for `mm`, epilogue `e` into `out` takes them on
 /// `mach`: a kernel knob that leaves the kernel unchanged is off.
 pub fn effective(mm: &Mm, e: &E, out: &Operand, knobs: &Knobs, mach: &Machine) -> Knobs {
-    let r = ring::resolve(mm, e, out, knobs, mach);
+    let r = ring::resolve(mm, &computed(e, knobs), out, knobs, mach);
     Knobs {
         batch_tiles: knobs.batch_tiles && mm.bt > 1 && r.depth == 0,
         ring_depth: r.depth,
@@ -861,7 +878,23 @@ pub fn effective(mm: &Mm, e: &E, out: &Operand, knobs: &Knobs, mach: &Machine) -
         tail_bands: r.tail_bands,
         activation_fp16: takes_f16(mm.k, mm.nk, knobs, mach),
         quant_ring: r.quant,
+        expr_cse: takes_cse(e, knobs),
         ..*knobs
+    }
+}
+
+/// Whether the kernel interns epilogue `e` under `knobs`: `expr_cse` and
+/// some two of its nodes structurally equal.
+pub fn takes_cse(e: &E, knobs: &Knobs) -> bool {
+    knobs.expr_cse && expr::intern::merges(e)
+}
+
+/// The epilogue the kernel computes for `e` under `knobs`.
+fn computed(e: &E, knobs: &Knobs) -> E {
+    if takes_cse(e, knobs) {
+        expr::intern::intern(e)
+    } else {
+        e.clone()
     }
 }
 

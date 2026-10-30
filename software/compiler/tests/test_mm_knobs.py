@@ -36,7 +36,21 @@ def test_the_knob_table_is_the_native_one():
         "tail_bands": False,
         "activation_fp16": False,
         "quant_ring": 0,
+        "expr_cse": False,
     }
+
+
+#: (x + 1)(x + 1), the sum built twice.
+TWICE = {
+    "nodes": [
+        {"load": 0},
+        {"const": 1.0},
+        {"op": "add", "args": [0, 1]},
+        {"op": "add", "args": [0, 1]},
+        {"op": "mul", "args": [2, 3]},
+    ],
+    "root": 4,
+}
 
 
 @pytest.mark.parametrize(
@@ -57,6 +71,9 @@ def test_the_knob_table_is_the_native_one():
             {"activation_fp16": True, "ring_depth": 1, "quant_ring": 5},
             {"activation_fp16": True, "ring_depth": 1, "quant_ring": 2},
         ),
+        (1, {"expr_cse": True}, None),
+        (1, {"expr_cse": True, "e": TWICE}, {"expr_cse": True}),
+        (1, {"e": TWICE}, None),
     ],
 )
 def test_a_call_resolves_the_knobs_its_kernel_takes(bt, knobs, want):
@@ -68,8 +85,8 @@ def test_a_call_resolves_the_knobs_its_kernel_takes(bt, knobs, want):
         e={"nodes": [{"load": 0}], "root": 0},
         extras=[],
         out=dict(kind="full", dtype="f16", offset=0, pitch=64, rows=bt * 32),
-        **knobs,
     )
+    args.update(knobs)
     got = MM.resolved(args, MACHINE)
     off = {
         "batch_tiles": False,
@@ -78,6 +95,7 @@ def test_a_call_resolves_the_knobs_its_kernel_takes(bt, knobs, want):
         "tail_bands": False,
         "activation_fp16": False,
         "quant_ring": 0,
+        "expr_cse": False,
     }
     assert got["knobs"] == {**off, **(want or {})}
     assert got["plain"] == (want is None)
