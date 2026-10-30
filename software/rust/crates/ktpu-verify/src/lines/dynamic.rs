@@ -210,7 +210,7 @@ impl State {
         }
         put(0, (1 << 16) | mode)?;
         if findings.is_empty() {
-            Ok(mover.words)
+            Ok(mover.runs)
         } else {
             Err(())
         }

@@ -52,6 +52,7 @@ pub const NAMES: &[&str] = &[
     "verify.vector/off",
     "verify.lines/no-dynamic-full-lines",
     "verify.lines/recv-is-payload",
+    "verify.lines/word-runs",
     "verify.lint/one-bank",
     "rul.003/queues-folded",
     "rul.051/zero-skips",

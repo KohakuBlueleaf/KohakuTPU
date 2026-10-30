@@ -12,14 +12,19 @@ fn machine() -> Machine {
 }
 
 fn package(m: &Machine, streams: &[&[(i64, i64)]]) -> Package {
+    let at: Vec<_> = streams.iter().map(|dims| (0x1000, *dims)).collect();
+    package_at(m, &at)
+}
+
+fn package_at(m: &Machine, streams: &[(i64, &[(i64, i64)])]) -> Package {
     let isa = MoverIsa::of(m);
     let f = Facts::of(m);
     let mut b = PackageBuilder::new(&f, BTreeMap::new(), 32);
-    for dims in streams {
+    for (base, dims) in streams {
         let mv = Move {
             mode: MoveMode::Fill,
             src: None,
-            dst: Some(Walk::new(0x1000, dims)),
+            dst: Some(Walk::new(*base, dims)),
             ewidth: 2,
             flags: 8,
             xform: (0, 0),
@@ -638,6 +643,40 @@ fn receive_stores_to_dram_not_engine_payload() {
     );
     assert!(ktpu_verify::lines::admit(&p, 0, &t).is_err());
     assert!(!ktpu_verify::lines::check(&p, 0, &t).is_empty());
+}
+
+/// 4 Mi words (LeNet b64's im2col size class) in one contiguous walk.
+const WIDE: &[(i64, i64)] = &[(2048, 32), (2048, 65536)];
+
+#[test]
+fn walks_past_the_word_budget_are_proven_by_runs() {
+    let m = machine();
+    // The second stream's partial line lies inside the wide stream's full
+    // lines: no competitor, and the package as a whole is not all full lines.
+    assert_eq!(conflicts(&m, package(&m, &[WIDE, &[(1, 32)]])), 0);
+    #[cfg(feature = "mutants")]
+    assert!(
+        ktpu_verify::mutant::with("verify.lines/word-runs", || {
+            conflicts(&m, package(&m, &[WIDE, &[(1, 32)]]))
+        }) > 0
+    );
+}
+
+#[test]
+fn a_merged_run_ending_inside_a_line_is_partial() {
+    let m = machine();
+    // Rows of 2049 words at a 2048-word pitch overlap by one word: one run
+    // ending 32 bytes into a line, whose other half the second stream writes.
+    let end = 0x1000 + 2047 * 65536 + 2049 * 32;
+    let rows: &[(i64, i64)] = &[(2049, 32), (2048, 65536)];
+    assert!(conflicts(&m, package_at(&m, &[(0x1000, rows), (end, &[(1, 32)])])) > 0);
+    assert_eq!(
+        conflicts(
+            &m,
+            package_at(&m, &[(0x1000, rows), (end + 32, &[(1, 32)])])
+        ),
+        0
+    );
 }
 
 #[cfg(feature = "mutants")]

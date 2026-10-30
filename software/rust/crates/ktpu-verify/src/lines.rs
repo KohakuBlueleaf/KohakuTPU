@@ -12,7 +12,7 @@ use crate::{Finding, Kind, Target};
 
 mod dynamic;
 
-/// Maximum node steps and destination word visits in a static line proof.
+/// Maximum node steps and destination runs in a static line proof.
 pub const LIMIT: usize = 2_000_000;
 
 #[derive(Clone, Copy, Default)]
@@ -42,7 +42,7 @@ struct Mover {
     stream: usize,
     seen: BTreeSet<(usize, usize)>,
     scatter: Vec<(usize, u64, u64)>,
-    words: usize,
+    runs: usize,
     full_only: bool,
     policy_only: bool,
 }
@@ -200,51 +200,41 @@ impl Mover {
                 ));
             }
         }
-        let mut points = vec![(dst.base as i128, [0i64; 2])];
-        for d in &dst.dims[..dst.ndim] {
-            if d.count == 0 || points.len().saturating_mul(d.count as usize) > LIMIT {
-                return Err(format!(
-                    "stream {id}: destination walk exceeds the static line-proof budget"
-                ));
-            }
-            let mut next = Vec::new();
-            for (at, axes) in points {
-                for i in 0..d.count {
-                    let mut a = axes;
-                    if (1..=2).contains(&d.axis) {
-                        a[d.axis - 1] += i as i64 * d.step;
-                    }
-                    next.push((at + i as i128 * d.stride as i128, a));
-                }
-            }
-            points = next;
-        }
-        self.words = self
-            .words
-            .saturating_add(points.len().saturating_mul(nword as usize));
-        if self.words > LIMIT {
+        let runs = runs(dst, nword * word, id)?;
+        self.runs = self.runs.saturating_add(runs.len());
+        if self.runs > LIMIT {
             return Err("package exceeds the static write-line proof budget".into());
         }
-        let mut coverage: BTreeMap<u64, BTreeSet<u64>> = BTreeMap::new();
-        for (at, axes) in points {
-            if dst.windows.iter().zip(axes).any(|(&(base, extent), a)| {
-                extent != 0 && !(0..extent as i64).contains(&(base + a))
-            }) {
-                continue;
-            }
-            let at = u64::try_from(at).map_err(|_| format!("stream {id}: negative destination"))?;
-            if at % word != 0 {
-                return Err(format!("stream {id}: destination is not word aligned"));
-            }
-            for k in 0..nword {
-                let a = at.checked_add(k * word).ok_or("destination overflow")?;
-                coverage.entry(a / line).or_default().insert(a % line);
-            }
+        if runs.iter().any(|&(s, _)| s % word != 0) {
+            return Err(format!("stream {id}: destination is not word aligned"));
         }
-        for (at, covered) in coverage {
-            if covered.len() as u64 == line / word {
-                continue;
+
+        // Merged runs are disjoint with gaps between them, so a line is
+        // partial exactly where a merged run starts or ends inside it.
+        let mut partial = BTreeSet::new();
+        let mut edges = |(s, e): (u64, u64)| {
+            for at in [s, e] {
+                if at % line != 0 {
+                    partial.insert(at / line);
+                }
             }
+        };
+        let mut merged: Option<(u64, u64)> = None;
+        for (s, e) in runs {
+            merged = match merged {
+                Some((ms, me)) if s <= me => Some((ms, me.max(e))),
+                Some(m) => {
+                    edges(m);
+                    Some((s, e))
+                }
+                None => Some((s, e)),
+            };
+        }
+        if let Some(m) = merged {
+            edges(m);
+        }
+
+        for at in partial {
             if self.full_only {
                 return Err("stream does not cover whole write lines".into());
             }
@@ -261,6 +251,66 @@ impl Mover {
         }
         Ok(())
     }
+}
+
+/// The sorted byte runs `[start, end)` a walk writes, `bytes` per point; an
+/// unwindowed dimension whose stride is ± the run so far folds into it.
+fn runs(w: &Walker, bytes: u64, id: usize) -> Result<Vec<(u64, u64)>, String> {
+    let budget = || format!("stream {id}: destination walk exceeds the static line-proof budget");
+    let mut dims: Vec<Dim> = w.dims[..w.ndim].to_vec();
+    if dims.iter().any(|d| d.count == 0) {
+        return Err(budget());
+    }
+    let windowed =
+        |d: &Dim| d.count > 1 && (1..=2).contains(&d.axis) && w.windows[d.axis - 1].1 != 0;
+    let (mut base, mut run) = (i128::from(w.base), i128::from(bytes));
+    while !crate::mutant::on("verify.lines/word-runs") {
+        let Some(i) = dims
+            .iter()
+            .position(|d| !windowed(d) && (d.count == 1 || i128::from(d.stride).abs() == run))
+        else {
+            break;
+        };
+        let d = dims.remove(i);
+        if d.stride < 0 {
+            base -= (i128::from(d.count) - 1) * run;
+        }
+        run *= i128::from(d.count);
+    }
+
+    let mut points = vec![(base, [0i64; 2])];
+    for d in &dims {
+        if points.len().saturating_mul(d.count as usize) > LIMIT {
+            return Err(budget());
+        }
+        let mut next = Vec::with_capacity(points.len() * d.count as usize);
+        for (at, axes) in points {
+            for i in 0..d.count {
+                let mut a = axes;
+                if (1..=2).contains(&d.axis) {
+                    a[d.axis - 1] += i as i64 * d.step;
+                }
+                next.push((at + i as i128 * i128::from(d.stride), a));
+            }
+        }
+        points = next;
+    }
+
+    let mut out = Vec::with_capacity(points.len());
+    for (at, axes) in points {
+        if w.windows
+            .iter()
+            .zip(axes)
+            .any(|(&(base, extent), a)| extent != 0 && !(0..extent as i64).contains(&(base + a)))
+        {
+            continue;
+        }
+        let start = u64::try_from(at).map_err(|_| format!("stream {id}: negative destination"))?;
+        let end = u64::try_from(at + run).map_err(|_| "destination overflow".to_string())?;
+        out.push((start, end));
+    }
+    out.sort_unstable();
+    Ok(out)
 }
 
 fn alu(op: u64, a: u64, b: u64) -> Option<u64> {
