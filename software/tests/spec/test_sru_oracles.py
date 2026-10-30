@@ -178,13 +178,35 @@ def test_oracle_red_max_and_mutant_witness():
         )
 
 
-def _check_plane_spec(fma_fn, fn_eval_fn):
+def _oracle_mul(a, b):
+    return oracle.fin_alu(oracle.FIN_MUL, a, b, 0)
+
+
+def _vector_rule_fma(a, b, c, add=True):
+    """The vector lane's zero rule (NUM.E8.008, ISA.VC.058) on the SRU oracle:
+    a finite zero product is +0 and an addend passes through it unchanged."""
+    finite = not any(oracle.e8_is_nan(w) or oracle.e8_is_inf(w) for w in (a, b, c))
+    if finite and (oracle.e8_is_zero(a) or oracle.e8_is_zero(b)):
+        return c if add else 0x000000
+    return oracle.e8_fma(a, b, c, add=add)
+
+
+def _vector_rule_mul(a, b):
+    return _vector_rule_fma(a, b, 0, add=False)
+
+
+def _check_plane_spec(fma_fn, fn_eval_fn, mul_fn):
     # ISA.SR.043, NUM.E8.001, RUL.056: 1.0 * 1.0 + 3*2^-17 rounds to nearest even (0x3F8001)
     three_2m17 = oracle.e8_encode(Fraction(3, 1 << 17))
     assert fma_fn(0x3F8000, 0x3F8000, three_2m17) == 0x3F8001
     # Exact cancellation gives +0 (0x000000), while (-0)*1 + (-0) gives -0 (0x800000)
     assert fma_fn(0x3F8000, 0x3F8000, 0xBF8000) == 0x000000
     assert fma_fn(0x800000, 0x3F8000, 0x800000) == 0x800000
+    # ISA.SR.043: two zero terms are -0 only when both are negative
+    assert fma_fn(0x000000, 0x3F8000, 0x800000) == 0x000000
+    assert fma_fn(0x800000, 0x3F8000, 0x000000) == 0x000000
+    # ISA.SR.043, ISA.SR.044: a zero product carries sa ^ sb, MUL included
+    assert mul_fn(0x800000, 0x3F8000) == 0x800000
     # ISA.SR.043: function op on exp2(0) = 1.0 (0x3F8000) and mantissa ROM 1/2.0 = 0.5 (0x3F0000)
     rom = oracle.fn_exp2_table(128)
     assert fn_eval_fn(0x000000, 0x000000, oracle.FN_EXP, 0, rom, rom=True) == 0x3F8000
@@ -195,14 +217,30 @@ def _check_plane_spec(fma_fn, fn_eval_fn):
 
 
 def test_oracle_plane_and_mutant_witness():
-    _check_plane_spec(oracle.e8_fma, oracle.fn_eval)
+    _check_plane_spec(oracle.e8_fma, oracle.fn_eval, _oracle_mul)
     with pytest.raises(AssertionError):
-        _check_plane_spec(lambda a, b, c: oracle.e8_fma(a, b, c) ^ 1, oracle.fn_eval)
+        _check_plane_spec(
+            lambda a, b, c: oracle.e8_fma(a, b, c) ^ 1, oracle.fn_eval, _oracle_mul
+        )
     with pytest.raises(AssertionError):
         _check_plane_spec(
             oracle.e8_fma,
             lambda *a, **kw: oracle.fn_eval(*a, **kw) ^ 1,
+            _oracle_mul,
         )
+
+
+def test_vector_zero_rule_fails_the_sru_plane_spec():
+    """The vector lane's zero rule differs from the SRU's on (+0) 1 + (-0)
+    and on a negative zero product; the plane spec refuses it on each."""
+    assert _vector_rule_fma(0x000000, 0x3F8000, 0x800000) == 0x800000
+    assert oracle.e8_fma(0x000000, 0x3F8000, 0x800000) == 0x000000
+    assert _vector_rule_mul(0x800000, 0x3F8000) == 0x000000
+    assert _oracle_mul(0x800000, 0x3F8000) == 0x800000
+    with pytest.raises(AssertionError):
+        _check_plane_spec(_vector_rule_fma, oracle.fn_eval, _oracle_mul)
+    with pytest.raises(AssertionError):
+        _check_plane_spec(oracle.e8_fma, oracle.fn_eval, _vector_rule_mul)
 
 
 def test_disagreement_between_red_py_and_spec_row_sum_is_pinned():
