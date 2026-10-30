@@ -4,9 +4,7 @@ import json
 import os
 from functools import lru_cache
 
-from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.plan.emit import expr
-from kohakutpu.application.runtime import packing
 from kohakutpu.language.dsl import TensorSpec, Traced
 from kohakutpu.language.text import module as M
 from kohakutpu.stack import rs
@@ -35,14 +33,6 @@ def launch(dev, generator, arguments, bindings, kind="dsl", info=None):
                 ("zero_reuse", "KTPU_QUANT_ZERO_REUSE", "1"),
             )
         }
-        arguments["finite"] = packing.finite_contract(
-            dev,
-            bindings["x"],
-            Operand(**arguments["src"]),
-            arguments["rows"],
-            arguments["cols"],
-            arguments.get("batches", 1),
-        )
     source = graph(
         generator, json.dumps(arguments, sort_keys=True), machine, rs._MUTANT.get()
     )

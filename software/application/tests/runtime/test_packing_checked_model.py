@@ -1,6 +1,7 @@
 """Device-side finite contract, lazy collection and replay on the card model."""
 
 import os
+from dataclasses import asdict
 
 import numpy as np
 import pytest
@@ -9,6 +10,7 @@ from application.tests.runtime.test_packing_model import reference
 from kohakutpu.application.kernels import matmul
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import device as D
+from kohakutpu.application.runtime import generated
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.application.runtime.packages import Refused
 from kohakutpu.application.runtime.packing import NonfinitePackingError
@@ -208,6 +210,32 @@ def test_drop_check_mutant_breaks_refusal_property(checked_device, side):
         result = dev.run(c, {"x": x, "q": q})
         assert result.cycles > 0
         assert "vcmplt" not in c.l1_text and "assert_zero" in c.l1_text
+    finally:
+        dev.free(x)
+        dev.free(q)
+
+
+def test_rust_generated_quant_is_device_checked(checked_device):
+    dev = checked_device
+    bits = np.zeros((6, 64), dtype="<u2")
+    bits[2, 20] = 0x7C00
+    x, q = dev.alloc(bits.nbytes), dev.alloc(512)
+    src = Operand("full", pitch=64, offset=16, rows=5)
+    args = {
+        "src": asdict(src),
+        "rows": 5,
+        "cols": 48,
+        "rp": 8,
+        "cp": 64,
+        "side": "a",
+        "g": 2,
+        "nk": 2,
+    }
+    try:
+        dev.write(x, bits.tobytes())
+        with pytest.raises(NonfinitePackingError, match="NONFINITE_FP16") as caught:
+            generated.launch(dev, "matmul.quant_kernel", args, {"x": x, "q": q})
+        assert caught.value.completion.status == 0x24
     finally:
         dev.free(x)
         dev.free(q)
