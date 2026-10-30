@@ -1,0 +1,110 @@
+{
+ "c": {
+  "batches": 1,
+  "cols": 128,
+  "cp": 128,
+  "g": 8,
+  "index": 2944,
+  "name": "quant_bc5c7fd47f",
+  "nk": 2,
+  "offset": 0,
+  "pitch": 128,
+  "rows": 84,
+  "rp": 96,
+  "side": "b"
+ },
+ "ci": 2944,
+ "consumer": {
+  "index": 2944,
+  "key": "76bbb2a237a8e6288e2f14506121fdadfcb11517d19138c486b43d0e8523c2a0",
+  "kind": "quant",
+  "ports": [
+   {
+    "address": 4539673088,
+    "allocation": 4539673088,
+    "name": "x",
+    "nbytes": 21504,
+    "offset": 0,
+    "role": "in",
+    "spec": {
+     "dtype": "f16",
+     "layout": [],
+     "shape": [
+      84,
+      128
+     ],
+     "space": "dram"
+    }
+   },
+   {
+    "address": 4493603840,
+    "allocation": 4493603840,
+    "name": "q",
+    "nbytes": 12288,
+    "offset": 0,
+    "role": "out",
+    "spec": {
+     "dtype": "mx7b",
+     "layout": [
+      [
+       "gn",
+       {
+        "int": 8
+       }
+      ],
+      [
+       "nk",
+       {
+        "int": 2
+       }
+      ]
+     ],
+     "shape": [
+      96,
+      128
+     ],
+     "space": "dram"
+    }
+   }
+  ]
+ },
+ "converts": [
+  {
+   "index": 2943,
+   "key": "8468bac9f77973c09712e357dbf16be4409d0b0066ef7f3720398de620ffbfaa"
+  }
+ ],
+ "kind": "quant",
+ "layouts": [
+  {
+   "at": 0,
+   "dat": 0,
+   "dst": 4539673088,
+   "dwalk": [
+    [
+     84,
+     128
+    ],
+    [
+     120,
+     1
+    ]
+   ],
+   "m": 10752,
+   "n": 10080,
+   "src": 4483089920,
+   "start": 2943,
+   "stop": 2944,
+   "walk": [
+    [
+     84,
+     120
+    ],
+    [
+     120,
+     1
+    ]
+   ]
+  }
+ ]
+}

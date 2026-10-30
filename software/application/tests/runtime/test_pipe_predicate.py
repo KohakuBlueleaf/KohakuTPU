@@ -1,18 +1,15 @@
 """Direct predicate select: bitwise payloads and wrong-arm mutant."""
 
-import json
-import os
-from pathlib import Path
-
 import numpy as np
 
+from application.tests.runtime.pipe_artifacts import predicate_records  # noqa: F401
 from application.tests.runtime.test_pipe_batch import model  # noqa: F401
 from kohakutpu.stack import kernel as K
 
 
-def test_predicate_select_bytes_and_mutant(model):  # noqa: F811
+def test_predicate_select_bytes_and_mutant(model, predicate_records):  # noqa: F811
     dev = model
-    recs = json.loads(Path(os.environ["KTPU_PIPE_PREDICATE_ARTIFACT"]).read_text())
+    recs = predicate_records
     rng = np.random.default_rng(100)
     data = rng.integers(0, 65536, (16, 128), dtype=np.uint16)
     data[(data & 0x7C00) == 0x7C00] = 0x7BFF

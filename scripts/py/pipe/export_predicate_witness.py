@@ -23,10 +23,7 @@ fn select.l2(x: f16[16,128] @dram, selector: f16[16,128] @dram, y: f16[16,128] @
 """
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("output", type=Path)
-    args = ap.parse_args()
+def records():
     machine = machine_of("vlt_v9t6s_1n", packing_backend="vector_mx7")
     recs = {}
     for label, mutant in (
@@ -38,7 +35,14 @@ def main():
             c = K.compile(SOURCE, name="select", machine=machine)
         recs[label] = {"l1": c.l1_text, "verdict": c.verdict}
         print(label, c.verdict)
-    args.output.write_text(json.dumps(recs))
+    return recs
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("output", type=Path)
+    args = ap.parse_args()
+    args.output.write_text(json.dumps(records()))
 
 
 if __name__ == "__main__":

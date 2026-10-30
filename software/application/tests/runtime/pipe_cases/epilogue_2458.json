@@ -1,0 +1,174 @@
+{
+ "convert_key": "2dab7491cc8147e2ffa677f86b77f915f76d9be73a41be756069564385cc374f",
+ "event": {
+  "index": 2458,
+  "key": "3365846d69d77ce7a3a3d969bb810e061420c8b4d4a2ccf6175f8e02018959fa",
+  "kind": "matmul",
+  "ports": [
+   {
+    "address": 4399481856,
+    "allocation": 4399481856,
+    "name": "a",
+    "nbytes": 1024,
+    "offset": 0,
+    "role": "in",
+    "spec": {
+     "dtype": "mx7a",
+     "layout": [
+      [
+       "gm",
+       {
+        "int": 2
+       }
+      ],
+      [
+       "nk",
+       {
+        "int": 2
+       }
+      ]
+     ],
+     "shape": [
+      8,
+      128
+     ],
+     "space": "dram"
+    }
+   },
+   {
+    "address": 4385859072,
+    "allocation": 4385859072,
+    "name": "b",
+    "nbytes": 12288,
+    "offset": 0,
+    "role": "in",
+    "spec": {
+     "dtype": "mx7b",
+     "layout": [
+      [
+       "gn",
+       {
+        "int": 8
+       }
+      ],
+      [
+       "nk",
+       {
+        "int": 2
+       }
+      ]
+     ],
+     "shape": [
+      96,
+      128
+     ],
+     "space": "dram"
+    }
+   },
+   {
+    "address": 4407253760,
+    "allocation": 4407253760,
+    "name": "in1",
+    "nbytes": 192,
+    "offset": 0,
+    "role": "in",
+    "spec": {
+     "dtype": "f16",
+     "layout": [],
+     "shape": [
+      96
+     ],
+     "space": "dram"
+    }
+   },
+   {
+    "address": 4399483136,
+    "allocation": 4399483136,
+    "name": "out",
+    "nbytes": 1536,
+    "offset": 0,
+    "role": "out",
+    "spec": {
+     "dtype": "f16",
+     "layout": [],
+     "shape": [
+      8,
+      96
+     ],
+     "space": "dram"
+    }
+   }
+  ]
+ },
+ "layout": {
+  "at": 0,
+  "dat": 0,
+  "dst": 4407253760,
+  "dwalk": [
+   [
+    84,
+    1
+   ]
+  ],
+  "m": 96,
+  "n": 84,
+  "src": 4381441280,
+  "start": 2457,
+  "stop": 2458,
+  "walk": [
+   [
+    84,
+    1
+   ]
+  ]
+ },
+ "metadata": {
+  "e": {
+   "nodes": [
+    {
+     "load": 0
+    },
+    {
+     "load": 1
+    },
+    {
+     "args": [
+      0,
+      1
+     ],
+     "op": "add"
+    }
+   ],
+   "root": 2
+  },
+  "extras": [
+   {
+    "dtype": "f16",
+    "kind": "col",
+    "offset": 0,
+    "pitch": 0,
+    "rows": 0
+   }
+  ],
+  "mm": {
+   "made_by": {
+    "args": {
+     "bt": 1,
+     "k": 120,
+     "m": 8,
+     "n": 96,
+     "quantum": 4,
+     "shared": true
+    },
+    "gen": "matmul.plan"
+   }
+  },
+  "out": {
+   "dtype": "f16",
+   "kind": "full",
+   "offset": 0,
+   "pitch": 96,
+   "rows": 8
+  }
+ }
+}

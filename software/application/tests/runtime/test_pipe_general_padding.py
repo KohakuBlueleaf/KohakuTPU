@@ -1,19 +1,17 @@
 """Partial/empty entries across class batches and nk chunks, no DRAM padding."""
 
-import json
-import os
-from pathlib import Path
-
 import numpy as np
 
+from application.tests.runtime.pipe_artifacts import general_records  # noqa: F401
 from application.tests.runtime.test_packing_model import reference
 from application.tests.runtime.test_pipe_batch import model  # noqa: F401
+from kohakutpu.language.numerics import mxfp7
 from kohakutpu.stack import kernel as K
 
 
-def test_class_batched_padding_bytes_and_mutant(model):  # noqa: F811
+def test_class_batched_padding_bytes_and_mutant(model, general_records):  # noqa: F811
     dev = model
-    recs = json.loads(Path(os.environ["KTPU_PIPE_GENERAL_ARTIFACT"]).read_text())
+    recs = general_records
     # Source guards are signaling NaNs; valid rows include signed zeros and
     # independent finite magnitudes. No padded word may be read or classified.
     data = np.full((11, 80), 0x7C01, np.uint16)
@@ -24,7 +22,7 @@ def test_class_batched_padding_bytes_and_mutant(model):  # noqa: F811
     padded = np.zeros((32, 128), np.float16)
     for b in range(2):
         padded[b * 16 : b * 16 + 5, :48] = valid[b]
-    want = reference(padded, "b", 2, 2)
+    want = reference(mxfp7.lift(padded, 2), "b", 2, 2)
     x, q = dev.alloc(data.nbytes), dev.alloc(padded.size + 256)
     dev.write(x, data.tobytes())
     for label in ("good", "walk", "l2.packing/pad-nonzero"):

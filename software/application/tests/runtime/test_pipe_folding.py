@@ -1,16 +1,20 @@
 """Prepared consumer destination stride and measured cost admission witnesses."""
 
 import json
-import os
-from pathlib import Path
 
 import numpy as np
 
+from application.tests.runtime.pipe_artifacts import (  # noqa: F401
+    case,
+    fold_record,
+    pipe_library,
+)
 from application.tests.runtime.test_packing_model import reference
 from application.tests.runtime.test_pipe_batch import model  # noqa: F401
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import costs
 from kohakutpu.application.runtime.forms import Step
+from kohakutpu.language.numerics import mxfp7
 from kohakutpu.stack import kernel as K
 
 
@@ -92,17 +96,17 @@ def test_measured_cost_is_board_specific_and_layout_equivalent(tmp_path, monkeyp
     assert not costs.choose("staged_padding", padding, "test")
 
 
-def test_prepared_quant_explicit_table_stride_bytes_and_mutant(model):  # noqa: F811
+def test_prepared_quant_explicit_table_stride_bytes_and_mutant(
+    model, fold_record  # noqa: F811
+):
     dev = model
-    root = Path(os.environ["KTPU_PIPE_FOLD_ARTIFACTS"])
-    rec = json.loads((root / "folds/2944.json").read_text())
-    qs = json.loads((root / "capture/quants.json").read_text())
-    q = next(q for q in qs if q["index"] == 2944)
+    rec = fold_record(2944)
+    q = case("fold_2944")["c"]
     rng = np.random.default_rng(119)
     values = (rng.integers(-500, 501, (84, 120)) / 64).astype(np.float16)
     padded = np.zeros((q["rp"], q["cp"]), np.float16)
     padded[:84, :120] = values
-    expected = reference(padded, q["side"], q["g"], q["nk"])
+    expected = reference(mxfp7.lift(padded, q["nk"]), q["side"], q["g"], q["nk"])
     buffers = {p: dev.alloc(n + 256) for p, n in rec["allocations"].items()}
     for label in ("before", "after", "mutant"):
         for p, n in rec["allocations"].items():
@@ -133,10 +137,9 @@ def test_prepared_quant_explicit_table_stride_bytes_and_mutant(model):  # noqa: 
         dev.free(addr)
 
 
-def test_prepared_tree_retains_partial_rounding(model):  # noqa: F811
+def test_prepared_tree_retains_partial_rounding(model, fold_record):  # noqa: F811
     dev = model
-    root = Path(os.environ["KTPU_PIPE_FOLD_ARTIFACTS"])
-    rec = json.loads((root / "folds/2922.json").read_text())
+    rec = fold_record(2922)
     rng = np.random.default_rng(42)
     buffers = {p: dev.alloc(n + 256) for p, n in rec["allocations"].items()}
     data = {
@@ -147,8 +150,11 @@ def test_prepared_tree_retains_partial_rounding(model):  # noqa: F811
         )
         for p, n in rec["allocations"].items()
     }
+    after = rec["after"]
+    assert "vmax " in after["l1"]
+    mutant = dict(after, l1=after["l1"].replace("vmax ", "vmin "))
     outputs = []
-    for stages in (rec["before"], [rec["after"]]):
+    for stages in (rec["before"], [after], [mutant]):
         for p, raw in data.items():
             dev.write(buffers[p], bytes([0xD3]) * 128 + raw + bytes([0xD3]) * 128)
         for stage in stages:
@@ -160,6 +166,6 @@ def test_prepared_tree_retains_partial_rounding(model):  # noqa: F811
         out = dev.read(buffers["out"], rec["allocations"]["out"] + 256)
         assert out[:128] == out[-128:] == bytes([0xD3]) * 128
         outputs.append(out)
-    assert outputs[0] == outputs[1]
+    assert outputs[0] == outputs[1] != outputs[2]
     for addr in buffers.values():
         dev.free(addr)

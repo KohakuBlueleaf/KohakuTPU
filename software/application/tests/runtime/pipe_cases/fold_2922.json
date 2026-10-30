@@ -1,0 +1,158 @@
+{
+ "c": {
+  "R": 400,
+  "W": 32,
+  "e": {
+   "nodes": [
+    {
+     "load": 0
+    },
+    {
+     "args": [
+      0,
+      0
+     ],
+     "op": "mul"
+    },
+    {
+     "arg": 1,
+     "reduce": "sum"
+    },
+    {
+     "const": 0.0025
+    },
+    {
+     "args": [
+      2,
+      3
+     ],
+     "op": "mul"
+    },
+    {
+     "const": 1e-05
+    },
+    {
+     "args": [
+      4,
+      5
+     ],
+     "op": "add"
+    },
+    {
+     "args": [
+      6
+     ],
+     "op": "sqrt"
+    }
+   ],
+   "root": 7
+  },
+  "index": 2922,
+  "name": "rows_ef25a4cf44",
+  "operands": [
+   {
+    "dtype": "f16",
+    "kind": "full",
+    "offset": 0,
+    "pitch": 32,
+    "rows": 0
+   }
+  ],
+  "out": {
+   "dtype": "f16",
+   "kind": "full",
+   "offset": 0,
+   "pitch": 32,
+   "rows": 0
+  }
+ },
+ "ci": 2922,
+ "consumer": {
+  "index": 2922,
+  "key": "82b42754896c86e931dd878646de9e9fd2ea21ac9b6635e418d73811deaa4ca5",
+  "kind": "dsl",
+  "ports": [
+   {
+    "address": 4539591936,
+    "allocation": 4539591936,
+    "name": "in0",
+    "nbytes": 25600,
+    "offset": 0,
+    "role": "in",
+    "spec": {
+     "dtype": "f16",
+     "layout": [],
+     "shape": [
+      400,
+      32
+     ],
+     "space": "dram"
+    }
+   },
+   {
+    "address": 4512312576,
+    "allocation": 4512312576,
+    "name": "out",
+    "nbytes": 64,
+    "offset": 0,
+    "role": "out",
+    "spec": {
+     "dtype": "f16",
+     "layout": [],
+     "shape": [
+      1,
+      32
+     ],
+     "space": "dram"
+    }
+   }
+  ]
+ },
+ "converts": [
+  {
+   "index": 2921,
+   "key": "12ae221d7c295f72b5fd7df9b70c869307726331f7dd189b2e534b170fed8f95"
+  }
+ ],
+ "kind": "rows/DSL",
+ "layouts": [
+  {
+   "at": 0,
+   "dat": 0,
+   "dst": 4539591936,
+   "dwalk": [
+    [
+     400,
+     32
+    ],
+    [
+     8,
+     4
+    ],
+    [
+     4,
+     1
+    ]
+   ],
+   "m": 12800,
+   "n": 12800,
+   "src": 4512286976,
+   "start": 2921,
+   "stop": 2922,
+   "walk": [
+    [
+     400,
+     1
+    ],
+    [
+     8,
+     1600
+    ],
+    [
+     4,
+     400
+    ]
+   ]
+  }
+ ]
+}
