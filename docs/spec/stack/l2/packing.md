@@ -56,6 +56,19 @@ does not override board admission.
 view with matching row counts. Both padding forms require the vector backend;
 requesting them with mover-quant is refused rather than silently staging.
 
+## Deferred finite status
+
+A checked quant drains each core's sticky finite accumulator into a status
+buffer, then a node barrier and one `assert_zero` per core follow it. Given
+`status=VIEW`, the quant drains each core of each piece holding source
+entries into its own 128-byte record of `VIEW` (`f16[64]` a record) with no
+barrier, and a later `quant_check VIEW` checks every record pending inside it
+behind one barrier (L2.MOV.019). The records a quant takes are
+`ktpu_machine::packing::quant_status_bytes`, the rule the lowering and the
+contraction kernel's quant ring both size by. A pending record is a linear
+resource: nothing writes over it before its check, and a function does not
+end with one unchecked.
+
 ## Overlapping output drains
 
 With `overlap=1`, an output drain can run under the next tile's computation.

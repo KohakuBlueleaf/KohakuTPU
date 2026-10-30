@@ -429,6 +429,8 @@ impl ValueOp {
 pub enum MoverOp {
     Copy,
     Quant,
+    #[serde(rename = "quant_check")]
+    QuantCheck,
     Gt4,
     Fill,
     Gen,
@@ -443,6 +445,7 @@ impl MoverOp {
         match self {
             MoverOp::Copy => "copy",
             MoverOp::Quant => "quant",
+            MoverOp::QuantCheck => "quant_check",
             MoverOp::Gt4 => "gt4",
             MoverOp::Fill => "fill",
             MoverOp::Gen => "gen",

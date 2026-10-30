@@ -2,7 +2,8 @@
 //! of every recorded run, planned under knobs away from their defaults, names
 //! them in its `matmul.plan` and `matmul.mm_kernel` calls, and each call
 //! replays (`ktpu_kernels::call`) to the tiling the planner bound storages
-//! for, never to the defaults'.
+//! for, never to the defaults'. A call takes an f16 A only where its kernel
+//! does and its producer laid A out for it.
 
 mod common;
 
@@ -21,6 +22,8 @@ fn every_knob() -> Knobs {
         ring_depth: 2,
         split_vc: true,
         tail_bands: true,
+        activation_fp16: true,
+        quant_ring: 2,
     }
 }
 
@@ -28,7 +31,7 @@ fn every_knob() -> Knobs {
 fn every_product_records_and_replays_its_knobs() {
     let k = every_knob();
     assert_ne!(k, defaults());
-    let (mut products, mut moved) = (0, 0);
+    let (mut products, mut moved, mut f16) = (0, 0, 0);
     for f in goldens() {
         let case: Case = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
         let m = case.machine();
@@ -48,9 +51,19 @@ fn every_product_records_and_replays_its_knobs() {
                     assert_eq!(plan[name], v, "{}: {name}", case.case);
                 }
                 for (name, v) in k.args(Group::Kernel) {
-                    assert_eq!(call.args[name], v, "{}: {name}", case.case);
+                    if name != "activation_fp16" {
+                        assert_eq!(call.args[name], v, "{}: {name}", case.case);
+                    }
                 }
                 let replayed = ktpu_kernels::call::mm_plan(plan, &m).unwrap();
+                if call.args["activation_fp16"] == Value::Bool(true) {
+                    assert!(
+                        matmul::takes_f16(replayed.k, replayed.nk, &k, &m),
+                        "{}",
+                        case.case
+                    );
+                    f16 += 1;
+                }
                 let mut unrecorded = plan.clone();
                 for (name, _) in k.args(Group::Plan) {
                     unrecorded.as_object_mut().unwrap().remove(name);
@@ -86,7 +99,8 @@ fn every_product_records_and_replays_its_knobs() {
         moved > 0,
         "no golden product's tiling moves under the knobs"
     );
-    eprintln!("{products} products, {moved} tiled otherwise under every knob");
+    assert!(f16 > 0, "no golden product takes an f16 A under every knob");
+    eprintln!("{products} products, {moved} tiled otherwise, {f16} of an f16 A under every knob");
 }
 
 /// The goldens witness the recording: with the knobs unrecorded every

@@ -34,6 +34,8 @@ def test_the_knob_table_is_the_native_one():
         "ring_depth": 0,
         "split_vc": False,
         "tail_bands": False,
+        "activation_fp16": False,
+        "quant_ring": 0,
     }
 
 
@@ -47,6 +49,14 @@ def test_the_knob_table_is_the_native_one():
         (2, {"ring_depth": 2, "batch_tiles": True}, {"ring_depth": 2}),
         (1, {"split_vc": True, "tail_bands": True}, None),
         (1, {"ring_depth": 1, "split_vc": True}, {"ring_depth": 1, "split_vc": True}),
+        (1, {"activation_fp16": True}, {"activation_fp16": True}),
+        (1, {"quant_ring": 2}, None),
+        (1, {"activation_fp16": True, "quant_ring": 2}, {"activation_fp16": True}),
+        (
+            1,
+            {"activation_fp16": True, "ring_depth": 1, "quant_ring": 5},
+            {"activation_fp16": True, "ring_depth": 1, "quant_ring": 2},
+        ),
     ],
 )
 def test_a_call_resolves_the_knobs_its_kernel_takes(bt, knobs, want):
@@ -66,6 +76,8 @@ def test_a_call_resolves_the_knobs_its_kernel_takes(bt, knobs, want):
         "ring_depth": 0,
         "split_vc": False,
         "tail_bands": False,
+        "activation_fp16": False,
+        "quant_ring": 0,
     }
     assert got["knobs"] == {**off, **(want or {})}
     assert got["plain"] == (want is None)
@@ -100,6 +112,17 @@ def test_a_recorded_call_keeps_its_knobs(monkeypatch):
     with pytest.raises(RuntimeError):
         generated.launch(Dev(), "matmul.mm_kernel", {"e": {}}, {})
     assert seen[1]["batch_tiles"] is True
+
+
+def test_an_f16_a_is_taken_where_the_kernel_takes_it():
+    """`MM.takes_f16`: the knob, a quant on the vector cores (K pairs on any
+    machine) and rows of whole words."""
+    on = {**MM.kernel_knobs(), "activation_fp16": True}
+    assert MM.takes_f16(64, 2, on, MACHINE)
+    assert not MM.takes_f16(72, 2, on, MACHINE)
+    assert not MM.takes_f16(64, 2, MM.kernel_knobs(), MACHINE)
+    mover = rs.machine_json("vlt_v9t6s_1n")
+    assert MM.takes_f16(64, 2, on, mover) and not MM.takes_f16(64, 1, on, mover)
 
 
 def away(v):

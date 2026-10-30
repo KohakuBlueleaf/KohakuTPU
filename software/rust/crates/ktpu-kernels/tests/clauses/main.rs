@@ -13,6 +13,7 @@ mod matmul;
 mod moves;
 #[cfg(feature = "mutants")]
 mod mutants;
+mod quant;
 mod ring;
 mod rows;
 mod rulings;

@@ -5,11 +5,12 @@
 //! transform's steps once per converted entry).
 
 mod packing;
+pub mod quant_status;
 mod views;
 mod walk;
 mod xform;
 
-pub use packing::{quant_backend, vector_quant};
+pub use packing::{quant_backend, vector_quant, Finite};
 
 use ktpu_l1::text::{Env, Stmt, Term};
 

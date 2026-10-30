@@ -25,6 +25,8 @@ fn every_knob() -> Knobs {
         ring_depth: 2,
         split_vc: true,
         tail_bands: true,
+        activation_fp16: true,
+        quant_ring: 2,
     }
 }
 

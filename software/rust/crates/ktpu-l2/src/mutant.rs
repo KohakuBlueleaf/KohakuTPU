@@ -117,6 +117,7 @@ pub const NAMES: &[&str] = &[
     "l2.vector/no-line-mask-cycle",
     "l2.class/serial-band",
     "l2.packing/repeated-zero",
+    "l2.packing/deferred-last-only",
     "l2.packing/unit-scale-zero",
     "l2.packing/mover-paired",
     "l2.vector/unit-scale-zero",

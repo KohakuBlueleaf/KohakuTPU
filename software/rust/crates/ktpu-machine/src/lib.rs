@@ -217,6 +217,23 @@ impl Machine {
         (self.die.stage_bytes().expect("a staging store's bytes") / 2) as i64
     }
 
+    /// Bytes `values` MXFP7 values take: whole entries of `mg.lanes` x
+    /// `mg.kblock` values, each `mg.entry_bits` in whole words.
+    pub fn mx7_bytes(&self, values: i64) -> i64 {
+        let word = self.die.word_bytes as i64;
+        let entry = (self.mg.entry_bits as i64 + 8 * word - 1) / (8 * word) * word;
+        values / (self.mg.lanes as i64 * self.mg.kblock as i64) * entry
+    }
+
+    /// Vector cores a vector_mx7 quant runs on
+    /// (`conversion.fp16_mx7.vector_cores`, 0: every core).
+    pub fn quant_cores(&self) -> i64 {
+        match self.conversion.fp16_mx7.vector_cores {
+            0 => self.units(UnitKind::Vc).len() as i64,
+            n => n,
+        }
+    }
+
     fn from_value(doc: Value) -> Result<Machine, MachineError> {
         let schema = doc.get("schema").cloned().unwrap_or(Value::Null);
         if schema.as_str() != Some(schema_version()) {

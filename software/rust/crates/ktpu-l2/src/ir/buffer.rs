@@ -246,8 +246,7 @@ impl Buffer {
     /// `mg.lanes x mg.kblock` values.
     pub fn nbytes(&self, t: &Target) -> i64 {
         if self.is_mx7() {
-            let per = t.mg_lanes * t.kblock;
-            return self.count() / per * t.entry_words() * t.word_bytes;
+            return t.machine.mx7_bytes(self.count());
         }
         self.count() * self.item()
     }

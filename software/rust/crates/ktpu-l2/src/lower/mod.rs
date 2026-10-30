@@ -88,6 +88,8 @@ pub fn lower(p: &Program, t: &Target, search: &Search) -> Result<String> {
         let mut links = Links::new(&streams(&body, &mine, t)?, t);
         let mut reading: HashMap<String, (Option<i64>, Option<i64>)> = HashMap::new();
         let mut built: Vec<Stage> = Vec::new();
+        let mut pending = mover::quant_status::Pending::default();
+        let end_st = last_st.as_ref().unwrap();
         if links.rings.values().any(|r| r.dst.starts_with("vc")) {
             built.push(open(&body.name, n, &links, &mut images));
         }
@@ -107,6 +109,7 @@ pub fn lower(p: &Program, t: &Target, search: &Search) -> Result<String> {
                         &rem,
                         search,
                     )?;
+                    pending.protect(&body, end_st, &acc)?;
                     let mut st = Stage::new(lines, units, acc);
                     st.group = s.tag;
                     st.segs = segs;
@@ -115,28 +118,71 @@ pub fn lower(p: &Program, t: &Target, search: &Search) -> Result<String> {
                 }
                 StageX::Op(node, env) => {
                     let op = node.as_op().unwrap();
+                    if op.op == "quant_check" {
+                        let args = op.st.positional();
+                        if args.len() != 1 {
+                            return Err(body.reader.fail(
+                                &op.st,
+                                "L2.MOV.019",
+                                "quant_check STATUS",
+                            ));
+                        }
+                        let region = mover::quant_status::region(&body, &op.st, args[0], env, t)?;
+                        let mut stage = pending.check(&body, &op.st, &region)?;
+                        stage.group = s.tag;
+                        stage.phase = s.phase;
+                        built.push(stage);
+                        continue;
+                    }
                     if op.op == "quant" && mover::quant_backend(&body, op, t)? {
                         let checked = op.st.kw("finite").and_then(Term::as_int) != Some(1);
-                        let status = format!("__mx7_status_{}", images.len());
-                        let mut stage = mover::vector_quant(
-                            &body,
-                            op,
-                            env,
-                            t,
-                            &mut images,
-                            checked.then_some(status.as_str()),
-                        )?;
-                        if checked {
-                            packing_status
-                                .push(format!("{status}: f16[{}] @dram", 64 * t.vc.len()));
+                        let deferred = op
+                            .st
+                            .kw("status")
+                            .map(|term| mover::quant_status::region(&body, &op.st, term, env, t))
+                            .transpose()?;
+                        let status = match deferred {
+                            Some(_) if !checked => {
+                                return Err(body.reader.fail(
+                                    &op.st,
+                                    "L2.MOV.019",
+                                    "a deferred quant status checks its quant: no finite=1",
+                                ))
+                            }
+                            Some(region) => {
+                                pending.admit(&body, &op.st, env, &region)?;
+                                Some(mover::Finite::Deferred(region))
+                            }
+                            None => checked.then(|| {
+                                mover::Finite::Inline(format!("__mx7_status_{}", images.len()))
+                            }),
+                        };
+                        let mut stage =
+                            mover::vector_quant(&body, op, env, t, &mut images, status.clone())?;
+                        pending.protect(&body, &op.st, &stage.accesses)?;
+                        match &status {
+                            Some(mover::Finite::Deferred(region)) => {
+                                pending.record(region, &stage.accesses)
+                            }
+                            Some(mover::Finite::Inline(name)) => packing_status
+                                .push(format!("{name}: f16[{}] @dram", 64 * t.vc.len())),
+                            None => {}
                         }
                         stage.group = s.tag;
                         stage.phase = s.phase;
                         built.push(stage);
                         continue;
                     }
+                    if op.op == "quant" && op.st.kw("status").is_some() {
+                        return Err(body.reader.fail(
+                            &op.st,
+                            "L2.MOV.019",
+                            "a deferred quant status is a vector_mx7 quant's",
+                        ));
+                    }
                     if op.op == "gemm_tiles" {
                         let mut stage = cluster::tiles::lower(&body, op, env, t, built.len())?;
+                        pending.protect(&body, &op.st, &stage.accesses)?;
                         stage.group = s.tag;
                         stage.phase = s.phase;
                         built.push(stage);
@@ -156,6 +202,7 @@ pub fn lower(p: &Program, t: &Target, search: &Search) -> Result<String> {
                         } else {
                             mover::class_convert_loop(&body, op, env, t, built.len())?
                         };
+                        pending.protect(&body, &op.st, &acc)?;
                         let mut stage = Stage::new(lines, vec![], acc);
                         stage.group = s.tag;
                         stage.phase = s.phase;
@@ -164,6 +211,7 @@ pub fn lower(p: &Program, t: &Target, search: &Search) -> Result<String> {
                         continue;
                     }
                     let (got, acc) = mover::lower(&body, op, env, t)?;
+                    pending.protect(&body, &op.st, &acc)?;
                     if mine.iter().any(|s| matches!(&s.x, StageX::Op(node, _) if node.as_op().is_some_and(|o| o.st.kw("node_loop").is_some() || (o.op == "quant" && t.machine.conversion.fp16_mx7.vector_looped && mover::quant_backend(&body, o, t).unwrap_or(false))))) {
                         let mut lines = vec!["move".into()];
                         lines.extend(got.iter().map(|l| format!("{IND}{l}")));
@@ -193,6 +241,7 @@ pub fn lower(p: &Program, t: &Target, search: &Search) -> Result<String> {
                 }
             }
         }
+        pending.end(&body, end_st)?;
         links.check(&body, last_st.as_ref())?;
         if links.rings.values().any(|r| r.dst.starts_with("vc")) {
             built.push(spend(&links));

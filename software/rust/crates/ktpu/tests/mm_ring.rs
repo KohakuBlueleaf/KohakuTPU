@@ -1,6 +1,7 @@
-//! The product ring compiles wherever the product without it compiles:
-//! every recorded `matmul.mm_kernel` call of the plan goldens, under each
-//! ring knob, through the stack to an unrefused verdict.
+//! The product ring and the in-kernel quant of an f16 A compile wherever the
+//! product without them compiles: every recorded `matmul.mm_kernel` call of
+//! the plan goldens, under each ring and quant knob, through the stack to an
+//! unrefused verdict, its L1 another exactly where the kernel takes a knob.
 
 use std::path::Path;
 
@@ -38,7 +39,7 @@ fn compiled(args: &Value, m: &Machine) -> Result<String, String> {
 fn every_recorded_product_compiles_through_the_ring() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../golden/plan");
     let mut seen = std::collections::BTreeSet::new();
-    let mut rung = 0;
+    let mut taken_n = [0usize; 2];
     for f in std::fs::read_dir(dir).unwrap() {
         let path = f.unwrap().path();
         let text = std::fs::read_to_string(&path).unwrap();
@@ -56,6 +57,9 @@ fn every_recorded_product_compiles_through_the_ring() {
                 serde_json::json!({"ring_depth": 1}),
                 serde_json::json!({"ring_depth": 2, "split_vc": true}),
                 serde_json::json!({"ring_depth": 2, "tail_bands": true}),
+                serde_json::json!({"activation_fp16": true}),
+                serde_json::json!({"activation_fp16": true, "ring_depth": 2, "quant_ring": 1}),
+                serde_json::json!({"activation_fp16": true, "ring_depth": 2, "quant_ring": 2}),
             ] {
                 let mut a = args.clone();
                 a.as_object_mut()
@@ -63,16 +67,20 @@ fn every_recorded_product_compiles_through_the_ring() {
                     .extend(knobs.as_object().unwrap().clone());
                 let l1 =
                     compiled(&a, &m).unwrap_or_else(|e| panic!("{} {knobs}: {e}", path.display()));
-                assert_ne!(
-                    Ok(&l1),
-                    base.as_ref(),
-                    "{}: the ring changes the kernel",
+                let taken = ktpu_kernels::call::mm_resolved(&a, &m).unwrap()["plain"] == false;
+                assert_eq!(
+                    Ok(&l1) != base.as_ref(),
+                    taken,
+                    "{} {knobs}",
                     path.display()
                 );
-                rung += 1;
+                taken_n[usize::from(knobs.get("quant_ring").is_some())] += usize::from(taken);
             }
         }
     }
-    assert!(rung > 0);
-    eprintln!("{} recorded products, {rung} ringed compiles", seen.len());
+    assert!(taken_n.iter().all(|n| *n > 0), "{taken_n:?}");
+    eprintln!(
+        "{} recorded products, {taken_n:?} compiles under ring / quant knobs taken",
+        seen.len()
+    );
 }

@@ -173,6 +173,8 @@ fn a_call_records_and_replays_its_knobs() {
         ring_depth: 2,
         split_vc: true,
         tail_bands: true,
+        activation_fp16: true,
+        quant_ring: 2,
     };
     let args: serde_json::Map<String, serde_json::Value> = k
         .args(mm::Group::Plan)
@@ -190,6 +192,8 @@ fn a_call_records_and_replays_its_knobs() {
             ("ring_depth", serde_json::json!(2)),
             ("split_vc", serde_json::json!(true)),
             ("tail_bands", serde_json::json!(true)),
+            ("activation_fp16", serde_json::json!(true)),
+            ("quant_ring", serde_json::json!(2)),
         ]
     );
     let mut call = serde_json::json!({"bt": 1, "m": 1576, "n": 768, "k": 768});

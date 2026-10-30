@@ -79,6 +79,11 @@ impl Mm {
         })
     }
 
+    /// Whether its kernel takes A as f16 on `m` (`matmul::takes_f16`).
+    pub fn takes_f16(&self, m: &Machine) -> bool {
+        matmul::takes_f16(self.k, self.nk, &self.knobs, m)
+    }
+
     /// The generator call that made it, its plan knobs recorded.
     pub fn made_by(&self) -> Value {
         let mut args = json!({
@@ -402,19 +407,28 @@ impl Runner<'_> {
         });
         let hw = self.hw;
         let q = if stat { self.stat_rows() } else { hw.band };
-        let mm = Mm::plan(self.m, &self.knobs, bt, em, np, k, shared, Some(q))?;
-        let qa = self.packed(
-            &bufs[&a.slot],
-            &a.dtype,
-            &Operand {
-                pitch: pa,
-                offset: a.off,
-                ..Operand::new("full")
-            },
-            (em, k, mm.mp, mm.kp),
-            "a",
-            (mm.tm / hw.band, mm.nk, bt),
-        )?;
+        let mut mm = Mm::plan(self.m, &self.knobs, bt, em, np, k, shared, Some(q))?;
+        let src_a = Operand {
+            pitch: pa,
+            offset: a.off,
+            ..Operand::new("full")
+        };
+        let f16 = match mm.takes_f16(self.m) {
+            true => self.f16_rows(&bufs[&a.slot], &a.dtype, &src_a, k)?,
+            false => None,
+        };
+        mm.knobs.activation_fp16 = f16.is_some();
+        let qa = match f16 {
+            Some(at) => at,
+            None => self.packed(
+                &bufs[&a.slot],
+                &a.dtype,
+                &src_a,
+                (em, k, mm.mp, mm.kp),
+                "a",
+                (mm.tm / hw.band, mm.nk, bt),
+            )?,
+        };
         let qb = self.packed(
             &bufs[&b.slot],
             &b.dtype,

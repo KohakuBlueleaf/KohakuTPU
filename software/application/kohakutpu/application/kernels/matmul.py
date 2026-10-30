@@ -86,6 +86,12 @@ def resolved(arguments: dict, machine_json: str) -> dict:
     return json.loads(_rs.mm_resolved(json.dumps(arguments), machine_json))
 
 
+def takes_f16(k: int, nk: int, knobs: dict, machine_json: str) -> bool:
+    """Whether a contraction over `k` (`nk` K blocks a chunk) takes A as
+    f16 under the kernel `knobs` (`_rs.mm_takes_f16`)."""
+    return _rs.mm_takes_f16(json.dumps({"k": k, "nk": nk, **knobs}), machine_json)
+
+
 def plan(
     bt: int,
     m: int,
@@ -592,4 +598,5 @@ __all__ = [
     "quant_kernel",
     "quant_walk_kernel",
     "resolved",
+    "takes_f16",
 ]

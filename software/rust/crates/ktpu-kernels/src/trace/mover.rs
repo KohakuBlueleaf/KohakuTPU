@@ -114,6 +114,33 @@ impl Trace {
         self.mover(g::MoverOp::Quant, dst, Some(src), &kw, here())
     }
 
+    /// A checked [`Trace::quant_scheduled`] whose finite status drains into
+    /// `status` with no barrier, checked by a later [`Trace::quant_check`]
+    /// (L2.MOV.010).
+    #[track_caller]
+    pub fn quant_deferred(
+        &mut self,
+        dst: &View,
+        src: &View,
+        status: &View,
+        schedule: &[(&str, i64)],
+        pad: bool,
+    ) -> R<()> {
+        let mut kw = vec![
+            ("status", Kw::Index(status)),
+            ("pad", Kw::Int(pad.then_some(1))),
+        ];
+        kw.extend(schedule.iter().map(|&(k, v)| (k, Kw::Int(Some(v)))));
+        self.mover(g::MoverOp::Quant, dst, Some(src), &kw, here())
+    }
+
+    /// `quant_check STATUS`: one barrier, then every deferred quant status
+    /// record pending in `status` checked.
+    #[track_caller]
+    pub fn quant_check(&mut self, status: &View) -> R<()> {
+        self.mover(g::MoverOp::QuantCheck, status, None, &[], here())
+    }
+
     /// `gt4 DST <- SRC walk=.. dwalk=..` (DSL.MOV.004): whole buffers.
     #[track_caller]
     pub fn gt4(&mut self, dst: &View, src: &View, walk: &Walk, dwalk: &Walk) -> R<()> {

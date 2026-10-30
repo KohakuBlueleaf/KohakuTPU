@@ -128,6 +128,13 @@ pub fn mm_resolved(a: &Value, m: &Machine) -> R<Value> {
     Ok(serde_json::json!({"knobs": knobs, "plain": plain}))
 }
 
+/// Whether a contraction of `a`'s `k` and `nk` takes A as f16 under the
+/// kernel knobs `a` names (`matmul::takes_f16`).
+pub fn mm_takes_f16(a: &Value, m: &Machine) -> R<bool> {
+    let knobs = matmul::unrecorded().read(a, matmul::Group::Kernel)?;
+    Ok(matmul::takes_f16(int(a, "k")?, int(a, "nk")?, &knobs, m))
+}
+
 /// `lanes.plan`'s relayout from its call's arguments.
 pub fn lanes_plan(a: &Value, m: &Machine) -> R<lanes::Plan> {
     lanes::plan(

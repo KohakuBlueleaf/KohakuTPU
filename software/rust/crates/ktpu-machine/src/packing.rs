@@ -54,6 +54,36 @@ pub fn pieces(
         .collect()
 }
 
+/// Bytes of a deferred quant's finite status (L2.MOV.010): a 128-byte
+/// record for each of `cores` cores of each piece holding source entries.
+pub fn status_bytes(cores: i64, pieces: &[(Run, Run)]) -> i64 {
+    let live = pieces
+        .iter()
+        .filter(|(r, c)| r.live != 0 && c.live != 0)
+        .count() as i64;
+    STATUS_RECORD * cores * live
+}
+
+/// Bytes of a quant's deferred status on `cores` cores: [`status_bytes`] of
+/// its [`pieces`] when padded, else one piece's records.
+pub fn quant_status_bytes(
+    cores: i64,
+    padded: bool,
+    rows: (i64, i64, i64),
+    cols: (i64, i64, i64),
+    groups: i64,
+    nk: i64,
+) -> i64 {
+    if padded {
+        status_bytes(cores, &pieces(rows, cols, groups, nk))
+    } else {
+        STATUS_RECORD * cores
+    }
+}
+
+/// Bytes of one core's finite status record.
+pub const STATUS_RECORD: i64 = 128;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,5 +97,16 @@ mod tests {
         );
         assert_eq!(runs(0, 128, 128, 32, 64), vec![run(0, 128, 32)]);
         assert_eq!(pieces((0, 64, 40), (0, 128, 96), 16, 2).len(), 2 * 3);
+    }
+
+    #[test]
+    fn a_status_holds_a_record_a_core_of_each_live_piece() {
+        // Rows: 40 live then 24 padding; columns: two live runs, one padding.
+        let p = pieces((0, 64, 40), (0, 128, 96), 16, 2);
+        assert_eq!(status_bytes(4, &p), 128 * 4 * 2);
+        assert_eq!(
+            status_bytes(4, &pieces((0, 64, 64), (0, 128, 128), 16, 2)),
+            128 * 4
+        );
     }
 }

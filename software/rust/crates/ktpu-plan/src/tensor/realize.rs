@@ -284,7 +284,7 @@ impl Session<'_> {
         };
         let shared = sw.len() == 2;
         let knobs = self.r.knobs;
-        let mm = Mm::plan(self.r.m, &knobs, bt, m, n, k, shared, None)
+        let mut mm = Mm::plan(self.r.m, &knobs, bt, m, n, k, shared, None)
             .map_err(|e| Refusal::new("API.OP.006", e.message))?;
         let src = Operand {
             pitch: k,
@@ -303,14 +303,22 @@ impl Session<'_> {
             )
         };
         let (va, da) = view_of(self, a);
-        let qa = self.r.packed(
-            &va,
-            tg_dtype(&da),
-            &src,
-            (m, k, mm.mp, mm.kp),
-            "a",
-            (mm.tm / self.r.hw.band, mm.nk, bt),
-        )?;
+        let f16 = match mm.takes_f16(self.r.m) {
+            true => self.r.f16_rows(&va, tg_dtype(&da), &src, k)?,
+            false => None,
+        };
+        mm.knobs.activation_fp16 = f16.is_some();
+        let qa = match f16 {
+            Some(at) => at,
+            None => self.r.packed(
+                &va,
+                tg_dtype(&da),
+                &src,
+                (m, k, mm.mp, mm.kp),
+                "a",
+                (mm.tm / self.r.hw.band, mm.nk, bt),
+            )?,
+        };
         let (vw, dw) = view_of(self, w);
         let nb = if shared { 1 } else { bt };
         let qb = self.r.packed(

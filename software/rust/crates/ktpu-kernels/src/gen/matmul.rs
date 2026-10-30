@@ -86,6 +86,16 @@ pub const KNOBS: &[Knob] = &[
         env: "KTPU_MM_TAIL_BANDS",
         group: Group::Kernel,
     },
+    Knob {
+        name: "activation_fp16",
+        env: "KTPU_MM_ACTIVATION_FP16",
+        group: Group::Kernel,
+    },
+    Knob {
+        name: "quant_ring",
+        env: "KTPU_MM_QUANT_RING",
+        group: Group::Kernel,
+    },
 ];
 
 /// A contraction's plan and kernel knobs: the one source the generators,
@@ -110,6 +120,13 @@ pub struct Knobs {
     /// Under the ring, the widest epilogue trip and a tail trip, not the
     /// widest dividing the tile.
     pub tail_bands: bool,
+    /// A is f16, quantised in the kernel, where its packing is the vector
+    /// cores' and its rows whole words.
+    pub activation_fp16: bool,
+    /// Under the ring with an f16 A: each row tile quantised into `@stage`
+    /// slots as the waves reach it (1), or a wave ahead with its finite
+    /// check deferred (2); 0 quantises the whole A first.
+    pub quant_ring: i64,
 }
 
 /// The knobs' defaults.
@@ -128,6 +145,8 @@ pub fn unrecorded() -> Knobs {
         ring_depth: 0,
         split_vc: false,
         tail_bands: false,
+        activation_fp16: false,
+        quant_ring: 0,
     }
 }
 
@@ -161,6 +180,8 @@ impl Knobs {
             "ring_depth" => self.ring_depth.into(),
             "split_vc" => self.split_vc.into(),
             "tail_bands" => self.tail_bands.into(),
+            "activation_fp16" => self.activation_fp16.into(),
+            "quant_ring" => self.quant_ring.into(),
             _ => unreachable!("a knob: {name}"),
         }
     }
@@ -183,6 +204,8 @@ impl Knobs {
             "ring_depth" => self.ring_depth = int()?,
             "split_vc" => self.split_vc = flag()?,
             "tail_bands" => self.tail_bands = flag()?,
+            "activation_fp16" => self.activation_fp16 = flag()?,
+            "quant_ring" => self.quant_ring = int()?,
             _ => unreachable!("a knob: {name}"),
         }
         Ok(())
@@ -545,9 +568,7 @@ pub fn quant_kernel_scheduled(
     // Columns past the source's last block are the vector packing's padding
     // (`quant pad=1`, L2.MOV.010); the mover packs only whole views.
     let k_live = cdiv(cols, hw.kblock) * hw.kblock;
-    let vector = nk >= 2
-        || mach.conversion.fp16_mx7.preferred_backend == ktpu_machine::PackingBackend::VectorMx7;
-    let pad = vector && cp > k_live;
+    let pad = vector_packs(nk, mach) && cp > k_live;
     let zc = if pad { k_live } else { cp };
     let direct = rows == rp && cols == zc && src.pitch == cols && src.offset == 0;
     let key = name(
@@ -595,6 +616,29 @@ pub fn quant_kernel_scheduled(
     })
 }
 
+/// Whether a quant into `nk` K blocks a chunk packs on the vector cores
+/// (L2.MOV.018): pairs always, else as the machine prefers.
+pub fn vector_packs(nk: i64, mach: &Machine) -> bool {
+    nk >= 2 || mach.conversion.fp16_mx7.preferred_backend == ktpu_machine::PackingBackend::VectorMx7
+}
+
+/// Whether a contraction over `k` (`nk` K blocks a chunk) takes A as f16
+/// under `knobs` (`activation_fp16`): its quant packs on the vector cores,
+/// which pad rows and columns in place, and A's rows are whole words.
+pub fn takes_f16(k: i64, nk: i64, knobs: &Knobs, mach: &Machine) -> bool {
+    knobs.activation_fp16 && vector_packs(nk, mach) && k % Hw::of(mach).lanes == 0
+}
+
+/// The checked quant of f16 `src` ([rows, K], rows whole words) into the
+/// [`rp`, kp] A packing `dst`, the rest zero; its finite status deferred
+/// into `status` where given.
+fn quant_a(t: &mut Trace, dst: &View, src: &View, padded: bool, status: Option<&View>) -> R<()> {
+    match status {
+        Some(s) => t.quant_deferred(dst, src, s, QUANT_SCHEDULE, padded),
+        None => t.quant_scheduled(dst, src, false, QUANT_SCHEDULE, padded),
+    }
+}
+
 /// The epilogue's column block: the widest of GT4 blocks dividing the
 /// tile's width whose trip of `quantum` rows fits the L1.
 fn epilogue_block(mm: &Mm, operands: &[Operand], out: &Operand, hw: &Hw) -> i64 {
@@ -629,7 +673,8 @@ fn epilogue_bands(mm: &Mm, operands: &[Operand], out: &Operand, wc: i64, hw: &Hw
 /// `in1..` the epilogue's operands (`Load(i)`), `out`. A batch's product
 /// tiles, then its epilogue, a batch at a time; with `knobs.batch_tiles`
 /// every batch's tiles at once, then each batch's epilogue; with a ring
-/// ([`ring::resolve`]) through `@stage` slots.
+/// ([`ring::resolve`]) through `@stage` slots. Where it takes A as f16
+/// ([`takes_f16`]) port `a` is the f16 [bt * m, K], quantised in the kernel.
 pub fn mm_kernel(
     mm: &Mm,
     e: &E,
@@ -673,15 +718,21 @@ pub fn mm_kernel(
     } else {
         (vec![], mm.bt * pl.rp)
     };
+    let f16 = takes_f16(mm.k, mm.nk, knobs, mach);
     let (sa, sb) = ([mm.bt * mm.mp, mm.kp], [nb_rows, mm.kp]);
+    let (pa, a_dtype, a_lay) = if f16 {
+        ([mm.bt * mm.m, mm.k], g::Dtype::F16, vec![])
+    } else {
+        (sa, g::Dtype::Mx7a, lay_a.clone())
+    };
     let mut ports = vec![
-        Port::input("a", &sa, g::Dtype::Mx7a).with_layout(lay_a.clone()),
+        Port::input("a", &pa, a_dtype).with_layout(a_lay.clone()),
         Port::input("b", &sb, g::Dtype::Mx7b).with_layout(lay_b.clone()),
     ];
     let mut given = vec![
         (
             "a".to_string(),
-            spec(&sa, g::Dtype::Mx7a, lay_a, g::BufSpace::Dram)?,
+            spec(&pa, a_dtype, a_lay, g::BufSpace::Dram)?,
         ),
         (
             "b".to_string(),
@@ -712,6 +763,9 @@ pub fn mm_kernel(
         key_args.push(ring.py());
     } else if batched {
         key_args.push(Py::str("batch_tiles"));
+    }
+    if f16 {
+        key_args.push(Py::str("activation_fp16"));
     }
     let key = name("mm", key_args);
     // The product tiles of `nb` batches from batch `bt` (`nb` > 1: from
@@ -760,8 +814,21 @@ pub fn mm_kernel(
         )
     };
     build(&key, mach, ports, given, |t, b| {
+        // An f16 A outside a quant ring: each batch quantised first.
+        let mut quantised = b.to_vec();
+        if f16 && ring.quant == 0 {
+            let qa = t.buffer(&sa, g::Dtype::Mx7a, lay_a.clone())?;
+            let padded = mm.m < mm.mp || mm.k < mm.kp;
+            for bi in 0..mm.bt {
+                let dst = qa.at(&[sl(bi * mm.mp, (bi + 1) * mm.mp), ALL])?;
+                let src = b[0].at(&[sl(bi * mm.m, (bi + 1) * mm.m), ALL])?;
+                quant_a(t, &dst, &src, padded, None)?;
+            }
+            quantised[0] = qa;
+        }
+        let b = &quantised[..];
         if ring.depth > 0 {
-            return ring::schedule(t, b, mm, e, extras, out, &ring, &segs, &hw);
+            return ring::schedule(t, b, mm, e, extras, out, &ring, &segs, mach);
         }
         let tile = vec![(
             "tile".to_string(),
@@ -792,6 +859,8 @@ pub fn effective(mm: &Mm, e: &E, out: &Operand, knobs: &Knobs, mach: &Machine) -
         ring_depth: r.depth,
         split_vc: r.parts > 1,
         tail_bands: r.tail_bands,
+        activation_fp16: takes_f16(mm.k, mm.nk, knobs, mach),
+        quant_ring: r.quant,
         ..*knobs
     }
 }

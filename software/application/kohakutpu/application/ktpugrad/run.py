@@ -2564,16 +2564,13 @@ def _product(dev, plan: Plan, bufs) -> list:
     except ValueError as e:
         raise Refused(str(e)) from None
     da, db = F.np_dtype(a.dtype), F.np_dtype(b.dtype)
-    qa = FM.mx7(
-        dev,
-        bufs[a.slot],
-        da,
-        Operand("full", pitch=pa, offset=a.off),
-        M,
-        K,
-        mm,
-        "a",
-        bt,
+    src_a = Operand("full", pitch=pa, offset=a.off)
+    takes = MM.takes_f16(mm.k, mm.nk, MM.kernel_knobs(), dev.machine.machine_json)
+    fa = FM.f16_rows(dev, bufs[a.slot], da, src_a, K) if takes else None
+    qa = (
+        fa
+        if fa is not None
+        else FM.mx7(dev, bufs[a.slot], da, src_a, M, K, mm, "a", bt)
     )
     qb = FM.mx7(
         dev,
@@ -2733,7 +2730,20 @@ def _product(dev, plan: Plan, bufs) -> list:
             binds[f"in{i}"] = at
             extras.append(o)
         return runs + _product_run(
-            dev, plan, bufs, mm, binds, extras, bt, M, N, Np, batch, m, n
+            dev,
+            plan,
+            bufs,
+            mm,
+            binds,
+            extras,
+            bt,
+            M,
+            N,
+            Np,
+            batch,
+            m,
+            n,
+            fa is not None,
         )
     finally:
         for t in lays:
@@ -2812,7 +2822,9 @@ def _pad_rows(dev, plan: Plan, bufs, acc, batch, m, cols, mp: int, width: int):
         raise
 
 
-def _product_run(dev, plan, bufs, mm, binds, extras, bt, M, N, Np, batch, m, n) -> list:
+def _product_run(
+    dev, plan, bufs, mm, binds, extras, bt, M, N, Np, batch, m, n, f16
+) -> list:
     # A batch's rows padded to mp (`MM.plan`): the product's rows are moved
     # out of an [bt, mp, Np] temporary.
     mp = mm.mp
@@ -2879,6 +2891,8 @@ def _product_run(dev, plan, bufs, mm, binds, extras, bt, M, N, Np, batch, m, n) 
             "extras": [vars(o) for o in extras],
             "out": vars(Operand("full", pitch=Np, rows=bt * mp)),
             **MM.kernel_knobs(),
+            # A is f16 only where its producer laid it out for the kernel.
+            "activation_fp16": f16,
         }
         pending = {int(k[2:]): v for k, v in binds.items() if isinstance(v, FM.Pending)}
         recipe = dict(

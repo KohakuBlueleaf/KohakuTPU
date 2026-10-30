@@ -347,6 +347,20 @@ def mx7(
     return packed(dev, s, dtype, src, rows, cols, rp, mm.kp, side, g, mm.nk, batches)
 
 
+def f16_rows(dev, s, dtype, src: Operand, cols: int) -> int | None:
+    """The address of the f16 A a contraction kernel reads
+    (`activation_fp16`): `src`'s rows of `cols` in `s`, dense from a word,
+    or None where they are not."""
+    if isinstance(s, Pending):
+        s, dtype = s.made(), np.float16
+    st, off = base_of(s)
+    item = np.dtype(dtype).itemsize
+    first = src.offset + off // item
+    if src.pitch != cols or first % 16:
+        return None
+    return f16(dev, st, dtype, st.nbytes // item) + 2 * first
+
+
 @dataclass(frozen=True)
 class Step:
     """One relayout making a `Pending` buffer: `n` f16 values at `src` (None:
@@ -714,6 +728,7 @@ __all__ = [
     "base_of",
     "compact",
     "f16",
+    "f16_rows",
     "for_port",
     "launch",
     "library_hints",

@@ -1,7 +1,9 @@
 //! Finite FP16 packing on a vector core, retaining the mover entry map.
 
+use super::quant_status::Status;
 use super::*;
 use crate::lower::sync::Stage;
+use ktpu_machine::packing::STATUS_RECORD;
 use ktpu_machine::PackingBackend;
 
 mod image;
@@ -62,6 +64,15 @@ pub fn quant_backend(body: &Body, op: &Op, tg: &Target) -> Result<bool> {
     Ok(backend == PackingBackend::VectorMx7)
 }
 
+/// Where a checked quant's finite status goes.
+#[derive(Clone, Debug)]
+pub enum Finite {
+    /// Its own buffer, checked behind a barrier at the quant.
+    Inline(String),
+    /// The caller's region, checked by a later `quant_check`.
+    Deferred(Status),
+}
+
 /// A serialized 16-entry L1 slot: gather, exact unpack, MX7 pack, drain.
 pub fn vector_quant(
     body: &Body,
@@ -69,7 +80,7 @@ pub fn vector_quant(
     env: &Env,
     tg: &Target,
     images: &mut Vec<String>,
-    status: Option<&str>,
+    status: Option<Finite>,
 ) -> Result<Stage> {
     let st = &op.st;
     let err = |msg| fail(body, st, "L2.MOV.010", msg);
@@ -181,11 +192,7 @@ pub fn vector_quant(
         return Err(err("classifier_banks requires 24 vector registers".into()));
     }
     let slots = policy.vector_slots;
-    let cores = if policy.vector_cores == 0 {
-        tg.vc.len() as i64
-    } else {
-        policy.vector_cores
-    };
+    let cores = tg.machine.quant_cores();
     if cores < 1 || cores > tg.vc.len() as i64 {
         return Err(err(
             "vector_cores must select 1..available VCs (0 means all)".into(),
@@ -263,6 +270,20 @@ pub fn vector_quant(
             "padded quant destination covers complete 4x32 entries".into()
         ));
     }
+    if let Some(Finite::Deferred(s)) = &status {
+        let need = padding::status_bytes(db, &dax, &sax, padded, cores);
+        if s.bytes < need {
+            return Err(fail(
+                body,
+                st,
+                "L2.MOV.019",
+                format!(
+                    "a quant status of {} bytes: its pieces' records take {need}",
+                    s.bytes
+                ),
+            ));
+        }
+    }
     let pieces = if padded {
         padding::pieces(db, &dax, &sax, soff, pitch)
     } else {
@@ -277,7 +298,7 @@ pub fn vector_quant(
         body,
         op,
         tg,
-        status,
+        status: None,
         finite_batch,
         overlap,
         classifier_overlap,
@@ -296,8 +317,26 @@ pub fn vector_quant(
         db,
     };
     let mut result = Stage::new(Vec::new(), Vec::new(), Vec::new());
+    let mut live = 0;
     for piece in pieces {
-        let stage = schedule.emit(piece, images)?;
+        // A deferred status gives each piece holding entries its own records.
+        let status = match &status {
+            Some(Finite::Deferred(s)) if piece.rows != 0 => {
+                let record = STATUS_RECORD * cores;
+                live += 1;
+                Some(Finite::Deferred(Status {
+                    offset: s.offset + (live - 1) * record,
+                    bytes: record,
+                    ..s.clone()
+                }))
+            }
+            other => other.clone(),
+        };
+        let stage = Schedule {
+            status: status.as_ref(),
+            ..schedule
+        }
+        .emit(piece, images)?;
         result.lines.extend(stage.lines);
         result.accesses.extend(stage.accesses);
         for unit in stage.units {
@@ -309,11 +348,12 @@ pub fn vector_quant(
     Ok(result)
 }
 
+#[derive(Clone, Copy)]
 struct Schedule<'a> {
     body: &'a Body,
     op: &'a Op,
     tg: &'a Target,
-    status: Option<&'a str>,
+    status: Option<&'a Finite>,
     finite_batch: i64,
     overlap: bool,
     classifier_overlap: bool,
@@ -601,24 +641,44 @@ impl Schedule<'_> {
                 }
             }
         }
+        let mut accesses = Vec::new();
         if let Some(status) = status {
             let name = format!("{}.mx7_status_{tag}", body.name);
             images.push(image::status(&name));
+            let at = match status {
+                Finite::Inline(s) => s.clone(),
+                Finite::Deferred(s) => s.address(),
+            };
             for (v, unit) in units.iter().enumerate() {
                 lines.extend([
                     format!("send {unit}"),
-                    format!("    run {name}({status} + {})", v * 128),
+                    format!("    run {name}({at} + {})", v as i64 * STATUS_RECORD),
                 ]);
             }
-            lines.push("barrier".into());
-            for v in 0..cores {
-                lines.extend([
-                    format!("r14 = load {status} + {}", v * 128),
-                    "assert_zero r14 code=1".into(),
-                ]);
+            match status {
+                Finite::Inline(_) => {
+                    lines.push("barrier".into());
+                    for v in 0..cores {
+                        lines.extend([
+                            format!("r14 = load {at} + {}", v * STATUS_RECORD),
+                            "assert_zero r14 code=1".into(),
+                        ]);
+                    }
+                }
+                Finite::Deferred(s) => {
+                    for (v, unit) in units.iter().enumerate() {
+                        let lo = s.offset + v as i64 * STATUS_RECORD;
+                        accesses.push(Access::new(
+                            unit,
+                            true,
+                            ("mem", &s.name),
+                            lo,
+                            lo + STATUS_RECORD,
+                        ));
+                    }
+                }
             }
         }
-        let mut accesses = Vec::new();
         for unit in &units {
             for mut a in [
                 mem_of(false, span_of(sn, soff, &sl, 32)),

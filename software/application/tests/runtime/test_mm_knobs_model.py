@@ -140,3 +140,42 @@ def test_the_ring_computes_the_product_without_it(dev, name):
         got = np.frombuffer(product(dev, args, data, rows, n), "<f2")
         got = got.reshape(bt, mm.mp, n)
         assert got[:, :m].tobytes() == want[:, :m].tobytes(), (name, knobs)
+
+
+#: An f16 A's knob sets: quantised first, and each quant ring.
+F16 = {
+    "first": dict(),
+    "ring1": dict(ring_depth=2, quant_ring=1),
+    "ring2": dict(ring_depth=2, quant_ring=2),
+}
+
+
+@pytest.mark.parametrize("name", list(F16))
+def test_an_f16_a_computes_the_packed_product(dev, monkeypatch, name):
+    """bt = 2 batches of M = 20 (a padded tail tile) over K = 112 (a padded
+    K tail), K pairs quantised on the vector cores: the kernel quantising its
+    f16 A computes the bytes the kernel of A quantised by the quant kernel
+    computes."""
+    monkeypatch.setenv("KTPU_MX7_PAIRING", "vector")
+    knobs = F16[name]
+    mt = rs.machine_json(dev.machine)
+    bt, m, n, k = 2, 20, 64, 112
+    mm = MM.plan(bt, m, n, k, False, machine_json=mt, pad_m=True)
+    on = {**MM.kernel_knobs(), "activation_fp16": True}
+    assert MM.takes_f16(mm.k, mm.nk, on, mt) and mm.kp > k, mm
+    rng = np.random.default_rng(5)
+    a = rng.standard_normal((bt, m, k)).astype(np.float16)
+    padded = np.zeros((bt, mm.mp, mm.kp), np.float16)
+    padded[:, :m, :k] = a
+    qa, _, _ = Z.quant(dev, padded.reshape(bt * mm.mp, mm.kp), "a", mm.tm // 4, mm.nk)
+    _, _, data = operands(dev, mm, 9)
+    out = Operand("full", pitch=n, rows=bt * mm.mp)
+    rows = bt * mm.mp
+    want = product(dev, call(mm, X.Load(0), [], out), {**data, "a": qa}, rows, n)
+    args = call(mm, X.Load(0), [], out, activation_fp16=True, **knobs)
+    resolved = MM.resolved(args, mt)["knobs"]
+    assert resolved["activation_fp16"]
+    assert resolved["quant_ring"] == knobs.get("quant_ring", 0)
+    got = product(dev, args, {**data, "a": a.tobytes()}, rows, n)
+    got, want = (np.frombuffer(x, "<f2").reshape(bt, mm.mp, n) for x in (got, want))
+    assert got[:, :m].tobytes() == want[:, :m].tobytes(), name

@@ -863,6 +863,17 @@ fn mm_resolved(args_json: &str, machine_json: &str) -> PyResult<String> {
         .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
+/// mm_takes_f16(args_json, machine_json) -> bool: whether a contraction of
+/// `{k, nk}` takes A as f16 under the kernel knobs it names
+/// (`ktpu_kernels::call::mm_takes_f16`); ValueError on a refusal.
+#[pyfunction]
+fn mm_takes_f16(args_json: &str, machine_json: &str) -> PyResult<bool> {
+    let m = machine(machine_json)?;
+    let args = serde_json::from_str(args_json)
+        .map_err(|e| PyValueError::new_err(format!("matmul.takes_f16 arguments: {e}")))?;
+    ktpu_kernels::call::mm_takes_f16(&args, &m).map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
 #[pymodule]
 #[pyo3(name = "_rs")]
 fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -884,6 +895,7 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mm_knobs, m)?)?;
     m.add_function(wrap_pyfunction!(mm_plan, m)?)?;
     m.add_function(wrap_pyfunction!(mm_resolved, m)?)?;
+    m.add_function(wrap_pyfunction!(mm_takes_f16, m)?)?;
     m.add("MM_KNOBS", mm_knob_table())?;
     m.add_function(wrap_pyfunction!(bind, m)?)?;
     m.add_function(wrap_pyfunction!(bind_cache_stats, m)?)?;

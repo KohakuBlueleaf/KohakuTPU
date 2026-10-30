@@ -247,6 +247,31 @@ impl<'a> Runner<'a> {
         s.valid.iter().find(|k| k[0] == "rows").cloned()
     }
 
+    /// The f16 A a contraction kernel reads (`activation_fp16`): `src`'s
+    /// rows of `cols` in `view`, dense from a word, or none where they are
+    /// not.
+    pub fn f16_rows(
+        &mut self,
+        view: &View,
+        dtype: &str,
+        src: &Operand,
+        cols: i64,
+    ) -> Result<Option<Addr>, Refusal> {
+        let it = item(dtype);
+        let first = src.offset + view.offset / it;
+        if src.pitch != cols || first % self.hw.halves != 0 {
+            return Ok(None);
+        }
+        let whole = View {
+            base: view.base.clone(),
+            offset: 0,
+            nbytes: self.x.store(&view.base).nbytes,
+        };
+        let mut at = self.f16_of(&whole, dtype, whole.nbytes / it)?;
+        at.offset += 2 * first;
+        Ok(Some(at))
+    }
+
     /// `forms.f16`: the address of `view`'s contents as f16.
     pub fn f16_of(&mut self, view: &View, dtype: &str, n: i64) -> Result<Addr, Refusal> {
         let (st, off) = (view.base.clone(), view.offset);
