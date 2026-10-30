@@ -188,8 +188,9 @@ fn a_file_of_another_schema_version_is_refused() {
     let mut doc: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!(doc["schema"], Value::from(schema_version()));
     let older = version(&edited("system.rs", |t| {
-        t.replacen("    pub gt4_granule_bits: u32,\n", "", 1)
+        t.replacen("pub gt4_granule_bits: u32,", "", 1)
     }));
+    assert_ne!(older, schema_version());
     for found in [Value::from(older), Value::from(1), Value::Null] {
         doc["schema"] = found.clone();
         let err = Machine::from_json(&doc.to_string()).unwrap_err();
