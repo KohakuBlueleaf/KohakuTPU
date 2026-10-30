@@ -47,7 +47,47 @@ pub const CHECKS: &[(&str, Check)] = &[
         "test_vregs::test_resident_imem_rebase_keeps_the_word_past_bit_32",
         resident_rebase_keeps_the_word_past_bit_32,
     ),
+    (
+        "skipz::a_long_skip_runs_as_consecutive_skips",
+        a_long_skip_runs_as_consecutive_skips,
+    ),
 ];
+
+/// An add that sets the configuration, `getstk s1`, then `skipz s1` over `n`
+/// adds of one word each (`inner` first in the block).
+fn skip_text(n: usize, inner: &str) -> String {
+    let body: String = (0..n).map(|_| "        vadd v1, v1, v2\n").collect();
+    format!("image k()\n    vadd v1, v1, v2\n    getstk s1\n    skipz s1\n{inner}{body}    halt\n")
+}
+
+/// A block past VSKIPZ's 8-bit skip runs as consecutive skips on its register,
+/// each within the field, the words between them the block's (L1.IMG.027):
+/// 255 words take one VSKIPZ, 256 take two. A block that writes the register
+/// stays refused.
+fn a_long_skip_runs_as_consecutive_skips() -> Result<(), String> {
+    for (n, parts) in [(255, 1), (256, 2), (300, 2), (511, 3)] {
+        let got = words(&skip_text(n, ""))?;
+        let heads: Vec<usize> = got
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| w.starts_with("VSKIPZ"))
+            .map(|(i, _)| i)
+            .collect();
+        let skip = |i: usize| -> usize { got[i].rsplit("skip=").next().unwrap().parse().unwrap() };
+        eq(heads.len(), parts)?;
+        for (k, &h) in heads.iter().enumerate() {
+            eq(got[h].contains("sreg=1"), true)?;
+            let next = heads.get(k + 1).copied().unwrap_or(got.len() - 1);
+            eq(h + 1 + skip(h), next)?;
+        }
+        eq(got[got.len() - 1].as_str(), "VHALT")?;
+        eq(got.iter().filter(|w| w.starts_with("vadd")).count(), n + 1)?;
+    }
+    if words(&skip_text(300, "        getstk s1\n")).is_ok() {
+        return Err("a block that writes its register was split".into());
+    }
+    Ok(())
+}
 
 const STREAM: &str = "image k(n)\n    seti s5 = n\n    loop s5\n        vunpk v0 <- l1[0] f16\n        vmul v1, v0, v0\n        vpack v1 -> l1[64] f16\n    halt\n";
 

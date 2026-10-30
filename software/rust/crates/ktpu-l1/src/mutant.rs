@@ -145,6 +145,8 @@ pub const NAMES: &[&str] = &[
     "l1.img/desc-none",
     "l1.img/key-all-params",
     "l1.img/skipz-meet",
+    "l1.img/skipz-whole",
+    "l1.img/skipz-head-once",
     "l1.img/peer-xy",
     "l1.mov/levels-reversed",
     "l1.mov/windows-dropped",

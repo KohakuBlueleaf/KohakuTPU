@@ -216,20 +216,54 @@ impl<'a> Encoder<'a> {
         Ok((out, entry))
     }
 
+    /// A body past VSKIPZ's skip field runs as consecutive skips on the same
+    /// register, each over whole statements, when the body leaves the
+    /// register unwritten: then every part runs or none does (L1.IMG.027).
     pub(super) fn skipz(&mut self, st: &Stmt, state: State, depth: u32) -> Result<(Words, State)> {
         let reg = self.one(st, "skipz sN")?;
         let sreg = self.sreg(st, reg)?;
-        let (body, end) = self.block(&st.body, state, depth)?;
-        let head = self.word(
-            st,
-            VWord::Skipz {
-                sreg,
-                n: body.len() as u32,
-            },
-        )?;
-        let mut out = vec![head];
-        out.extend(body);
+        let mut pieces = Vec::new();
+        let mut end = state;
+        for s in &st.body {
+            let (words, next) = self.stmt(s, end, depth)?;
+            pieces.push(words);
+            end = next;
+        }
+        let head = |n: usize| self.word(st, VWord::Skipz { sreg, n: n as u32 });
+        let total: usize = pieces.iter().map(Vec::len).sum();
+        let split =
+            head(total).is_err() && !self.writes_sreg(&st.body, sreg) && !on("l1.img/skipz-whole");
+        let mut parts: Vec<Words> = vec![Vec::new()];
+        for p in pieces {
+            let last = parts.last_mut().unwrap();
+            if split && !last.is_empty() && head(last.len() + p.len()).is_err() {
+                parts.push(p);
+            } else {
+                last.extend(p);
+            }
+        }
+        let mut out = Vec::new();
+        for (k, part) in parts.into_iter().enumerate() {
+            if k == 0 || !on("l1.img/skipz-head-once") {
+                out.push(head(part.len())?);
+            }
+            out.extend(part);
+        }
         Ok((out, meet(state, end)))
+    }
+
+    /// Whether a statement of `body` (at any depth) may write s-register `sreg`.
+    fn writes_sreg(&self, body: &[Stmt], sreg: u32) -> bool {
+        body.iter().any(|s| {
+            let named = match (s.op.as_str(), s.args.first()) {
+                ("seti", Some(Term::Assign(a, _))) => Some(a.as_ref()),
+                ("getstk" | "loop", a) => a,
+                _ => None,
+            };
+            s.op == "word"
+                || named.is_some_and(|t| self.sreg(s, t).ok() == Some(sreg))
+                || self.writes_sreg(&s.body, sreg)
+        })
     }
 
     /// The end state of a trial encoding, whose words are not counted.

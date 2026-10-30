@@ -155,6 +155,10 @@ const KILLERS: &[(&str, &str)] = &[
         "l1.img/no-hoist",
     ),
     (
+        "skipz::a_long_skip_runs_as_consecutive_skips",
+        "l1.img/skipz-whole",
+    ),
+    (
         "test_emit_image::test_operand_fields_follow_the_op",
         "l1.img/reads",
     ),
