@@ -65,7 +65,13 @@ def records(schema: dict, n: int = 3, double=SpecFirmware) -> list:
 def expected(n: int = 3) -> list:
     line = len(f"run {PACKAGE_LINE}B []\n")
     return [
-        {"so_wr": line * (r + 1), **{k: 10 * (r + 1) + i for i, k in enumerate(TIMES)}}
+        {
+            "so_wr": line * (r + 1),
+            **{k: 10 * (r + 1) + i for i, k in enumerate(TIMES)},
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0,
+        }
         for r in range(n)
     ]
 

@@ -256,6 +256,18 @@ def fw_package_copy_bytes(img):
     return img.fw_src_define("kohakuaccel/package/interp.c", "KA_PKG_COPY_BYTES")
 
 
+def fw_queue_enum(img, name, prefix):
+    """Named constants from a queue/layout.h enum with `prefix` stripped."""
+    items, src = img.fw_enum("queue/layout.h", name)
+    return {k.removeprefix(prefix).lower(): v for k, v in items.items()}, src
+
+
+def fw_queue_status(img):
+    """Completion status codes (`KA_ST_*`) with the prefix stripped."""
+    items, src = img.fw_enum("package/status.h", "ka_status")
+    return {k.removeprefix("KA_ST_").lower(): v for k, v in items.items()}, src
+
+
 def fw_queue_record(img):
     """The run record's version, bytes and field offsets from queue/layout.h."""
     version, src = img.fw_define("queue/layout.h", "KA_Q_REC_VERSION")
@@ -265,6 +277,7 @@ def fw_queue_record(img):
     return {
         "version": version,
         "bytes": nbytes,
+        "word": word,
         "fields": {
             k.removeprefix("KA_QR_").lower(): {"offset": v, "width": word}
             for k, v in fields.items()
@@ -856,10 +869,42 @@ ROWS = [
     ("fw.boot.regions", lambda i: i.fw_define("boot/args.h", "KA_BOOT_REGIONS")),
     ("fw.boot.region_uses", lambda i: i.fw_flags("boot/args.h", "KA_REGION_")),
     ("fw.debug", fw_debug),
+    ("fw.queue.magic", lambda i: i.fw_define("queue/layout.h", "KA_Q_MAGIC")),
+    (
+        "fw.queue.min_version",
+        lambda i: i.fw_define("queue/layout.h", "KA_Q_MIN_VERSION"),
+    ),
     ("fw.queue.version", lambda i: i.fw_define("queue/layout.h", "KA_Q_VERSION")),
+    (
+        "fw.queue.list_version",
+        lambda i: i.fw_define("queue/layout.h", "KA_Q_LIST_VERSION"),
+    ),
     ("fw.queue.line", lambda i: i.fw_define("queue/layout.h", "KA_Q_LINE")),
     ("fw.queue.sq_bytes", lambda i: i.fw_define("queue/layout.h", "KA_Q_SQ_BYTES")),
     ("fw.queue.cq_bytes", lambda i: i.fw_define("queue/layout.h", "KA_Q_CQ_BYTES")),
+    ("fw.queue.sq_words", lambda i: i.fw_define("queue/layout.h", "KA_SQ_WORDS")),
+    (
+        "fw.queue.nbind_shift",
+        lambda i: i.fw_define("queue/layout.h", "KA_SQ_NBIND_SHIFT"),
+    ),
+    (
+        "fw.queue.stdio_mask",
+        lambda i: i.fw_define("queue/layout.h", "KA_QI_STDIO_MASK"),
+    ),
+    ("fw.queue.op_mask", lambda i: i.fw_define("queue/layout.h", "KA_SQ_OP_MASK")),
+    (
+        "fw.queue.cq_status_mask",
+        lambda i: i.fw_define("queue/layout.h", "KA_CQ_STATUS_MASK"),
+    ),
+    ("fw.queue.offsets", lambda i: fw_queue_enum(i, "ka_q_off", "KA_Q_")),
+    ("fw.queue.cq_offsets", lambda i: fw_queue_enum(i, "ka_cq_off", "KA_CQ_")),
+    ("fw.queue.info_words", lambda i: fw_queue_enum(i, "ka_q_info", "KA_QI_")),
+    ("fw.queue.fw_words", lambda i: fw_queue_enum(i, "ka_q_fw", "KA_QF_")),
+    ("fw.queue.states", lambda i: fw_queue_enum(i, "ka_q_state", "KA_Q_ST_")),
+    ("fw.queue.opcodes", lambda i: fw_queue_enum(i, "ka_sq_op", "KA_SQ_")),
+    ("fw.queue.run_words", lambda i: fw_queue_enum(i, "ka_sq_run", "KA_SQ_RUN_")),
+    ("fw.queue.list_words", lambda i: fw_queue_enum(i, "ka_sq_list", "KA_SQ_LIST_")),
+    ("fw.queue.status", fw_queue_status),
     ("fw.queue.record", fw_queue_record),
     ("fw.package.magic", lambda i: i.fw_define("package/format.h", "KA_PKG_MAGIC")),
     ("fw.package.version", lambda i: i.fw_define("package/format.h", "KA_PKG_VERSION")),

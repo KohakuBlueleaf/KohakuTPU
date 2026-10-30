@@ -27,6 +27,7 @@ struct ka_pkg_run {
 /* Entry `seq`'s words when they were read ahead, or 0. Valid until the next
  * `ka_package_run`. */
 const uint64_t *ka_package_ahead(uint64_t seq);
+void ka_package_ahead_reset(void);
 
 #define KA_RUN_F_CHECKSUM 1u /* verify the checksum whether or not the package asks */
 #define KA_RUN_F_IRQ      2u /* raise the host interrupt once the completion is posted */

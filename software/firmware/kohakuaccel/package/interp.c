@@ -50,6 +50,8 @@ static union {
 } stage;
 static uint64_t entry_at = ~0UL, t_end;
 
+void ka_package_ahead_reset(void) { entry_at = ~0UL; }
+
 const uint64_t *ka_package_ahead(uint64_t seq)
 {
     if (seq != entry_at) {

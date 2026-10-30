@@ -1,5 +1,5 @@
 {
- "schema": "77e5063f76e11865",
+ "schema": "8679b4c7aaac6cb0",
  "name": "vlt_v9t6_2n",
  "image": "v9t6",
  "board": "vlt_v9t6_2n",
@@ -362,11 +362,11 @@
     "spad_bytes": 32768
    },
    "sections": {
-    ".text": 30048,
+    ".text": 30752,
     ".bootargs": 320,
     ".rodata": 1728,
     ".data": 8,
-    ".bss": 3080,
+    ".bss": 3104,
     ".noinit": 4096,
     ".stack": 6144,
     ".ka_abi": 48
@@ -407,13 +407,113 @@
     "last": 4
    },
    "queue": {
+    "magic": 3550337637523997003,
+    "min_version": 3,
     "version": 4,
+    "list_version": 1,
     "line": 64,
     "sq_bytes": 64,
     "cq_bytes": 32,
+    "sq_words": 8,
+    "nbind_shift": 16,
+    "stdio_mask": 4294967295,
+    "op_mask": 255,
+    "cq_status_mask": 65535,
+    "offsets": {
+     "info": 0,
+     "epoch": 32,
+     "fw": 64,
+     "list_abi": 96,
+     "sq_tail": 128,
+     "sq_head": 192,
+     "cq_tail": 256,
+     "cq_head": 320,
+     "so_wr": 384,
+     "so_rd": 448,
+     "si_wr": 512,
+     "si_rd": 576,
+     "units": 640,
+     "heaps": 832,
+     "sq": 1088
+    },
+    "cq_offsets": {
+     "tag": 0,
+     "status": 8,
+     "cycles": 16,
+     "value": 24
+    },
+    "info_words": {
+     "magic": 0,
+     "version": 1,
+     "rings": 2,
+     "stdio": 3,
+     "epoch": 4
+    },
+    "fw_words": {
+     "state": 0,
+     "abi": 1,
+     "done": 2,
+     "fatal": 3
+    },
+    "states": {
+     "none": 0,
+     "ready": 1,
+     "stopped": 2,
+     "fatal": 3
+    },
+    "opcodes": {
+     "nop": 0,
+     "run": 1,
+     "stop": 2,
+     "list": 6
+    },
+    "run_words": {
+     "op": 0,
+     "tag": 1,
+     "pkg": 2,
+     "bytes": 3,
+     "bind": 4,
+     "timeout": 5,
+     "flags": 6
+    },
+    "list_words": {
+     "op": 0,
+     "tag": 1,
+     "addr": 2,
+     "count": 3,
+     "epoch": 4,
+     "version": 5,
+     "flags": 6
+    },
+    "status": {
+     "ok": 0,
+     "progress": 1,
+     "bad_magic": 16,
+     "bad_version": 17,
+     "bad_signature": 18,
+     "bad_checksum": 19,
+     "bad_step": 20,
+     "too_large": 21,
+     "bad_reloc": 22,
+     "bad_unit": 23,
+     "bad_layout": 24,
+     "unit_fault": 32,
+     "mbox_overflow": 33,
+     "mover_fault": 34,
+     "contract": 36,
+     "no_reach": 35,
+     "timeout": 48,
+     "bad_op": 64,
+     "no_memory": 80,
+     "no_slots": 81,
+     "bad_free": 82,
+     "bad_arg": 83,
+     "heap_busy": 84
+    },
     "record": {
      "version": 1,
      "bytes": 128,
+     "word": 8,
      "fields": {
       "tag": {
        "offset": 0,
@@ -465,6 +565,18 @@
       },
       "idle": {
        "offset": 96,
+       "width": 8
+      },
+      "list_index": {
+       "offset": 104,
+       "width": 8
+      },
+      "item_tag": {
+       "offset": 112,
+       "width": 8
+      },
+      "epoch": {
+       "offset": 120,
        "width": 8
       }
      }
@@ -712,11 +824,28 @@
   "fw.boot.regions": "software/firmware/kohakuaccel/include/ka/boot/args.h:12",
   "fw.boot.region_uses": "software/firmware/kohakuaccel/include/ka/boot/args.h:KA_REGION_*",
   "fw.debug": "software/firmware/build.py:DEFINES; software/firmware/kohakuaccel/include/ka/package/debug.h:KA_DEBUG_F_*",
-  "fw.queue.version": "software/firmware/kohakuaccel/include/ka/queue/layout.h:7",
-  "fw.queue.line": "software/firmware/kohakuaccel/include/ka/queue/layout.h:10",
-  "fw.queue.sq_bytes": "software/firmware/kohakuaccel/include/ka/queue/layout.h:29",
-  "fw.queue.cq_bytes": "software/firmware/kohakuaccel/include/ka/queue/layout.h:30",
-  "fw.queue.record": "software/firmware/kohakuaccel/include/ka/queue/layout.h:35; queue/layout.h:ka_q_rec",
+  "fw.queue.magic": "software/firmware/kohakuaccel/include/ka/queue/layout.h:6",
+  "fw.queue.min_version": "software/firmware/kohakuaccel/include/ka/queue/layout.h:7",
+  "fw.queue.version": "software/firmware/kohakuaccel/include/ka/queue/layout.h:8",
+  "fw.queue.list_version": "software/firmware/kohakuaccel/include/ka/queue/layout.h:9",
+  "fw.queue.line": "software/firmware/kohakuaccel/include/ka/queue/layout.h:12",
+  "fw.queue.sq_bytes": "software/firmware/kohakuaccel/include/ka/queue/layout.h:52",
+  "fw.queue.cq_bytes": "software/firmware/kohakuaccel/include/ka/queue/layout.h:53",
+  "fw.queue.sq_words": "software/firmware/kohakuaccel/include/ka/queue/layout.h:55",
+  "fw.queue.nbind_shift": "software/firmware/kohakuaccel/include/ka/queue/layout.h:56",
+  "fw.queue.stdio_mask": "software/firmware/kohakuaccel/include/ka/queue/layout.h:23",
+  "fw.queue.op_mask": "software/firmware/kohakuaccel/include/ka/queue/layout.h:57",
+  "fw.queue.cq_status_mask": "software/firmware/kohakuaccel/include/ka/queue/layout.h:58",
+  "fw.queue.offsets": "software/firmware/kohakuaccel/include/ka/queue/layout.h:33",
+  "fw.queue.cq_offsets": "software/firmware/kohakuaccel/include/ka/queue/layout.h:61",
+  "fw.queue.info_words": "software/firmware/kohakuaccel/include/ka/queue/layout.h:15",
+  "fw.queue.fw_words": "software/firmware/kohakuaccel/include/ka/queue/layout.h:26",
+  "fw.queue.states": "software/firmware/kohakuaccel/include/ka/queue/layout.h:95",
+  "fw.queue.opcodes": "software/firmware/kohakuaccel/include/ka/queue/layout.h:112",
+  "fw.queue.run_words": "software/firmware/kohakuaccel/include/ka/queue/layout.h:120",
+  "fw.queue.list_words": "software/firmware/kohakuaccel/include/ka/queue/layout.h:131",
+  "fw.queue.status": "software/firmware/kohakuaccel/include/ka/package/status.h:6",
+  "fw.queue.record": "software/firmware/kohakuaccel/include/ka/queue/layout.h:73; queue/layout.h:ka_q_rec",
   "fw.package.magic": "software/firmware/kohakuaccel/include/ka/package/format.h:8",
   "fw.package.version": "software/firmware/kohakuaccel/include/ka/package/format.h:9",
   "fw.package.header_bytes": "software/firmware/kohakuaccel/include/ka/package/format.h:12",

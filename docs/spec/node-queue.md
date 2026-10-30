@@ -89,8 +89,8 @@ so the firmware may write single words.
 
 | Offset | Writer | Words |
 |---|---|---|
-| `0x000` | host | magic `0x314555455551414B` ("KAQUEUE1"), version `3`, `sq_n \| cq_n << 16`, `so_bytes \| si_bytes << 32` |
-| `0x040` | firmware | state (0 none, 1 ready, 2 stopped, 3 fatal), ABI version, entries completed, fatal code |
+| `0x000` | host | magic `0x314555455551414B` ("KAQUEUE1"), version `4`, `sq_n \| cq_n << 16`, `so_bytes \| si_bytes << 32`; at `0x020` (`KA_Q_EPOCH`, word 4) the host's queue generation epoch |
+| `0x040` | firmware | state (0 none, 1 ready, 2 stopped, 3 fatal), ABI version, entries completed, fatal code; at `0x060` (`KA_Q_LIST_ABI`, word 4) the execution-list ABI version (`KA_Q_LIST_VERSION`, `1`) |
 | `0x080` | host | SQ tail — entries submitted, ever |
 | `0x0C0` | firmware | SQ head — entries consumed |
 | `0x100` | firmware | CQ tail — completions posted |
@@ -105,6 +105,7 @@ so the firmware may write single words.
 | then | firmware | the CQ: `cq_n` entries of 32 bytes |
 | next 64-byte line | firmware | stdout ring, `so_bytes` (a multiple of 64) |
 | then | host | stdin ring, `si_bytes` (a multiple of 64) |
+| then | firmware | run record ring (version 4): `cq_n` records of 128 bytes (`KA_Q_REC_BYTES`) |
 
 Indices count entries or bytes **ever**, never wrapped; a slot is the index
 modulo the ring's size. A ring is empty when its two indices are equal and full
@@ -121,6 +122,17 @@ word 1 is the tag, returned in the completion. Words 2–7 depend on the opcode:
 | 1 `RUN` | the package's unit-global address | its length in bytes | the bindings' address (one 64-bit address per buffer), or 0 | per-wait timeout in cycles, 0 for the boot block's | flags: `[0]` verify the checksum, `[1]` raise the host interrupt once the completion is posted (control-registers.md §7.2 `R_IRQ`; a host that cannot take one leaves it clear) | §3.2 |
 | 2 `STOP` | the exit value | | | | | 0 |
 | 3..5 reserved | | | | | | `BAD_OP` |
+| 6 `LIST` | the descriptor array's unit-global address (`count` 64-byte `RUN` entries) | item count | queue epoch (`KA_Q_EPOCH`) | list ABI version (`KA_Q_LIST_VERSION`, `1`) | flags (`0`) | total instructions dispatched across completed items, or the failing item's value |
+
+For `LIST`, header validation checks the queue epoch, list ABI version and flags
+before reading descriptor items: an epoch mismatch (`word 4 != KA_Q_EPOCH`)
+posts `BAD_ARG` with `detail = 1` and `value = word 4`, while a version mismatch
+(`word 5 != KA_Q_LIST_VERSION`) or nonzero flags (`word 6 != 0`) posts `BAD_ARG`
+with `detail = 2` and `value = word 4`. Each descriptor item is a 64-byte `RUN`
+entry (`KA_SQ_RUN_*`). If item `i`'s opcode (`word 0 & 0xff`) is not `RUN`, the
+list stops at item `i`, prints `[ka] package <item_tag> failed: status 40 detail <op> step 0 value 0`
+to stdout, and posts `BAD_OP` with `detail = op`, `value = 0`, and run record
+`list_index = i`, `item_tag = item[1]`, `epoch = KA_Q_EPOCH`.
 
 Unused words are 0. Binding belongs to the host; firmware refuses packages
 carrying relocation entries. RUN's binding fields are reserved compatibility
@@ -147,6 +159,16 @@ reads are sequential observations, not an atomic snapshot of both agents.
 The firmware writes the entry, then the CQ tail; each uncached store completes
 before the next is issued, so a host that reads the tail first and the entry
 second never sees a torn entry.
+
+In a version 4 region, the firmware writes the 128-byte run record (`KA_Q_REC_BYTES`,
+version `KA_Q_REC_VERSION` = `1`) at the same slot index modulo `cq_n` before
+posting the CQ entry. Words are 8 bytes (`KA_Q_REC_WORD`): `tag` (`0`), `so_wr`
+(`8`), the `RUN` timing words `head` (`16`), `copy` (`24`), `bind` (`32`),
+`steps` (`40`), `barrier` (`48`), `local` (`56`), `total` (`64`), `first` (`72`),
+`last` (`80`), `sent` (`88`), `idle` (`96`), then `list_index` (`104`, items
+completed or the failing item's index for `LIST`, `0` for `RUN`), `item_tag`
+(`112`, the last or failing item's tag for `LIST`, `0` for `RUN`), and `epoch`
+(`120`, the queue generation epoch read from `KA_Q_EPOCH` on every completion).
 
 The application runtime's default per-wait firmware budget is one third of its
 host completion timeout. A failed wait can consume one budget, and the firmware
@@ -177,11 +199,11 @@ error; its tag alone does not establish success.
 | `0x22` | `MOVER_FAULT` | detail: the mover's fault code |
 | `0x23` | `NO_REACH` | a mover register the processor cannot write; detail: the register |
 | `0x30` | `TIMEOUT` | detail: what was awaited — 1 credit, 2 `AWAIT`, 3 barrier, 4 mover, 5 doorbell, 6 the mailbox's outbound slot, 7 slot, 8 RX, 9 ack, 10 ring, 11 the dispatch engine (value: its raw `STAT`, decoded on the host) |
-| `0x40` | `BAD_OP` | an unknown submission opcode |
+| `0x40` | `BAD_OP` | an unknown submission opcode, or a `LIST` descriptor item whose opcode is not `RUN` (detail: the opcode) |
 | `0x50` | `NO_MEMORY` | no free block of the region holds the request |
 | `0x51` | `NO_SLOTS` | the region's block table (64 entries) is full |
 | `0x52` | `BAD_FREE` | the address is not the start of a used block |
-| `0x53` | `BAD_ARG` | a region past 3 or unconfigured, a zero size, an alignment or granule that is not a power of two, a base off the granule |
+| `0x53` | `BAD_ARG` | a region past 3 or unconfigured, a zero size, an alignment or granule that is not a power of two, a base off the granule, or a `LIST` header validation failure (detail 1: epoch mismatch; detail 2: list ABI version or flags mismatch; value: the submitted epoch) |
 | `0x54` | `HEAP_BUSY` | `HEAP` on a region that still has live blocks |
 
 ## 5. stdio

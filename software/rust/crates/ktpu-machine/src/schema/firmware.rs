@@ -84,10 +84,27 @@ pub struct Debug {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Queue {
+    pub magic: u64,
+    pub min_version: u32,
     pub version: u32,
+    pub list_version: u32,
     pub line: u32,
     pub sq_bytes: u32,
     pub cq_bytes: u32,
+    pub sq_words: u32,
+    pub nbind_shift: u32,
+    pub stdio_mask: u64,
+    pub op_mask: u32,
+    pub cq_status_mask: u32,
+    pub offsets: BTreeMap<String, u32>,
+    pub cq_offsets: BTreeMap<String, u32>,
+    pub info_words: BTreeMap<String, u32>,
+    pub fw_words: BTreeMap<String, u32>,
+    pub states: BTreeMap<String, u32>,
+    pub opcodes: BTreeMap<String, u32>,
+    pub run_words: BTreeMap<String, u32>,
+    pub list_words: BTreeMap<String, u32>,
+    pub status: BTreeMap<String, u32>,
     pub record: QueueRecord,
 }
 
@@ -96,6 +113,7 @@ pub struct Queue {
 pub struct QueueRecord {
     pub version: u32,
     pub bytes: u32,
+    pub word: u32,
     pub fields: BTreeMap<String, RecordField>,
 }
 
