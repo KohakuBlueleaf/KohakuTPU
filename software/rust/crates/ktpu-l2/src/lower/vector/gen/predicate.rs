@@ -1,5 +1,6 @@
 //! Consume a one-use comparison mask as a predicate instead of materializing
-//! 0/1 in RF and selecting it back. Payloads move bitwise; no arithmetic rewrite.
+//! 0/1 in RF and selecting it back. Payloads move by vmov, as VSEL would move
+//! them: bit for bit except a zero, which comes back +0 (ISA.VC.058).
 
 use std::collections::HashMap;
 
@@ -76,11 +77,16 @@ pub fn fuse(events: Vec<Event>) -> Vec<Event> {
             {
                 return None;
             }
-            let initial = ir::math("vmov", s[0].clone(), vec![s[2].clone()], vec![]);
-            let arm = if crate::mutant::on("l2.predicate-select/wrong-arm") {
-                s[2]
+            let (yes, no) = if crate::mutant::on("l2.vector/sel-arms-swapped") {
+                (s[2], s[1])
             } else {
-                s[1]
+                (s[1], s[2])
+            };
+            let initial = ir::math("vmov", s[0].clone(), vec![no.clone()], vec![]);
+            let arm = if crate::mutant::on("l2.predicate-select/wrong-arm") {
+                no
+            } else {
+                yes
             };
             let chosen = ir::math(
                 "vmov",
@@ -159,5 +165,54 @@ mod tests {
         };
         let fused = fuse(constants);
         assert!(matches!(&fused[1], Event::Op { syms, .. } if syms == &vec![Symbol(2)]));
+    }
+
+    #[cfg(feature = "mutants")]
+    #[test]
+    fn swapped_arms_reach_the_fused_select() {
+        let sel = vec![
+            event(ir::math(
+                "vcmplt",
+                Term::name("p1"),
+                vec![Term::name("%1"), Term::name("%5")],
+                vec![],
+            )),
+            event(ir::math(
+                "vmov",
+                Term::name("%2"),
+                vec![Term::name("k0")],
+                vec![],
+            )),
+            event(ir::math(
+                "vmov",
+                Term::name("%2"),
+                vec![Term::name("k1")],
+                vec![ir::kw("if", Term::name("p1"))],
+            )),
+            event(ir::math(
+                "vsel",
+                Term::name("%4"),
+                vec![Term::name("%1"), Term::name("%5"), Term::name("%2")],
+                vec![],
+            )),
+        ];
+        let sources = |events: Vec<Event>| -> Vec<Term> {
+            [0, 2]
+                .iter()
+                .map(|&i| op(&events[i]).unwrap().positional()[1].clone())
+                .collect()
+        };
+        assert_eq!(
+            sources(fuse(sel.clone())),
+            [Term::name("%5"), Term::name("%1")]
+        );
+        let swapped = crate::mutant::State {
+            active: Some("l2.vector/sel-arms-swapped"),
+            ..Default::default()
+        };
+        assert_eq!(
+            crate::mutant::scoped(swapped, || sources(fuse(sel))),
+            [Term::name("%1"), Term::name("%5")]
+        );
     }
 }
