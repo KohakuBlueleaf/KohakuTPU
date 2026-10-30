@@ -10,7 +10,7 @@
 
 use crate::expr;
 use crate::gen::vector::{Kind, Operand};
-use crate::gen::{convert, lanes, matmul, transpose, vector};
+use crate::gen::{convert, lanes, matmul, reductions, transpose, vector};
 use crate::kernel::Kernel;
 use crate::trace::{fail, R};
 use ktpu_graph as g;
@@ -153,6 +153,16 @@ pub fn lanes_plan(a: &Value, m: &Machine) -> R<lanes::Plan> {
 pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
     let e = |k: &str| expr::from_table(arg(a, k)?);
     Ok(match gen {
+        "reductions.wide_fold_kernel" => {
+            let (out, r, w) = (operand(arg(a, "out")?)?, int(a, "R")?, int(a, "W")?);
+            let ops = operands(arg(a, "operands")?)?;
+            reductions::wide_fold_kernel(&e("e")?, &ops, r, w, &out, m)?.0
+        }
+        "reductions.column_tree_kernel" => {
+            let (out, r, w) = (operand(arg(a, "out")?)?, int(a, "R")?, int(a, "W")?);
+            let ops = operands(arg(a, "operands")?)?;
+            reductions::column_tree_kernel(&e("e")?, &ops, r, w, &out, m)?
+        }
         "vector.rows_kernel" => {
             let bands = a.get("bands").and_then(Value::as_i64);
             let (out, r, w) = (operand(arg(a, "out")?)?, int(a, "R")?, int(a, "W")?);

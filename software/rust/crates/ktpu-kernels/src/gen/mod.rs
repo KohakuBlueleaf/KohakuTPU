@@ -3,6 +3,7 @@
 pub mod convert;
 pub mod lanes;
 pub mod matmul;
+pub mod reductions;
 pub mod transpose;
 pub mod vector;
 

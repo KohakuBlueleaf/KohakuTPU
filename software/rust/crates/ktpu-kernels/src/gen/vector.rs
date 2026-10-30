@@ -763,7 +763,7 @@ pub fn rows_kernel(
 /// the band computed there, its first `rows` rows copied out -- no row
 /// past R read or written, but a statistic's: its word, whole.
 #[allow(clippy::too_many_arguments)]
-fn tail_band(
+pub(super) fn tail_band(
     t: &mut Trace,
     bufs: &Bufs,
     e: &E,

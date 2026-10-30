@@ -271,6 +271,20 @@ fn expr_text(e: &program::Expr, at: usize) -> String {
 }
 
 // ------------------------------------------------------------------- tg.run
+/// The planner knobs a vector's `input` runs with: [`run::Knobs::resolve`],
+/// each knob the vector names explicitly (`input.knobs`, by its Python name)
+/// set; a knob the planner does not take refuses.
+pub fn knobs(input: &Value) -> Result<run::Knobs, String> {
+    let mut k = run::Knobs::resolve();
+    for (name, v) in input["knobs"].as_object().into_iter().flatten() {
+        match (name.as_str(), v.as_bool()) {
+            ("rows.SINGLE_PACKAGE_AST", Some(on)) => k.rows.single_package_ast = on,
+            _ => return Err(format!("knob {name} = {v} is not a planner knob")),
+        }
+    }
+    Ok(k)
+}
+
 /// What `make`'s realize ran: every launch in order and the output's base
 /// storage record after (the last run's output slot).
 pub struct Realized {
@@ -284,6 +298,7 @@ pub struct Realized {
 /// the record this crate's run left (so a mutated run's forms carry on); a
 /// refusal as Python prints it.
 pub fn realized(input: &Value) -> Result<Realized, String> {
+    let knobs = knobs(input)?;
     let case = case_of(input)?;
     let m = case.machine();
     let from = case.realized.last().copied().unwrap_or(0);
@@ -305,7 +320,7 @@ pub fn realized(input: &Value) -> Result<Realized, String> {
             lower::Slot::Param(n) => state.slots.get(&n.to_string()).map(|s| s.base.clone()),
             _ => None,
         };
-        let x = run::execute(l, &state, &m).map_err(|(e, _)| class::text(&e))?;
+        let x = run::execute_with(l, &state, &m, knobs).map_err(|(e, _)| class::text(&e))?;
         let bases: Vec<String> = r.end.keys().cloned().collect();
         for (b, rs) in x.records(&bases) {
             left.insert(b.clone(), (r.end[&b].clone(), rs));

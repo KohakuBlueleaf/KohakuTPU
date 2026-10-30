@@ -4,6 +4,7 @@ block runs as per-block partials, then folds them (statistics alone) under
 the expression around the reduction; any other reduction across such a row
 is computed first, as a statistic the rest reads."""
 
+import json
 import os
 from dataclasses import replace
 
@@ -18,10 +19,13 @@ from kohakutpu.application.kernels.classes.policy import ShapeClass
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import launch_reductions as LR
+from kohakutpu.compiler import _rs
 
 #: Whether a multi-stage AST (wide row reduction or column tree reduction) is
-#: compiled into a single kernel package rather than split across launches.
-SINGLE_PACKAGE_AST = True
+#: compiled into a single kernel package rather than split across launches;
+#: the default is the native planner's (`ktpu_kernels::gen::reductions::
+#: defaults`).
+SINGLE_PACKAGE_AST = json.loads(_rs.ROWS_DEFAULTS)["single_package_ast"]
 #: Optional mutant mode for witness testing ("drop_member", "wrong_order", "alias_members").
 MUTANT: str | None = None
 

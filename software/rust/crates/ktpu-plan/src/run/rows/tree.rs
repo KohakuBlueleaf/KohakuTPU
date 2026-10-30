@@ -20,6 +20,12 @@ impl Runner<'_> {
         if reds.len() != 1 {
             return row_err("a reduction down the rows holds one reduction");
         }
+        if r > 1 && self.knobs.rows.single_package_ast {
+            let mut binds = binds.clone();
+            binds.insert("out".into(), out_at.clone());
+            self.launch_reduction("column_tree_kernel", e, ops, binds, r, w, out, info.clone());
+            return Ok(());
+        }
         let mut scratch = Vec::new();
         let got = self.tree(
             e,
@@ -64,7 +70,11 @@ impl Runner<'_> {
         let views = self.m.facts().vc.descriptors as i64;
         let mut n = r;
         let mut cur: Option<String> = None;
-        if n > 1 && 2 * ops.len() as i64 + 1 > views {
+        let row_split = (n / 2) % self.stat_rows() != 0 || n % 2 != 0;
+        if n > 1
+            && (2 * ops.len() as i64 + 1 > views
+                || (ops.iter().any(|o| o.kind == "row") && row_split))
+        {
             let c = self.x.raw(n * row);
             scratch.push(c.clone());
             let at = self.x.addr(&c, 0);

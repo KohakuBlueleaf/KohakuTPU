@@ -5,6 +5,7 @@ from contextlib import ExitStack
 from unittest.mock import patch
 
 from kohakutpu.application.kernels import expr as X
+from kohakutpu.application.kernels import relayout as RL
 from kohakutpu.application.ktpugrad import run as R
 from kohakutpu.application.ktpugrad import uops as U
 from kohakutpu.application.runtime import rows as RW
@@ -93,8 +94,9 @@ class ArithmeticPath:
                         rows=rows,
                         width=width,
                         levels=levels,
-                        materialize_argument=rows > 1
-                        and 2 * len(operands) + 1 > TR.VIEWS,
+                        materialize_argument=TR.materialized(
+                            operands, rows, RL.hw_for(dev).descriptors
+                        ),
                         formats=[
                             "f16 inputs",
                             "E8M15 pairwise fold",

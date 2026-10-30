@@ -38,7 +38,11 @@ fn every_product_records_and_replays_its_knobs() {
         let m = case.machine();
         for r in &case.runs {
             let l = lower::plan(&case.plans[r.plan].uops).expect("a run's ast plans");
-            let x = match run::execute_under(l, &r.state, &m, k) {
+            let all = run::Knobs {
+                matmul: k,
+                ..run::Knobs::resolve()
+            };
+            let x = match run::execute_with(l, &r.state, &m, all) {
                 Ok(x) | Err((_, x)) => x,
             };
             for s in &x.steps {

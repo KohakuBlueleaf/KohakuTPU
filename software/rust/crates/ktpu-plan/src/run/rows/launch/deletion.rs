@@ -79,6 +79,7 @@ fn column_extent_preserved() -> bool {
             3,
             64,
             &original,
+            None,
             Value::Null,
         )
         .unwrap();

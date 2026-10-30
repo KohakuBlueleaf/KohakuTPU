@@ -55,6 +55,21 @@ pub fn layout(pairs: &[(&str, i64)]) -> Vec<(String, g::LayoutValue)> {
         .collect()
 }
 
+/// The extents `shape` a caller supplies for port `p` of kernel `name`
+/// checked against the port's: a DSL.KERN.020 refusal when they differ.
+pub fn bind_shape(name: &str, p: &Port, shape: &[i64]) -> R<()> {
+    if shape != p.dims {
+        return fail(
+            "DSL.KERN.020",
+            format!(
+                "{name}: {} has extents {:?} where the kernel says {:?}",
+                p.name, shape, p.dims
+            ),
+        );
+    }
+    Ok(())
+}
+
 /// The kernel `name` over `ports` (each given the spec in `given`) traced
 /// for `machine`: each port's spec is the given shape with the port's
 /// element type and layout, the given rank and fixed extents checked.
@@ -71,15 +86,7 @@ pub fn build(
         let Some((_, s)) = given.iter().find(|(n, _)| *n == p.name) else {
             return fail("DSL.KERN.020", format!("{name}: no tensor for {}", p.name));
         };
-        if s.shape.len() != p.dims.len() || s.shape != p.dims {
-            return fail(
-                "DSL.KERN.020",
-                format!(
-                    "{name}: {} has extents {:?} where the kernel says {:?}",
-                    p.name, s.shape, p.dims
-                ),
-            );
-        }
+        bind_shape(name, p, &s.shape)?;
         let spec = buffer::spec(&s.shape, p.dtype, p.layout.clone(), g::BufSpace::Dram)?;
         bufs.push(t.port(&p.name, p.role, spec)?);
     }

@@ -16,15 +16,26 @@ from kohakutpu.application.kernels import convert as C
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import prepared as P
 from kohakutpu.application.kernels import relayout as RL
+from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.vector import Operand
-from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import costs
+from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import launch_reductions as LR
 from kohakutpu.application.runtime import rows as RW
 
 OP = {"sum": "add", "max": "max", "prod": "mul"}
-#: Memory views one vector core's kernel takes (`l2/vector.py` DESCS).
-VIEWS = 8
+
+
+def materialized(operands, R: int, views: int) -> bool:
+    """Whether a tree's first level computes `e` into a scratch first: its
+    reads twice over pass a core's memory `views` (`vc.descriptors`), or a
+    statistic operand's halves do not split in whole words."""
+    return R > 1 and (
+        2 * len(operands) + 1 > views
+        or (
+            any(o.kind == "row" for o in operands) and ((R // 2) % V.STAT_ROWS or R % 2)
+        )
+    )
 
 
 def _shift(o: Operand, rows: int, W: int) -> Operand:
@@ -95,7 +106,9 @@ def column(
         cores = dev.machine.count("VC")
         operands_b, binds_b = RW._based(operands, dict(binds, out=out_at), "in")
         (out_b,), binds_b = RW._based([out], binds_b, "out")
-        k, given = column_tree_kernel(e, operands_b, R, W, out_b, cores)
+        k, given = column_tree_kernel(
+            e, operands_b, R, W, out_b, cores, hw=RL.hw_for(dev)
+        )
         return [FM.launch(dev, k, given, binds_b, info=info)]
     red = reds[0]
     op = OP[red.op]
@@ -110,9 +123,10 @@ def column(
         scratch.append(at)
         return at
 
+    views = RL.hw_for(dev).descriptors
     try:
         n, ops, bnd = R, list(operands), dict(binds)
-        if R % 2 or 2 * len(ops) + 1 > VIEWS:
+        if R % 2 or 2 * len(ops) + 1 > views:
             # A `forms.Pending` read is made inside the first level's kernel
             # (both halves of it); a level reading it twice over, made first.
             bnd = {
@@ -121,10 +135,7 @@ def column(
             }
             binds = {**binds, **{k: bnd[k] for k in binds}}
         cur = None  # once a level ran: the scratch rows
-        if n > 1 and (
-            2 * len(ops) + 1 > VIEWS
-            or (any(o.kind == "row" for o in ops) and ((n // 2) % 16 or n % 2))
-        ):
+        if materialized(ops, n, views):
             # e's reads twice over pass a core's views: e into a scratch first.
             cur = alloc(n)
             runs += RW.run(dev, red.arg, ops, bnd, n, W, full, cur, info)
@@ -189,7 +200,7 @@ def _place(post, acc, base: int):
     return post
 
 
-__all__ = ["OP", "VIEWS", "column", "column_tree_kernel"]
+__all__ = ["OP", "column", "column_tree_kernel", "materialized"]
 
 
 def column_tree_kernel(*args, **kwargs):

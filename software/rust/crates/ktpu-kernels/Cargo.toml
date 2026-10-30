@@ -16,6 +16,10 @@ ktpu-machine.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha1_smol = "1"
 
+[[example]]
+name = "reverse_regold"
+required-features = ["mutants"]
+
 [dev-dependencies]
 serde.workspace = true
 sha2.workspace = true

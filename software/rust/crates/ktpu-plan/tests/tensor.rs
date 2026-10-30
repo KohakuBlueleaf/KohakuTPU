@@ -1,4 +1,5 @@
-//! `tensor::Session` against the Python `kp` planner (API.TEN / OP / FUSE /
+//! `tensor::Session` at each golden's knobs (`common::knobs`) against the
+//! Python `kp` planner (API.TEN / OP / FUSE /
 //! READ): every recorded `kp` op log replays with the same steps (storage
 //! names, launch names and graphs included), the same tensors made (shape,
 //! statistic, storage) and the same refusals.
@@ -27,6 +28,7 @@ fn every_kp_log_takes_the_python_steps() {
         cases += 1;
         let m = case.machine();
         let mut s = Session::new(&m);
+        s.r.knobs = common::knobs(&case.case);
         let mut names: HashMap<String, usize> = HashMap::new();
         for (i, k) in case.kp.iter().enumerate() {
             entries += 1;

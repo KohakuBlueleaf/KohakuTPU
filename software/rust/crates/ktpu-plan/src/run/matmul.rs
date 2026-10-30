@@ -407,7 +407,7 @@ impl Runner<'_> {
         });
         let hw = self.hw;
         let q = if stat { self.stat_rows() } else { hw.band };
-        let mut mm = Mm::plan(self.m, &self.knobs, bt, em, np, k, shared, Some(q))?;
+        let mut mm = Mm::plan(self.m, &self.knobs.matmul, bt, em, np, k, shared, Some(q))?;
         let src_a = Operand {
             pitch: pa,
             offset: a.off,

@@ -62,7 +62,9 @@ impl Runner<'_> {
         out
     }
 
-    /// `rows._launch`.
+    /// `rows._launch`. A statistic output's buffer is the planner's: `stat`
+    /// gives its extents (one block's statistic, or the partials of each
+    /// block), bound against the kernel's `out` port (DSL.KERN.020).
     #[allow(clippy::too_many_arguments)]
     fn launch_rows(
         &mut self,
@@ -72,13 +74,21 @@ impl Runner<'_> {
         r: i64,
         w: i64,
         out: &Operand,
+        stat: Option<&[i64]>,
         info: Value,
     ) -> Result<(), Refusal> {
         let ops = self.based(ops, &mut binds, "in");
         let out = self
             .based(std::slice::from_ref(out), &mut binds, "out")
             .remove(0);
-        self.rows_kernel(e, &ops, r, w, &out)?;
+        let (_, shape) = self.rows_kernel(e, &ops, r, w, &out)?;
+        if let Some(stat) = stat {
+            ktpu_kernels::kernel::bind_shape(
+                "rows",
+                &ktpu_kernels::kernel::Port::output("out", &shape, ktpu_graph::Dtype::F16),
+                stat,
+            )?;
+        }
         let call = Call {
             gen: "vector.rows_kernel".into(),
             args: json!({
@@ -92,6 +102,38 @@ impl Runner<'_> {
         };
         self.x.launch(call, "dsl", info, binds);
         Ok(())
+    }
+
+    /// `rows._launch_wide` / `tree.column`'s single package: generator
+    /// `reductions.{gen}` over the based operands and output.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn launch_reduction(
+        &mut self,
+        gen: &str,
+        e: &E,
+        ops: &[Operand],
+        mut binds: BTreeMap<String, Addr>,
+        r: i64,
+        w: i64,
+        out: &Operand,
+        info: Value,
+    ) {
+        let ops = self.based(ops, &mut binds, "in");
+        let out = self
+            .based(std::slice::from_ref(out), &mut binds, "out")
+            .remove(0);
+        let call = Call {
+            gen: format!("reductions.{gen}"),
+            args: json!({
+                "e": expr_arg(e),
+                "operands": ops.iter().map(Operand::json).collect::<Vec<_>>(),
+                "R": r,
+                "W": w,
+                "out": out.json(),
+                "cores": self.cores(),
+            }),
+        };
+        self.x.launch(call, "dsl", info, binds);
     }
 
     /// `rows._whole_rows`.
@@ -153,12 +195,34 @@ impl Runner<'_> {
         let mut b = binds.clone();
         b.insert("out".into(), out_at.clone());
         if out.kind != "row" {
-            return self.launch_rows(e, ops, b, r, w, out, info.clone());
+            return self.launch_rows(e, ops, b, r, w, out, None, info.clone());
         }
         if blocks == 1 {
-            return self.launch_rows(e, ops, b, r, w, &Operand::new("row"), info.clone());
+            let row = Operand::new("row");
+            let stat = ktpu_kernels::gen::vector::port_shape(
+                &ktpu_kernels::call::operand(&row.json())?,
+                r,
+                w,
+                &ktpu_kernels::gen::Hw::of(self.m),
+            )?;
+            return self.launch_rows(e, ops, b, r, w, &row, Some(&stat), info.clone());
         }
         let red = reds[0].clone();
+        if self.knobs.rows.single_package_ast {
+            let (_, keep) = substitute(e, Some(&red), Some(&expr::load(0)), 1);
+            if keep
+                .iter()
+                .any(|i| ops[*i].kind != "row" && ops[*i].kind != "scalar")
+            {
+                return row_err(
+                    "a row-wide operand outside a reduction whose result is a statistic",
+                );
+            }
+            let mut info = info.clone();
+            info["blocks"] = json!(blocks);
+            self.launch_reduction("wide_fold_kernel", e, ops, b, r, w, out, info);
+            return Ok(());
+        }
         let (nblk, shape) = self.rows_kernel(&red, ops, r, w, &Operand::new("row"))?;
         let rq = *shape.last().unwrap();
         let nbytes = 2 * shape.iter().product::<i64>();
@@ -200,7 +264,7 @@ impl Runner<'_> {
         b1.insert("out".into(), self.x.addr(&parts[0], 0));
         let mut info1 = info.clone();
         info1["blocks"] = json!(nblk);
-        self.launch_rows(red, ops, b1, r, w, &part, info1)?;
+        self.launch_rows(red, ops, b1, r, w, &part, Some(&[nblk, rq]), info1)?;
         let Expr::Reduce(rop, _) = red.as_ref() else {
             unreachable!()
         };

@@ -283,7 +283,7 @@ impl Session<'_> {
             1
         };
         let shared = sw.len() == 2;
-        let knobs = self.r.knobs;
+        let knobs = self.r.knobs.matmul;
         let mut mm = Mm::plan(self.r.m, &knobs, bt, m, n, k, shared, None)
             .map_err(|e| Refusal::new("API.OP.006", e.message))?;
         let src = Operand {

@@ -1,12 +1,20 @@
-//! Shared by the golden tests: the goldens, steps as comparable JSON.
+//! Shared by the golden tests and the golden recorders: the goldens, the
+//! ported vectors and the knobs a golden is recorded at, a direct rows call,
+//! steps as comparable JSON.
 
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use ktpu_plan::Step;
+use ktpu_machine::Machine;
+use ktpu_plan::exec::Exec;
+use ktpu_plan::expr::{self, E};
+use ktpu_plan::program::RowsCall;
+use ktpu_plan::run::{self, Operand, Runner};
+use ktpu_plan::uop::Graph;
+use ktpu_plan::{class, program, spec, Addr, Step};
 use serde_json::Value;
 
 pub fn goldens() -> Vec<PathBuf> {
@@ -18,6 +26,135 @@ pub fn goldens() -> Vec<PathBuf> {
         .collect();
     out.sort();
     out
+}
+
+/// A ported vector: its name (its golden's stem), its path from the vector
+/// root less `.json`, its input.
+pub struct Vector {
+    pub name: String,
+    pub from: String,
+    pub input: Value,
+}
+
+fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+    for e in std::fs::read_dir(dir).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            walk(&p, out);
+        } else if p.extension().is_some_and(|x| x == "json") {
+            out.push(p);
+        }
+    }
+}
+
+/// Every ported vector (its runner one `spec::runners` names), by path.
+pub fn vectors() -> &'static [Vector] {
+    static VECTORS: OnceLock<Vec<Vector>> = OnceLock::new();
+    VECTORS.get_or_init(|| {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/spec/vectors");
+        let mut files = Vec::new();
+        walk(&root, &mut files);
+        files.sort();
+        let mut out = Vec::new();
+        for f in files {
+            let v: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
+            if !v["runner"]
+                .as_str()
+                .is_some_and(|r| spec::runners().contains(&r))
+            {
+                continue;
+            }
+            let rel = f.strip_prefix(&root).unwrap().with_extension("");
+            out.push(Vector {
+                name: f.file_stem().unwrap().to_string_lossy().into(),
+                from: rel.to_string_lossy().replace('\\', "/"),
+                input: v["input"].clone(),
+            });
+        }
+        out
+    })
+}
+
+/// The knobs golden `case` is recorded at: its vector's (`spec::knobs`),
+/// else the resolved defaults.
+pub fn knobs(case: &str) -> run::Knobs {
+    vectors()
+        .iter()
+        .find(|v| v.name == case)
+        .map_or_else(run::Knobs::resolve, |v| {
+            spec::knobs(&v.input).expect("a golden's vector names knobs the planner takes")
+        })
+}
+
+fn num(v: &Value) -> f64 {
+    match v.as_str() {
+        Some("inf") => f64::INFINITY,
+        Some("-inf") => f64::NEG_INFINITY,
+        Some(_) => f64::NAN,
+        None => v.as_f64().unwrap(),
+    }
+}
+
+/// An expression from its node table.
+fn expr_of(t: &Value) -> E {
+    let mut nodes: Vec<E> = Vec::new();
+    for n in t["nodes"].as_array().unwrap() {
+        let at = |k: &Value| nodes[k.as_u64().unwrap() as usize].clone();
+        let e = if let Some(i) = n.get("load") {
+            expr::load(i.as_u64().unwrap() as usize)
+        } else if let Some(c) = n.get("const") {
+            expr::constant(num(c))
+        } else if let Some(r) = n.get("reduce") {
+            expr::reduce(r.as_str().unwrap(), at(&n["arg"]))
+        } else {
+            let args = n["args"].as_array().unwrap().iter().map(at).collect();
+            expr::op(n["op"].as_str().unwrap(), args)
+        };
+        nodes.push(e);
+    }
+    nodes[t["root"].as_u64().unwrap() as usize].clone()
+}
+
+fn operand(v: &Value) -> Operand {
+    Operand {
+        kind: v["kind"].as_str().unwrap().into(),
+        dtype: v["dtype"].as_str().unwrap().into(),
+        offset: v["offset"].as_i64().unwrap(),
+        pitch: v["pitch"].as_i64().unwrap(),
+        rows: v["rows"].as_i64().unwrap(),
+    }
+}
+
+/// `rows.run` called with a golden call's arguments at `knobs`: the runner
+/// after, the refusal as Python prints it.
+pub fn rows_call<'a>(
+    c: &RowsCall,
+    m: &'a Machine,
+    knobs: run::Knobs,
+) -> (Runner<'a>, Option<String>) {
+    let a = &c.args;
+    let ops: Vec<Operand> = a["operands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(operand)
+        .collect();
+    let binds: BTreeMap<String, Addr> = serde_json::from_value(a["binds"].clone()).unwrap();
+    let out_at: Addr = serde_json::from_value(a["out_at"].clone()).unwrap();
+    let mut r = Runner::new(m, Graph::default(), Exec::default());
+    r.knobs = knobs;
+    let got = r.rows_run(
+        &expr_of(&a["e"]["expr"]),
+        &ops,
+        &binds,
+        a["R"].as_i64().unwrap(),
+        a["W"].as_i64().unwrap(),
+        &operand(&a["out"]),
+        &out_at,
+        &a["info"],
+    );
+    let got = got.and(program::compile(&mut r.x.steps, m));
+    (r, got.err().map(|e| class::text(&e)))
 }
 
 /// Kernel name -> its graph as RUL.060 rules a truncation (`golden/kernels`,

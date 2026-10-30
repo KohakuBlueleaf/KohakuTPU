@@ -884,6 +884,13 @@ fn mm_takes_f16(args_json: &str, machine_json: &str) -> PyResult<bool> {
     ktpu_kernels::call::mm_takes_f16(&args, &m).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
+/// The rows reduction knobs' defaults (`ktpu_kernels::gen::reductions::
+/// defaults`), a JSON object: Python's `rows.SINGLE_PACKAGE_AST`.
+fn rows_defaults() -> String {
+    let d = ktpu_kernels::gen::reductions::defaults();
+    serde_json::json!({"single_package_ast": d.single_package_ast}).to_string()
+}
+
 #[pymodule]
 #[pyo3(name = "_rs")]
 fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -908,6 +915,7 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mm_takes_f16, m)?)?;
     m.add("MM_KNOBS", mm_knob_table())?;
     m.add("VECTOR_DEFAULTS", vector_defaults())?;
+    m.add("ROWS_DEFAULTS", rows_defaults())?;
     m.add_function(wrap_pyfunction!(bind, m)?)?;
     m.add_function(wrap_pyfunction!(bind_cache_stats, m)?)?;
     m.add_function(wrap_pyfunction!(bind_cache_configure, m)?)?;

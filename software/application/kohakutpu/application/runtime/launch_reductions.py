@@ -1,12 +1,18 @@
 """Single-package reduction emitters retaining each f16 partial-store boundary."""
 
+import json
+
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import prepared as P
+from kohakutpu.application.kernels import relayout as RL
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.vector import Operand
+from kohakutpu.application.plan import emit
 from kohakutpu.application.runtime import rows as RW
 from kohakutpu.application.runtime import tree as TR
 from kohakutpu.language import dsl as kt
+from kohakutpu.language import machine as MF
+from kohakutpu.stack import kernel as K
 
 
 def emit_rows_stages(
@@ -129,9 +135,10 @@ def wide_fold_kernel(e, operands, R: int, W: int, out: Operand, cores: int):
 
 
 def column_tree_kernel(
-    e, operands, R: int, W: int, out: Operand, cores: int, *, made=None, hw=None
+    e, operands, R: int, W: int, out: Operand, cores: int, *, hw, made=None
 ):
-    """Single-package column reduction tree kernel over `[R, W]`."""
+    """Single-package column reduction tree kernel over `[R, W]` on the
+    machine `hw` describes (`relayout.hw_for`)."""
     made = dict(made or {})
     prepkey = tuple(sorted((i, tuple(p.shape() for p in ps)) for i, ps in made.items()))
     operands = tuple(operands)
@@ -185,10 +192,7 @@ def column_tree_kernel(
         ops = list(operands)
         bnd = {f"in{i}": p[f"in{i}"] for i in range(len(ops))}
         cur = None
-        if n > 1 and (
-            2 * len(ops) + 1 > TR.VIEWS
-            or (any(o.kind == "row" for o in ops) and ((n // 2) % 16 or n % 2))
-        ):
+        if TR.materialized(ops, n, hw.descriptors):
             cur = kt.buffer((n, W), "f16")
             RW.emit_rows_stages(
                 {**bnd, "out": cur}, red.arg, tuple(ops), n, W, full, cores
@@ -285,3 +289,20 @@ def column_tree_kernel(
         while len(V._kernels) > V.KERNELS_KEPT:
             V._kernels.popitem(last=False)
     return got
+
+
+def call_graph(gen: str, args: dict, machine) -> dict:
+    """The graph of generator call `reductions.{name}` (as ktpu-plan encodes
+    it: `e`, `operands`, `R`, `W`, `out`) traced here for `machine`
+    (`runtime.machine.machine_of`)."""
+    e = emit.parse_expr(args["e"])
+    ops = tuple(Operand(**o) for o in args["operands"])
+    out = Operand(**args["out"])
+    cores = machine.count("VC")
+    R, W = args["R"], args["W"]
+    if gen == "reductions.wide_fold_kernel":
+        k, given, _ = wide_fold_kernel(e, ops, R, W, out, cores)
+    else:
+        hw = RL.hw_of(MF.load(machine.board), cores)
+        k, given = column_tree_kernel(e, ops, R, W, out, cores, hw=hw)
+    return json.loads(k.trace(given, machine=K.dsl_machine(machine)).graph_json)

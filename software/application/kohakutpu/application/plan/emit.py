@@ -6,7 +6,8 @@
   size, element type, valid and allocated forms, host bytes; each slot's base
   and byte offset.
 - `expr`: a `kernels.expr` expression as a node table, a node reached twice
-  stored once (the generators emit a shared node once).
+  stored once (the generators emit a shared node once); `parse_expr` reads
+  one back.
 - `operand`, `form`: a `kernels.vector.Operand`, a storage form key.
 
 `Names` gives every storage the planner sees a stable name (``buf0``..),
@@ -112,6 +113,24 @@ def expr(e, seen: dict | None = None) -> dict:
     return {"nodes": nodes, "root": root}
 
 
+def parse_expr(table: dict):
+    """The `kernels.expr` expression of an `expr` node table, bare or under
+    `"expr"` (a generator argument, as ktpu-kernels' `expr::from_table`
+    reads it)."""
+    table = table.get("expr", table)
+    made: list = []
+    for node in table["nodes"]:
+        if "load" in node:
+            made.append(X.Load(node["load"]))
+        elif "const" in node:
+            made.append(X.Const(float(node["const"])))
+        elif "op" in node:
+            made.append(X.Op(node["op"], tuple(made[j] for j in node["args"])))
+        else:
+            made.append(X.Reduce(node["reduce"], made[node["arg"]]))
+    return made[table["root"]]
+
+
 def operand(o: Operand) -> dict:
     return dataclasses.asdict(o)
 
@@ -192,6 +211,7 @@ __all__ = [
     "host_digest",
     "number",
     "operand",
+    "parse_expr",
     "plain",
     "state",
     "storage",

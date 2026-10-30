@@ -9,6 +9,7 @@ pub enum Py {
     Float(f64),
     Str(String),
     Bool(bool),
+    None,
     Tuple(Vec<Py>),
     /// A dataclass: `Name(field=value, ..)`.
     Obj(&'static str, Vec<(&'static str, Py)>),
@@ -33,6 +34,7 @@ impl Py {
             Py::Float(x) => float_repr(*x),
             Py::Str(s) => str_repr(s),
             Py::Bool(b) => if *b { "True" } else { "False" }.to_string(),
+            Py::None => "None".to_string(),
             Py::Tuple(xs) => {
                 let inner: Vec<String> = xs.iter().map(Py::repr).collect();
                 if xs.len() == 1 {

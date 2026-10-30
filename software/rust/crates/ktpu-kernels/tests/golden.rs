@@ -213,6 +213,40 @@ fn each_mutant_breaks_golden_calls() {
             assert_ne!(plain.graph.ports, broken.graph.ports);
             continue;
         }
+        if ktpu_kernels::gen::reductions::EMITTER_MUTANTS
+            .iter()
+            .any(|(n, _)| n == name)
+        {
+            // No golden call reaches the single-package reductions.
+            let m = machine("multimesh_v9t6", 1);
+            let full = |w: i64| serde_json::json!({"kind": "full", "dtype": "f16", "pitch": w, "offset": 0, "rows": 0});
+            let sum =
+                serde_json::json!({"nodes": [{"load": 0}, {"reduce": "sum", "arg": 0}], "root": 1});
+            let calls = [
+                (
+                    "reductions.wide_fold_kernel",
+                    serde_json::json!({
+                        "e": sum, "operands": [full(1184)], "R": 8, "W": 1184,
+                        "out": {"kind": "row", "dtype": "f16", "pitch": 0, "offset": 0, "rows": 0}
+                    }),
+                ),
+                (
+                    "reductions.column_tree_kernel",
+                    serde_json::json!({
+                        "e": sum, "operands": [full(64)], "R": 5, "W": 64, "out": full(64)
+                    }),
+                ),
+            ];
+            let moved = calls
+                .iter()
+                .filter(|(gen, args)| {
+                    let make = || ktpu_kernels::call::call(gen, args, &m).unwrap();
+                    make().graph.body != ktpu_kernels::mutants::with(name, make).graph.body
+                })
+                .count();
+            assert!(moved > 0, "mutant {name} changes no reductions kernel");
+            continue;
+        }
         let t = ktpu_kernels::mutants::with(name, check_all);
         eprintln!(
             "{name}: {} of {} golden calls differ",

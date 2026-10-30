@@ -1,4 +1,5 @@
-//! `run::execute` against the Python planner (TG.RUN): every recorded run
+//! `run::execute_with` at each golden's knobs (`common::knobs`) against the
+//! Python planner (TG.RUN): every recorded run
 //! takes the same steps (allocations, forms, tables, writes, casts, launches
 //! by generator call, name, graph, kind, info and binds; temporaries matched
 //! by order of first use) and leaves the same storage records, or fails the
@@ -23,10 +24,11 @@ fn every_run_takes_the_python_steps() {
     for f in goldens() {
         let case: Case = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
         let m = case.machine();
+        let k = common::knobs(&case.case);
         for (i, r) in case.runs.iter().enumerate() {
             total += 1;
             let l = lower::plan(&case.plans[r.plan].uops).expect("a run's ast plans");
-            let got = run::execute(l, &r.state, &m);
+            let got = run::execute_with(l, &r.state, &m, k);
             let (x, err) = match got {
                 Ok(x) => (x, None),
                 Err((e, x)) => (x, Some(e)),
@@ -53,8 +55,8 @@ fn every_run_takes_the_python_steps() {
             #[cfg(feature = "mutants")]
             if err.is_none() && r.error.is_none() && x.records(&bases) == r.end {
                 let legacy = ktpu_plan::mutant::with("memory/unsafe-bounds", || {
-                    run::execute(lower::plan(&case.plans[r.plan].uops).unwrap(), &r.state, &m)
-                        .unwrap()
+                    let l = lower::plan(&case.plans[r.plan].uops).unwrap();
+                    run::execute_with(l, &r.state, &m, k).unwrap()
                 });
                 if normal(&legacy.steps) == want {
                     // RUL.020 adds explicit padded operands instead of allocation tails.

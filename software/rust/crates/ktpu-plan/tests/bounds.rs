@@ -104,7 +104,11 @@ fn recorded(knobs: Knobs) -> Vec<String> {
             let Ok(l) = lower::plan(&case.plans[r.plan].uops) else {
                 continue;
             };
-            let x = match run::execute_under(l, &r.state, &m, knobs) {
+            let all = run::Knobs {
+                matmul: knobs,
+                ..run::Knobs::resolve()
+            };
+            let x = match run::execute_with(l, &r.state, &m, all) {
                 Ok(x) | Err((_, x)) => x,
             };
             for o in overruns(&x.steps, &sizes(&x), &m) {
@@ -115,7 +119,7 @@ fn recorded(knobs: Knobs) -> Vec<String> {
             continue;
         }
         let mut s = Session::new(&m);
-        s.r.knobs = knobs;
+        s.r.knobs.matmul = knobs;
         let mut names: HashMap<String, usize> = HashMap::new();
         for k in &case.kp {
             if let (Ok(r), Some(name)) = (s.replay(&k.op, &k.args, &names), &k.out) {
@@ -147,7 +151,7 @@ fn every_recorded_launch_lies_in_its_storages_under_every_knob() {
 /// residual, realised in a session under `knobs`.
 fn product(m: &Machine, knobs: Knobs, (bt, rows, n, k): (i64, i64, i64, i64)) -> Session<'_> {
     let mut s = Session::new(m);
-    s.r.knobs = knobs;
+    s.r.knobs.matmul = knobs;
     let host = |bytes: i64| Digest {
         bytes,
         sha256: format!("{bytes:064x}"),

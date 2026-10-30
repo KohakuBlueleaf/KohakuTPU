@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use ktpu_kernels::gen::matmul::Knobs;
+use ktpu_kernels::gen::reductions;
 use ktpu_machine::{Machine, Refusal, UnitKind};
 use serde_json::{json, Value};
 use sha2::{Digest as _, Sha256};
@@ -115,13 +115,13 @@ pub struct Runner<'a> {
     pub hw: Hw,
     pub g: Graph,
     pub x: Exec,
-    /// the contraction knobs its products are planned and recorded under
+    /// the knobs its products and rows reductions are planned under
     pub knobs: Knobs,
     keys: usize,
 }
 
 impl<'a> Runner<'a> {
-    /// A runner under the environment's contraction knobs.
+    /// A runner under [`Knobs::resolve`].
     pub fn new(m: &'a Machine, g: Graph, x: Exec) -> Runner<'a> {
         Runner {
             m,
@@ -881,12 +881,30 @@ fn raw_bytes(a: &fold::Arr) -> Vec<u8> {
 /// and storages it leaves (a refused run's too: they are compared).
 #[allow(clippy::result_large_err)]
 pub fn execute(l: Lowered, state: &State, m: &Machine) -> Result<Exec, (Refusal, Exec)> {
-    execute_under(l, state, m, Knobs::resolve())
+    execute_with(l, state, m, Knobs::resolve())
 }
 
-/// [`execute`] under the contraction knobs `knobs`.
+/// The knobs a plan runs under: the contraction's and the rows reductions'.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Knobs {
+    pub matmul: ktpu_kernels::gen::matmul::Knobs,
+    pub rows: reductions::Knobs,
+}
+
+impl Knobs {
+    /// The contraction knobs the environment resolves
+    /// (`matmul::Knobs::resolve`), the rows reductions' defaults.
+    pub fn resolve() -> Self {
+        Self {
+            matmul: ktpu_kernels::gen::matmul::Knobs::resolve(),
+            rows: reductions::defaults(),
+        }
+    }
+}
+
+/// [`execute`] under `knobs`.
 #[allow(clippy::result_large_err)]
-pub fn execute_under(
+pub fn execute_with(
     l: Lowered,
     state: &State,
     m: &Machine,

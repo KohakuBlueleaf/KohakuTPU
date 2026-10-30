@@ -23,12 +23,15 @@ pub const NAMES: &[&str] = &[
     "num.stat/32-a-word",
     "num.expr/round-constant-2-15",
     "dsl.kernel/name",
+    crate::gen::reductions::EMITTER_MUTANTS[0].0,
+    crate::gen::reductions::EMITTER_MUTANTS[1].0,
+    crate::gen::reductions::EMITTER_MUTANTS[2].0,
 ];
 
 /// Mutants no spec vector names, witnessed by this crate's own tests: the
 /// unit facts read as the constants they replaced; a statistic packed in
 /// the [R, 32] form RUL.030 refuses; a reduction read twice taken twice;
-/// the contraction knobs unrecorded.
+/// the contraction knobs unrecorded; the reductions as separate launches.
 pub const LOCAL: &[&str] = &[
     crate::gen::matmul::UNRECORDED_MUTANT,
     "kernels.quant/no-schedule",
@@ -36,6 +39,7 @@ pub const LOCAL: &[&str] = &[
     "kernels.vector/stat_rows_form",
     "kernels.expr/reduces_dup",
     crate::expr::intern::UNORDERED_MUTANT,
+    crate::gen::reductions::SEPARATE_MUTANT,
 ];
 
 #[cfg(feature = "mutants")]
