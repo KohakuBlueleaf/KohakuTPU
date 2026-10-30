@@ -144,7 +144,7 @@ fn receive_does_not_waive_partial_mover_line_ownership() {
     p.payloads.push(Word([0x8000, 0, 0, 0]));
     p.steps.insert(
         0,
-        Step::new(Op::Recv, ktpu_l0::format::ANY_UNIT as u64, 1, address, 0),
+        Step::new(Op::Recv, ktpu_l0::format::ANY_UNIT, 1, address, 0),
     );
     let t = Target::from_machine(&m, Some(1)).unwrap();
     assert!(ktpu_verify::lines::check(&p, 0, &t)
@@ -591,7 +591,7 @@ fn receive_stores_to_dram_not_engine_payload() {
         p.payloads.push(Word([0x8000, 0, 0, 0]));
         p.steps.insert(
             0,
-            Step::new(Op::Recv, ktpu_l0::format::ANY_UNIT as u64, 1, address, 0),
+            Step::new(Op::Recv, ktpu_l0::format::ANY_UNIT, 1, address, 0),
         );
         for p in [p.clone(), unknown_loop(p)] {
             assert!(ktpu_verify::lines::check(&p, 0, &t).is_empty());
@@ -603,7 +603,7 @@ fn receive_stores_to_dram_not_engine_payload() {
     p.payloads.push(Word([0x8000, 0, 0, 0]));
     p.steps.insert(
         0,
-        Step::new(Op::Recv, ktpu_l0::format::ANY_UNIT as u64, 1, address, 0),
+        Step::new(Op::Recv, ktpu_l0::format::ANY_UNIT, 1, address, 0),
     );
     #[cfg(feature = "mutants")]
     assert!(

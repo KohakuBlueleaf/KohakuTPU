@@ -343,8 +343,10 @@ impl Buffer {
         }
         if self.host_dtype() == "f16" {
             let x: Vec<u16> = host
-                .chunks_exact(2)
-                .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&b| u16::from_le_bytes(b))
                 .collect();
             return self.pack(&x, machine);
         }
@@ -412,8 +414,10 @@ impl Buffer {
         let mut v: Vec<f64> = match self.tile() {
             Some(_) => {
                 let h: Vec<u16> = raw
-                    .chunks_exact(2)
-                    .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|&b| u16::from_le_bytes(b))
                     .collect();
                 let h = self.untiled(&h).expect("a tile= layout");
                 h.into_iter()

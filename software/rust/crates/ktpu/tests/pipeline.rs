@@ -242,6 +242,7 @@ fn a_refusal_is_cached_too() {
 }
 
 /// Every entry file under `dir`, and the temporaries beside them.
+#[cfg(windows)]
 fn entries(dir: &std::path::Path) -> (Vec<PathBuf>, usize) {
     let (mut out, mut tmp) = (Vec::new(), 0);
     let mut todo = vec![dir.to_path_buf()];

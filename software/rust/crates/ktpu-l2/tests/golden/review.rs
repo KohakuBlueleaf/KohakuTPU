@@ -44,10 +44,9 @@ impl Review {
             );
         }
         let mutant = std::env::var("KTPU_L2_REGOLD_MUTANT").ok().map(|name| {
-            assert!(
-                cfg!(feature = "mutants"),
-                "KTPU_L2_REGOLD_MUTANT needs --features mutants"
-            );
+            if !cfg!(feature = "mutants") {
+                panic!("KTPU_L2_REGOLD_MUTANT needs --features mutants");
+            }
             *NAMES
                 .iter()
                 .find(|n| **n == name)

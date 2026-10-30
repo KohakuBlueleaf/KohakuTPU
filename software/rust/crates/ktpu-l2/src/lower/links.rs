@@ -170,8 +170,7 @@ impl Links {
             self.queues.entry(k).or_default().push(x.clone());
             return Ok(x);
         }
-        let at;
-        if side == "l1" {
+        let at = if side == "l1" {
             let pool = self.pool;
             if size > pool {
                 return Err(body.reader.fail(
@@ -185,7 +184,7 @@ impl Links {
                 a = self.l1_words - pool;
             }
             self.ring.insert(dst.to_string(), a + size);
-            at = a;
+            a
         } else {
             if size > self.bank {
                 return Err(body.reader.fail(
@@ -198,8 +197,8 @@ impl Links {
             let first = crate::mutant::on("l2.lower/landing-bank1") as i64;
             let bank = self.banks.get(&bk).copied().unwrap_or(first);
             self.banks.insert(bk, 1 - bank);
-            at = bank * self.bank;
-        }
+            bank * self.bank
+        };
         let x = Transfer::new(src, dst, side, at, size, shape, false);
         self.queues.entry(k).or_default().push(x.clone());
         Ok(x)

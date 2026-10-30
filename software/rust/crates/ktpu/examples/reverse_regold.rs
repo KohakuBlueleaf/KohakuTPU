@@ -453,8 +453,9 @@ fn main() -> Result<()> {
     cases.sort_by(|a, b| a.stem.cmp(&b.stem));
     assert!(only.is_empty() || cases.len() == only.len(), "unknown case");
 
-    let results: Vec<Result<Option<(Value, Option<Value>, Value)>>> =
-        cases.par_iter().map(|c| regold(c, mutant)).collect();
+    /// The updated case, its sched fixture and the evidence line.
+    type Regolded = Option<(Value, Option<Value>, Value)>;
+    let results: Vec<Result<Regolded>> = cases.par_iter().map(|c| regold(c, mutant)).collect();
     let mut manifest = Vec::new();
     let mut failed = Vec::new();
     for (c, got) in cases.iter().zip(results) {

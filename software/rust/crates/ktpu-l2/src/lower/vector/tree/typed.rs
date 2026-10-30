@@ -102,7 +102,7 @@ pub fn tree4(
     }
     while syms.len() > 1 {
         let (mut level, mut next) = (vec![], vec![]);
-        for pair in syms.chunks_exact(2) {
+        for pair in syms.as_chunks::<2>().0 {
             let d = g.sym();
             level.push(insn(
                 code,

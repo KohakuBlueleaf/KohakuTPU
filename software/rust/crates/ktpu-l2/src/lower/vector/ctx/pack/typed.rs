@@ -96,7 +96,7 @@ impl Ctx<'_> {
                             g,
                             zero_lift_value(),
                             &mut syms,
-                            &[w.clone()],
+                            std::slice::from_ref(&w),
                             Select::Whole,
                         )?;
                         g.op(

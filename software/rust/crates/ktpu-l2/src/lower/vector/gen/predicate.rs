@@ -20,7 +20,7 @@ fn event(st: Stmt) -> Event {
     // Allocator metadata is destination-first, not sorted textual occurrence.
     let mut ordered = names(&st.args[0..1]).into_iter().collect::<Vec<_>>();
     let rest = names(&st.args[1..]);
-    ordered.extend(rest.into_iter());
+    ordered.extend(rest);
     let syms = ordered
         .into_iter()
         .filter_map(|n| n.strip_prefix('%').map(|n| Symbol(n.parse().unwrap())))

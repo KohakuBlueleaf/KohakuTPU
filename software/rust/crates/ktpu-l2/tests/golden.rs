@@ -161,7 +161,10 @@ fn alike_in_less_work(each: &'static str, work: fn(&Search) -> usize) {
                 })
             })
             .collect();
-        workers.into_iter().flat_map(|w| w.join().unwrap()).collect()
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().unwrap())
+            .collect()
     });
     done.sort_by_key(|(i, _, _)| *i);
 
@@ -176,7 +179,10 @@ fn alike_in_less_work(each: &'static str, work: fn(&Search) -> usize) {
     }
     let n = done.len();
     eprintln!("{n} cases: {once}, {apart} under {each}");
-    assert!(n == cases.len() && n > 150 && once * 2 < apart, "{once} vs {apart}");
+    assert!(
+        n == cases.len() && n > 150 && once * 2 < apart,
+        "{once} vs {apart}"
+    );
 }
 
 #[cfg(feature = "witness")]
