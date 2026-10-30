@@ -48,6 +48,8 @@ pub struct Vc {
     pub run_reach: u32,
     pub queue_depth: u32,
     pub dma_queue_depth: u32,
+    /// Fills the completion queue holds taken and unretired (ISA.VC.193).
+    pub fill_track_depth: u32,
     pub dualq: u32,
     pub has_mx: u32,
     pub xnet: u32,

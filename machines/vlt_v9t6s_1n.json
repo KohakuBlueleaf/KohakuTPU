@@ -1,5 +1,5 @@
 {
- "schema": "da87842edbfe458c",
+ "schema": "77e5063f76e11865",
  "name": "vlt_v9t6s_1n",
  "image": "v9t6",
  "die": "ktpu_sim_1x2_1c1v_1m_nol2_pump",
@@ -204,6 +204,7 @@
    "run_reach": 512,
    "queue_depth": 8,
    "dma_queue_depth": 4,
+   "fill_track_depth": 16,
    "dualq": 0,
    "has_mx": 1,
    "xnet": 1,
@@ -624,6 +625,7 @@
   "vc.run_reach": "derived: 2^RUN start pc bits, src/kohakutpu/vector2/v2_core.v:115",
   "vc.queue_depth": "src/kohakutpu/vector2/v2_core.v:45",
   "vc.dma_queue_depth": "src/kohakutpu/vector2/v2_core.v:450",
+  "vc.fill_track_depth": "src/kohakutpu/vector2/v2_core.v:1200",
   "vc.dualq": "src/kohakutpu/vector2/v2_core.v:51",
   "vc.has_mx": "src/kohakutpu/vector2/v2_core.v:56",
   "vc.xnet": "src/kohakutpu/vector2/v2_core.v:58",

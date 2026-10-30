@@ -196,6 +196,64 @@ fn the_stream_variants_find_their_hazards() {
     assert_eq!(stream_facts(), [true; 6]);
 }
 
+/// A fill of `head` words then `n - 1` of one, each `every`-th behind a sync
+/// on the landing of those before it; whether the checker finds a word count
+/// lost from the completion queue.
+fn overfilled(n: u32, every: u32, head: u32) -> bool {
+    let fills: String = (0..n)
+        .map(|i| {
+            let wait = if i % every == every - 1 {
+                "    vbar\n    vunpk v0 <- l1[0] f16\n    vsync fill on=unpack\n"
+            } else {
+                ""
+            };
+            let ad = if i == 0 { "a1" } else { "a0" };
+            format!("{wait}    vfill {ad} -> l1[{}] rel\n", 2 * i)
+        })
+        .collect();
+    let text = format!(
+        "target ktpu.v9
+
+image f(x)
+    desc a0 = x walk=(32, 1)
+    desc a1 = x walk=(32, {head})
+    ainc a0 += 32
+{fills}    halt
+
+fn f.l1(x: f16[4096] @dram)
+    send vc[0]
+        run f(x)
+    barrier
+"
+    );
+    let got = kinds(&text);
+    assert!(
+        got.iter()
+            .all(|(k, t)| k != "refused" || t.contains("completion queue")),
+        "{got:?}"
+    );
+    got.iter().any(|(_, t)| t.contains("completion queue"))
+}
+
+/// The bound on the depth the machine names, the sync that lifts it, and
+/// equal word counts, which overwrite nothing until the entry count wraps.
+pub fn fill_track_facts() -> [bool; 5] {
+    let depth = machine(1).vc.fill_track_depth;
+    let never = 8 * depth;
+    [
+        !overfilled(depth, never, 2),
+        overfilled(depth + 1, never, 2),
+        !overfilled(4 * depth, depth, 2),
+        !overfilled(2 * depth - 1, never, 1),
+        overfilled(2 * depth, never, 1),
+    ]
+}
+
+#[test]
+fn isa_vc_193_fills_past_the_completion_queue() {
+    assert_eq!(fill_track_facts(), [true; 5]);
+}
+
 /// Both cores peer-drain into mg[0]'s L1 A with nothing ordering the two.
 const TWO: &str = "target ktpu.v9
 
@@ -277,6 +335,11 @@ mod mutants {
     #[test]
     fn stream_breaks_under_model_no_sync() {
         breaks("isa.vector/model_no_sync", stream_facts);
+    }
+
+    #[test]
+    fn fill_track_breaks_without_its_check() {
+        breaks("verify.vector/no-fill-track", fill_track_facts);
     }
 
     #[test]

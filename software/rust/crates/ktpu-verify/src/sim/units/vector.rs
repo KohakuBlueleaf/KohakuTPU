@@ -257,6 +257,12 @@ pub(crate) struct Vector {
     pub cu: usize,
     pub fe_proc: usize,
     pub eng_procs: Vec<usize>,
+    /// Stamps each fill's landing, in order; its count is the fills landed.
+    landing: usize,
+    fills: u32,
+    /// The completion queue's word counts, by slot.
+    track: Vec<i64>,
+    overfilled: bool,
     cu_pc: usize,
     pub running: bool,
     pub fe: Front,
@@ -393,6 +399,7 @@ impl Sim<'_> {
         for (k, slot) in eng.iter_mut().enumerate() {
             *slot = self.add_proc(Pk::VcEng(ui, k), format!("{name} {} engine", LETTERS[k]));
         }
+        let landing = self.add_proc(Pk::Port, format!("{name} fill landing"));
         Unit {
             key,
             mem: Memory::new(&name),
@@ -424,6 +431,10 @@ impl Sim<'_> {
                 cu,
                 fe_proc: fe,
                 eng_procs: eng,
+                landing,
+                fills: 0,
+                track: vec![0; self.t.facts.vc_fill_track_depth as usize],
+                overfilled: false,
                 cu_pc: 0,
                 running: false,
                 fe: Front {
@@ -698,7 +709,12 @@ impl Sim<'_> {
                     self.vc_mut(u).fe.why = format!("halt: engines {busy} still busy");
                     return false;
                 }
-                let rel: Vec<Clock> = v.eng_procs.iter().map(|&p| self.clock_of(p)).collect();
+                let rel: Vec<Clock> = v
+                    .eng_procs
+                    .iter()
+                    .chain([&v.landing])
+                    .map(|&p| self.clock_of(p))
+                    .collect();
                 self.tick(fp, &rel);
                 self.vc_mut(u).fe.halted = true;
                 return true;
@@ -1043,6 +1059,12 @@ impl Sim<'_> {
             // A peer drain by the node bit alone, as the core decides (RUL.052).
             self.vc_peer(u, k, &f, roff, &clock);
         }
+        let clock = if op == VOp::Vfill {
+            let words = self.vc(u).walk_words(f.g("ad"));
+            self.vc_fill_landed(u, words, &clock)
+        } else {
+            clock
+        };
         let v = self.vc_mut(u);
         v.entries[e].done = Some(clock.clone());
         let head = v.eng[k].head;
@@ -1051,6 +1073,33 @@ impl Sim<'_> {
         }
         v.eng[k].head += 1;
         true
+    }
+
+    /// A fill of `words` taken at `taken` and its landing, a later event in
+    /// landing order: fills whose landing the take has not seen hold
+    /// completion entries. Past `vc.fill_track_depth` the push overwrites the
+    /// word count of the fill that depth back, and at twice the depth the
+    /// count of entries wraps to empty (ISA.VC.193).
+    fn vc_fill_landed(&mut self, u: usize, words: i64, taken: &Clock) -> Clock {
+        let depth = self.t.facts.vc_fill_track_depth;
+        let v = self.vc_mut(u);
+        let landing = v.landing;
+        let held = v.fills + 1 - taken.at(landing);
+        let slot = (v.fills % depth) as usize;
+        let shadowed = std::mem::replace(&mut v.track[slot], words);
+        v.fills += 1;
+        let lost = held > depth && (shadowed != words || held >= 2 * depth);
+        if lost && !on("verify.vector/no-fill-track") && !self.vc(u).overfilled {
+            self.vc_mut(u).overfilled = true;
+            self.vc_model(
+                u,
+                format!(
+                    "{held} fills taken with no sync on their landing; \
+                     the completion queue holds {depth}"
+                ),
+            );
+        }
+        self.tick(landing, std::slice::from_ref(taken))
     }
 
     /// A peer drain: one burst of the walk's words; the descriptor's base

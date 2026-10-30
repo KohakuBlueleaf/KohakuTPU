@@ -61,6 +61,8 @@ pub struct Facts {
     pub vc_walk_max: i64,
     /// `vc.dma_queue_depth` (FILL, DRAIN), `vc.queue_depth` (UNPACK, MATH, PACK).
     pub vc_dma_queue_depth: usize,
+    /// `vc.fill_track_depth`: fills taken and unretired (ISA.VC.193).
+    pub vc_fill_track_depth: u32,
     pub vc_queue_depth: usize,
     /// `vc.dualq`: independent unpack and pack queue 1.
     pub vc_dualq: bool,
@@ -187,6 +189,7 @@ impl Target {
             vc_l1_words: int(m, "vc.l1_words")?,
             vc_walk_max: int(m, "vc.walk_max")?,
             vc_dma_queue_depth: int(m, "vc.dma_queue_depth")? as usize,
+            vc_fill_track_depth: int(m, "vc.fill_track_depth")? as u32,
             vc_queue_depth: int(m, "vc.queue_depth")? as usize,
             vc_dualq: int(m, "vc.dualq")? != 0,
             vc_regs: int(m, "vc.regs")? as u32,

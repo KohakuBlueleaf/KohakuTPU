@@ -684,6 +684,10 @@ ROWS = [
         "vc.dma_queue_depth",
         lambda i: i.rtl_override(VEC_CORE, "D", inst="u_fq"),
     ),
+    (
+        "vc.fill_track_depth",
+        lambda i: i.rtl_override(VEC_CORE, "D", inst="u_ft"),
+    ),
     ("vc.dualq", lambda i: i.core("DUALQ")),
     ("vc.has_mx", lambda i: i.core("HAS_MX")),
     ("vc.xnet", lambda i: i.core("XNET")),
