@@ -2,8 +2,11 @@
 
 The witness JSON files are stored in the Hugging Face dataset
 `KBlueLeaf/kohakutpu-golden`, not in git; `python software/rust/golden/fetch.py`
-downloads them into this directory. A regeneration that changes a witness is
-uploaded to that dataset in the same change.
+downloads them into this directory. `REVISION` holds the dataset commit this
+tree's code agrees with; `fetch.py` downloads that commit and records it in
+`.revision`, and `ktpu`'s `golden_revision` test fails when the two differ. A
+regeneration that changes a witness is uploaded to the dataset, and the change
+that needs it sets `REVISION` to the new dataset commit.
 
 The JSON files are fixed byte-layout and compiler-output witnesses. They are
 not regenerated from a live Python compiler. Rust stage tests compare against
