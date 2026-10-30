@@ -22,7 +22,12 @@ def no_overrides(monkeypatch):
 def test_the_knob_table_is_the_native_one():
     assert set(MM.KNOBS) == set(json.loads(_rs.mm_knobs()))
     assert {g for _, g in MM.KNOBS.values()} <= {"plan", "kernel"}
-    assert MM.plan_knobs() == {"pad_m": False, "n_tiles": 1, "dense_n": False}
+    assert MM.plan_knobs() == {
+        "pad_m": False,
+        "n_tiles": 1,
+        "dense_n": False,
+        "pad_k": False,
+    }
 
 
 def test_an_override_moves_the_plan_through_the_native_knobs(monkeypatch):
@@ -50,6 +55,51 @@ def test_the_plan_is_the_recorded_calls_replay(monkeypatch):
     }
     assert vars(mm) == json.loads(_rs.mm_plan(json.dumps(args), MACHINE))
     assert mm.tn == 96
+
+
+@pytest.mark.parametrize("name", ["multimesh_v9t6", "vlt_v9t6s_1n"])
+@pytest.mark.parametrize("rows,rp", [(64, 64), (40, 48)])
+def test_a_pad_k_operand_quantises_with_its_tail_padded(monkeypatch, name, rows, rp):
+    """KTPU_MM_PAD_K pairs a 96-deep K into 128 where the pairing pairs
+    blocks; the native quant of its
+    96-column operand packs the 32-column tail as padding and compiles."""
+    machine = rs.machine_json(name)
+    monkeypatch.setenv("KTPU_MM_PAD_K", "1")
+    mm = MM.plan(1, 64, 128, 96, pairing="vector", machine_json=machine)
+    assert (mm.kp, mm.nk) == (128, 2)
+    args = dict(
+        src=dict(kind="full", pitch=96, rows=0, offset=0, dtype="f16"),
+        rows=rows,
+        cols=96,
+        rp=rp,
+        cp=mm.kp,
+        side="b",
+        g=rp // 4,
+        nk=mm.nk,
+    )
+    source = _rs.generate("matmul.quant_kernel", json.dumps(args), machine, None)
+    quant = [n for n in json.loads(source)["body"] if n.get("op") == "quant"]
+    assert len(quant) == 1 and dict(quant[0]["kw"])["pad"]["int"] == 1
+    compiled = _rs.compile(source, machine, cache_dir="", fetch=True)
+    assert not compiled["verdict"]["refused"], compiled["verdict"]
+    assert pad_fill(compiled["l1"]) == "s4"
+    lifted = _rs.compile(
+        source, machine, cache_dir="", fetch=True, mutant="l2.packing/unit-scale-zero"
+    )
+    assert pad_fill(lifted["l1"]) == "k0"
+
+
+def pad_fill(l1):
+    """The register the K tail's padding entries pack from: the zero lift
+    (`s4`, RUL.099), so the nk = 2 pair merge never shifts the live block."""
+    (fill,) = {
+        line.split(",")[1].strip()
+        for image in l1.split("\nimage ")
+        if "vpack v0 -> l1[128] mx7b" in image
+        for line in image.splitlines()
+        if line.strip().startswith("vmov v0,")
+    }
+    return fill
 
 
 def test_an_n_not_whole_blocks_is_refused():

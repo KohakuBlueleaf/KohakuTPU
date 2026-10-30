@@ -93,7 +93,8 @@ impl Trace {
         self.mover(g::MoverOp::Quant, dst, Some(src), &kw, here())
     }
 
-    /// Explicit quant scheduling attributes are part of the graph identity.
+    /// Explicit quant scheduling attributes are part of the graph identity;
+    /// `pad`: entries past the source pack zeros (L2 padded vector packing).
     #[track_caller]
     pub fn quant_scheduled(
         &mut self,
@@ -101,8 +102,12 @@ impl Trace {
         src: &View,
         finite: bool,
         schedule: &[(&str, i64)],
+        pad: bool,
     ) -> R<()> {
-        let mut kw = vec![("finite", Kw::Int(finite.then_some(1)))];
+        let mut kw = vec![
+            ("finite", Kw::Int(finite.then_some(1))),
+            ("pad", Kw::Int(pad.then_some(1))),
+        ];
         if !crate::mutants::on("kernels.quant/no-schedule") {
             kw.extend(schedule.iter().map(|&(k, v)| (k, Kw::Int(Some(v)))));
         }

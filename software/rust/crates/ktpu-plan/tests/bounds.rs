@@ -20,6 +20,7 @@ fn every_knob() -> Knobs {
         pad_m: true,
         n_tiles: 2,
         dense_n: true,
+        pad_k: true,
     }
 }
 

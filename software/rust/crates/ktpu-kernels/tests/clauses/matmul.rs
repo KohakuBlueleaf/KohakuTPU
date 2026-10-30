@@ -1,6 +1,6 @@
 //! Products: API.OP.005-.007, API.FORM.006, .007, .011.
 
-use super::{card, stmts, text};
+use super::{card, lines, stmts, text};
 use ktpu_graph as g;
 use ktpu_kernels::expr;
 use ktpu_kernels::gen::matmul::{self as mm, Side};
@@ -61,6 +61,53 @@ fn n_tiles_splits_n() {
     assert_eq!(768 / tiling(64, 768, &dense).tn, 6);
 }
 
+#[test]
+fn pad_k_pairs_the_k_blocks() {
+    let d = mm::defaults();
+    let pad = mm::Knobs { pad_k: true, ..d };
+    let at = |k: i64, knobs: &mm::Knobs, m: &ktpu_machine::Machine, p: Pairing| {
+        let t = mm::plan(1, 64, 128, k, true, 4, p, m, knobs).unwrap();
+        (t.kp, t.nk)
+    };
+    let c = card();
+    assert_eq!(at(96, &d, &c, Pairing::Vector), (96, 1));
+    assert_eq!(at(96, &pad, &c, Pairing::Vector), (128, 2));
+    assert_eq!(at(32, &pad, &c, Pairing::Vector), (32, 1), "one block");
+    let mover = super::common::machine("vlt_v9t6s_1n", 1);
+    assert!(!mover.pairs_blocks(Pairing::Unpaired));
+    assert_eq!(at(96, &pad, &mover, Pairing::Unpaired), (96, 1), "unpaired");
+}
+
+/// A K tail past the source's last block packs zeros in the vector
+/// quantiser (`pad=1`): the staged rows hold only the source's blocks.
+#[test]
+fn a_padded_k_tail_quantises_padded() {
+    let src = Operand::full(96, 0);
+    let direct = mm::quant_kernel(&src, 64, 96, 64, 128, Side::B, 16, 2, 1, &card()).unwrap();
+    assert_eq!(
+        lines(&direct, "quant"),
+        vec![format!("quant q <- x[0 : +64] pad=1 {}", schedule())]
+    );
+    let staged = mm::quant_kernel(&src, 40, 96, 48, 128, Side::B, 12, 2, 1, &card()).unwrap();
+    let t = text(&staged);
+    assert!(t.contains("h1 = buffer  : f16[48, 96]"), "{t}");
+    assert_eq!(
+        lines(&staged, "quant"),
+        vec![format!("quant q <- h1 pad=1 {}", schedule())]
+    );
+    let whole = mm::quant_kernel(&src, 40, 96, 48, 96, Side::B, 12, 2, 1, &card()).unwrap();
+    assert!(!text(&whole).contains("pad="), "{}", text(&whole));
+}
+
+/// The default quant schedule as the L2 text writes it.
+fn schedule() -> String {
+    mm::QUANT_SCHEDULE
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// A call records its group's knobs by name, and a recorded call plans
 /// under the knobs it names, the contraction before the knobs where it
 /// names none.
@@ -70,6 +117,7 @@ fn a_call_records_and_replays_its_knobs() {
         pad_m: true,
         n_tiles: 2,
         dense_n: true,
+        pad_k: true,
     };
     let args: serde_json::Map<String, serde_json::Value> = k
         .args(mm::Group::Plan)
@@ -78,7 +126,7 @@ fn a_call_records_and_replays_its_knobs() {
         .collect();
     assert_eq!(
         serde_json::Value::Object(args.clone()),
-        serde_json::json!({"pad_m": true, "n_tiles": 2, "dense_n": true})
+        serde_json::json!({"pad_m": true, "n_tiles": 2, "dense_n": true, "pad_k": true})
     );
     assert!(k.args(mm::Group::Kernel).is_empty());
     let mut call = serde_json::json!({"bt": 1, "m": 1576, "n": 768, "k": 768});

@@ -16,6 +16,7 @@ fn every_knob() -> Knobs {
         pad_m: true,
         n_tiles: 2,
         dense_n: true,
+        pad_k: true,
     }
 }
 
@@ -112,9 +113,8 @@ fn knob_recording_reverse_witness() {
             let at = have.iter().zip(&want).position(|(a, b)| a != b);
             let why = at.map(|i| common::first_diff(&have[i], &want[i]));
             assert!(
-                why.as_ref().is_some_and(|w| ["pad_m", "n_tiles", "dense_n"]
-                    .iter()
-                    .any(|k| w.contains(k))),
+                why.as_ref()
+                    .is_some_and(|w| matmul::KNOBS.iter().any(|k| w.contains(k.name))),
                 "{}: {why:?}",
                 case.case
             );

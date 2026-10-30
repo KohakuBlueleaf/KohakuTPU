@@ -9,6 +9,7 @@
 pub mod canon;
 pub mod card;
 pub mod mutant;
+pub mod packing;
 pub mod pairing;
 pub mod refusal;
 pub mod schema;

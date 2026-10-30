@@ -262,16 +262,18 @@ def mm_source(mm, pairing, machine_json, mutant=None):
     return rs._rs.generate("matmul.mm_kernel", json.dumps(call), machine_json, mutant)
 
 
-def quant(dev, x, side, groups, nk, mutant=None):
-    """`x` quantised by the generated quant kernel on `dev.machine`: the
-    packed bytes, its cycles and its L1 text."""
+def quant(dev, x, side, groups, nk, mutant=None, padded_to=None):
+    """`x` quantised by the generated quant kernel on `dev.machine` into
+    [rp, cp] (`padded_to`, else x's shape): the packed bytes, its cycles and
+    its L1 text."""
     rows, cols = x.shape
+    rp, cp = padded_to or x.shape
     call = dict(
         src=dict(kind="full", dtype="f16", pitch=cols, offset=0, rows=0),
         rows=rows,
         cols=cols,
-        rp=rows,
-        cp=cols,
+        rp=rp,
+        cp=cp,
         side=side,
         g=groups,
         nk=nk,
@@ -282,11 +284,11 @@ def quant(dev, x, side, groups, nk, mutant=None):
         "matmul.quant_kernel", json.dumps(call), rs.machine_json(dev.machine), None
     )
     comp, output = compiled(dev, source, mutant)
-    xa, qa = dev.alloc(x.nbytes), dev.alloc(x.size)
+    xa, qa = dev.alloc(x.nbytes), dev.alloc(rp * cp)
     try:
         dev.write(xa, x.tobytes())
         run = dev.run(comp, {"x": xa, "q": qa}, kind="quant")
-        return dev.read(qa, x.size), run.cycles, output["l1"]
+        return dev.read(qa, rp * cp), run.cycles, output["l1"]
     finally:
         dev.free(xa)
         dev.free(qa)

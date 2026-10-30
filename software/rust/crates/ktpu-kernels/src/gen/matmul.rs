@@ -58,6 +58,11 @@ pub const KNOBS: &[Knob] = &[
         env: "KTPU_MM_DENSE_N",
         group: Group::Plan,
     },
+    Knob {
+        name: "pad_k",
+        env: "KTPU_MM_PAD_K",
+        group: Group::Plan,
+    },
 ];
 
 /// A contraction's plan and kernel knobs: the one source the generators,
@@ -70,6 +75,8 @@ pub struct Knobs {
     pub n_tiles: i64,
     /// The widest N tile that divides N (not only powers of two).
     pub dense_n: bool,
+    /// K padded to whole block pairs where the machine pairs blocks.
+    pub pad_k: bool,
 }
 
 /// The knobs' defaults.
@@ -83,6 +90,7 @@ pub fn unrecorded() -> Knobs {
         pad_m: false,
         n_tiles: 1,
         dense_n: false,
+        pad_k: false,
     }
 }
 
@@ -111,6 +119,7 @@ impl Knobs {
             "pad_m" => self.pad_m.into(),
             "n_tiles" => self.n_tiles.into(),
             "dense_n" => self.dense_n.into(),
+            "pad_k" => self.pad_k.into(),
             _ => unreachable!("a knob: {name}"),
         }
     }
@@ -128,6 +137,7 @@ impl Knobs {
             "pad_m" => self.pad_m = flag()?,
             "n_tiles" => self.n_tiles = int()?,
             "dense_n" => self.dense_n = flag()?,
+            "pad_k" => self.pad_k = flag()?,
             _ => unreachable!("a knob: {name}"),
         }
         Ok(())
@@ -221,7 +231,8 @@ impl Mm {
 /// tile (its tail zero-padded) where [`tile_cost`] prices it no higher; the
 /// N tile the widest power-of-two block the accumulator holds, halved to at
 /// least `knobs.n_tiles` tiles, or with `knobs.dense_n` the widest
-/// `mg.kblock` multiple dividing N.
+/// `mg.kblock` multiple dividing N. K pads to whole blocks, or with
+/// `knobs.pad_k` (K past one block, blocks paired) to whole block pairs.
 #[allow(clippy::too_many_arguments)]
 pub fn plan(
     bt: i64,
@@ -242,8 +253,14 @@ pub fn plan(
             format!("N = {n}: the product's columns are whole blocks of {kb}"),
         );
     }
-    let kp = cdiv(k, kb) * kb;
-    let nk = if mach.pairs_blocks(pairing) && kp % (hw.kstep * kb) == 0 {
+    let pairs = mach.pairs_blocks(pairing);
+    let k_unit = if knobs.pad_k && pairs && k > kb {
+        hw.kstep * kb
+    } else {
+        kb
+    };
+    let kp = cdiv(k, k_unit) * k_unit;
+    let nk = if pairs && kp % (hw.kstep * kb) == 0 {
         hw.kstep
     } else {
         1
@@ -468,7 +485,14 @@ pub fn quant_kernel_scheduled(
         ),
         ("q".to_string(), spec(&qs, dtype, lay, g::BufSpace::Dram)?),
     ];
-    let direct = rows == rp && cols == cp && src.pitch == cp && src.offset == 0;
+    // Columns past the source's last block are the vector packing's padding
+    // (`quant pad=1`, L2.MOV.010); the mover packs only whole views.
+    let k_live = cdiv(cols, hw.kblock) * hw.kblock;
+    let vector = nk >= 2
+        || mach.conversion.fp16_mx7.preferred_backend == ktpu_machine::PackingBackend::VectorMx7;
+    let pad = vector && cp > k_live;
+    let zc = if pad { k_live } else { cp };
+    let direct = rows == rp && cols == zc && src.pitch == cols && src.offset == 0;
     let key = name(
         "quant",
         vec![
@@ -498,9 +522,10 @@ pub fn quant_kernel_scheduled(
                 &x.at(&[sl(0, batches * rp), ALL])?,
                 finite,
                 schedule,
+                pad,
             );
         }
-        let z = t.buffer(&[batches * rp, cp], g::Dtype::F16, vec![])?;
+        let z = t.buffer(&[batches * rp, zc], g::Dtype::F16, vec![])?;
         t.fill_value(&z.whole(), 0, None, None)?;
         let (r0, c0) = (src.offset / src.pitch, src.offset % src.pitch);
         for bi in 0..batches {
@@ -509,7 +534,7 @@ pub fn quant_kernel_scheduled(
             let from = x.at(&[sl(lo, lo + rows), sl(c0, c0 + cols)])?;
             t.copy(&dst, &from, None, None)?;
         }
-        t.quant_scheduled(&q.whole(), &z.whole(), finite, schedule)
+        t.quant_scheduled(&q.whole(), &z.whole(), finite, schedule, pad)
     })
 }
 

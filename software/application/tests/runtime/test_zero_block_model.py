@@ -143,6 +143,28 @@ def test_checked_quant_lifts_without_a_nonfinite_status(vector_dev):
     assert sha(got) == sha(Z.reference(mxfp7.lift(x, 2), "a", 4, 2))
 
 
+@pytest.mark.parametrize("side", ["a", "b"])
+@pytest.mark.parametrize("rows,rp", [(16, 16), (12, 16)])
+def test_a_k_tail_packs_as_its_lifted_zero_padding(vector_dev, side, rows, rp):
+    """A 96-deep K paired into 128 (pad_k): the generated quant of the 96
+    source columns packs as the lifted zero-padded [rp, 128] packs, and
+    under the unit-scale mutant does not."""
+    x = sweep(rows, 96, 11 + rows, False)
+    want = Z.reference(mxfp7.lift(Z.padded(x, rp, 128), 2), side, rp // 4, 2)
+    got = Z.quant(vector_dev, x, side, rp // 4, 2, padded_to=(rp, 128))[0]
+    assert sha(got) == sha(want)
+    unlifted = Z.quant(
+        vector_dev,
+        x,
+        side,
+        rp // 4,
+        2,
+        "l2.packing/unit-scale-zero",
+        padded_to=(rp, 128),
+    )[0]
+    assert sha(unlifted) != sha(want)
+
+
 @pytest.fixture(scope="module")
 def contractions():
     return {
