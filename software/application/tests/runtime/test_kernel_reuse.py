@@ -372,7 +372,7 @@ def test_thirty_two_warm_steps_stay_flat_and_bounded(tmp_path, monkeypatch):
     dev = Device(
         kind="offline", board="multimesh_v9t6", library=tmp_path, library_only=True
     )
-    D.attach(dev)
+    monkeypatch.setattr(D, "_device", dev)
     try:
         V._kernels.clear()
         DK._TRACES.clear()

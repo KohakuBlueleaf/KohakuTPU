@@ -125,8 +125,9 @@ def test_epoch_tail_and_full_evaluation(cpu):
     assert shapes == [(4, 784)] * 3
 
 
-def test_host_upload_refreshes_side_form_before_recording():
-    dev = D.attach(D.Device(kind="offline", board="multimesh_v9t6"))
+def test_host_upload_refreshes_side_form_before_recording(monkeypatch):
+    dev = D.Device(kind="offline", board="multimesh_v9t6")
+    monkeypatch.setattr(D, "_device", dev)
     opt = SimpleNamespace(lr=Tensor(np.array([0.002], dtype=np.float32), device="KTPU"))
     writer = HostLearningRate(opt)
     st = writer.buffer._buf
