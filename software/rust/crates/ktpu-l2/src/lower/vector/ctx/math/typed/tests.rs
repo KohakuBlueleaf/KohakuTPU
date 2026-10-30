@@ -436,7 +436,7 @@ fn compare_symbols_and_predicate_sequence() {
                 false,
                 false,
             );
-            for chunk in z.code.chunks_exact(3) {
+            for chunk in z.code.as_chunks::<3>().0 {
                 let Event::Op { stmt, syms } = &chunk[0] else {
                     panic!()
                 };
