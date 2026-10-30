@@ -955,10 +955,10 @@ impl Sim<'_> {
     fn vc_eval(&self, u: usize, g: Guard) -> (bool, Vec<Clock>) {
         match g {
             Guard::Always => (true, Vec::new()),
-            Guard::Count { ctr, want } => {
-                let c = &self.counters[ctr];
-                (c.reached(want), vec![c.clock_to(want, &[])])
-            }
+            Guard::Count { ctr, want } => (
+                self.counters[ctr].reached(want),
+                vec![self.clock_to(ctr, want, &[])],
+            ),
             Guard::Finished { kind, upto } => self.vc(u).finished_upto(kind, upto),
         }
     }

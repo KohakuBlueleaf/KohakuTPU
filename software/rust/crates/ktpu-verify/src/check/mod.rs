@@ -1,17 +1,22 @@
 //! The dispatch scheduler and the static check over bound packages
 //! (l1/program.md s15, L1.VER.001-L1.VER.004).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use rayon::prelude::*;
 
 use crate::adapter::l0::{from_l0, to_l0};
 use crate::adapter::package::Package;
 use crate::model::finding::{Finding, Kind};
+use crate::mutant::on;
 use crate::sim::{Kinded, Sim, EVENT_LIMIT};
 use crate::target::Target;
 
+pub use crate::sim::Totals;
+
 pub mod gate;
+#[cfg(test)]
+mod tests;
 
 /// One node's bound package per mesh.
 pub type Nodes = BTreeMap<u32, ktpu_l0::Package>;
@@ -38,11 +43,13 @@ pub struct ScheduleError {
 }
 
 /// The packages in the order the scheduler sent them (each the input with
-/// its steps reordered), and what the vector cores hold after.
+/// its steps reordered), what the vector cores hold after, and the run's
+/// counter increments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Scheduled {
     pub packages: Nodes,
     pub held: Held,
+    pub totals: Totals,
 }
 
 /// Each node's package (bound) run on the abstract machine with each node
@@ -52,7 +59,7 @@ pub struct Scheduled {
 /// program already orders well is left as written (L1.VER.002).
 pub fn schedule(pkgs: &Nodes, held: &Held, t: &Target) -> Result<Scheduled, ScheduleError> {
     let own: BTreeMap<u32, Package> = pkgs.iter().map(|(&m, p)| (m, from_l0(p))).collect();
-    let (ordered, held) = order(&own, held, t)?;
+    let (ordered, held, totals) = order(&own, held, t)?;
     let packages = pkgs
         .iter()
         .map(|(&m, p)| {
@@ -61,14 +68,18 @@ pub fn schedule(pkgs: &Nodes, held: &Held, t: &Target) -> Result<Scheduled, Sche
             (m, p)
         })
         .collect();
-    Ok(Scheduled { packages, held })
+    Ok(Scheduled {
+        packages,
+        held,
+        totals,
+    })
 }
 
 fn order(
     pkgs: &BTreeMap<u32, Package>,
     held: &Held,
     t: &Target,
-) -> Result<(BTreeMap<u32, Package>, Held), ScheduleError> {
+) -> Result<(BTreeMap<u32, Package>, Held, Totals), ScheduleError> {
     let mut sim = Sim::new(t, None);
     for (&mesh, cores) in held {
         for core in cores {
@@ -107,7 +118,7 @@ fn order(
         })?;
         packages.insert(mesh, got.into_iter().next().expect("one package"));
     }
-    Ok((packages, held_after(&sim)))
+    Ok((packages, held_after(&sim), sim.tally()))
 }
 
 /// The vector cores' state at the run's end, per mesh.
@@ -128,7 +139,10 @@ fn held_after(sim: &Sim) -> Held {
 }
 
 /// One run of every node's packages, back to back, on a fresh machine.
-fn run<'t>(pkgs: &BTreeMap<u32, Vec<Package>>, t: &'t Target, totals: Option<Totals>) -> Sim<'t> {
+/// Each mesh's ordered packages, run after run.
+type Queued = BTreeMap<u32, Vec<Package>>;
+
+fn run<'t>(pkgs: &Queued, t: &'t Target, totals: Option<Totals>) -> Sim<'t> {
     let mut sim = Sim::new(t, totals);
     for (&mesh, ps) in pkgs {
         sim.add_node(mesh, ps.clone(), false);
@@ -137,14 +151,12 @@ fn run<'t>(pkgs: &BTreeMap<u32, Vec<Package>>, t: &'t Target, totals: Option<Tot
     sim
 }
 
-type Totals = HashMap<String, Vec<(usize, i64)>>;
-
 /// Every finding for `runs` (each run's bound package per mesh, as built,
 /// unordered): each run scheduled against the vector cores the runs before
 /// left, then all run back to back on a fresh machine with the totals of a
 /// first run (L1.VER.004). Empty means none of the finding kinds can happen.
 pub fn check(runs: &[Nodes], t: &Target) -> Vec<Finding> {
-    let mut out = checked(Held::new(), BTreeMap::new(), runs, t);
+    let mut out = checked(Held::new(), BTreeMap::new(), Totals::new(), runs, t);
     line_findings(runs, t, &mut out);
     out
 }
@@ -170,33 +182,22 @@ pub fn check_scheduled(first: &Scheduled, rest: &[Nodes], t: &Target) -> Vec<Fin
         .iter()
         .map(|(&m, p)| (m, vec![from_l0(p)]))
         .collect();
-    let mut out = checked(first.held.clone(), pkgs, rest, t);
+    let mut out = checked(first.held.clone(), pkgs, first.totals.clone(), rest, t);
     line_findings(std::slice::from_ref(&first.packages), t, &mut out);
     line_findings(rest, t, &mut out);
     out
 }
 
-/// `check` from `held` and the ordered runs in `pkgs` on: `runs` each
-/// ordered in turn, then all run back to back.
-fn checked(
-    mut held: Held,
-    mut pkgs: BTreeMap<u32, Vec<Package>>,
-    runs: &[Nodes],
-    t: &Target,
-) -> Vec<Finding> {
-    for nodes in runs {
-        let own: BTreeMap<u32, Package> = nodes.iter().map(|(&m, p)| (m, from_l0(p))).collect();
-        match order(&own, &held, t) {
-            Err(e) => return e.findings,
-            Ok((ordered, after)) => {
-                held = after;
-                for (mesh, p) in ordered {
-                    pkgs.entry(mesh).or_default().push(p);
-                }
-            }
-        }
+/// `check` from `held`, the ordered runs in `pkgs` and their `totals` on:
+/// `runs` each ordered in turn, then all run back to back.
+fn checked(held: Held, pkgs: Queued, totals: Totals, runs: &[Nodes], t: &Target) -> Vec<Finding> {
+    let (pkgs, mut totals) = match ordered(held, pkgs, totals, runs, t) {
+        Err(findings) => return findings,
+        Ok(got) => got,
+    };
+    if on("verify.check/totals-prepass") {
+        totals = run(&pkgs, t, None).tally();
     }
-    let totals = run(&pkgs, t, None).tally();
     let sim = run(&pkgs, t, Some(totals));
     let mut out = sim.findings.clone();
     if out.iter().any(|f| f.kind == Kind::Deadlock) {
@@ -210,6 +211,45 @@ fn checked(
         out.extend(sim.sequence_findings.clone());
     }
     out
+}
+
+/// `runs` each ordered in turn after `pkgs` (from `held`), and the
+/// back-to-back run's totals: `totals` joined with each ordering run's.
+fn ordered(
+    mut held: Held,
+    mut pkgs: Queued,
+    mut totals: Totals,
+    runs: &[Nodes],
+    t: &Target,
+) -> Result<(Queued, Totals), Vec<Finding>> {
+    for nodes in runs {
+        let own: BTreeMap<u32, Package> = nodes.iter().map(|(&m, p)| (m, from_l0(p))).collect();
+        let (ordered, after, tally) = order(&own, &held, t).map_err(|e| e.findings)?;
+        held = after;
+        // Totals only feed clocks, and clocks never steer a process.
+        join(&mut totals, tally);
+        for (mesh, p) in ordered {
+            pkgs.entry(mesh).or_default().push(p);
+        }
+    }
+    Ok((pkgs, totals))
+}
+
+/// `run`'s increments added to `totals`, the runs' before it: its `host:k`
+/// (the host after every node's k-th package end) follows theirs.
+fn join(totals: &mut Totals, run: Totals) {
+    let host = |c: &str| c.strip_prefix("host:")?.parse::<usize>().ok();
+    let ends = totals.keys().filter_map(|c| host(c)).max().unwrap_or(0);
+    for (counter, owners) in run {
+        let counter = match host(&counter) {
+            Some(k) => format!("host:{}", k + ends),
+            None => counter,
+        };
+        let into = totals.entry(counter).or_default();
+        for (owner, n) in owners {
+            *into.entry(owner).or_default() += n;
+        }
+    }
 }
 
 /// `check` of each kernel, in parallel; the results in input order.

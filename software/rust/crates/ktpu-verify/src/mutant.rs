@@ -66,4 +66,5 @@ pub const NAMES: &[&str] = &[
     "isa.vector/model_no_sync",
     "isa.cluster/checker",
     "l1.verify/reverse-segment",
+    "verify.check/totals-prepass",
 ];

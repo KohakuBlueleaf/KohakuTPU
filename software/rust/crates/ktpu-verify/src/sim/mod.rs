@@ -4,7 +4,7 @@
 //! deadlock for all (Theorem 1). The card holds the units by coordinate, the
 //! nodes that feed them and the routes between them.
 
-use std::collections::HashMap as StdMap;
+use std::collections::BTreeMap;
 
 use indexmap::IndexMap;
 
@@ -115,6 +115,10 @@ pub(crate) struct Window {
     pub me: usize,
 }
 
+/// Per counter name, each owner process's increments over a run, by the
+/// process's name; a counter no process incremented is left out.
+pub type Totals = BTreeMap<String, BTreeMap<String, i64>>;
+
 /// (`bell`, from mesh) or (`slot`, n): what a node's waits take.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Take {
@@ -125,9 +129,11 @@ pub(crate) enum Take {
 pub(crate) struct Sim<'t> {
     pub t: &'t Target,
     pub procs: Vec<Proc>,
+    /// Every process's name: the owner key of `Totals`, so one name each.
+    proc_names: HashSet<String>,
     pub counters: Vec<Counter>,
     names: IndexMap<String, usize>,
-    totals: Option<StdMap<String, Vec<(usize, i64)>>>,
+    totals: Option<Totals>,
     pub findings: Vec<Finding>,
     /// Secondary initialization diagnostics, after routing/counter failures.
     pub sequence_findings: Vec<Finding>,
@@ -157,10 +163,11 @@ pub(crate) struct Sim<'t> {
 }
 
 impl<'t> Sim<'t> {
-    pub fn new(t: &'t Target, totals: Option<StdMap<String, Vec<(usize, i64)>>>) -> Self {
+    pub fn new(t: &'t Target, totals: Option<Totals>) -> Self {
         Sim {
             t,
             procs: Vec::new(),
+            proc_names: HashSet::default(),
             counters: Vec::new(),
             names: IndexMap::new(),
             totals,
@@ -185,6 +192,10 @@ impl<'t> Sim<'t> {
 
     // --------------------------------------------------------- the machine
     pub fn add_proc(&mut self, kind: Pk, name: String) -> usize {
+        assert!(
+            self.proc_names.insert(name.clone()),
+            "two processes named {name:?}"
+        );
         self.procs.push(Proc {
             kind,
             name,
@@ -199,22 +210,36 @@ impl<'t> Sim<'t> {
         if let Some(&i) = self.names.get(name) {
             return i;
         }
-        let totals = self
-            .totals
-            .as_ref()
-            .map(|t| t.get(name).cloned().unwrap_or_default());
+        let totals = self.totals.as_ref().map(|t| {
+            t.get(name)
+                .map(|owners| owners.iter().map(|(o, &n)| (o.clone(), n)).collect())
+                .unwrap_or_default()
+        });
         self.counters.push(Counter::new(name.to_string(), totals));
         let i = self.counters.len() - 1;
         self.names.insert(name.to_string(), i);
         i
     }
 
-    /// Every counter's increments by owner: the next run's `totals`.
-    pub fn tally(&self) -> StdMap<String, Vec<(usize, i64)>> {
+    /// Every counter's increments by owner: a run's `totals`.
+    pub fn tally(&self) -> Totals {
         self.counters
             .iter()
-            .map(|c| (c.name.clone(), c.tally()))
+            .map(|c| {
+                let owners: BTreeMap<String, i64> = c
+                    .tally()
+                    .into_iter()
+                    .map(|(o, n)| (self.procs[o].name.clone(), n))
+                    .collect();
+                (c.name.clone(), owners)
+            })
+            .filter(|(_, owners)| !owners.is_empty())
             .collect()
+    }
+
+    /// Counter `c`'s `clock_to`, its owners named by their processes.
+    pub fn clock_to(&self, c: usize, target: i64, caps: &[(usize, i64)]) -> Clock {
+        self.counters[c].clock_to(target, caps, |o| self.procs[o].name.as_str())
     }
 
     /// Counters in the order first named.
@@ -458,4 +483,36 @@ impl<'t> Sim<'t> {
 /// `(a, b)` as Python prints a pair.
 pub(crate) fn pair(a: impl std::fmt::Display, b: impl std::fmt::Display) -> String {
     format!("({a}, {b})")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ktpu_machine::Machine;
+
+    /// Every unit of a multi-mesh machine made at once: no two processes
+    /// share a name.
+    #[test]
+    fn every_unit_names_its_processes_apart() {
+        let m = Machine::named("multimesh_v9t6").unwrap();
+        let t = Target::from_machine(&m, None).unwrap();
+        assert!(t.meshes.len() > 1);
+        let mut s = Sim::new(&t, None);
+        for mesh in &t.meshes {
+            for &(x, y) in mesh.mg.iter().chain(&mesh.vc).chain(&mesh.sr) {
+                s.unit((mesh.index, x, y)).unwrap();
+            }
+        }
+        assert!(s.procs.len() > 2 * t.meshes.len());
+    }
+
+    #[test]
+    #[should_panic(expected = "two processes named")]
+    fn a_second_process_of_one_name_is_refused() {
+        let m = Machine::named("multimesh_v9t6").unwrap();
+        let t = Target::from_machine(&m, Some(1)).unwrap();
+        let mut s = Sim::new(&t, None);
+        s.add_proc(Pk::Port, "port".into());
+        s.add_proc(Pk::Port, "port".into());
+    }
 }

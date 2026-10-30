@@ -5,8 +5,8 @@
 //! one owner that is its first increments up to `t`. With several, owner s
 //! contributes at least `t - (total - total_s)` of its own increments
 //! whatever the order (verify.md lemma 3), `total_s` its increments over the
-//! whole run; `totals` holds them from a first run (absent there, the first
-//! run joins its own order, which only that run's totals use).
+//! whole run; `totals` holds them by owner name (absent, the run joins its
+//! own order, which only a run taken for its totals uses).
 
 use super::clock::Clock;
 
@@ -16,11 +16,11 @@ pub struct Counter {
     pub value: i64,
     /// owner -> [(owner's running total after the increment, its clock)]
     owners: Vec<(usize, Vec<(i64, Clock)>)>,
-    totals: Option<Vec<(usize, i64)>>,
+    totals: Option<Vec<(String, i64)>>,
 }
 
 impl Counter {
-    pub fn new(name: String, totals: Option<Vec<(usize, i64)>>) -> Self {
+    pub fn new(name: String, totals: Option<Vec<(String, i64)>>) -> Self {
         Counter {
             name,
             value: 0,
@@ -59,7 +59,7 @@ impl Counter {
             .unwrap_or(0)
     }
 
-    /// Every owner's increments: the next run's `totals`.
+    /// Every owner's increments.
     pub fn tally(&self) -> Vec<(usize, i64)> {
         self.owners
             .iter()
@@ -68,8 +68,14 @@ impl Counter {
     }
 
     /// The join of the increments reaching `target` must follow. `caps`
-    /// bounds an owner's increments that can precede the wait.
-    pub fn clock_to(&self, target: i64, caps: &[(usize, i64)]) -> Clock {
+    /// bounds an owner's increments that can precede the wait; `name` names
+    /// an owner.
+    pub fn clock_to<'n>(
+        &self,
+        target: i64,
+        caps: &[(usize, i64)],
+        name: impl Fn(usize) -> &'n str,
+    ) -> Clock {
         let mut out = Clock::new();
         if target <= 0 {
             return out;
@@ -80,8 +86,9 @@ impl Counter {
             }
             return out;
         };
-        let mut avail: Vec<(usize, i64)> = totals.clone();
+        let mut avail: Vec<(&str, i64)> = totals.iter().map(|(o, v)| (o.as_str(), *v)).collect();
         for &(owner, cap) in caps {
+            let owner = name(owner);
             match avail.iter_mut().find(|(o, _)| *o == owner) {
                 Some(e) => e.1 = e.1.min(cap),
                 None => avail.push((owner, 0i64.min(cap))),
@@ -89,9 +96,10 @@ impl Counter {
         }
         let whole: i64 = avail.iter().map(|(_, v)| v).sum();
         for (owner, marks) in &self.owners {
+            let owner = name(*owner);
             let mine = avail
                 .iter()
-                .find(|(o, _)| o == owner)
+                .find(|(o, _)| *o == owner)
                 .map(|(_, v)| *v)
                 .unwrap_or(0);
             let k = target - (whole - mine);

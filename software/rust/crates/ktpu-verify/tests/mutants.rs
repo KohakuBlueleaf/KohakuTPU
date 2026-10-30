@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use ktpu_l0::{Facts, Package};
 use ktpu_machine::Machine;
-use ktpu_verify::{mutant, schedule, spec, Held, Nodes, Target};
+use ktpu_verify::{check, mutant, schedule, spec, Held, Nodes, Target};
 use serde_json::Value;
 
 fn root() -> PathBuf {
@@ -92,4 +92,37 @@ fn mutants_break_their_vectors() {
     }
     eprintln!("checker mutants: {witnessed} witnessed");
     assert!(witnessed > 0 && fails.is_empty(), "{}", fails.join("\n"));
+}
+
+/// The back-to-back run's totals joined from the ordering runs find what a
+/// totals-free run's do (`verify.check/totals-prepass`), on every case.
+#[test]
+fn joined_totals_find_what_a_prepass_finds() {
+    let dir = root().join("golden/verify");
+    let mut paths: Vec<PathBuf> = fs::read_dir(&dir)
+        .map(|rd| rd.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    paths.sort();
+    let (mut cases, mut fails) = (0, Vec::new());
+    for p in &paths {
+        if p.extension().is_none_or(|x| x != "json") {
+            continue;
+        }
+        let g: Value = serde_json::from_str(&fs::read_to_string(p).unwrap()).unwrap();
+        if g["runs"].is_null() {
+            continue;
+        }
+        let m = Machine::named(g["machine"].as_str().unwrap()).unwrap();
+        let n = g["target"]["meshes"].as_array().unwrap().len() as u32;
+        let t = Target::from_machine(&m, Some(n)).unwrap();
+        let runs = runs(&g, &Facts::of(&m));
+        let joined = check(&runs, &t);
+        let prepass = mutant::with("verify.check/totals-prepass", || check(&runs, &t));
+        cases += 1;
+        if joined != prepass {
+            fails.push(format!("{}: {joined:?} != {prepass:?}", g["case"]));
+        }
+    }
+    eprintln!("joined totals: {cases} cases");
+    assert!(cases > 0 && fails.is_empty(), "{}", fails.join("\n"));
 }

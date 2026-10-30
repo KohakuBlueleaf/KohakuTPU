@@ -243,7 +243,7 @@ impl Sim<'_> {
                 self.nodes[i].why = "the host waits for every node's package".into();
                 return false;
             }
-            let cl = self.counters[c].clock_to(need, &[]);
+            let cl = self.clock_to(c, need, &[]);
             self.tick(p, &[cl]);
             self.nodes[i].host = 0;
         }
@@ -268,7 +268,7 @@ impl Sim<'_> {
                         );
                         return false;
                     }
-                    rel.push(self.counters[done].clock_to(sent, &[]));
+                    rel.push(self.clock_to(done, sent, &[]));
                 }
                 let clock = self.tick(p, &rel);
                 let nd = &mut self.nodes[i];
@@ -313,7 +313,7 @@ impl Sim<'_> {
                 }
                 // The unit completes at most the words this node sent it so far.
                 let cap = [(self.units[unit].completer, self.nodes[i].sent[u])];
-                let cl = self.counters[recv].clock_to(want, &cap);
+                let cl = self.clock_to(recv, want, &cap);
                 self.tick(p, &[cl]);
                 self.nodes[i].armed = false;
                 self.nodes[i].at += 1;
@@ -330,7 +330,7 @@ impl Sim<'_> {
                     );
                     return false;
                 }
-                let cl = self.counters[rx].clock_to(want, &[]);
+                let cl = self.clock_to(rx, want, &[]);
                 self.tick(p, &[cl]);
                 self.nodes[i].rx_taken = want;
                 self.nodes[i].at += 1;
@@ -451,7 +451,7 @@ impl Sim<'_> {
                 break;
             }
             let clock = if need > 0 {
-                let cl = self.counters[self.units[unit].done].clock_to(need, &[]);
+                let cl = self.clock_to(self.units[unit].done, need, &[]);
                 self.tick(p, &[cl])
             } else {
                 self.tick(p, &[])
@@ -566,7 +566,7 @@ impl Sim<'_> {
                     );
                     return false;
                 }
-                let cl = self.counters[c].clock_to(want, &[]);
+                let cl = self.clock_to(c, want, &[]);
                 self.tick(p, &[cl]);
                 if s.op == op::WAIT_BELL || s.flags & flag::CONSUME != 0 {
                     self.taken.insert((mesh, key), want);
@@ -716,7 +716,7 @@ impl Sim<'_> {
                 self.nodes[i].why = format!("send: DATA_RECEIVED from {}", self.units[u].name);
                 return false;
             }
-            let cl = self.counters[acks].clock_to(want, &[]);
+            let cl = self.clock_to(acks, want, &[]);
             self.tick(p, &[cl]);
         }
         self.nodes[i].armed = false;

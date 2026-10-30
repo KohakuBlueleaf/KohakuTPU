@@ -267,10 +267,7 @@ impl Sim<'_> {
             let have = self.counters[r.rx].value - r.taken;
             let n = have.min(room).min(job.total - job.inn);
             if n > 0 {
-                let rel = [
-                    job.clock.clone(),
-                    self.counters[r.rx].clock_to(r.taken + n, &[]),
-                ];
+                let rel = [job.clock.clone(), self.clock_to(r.rx, r.taken + n, &[])];
                 let clock = self.tick(sh, &rel);
                 let r = self.sr_mut(u);
                 let job = r.job.as_mut().expect("a job");
@@ -292,10 +289,7 @@ impl Sim<'_> {
             let end = (job.out / job.onw + 1) * job.onw;
             let n = self.t.facts.sr_burst.min(end - job.out);
             if job.out + n <= ready && self.counters[r.cr].value - r.spent >= n {
-                let rel = [
-                    job.clock.clone(),
-                    self.counters[r.cr].clock_to(r.spent + n, &[]),
-                ];
+                let rel = [job.clock.clone(), self.clock_to(r.cr, r.spent + n, &[])];
                 let clock = self.tick(sh, &rel);
                 let mesh = self.units[u].key.0;
                 let r = self.sr_mut(u);

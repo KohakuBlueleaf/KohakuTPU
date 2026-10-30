@@ -339,7 +339,7 @@ impl Sim<'_> {
                     );
                     return self.mg_block(u, why);
                 }
-                rel.push(self.counters[rx].clock_to(want, &[]));
+                rel.push(self.clock_to(rx, want, &[]));
                 self.mg_mut(u).taken[s] = want;
             }
             "FILL" if f.g("npeer") != 0 => {
@@ -614,7 +614,7 @@ impl Sim<'_> {
             if upto <= c.into {
                 return false;
             }
-            rel.push(self.counters[c.cr].clock_to(c.spent + (upto + burst - 1).min(g), &[]));
+            rel.push(self.clock_to(c.cr, c.spent + (upto + burst - 1).min(g), &[]));
         }
         let into = c.into;
         let clock = self.tick(dq, &rel);
