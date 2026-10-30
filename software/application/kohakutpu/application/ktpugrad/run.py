@@ -2888,7 +2888,12 @@ def _product_run(dev, plan, bufs, mm, binds, extras, bt, M, N, Np, batch, m, n) 
             out=arguments["out"],
             steps={i: FM.costs.steps_recipe(v.steps) for i, v in pending.items()},
         )
-        if pending and FM.costs.choose("prepared_mm", recipe, dev.machine.board):
+        # The prepared product is the kernel of no kernel knob.
+        if (
+            pending
+            and MM.resolved(arguments, dev.machine.machine_json)["plain"]
+            and FM.costs.choose("prepared_mm", recipe, dev.machine.board)
+        ):
             plans = {i: FM.plans_of(dev, v.steps) for i, v in pending.items()}
             kernel, given = MM.mm_kernel(
                 mm,

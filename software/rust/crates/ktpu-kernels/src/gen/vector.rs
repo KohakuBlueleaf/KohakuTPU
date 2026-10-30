@@ -454,31 +454,61 @@ fn rows_trips(
     cb: i64,
     hw: &Hw,
 ) -> R<()> {
-    let col0 = cb * pl.wc;
-    let mut pro = HashMap::new();
-    for (i, o) in operands.iter().enumerate() {
-        if o.kind == Kind::Col {
-            let lo = o.offset + col0;
-            let l = t.load(&bufs.ins[i].at(&[sl(lo, lo + pl.wc)])?, true)?;
-            pro.insert(i, Arg::Val(t.unpack(l, None)?));
-        }
-    }
+    let pro = prologue(t, bufs, operands, pl, cb, &Idx::Int(0))?;
     t.range(trips, |t, k| {
         let r = first.mul(pl.rows).add(k.mul(pl.rows)).add(row0);
-        rows_block(t, bufs, e, operands, out, pl, &r, cb, &pro, hw)
+        let at = Origin::rows(&r, operands.len());
+        rows_block(t, bufs, e, operands, out, pl, &at, cb, &pro, hw)
     })
 }
 
-/// One band of rows from row `r`, column block `cb`.
+/// Each `col` operand's column block `cb` of a window from column `col`.
+pub fn prologue(
+    t: &mut Trace,
+    bufs: &Bufs,
+    operands: &[Operand],
+    pl: &Plan,
+    cb: i64,
+    col: &Idx,
+) -> R<HashMap<usize, Arg>> {
+    let mut pro = HashMap::new();
+    for (i, o) in operands.iter().enumerate() {
+        if o.kind == Kind::Col {
+            let lo = col.add(o.offset + cb * pl.wc);
+            let l = t.load(&bufs.ins[i].at(&[sl(&lo, lo.add(pl.wc))])?, true)?;
+            pro.insert(i, Arg::Val(t.unpack(l, None)?));
+        }
+    }
+    Ok(pro)
+}
+
+/// Where a band lies: each operand's and the output's (row, column) in its
+/// buffer before the operand's own offset.
+pub struct Origin {
+    pub ins: Vec<(Idx, Idx)>,
+    pub out: (Idx, Idx),
+}
+
+impl Origin {
+    /// Row `r`, column 0 of every buffer.
+    pub fn rows(r: &Idx, n: usize) -> Origin {
+        Origin {
+            ins: vec![(r.clone(), Idx::Int(0)); n],
+            out: (r.clone(), Idx::Int(0)),
+        }
+    }
+}
+
+/// One band of rows at `at`, column block `cb`.
 #[allow(clippy::too_many_arguments)]
-fn rows_block(
+pub fn rows_block(
     t: &mut Trace,
     bufs: &Bufs,
     e: &E,
     operands: &[Operand],
     out: &Operand,
     pl: &Plan,
-    r: &Idx,
+    at: &Origin,
     cb: i64,
     pro: &HashMap<usize, Arg>,
     hw: &Hw,
@@ -488,11 +518,13 @@ fn rows_block(
     let mut vals = pro.clone();
     for (i, o) in operands.iter().enumerate() {
         let buf = &bufs.ins[i];
+        let (r, c) = &at.ins[i];
         match o.kind {
             Kind::Full | Kind::Tile => {
                 let (rr, cc) = o.divmod()?;
                 let lo = Idx::Int(rr).add(r);
-                let view = buf.at(&[sl(&lo, lo.add(pl.rows)), sl(cc + col0, cc + col0 + pl.wc)])?;
+                let c = c.add(cc + col0);
+                let view = buf.at(&[sl(&lo, lo.add(pl.rows)), sl(&c, c.add(pl.wc))])?;
                 vals.insert(i, Arg::Val(t.load(&view, true)?));
             }
             Kind::Row => {
@@ -510,6 +542,7 @@ fn rows_block(
         }
     }
     let v = expr::emit(t, e, &vals)?;
+    let (r, c) = &at.out;
     if out.kind == Kind::Row {
         let keys = if pl.nblk > 1 {
             vec![crate::trace::buffer::at(cb), sl(r, r.add(pl.rows))]
@@ -523,7 +556,7 @@ fn rows_block(
         t,
         &bufs.out,
         &Idx::Int(rr).add(r),
-        cc + col0,
+        &c.add(cc + col0),
         pl.rows,
         pl.wc,
         v,
@@ -533,7 +566,7 @@ fn rows_block(
 /// `v` over the [rows, cols] window of `dst` at (r0, c0): packed once, then
 /// stored over each of its bands (a row broadcast is one band of 4 rows,
 /// repeated down).
-fn store_over(t: &mut Trace, dst: &Buf, r0: &Idx, c0: i64, rows: i64, cols: i64, v: Arg) -> R<()> {
+fn store_over(t: &mut Trace, dst: &Buf, r0: &Idx, c0: &Idx, rows: i64, cols: i64, v: Arg) -> R<()> {
     let mut v = v;
     if let Arg::Val(x) = v {
         let xv = t.value(x);
@@ -574,7 +607,7 @@ fn store_over(t: &mut Trace, dst: &Buf, r0: &Idx, c0: i64, rows: i64, cols: i64,
     for i in (0..rows).step_by(h as usize) {
         for j in (0..cols).step_by(w as usize) {
             let lo = r0.add(i);
-            let view = dst.at(&[sl(&lo, lo.add(h)), sl(c0 + j, c0 + j + w)])?;
+            let view = dst.at(&[sl(&lo, lo.add(h)), sl(c0.add(j), c0.add(j + w))])?;
             t.store(&view, Arg::Val(p))?;
         }
     }

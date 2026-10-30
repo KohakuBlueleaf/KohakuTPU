@@ -207,7 +207,18 @@ impl Trace {
         dtype: g::Dtype,
         layout: Vec<(String, g::LayoutValue)>,
     ) -> R<Buf> {
-        let s = spec(shape, dtype, layout, g::BufSpace::Dram)?;
+        self.buffer_in(shape, dtype, layout, g::BufSpace::Dram)
+    }
+
+    /// Scratch memory in `space`.
+    pub fn buffer_in(
+        &mut self,
+        shape: &[i64],
+        dtype: g::Dtype,
+        layout: Vec<(String, g::LayoutValue)>,
+        space: g::BufSpace,
+    ) -> R<Buf> {
+        let s = spec(shape, dtype, layout, space)?;
         let n = self.fresh("h");
         self.scratch.push((n.clone(), s.clone()));
         Ok(Buf::new(&n, s))

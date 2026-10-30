@@ -170,6 +170,9 @@ fn a_call_records_and_replays_its_knobs() {
         dense_n: true,
         pad_k: true,
         batch_tiles: true,
+        ring_depth: 2,
+        split_vc: true,
+        tail_bands: true,
     };
     let args: serde_json::Map<String, serde_json::Value> = k
         .args(mm::Group::Plan)
@@ -182,7 +185,12 @@ fn a_call_records_and_replays_its_knobs() {
     );
     assert_eq!(
         k.args(mm::Group::Kernel),
-        vec![("batch_tiles", serde_json::json!(true))]
+        vec![
+            ("batch_tiles", serde_json::json!(true)),
+            ("ring_depth", serde_json::json!(2)),
+            ("split_vc", serde_json::json!(true)),
+            ("tail_bands", serde_json::json!(true)),
+        ]
     );
     let mut call = serde_json::json!({"bt": 1, "m": 1576, "n": 768, "k": 768});
     let bare = ktpu_kernels::call::mm_plan(&call, &card()).unwrap();

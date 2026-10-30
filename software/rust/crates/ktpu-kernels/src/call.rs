@@ -112,6 +112,22 @@ pub fn mm_plan(a: &Value, m: &Machine) -> R<matmul::Mm> {
     )
 }
 
+/// A `matmul.mm_kernel` call's kernel knobs as its kernel takes them
+/// (`matmul::effective`), and whether that is the kernel of none.
+pub fn mm_resolved(a: &Value, m: &Machine) -> R<Value> {
+    let mm = mm_plan(made_by(arg(a, "mm")?, "matmul.plan")?, m)?;
+    let e = expr::from_table(arg(a, "e")?)?;
+    let knobs = matmul::unrecorded().read(a, matmul::Group::Kernel)?;
+    let got = matmul::effective(&mm, &e, &operand(arg(a, "out")?)?, &knobs, m);
+    let plain = got.args(matmul::Group::Kernel) == matmul::unrecorded().args(matmul::Group::Kernel);
+    let knobs: serde_json::Map<String, Value> = got
+        .args(matmul::Group::Kernel)
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+    Ok(serde_json::json!({"knobs": knobs, "plain": plain}))
+}
+
 /// `lanes.plan`'s relayout from its call's arguments.
 pub fn lanes_plan(a: &Value, m: &Machine) -> R<lanes::Plan> {
     lanes::plan(

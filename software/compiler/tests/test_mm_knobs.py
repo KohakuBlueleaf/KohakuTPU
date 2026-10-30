@@ -29,7 +29,46 @@ def test_the_knob_table_is_the_native_one():
         "dense_n": False,
         "pad_k": False,
     }
-    assert MM.kernel_knobs() == {"batch_tiles": False}
+    assert MM.kernel_knobs() == {
+        "batch_tiles": False,
+        "ring_depth": 0,
+        "split_vc": False,
+        "tail_bands": False,
+    }
+
+
+@pytest.mark.parametrize(
+    "bt,knobs,want",
+    [
+        (1, {}, None),
+        (1, {"batch_tiles": True}, None),
+        (2, {"batch_tiles": True}, {"batch_tiles": True}),
+        (2, {"ring_depth": 2}, {"ring_depth": 2}),
+        (2, {"ring_depth": 2, "batch_tiles": True}, {"ring_depth": 2}),
+        (1, {"split_vc": True, "tail_bands": True}, None),
+        (1, {"ring_depth": 1, "split_vc": True}, {"ring_depth": 1, "split_vc": True}),
+    ],
+)
+def test_a_call_resolves_the_knobs_its_kernel_takes(bt, knobs, want):
+    """`MM.resolved`: a kernel knob that leaves the kernel as it is resolves
+    off, and a call of none such is plain (the prepared product's gate)."""
+    plan = dict(bt=bt, m=32, n=64, k=64, shared=False)
+    args = dict(
+        mm=dict(made_by=dict(gen="matmul.plan", args=plan)),
+        e={"nodes": [{"load": 0}], "root": 0},
+        extras=[],
+        out=dict(kind="full", dtype="f16", offset=0, pitch=64, rows=bt * 32),
+        **knobs,
+    )
+    got = MM.resolved(args, MACHINE)
+    off = {
+        "batch_tiles": False,
+        "ring_depth": 0,
+        "split_vc": False,
+        "tail_bands": False,
+    }
+    assert got["knobs"] == {**off, **(want or {})}
+    assert got["plain"] == (want is None)
 
 
 def test_a_recorded_call_keeps_its_knobs(monkeypatch):

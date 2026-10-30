@@ -14,9 +14,12 @@ use crate::kernel::{build, layout, Kernel, Port};
 use crate::pyrepr::{name, Py};
 use crate::trace::buffer::{sl, spec, ALL};
 use crate::trace::control::At;
-use crate::trace::{fail, Buf, Cond, Idx, Trace, R};
+use crate::trace::{fail, Buf, Cond, Idx, Trace, View, R};
+
+mod ring;
 use ktpu_graph as g;
 use ktpu_machine::{Machine, Pairing};
+pub use ring::{resolve as ring_resolve, Ring};
 
 /// The widest product tile's rows: stack policy, below the bank bound
 /// (`(tm / mg.lanes) * nk <= mg.l1_bank_entries`) the plan also checks.
@@ -68,6 +71,21 @@ pub const KNOBS: &[Knob] = &[
         env: "KTPU_MM_BATCH_TILES",
         group: Group::Kernel,
     },
+    Knob {
+        name: "ring_depth",
+        env: "KTPU_MM_RING_DEPTH",
+        group: Group::Kernel,
+    },
+    Knob {
+        name: "split_vc",
+        env: "KTPU_MM_SPLIT_VC",
+        group: Group::Kernel,
+    },
+    Knob {
+        name: "tail_bands",
+        env: "KTPU_MM_TAIL_BANDS",
+        group: Group::Kernel,
+    },
 ];
 
 /// A contraction's plan and kernel knobs: the one source the generators,
@@ -84,6 +102,14 @@ pub struct Knobs {
     pub pad_k: bool,
     /// The clusters share out every batch's product tiles at once.
     pub batch_tiles: bool,
+    /// Waves of product tiles in flight through an on-chip ring of row
+    /// groups (0: the product in DRAM), at most the staging room holds.
+    pub ring_depth: i64,
+    /// Under the ring, a row group's epilogue rows split over the cores.
+    pub split_vc: bool,
+    /// Under the ring, the widest epilogue trip and a tail trip, not the
+    /// widest dividing the tile.
+    pub tail_bands: bool,
 }
 
 /// The knobs' defaults.
@@ -99,6 +125,9 @@ pub fn unrecorded() -> Knobs {
         dense_n: false,
         pad_k: false,
         batch_tiles: false,
+        ring_depth: 0,
+        split_vc: false,
+        tail_bands: false,
     }
 }
 
@@ -129,6 +158,9 @@ impl Knobs {
             "dense_n" => self.dense_n.into(),
             "pad_k" => self.pad_k.into(),
             "batch_tiles" => self.batch_tiles.into(),
+            "ring_depth" => self.ring_depth.into(),
+            "split_vc" => self.split_vc.into(),
+            "tail_bands" => self.tail_bands.into(),
             _ => unreachable!("a knob: {name}"),
         }
     }
@@ -148,6 +180,9 @@ impl Knobs {
             "dense_n" => self.dense_n = flag()?,
             "pad_k" => self.pad_k = flag()?,
             "batch_tiles" => self.batch_tiles = flag()?,
+            "ring_depth" => self.ring_depth = int()?,
+            "split_vc" => self.split_vc = flag()?,
+            "tail_bands" => self.tail_bands = flag()?,
             _ => unreachable!("a knob: {name}"),
         }
         Ok(())
@@ -276,7 +311,12 @@ pub fn plan(
         1
     };
     let mut mp = cdiv(m, quantum) * quantum;
-    let max_tm = (hw.bank / nk * band).min(MAX_TM).min(mp) / quantum * quantum;
+    let max_tm = (hw.bank / nk * band)
+        .min(MAX_TM)
+        .min(ring_rows(mach).max(quantum))
+        .min(mp)
+        / quantum
+        * quantum;
     let mut tm_div = None;
     let mut t = max_tm;
     while t >= band {
@@ -337,6 +377,13 @@ pub fn plan(
         shared,
         quantum,
     })
+}
+
+/// The most rows a product tile takes for one ring wave of tiles of the
+/// widest block, one a cluster, to fit the staging room ([`ring::resolve`]).
+pub fn ring_rows(mach: &Machine) -> i64 {
+    let hw = Hw::of(mach);
+    mach.stage_room() / (2 * hw.mg * hw.max_block())
 }
 
 /// The plan's price of an M tile `tm` (N tile `tn`) over `mp` padded rows:
@@ -581,7 +628,8 @@ fn epilogue_bands(mm: &Mm, operands: &[Operand], out: &Operand, wc: i64, hw: &Hw
 /// The kernel for `mm` (API.OP.005, .007): ports `a` (mx7a), `b` (mx7b),
 /// `in1..` the epilogue's operands (`Load(i)`), `out`. A batch's product
 /// tiles, then its epilogue, a batch at a time; with `knobs.batch_tiles`
-/// every batch's tiles at once, then each batch's epilogue.
+/// every batch's tiles at once, then each batch's epilogue; with a ring
+/// ([`ring::resolve`]) through `@stage` slots.
 pub fn mm_kernel(
     mm: &Mm,
     e: &E,
@@ -617,6 +665,14 @@ pub fn mm_kernel(
         mm.quantum,
         &hw,
     )?;
+    let ring = ring::resolve(mm, e, out, knobs, mach);
+    let (segs, rows) = if ring.depth > 0 {
+        let segs = ring::segments(mm, &ring, &operands, out, wc, &hw)?;
+        let rows = (mm.bt - 1) * mm.mp + ring::cover(mm, &ring, &segs);
+        (segs, rows)
+    } else {
+        (vec![], mm.bt * pl.rp)
+    };
     let (sa, sb) = ([mm.bt * mm.mp, mm.kp], [nb_rows, mm.kp]);
     let mut ports = vec![
         Port::input("a", &sa, g::Dtype::Mx7a).with_layout(lay_a.clone()),
@@ -633,12 +689,12 @@ pub fn mm_kernel(
         ),
     ];
     for (i, o) in extras.iter().enumerate() {
-        let shape = v::port_shape(o, mm.bt * pl.rp, mm.n, &hw)?;
+        let shape = v::port_shape(o, rows, mm.n, &hw)?;
         let n = format!("in{}", i + 1);
         ports.push(Port::input(&n, &shape, g::Dtype::F16));
         given.push((n, spec(&shape, o.dtype, vec![], g::BufSpace::Dram)?));
     }
-    let os = v::port_shape(out, mm.bt * pl.rp, mm.n, &hw)?;
+    let os = v::port_shape(out, rows, mm.n, &hw)?;
     ports.push(Port::output("out", &os, g::Dtype::F16));
     given.push((
         "out".to_string(),
@@ -652,7 +708,9 @@ pub fn mm_kernel(
         Py::Int(clusters),
         Py::Int(cores),
     ];
-    if batched {
+    if ring.depth > 0 {
+        key_args.push(ring.py());
+    } else if batched {
         key_args.push(Py::str("batch_tiles"));
     }
     let key = name("mm", key_args);
@@ -702,6 +760,9 @@ pub fn mm_kernel(
         )
     };
     build(&key, mach, ports, given, |t, b| {
+        if ring.depth > 0 {
+            return ring::schedule(t, b, mm, e, extras, out, &ring, &segs, &hw);
+        }
         let tile = vec![(
             "tile".to_string(),
             g::LayoutValue::Ints(vec![mm.tm / hw.band, mm.tn / hw.band]),
@@ -722,7 +783,20 @@ pub fn mm_kernel(
     })
 }
 
-/// One tile: zero, a gemm a K chunk, drained into the tile scratch.
+/// `knobs` as the kernel for `mm`, epilogue `e` into `out` takes them on
+/// `mach`: a kernel knob that leaves the kernel unchanged is off.
+pub fn effective(mm: &Mm, e: &E, out: &Operand, knobs: &Knobs, mach: &Machine) -> Knobs {
+    let r = ring::resolve(mm, e, out, knobs, mach);
+    Knobs {
+        batch_tiles: knobs.batch_tiles && mm.bt > 1 && r.depth == 0,
+        ring_depth: r.depth,
+        split_vc: r.parts > 1,
+        tail_bands: r.tail_bands,
+        ..*knobs
+    }
+}
+
+/// Tile (`ti`, `tj`) of batch `bt` into the [bt * mp, N] scratch `h`.
 #[allow(clippy::too_many_arguments)]
 fn product_tile(
     t: &mut Trace,
@@ -734,8 +808,26 @@ fn product_tile(
     tj: &Idx,
     hw: &Hw,
 ) -> R<()> {
-    let acc = t.zero(mm.tm, mm.tn)?;
     let arow = bt.mul(mm.mp).add(ti.mul(mm.tm));
+    let c0 = tj.mul(mm.tn);
+    let dst = h.at(&[sl(&arow, arow.add(mm.tm)), sl(&c0, c0.add(mm.tn))])?;
+    product(t, b, mm, bt, &arow, tj, &dst, hw)
+}
+
+/// One tile, A rows from `arow`, B's N tile `tj` of batch `bt`: zero, a gemm
+/// a K chunk, drained into `dst`.
+#[allow(clippy::too_many_arguments)]
+fn product(
+    t: &mut Trace,
+    b: &[Buf],
+    mm: &Mm,
+    bt: &Idx,
+    arow: &Idx,
+    tj: &Idx,
+    dst: &View,
+    hw: &Hw,
+) -> R<()> {
+    let acc = t.zero(mm.tm, mm.tn)?;
     let brow = if mm.shared {
         tj.mul(mm.tn)
     } else {
@@ -745,14 +837,10 @@ fn product_tile(
     let mut acc = acc;
     t.range(mm.kp / kc, |t, k| {
         let k0 = k.mul(kc);
-        let a = t.fill(&b[0].at(&[sl(&arow, arow.add(mm.tm)), sl(&k0, k0.add(kc))])?)?;
+        let a = t.fill(&b[0].at(&[sl(arow, arow.add(mm.tm)), sl(&k0, k0.add(kc))])?)?;
         let bv = t.fill(&b[1].at(&[sl(&brow, brow.add(mm.tn)), sl(&k0, k0.add(kc))])?)?;
         acc = t.gemm(a, bv, acc)?;
         Ok(())
     })?;
-    let c0 = tj.mul(mm.tn);
-    t.drain(
-        acc,
-        &h.at(&[sl(&arow, arow.add(mm.tm)), sl(&c0, c0.add(mm.tn))])?,
-    )
+    t.drain(acc, dst)
 }

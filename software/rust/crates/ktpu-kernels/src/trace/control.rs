@@ -146,6 +146,18 @@ impl Trace {
         n: impl Into<Idx>,
         body: impl FnOnce(&mut Trace, Idx) -> R<()>,
     ) -> R<()> {
+        self.range_pipe(n, None, body)
+    }
+
+    /// `for v in 0..n [pipe=K]` (DSL.CTRL.005): at node scope K iterations
+    /// in flight.
+    #[track_caller]
+    pub fn range_pipe(
+        &mut self,
+        n: impl Into<Idx>,
+        pipe: Option<i64>,
+        body: impl FnOnce(&mut Trace, Idx) -> R<()>,
+    ) -> R<()> {
         let at_line = here();
         let (lo, hi) = (Idx::Int(0), n.into());
         let prefix = if self.scope().kind == Some(g::UnitKind::Vc) {
@@ -158,7 +170,7 @@ impl Trace {
             var: v.clone(),
             lo: lo.graph(),
             hi: hi.graph(),
-            pipe: None,
+            pipe,
             body: vec![],
         };
         let s = self.scope();

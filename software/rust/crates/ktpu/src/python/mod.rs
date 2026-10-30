@@ -850,6 +850,19 @@ fn mm_plan(args_json: &str, machine_json: &str, mutant: Option<&str>) -> PyResul
     .to_string())
 }
 
+/// mm_resolved(args_json, machine_json) -> str: a `matmul.mm_kernel` call's
+/// kernel knobs as its kernel takes them (`ktpu_kernels::call::mm_resolved`),
+/// JSON `{knobs, plain}`; ValueError on a refusal.
+#[pyfunction]
+fn mm_resolved(args_json: &str, machine_json: &str) -> PyResult<String> {
+    let m = machine(machine_json)?;
+    let args = serde_json::from_str(args_json)
+        .map_err(|e| PyValueError::new_err(format!("matmul.mm_kernel arguments: {e}")))?;
+    ktpu_kernels::call::mm_resolved(&args, &m)
+        .map(|v| v.to_string())
+        .map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
 #[pymodule]
 #[pyo3(name = "_rs")]
 fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -870,6 +883,7 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("MX7_PAIRING", ktpu_machine::PAIRING.name())?;
     m.add_function(wrap_pyfunction!(mm_knobs, m)?)?;
     m.add_function(wrap_pyfunction!(mm_plan, m)?)?;
+    m.add_function(wrap_pyfunction!(mm_resolved, m)?)?;
     m.add("MM_KNOBS", mm_knob_table())?;
     m.add_function(wrap_pyfunction!(bind, m)?)?;
     m.add_function(wrap_pyfunction!(bind_cache_stats, m)?)?;

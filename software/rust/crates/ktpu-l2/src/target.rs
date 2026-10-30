@@ -38,8 +38,6 @@ pub struct Target {
     /// The system node's memory ports.
     pub ports: Vec<(i64, i64)>,
     pub word_bytes: i64,
-    /// The staging store's bytes a node: banks x entries words.
-    pub stage_bytes: i64,
     // vector core
     pub vregs: u32,
     pub vcopies: u32,
@@ -94,9 +92,6 @@ impl Target {
                 .map(|c| (c.0 as i64, c.1 as i64))
                 .collect(),
             word_bytes: m.die.word_bytes as i64,
-            stage_bytes: m.die.staging.banks as i64
-                * m.die.staging.entries as i64
-                * m.die.word_bytes as i64,
             vregs: m.vc.regs,
             vcopies: m.vc.rf_copies,
             l1_words: m.vc.l1_words as i64,
@@ -267,8 +262,8 @@ impl Target {
         (rows / self.mg_lanes) * (cols / self.kblock)
     }
 
-    /// The stack's staging room a node: half the staging store.
+    /// The stack's staging room a node (`Machine::stage_room`).
     pub fn stage_room(&self) -> i64 {
-        self.stage_bytes / 2
+        self.machine.stage_room()
     }
 }

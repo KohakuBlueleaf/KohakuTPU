@@ -79,6 +79,13 @@ def kernel_knobs() -> dict:
     return knobs("kernel")
 
 
+def resolved(arguments: dict, machine_json: str) -> dict:
+    """A `matmul.mm_kernel` call's kernel knobs as its kernel takes them on
+    the machine, and whether that is the kernel of none (`_rs.mm_resolved`):
+    `{"knobs": {...}, "plain": bool}`."""
+    return json.loads(_rs.mm_resolved(json.dumps(arguments), machine_json))
+
+
 def plan(
     bt: int,
     m: int,
@@ -584,4 +591,5 @@ __all__ = [
     "plan_knobs",
     "quant_kernel",
     "quant_walk_kernel",
+    "resolved",
 ]

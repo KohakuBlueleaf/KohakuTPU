@@ -211,6 +211,12 @@ impl Machine {
             .with_fact("card.chain", Value::from((0..nodes).collect::<Vec<_>>()))
     }
 
+    /// The stack's staging room a node: half the staging store (the
+    /// firmware queues hold the other half).
+    pub fn stage_room(&self) -> i64 {
+        (self.die.stage_bytes().expect("a staging store's bytes") / 2) as i64
+    }
+
     fn from_value(doc: Value) -> Result<Machine, MachineError> {
         let schema = doc.get("schema").cloned().unwrap_or(Value::Null);
         if schema.as_str() != Some(schema_version()) {

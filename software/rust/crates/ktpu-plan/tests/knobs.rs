@@ -18,6 +18,9 @@ fn every_knob() -> Knobs {
         dense_n: true,
         pad_k: true,
         batch_tiles: true,
+        ring_depth: 2,
+        split_vc: true,
+        tail_bands: true,
     }
 }
 
