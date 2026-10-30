@@ -283,7 +283,8 @@ impl Session<'_> {
             1
         };
         let shared = sw.len() == 2;
-        let mm = Mm::plan(&self.r.hw, bt, m, n, k, shared, None)
+        let knobs = self.r.knobs;
+        let mm = Mm::plan(self.r.m, &knobs, bt, m, n, k, shared, None)
             .map_err(|e| Refusal::new("API.OP.006", e.message))?;
         let src = Operand {
             pitch: k,
@@ -322,32 +323,74 @@ impl Session<'_> {
         )?;
         let mut binds = BTreeMap::from([("a".to_string(), qa), ("b".to_string(), qb)]);
         let mut ops = Vec::new();
+        let mut lays = Vec::new();
+        let padded = mm.mp != m && !crate::mutant::on("memory/unsafe-bounds");
         for (i, x) in extras.iter().enumerate() {
             let K::Ref(u) = x.as_ref() else {
                 unreachable!("a read")
             };
             let kind = self.kind(*u, view)?;
-            let (at, o) = self.addr(*u, kind, false)?;
+            let (mut at, o) = self.addr(*u, kind, false)?;
+            if padded && (kind == "full" || kind == "row") {
+                let w = if kind == "full" { o.pitch } else { 1 };
+                let nbytes = if kind == "row" {
+                    self.r.stat_bytes(bt * mm.mp)
+                } else {
+                    self.r.hw.f16_bytes(bt * mm.mp * w)
+                };
+                let lay = self.r.x.storage(nbytes);
+                let to = self.r.x.addr(&lay, 0);
+                self.batch_rows(at, to.clone(), bt, (m, mm.mp), w)?;
+                lays.push(lay);
+                at = to;
+            }
             binds.insert(format!("in{}", i + 1), at);
             ops.push(o);
         }
         let (st, out) = self.out_storage(t, false);
-        binds.insert("out".into(), out);
-        let ms = |kind: UnitKind| self.r.m.units(kind).len() as i64;
-        let call = Call {
-            gen: "matmul.mm_kernel".into(),
-            args: json!({
-                "mm": mm.made_by(),
-                "e": expr_arg(e),
-                "extras": ops.iter().map(Operand::json).collect::<Vec<_>>(),
-                "out": Operand { pitch: n, rows: bt * m, ..Operand::new("full") }.json(),
-                "clusters": ms(UnitKind::Mg),
-                "cores": ms(UnitKind::Vc),
-            }),
+        let tmp = padded.then(|| self.r.x.storage(self.r.hw.f16_bytes(bt * mm.mp * n)));
+        let kout = match &tmp {
+            Some(s) => self.r.x.addr(s, 0),
+            None => out.clone(),
         };
+        binds.insert("out".into(), kout.clone());
+        let ms = |kind: UnitKind| self.r.m.units(kind).len() as i64;
+        let call = mm.kernel_call(expr_arg(e), &ops, n, (ms(UnitKind::Mg), ms(UnitKind::Vc)));
         let mut info = info;
         info["mm"] = mm.made_by();
         self.r.x.launch(call, "matmul", info, binds);
+        for lay in lays {
+            self.r.x.free(&lay);
+        }
+        if let Some(s) = tmp {
+            self.batch_rows(kout, out, bt, (mm.mp, m), n)?;
+            self.r.x.free(&s);
+        }
         Ok(st)
+    }
+
+    /// `bt` batches of rows `w` elements wide moved from `from` (each batch
+    /// `rows.0` rows apart) into `to` (`rows.1` apart), the fewer of the two
+    /// rows a batch.
+    fn batch_rows(
+        &mut self,
+        from: Addr,
+        to: Addr,
+        bt: i64,
+        rows: (i64, i64),
+        w: i64,
+    ) -> Result<(), Refusal> {
+        let live = rows.0.min(rows.1) * w;
+        self.r.relayout(
+            from,
+            bt * rows.0 * w,
+            &[(bt, rows.0 * w), (live, 1)],
+            0,
+            &[(bt, rows.1 * w), (live, 1)],
+            bt * rows.1 * w,
+            to,
+            0,
+            false,
+        )
     }
 }

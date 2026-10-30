@@ -801,6 +801,55 @@ fn pairs_blocks(machine_json: &str, pairing: Option<&str>, mutant: Option<&str>)
     }
 }
 
+/// mm_knobs() -> str: the contraction knobs the environment's `KTPU_MM_*`
+/// overrides resolve (`ktpu_kernels::gen::matmul::Knobs::resolve`), a JSON
+/// object by knob name.
+#[pyfunction]
+fn mm_knobs() -> String {
+    ktpu_kernels::gen::matmul::Knobs::resolve()
+        .json()
+        .to_string()
+}
+
+/// Every contraction knob as JSON: `[{name, env, group}]`, group `plan` or
+/// `kernel` (the call recording it).
+fn mm_knob_table() -> String {
+    use ktpu_kernels::gen::matmul::{Group, KNOBS};
+    let rows: Vec<serde_json::Value> = KNOBS
+        .iter()
+        .map(|k| {
+            let group = match k.group {
+                Group::Plan => "plan",
+                Group::Kernel => "kernel",
+            };
+            serde_json::json!({"name": k.name, "env": k.env, "group": group})
+        })
+        .collect();
+    serde_json::Value::Array(rows).to_string()
+}
+
+/// mm_plan(args_json, machine_json, mutant=None) -> str: the tiling of a
+/// `matmul.plan` call's arguments (`ktpu_kernels::call::mm_plan`), JSON of
+/// `bt m n k mp kp tm tn nk shared quantum`; ValueError on a refusal.
+#[pyfunction]
+#[pyo3(signature = (args_json, machine_json, mutant=None))]
+fn mm_plan(args_json: &str, machine_json: &str, mutant: Option<&str>) -> PyResult<String> {
+    let m = machine(machine_json)?;
+    let args = serde_json::from_str(args_json)
+        .map_err(|e| PyValueError::new_err(format!("matmul.plan arguments: {e}")))?;
+    let run = || ktpu_kernels::call::mm_plan(&args, &m);
+    let p = match mutant {
+        Some(n) => crate::mutant::with(n, run).map_err(PyValueError::new_err)?,
+        None => run(),
+    }
+    .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(serde_json::json!({
+        "bt": p.bt, "m": p.m, "n": p.n, "k": p.k, "mp": p.mp, "kp": p.kp,
+        "tm": p.tm, "tn": p.tn, "nk": p.nk, "shared": p.shared, "quantum": p.quantum,
+    })
+    .to_string())
+}
+
 #[pymodule]
 #[pyo3(name = "_rs")]
 fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -819,6 +868,9 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate, m)?)?;
     m.add_function(wrap_pyfunction!(pairs_blocks, m)?)?;
     m.add("MX7_PAIRING", ktpu_machine::PAIRING.name())?;
+    m.add_function(wrap_pyfunction!(mm_knobs, m)?)?;
+    m.add_function(wrap_pyfunction!(mm_plan, m)?)?;
+    m.add("MM_KNOBS", mm_knob_table())?;
     m.add_function(wrap_pyfunction!(bind, m)?)?;
     m.add_function(wrap_pyfunction!(bind_cache_stats, m)?)?;
     m.add_function(wrap_pyfunction!(bind_cache_configure, m)?)?;

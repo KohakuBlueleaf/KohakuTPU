@@ -4,6 +4,7 @@ import json
 import os
 from functools import lru_cache
 
+from kohakutpu.application.kernels import matmul as MM
 from kohakutpu.application.plan.emit import expr
 from kohakutpu.language.dsl import TensorSpec, Traced
 from kohakutpu.language.text import module as M
@@ -33,6 +34,8 @@ def launch(dev, generator, arguments, bindings, kind="dsl", info=None):
                 ("zero_reuse", "KTPU_QUANT_ZERO_REUSE", "1"),
             )
         }
+    if generator == "matmul.mm_kernel":
+        arguments = {**MM.kernel_knobs(), **arguments}
     source = graph(
         generator, json.dumps(arguments, sort_keys=True), machine, rs._MUTANT.get()
     )

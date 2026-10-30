@@ -74,6 +74,26 @@ job-local golden directory and runs only `cargo test -p ktpu-plan --test run`.
 The `quant_schedule_emission_reverse_witness` test reruns the same comparison
 with Rust quant attribute emission disabled and requires the attribute mismatch.
 
+## Planner goldens moved by a contraction change
+
+```text
+cargo run -p ktpu-plan --example planner_regold -- <dir> <key>[,<key>..] [--mutant <mutant>]
+python scripts/py/measure/mmeff/apply_patches.py <dir> [--write]
+```
+
+`planner_regold` plans every `plan/` golden holding a product (its runs and
+`kp` logs): each step must equal the golden's or be a launch whose only
+differences are the keys `<key>..` within its `call` and `info`; an end
+record or refusal other than the golden's aborts. With `--mutant`, the
+ktpu-kernels reverse mutant of the change under review, each is also
+planned under it and must reproduce its golden: steps, end records and
+refusal. The moved `call` and `info` fields are written as JSON-pointer
+patches to `<dir>/patches.json`, the moved launches a file to
+`<dir>/manifest.json`. `apply_patches.py` checks
+that each patched golden re-serialises to its own bytes, then writes the
+patched files to `<dir>/updated/` and the originals to `<dir>/originals/`;
+`--write` replaces the goldens.
+
 ## Machine digest regeneration
 
 After regenerating machines with `python -m machine --all` from `scripts/py`,

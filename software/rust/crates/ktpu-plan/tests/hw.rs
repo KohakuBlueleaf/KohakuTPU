@@ -8,6 +8,7 @@ mod common;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use common::goldens;
+use ktpu_kernels::gen::matmul::defaults;
 use ktpu_machine::Machine;
 use ktpu_plan::hw::Hw;
 use ktpu_plan::run::matmul::Mm;
@@ -52,7 +53,7 @@ fn every_fact_is_the_machines() {
 #[test]
 fn the_product_tiles_by_the_cluster() {
     let m = board();
-    let mm = |m: &Machine, n: i64| Mm::plan(&Hw::of(m), 1, 256, n, 256, true, None);
+    let mm = |m: &Machine, n: i64| Mm::plan(m, &defaults(), 1, 256, n, 256, true, None);
     let got = mm(&m, 256).unwrap();
     assert_eq!((got.tm, got.tn, got.nk), (256, 256, 2));
     let e = mm(&with(&m, "mg.kblock", 64), 32).unwrap_err();

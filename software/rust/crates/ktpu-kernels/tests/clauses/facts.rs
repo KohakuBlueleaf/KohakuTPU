@@ -15,9 +15,19 @@ fn with(fact: &str, value: i64) -> Machine {
 
 /// K chunks (`nk`) of a K = 128 product.
 fn nk(m: &Machine) -> i64 {
-    matmul::plan(1, 64, 64, 128, true, 4, Pairing::Vector, m)
-        .unwrap()
-        .nk
+    matmul::plan(
+        1,
+        64,
+        64,
+        128,
+        true,
+        4,
+        Pairing::Vector,
+        m,
+        &matmul::defaults(),
+    )
+    .unwrap()
+    .nk
 }
 
 /// Rows of a [64, 32] rows trip, or the refusal's clause.
@@ -47,6 +57,7 @@ fn kstep_from_the_machine() {
         4,
         Pairing::Vector,
         &with("mg.kstep", 4),
+        &matmul::defaults(),
     )
     .unwrap();
     assert_eq!(k.nk, 4);
@@ -65,7 +76,11 @@ fn pairing_follows_the_quantiser() {
             .and_then(|m| m.with_fact("conversion.fp16_mx7.preferred_backend", json!(b)))
             .unwrap()
     };
-    let nk = |p: Pairing, m: &Machine| matmul::plan(1, 64, 64, 128, true, 4, p, m).unwrap().nk;
+    let nk = |p: Pairing, m: &Machine| {
+        matmul::plan(1, 64, 64, 128, true, 4, p, m, &matmul::defaults())
+            .unwrap()
+            .nk
+    };
     let (mover, vector) = (backend("mover_quant"), backend("vector_mx7"));
     assert_eq!(nk(Pairing::Unpaired, &mover), 1);
     assert_eq!(nk(Pairing::Vector, &mover), 2);
@@ -77,7 +92,18 @@ fn pairing_follows_the_quantiser() {
 fn kblock_from_the_machine() {
     assert_eq!(trip_rows(&card()), Ok(16));
     assert_eq!(trip_rows(&with("mg.kblock", 64)), Err("API.ROW.008".into()));
-    let err = matmul::plan(1, 64, 96, 64, true, 4, PAIRING, &with("mg.kblock", 64)).unwrap_err();
+    let err = matmul::plan(
+        1,
+        64,
+        96,
+        64,
+        true,
+        4,
+        PAIRING,
+        &with("mg.kblock", 64),
+        &matmul::defaults(),
+    )
+    .unwrap_err();
     assert_eq!(err.clause, "API.OP.006");
 }
 

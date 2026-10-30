@@ -22,6 +22,151 @@ use ktpu_machine::{Machine, Pairing};
 /// (`(tm / mg.lanes) * nk <= mg.l1_bank_entries`) the plan also checks.
 pub const MAX_TM: i64 = 256;
 
+/// The reverse mutant of the knobs' recording: no knob recorded in a
+/// `matmul.plan` or `matmul.mm_kernel` call.
+pub const UNRECORDED_MUTANT: &str = "kernels.matmul/unrecorded-knobs";
+
+/// Which call records a knob: the plan's (`matmul.plan`) or the kernel's
+/// (`matmul.mm_kernel`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Group {
+    Plan,
+    Kernel,
+}
+
+/// A knob: its argument name, its environment override, the call recording it.
+pub struct Knob {
+    pub name: &'static str,
+    pub env: &'static str,
+    pub group: Group,
+}
+
+/// Every contraction knob.
+pub const KNOBS: &[Knob] = &[
+    Knob {
+        name: "pad_m",
+        env: "KTPU_MM_PAD_M",
+        group: Group::Plan,
+    },
+    Knob {
+        name: "n_tiles",
+        env: "KTPU_MM_N_TILES",
+        group: Group::Plan,
+    },
+    Knob {
+        name: "dense_n",
+        env: "KTPU_MM_DENSE_N",
+        group: Group::Plan,
+    },
+];
+
+/// A contraction's plan and kernel knobs: the one source the generators,
+/// ktpu-plan and Python (`_rs.mm_knobs`) read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Knobs {
+    /// Balanced, cost-modelled M tiles with a zero-padded tail.
+    pub pad_m: bool,
+    /// The least N tile count.
+    pub n_tiles: i64,
+    /// The widest N tile that divides N (not only powers of two).
+    pub dense_n: bool,
+}
+
+/// The knobs' defaults.
+pub fn defaults() -> Knobs {
+    unrecorded()
+}
+
+/// The knobs of a call that records none: the contraction before them.
+pub fn unrecorded() -> Knobs {
+    Knobs {
+        pad_m: false,
+        n_tiles: 1,
+        dense_n: false,
+    }
+}
+
+impl Knobs {
+    /// The defaults under each set `KTPU_MM_*` override (`1` sets a flag,
+    /// anything else clears it; an integer knob's value is an integer).
+    pub fn resolve() -> Knobs {
+        let mut k = defaults();
+        for knob in KNOBS {
+            if let Ok(raw) = std::env::var(knob.env) {
+                let v = match k.get(knob.name) {
+                    serde_json::Value::Bool(_) => serde_json::Value::Bool(raw == "1"),
+                    _ => raw
+                        .parse::<i64>()
+                        .unwrap_or_else(|_| panic!("{}={raw} is not an integer", knob.env))
+                        .into(),
+                };
+                k.set(knob.name, &v).expect("a value of the knob's type");
+            }
+        }
+        k
+    }
+
+    fn get(&self, name: &str) -> serde_json::Value {
+        match name {
+            "pad_m" => self.pad_m.into(),
+            "n_tiles" => self.n_tiles.into(),
+            "dense_n" => self.dense_n.into(),
+            _ => unreachable!("a knob: {name}"),
+        }
+    }
+
+    fn set(&mut self, name: &str, v: &serde_json::Value) -> R<()> {
+        let flag = || match v.as_bool() {
+            Some(b) => Ok(b),
+            None => fail("API.OP.001", format!("{name} is not a bool")),
+        };
+        let int = || match v.as_i64() {
+            Some(i) => Ok(i),
+            None => fail("API.OP.001", format!("{name} is not an int")),
+        };
+        match name {
+            "pad_m" => self.pad_m = flag()?,
+            "n_tiles" => self.n_tiles = int()?,
+            "dense_n" => self.dense_n = flag()?,
+            _ => unreachable!("a knob: {name}"),
+        }
+        Ok(())
+    }
+
+    /// The `group` knobs as the call records them (none under
+    /// [`UNRECORDED_MUTANT`]).
+    pub fn args(&self, group: Group) -> Vec<(&'static str, serde_json::Value)> {
+        if crate::mutants::on(UNRECORDED_MUTANT) {
+            return vec![];
+        }
+        KNOBS
+            .iter()
+            .filter(|k| k.group == group)
+            .map(|k| (k.name, self.get(k.name)))
+            .collect()
+    }
+
+    /// `self` with each `group` knob the call `a` names.
+    pub fn read(&self, a: &serde_json::Value, group: Group) -> R<Knobs> {
+        let mut k = *self;
+        for knob in KNOBS.iter().filter(|k| k.group == group) {
+            if let Some(v) = a.get(knob.name) {
+                k.set(knob.name, v)?;
+            }
+        }
+        Ok(k)
+    }
+
+    /// Every knob as a JSON object.
+    pub fn json(&self) -> serde_json::Value {
+        KNOBS
+            .iter()
+            .map(|k| (k.name.to_string(), self.get(k.name)))
+            .collect::<serde_json::Map<_, _>>()
+            .into()
+    }
+}
+
 /// One contraction's tiling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Mm {
@@ -71,7 +216,12 @@ impl Mm {
 
 /// The tiling of `bt` [M, K] x [N, K] products, each batch's rows padded
 /// to whole `quantum`s (API.OP.006: N whole `mg.kblock`-column blocks); K
-/// blocks paired as `pairing` allows on `mach` (RUL.099).
+/// blocks paired as `pairing` allows on `mach` (RUL.099). The M tile is the
+/// largest that divides the padded rows, or with `knobs.pad_m` the balanced
+/// tile (its tail zero-padded) where [`tile_cost`] prices it no higher; the
+/// N tile the widest power-of-two block the accumulator holds, halved to at
+/// least `knobs.n_tiles` tiles, or with `knobs.dense_n` the widest
+/// `mg.kblock` multiple dividing N.
 #[allow(clippy::too_many_arguments)]
 pub fn plan(
     bt: i64,
@@ -82,6 +232,7 @@ pub fn plan(
     quantum: i64,
     pairing: Pairing,
     mach: &Machine,
+    knobs: &Knobs,
 ) -> R<Mm> {
     let hw = Hw::of(mach);
     let (kb, band) = (hw.kblock, hw.band);
@@ -97,23 +248,55 @@ pub fn plan(
     } else {
         1
     };
-    let mp = cdiv(m, quantum) * quantum;
-    let mut tm = None;
-    let mut t = MAX_TM.min(mp);
+    let mut mp = cdiv(m, quantum) * quantum;
+    let max_tm = (hw.bank / nk * band).min(MAX_TM).min(mp) / quantum * quantum;
+    let mut tm_div = None;
+    let mut t = max_tm;
     while t >= band {
-        if mp % t == 0 && t % quantum == 0 && (t / band) * nk <= hw.bank {
-            tm = Some(t);
+        if mp % t == 0 && t % quantum == 0 {
+            tm_div = Some(t);
             break;
         }
         t -= band;
     }
-    let Some(tm) = tm else {
+    let Some(tm_div) = tm_div else {
         return fail("API.OP.006", format!("no product tile divides {mp} rows"));
     };
-    let mut tn = v::block(n, hw.max_block(), &hw)?;
-    while (tm / band) * (tn / band) > hw.acc_subtiles {
-        tn /= 2;
-    }
+    let tn_of = |tm: i64| -> R<i64> {
+        let mut tn = v::block(n, hw.max_block(), &hw)?;
+        while (tm / band) * (tn / band) > hw.acc_subtiles {
+            tn /= 2;
+        }
+        if knobs.dense_n {
+            return Ok((1..=n.min(hw.max_block()) / kb)
+                .rev()
+                .map(|x| x * kb)
+                .find(|&x| {
+                    n % x == 0
+                        && (tm / band) * (x / band) <= hw.acc_subtiles
+                        && (x / band) * nk <= hw.bank
+                        && n / x >= knobs.n_tiles.min(n / kb)
+                })
+                .unwrap_or(tn));
+        }
+        while n / tn < knobs.n_tiles && tn / 2 >= kb && n % (tn / 2) == 0 {
+            tn /= 2;
+        }
+        Ok(tn)
+    };
+    let tm = if knobs.pad_m {
+        let tm_bal = cdiv(cdiv(mp, cdiv(mp, max_tm)), quantum) * quantum;
+        let cost = |tm: i64| -> R<i64> { Ok(tile_cost(mp, n, kp, nk, tm, tn_of(tm)?, &hw)) };
+        if cost(tm_bal)? <= cost(tm_div)? {
+            tm_bal
+        } else {
+            tm_div
+        }
+    } else {
+        tm_div
+    };
+    mp = cdiv(mp, tm) * tm;
+    let tn = tn_of(tm)?;
     Ok(Mm {
         bt,
         m,
@@ -127,6 +310,23 @@ pub fn plan(
         shared,
         quantum,
     })
+}
+
+/// The plan's price of an M tile `tm` (N tile `tn`) over `mp` padded rows:
+/// the clusters' issue slots, the A and B fills, the product's drain,
+/// epilogue read and store, the padded tail's quantise and epilogue traffic
+/// in machine words, and a fixed cost a tile.
+#[allow(clippy::too_many_arguments)]
+pub fn tile_cost(mp: i64, n: i64, kp: i64, nk: i64, tm: i64, tn: i64, hw: &Hw) -> i64 {
+    let (kb, band) = (hw.kblock, hw.band);
+    let ntm = cdiv(mp, tm);
+    let mp_pad = ntm * tm;
+    let ntn = n / tn;
+    let issue = (mp_pad / band) * (n / band) * (kp / (kb * nk));
+    let fill_bytes = kp * (mp_pad * ntn + n * ntm);
+    let out_bytes = 2 * mp_pad * n;
+    let pad_bytes = (mp_pad - mp) * (2 * kp + 4 * n);
+    issue + (fill_bytes + 3 * out_bytes + pad_bytes) / hw.word_bytes + 64 * ntm * ntn
 }
 
 /// Which packing: A (rows of the left operand) or B.

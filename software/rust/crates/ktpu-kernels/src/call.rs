@@ -108,6 +108,7 @@ pub fn mm_plan(a: &Value, m: &Machine) -> R<matmul::Mm> {
             },
         },
         m,
+        &matmul::unrecorded().read(a, matmul::Group::Plan)?,
     )
 }
 

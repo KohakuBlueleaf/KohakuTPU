@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use ktpu_kernels::gen::matmul::Knobs;
 use ktpu_machine::{Machine, Refusal, UnitKind};
 use serde_json::{json, Value};
 use sha2::{Digest as _, Sha256};
@@ -114,16 +115,20 @@ pub struct Runner<'a> {
     pub hw: Hw,
     pub g: Graph,
     pub x: Exec,
+    /// the contraction knobs its products are planned and recorded under
+    pub knobs: Knobs,
     keys: usize,
 }
 
 impl<'a> Runner<'a> {
+    /// A runner under the environment's contraction knobs.
     pub fn new(m: &'a Machine, g: Graph, x: Exec) -> Runner<'a> {
         Runner {
             m,
             hw: Hw::of(m),
             g,
             x,
+            knobs: Knobs::resolve(),
             keys: 0,
         }
     }
@@ -851,7 +856,19 @@ fn raw_bytes(a: &fold::Arr) -> Vec<u8> {
 /// and storages it leaves (a refused run's too: they are compared).
 #[allow(clippy::result_large_err)]
 pub fn execute(l: Lowered, state: &State, m: &Machine) -> Result<Exec, (Refusal, Exec)> {
+    execute_under(l, state, m, Knobs::resolve())
+}
+
+/// [`execute`] under the contraction knobs `knobs`.
+#[allow(clippy::result_large_err)]
+pub fn execute_under(
+    l: Lowered,
+    state: &State,
+    m: &Machine,
+    knobs: Knobs,
+) -> Result<Exec, (Refusal, Exec)> {
     let mut r = Runner::new(m, l.graph, Exec::new(state));
+    r.knobs = knobs;
     let mut bufs = Bufs::new();
     for (slot, s) in &state.slots {
         let k = Slot::Param(slot.parse().unwrap_or(-1));

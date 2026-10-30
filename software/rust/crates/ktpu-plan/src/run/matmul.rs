@@ -6,7 +6,8 @@
 
 use std::collections::BTreeMap;
 
-use ktpu_machine::Refusal;
+use ktpu_kernels::gen::matmul::{self, Group, Knobs};
+use ktpu_machine::{Machine, Refusal, PAIRING};
 use serde_json::{json, Value};
 
 use super::{expr_arg, is_float, item, np_name, Bufs, Operand, Runner};
@@ -16,11 +17,8 @@ use crate::lower::{Access, Plan, Slot};
 use crate::program::{Addr, Call};
 use crate::uop::{Arg, Id};
 
-/// The tallest M tile tried (`matmul.plan`'s search start): a search bound,
-/// the bank and the accumulator cap the tile.
-const MAX_TM: i64 = 256;
-
-/// One contraction's tiling (`matmul.Mm`).
+/// One contraction's tiling (`ktpu_kernels::gen::matmul::plan`) and the
+/// knobs it was planned under.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Mm {
     pub bt: i64,
@@ -36,19 +34,23 @@ pub struct Mm {
     pub quantum: i64,
     /// whether the call named the quantum (one band otherwise)
     pub named: bool,
+    pub knobs: Knobs,
 }
 
 impl Mm {
-    /// `matmul.plan`, sized by the machine's cluster (`hw`).
+    /// The generators' plan on `m` (its default pairing) under `knobs`.
+    #[allow(clippy::too_many_arguments)]
     pub fn plan(
-        hw: &Hw,
+        m: &Machine,
+        knobs: &Knobs,
         bt: i64,
-        m: i64,
+        rows: i64,
         n: i64,
         k: i64,
         shared: bool,
         quantum: Option<i64>,
     ) -> Result<Mm, Refusal> {
+        let hw = Hw::of(m);
         let (named, quantum) = (quantum.is_some(), quantum.unwrap_or(hw.band));
         if n % hw.kblock != 0 {
             return Err(Refusal::new(
@@ -59,48 +61,25 @@ impl Mm {
                 ),
             ));
         }
-        let kp = hw.whole_blocks(k);
-        let nk = if hw.pairs && kp % (hw.kstep * hw.kblock) == 0 {
-            hw.kstep
-        } else {
-            1
-        };
-        let mp = (m + quantum - 1) / quantum * quantum;
-        let tm = (hw.band..=mp.min(MAX_TM))
-            .rev()
-            .step_by(hw.band as usize)
-            .find(|t| mp % t == 0 && t % quantum == 0 && (t / hw.band) * nk <= hw.bank)
-            .ok_or_else(|| {
-                Refusal::new(
-                    "TG.RUN.019",
-                    format!("M = {m}: no tile of whole {quantum}-row quanta fits a bank"),
-                )
-            })?;
-        let mut tn = hw
-            .blocks()
-            .into_iter()
-            .find(|w| n % w == 0)
-            .expect("N is whole GT4 blocks");
-        while (tm / hw.band) * (tn / hw.band) > hw.acc_subtiles {
-            tn /= 2;
-        }
+        let p = matmul::plan(bt, rows, n, k, shared, quantum, PAIRING, m, knobs)?;
         Ok(Mm {
             bt,
-            m,
+            m: rows,
             n,
             k,
-            mp,
-            kp,
-            tm,
-            tn,
-            nk,
+            mp: p.mp,
+            kp: p.kp,
+            tm: p.tm,
+            tn: p.tn,
+            nk: p.nk,
             shared,
             quantum,
             named,
+            knobs: *knobs,
         })
     }
 
-    /// The generator call that made it.
+    /// The generator call that made it, its plan knobs recorded.
     pub fn made_by(&self) -> Value {
         let mut args = json!({
             "bt": self.bt, "m": self.m, "n": self.n, "k": self.k, "shared": self.shared,
@@ -108,7 +87,36 @@ impl Mm {
         if self.named {
             args["quantum"] = json!(self.quantum);
         }
+        for (k, v) in self.knobs.args(Group::Plan) {
+            args[k] = v;
+        }
         json!({"made_by": {"gen": "matmul.plan", "args": args}})
+    }
+
+    /// The `matmul.mm_kernel` call of epilogue `e` over `extras` into a
+    /// full [bt * mp, `pitch`] output, its kernel knobs recorded.
+    pub fn kernel_call(
+        &self,
+        e: Value,
+        extras: &[Operand],
+        pitch: i64,
+        (clusters, cores): (i64, i64),
+    ) -> Call {
+        let mut args = json!({
+            "mm": self.made_by(),
+            "e": e,
+            "extras": extras.iter().map(Operand::json).collect::<Vec<_>>(),
+            "out": Operand { pitch, rows: self.bt * self.mp, ..Operand::new("full") }.json(),
+            "clusters": clusters,
+            "cores": cores,
+        });
+        for (k, v) in self.knobs.args(Group::Kernel) {
+            args[k] = v;
+        }
+        Call {
+            gen: "matmul.mm_kernel".into(),
+            args,
+        }
     }
 }
 
@@ -394,7 +402,7 @@ impl Runner<'_> {
         });
         let hw = self.hw;
         let q = if stat { self.stat_rows() } else { hw.band };
-        let mm = Mm::plan(&hw, bt, em, np, k, shared, Some(q))?;
+        let mm = Mm::plan(self.m, &self.knobs, bt, em, np, k, shared, Some(q))?;
         let qa = self.packed(
             &bufs[&a.slot],
             &a.dtype,
@@ -733,17 +741,12 @@ impl Runner<'_> {
             at
         };
         binds.insert("out".into(), out_at);
-        let call = Call {
-            gen: "matmul.mm_kernel".into(),
-            args: json!({
-                "mm": mm.made_by(),
-                "e": expr_arg(plan.expr.as_ref().unwrap()),
-                "extras": extras.iter().map(Operand::json).collect::<Vec<_>>(),
-                "out": Operand { pitch: np, rows: bt * mp, ..Operand::new("full") }.json(),
-                "clusters": self.clusters(),
-                "cores": self.cores(),
-            }),
-        };
+        let call = mm.kernel_call(
+            expr_arg(plan.expr.as_ref().unwrap()),
+            extras,
+            np,
+            (self.clusters(), self.cores()),
+        );
         self.x.launch(
             call,
             "matmul",

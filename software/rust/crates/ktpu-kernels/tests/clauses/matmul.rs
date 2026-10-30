@@ -13,15 +13,86 @@ fn relu() -> expr::E {
 
 #[test]
 fn api_op_006_product_columns_whole_blocks() {
-    let err = mm::plan(1, 64, 40, 64, true, 4, PAIRING, &card()).unwrap_err();
+    let d = mm::defaults();
+    let err = mm::plan(1, 64, 40, 64, true, 4, PAIRING, &card(), &d).unwrap_err();
     assert_eq!(err.clause, "API.OP.006");
-    let p = mm::plan(1, 64, 96, 40, true, 4, Pairing::Vector, &card()).unwrap();
+    let p = mm::plan(1, 64, 96, 40, true, 4, Pairing::Vector, &card(), &d).unwrap();
     assert_eq!((p.kp, p.nk, p.tn), (64, 2, 32));
+}
+
+/// The tiling of a [m, 768] x [n, 768] product under `k`.
+fn tiling(m: i64, n: i64, k: &mm::Knobs) -> mm::Mm {
+    mm::plan(1, m, n, 768, true, 4, PAIRING, &card(), k).unwrap()
+}
+
+#[test]
+fn pad_m_balances_the_m_tiles() {
+    let d = mm::defaults();
+    let base = tiling(1576, 768, &d);
+    assert_eq!((base.tm, base.mp), (8, 1576), "the largest dividing tile");
+    let pad = tiling(1576, 768, &mm::Knobs { pad_m: true, ..d });
+    assert_eq!((pad.tm, pad.mp), (228, 1596), "seven balanced tiles");
+    let even = tiling(1024, 768, &mm::Knobs { pad_m: true, ..d });
+    assert_eq!(
+        (even.tm, even.mp),
+        (256, 1024),
+        "a dividing tile prices lower"
+    );
+}
+
+#[test]
+fn dense_n_takes_the_widest_dividing_tile() {
+    let d = mm::defaults();
+    assert_eq!(tiling(64, 96, &d).tn, 32);
+    assert_eq!(tiling(64, 96, &mm::Knobs { dense_n: true, ..d }).tn, 96);
+}
+
+#[test]
+fn n_tiles_splits_n() {
+    let d = mm::defaults();
+    let one = tiling(64, 768, &d);
+    let six = tiling(64, 768, &mm::Knobs { n_tiles: 6, ..d });
+    assert_eq!((768 / one.tn, 768 / six.tn), (3, 6));
+    let dense = mm::Knobs {
+        n_tiles: 6,
+        dense_n: true,
+        ..d
+    };
+    assert_eq!(768 / tiling(64, 768, &dense).tn, 6);
+}
+
+/// A call records its group's knobs by name, and a recorded call plans
+/// under the knobs it names, the contraction before the knobs where it
+/// names none.
+#[test]
+fn a_call_records_and_replays_its_knobs() {
+    let k = mm::Knobs {
+        pad_m: true,
+        n_tiles: 2,
+        dense_n: true,
+    };
+    let args: serde_json::Map<String, serde_json::Value> = k
+        .args(mm::Group::Plan)
+        .into_iter()
+        .map(|(n, v)| (n.to_string(), v))
+        .collect();
+    assert_eq!(
+        serde_json::Value::Object(args.clone()),
+        serde_json::json!({"pad_m": true, "n_tiles": 2, "dense_n": true})
+    );
+    assert!(k.args(mm::Group::Kernel).is_empty());
+    let mut call = serde_json::json!({"bt": 1, "m": 1576, "n": 768, "k": 768});
+    let bare = ktpu_kernels::call::mm_plan(&call, &card()).unwrap();
+    assert_eq!(bare, tiling(1576, 768, &mm::unrecorded()));
+    call.as_object_mut().unwrap().extend(args);
+    let recorded = ktpu_kernels::call::mm_plan(&call, &card()).unwrap();
+    assert_eq!(recorded, tiling(1576, 768, &k));
+    assert_ne!(recorded, bare);
 }
 
 #[test]
 fn api_op_007_product_and_epilogue_one_kernel() {
-    let p = mm::plan(1, 64, 128, 64, true, 4, PAIRING, &card()).unwrap();
+    let p = mm::plan(1, 64, 128, 64, true, 4, PAIRING, &card(), &mm::defaults()).unwrap();
     let out = Operand::full(128, 64);
     let k = mm::mm_kernel(&p, &relu(), &[], &out, &card()).unwrap();
     let units: Vec<g::UnitKind> = stmts(&k.graph.body)
@@ -65,7 +136,7 @@ fn api_form_007_rows_not_whole_words_refused() {
 
 #[test]
 fn api_form_011_tile_scratch_read_gt4() {
-    let p = mm::plan(1, 64, 128, 64, true, 4, PAIRING, &card()).unwrap();
+    let p = mm::plan(1, 64, 128, 64, true, 4, PAIRING, &card(), &mm::defaults()).unwrap();
     let k = mm::mm_kernel(&p, &relu(), &[], &Operand::full(128, 64), &card()).unwrap();
     let h = &k.graph.scratch[0];
     assert_eq!(

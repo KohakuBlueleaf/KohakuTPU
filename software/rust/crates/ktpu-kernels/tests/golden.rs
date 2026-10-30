@@ -148,6 +148,7 @@ fn run(call: &Value, plans: &[&Value], m: &Machine) -> Result<Got, Refusal> {
                 int(&a["quantum"]),
                 ktpu_machine::PAIRING,
                 m,
+                &matmul::unrecorded().read(a, matmul::Group::Plan)?,
             )?;
             Got::Result(serde_json::json!({"mm": {
                 "bt": mm.bt, "m": mm.m, "n": mm.n, "k": mm.k, "mp": mm.mp, "kp": mm.kp,

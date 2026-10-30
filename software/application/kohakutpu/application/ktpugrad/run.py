@@ -2871,12 +2871,14 @@ def _product_run(dev, plan, bufs, mm, binds, extras, bt, M, N, Np, batch, m, n) 
                         "shared": mm.shared,
                         "quantum": mm.quantum,
                         **MM.pairing_arg(),
+                        **MM.plan_knobs(),
                     },
                 }
             },
             "e": FM.generated.expr(plan.expr),
             "extras": [vars(o) for o in extras],
             "out": vars(Operand("full", pitch=Np, rows=bt * mp)),
+            **MM.kernel_knobs(),
         }
         pending = {int(k[2:]): v for k, v in binds.items() if isinstance(v, FM.Pending)}
         recipe = dict(

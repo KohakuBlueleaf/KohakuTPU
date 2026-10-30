@@ -9,6 +9,7 @@ band at a time, apply the epilogue (its `Load(0)` the product; bias,
 residual, statistics as `vector.Operand`s) and store row-major f16.
 """
 
+import json
 import os
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -20,8 +21,6 @@ from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.compiler import _rs
 from kohakutpu.language import dsl as kt
 
-ACC_SUBTILES = 4096
-BANK = 256
 KERNELS_KEPT = 1024
 _kernels: OrderedDict = OrderedDict()
 
@@ -61,6 +60,25 @@ def pairing_arg() -> dict:
     return {} if p == _rs.MX7_PAIRING else {"pairing": p}
 
 
+#: Each contraction knob by name: its `KTPU_MM_*` override and the call that
+#: records it (``plan``: `matmul.plan`, ``kernel``: `matmul.mm_kernel`).
+KNOBS = {k["name"]: (k["env"], k["group"]) for k in json.loads(_rs.MM_KNOBS)}
+
+
+def knobs(group: str) -> dict:
+    """The `group` knobs the environment resolves (`_rs.mm_knobs`)."""
+    every = json.loads(_rs.mm_knobs())
+    return {k: v for k, v in every.items() if KNOBS[k][1] == group}
+
+
+def plan_knobs() -> dict:
+    return knobs("plan")
+
+
+def kernel_knobs() -> dict:
+    return knobs("kernel")
+
+
 def plan(
     bt: int,
     m: int,
@@ -71,28 +89,26 @@ def plan(
     pairing: str | None = None,
     *,
     machine_json: str,
+    **knob_args,
 ) -> Mm:
-    """The tiling for an [M, K] x [N, K] product on the machine, `bt` of them,
-    each batch's rows padded to `mp` (whole groups of `quantum`: the
-    epilogue's operands and output are [bt * mp, N]), K blocks paired as the
-    machine allows under `pairing` (`stack_pairing()` when None). Raises
-    ValueError for an N that is not whole 32-column blocks (the epilogue
-    stores whole blocks)."""
-    if n % 32:
-        raise ValueError(f"N = {n}: the product's columns are whole blocks of 32")
-    kp = -(-k // 32) * 32
-    pairs = _rs.pairs_blocks(machine_json, pairing or stack_pairing())
-    nk = 2 if pairs and kp % 64 == 0 else 1
-    mp = -(-m // quantum) * quantum
-    tm = next(
-        t
-        for t in range(min(256, mp), 3, -4)
-        if mp % t == 0 and t % quantum == 0 and (t // 4) * nk <= BANK
-    )
-    tn = V.block(n)
-    while (tm // 4) * (tn // 4) > ACC_SUBTILES:
-        tn //= 2
-    return Mm(bt, m, n, k, mp, kp, tm, tn, nk, shared, quantum)
+    """The tiling for an [M, K] x [N, K] product on the machine, `bt` of them
+    (each batch's rows padded to `mp`, the epilogue's operands and output
+    [bt * mp, N]), K blocks paired under `pairing` (`stack_pairing()` when
+    None), the plan knobs resolved with `knob_args` over them: the native
+    plan (`_rs.mm_plan`). Raises ValueError for an N that is not whole
+    32-column blocks."""
+    args = {
+        "bt": bt,
+        "m": m,
+        "n": n,
+        "k": k,
+        "shared": shared,
+        "quantum": quantum,
+        "pairing": pairing or stack_pairing(),
+        **plan_knobs(),
+        **knob_args,
+    }
+    return Mm(**json.loads(_rs.mm_plan(json.dumps(args), machine_json)))
 
 
 def quant_kernel(
@@ -558,4 +574,14 @@ def _bands(mm: Mm, operands, out, wc: int) -> int:
     )
 
 
-__all__ = ["Mm", "mm_kernel", "plan", "quant_kernel", "quant_walk_kernel"]
+__all__ = [
+    "KNOBS",
+    "Mm",
+    "kernel_knobs",
+    "knobs",
+    "mm_kernel",
+    "plan",
+    "plan_knobs",
+    "quant_kernel",
+    "quant_walk_kernel",
+]

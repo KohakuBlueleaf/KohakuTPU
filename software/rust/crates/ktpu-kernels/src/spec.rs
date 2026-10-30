@@ -126,6 +126,9 @@ fn cluster_plan(inp: &Value, m: Option<&Machine>) -> Result<Value, String> {
         int(p, "quantum")?,
         ktpu_machine::PAIRING,
         m,
+        &matmul::unrecorded()
+            .read(p, matmul::Group::Plan)
+            .map_err(|r| r.to_string())?,
     ) {
         Ok(mm) => Ok(json!({
             "bt": mm.bt, "m": mm.m, "n": mm.n, "k": mm.k, "mp": mm.mp, "kp": mm.kp,
