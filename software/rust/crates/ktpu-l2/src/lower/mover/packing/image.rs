@@ -157,7 +157,7 @@ impl Batch<'_> {
         for j in 0..n {
             self.lift(base + step * j, ind, lines);
         }
-        if self.checked {
+        if self.checked && !on("l2.packing/drop-finite-check") {
             self.classify(n, base, step, ind, lines);
         }
         for j in 0..n {
