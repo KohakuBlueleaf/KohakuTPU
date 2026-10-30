@@ -621,6 +621,7 @@ fn goldens() {
         eprintln!("FAIL {f}");
     }
     assert!(fails.is_empty(), "{} golden cases differ", fails.len());
+    assert!(pass > 0, "KTPU_GOLDEN={only:?} selects no case");
 }
 
 /// The e2e goldens (`golden/e2e`, `dump.py`): `compile_l1` with one search
@@ -673,6 +674,7 @@ fn e2e_l1() {
         eprintln!("FAIL {f}");
     }
     assert!(fails.is_empty());
+    assert!(pass > 0, "KTPU_E2E={only:?} selects no case");
 }
 
 fn compile_example(stem: &str) -> Result<ktpu_l2::Compiled, ktpu_l1::Error> {
