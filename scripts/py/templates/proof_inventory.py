@@ -15,7 +15,7 @@ def inventory(library, capture, caps=()):
     machine = rs.machine_json(device.machine)
     device.close()
     source = next(iter(capture["sources"].values()))["source"]
-    key = json.loads(rs._rs.library_key(source, machine))
+    key = json.loads(rs.library_key(source, machine))
     rows = {}
     for path in sorted((library / key["machine"] / "classes").glob("*.json")):
         if path.name == "index.json":

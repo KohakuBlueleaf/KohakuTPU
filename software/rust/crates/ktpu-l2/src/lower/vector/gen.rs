@@ -85,7 +85,7 @@ fn symbols(line: &str) -> std::collections::BTreeSet<String> {
 /// `op A, B, ... opts`: the operands split at top-level commas, and the
 /// options after the last operand.
 #[cfg(feature = "witness")]
-fn operands<'a>(line: &'a str, op: &str) -> Option<(Vec<&'a str>, &'a str)> {
+pub(crate) fn operands<'a>(line: &'a str, op: &str) -> Option<(Vec<&'a str>, &'a str)> {
     let rest = line.strip_prefix(op)?.strip_prefix(' ')?;
     let mut args = Vec::new();
     let (mut depth, mut start) = (0, 0);

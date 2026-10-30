@@ -71,7 +71,7 @@ class ClassLibrary:
         self.store = TemplateStore(root, machine)
 
     def _key_path(self, source):
-        key = json.loads(rs._rs.library_key(source, self.machine))
+        key = json.loads(rs.library_key(source, self.machine))
         member = key["class"]
         graph = json.loads(source)
         graph.pop("name", None)

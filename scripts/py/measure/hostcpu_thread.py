@@ -35,7 +35,7 @@ def main():
     kernel, given = V.flat_kernel(X.op("add", X.Load(0), 1.0), ("f16",), 128, "f16", 2)
     source = kernel.trace(given, machine=K.dsl_machine(machine)).graph_json
     library = str(args.output.parent / "thread-library")
-    rs._rs.library_prebuild(library, source, machine.machine_json)
+    rs.library_prebuild(library, source, machine.machine_json)
     r, c = UOp.range(32, 0, AxisType.LOOP), UOp.range(64, 1, AxisType.LOOP)
     plan = Plan(
         "vector",

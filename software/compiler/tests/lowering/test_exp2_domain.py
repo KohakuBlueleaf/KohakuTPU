@@ -433,27 +433,27 @@ class Core:
         with np.errstate(all="ignore"):
             match op:
                 case "vmov":
-                    return a, none
+                    return e8m15.moved(a), none
                 case "vneg":
-                    return -a, none
+                    return e8m15.moved(-a), none
                 case "vabs":
-                    return np.abs(a), none
+                    return e8m15.moved(np.abs(a)), none
                 case "vadd":
-                    return e8m15.value(a + c), none
+                    return e8m15.fma(a, 1.0, c), none
                 case "vsub":
-                    return e8m15.value(a - c), none
+                    return e8m15.fma(a, 1.0, -c), none
                 case "vmul":
-                    return e8m15.value(a * b), none
+                    return e8m15.fma(a, b, 0.0), none
                 case "vfma":
-                    return e8m15.value(a * b + c), none
+                    return e8m15.fma(a, b, c), none
                 case "vfnma":
-                    return e8m15.value(c - a * b), none
+                    return e8m15.fma(-a, b, c), none
                 case "vmax":
-                    return np.where(a < b, b, a), none
+                    return e8m15.moved(np.where(a < b, b, a)), none
                 case "vmin":
-                    return np.where(a > b, b, a), none
+                    return e8m15.moved(np.where(a > b, b, a)), none
                 case "vsel":
-                    return np.where(x["cnz"], a, b), none
+                    return e8m15.moved(np.where(x["cnz"], a, b)), none
                 case "vinv":
                     return e8m15.value(1.0 / a), none
                 case "vrsqrt":

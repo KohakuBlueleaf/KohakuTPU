@@ -21,6 +21,7 @@ use super::gen::{Code, Gen};
 use super::indent;
 use super::modulo as MO;
 use super::range::{self, Ranges};
+use super::sign::ZeroSign;
 use super::{banks, encode, numbers, ops_of, renamed, split, Plan, RPar, VErr, VResult};
 use crate::ir::{Body, Node, Result};
 use crate::lower::sync::Access;
@@ -139,6 +140,8 @@ pub struct Search {
     /// What range analysis may prove of EXP2 / EXP2D arguments, dropping
     /// the guard checks it covers.
     pub ranges: Ranges,
+    /// How the lowering moves a value it does not change (ISA.VC.058).
+    pub zero_sign: ZeroSign,
     chosen: Mutex<IndexMap<Key, (String, i64)>>,
     recording: bool,
     frozen: AtomicBool,
@@ -179,6 +182,7 @@ impl Search {
             hold: None,
             pin: None,
             ranges: Ranges::DEFAULT,
+            zero_sign: ZeroSign::DEFAULT,
             chosen: Mutex::new(IndexMap::new()),
             recording: false,
             frozen: AtomicBool::new(false),
@@ -288,6 +292,12 @@ impl Search {
         self
     }
 
+    /// This search with zero-sign handling `zero_sign`.
+    pub fn signed(mut self, zero_sign: ZeroSign) -> Search {
+        self.zero_sign = zero_sign;
+        self
+    }
+
     fn pin_given(&self) -> Option<bool> {
         self.pin.filter(|_| !on("l2.vector/pin-unforced"))
     }
@@ -321,6 +331,7 @@ impl Search {
     ) -> Result<Best> {
         let par = &RPar {
             guards: range::guards(par, self.ranges),
+            zero_sign: self.zero_sign,
             ..par.clone()
         };
         if par.st.kw("classed").is_some() {
@@ -743,6 +754,7 @@ fn modulo_legacy(
     c.unit = super::unit_of(body, par, env)?;
     c.pre = pre.clone();
     c.guards = par.guards.clone();
+    c.zero_sign = par.zero_sign;
     for n in &lp.body {
         if matches!(n.as_ref(), Node::For(_)) {
             return no("a nested loop");
@@ -794,7 +806,11 @@ fn modulo_legacy(
         Ok(()) => {}
     }
     let trip = super::gen::fuse(g.code.split_off(head_len));
-    g.code.extend(trip);
+    let (signed, head_len) = c
+        .zero_sign
+        .code_trip(std::mem::take(&mut g.code), trip, super::sign::Lanes::of(t))
+        .map_err(|e| VErr::Fail(body.reader.fail(&lp.st, "L2.VC.026", e)))?;
+    g.code = signed;
     let placed = banks::rotate(std::mem::take(&mut g.code), body.vcopies, &MO::Core::of(t));
     let (head_code, trip) = placed.split_at(head_len);
     #[cfg(test)]

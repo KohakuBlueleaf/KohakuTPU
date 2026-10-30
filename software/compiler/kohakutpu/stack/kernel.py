@@ -148,8 +148,15 @@ def compile(source, name=None, machine=None, level="l2"):
     text = traced.text if traced else module.source if module else source
     if name is None:
         name = traced.name if traced else (module or M.read(text)).names()[0]
-    # Include the mutation context so a warm normal compile cannot hide a mutant.
-    key = (text, name, rs.machine_json(machine), level, rs._MUTANT.get())
+    # Include the mutation and zero-sign contexts so a warm compile cannot hide either.
+    key = (
+        text,
+        name,
+        rs.machine_json(machine),
+        level,
+        rs._MUTANT.get(),
+        rs._ZERO_SIGN.get(),
+    )
     if key in _cache:
         _cache.move_to_end(key)
         return _cache[key]

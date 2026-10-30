@@ -27,7 +27,10 @@ impl Ctx<'_> {
         let head = g.code.len();
         self.iteration_typed(&mut g, &body, 0, false)?;
         let trip = crate::lower::vector::gen::predicate::fuse(g.code.split_off(head));
-        g.code.extend(trip);
-        Ok((g.code, head, self.pinned))
+        let (code, head) = self
+            .zero_sign
+            .trip(g.code, trip, crate::lower::vector::sign::Lanes::of(self.t))
+            .map_err(|e| self.fail(&self.lp.as_ref().unwrap().st, "L2.VC.026", e))?;
+        Ok((code, head, self.pinned))
     }
 }

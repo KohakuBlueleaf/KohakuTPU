@@ -224,6 +224,7 @@ fn modulo_module(
     c.unit = crate::lower::vector::unit_of(body, par, env)?;
     c.pre = pre.clone();
     c.guards = par.guards.clone();
+    c.zero_sign = par.zero_sign;
     for n in &lp.body {
         if matches!(n.as_ref(), Node::For(_)) {
             return no("a nested loop");

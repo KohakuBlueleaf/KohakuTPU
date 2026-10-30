@@ -12,7 +12,7 @@ use crate::pipeline::stage::{Backend, Stage};
 use ktpu_l1::layout::scratch::Arena;
 use ktpu_l1::lower::imem::Cores;
 use ktpu_l1::text::Module as L1;
-use ktpu_l2::{Program, Ranges, Search, Target};
+use ktpu_l2::{Program, Ranges, Search, Target, ZeroSign};
 use ktpu_machine::{Machine, Refusal};
 use std::collections::BTreeMap;
 
@@ -39,6 +39,8 @@ pub struct CardStack {
     pub parameter_rotations: bool,
     /// The search's EXP2 / EXP2D range analysis; none: its default.
     pub ranges: Option<Ranges>,
+    /// How the lowering moves a value it does not change; none: its default.
+    pub zero_sign: Option<ZeroSign>,
 }
 
 impl CardStack {
@@ -48,7 +50,22 @@ impl CardStack {
 
     /// The search a stage without a template search runs.
     fn search(&self) -> Search {
-        Search::default().ranged(self.ranges.unwrap_or(Ranges::DEFAULT))
+        Search::default()
+            .ranged(self.ranges.unwrap_or(Ranges::DEFAULT))
+            .signed(self.zero_sign.unwrap_or(ZeroSign::DEFAULT))
+    }
+
+    /// The suffix the passes' and the lowering's version carry: the search
+    /// settings given.
+    pub(crate) fn settings(&self) -> String {
+        let mut s = String::new();
+        if let Some(r) = self.ranges {
+            s += &format!("+ranges:{r:?}");
+        }
+        if let Some(z) = self.zero_sign {
+            s += &format!("+zero_sign:{}", z.name());
+        }
+        s
     }
 }
 
@@ -183,12 +200,12 @@ impl Backend for CardStack {
             return None;
         }
         let v = Stack.version(stage)?;
-        Some(match (stage, self.ranges) {
-            (Stage::Order | Stage::Verify, _) => {
+        Some(match stage {
+            Stage::Order | Stage::Verify => {
                 format!("{v}+fetch:{}+{:?}", !self.node_fed, self.binds)
             }
-            (Stage::Passes, _) if self.no_passes => format!("{v}+none"),
-            (Stage::Passes | Stage::Lower, Some(r)) => format!("{v}+ranges:{r:?}"),
+            Stage::Passes if self.no_passes => format!("{v}+none"),
+            Stage::Passes | Stage::Lower => format!("{v}{}", self.settings()),
             _ => v,
         })
     }
@@ -794,6 +811,38 @@ fn first_difference(
         "payload {i} (step {step:?}): {:x?} vs {:x?}; relocations on it {relocs:?}",
         got.payloads[i].0, want.payloads[i].0
     )
+}
+
+#[cfg(test)]
+mod setting_tests {
+    use super::*;
+
+    #[test]
+    fn zero_sign_keys_the_passes_and_the_lowering_apart() {
+        let card = |zero_sign| CardStack {
+            zero_sign,
+            ..CardStack::default()
+        };
+        let vs = |c: &CardStack| {
+            [Stage::Graph, Stage::Passes, Stage::Lower, Stage::Order].map(|s| c.version(s))
+        };
+        let (none, native, preserve) = (
+            vs(&card(None)),
+            vs(&card(Some(ZeroSign::Native))),
+            vs(&card(Some(ZeroSign::Preserve))),
+        );
+        assert_eq!(none[0], preserve[0]);
+        assert_eq!(none[3], preserve[3]);
+        for i in [1, 2] {
+            assert_ne!(native[i], preserve[i]);
+            assert_ne!(none[i], preserve[i]);
+        }
+        assert_eq!(
+            card(Some(ZeroSign::Preserve)).search().zero_sign,
+            ZeroSign::Preserve
+        );
+        assert_eq!(card(None).search().zero_sign, ZeroSign::DEFAULT);
+    }
 }
 
 #[cfg(test)]

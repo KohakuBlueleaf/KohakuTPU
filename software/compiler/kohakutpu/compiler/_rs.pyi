@@ -3,16 +3,26 @@
 
 from typing import TypedDict
 
-def library_key(source: str, machine_json: str) -> str:
-    """Name-free exact graph key, machine digest and stage versions as JSON."""
+def library_key(source: str, machine_json: str, zero_sign: str | None = None) -> str:
+    """Name-free exact graph key, target digest (machine and zero_sign) and
+    stage versions as JSON."""
+
+def library_machine(machine_json: str, zero_sign: str | None = None) -> str:
+    """The target digest: the directory a key's entries live in."""
 
 def library_get(
-    root: str, source: str, machine_json: str, mutant: str | None = None
+    root: str,
+    source: str,
+    machine_json: str,
+    mutant: str | None = None,
+    zero_sign: str | None = None,
 ) -> dict | None:
     """Load a verified relocatable artifact without compiling."""
 
-def library_prebuild(root: str, source: str, machine_json: str) -> dict:
-    """Compile and store a missing exact-class artifact offline."""
+def library_prebuild(
+    root: str, source: str, machine_json: str, zero_sign: str | None = None
+) -> dict:
+    """Compile under `zero_sign` and store a missing exact-class artifact offline."""
 
 def template_verify(
     packages: dict[int, bytes],
@@ -37,6 +47,9 @@ MACHINE_SCHEMA: str
 #: a production build.
 MUTANTS: list[str]
 SPEC_RUNNERS: list[str]
+#: `compile`'s `zero_sign` when None ("native" or "preserve").
+ZERO_SIGN: str
+ZERO_SIGNS: list[str]
 
 def machine_view(
     machine_json: str,
@@ -142,6 +155,7 @@ def template_compile(
     sources: list[str],
     machine_json: str,
     parameter_rotations: bool = False,
+    zero_sign: str | None = None,
 ) -> list[Compiled]:
     """Freeze image/retile choices; optionally declare rotations bind-time values."""
 
@@ -230,6 +244,7 @@ def compile(
     binds: dict[str, int] | None = None,
     passes: bool = True,
     exp2_ranges: str | None = None,
+    zero_sign: str | None = None,
 ) -> Compiled:
     """`source` (L2 text, or the tracer's graph as JSON text) for the machine
     file `machine_json` (its text). `name`: the fn compiled (the first when
@@ -245,7 +260,9 @@ def compile(
     `fetch`): the L2 lowered with no L2 -> L2 pass. `exp2_ranges` (with
     `fetch`): "off", "intervals" or "rowmax", what the vector search's range
     analysis may prove of EXP2 / EXP2D arguments (None: its default,
-    "intervals"). Raises `Refused`."""
+    "intervals"). `zero_sign`: "native" or "preserve", how the lowering
+    moves a value it does not change (ISA.VC.058; None: `ZERO_SIGN`). Raises
+    `Refused`."""
 
 def bind(
     package: bytes,
@@ -294,6 +311,7 @@ def compile_many(
     machine_json: str | list[str],
     cache_dir: str | None = None,
     threads: int | None = None,
+    zero_sign: str | None = None,
 ) -> list[Compiled | RefusedResult]:
     """`compile` of every source in parallel (`threads`: None for one a
     CPU), on one machine or, given a list, source i on machine i; item i is

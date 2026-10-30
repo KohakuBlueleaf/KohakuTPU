@@ -80,8 +80,11 @@ fn instance(
     });
     if o.reads.iter().chain(&o.writes).any(|s| s == PRED) {
         let pred = format!("p{}", 1 + floor_mod(copy, pred_copies(p.k, p.core.preds)));
-        if COMPARE.contains(&st.op.as_str()) && st.args.first() == Some(&Term::name("p1")) {
-            st.args[0] = Term::name(&pred);
+        if COMPARE.contains(&st.op.as_str()) {
+            match st.args.first_mut() {
+                Some(Term::Name(n) | Term::View(n, _)) if n == "p1" => *n = pred.clone(),
+                _ => {}
+            }
         }
         for arg in &mut st.args {
             if let Term::Assign(key, value) = arg {

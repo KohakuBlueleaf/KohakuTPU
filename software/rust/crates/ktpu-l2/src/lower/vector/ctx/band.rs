@@ -78,6 +78,7 @@ fn band_text(
     c.unit = super::super::unit_of(body, par, env)?;
     c.pre = pre.clone();
     c.guards = par.guards.clone();
+    c.zero_sign = par.zero_sign;
     if let Some(lp) = &lp {
         for n in &lp.body {
             if let Node::For(f) = n.as_ref() {
@@ -202,7 +203,12 @@ fn band_text(
         );
     }
     let code = banks::rotate(
-        crate::lower::vector::gen::fuse(std::mem::take(&mut g.code)),
+        c.zero_sign
+            .code(
+                crate::lower::vector::gen::fuse(std::mem::take(&mut g.code)),
+                crate::lower::vector::sign::Lanes::of(c.t),
+            )
+            .map_err(|e| c.fail(&par.st, "L2.VC.026", e))?,
         body.vcopies,
         &super::super::modulo::Core::of(t),
     );

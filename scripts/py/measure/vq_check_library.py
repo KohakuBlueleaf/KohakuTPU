@@ -16,9 +16,9 @@ def main():
     key = "c4cc4159d7a8970c14402929a6e46648f769bd21e75451d7288d8b3eacd0f0a3"
     source = capture["sources"][key]["source"]
     machine = rs.machine_json(machine_of("vlt_v9t6s_1n"))
-    identity = json.loads(rs._rs.library_key(source, machine))
+    identity = json.loads(rs.library_key(source, machine))
     assert identity["class"] == key
-    result = rs._rs.library_get(str(ROOT / "build/vq/loop7-check"), source, machine)
+    result = rs.library_get(str(ROOT / "build/vq/loop7-check"), source, machine)
     assert result is not None
     print(
         json.dumps(

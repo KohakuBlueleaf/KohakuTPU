@@ -503,9 +503,7 @@ def run(
                     )
                     start = time.perf_counter()
                     try:
-                        built = rs._rs.template_compile(
-                            representative, sources, machine
-                        )
+                        built = rs.template_compile(representative, sources, machine)
                         report["derivation_compiles"] += len(built) + 1
                     finally:
                         report["derivation_compile_seconds"] += (

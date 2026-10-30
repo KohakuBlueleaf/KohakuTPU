@@ -121,7 +121,7 @@ def main():
             if args.probe_only:
                 points = points[:5]
             graphs = [graph(p) for p in points]
-            compiled = rs._rs.template_compile(
+            compiled = rs.template_compile(
                 graphs[0], graphs, machine_json, parameter_rotations=True
             )
             if args.probe_only or taps == 1:
@@ -163,7 +163,7 @@ def main():
             unique = {json.dumps(parameters(c), sort_keys=True) for c in cases}
             for raw in sorted(unique):
                 p = json.loads(raw)
-                direct = rs._rs.template_compile(
+                direct = rs.template_compile(
                     graphs[0], [graph(p)], machine_json, parameter_rotations=True
                 )[0]
                 assert not direct["verdict"]["refused"], direct["verdict"]

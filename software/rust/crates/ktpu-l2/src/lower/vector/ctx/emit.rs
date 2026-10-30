@@ -46,6 +46,12 @@ impl<'a> Ctx<'a> {
         srcs: &[String],
         sel: &str,
     ) -> VResult<String> {
+        if self.zero_sign.negative_zero(f) {
+            let v = g.sym();
+            g.emit("vsub {0}, k0, k0", &[&v]);
+            syms.push(v);
+            return Ok(format!("{{{}}}{sel}", syms.len()));
+        }
         let k = FKey::of(f);
         if let Some(v) = self.held.get(&k) {
             syms.push(v.clone());

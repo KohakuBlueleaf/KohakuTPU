@@ -3,8 +3,17 @@
 
 #[cfg(feature = "witness")]
 use super::gen::{Code, Gen};
+use super::sign::ZeroSign;
 
 pub(super) mod typed;
+
+/// Whether a tree of `code` folds lanes by xor alone: `zero_sign` rewrites it
+/// as compare and copies, and a merge also redirects the a operand
+/// (ISA.VC.076), so no copy of a merge operand is exact. These trees and the
+/// compact are the only producers of a merge pick.
+pub fn lane_folds(zero_sign: ZeroSign, code: &str) -> bool {
+    zero_sign.picks(code) && !crate::mutant::on("l2.vector/merge-tree-picked")
+}
 
 /// One instruction of a tree step: template and symbols.
 #[cfg(feature = "witness")]
@@ -105,7 +114,9 @@ pub fn tree4(
 }
 
 /// The merge tree over 8 rows: the symbol whose chunk 0 lane r is row r's
-/// reduction. `rows` are row registers, or with `fused` (a, b) pairs.
+/// reduction. `rows` are row registers, or with `fused` (a, b) pairs. Where
+/// `zero_sign` picks `code`, each row's chunk folds by xor and lane r is
+/// copied from row r's chunk, rows 7 down to 0 over lanes 0..=r.
 #[cfg(feature = "witness")]
 pub fn tree(
     g: &mut Gen,
@@ -113,6 +124,7 @@ pub fn tree(
     rows: &[Vec<String>],
     fused: bool,
     into: Option<String>,
+    zero_sign: ZeroSign,
 ) -> (Steps, String) {
     let t: Vec<String> = (0..4).map(|_| g.sym()).collect();
     let mut first = Vec::new();
@@ -158,6 +170,28 @@ pub fn tree(
             &[&acc, &t[r / 2]],
         ));
     }
+    if lane_folds(zero_sign, code) {
+        let d = into.unwrap_or_else(|| g.sym());
+        let mut steps = vec![first, second, third];
+        for k in [8, 4, 2, 1] {
+            steps.push(vec![insn(
+                format!("{code} {{0}}, {{0}}, xor({{0}}, {k})"),
+                &[&acc],
+            )]);
+        }
+        steps.push(
+            (0..8)
+                .rev()
+                .map(|r| {
+                    insn(
+                        format!("vmov {{0}}[0:], {{1}}[{r}:] vl={}", r + 1),
+                        &[&d, &acc],
+                    )
+                })
+                .collect(),
+        );
+        return (steps, d);
+    }
     let m = g.sym();
     let d = into.unwrap_or_else(|| g.sym());
     let steps = vec![
@@ -184,16 +218,29 @@ pub fn tree(
     (steps, d)
 }
 
-/// The symbol whose chunk 0 lane r is row r of four GT4 band statistics:
-/// rows r and r + 8 merged by lane bit 3, then 4, 2, 1 (15 one-chunk ops).
+/// The symbol whose chunk 0 lane r is row r of four GT4 band statistics
+/// (each chunk one row's value in every lane): rows r and r + 8 merged by
+/// lane bit 3, then 4, 2, 1 (15 one-chunk ops). Where `zero_sign` picks a
+/// max, lane r is copied from row r's chunk, rows 15 down to 0 over lanes
+/// 0..=r (16 one-chunk copies).
 #[cfg(feature = "witness")]
-pub fn compact(g: &mut Gen, bands: &[String]) -> String {
+pub fn compact(g: &mut Gen, bands: &[String], zero_sign: ZeroSign) -> String {
     let reversed: Vec<String> = bands.iter().rev().cloned().collect();
     let bands: &[String] = if crate::mutant::on("l2.vector/compact-reversed") {
         &reversed
     } else {
         bands
     };
+    if lane_folds(zero_sign, "vmax") {
+        let d = g.sym();
+        for r in (0..16).rev() {
+            g.emit(
+                format!("vmov {{0}}[0:], {{1}}[{}:] vl={}", r % 4, r + 1),
+                &[&d, &bands[r / 4]],
+            );
+        }
+        return d;
+    }
     let (a, b, c, d) = (g.sym(), g.sym(), g.sym(), g.sym());
     for r in 0..8 {
         let (lo, hi) = (&bands[r / 4], &bands[(r + 8) / 4]);

@@ -131,7 +131,7 @@ fn fused_unfused_trees_all_levels_and_orders() {
                     }
                 }
                 // Every source row can occupy every input slot; all output chunks are compared.
-                for rotation in 0..8 {
+                for (rotation, zero_sign) in (0..8).flat_map(|r| ZeroSign::ALL.map(|z| (r, z))) {
                     let mut regs: Vec<Vec<Symbol>> = (0..8)
                         .map(|i| vec![Symbol(1 + 2 * i), Symbol(2 + 2 * i)])
                         .collect();
@@ -156,14 +156,17 @@ fn fused_unfused_trees_all_levels_and_orders() {
                         &strings,
                         fused,
                         into.as_ref().map(Symbol::name),
+                        zero_sign,
                     );
-                    let (zt, zd) = tree(&mut z, code, &regs, fused, into.clone());
+                    let (zt, zd) = tree(&mut z, code, &regs, fused, into.clone(), zero_sign);
                     assert_eq!(ad, zd.name());
                     steps(&at, &zt);
                     events(&a, &z);
                     old::interleave(&mut a, &[at]);
                     interleave(&mut z, &[zt]);
                     events(&a, &z);
+                    let merges = z.code.iter().any(|e| format!("{e:?}").contains("merge"));
+                    assert_eq!(merges, !zero_sign.picks(code), "{code} {zero_sign:?}");
                 }
             }
         }
@@ -185,22 +188,24 @@ fn compact_all_band_permutations() {
                         continue;
                     }
                     let syms: Vec<_> = order.into_iter().map(Symbol).collect();
-                    let (mut a, mut z) = (
-                        OldGen {
-                            n: 100,
-                            code: vec![],
-                        },
-                        Gen {
-                            n: 100,
-                            code: vec![],
-                        },
-                    );
-                    let ad =
-                        old::compact(&mut a, &syms.iter().map(Symbol::name).collect::<Vec<_>>());
-                    let zd = compact(&mut z, &syms);
-                    assert_eq!(ad, zd.name());
-                    assert_eq!(z.code.len(), 15);
-                    events(&a, &z);
+                    for (zero_sign, ops) in [(ZeroSign::Native, 15), (ZeroSign::Preserve, 16)] {
+                        let (mut a, mut z) = (
+                            OldGen {
+                                n: 100,
+                                code: vec![],
+                            },
+                            Gen {
+                                n: 100,
+                                code: vec![],
+                            },
+                        );
+                        let names = syms.iter().map(Symbol::name).collect::<Vec<_>>();
+                        let ad = old::compact(&mut a, &names, zero_sign);
+                        let zd = compact(&mut z, &syms, zero_sign);
+                        assert_eq!(ad, zd.name());
+                        assert_eq!(z.code.len(), ops);
+                        events(&a, &z);
+                    }
                 }
             }
         }

@@ -249,7 +249,7 @@ impl Ctx<'_> {
             } else {
                 None
             };
-            let (steps, result) = tt::tree(g, code, &rows, is_fused, into);
+            let (steps, result) = tt::tree(g, code, &rows, is_fused, into, self.zero_sign);
             trees.push(steps);
             local
                 .get_mut(&target)

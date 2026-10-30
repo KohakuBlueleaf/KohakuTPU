@@ -29,6 +29,25 @@ def value(x):
     return np.where(np.abs(out) >= HUGE, np.copysign(np.inf, out), out)
 
 
+def fma(a, b, c):
+    """The lane FMA `a * b + c` (vadd is `a * 1 + c`, vsub `a * 1 + (-c)`,
+    vmul `a * b + (+0)`, vfnma `(-a) * b + c`). A zero factor times a finite
+    one is a zero product, and then the addend passes unchanged, its sign
+    included (NUM.E8.008-.009): +0 + -0 is -0 when the -0 is the addend."""
+    a, b, c = (np.asarray(t, np.float64) for t in (a, b, c))
+    with np.errstate(all="ignore"):
+        zero = ((a == 0) & np.isfinite(b)) | ((b == 0) & np.isfinite(a))
+        return np.where(zero, c, value(a * b + c))
+
+
+def moved(x):
+    """What vmov, vsel, vmax, vmin, vneg and vabs return for their chosen
+    (negated, cleared) operand `x`: `x * 1.0 + (+0)`, so a zero is +0
+    (ISA.VC.058)."""
+    x = np.asarray(x, np.float64)
+    return np.where(x == 0, 0.0, x)
+
+
 def encode(x: float) -> int:
     """A constant as {sign, exponent, mantissa}, using the lane's RNE rule."""
     rounded = float(value(x))
@@ -37,4 +56,4 @@ def encode(x: float) -> int:
     return struct.unpack("<I", struct.pack("<f", rounded))[0] >> 8
 
 
-__all__ = ["HUGE", "SIGNIFICAND", "TINY", "encode", "value"]
+__all__ = ["HUGE", "SIGNIFICAND", "TINY", "encode", "fma", "moved", "value"]

@@ -16,6 +16,7 @@ pub mod modulo;
 pub mod pat;
 pub mod range;
 pub mod search;
+pub mod sign;
 mod transfers;
 pub mod tree;
 mod views;
@@ -37,6 +38,7 @@ use gen::Code;
 
 pub use range::{Guards, Ranges, Risk};
 pub use search::Search;
+pub use sign::ZeroSign;
 pub use transfers::transfers;
 pub use views::{contiguous, mx7, tiled, view_offset, Walk};
 
@@ -122,7 +124,8 @@ pub fn is_in(table: &[(&str, &str)], op: &str) -> bool {
 /// at `|a| >= 128` is not `2^(a - floor b)` where `b` brings it back in range.
 pub const EXP2_RANGE: f64 = 128.0;
 /// EXP2's floor: `2^a` flushes to zero at and below it in E8M15, so a clamp
-/// there is exact (NaN passes `vmax` as its `a`, v2_alu.v:224; -0 survives).
+/// there is exact (NaN passes `vmax` as its `a`, v2_alu.v:224; -0 comes back
+/// +0, ISA.VC.058, and 2^-0 = 2^+0).
 /// EXP2D's `a - floor(b)` can lift `a` back above it: EXP2D takes no clamp.
 pub const EXP2_FLOOR: f64 = -127.0;
 
@@ -347,6 +350,8 @@ pub struct RPar {
     pub index: Option<Term>,
     pub body: Vec<Arc<Node>>,
     pub guards: Guards,
+    /// How the instance moves a value it does not change (the search's).
+    pub zero_sign: ZeroSign,
 }
 
 pub fn op_of(n: &Node) -> &Op {
@@ -517,6 +522,7 @@ pub fn resolve(body: &Body, par: &Par, env: &Env) -> Result<RPar> {
         index: par.index.clone(),
         body: go(body, &par.body, env)?,
         guards: Guards::new(),
+        zero_sign: ZeroSign::DEFAULT,
     })
 }
 

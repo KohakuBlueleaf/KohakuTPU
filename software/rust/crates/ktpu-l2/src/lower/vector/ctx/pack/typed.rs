@@ -219,7 +219,8 @@ impl Ctx<'_> {
                 let regs: Vec<Symbol> = (0..4)
                     .map(|k| symbol(&stat.regs[&((4 * w + k) % nb)]))
                     .collect();
-                let word = with_tree(g, |g| tt::compact(g, &regs));
+                let zero_sign = self.zero_sign;
+                let word = with_tree(g, |g| tt::compact(g, &regs, zero_sign));
                 for &d in &dests {
                     g.op(
                         ir::memory(

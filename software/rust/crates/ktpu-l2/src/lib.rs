@@ -17,7 +17,7 @@ use ktpu_machine::Machine;
 
 pub use ir::{Body, Buffer, Error, Node, Op, Par, Program, Result, Type};
 pub use lower::vector::search::Strategy;
-pub use lower::vector::{Ranges, Search};
+pub use lower::vector::{Ranges, Search, ZeroSign};
 pub use passes::PASSES;
 pub use target::Target;
 

@@ -81,9 +81,7 @@ def main():
         )
 
         def artifact(source):
-            identity = json.loads(
-                rs._rs.library_key(source, rs.machine_json(dev.machine))
-            )
+            identity = json.loads(rs.library_key(source, rs.machine_json(dev.machine)))
             c = (
                 patched[identity["class"]]
                 if identity["class"] in patched

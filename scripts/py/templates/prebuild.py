@@ -211,9 +211,7 @@ def capture(
         return sig
 
     def record(source, family, binds=None, kind="dsl", info=None):
-        key = json.loads(rs._rs.library_key(source, rs.machine_json(dev.machine)))[
-            "class"
-        ]
+        key = json.loads(rs.library_key(source, rs.machine_json(dev.machine)))["class"]
         entry = sources.setdefault(
             key, {"source": source, "family": family, "aliases": []}
         )
@@ -625,14 +623,14 @@ def prebuild_classes(library_root, doc, machine, exact_results, cold_times):
     machine_digest = None
     for key, entry in doc["sources"].items():
         source = entry["source"]
-        output = rs._rs.library_get(str(library_root), source, machine)
+        output = rs.library_get(str(library_root), source, machine)
         if output is None:
             raise RuntimeError(f"missing exact prebuild for {key}")
         g = json.loads(source)
         gname = g.pop("name", "")
         skey = digest(structure(g))
         if machine_digest is None:
-            machine_digest = json.loads(rs._rs.library_key(source, machine))["machine"]
+            machine_digest = json.loads(rs.library_key(source, machine))["machine"]
         pkg_bytes = output["packages"][0]["bytes"]
         buffers = rs._rs.package_read(pkg_bytes, machine)["buffers"]
         aliases = entry.get("aliases", [])
@@ -935,10 +933,19 @@ def main():
         "--fragment", action="store_true", help="unrelated heap history"
     )
     parser.add_argument("--classes", type=int, choices=[0, 1], default=None)
+    parser.add_argument(
+        "--zero-sign",
+        nargs="+",
+        choices=rs._rs.ZERO_SIGNS,
+        default=[rs._rs.ZERO_SIGN],
+        help="prebuild: library entries under each value; run: the one value run",
+    )
     args = parser.parse_args()
     args.model = args.model_option or args.model
     if args.model is None:
         parser.error("a model is required")
+    if args.mode == "run" and len(args.zero_sign) != 1:
+        parser.error("--mode run runs under one --zero-sign value")
     recipe = {
         "eval_batch": args.eval_batch or args.batch,
         "schedule": args.schedule,
@@ -960,148 +967,156 @@ def main():
         )
     )
     if args.mode == "run":
-        t0 = time.perf_counter()
-        graphs = []
-        graph_keys, replay_keys, source_keys = {}, {}, {}
-        original_run = D.Device.run
-        original = KTPUGraph.__call__
+        with rs.zero_sign(args.zero_sign[0]):
+            t0 = time.perf_counter()
+            graphs = []
+            graph_keys, replay_keys, source_keys = {}, {}, {}
+            original_run = D.Device.run
+            original = KTPUGraph.__call__
 
-        def observe_run(device, compiled, *a, **kw):
-            if compiled.name not in source_keys:
-                source_keys[compiled.name] = json.loads(
-                    rs._rs.library_key(
-                        compiled.traced.graph_json, rs.machine_json(device.machine)
-                    )
-                )["class"]
-            return original_run(device, compiled, *a, **kw)
+            def observe_run(device, compiled, *a, **kw):
+                if compiled.name not in source_keys:
+                    source_keys[compiled.name] = json.loads(
+                        rs.library_key(
+                            compiled.traced.graph_json, rs.machine_json(device.machine)
+                        )
+                    )["class"]
+                return original_run(device, compiled, *a, **kw)
 
-        def observe(graph, *a, **kw):
-            if graph not in graphs:
-                graphs.append(graph)
-            start = len(dev.runs)
-            replayed = graph.counts["replayed"]
-            result = original(graph, *a, **kw)
-            if graph.counts["replayed"] > replayed:
-                assert len(dev.runs) - start == len(graph_keys[graph])
-                replay_keys.update(enumerate(graph_keys[graph], start))
+            def observe(graph, *a, **kw):
+                if graph not in graphs:
+                    graphs.append(graph)
+                start = len(dev.runs)
+                replayed = graph.counts["replayed"]
+                result = original(graph, *a, **kw)
+                if graph.counts["replayed"] > replayed:
+                    assert len(dev.runs) - start == len(graph_keys[graph])
+                    replay_keys.update(enumerate(graph_keys[graph], start))
+                else:
+                    graph_keys[graph] = [r.name for r in dev.runs[start:]]
+                return result
+
+            churn = (
+                [dev.alloc(8192) for _ in range(args.steps)] if args.fragment else []
+            )
+            holes = (
+                [dev.alloc(n) for n in (256, 4096, 256, 2048, 256, 8192)]
+                if args.fragment
+                else []
+            )
+            if args.fragment:
+                for i in (1, 3, 5):
+                    dev.free(holes[i])
+            with (
+                patch.object(KTPUGraph, "__call__", observe),
+                patch.object(D.Device, "run", observe_run),
+            ):
+                step_records = MODELS[args.model](
+                    args.batch,
+                    args.forward_only,
+                    args.steps,
+                    jit=args.jit,
+                    churn=churn,
+                    **recipe,
+                )
+            dev.drain()
+            wall = time.perf_counter() - t0
+            assert dev.counters["compile_calls"] == 0
+            assert dev.counters["library_misses"] == 0
+            assert dev.counters["library_hits"] > 0
+            if dev.classes:
+                assert dev.counters["class_hits"] > 0
             else:
-                graph_keys[graph] = [r.name for r in dev.runs[start:]]
-            return result
-
-        churn = [dev.alloc(8192) for _ in range(args.steps)] if args.fragment else []
-        holes = (
-            [dev.alloc(n) for n in (256, 4096, 256, 2048, 256, 8192)]
-            if args.fragment
-            else []
-        )
-        if args.fragment:
-            for i in (1, 3, 5):
-                dev.free(holes[i])
-        with (
-            patch.object(KTPUGraph, "__call__", observe),
-            patch.object(D.Device, "run", observe_run),
-        ):
-            step_records = MODELS[args.model](
-                args.batch,
-                args.forward_only,
-                args.steps,
-                jit=args.jit,
-                churn=churn,
-                **recipe,
+                assert dev.counters["class_hits"] == 0
+                assert dev.counters["exact_hits"] == dev.counters["library_hits"]
+            result = dict(
+                dev.counters,
+                classes=dev.classes,
+                model=args.model,
+                schedule=args.schedule,
+                eval_batch=args.eval_batch or args.batch,
+                step_records=step_records,
+                launch_keys=[
+                    source_keys[replay_keys.get(i, r.name)]
+                    for i, r in enumerate(dev.runs)
+                ],
+                batch=args.batch,
+                board=args.board,
+                steps=args.steps,
+                zero_sign=args.zero_sign[0],
+                seconds=wall,
+                ms_per_launch=wall * 1000.0 / max(1, dev.counters["runs"]),
             )
-        dev.drain()
-        wall = time.perf_counter() - t0
-        assert dev.counters["compile_calls"] == 0
-        assert dev.counters["library_misses"] == 0
-        assert dev.counters["library_hits"] > 0
-        if dev.classes:
-            assert dev.counters["class_hits"] > 0
-        else:
-            assert dev.counters["class_hits"] == 0
-            assert dev.counters["exact_hits"] == dev.counters["library_hits"]
-        result = dict(
-            dev.counters,
-            classes=dev.classes,
-            model=args.model,
-            schedule=args.schedule,
-            eval_batch=args.eval_batch or args.batch,
-            step_records=step_records,
-            launch_keys=[
-                source_keys[replay_keys.get(i, r.name)] for i, r in enumerate(dev.runs)
-            ],
-            batch=args.batch,
-            board=args.board,
-            steps=args.steps,
-            seconds=wall,
-            ms_per_launch=wall * 1000.0 / max(1, dev.counters["runs"]),
-        )
-        if args.jit:
-            refs = {ref for g in graphs if g.log for ref in g.log[1].references}
-            placements = {
-                ref for g in graphs if g.placement for ref in g.placement.references
-            }
-            owners = Counter()
-            for arena, at in placements:
-                owners[arena.owners[at].split(":")[0]] += arena.live[at]
-            result["jit"] = {
-                "graphs": len(graphs),
-                "counts": {
-                    k: sum(g.counts[k] for g in graphs)
-                    for k in ("planned", "recorded", "replayed")
-                },
-                "placement_bytes": sum(a.live[at] for a, at in placements),
-                "placement_spans": len(placements),
-                "placement_by_owner": dict(owners),
-                "recording_bytes": sum(a.live[at] for a, at in refs),
-                "pinned_union_bytes": sum(a.live[at] for a, at in refs | placements),
-                "misses": [g.misses for g in graphs],
-            }
-            assert graphs and result["jit"]["counts"]["replayed"] > 0
-            for graph in graphs:
-                graph._release_logs()
-            result["jit"]["placement_bytes_after_release"] = sum(
-                g.placement.nbytes for g in graphs if g.placement is not None
-            )
-        for at in churn:
-            dev.free(at)
-        for i, at in enumerate(holes):
-            if not args.fragment or i not in (1, 3, 5):
+            if args.jit:
+                refs = {ref for g in graphs if g.log for ref in g.log[1].references}
+                placements = {
+                    ref for g in graphs if g.placement for ref in g.placement.references
+                }
+                owners = Counter()
+                for arena, at in placements:
+                    owners[arena.owners[at].split(":")[0]] += arena.live[at]
+                result["jit"] = {
+                    "graphs": len(graphs),
+                    "counts": {
+                        k: sum(g.counts[k] for g in graphs)
+                        for k in ("planned", "recorded", "replayed")
+                    },
+                    "placement_bytes": sum(a.live[at] for a, at in placements),
+                    "placement_spans": len(placements),
+                    "placement_by_owner": dict(owners),
+                    "recording_bytes": sum(a.live[at] for a, at in refs),
+                    "pinned_union_bytes": sum(
+                        a.live[at] for a, at in refs | placements
+                    ),
+                    "misses": [g.misses for g in graphs],
+                }
+                assert graphs and result["jit"]["counts"]["replayed"] > 0
+                for graph in graphs:
+                    graph._release_logs()
+                result["jit"]["placement_bytes_after_release"] = sum(
+                    g.placement.nbytes for g in graphs if g.placement is not None
+                )
+            for at in churn:
                 dev.free(at)
-        if isinstance(step_records, list) and len(step_records) > 1:
-            warm = step_records[1:]
-            warm_s = sum(r["seconds"] for r in warm)
-            warm_n = sum(r["launches"] for r in warm)
-            steady = step_records[4:] if len(step_records) > 4 else warm
-            steady_s = sum(r["seconds"] for r in steady)
-            steady_n = sum(r["launches"] for r in steady)
-            result.update(
-                step0_seconds=step_records[0]["seconds"],
-                step0_ms_per_launch=step_records[0]["ms_per_launch"],
-                warm_steps=len(warm),
-                warm_seconds=warm_s,
-                warm_per_step_seconds=warm_s / len(warm),
-                warm_launches=warm_n,
-                warm_ms_per_launch=warm_s * 1000.0 / max(1, warm_n),
-                steady_ms_per_launch=steady_s * 1000.0 / max(1, steady_n),
-                step_seconds=[round(r["seconds"], 4) for r in step_records],
+            for i, at in enumerate(holes):
+                if not args.fragment or i not in (1, 3, 5):
+                    dev.free(at)
+            if isinstance(step_records, list) and len(step_records) > 1:
+                warm = step_records[1:]
+                warm_s = sum(r["seconds"] for r in warm)
+                warm_n = sum(r["launches"] for r in warm)
+                steady = step_records[4:] if len(step_records) > 4 else warm
+                steady_s = sum(r["seconds"] for r in steady)
+                steady_n = sum(r["launches"] for r in steady)
+                result.update(
+                    step0_seconds=step_records[0]["seconds"],
+                    step0_ms_per_launch=step_records[0]["ms_per_launch"],
+                    warm_steps=len(warm),
+                    warm_seconds=warm_s,
+                    warm_per_step_seconds=warm_s / len(warm),
+                    warm_launches=warm_n,
+                    warm_ms_per_launch=warm_s * 1000.0 / max(1, warm_n),
+                    steady_ms_per_launch=steady_s * 1000.0 / max(1, steady_n),
+                    step_seconds=[round(r["seconds"], 4) for r in step_records],
+                )
+            run_name = (
+                "run.json"
+                if args.classes is None
+                else f"run-classes-{int(dev.classes)}.json"
             )
-        run_name = (
-            "run.json"
-            if args.classes is None
-            else f"run-classes-{int(dev.classes)}.json"
-        )
-        (args.output / run_name).write_text(
-            json.dumps(result, indent=2), encoding="utf-8"
-        )
-        if args.classes is not None:
-            (
-                args.output / f"run-steps{args.steps}-classes-{int(dev.classes)}.json"
-            ).write_text(json.dumps(result, indent=2), encoding="utf-8")
-            (args.output / "run.json").write_text(
+            (args.output / run_name).write_text(
                 json.dumps(result, indent=2), encoding="utf-8"
             )
-        print(json.dumps({k: v for k, v in result.items() if k != "launch_keys"}))
-        return
+            if args.classes is not None:
+                (
+                    args.output
+                    / f"run-steps{args.steps}-classes-{int(dev.classes)}.json"
+                ).write_text(json.dumps(result, indent=2), encoding="utf-8")
+                (args.output / "run.json").write_text(
+                    json.dumps(result, indent=2), encoding="utf-8"
+                )
+            print(json.dumps({k: v for k, v in result.items() if k != "launch_keys"}))
+            return
     cap = args.capture or args.output / "capture.json"
     if args.capture is not None and not cap.is_file():
         raise FileNotFoundError(cap)
@@ -1134,49 +1149,66 @@ def main():
         json.loads(cold_path.read_text(encoding="utf-8")) if cold_path.exists() else {}
     )
     started = time.perf_counter()
-    results, failures = {}, {}
     machine_json = rs.machine_json(dev.machine)
-    for idx, (key, entry) in enumerate(doc["sources"].items(), 1):
-        try:
-            res = rs._rs.library_prebuild(
-                str(args.library), entry["source"], machine_json
-            )
-            results[key] = res
-            if not res["hit"]:
-                cold_times[f"{args.board}:{key}"] = res["seconds"]
-                cold_times[key] = res["seconds"]
-        except ValueError as error:
-            failures[key] = {"family": entry["family"], "error": str(error)}
-        if idx % 25 == 0 or idx == len(doc["sources"]):
-            print(
-                f"{len(results) + len(failures)}/{len(doc['sources'])}: {entry['family']}: {'refused' if key in failures else 'ready'}",
-                flush=True,
-            )
-    args.library.mkdir(parents=True, exist_ok=True)
-    cold_path.write_text(json.dumps(cold_times, indent=2), encoding="utf-8")
-    exact_wall = time.perf_counter() - started
     result = {
         "policy": "class+exact" if dev.classes else "exact graph",
         "batch": args.batch,
         "board": args.board,
-        "seconds": exact_wall,
-        "results": results,
-        "failures": failures,
+        "zero_sign": {},
     }
-    if not failures and dev.classes:
-        migration = prebuild_classes(
-            args.library, doc, machine_json, results, cold_times
+    for zero_sign in args.zero_sign:
+        result["zero_sign"][zero_sign] = prebuild_value(
+            args, doc, dev, machine_json, zero_sign, cold_times
         )
-        result["class_migration"] = migration
-        print(
-            f"class migration: {migration['admitted_sources']}/{len(doc['sources'])} sources ({migration['admitted_launches']}/{len(doc['launches'])} launches) admitted into {migration['class_templates']} templates in {migration['prebuild_seconds']['class_derivation_and_proof_seconds']:.2f}s",
-            flush=True,
-        )
+        args.library.mkdir(parents=True, exist_ok=True)
+        cold_path.write_text(json.dumps(cold_times, indent=2), encoding="utf-8")
+    result["seconds"] = time.perf_counter() - started
     (args.output / "prebuild.json").write_text(
         json.dumps(result, indent=2), encoding="utf-8"
     )
+    failures = {
+        z: len(v["failures"]) for z, v in result["zero_sign"].items() if v["failures"]
+    }
     if failures:
-        raise RuntimeError(f"{len(failures)} classes refused; see prebuild.json")
+        raise RuntimeError(
+            f"classes refused per zero_sign {failures}; see prebuild.json"
+        )
+
+
+def prebuild_value(args, doc, dev, machine_json, zero_sign, cold_times):
+    """The exact (and, with classes, the class) library entries under one
+    zero_sign value; `cold_times[zero_sign]` holds its cold compile seconds."""
+    started = time.perf_counter()
+    results, failures = {}, {}
+    cold = cold_times.setdefault(zero_sign, {})
+    with rs.zero_sign(zero_sign):
+        for idx, (key, entry) in enumerate(doc["sources"].items(), 1):
+            try:
+                res = rs.library_prebuild(args.library, entry["source"], machine_json)
+                results[key] = res
+                if not res["hit"]:
+                    cold[f"{args.board}:{key}"] = res["seconds"]
+                    cold[key] = res["seconds"]
+            except ValueError as error:
+                failures[key] = {"family": entry["family"], "error": str(error)}
+            if idx % 25 == 0 or idx == len(doc["sources"]):
+                print(
+                    f"{zero_sign} {len(results) + len(failures)}/{len(doc['sources'])}: {entry['family']}: {'refused' if key in failures else 'ready'}",
+                    flush=True,
+                )
+        value = {
+            "seconds": time.perf_counter() - started,
+            "results": results,
+            "failures": failures,
+        }
+        if not failures and dev.classes:
+            migration = prebuild_classes(args.library, doc, machine_json, results, cold)
+            value["class_migration"] = migration
+            print(
+                f"{zero_sign} class migration: {migration['admitted_sources']}/{len(doc['sources'])} sources ({migration['admitted_launches']}/{len(doc['launches'])} launches) admitted into {migration['class_templates']} templates in {migration['prebuild_seconds']['class_derivation_and_proof_seconds']:.2f}s",
+                flush=True,
+            )
+    return value
 
 
 if __name__ == "__main__":

@@ -330,6 +330,7 @@ class Device:
             rs.machine_json(self.machine),
             self.library,
             self.library_only,
+            rs._ZERO_SIGN.get(),
         )
 
     def invalidate_library(self):
@@ -347,18 +348,13 @@ class Device:
                     self.counters["class_hits"] += 1
                     self.counters["library_hits"] += 1
                     return output
-            mutant = rs._MUTANT.get()
-            output = (
-                rs._rs.library_get(self.library, source, machine)
-                if mutant is None
-                else rs._rs.library_get(self.library, source, machine, mutant)
-            )
+            output = rs.library_get(self.library, source, machine, rs._MUTANT.get())
             if output is not None:
                 self.counters["exact_hits"] += 1
                 self.counters["library_hits"] += 1
                 return output
             self.counters["library_misses"] += 1
-            key = json.loads(rs._rs.library_key(source, machine))
+            key = json.loads(rs.library_key(source, machine))
             if self.library_only:
                 raise RuntimeError(
                     f"library miss: class {key['class']}, machine {key['machine']}"
@@ -762,7 +758,7 @@ class Device:
                 cached = self.kernels.get(exact_key)
                 exact = cached[0] if cached is not None else None
                 if exact is None:
-                    output = rs._rs.library_get(
+                    output = rs.library_get(
                         self.library,
                         source,
                         rs.machine_json(self.machine),

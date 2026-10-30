@@ -1,0 +1,27 @@
+{
+ "clause": "ISA.VC.058",
+ "tier": 1,
+ "runner": "isa.card.kernel",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "body": [
+   "vmov v2, v0"
+  ],
+  "check": "mov",
+  "x": {
+   "seed": 58,
+   "set": {"0": -0.0, "1": 0.0, "2": -0.0, "3": 1.5, "4": -1.5}
+  },
+  "tol": {
+   "exact": true
+  }
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.vector/opcodes",
+  "isa.card/ieee-zeros"
+ ]
+}

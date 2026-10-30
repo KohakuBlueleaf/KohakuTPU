@@ -21,7 +21,7 @@ def measure(library, capture, cap):
     machine = rs.machine_json(device.machine)
     device.close()
     source = next(iter(capture["sources"].values()))["source"]
-    key = json.loads(rs._rs.library_key(source, machine))
+    key = json.loads(rs.library_key(source, machine))
     directory = library / key["machine"]
     if not directory.is_dir():
         raise RuntimeError(f"missing current-machine library {directory}")
@@ -89,7 +89,7 @@ def measure(library, capture, cap):
         )
         admission_seconds += seconds
         for member, mesh, metadata in members[identifier]:
-            output = rs._rs.library_get(
+            output = rs.library_get(
                 str(library), capture["sources"][member]["source"], machine
             )
             if output is None:

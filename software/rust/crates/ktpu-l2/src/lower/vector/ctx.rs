@@ -36,8 +36,8 @@ use super::gen::{Code, Gen};
 use super::tree::{compact, interleave, quantiser_order, tree, tree4, Steps};
 use super::{
     banks, code_of, count_of, guard, is_in, kreg, mode_of, number, numbers, ops_of, risk_of,
-    value_name, Desc, FKey, Guard, Guards, Plan, PlanX, RPar, VErr, VResult, Val, Walk, BINARY,
-    CMP, EXP2D_LOW, EXP2_FLOOR, EXP2_RANGE, REDUCE, TERNARY, UNARY, XLANE,
+    value_name, Desc, FKey, Guard, Guards, Plan, PlanX, RPar, VErr, VResult, Val, Walk, ZeroSign,
+    BINARY, CMP, EXP2D_LOW, EXP2_FLOOR, EXP2_RANGE, REDUCE, TERNARY, UNARY, XLANE,
 };
 use crate::ir::read::bind;
 use crate::ir::repr::repr;
@@ -100,6 +100,8 @@ pub struct Ctx<'a> {
     pub tile: i64,
     /// the instance's EXP2 / EXP2D risks (`RPar::guards`)
     pub guards: Guards,
+    /// how a value the instance does not change moves (`RPar::zero_sign`)
+    pub zero_sign: ZeroSign,
 }
 
 fn op(n: &Node) -> &Op {
@@ -153,6 +155,7 @@ impl<'a> Ctx<'a> {
             per_band: 0,
             tile: 1,
             guards: Guards::new(),
+            zero_sign: ZeroSign::DEFAULT,
         })
     }
 

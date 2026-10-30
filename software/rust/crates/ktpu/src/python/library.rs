@@ -1,7 +1,9 @@
 //! Machine-scoped, versioned exact-class artifacts. Reads never invoke a compiler.
 
 use super::{compiled, machine};
+use crate::stack::CardStack;
 use crate::{Backend, Compiled, Stage};
+use ktpu_l2::ZeroSign;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -93,36 +95,39 @@ fn clean(v: &mut Value) {
     }
 }
 
-fn stage_versions() -> PyResult<BTreeMap<String, String>> {
-    if crate::mutant::active().is_none() {
-        static VERSIONS: OnceLock<BTreeMap<String, String>> = OnceLock::new();
-        if let Some(v) = VERSIONS.get() {
-            return Ok(v.clone());
-        }
-        let v: BTreeMap<String, String> = Stage::ALL
-            .into_iter()
-            .map(|s| {
-                crate::stack::CardStack::default()
-                    .version(s)
-                    .map(|v| (s.name().to_string(), v))
-                    .ok_or_else(|| PyValueError::new_err("unversioned library stage"))
-            })
-            .collect::<PyResult<_>>()?;
-        let _ = VERSIONS.set(v.clone());
-        return Ok(v);
-    }
+/// The stack a library entry is compiled with: the card stack under one
+/// `zero_sign` value (none: `ZeroSign::DEFAULT`).
+fn card(zero_sign: Option<&str>) -> PyResult<CardStack> {
+    let z = zero_sign.map(super::signed).transpose()?;
+    Ok(CardStack {
+        zero_sign: Some(z.unwrap_or(ZeroSign::DEFAULT)),
+        ..CardStack::default()
+    })
+}
+
+/// The directory an entry lives under: the machine text and the stack's
+/// settings, so each `zero_sign` value keeps its own entries.
+fn target(text: &str, card: &CardStack) -> String {
+    digest(&format!("{text}{}", card.settings()))
+}
+
+fn stage_versions(card: &CardStack) -> PyResult<BTreeMap<String, String>> {
     Stage::ALL
         .into_iter()
         .map(|s| {
-            crate::stack::CardStack::default()
-                .version(s)
+            card.version(s)
                 .map(|v| (s.name().to_string(), v))
                 .ok_or_else(|| PyValueError::new_err("unversioned library stage"))
         })
         .collect()
 }
 
-fn identity(source: &str, text: &str, need_canonical: bool) -> PyResult<(Key, String, String)> {
+fn identity(
+    source: &str,
+    text: &str,
+    card: &CardStack,
+    need_canonical: bool,
+) -> PyResult<(Key, String, String)> {
     machine(text)?;
     let mut graph: Value =
         serde_json::from_str(source).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -142,12 +147,12 @@ fn identity(source: &str, text: &str, need_canonical: bool) -> PyResult<(Key, St
     } else {
         String::new()
     };
-    let versions = stage_versions()?;
+    let versions = stage_versions(card)?;
     Ok((
         Key {
             schema: 1,
             class,
-            machine: digest(text),
+            machine: target(text, card),
             versions,
         },
         canonical,
@@ -165,26 +170,39 @@ fn error(e: impl std::fmt::Display) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
 
+/// `zero_sign` on every library call: the value the entry is compiled under
+/// (`_rs.compile`'s; none: the default), part of its key and its directory.
 #[pyfunction]
-fn library_key(source: &str, machine_json: &str) -> PyResult<String> {
-    let (key, _, _) = identity(source, machine_json, false)?;
+#[pyo3(signature = (source, machine_json, zero_sign=None))]
+fn library_key(source: &str, machine_json: &str, zero_sign: Option<&str>) -> PyResult<String> {
+    let (key, _, _) = identity(source, machine_json, &card(zero_sign)?, false)?;
     serde_json::to_string(&key).map_err(error)
 }
 
+/// The directory under `root` the entries for `machine_json` and `zero_sign`
+/// live in (a key's `machine`).
 #[pyfunction]
-#[pyo3(signature = (root, source, machine_json, mutant=None))]
+#[pyo3(signature = (machine_json, zero_sign=None))]
+fn library_machine(machine_json: &str, zero_sign: Option<&str>) -> PyResult<String> {
+    machine(machine_json)?;
+    Ok(target(machine_json, &card(zero_sign)?))
+}
+
+#[pyfunction]
+#[pyo3(signature = (root, source, machine_json, mutant=None, zero_sign=None))]
 fn library_get<'py>(
     py: Python<'py>,
     root: &str,
     source: &str,
     machine_json: &str,
     mutant: Option<&str>,
+    zero_sign: Option<&str>,
 ) -> PyResult<Option<Bound<'py, PyDict>>> {
     if let Some(n) = mutant {
         crate::mutant::with(n, || ()).map_err(PyValueError::new_err)?;
     }
     let no_cache = mutant.is_some() || crate::mutant::active().is_some();
-    let (key, _, _) = identity(source, machine_json, false)?;
+    let (key, _, _) = identity(source, machine_json, &card(zero_sign)?, false)?;
     let dest = path(root, &key);
     let raw = match std::fs::read(&dest) {
         Ok(raw) => raw,
@@ -238,13 +256,16 @@ fn library_get<'py>(
 }
 
 #[pyfunction]
+#[pyo3(signature = (root, source, machine_json, zero_sign=None))]
 fn library_prebuild<'py>(
     py: Python<'py>,
     root: &str,
     source: &str,
     machine_json: &str,
+    zero_sign: Option<&str>,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let (key, canonical, name) = identity(source, machine_json, true)?;
+    let stack = card(zero_sign)?;
+    let (key, canonical, name) = identity(source, machine_json, &stack, true)?;
     let m = machine(machine_json)?;
     let dest = path(root, &key);
     let mut entry = match std::fs::read(&dest) {
@@ -260,7 +281,7 @@ fn library_prebuild<'py>(
         let c = py
             .detach(|| {
                 crate::compile(
-                    &crate::stack::CardStack::default(),
+                    &stack,
                     &crate::Input::Graph(canonical),
                     None,
                     &m,
@@ -335,6 +356,7 @@ fn library_prebuild<'py>(
 
 pub(super) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(library_key, m)?)?;
+    m.add_function(wrap_pyfunction!(library_machine, m)?)?;
     m.add_function(wrap_pyfunction!(library_get, m)?)?;
     m.add_function(wrap_pyfunction!(library_prebuild, m)?)?;
     Ok(())

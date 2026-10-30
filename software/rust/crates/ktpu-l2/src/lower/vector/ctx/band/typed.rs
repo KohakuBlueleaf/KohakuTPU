@@ -28,7 +28,7 @@ pub(in crate::lower::vector) fn lower_band(
         body, par, env, t, band, remat, ahead, plan, land, hold, pin, false,
     )?;
     let events = banks::typed::rotate(
-        crate::lower::vector::gen::predicate::fuse(g.code),
+        signed(&c, par, crate::lower::vector::gen::predicate::fuse(g.code))?,
         body.vcopies,
         &crate::lower::vector::modulo::Core::of(t),
     );
@@ -52,12 +52,23 @@ pub(in crate::lower::vector) fn lower_band(
         body, par, env, t, band, remat, ahead, plan, land, hold, pin, true,
     )?;
     let events = banks::typed::rotate(
-        crate::lower::vector::gen::predicate::fuse(g.code),
+        signed(&c, par, crate::lower::vector::gen::predicate::fuse(g.code))?,
         body.vcopies,
         &crate::lower::vector::modulo::Core::of(t),
     );
     let (assigned, _) = crate::lower::vector::assign_typed::assign(&events, &c.pinned, body.vregs);
     Ok(image(&c, name, &assigned?).expect("generated serial band image"))
+}
+
+/// `events` in the instance's zero-sign form (L2.VC.026).
+pub(in crate::lower::vector) fn signed(
+    c: &Ctx,
+    par: &RPar,
+    events: Vec<ir::Event>,
+) -> VResult<Vec<ir::Event>> {
+    c.zero_sign
+        .events(events, crate::lower::vector::sign::Lanes::of(c.t))
+        .map_err(|e| c.fail(&par.st, "L2.VC.026", e))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -88,6 +99,7 @@ fn flat_band<'a>(
     c.unit = crate::lower::vector::unit_of(body, par, env)?;
     c.pre = pre.clone();
     c.guards = par.guards.clone();
+    c.zero_sign = par.zero_sign;
     if let Some(lp) = &lp {
         for n in &lp.body {
             if let Node::For(f) = n.as_ref() {

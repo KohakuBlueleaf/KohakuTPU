@@ -11,7 +11,7 @@ def stage(compiled, binds, library):
         compiled.traced.graph_json if compiled.traced is not None else compiled.l2_text
     )
     graph = json.loads(source)
-    result = rs._rs.library_prebuild(
+    result = rs.library_prebuild(
         str(library), source, rs.machine_json(compiled.machine)
     )
     key = json.loads(result["key"])

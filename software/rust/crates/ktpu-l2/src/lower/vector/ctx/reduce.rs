@@ -220,7 +220,7 @@ impl<'a> Ctx<'a> {
             } else {
                 None
             };
-            let (steps, result) = tree(g, code, &rows, is_fused, into);
+            let (steps, result) = tree(g, code, &rows, is_fused, into, self.zero_sign);
             trees.push(steps);
             local
                 .get_mut(&target)

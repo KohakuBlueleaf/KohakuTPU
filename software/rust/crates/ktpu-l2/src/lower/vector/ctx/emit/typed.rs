@@ -89,6 +89,21 @@ impl Ctx<'_> {
         srcs: &[Term],
         sel: Select,
     ) -> VResult<Term> {
+        if self.zero_sign.negative_zero(f) {
+            let v = g.sym();
+            g.op(
+                ir::math(
+                    "vsub",
+                    v.operand(Select::Whole),
+                    vec![Term::name("k0"), Term::name("k0")],
+                    vec![],
+                ),
+                vec![v.clone()],
+            );
+            let operand = v.operand(sel);
+            syms.push(v);
+            return Ok(operand);
+        }
         let k = FKey::of(f);
         if let Some(v) = self.held.get(&k) {
             let v = symbol(v);

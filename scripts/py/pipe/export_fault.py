@@ -45,7 +45,7 @@ def main():
         event["source"] = doc["sources"][event["key"]]["source"]
     (base / f"runtime-prefix-{args.board}.json").write_text(json.dumps(snapshots))
     for event in snapshots:
-        result = rs._rs.library_prebuild(
+        result = rs.library_prebuild(
             str(base / "library"), event["source"], rs.machine_json(dev.machine)
         )
         print(

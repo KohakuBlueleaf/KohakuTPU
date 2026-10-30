@@ -37,7 +37,7 @@ class TemplateStore:
     def identity(self, source, table, environment=None):
         metadata = json.loads(table)
         embedded = metadata.pop("environment", [])
-        key = json.loads(rs._rs.library_key(source, self.machine))
+        key = json.loads(rs.library_key(source, self.machine))
         key["template_table"] = digest(metadata)
         key["environment"] = embedded if environment is None else environment
         return key
@@ -141,7 +141,7 @@ class TemplateStore:
         machine_digest = (
             expected_key["machine"]
             if expected_key is not None
-            else hashlib.sha256(self.machine.encode()).hexdigest()
+            else rs.library_machine(self.machine)
         )
         path = self.root / machine_digest / "classes" / f"{identifier}.json"
         raw_file = path.read_bytes()

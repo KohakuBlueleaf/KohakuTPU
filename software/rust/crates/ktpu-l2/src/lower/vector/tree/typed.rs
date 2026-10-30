@@ -1,6 +1,8 @@
 //! Typed reduction steps and quantiser operand edits.
 
+use super::lane_folds;
 use crate::lower::vector::gen::typed::{self as ir, Event, Select, Symbol};
+use crate::lower::vector::sign::ZeroSign;
 use ktpu_l1::text::{Stmt, Term};
 
 #[cfg(all(test, feature = "witness"))]
@@ -154,6 +156,7 @@ pub fn tree(
     rows: &[Vec<Symbol>],
     fused: bool,
     into: Option<Symbol>,
+    zero_sign: ZeroSign,
 ) -> (Steps, Symbol) {
     let t: Vec<_> = (0..4).map(|_| g.sym()).collect();
     let mut first = vec![];
@@ -220,6 +223,34 @@ pub fn tree(
             &[acc.clone(), s.clone()],
         ));
     }
+    if lane_folds(zero_sign, code) {
+        let d = into.unwrap_or_else(|| g.sym());
+        let mut steps = vec![first, second, third];
+        for k in [8, 4, 2, 1] {
+            steps.push(vec![insn(
+                code,
+                whole(&acc),
+                vec![whole(&acc), ir::crossbar("xor", whole(&acc), k)],
+                None,
+                std::slice::from_ref(&acc),
+            )]);
+        }
+        steps.push(
+            (0..8u64)
+                .rev()
+                .map(|r| {
+                    insn(
+                        "vmov",
+                        chunk(&d, 0),
+                        vec![chunk(&acc, r)],
+                        Some(r as i128 + 1),
+                        &[d.clone(), acc.clone()],
+                    )
+                })
+                .collect(),
+        );
+        return (steps, d);
+    }
     let m = g.sym();
     let d = into.unwrap_or_else(|| g.sym());
     let steps = vec![
@@ -258,13 +289,27 @@ pub fn tree(
     (steps, d)
 }
 
-pub fn compact(g: &mut Gen, bands: &[Symbol]) -> Symbol {
+pub fn compact(g: &mut Gen, bands: &[Symbol], zero_sign: ZeroSign) -> Symbol {
     let reversed: Vec<_> = bands.iter().rev().cloned().collect();
     let bands = if crate::mutant::on("l2.vector/compact-reversed") {
         &reversed
     } else {
         bands
     };
+    if lane_folds(zero_sign, "vmax") {
+        let d = g.sym();
+        for r in (0..16).rev() {
+            let band = &bands[r / 4];
+            g.emit(insn(
+                "vmov",
+                chunk(&d, 0),
+                vec![chunk(band, (r % 4) as u64)],
+                Some(r as i128 + 1),
+                &[d.clone(), band.clone()],
+            ));
+        }
+        return d;
+    }
     let (a, b, c, d) = (g.sym(), g.sym(), g.sym(), g.sym());
     for r in 0..8 {
         let (lo, hi) = (&bands[r / 4], &bands[(r + 8) / 4]);

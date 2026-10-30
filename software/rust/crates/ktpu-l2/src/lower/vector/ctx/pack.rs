@@ -190,7 +190,7 @@ impl<'a> Ctx<'a> {
                 let regs: Vec<String> = (0..4)
                     .map(|k| stat.regs[&((4 * w + k) % nb)].clone())
                     .collect();
-                let word = compact(g, &regs);
+                let word = compact(g, &regs, self.zero_sign);
                 for &d in &dests {
                     g.emit(
                         format!(

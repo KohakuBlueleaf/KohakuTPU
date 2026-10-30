@@ -25,6 +25,77 @@ def test_rounds_like_the_fp32_top_24_bits():
         assert np.array_equal(e8m15.value(v.astype(np.float64)), _by_bits(v))
 
 
+#: Inputs and, per form, the bits the Verilated v9t6 card returned (zero_sign
+#: probe 3, `vlt_card_v9t6s_1n`), with each form's lane rule.
+PROBED = ["8000", "0000", "bc00", "3c00", "c200", "0001", "8001", "7bff", "fbff"]
+PROBED += ["7c00", "fc00", "7e00"]
+LANE_FORMS = {
+    "vadd d, k0, x": (
+        lambda x: e8m15.fma(0.0, 1.0, x),
+        "8000 0000 bc00 3c00 c200 0001 8001 7bff fbff 7c00 fc00 7e00",
+    ),
+    "vadd d, x, k0": (
+        lambda x: e8m15.fma(x, 1.0, 0.0),
+        "0000 0000 bc00 3c00 c200 0001 8001 7bff fbff 7c00 fc00 7e00",
+    ),
+    "vmul d, k1, x": (
+        lambda x: e8m15.fma(1.0, x, 0.0),
+        "0000 0000 bc00 3c00 c200 0001 8001 7bff fbff 7c00 fc00 7e00",
+    ),
+    "vfma d, k0, x, x": (
+        lambda x: e8m15.fma(0.0, x, x),
+        "8000 0000 bc00 3c00 c200 0001 8001 7bff fbff 7e00 7e00 7e00",
+    ),
+    "vsub d, k0, x": (
+        lambda x: e8m15.fma(0.0, 1.0, -x),
+        "0000 8000 3c00 bc00 4200 8001 0001 fbff 7bff fc00 7c00 7e00",
+    ),
+    "vadd d, x, -0": (
+        lambda x: e8m15.fma(x, 1.0, -0.0),
+        "8000 8000 bc00 3c00 c200 0001 8001 7bff fbff 7c00 fc00 7e00",
+    ),
+    "vneg d, x": (
+        lambda x: e8m15.moved(-x),
+        "0000 0000 3c00 bc00 4200 8001 0001 fbff 7bff fc00 7c00 7e00",
+    ),
+    "vmov d, x": (
+        lambda x: e8m15.moved(x),
+        "0000 0000 bc00 3c00 c200 0001 8001 7bff fbff 7c00 fc00 7e00",
+    ),
+    "vmax d, x, k0": (
+        lambda x: e8m15.moved(np.where(x < 0, 0.0, x)),
+        "0000 0000 0000 3c00 0000 0001 0000 7bff 0000 7c00 0000 7e00",
+    ),
+    "vmin d, x, k0": (
+        lambda x: e8m15.moved(np.where(x > 0, 0.0, x)),
+        "0000 0000 bc00 0000 c200 0000 8001 0000 fbff 0000 fc00 7e00",
+    ),
+}
+
+
+def _f16_bits(x):
+    """f16 bits of `x`, a NaN as 7e00."""
+    x = np.atleast_1d(np.asarray(x, np.float64)).astype(np.float16)
+    bits = x.view(np.uint16).copy()
+    bits[np.isnan(x)] = 0x7E00
+    return " ".join(f"{int(b):04x}" for b in bits)
+
+
+@pytest.mark.parametrize("form", list(LANE_FORMS))
+def test_lane_rules_return_the_probed_bits(form):
+    x = np.array([int(b, 16) for b in PROBED], np.uint16).view(np.float16)
+    rule, want = LANE_FORMS[form]
+    assert _f16_bits(rule(x.astype(np.float64))) == want
+
+
+def test_the_lane_zero_rules_are_not_ieee():
+    with np.errstate(all="ignore"):
+        assert _f16_bits(np.float64(0.0) + np.float64(-0.0)) == "0000"
+        assert _f16_bits(e8m15.fma(0.0, 1.0, -0.0)) == "8000"
+        assert _f16_bits(-np.float64(0.0)) == "8000"
+        assert _f16_bits(e8m15.moved(-np.float64(0.0))) == "0000"
+
+
 def test_has_no_subnormals_and_keeps_the_fp32_range():
     assert e8m15.value(2.0**-127) == 0.0
     assert e8m15.value(-(2.0**-126)) == -(2.0**-126)

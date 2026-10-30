@@ -15,6 +15,7 @@ from kohakutpu.language.text.syntax import TextError
 MACHINE_ENV = "KTPU_RS_MACHINE"
 BASE = "multimesh_v9t6"
 _COMPILER_OWNER = contextvars.ContextVar("compiler_owner", default=None)
+_ZERO_SIGN = contextvars.ContextVar("zero_sign", default=None)
 
 
 @contextlib.contextmanager
@@ -62,6 +63,17 @@ def mutant(name):
         _MUTANT.reset(token)
 
 
+@contextlib.contextmanager
+def zero_sign(value):
+    """Compiles and library calls inside lower with zero-sign handling `value`
+    (one of `_rs.ZERO_SIGNS`; None: `_rs.ZERO_SIGN`)."""
+    token = _ZERO_SIGN.set(value)
+    try:
+        yield
+    finally:
+        _ZERO_SIGN.reset(token)
+
+
 def compile(source, name, spec, l1=False, binds=None, passes=True):
     owner = _COMPILER_OWNER.get()
     if owner is not None:
@@ -79,12 +91,41 @@ def compile(source, name, spec, l1=False, binds=None, passes=True):
             l1=l1,
             binds=None if binds is None else dict(binds),
             passes=passes,
+            zero_sign=_ZERO_SIGN.get(),
         )
     except _rs.Refused as exc:
         raise TextError(str(exc), name=f"<{name}.l2>") from exc
     finally:
         if owner is not None:
             owner.counters["compile_seconds"] += time.perf_counter() - started
+
+
+def library_key(source, machine):
+    return _rs.library_key(source, machine, zero_sign=_ZERO_SIGN.get())
+
+
+def library_machine(machine):
+    return _rs.library_machine(machine, zero_sign=_ZERO_SIGN.get())
+
+
+def library_get(root, source, machine, mutant=None):
+    return _rs.library_get(
+        str(root), source, machine, mutant, zero_sign=_ZERO_SIGN.get()
+    )
+
+
+def library_prebuild(root, source, machine):
+    return _rs.library_prebuild(str(root), source, machine, zero_sign=_ZERO_SIGN.get())
+
+
+def template_compile(representative, sources, machine, parameter_rotations=False):
+    return _rs.template_compile(
+        representative,
+        sources,
+        machine,
+        parameter_rotations,
+        zero_sign=_ZERO_SIGN.get(),
+    )
 
 
 def bind(

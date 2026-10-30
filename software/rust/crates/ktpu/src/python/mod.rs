@@ -344,8 +344,10 @@ fn debug_decode<'py>(
 /// card's packages (`fetch=True`). `exp2_ranges` ("off", "intervals",
 /// "rowmax"; None the default): what the vector search's range analysis may
 /// prove of EXP2 / EXP2D arguments (`ktpu_l2::Ranges`), a card's packages.
+/// `zero_sign` ("native", "preserve"; None the default `ZERO_SIGN`): how the
+/// lowering moves a value it does not change (`ktpu_l2::ZeroSign`).
 #[pyfunction]
-#[pyo3(signature = (source, machine_json, name=None, cache_dir=None, fetch=false, mutant=None, l1=false, binds=None, passes=true, exp2_ranges=None))]
+#[pyo3(signature = (source, machine_json, name=None, cache_dir=None, fetch=false, mutant=None, l1=false, binds=None, passes=true, exp2_ranges=None, zero_sign=None))]
 #[allow(clippy::too_many_arguments)]
 fn compile<'py>(
     py: Python<'py>,
@@ -359,6 +361,7 @@ fn compile<'py>(
     binds: Option<std::collections::BTreeMap<String, i128>>,
     passes: bool,
     exp2_ranges: Option<&str>,
+    zero_sign: Option<&str>,
 ) -> PyResult<Bound<'py, PyDict>> {
     if (binds.is_some() || !passes || exp2_ranges.is_some()) && !fetch {
         return Err(PyValueError::new_err(
@@ -372,10 +375,13 @@ fn compile<'py>(
             })
         })
         .transpose()?;
+    let zero_sign = zero_sign.map(signed).transpose()?;
     let card = CardStack {
         binds,
         no_passes: !passes,
         ranges,
+        zero_sign,
+        node_fed: !fetch,
         ..CardStack::default()
     };
     let m = machine(machine_json)?;
@@ -387,9 +393,9 @@ fn compile<'py>(
         Some(_) => Cache::off(),
         None => cache(cache_dir),
     };
-    let run = || match fetch {
-        true => crate::compile(&card, &input, name, &m, &c),
-        false => crate::compile(&Stack, &input, name, &m, &c),
+    let run = || match (fetch, zero_sign) {
+        (false, None) => crate::compile(&Stack, &input, name, &m, &c),
+        _ => crate::compile(&card, &input, name, &m, &c),
     };
     let got = py.detach(|| match mutant {
         Some(n) => crate::mutant::with(n, run),
@@ -670,6 +676,12 @@ fn bind_cache_configure(
     library::cache_configure(library, clear);
 }
 
+/// A `zero_sign` argument's value.
+fn signed(name: &str) -> PyResult<ktpu_l2::ZeroSign> {
+    ktpu_l2::ZeroSign::parse(name)
+        .ok_or_else(|| PyValueError::new_err(format!("zero_sign is native or preserve: {name}")))
+}
+
 /// One machine for every source, or one a source.
 #[derive(FromPyObject)]
 enum Machines {
@@ -677,19 +689,27 @@ enum Machines {
     Each(Vec<String>),
 }
 
-/// compile_many(sources, machine_json, cache=None, threads=None) -> list
+/// compile_many(sources, machine_json, cache=None, threads=None,
+/// zero_sign=None) -> list
 ///
 /// `machine_json`: one machine file's text, or a list of one a source. Item
-/// i is source i's dict, or `{"refused": {...}}`.
+/// i is source i's dict, or `{"refused": {...}}`. `zero_sign`: `compile`'s.
 #[pyfunction]
-#[pyo3(name = "compile_many", signature = (sources, machine_json, cache_dir=None, threads=None))]
+#[pyo3(name = "compile_many", signature = (sources, machine_json, cache_dir=None, threads=None, zero_sign=None))]
 fn compile_many<'py>(
     py: Python<'py>,
     sources: Vec<String>,
     machine_json: Machines,
     cache_dir: Option<&str>,
     threads: Option<usize>,
+    zero_sign: Option<&str>,
 ) -> PyResult<Bound<'py, PyList>> {
+    let zero_sign = zero_sign.map(signed).transpose()?;
+    let card = CardStack {
+        node_fed: true,
+        zero_sign,
+        ..CardStack::default()
+    };
     let texts = match machine_json {
         Machines::One(t) => vec![t; sources.len().min(1)],
         Machines::Each(ts) if ts.len() == sources.len() => ts,
@@ -713,7 +733,10 @@ fn compile_many<'py>(
             .num_threads(threads.unwrap_or(0))
             .build()
             .map_err(|e| e.to_string())?;
-        Ok::<_, String>(pool.install(|| crate::compile_each(&Stack, &inputs, &c)))
+        Ok::<_, String>(pool.install(|| match zero_sign {
+            None => crate::compile_each(&Stack, &inputs, &c),
+            Some(_) => crate::compile_each(&card, &inputs, &c),
+        }))
     });
     let got = got.map_err(PyValueError::new_err)?;
     let out = PyList::empty(py);
@@ -730,23 +753,30 @@ fn compile_many<'py>(
     Ok(out)
 }
 
-/// Compile box points with the representative's image and retile choices frozen.
+/// Compile box points with the representative's image and retile choices
+/// frozen. `zero_sign`: `compile`'s.
 #[pyfunction]
-#[pyo3(signature = (representative, sources, machine_json, parameter_rotations=false))]
+#[pyo3(signature = (representative, sources, machine_json, parameter_rotations=false, zero_sign=None))]
 fn template_compile<'py>(
     py: Python<'py>,
     representative: &str,
     sources: Vec<String>,
     machine_json: &str,
     parameter_rotations: bool,
+    zero_sign: Option<&str>,
 ) -> PyResult<Bound<'py, PyList>> {
     let m = machine(machine_json)?;
+    let zero_sign = zero_sign
+        .map(signed)
+        .transpose()?
+        .unwrap_or(ktpu_l2::ZeroSign::DEFAULT);
     let got = py
         .detach(|| {
             let compiler = crate::templates::compiler::PinnedCompiler::with_rotation_parameters(
                 representative,
                 &m,
                 parameter_rotations,
+                zero_sign,
             )?;
             sources
                 .iter()
@@ -954,6 +984,11 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("ROWS_DEFAULTS", rows_defaults())?;
     m.add("RELAYOUT_DEFAULTS", relayout_defaults())?;
     m.add("PREPARED_DEFAULTS", prepared_defaults())?;
+    m.add("ZERO_SIGN", ktpu_l2::ZeroSign::DEFAULT.name())?;
+    m.add(
+        "ZERO_SIGNS",
+        ktpu_l2::ZeroSign::ALL.map(ktpu_l2::ZeroSign::name).to_vec(),
+    )?;
     m.add_function(wrap_pyfunction!(bind, m)?)?;
     m.add_function(wrap_pyfunction!(bind_cache_stats, m)?)?;
     m.add_function(wrap_pyfunction!(bind_cache_configure, m)?)?;

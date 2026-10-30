@@ -19,19 +19,23 @@ def main():
         folder = args.lib / name
         doc = json.loads((folder / "prebuild.json").read_text(encoding="utf-8"))
         cap = json.loads((folder / "capture.json").read_text(encoding="utf-8"))
-        rows.append(
-            {
-                "workload": name,
-                "batch": doc["batch"],
-                "board": doc["board"],
-                "launches": len(cap["launches"]),
-                "exact_classes": len(doc["results"]),
-                "artifact_bytes": sum(r["bytes"] for r in doc["results"].values()),
-                "prebuild_seconds": doc["seconds"],
-                "prebuild_hits": sum(r["hit"] for r in doc["results"].values()),
-                "failures": len(doc["failures"]),
-            }
-        )
+        for zero_sign, value in doc["zero_sign"].items():
+            rows.append(
+                {
+                    "workload": name,
+                    "zero_sign": zero_sign,
+                    "batch": doc["batch"],
+                    "board": doc["board"],
+                    "launches": len(cap["launches"]),
+                    "exact_classes": len(value["results"]),
+                    "artifact_bytes": sum(
+                        r["bytes"] for r in value["results"].values()
+                    ),
+                    "prebuild_seconds": value["seconds"],
+                    "prebuild_hits": sum(r["hit"] for r in value["results"].values()),
+                    "failures": len(value["failures"]),
+                }
+            )
     output = {
         "status": "partial; policy and count-path sweeps not measured",
         "exact_libraries": rows,

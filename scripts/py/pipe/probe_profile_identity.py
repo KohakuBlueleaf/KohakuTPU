@@ -35,7 +35,7 @@ def main():
         source = json.loads(args.capture.read_text())["sources"][
             "b5722073f594be01fc78380a4440ddd1657ae0e33b1c01ea70e50162a1646653"
         ]["source"]
-        print(rs._rs.library_key(source, rs.machine_json(machine)))
+        print(rs.library_key(source, rs.machine_json(machine)))
         for (kind, b), records in profiles[1].items():
             if b == board:
                 for recipe, _ in records.values():

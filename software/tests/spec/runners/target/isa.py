@@ -9,6 +9,7 @@ from harness.registry import mutant, patched, runner
 
 from kohakutpu.application.tools import l1 as L1RUN
 from kohakutpu.language import examples
+from kohakutpu.language.numerics import e8m15
 from kohakutpu.language.text import module
 from kohakutpu.stack import kernel
 from kohakutpu.stack.buffer import Buffer
@@ -58,20 +59,24 @@ def _lanes(x, f):
     return np.array([f(c, ln) for c in range(8) for ln in range(16)], np.float64)
 
 
+#: Each check's reference, the lane rules of the core included: a move
+#: (vmov, vmax, vsel, a `vmul k1` copy) returns a zero as +0 (ISA.VC.058), a
+#: zero product passes the addend (NUM.E8.009).
 KERNEL = {
     "x0": lambda a, b: a,
     "x1": lambda a, b: b,
-    "add": lambda a, b: a + b,
-    "sub": lambda a, b: a - b,
-    "mul": lambda a, b: a * b,
-    "max": lambda a, b: np.maximum(a, b),
-    "sel": lambda a, b: np.where(b != 0, a, 0.0),
+    "mov": lambda a, b: e8m15.moved(a),
+    "add": lambda a, b: e8m15.fma(a, 1.0, b),
+    "sub": lambda a, b: e8m15.fma(a, 1.0, -b),
+    "mul": lambda a, b: e8m15.fma(a, b, 0.0),
+    "max": lambda a, b: e8m15.moved(np.where(a < b, b, a)),
+    "sel": lambda a, b: e8m15.moved(np.where(b != 0, a, 0.0)),
     "exp2": lambda a, b: np.exp2(a),
     "log2": lambda a, b: np.log2(a),
     "inv": lambda a, b: 1 / a,
     "rsqrt": lambda a, b: 1 / np.sqrt(a),
-    "fma": lambda a, b: a * b + b,
-    "fnma": lambda a, b: b - a * b,
+    "fma": lambda a, b: e8m15.fma(a, b, b),
+    "fnma": lambda a, b: e8m15.fma(-a, b, b),
     "exp2d": lambda a, b: np.exp2(a - np.floor(b)),
     "one_minus": lambda a, b: 1 - a,
     "s_two_three": lambda a, b: 2 * a + 3 * b,
@@ -82,13 +87,19 @@ KERNEL = {
     "eq": lambda a, b: (a == b).astype(np.float64),
     "le": lambda a, b: (a <= b).astype(np.float64),
     "neg_sq_add": lambda a, b: -(a * a + b),
-    "vl40": lambda a, b: np.concatenate([2 * a[:40], b[40:]]),
-    "chunks": lambda a, b: np.concatenate([a[:64] + a[64:], b[64:]]),
-    "chunk0": lambda a, b: a * np.tile(b[:16], 8),
-    "xor3": lambda a, b: _lanes(a, lambda c, ln: a[16 * c + (ln ^ 3)]),
+    "vl40": lambda a, b: np.concatenate(
+        [e8m15.fma(a[:40], 1.0, a[:40]), e8m15.moved(b[40:])]
+    ),
+    "chunks": lambda a, b: np.concatenate(
+        [e8m15.fma(a[:64], 1.0, a[64:]), e8m15.moved(b[64:])]
+    ),
+    "chunk0": lambda a, b: e8m15.fma(a, np.tile(b[:16], 8), 0.0),
+    "xor3": lambda a, b: e8m15.moved(_lanes(a, lambda c, ln: a[16 * c + (ln ^ 3)])),
     "xor8c": lambda a, b: _lanes(a, lambda c, ln: a[16 * c + (ln ^ 8)]),
-    "bcast5": lambda a, b: _lanes(a, lambda c, ln: a[(5 + c) % 16]),
-    "bcast_sh1": lambda a, b: _lanes(a, lambda c, ln: a[(2 + (c >> 1)) % 16]),
+    "bcast5": lambda a, b: e8m15.moved(_lanes(a, lambda c, ln: a[(5 + c) % 16])),
+    "bcast_sh1": lambda a, b: e8m15.moved(
+        _lanes(a, lambda c, ln: a[(2 + (c >> 1)) % 16])
+    ),
     "merge4": lambda a, b: _lanes(
         a,
         lambda c, ln: (
@@ -201,6 +212,16 @@ def card_example(inp, ctx):
 
 
 XSIM_ARGS = []
+
+
+@mutant("isa.card/ieee-zeros")
+def ieee_zeros():
+    """The lane reference with IEEE zeros: moves keep -0, +0 + -0 is +0."""
+    with (
+        patched(e8m15, "fma", lambda a, b, c: e8m15.value(np.multiply(a, b) + c)),
+        patched(e8m15, "moved", lambda x: np.asarray(x, np.float64)),
+    ):
+        yield
 
 
 @mutant("isa.bench/short")

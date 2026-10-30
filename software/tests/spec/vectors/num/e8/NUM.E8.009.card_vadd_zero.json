@@ -1,0 +1,35 @@
+{
+ "clause": "NUM.E8.009",
+ "tier": 1,
+ "runner": "isa.card.kernel",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "body": [
+   "vadd v2, v0, v1"
+  ],
+  "check": "add",
+  "x": {
+   "seed": 61,
+   "set": {
+    "0": 0.0, "128": -0.0,
+    "1": -0.0, "129": 0.0,
+    "2": -0.0, "130": -0.0,
+    "3": 0.0, "131": 0.0,
+    "4": 0.0, "132": -1.5,
+    "5": 2.0, "133": -0.0,
+    "6": 2.0, "134": -2.0
+   }
+  },
+  "tol": {
+   "exact": true
+  }
+ },
+ "expect": {
+  "ok": true
+ },
+ "mutants": [
+  "isa.vector/opcodes",
+  "isa.card/ieee-zeros"
+ ]
+}

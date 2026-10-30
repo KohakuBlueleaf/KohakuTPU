@@ -52,7 +52,7 @@ def main():
             hw=hw,
         )
         graph = kernel.trace(given, machine=K.dsl_machine(machine)).graph_json
-        result = rs._rs.library_prebuild(
+        result = rs.library_prebuild(
             str(base / "fixed-library"), graph, rs.machine_json(machine)
         )
         (base / f"arena-witness-{board}.json").write_text(

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use ktpu_l2::Search;
+use ktpu_l2::{Search, ZeroSign};
 use ktpu_machine::Machine;
 
 use crate::{Cache, CardStack, Compiled, Input, Refused};
@@ -17,15 +17,16 @@ pub struct PinnedCompiler {
 
 impl PinnedCompiler {
     pub fn new(source: &str, machine: &Machine) -> Result<Self, Refused> {
-        Self::with_rotation_parameters(source, machine, false)
+        Self::with_rotation_parameters(source, machine, false, ZeroSign::DEFAULT)
     }
 
     pub fn with_rotation_parameters(
         source: &str,
         machine: &Machine,
         parameter_rotations: bool,
+        zero_sign: ZeroSign,
     ) -> Result<Self, Refused> {
-        let search = Arc::new(Search::recording());
+        let search = Arc::new(Search::recording().signed(zero_sign));
         let backend = CardStack {
             template_search: Some(search.clone()),
             parameter_rotations,

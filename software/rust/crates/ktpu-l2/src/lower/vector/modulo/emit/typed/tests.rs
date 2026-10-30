@@ -31,7 +31,7 @@ fn fixture(k: i64, stages: i64) -> (Plan, Plan, Vec<Stmt>, Vec<Ring>) {
     let symbol = |n| ir::Symbol(n).operand(ir::Select::Stride(2));
     let templates = [
         ("vunpk {0}[2:] <- l1[13] f16 n=2", vec![0]),
-        ("vcmplt p1, {0}[2:], k1 vl=32", vec![0]),
+        ("vcmplt p1[2:], {0}[2:], k1 vl=32", vec![0]),
         ("vmov {0}[2:], {1}[2:] vl=32 if=p1", vec![1, 0]),
         ("vpack {0}[2:] -> l1[101] f16 n=2", vec![1]),
     ];
@@ -47,7 +47,7 @@ fn fixture(k: i64, stages: i64) -> (Plan, Plan, Vec<Stmt>, Vec<Ring>) {
         .unwrap(),
         ir::math(
             "vcmplt",
-            Term::name("p1"),
+            ir::reg("p1", ir::Select::Stride(2)),
             vec![symbol(0), Term::name("k1")],
             vec![ir::kw("vl", Term::int(32))],
         ),
