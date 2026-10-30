@@ -121,11 +121,14 @@ pub fn emit(
     };
     let text = |i: usize, j: i64| -> Result<String, String> {
         let o = &ops[i];
+        let named = pat::syms(&o.tmpl);
         let names: Vec<String> = o
             .syms
             .iter()
-            .map(|s| match pinned.get(s) {
+            .enumerate()
+            .map(|(n, s)| match pinned.get(s) {
                 Some(r) => format!("v{r}"),
+                None if !named.contains(&n) => String::new(),
                 None => format!("v{}", p.phys[&(s.clone(), floor_mod(j, k))]),
             })
             .collect();

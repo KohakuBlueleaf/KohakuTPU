@@ -746,6 +746,8 @@ fn modulo_legacy(
         Err(e) => return Err(e),
         Ok(()) => {}
     }
+    let trip = super::gen::fuse(g.code.split_off(head_len));
+    g.code.extend(trip);
     let placed = banks::rotate(std::mem::take(&mut g.code), body.vcopies, &MO::Core::of(t));
     let (head_code, trip) = placed.split_at(head_len);
     #[cfg(test)]

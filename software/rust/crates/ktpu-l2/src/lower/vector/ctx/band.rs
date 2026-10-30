@@ -21,6 +21,50 @@ pub fn lower_band(
     hold: bool,
     pin: bool,
 ) -> VResult<(String, Vec<String>, Vec<Access>)> {
+    let result = band_text(
+        body, par, env, name, t, band, remat, ahead, plan, land, hold, pin, false,
+    )?;
+    let fits = crate::lower::vector::encode::read_image(&result.0, name, body.vregs)
+        .map_err(|e| e.to_string())
+        .and_then(|m| ktpu_l1::sched::schedule_module(&m, &t.machine).map_err(|e| e.to_string()))
+        .and_then(|m| {
+            crate::lower::vector::encode::words_of(&m, name, result.1.len(), &t.machine)
+                .map_err(|e| e.to_string())
+        })
+        .is_ok_and(|n| n as i64 <= crate::target::IMEM_ROOM || on("l2.vector/imem-unbounded"));
+    let (_, lp) = super::super::split(body, par)?;
+    let peer = lp.as_ref().is_some_and(|lp| {
+        ops_of(&lp.body)
+            .iter()
+            .any(|o| matches!(o.op_name(), "recv" | "send"))
+    });
+    if fits || peer || crate::mutant::on("l2.vector/no-serial-loop") {
+        return Ok(result);
+    }
+    band_text(
+        body, par, env, name, t, band, remat, ahead, plan, land, hold, pin, true,
+    )
+}
+
+/// One band image: two trips a pass over ping-pong buffers, or (`serial`)
+/// one synchronized trip a pass.
+#[allow(clippy::too_many_arguments)]
+#[cfg(feature = "witness")]
+fn band_text(
+    body: &Body,
+    par: &RPar,
+    env: &Env,
+    name: &str,
+    t: &Target,
+    band: usize,
+    remat: bool,
+    ahead: bool,
+    plan: &Plan,
+    land: Option<i64>,
+    hold: bool,
+    pin: bool,
+    serial: bool,
+) -> VResult<(String, Vec<String>, Vec<Access>)> {
     let (pre, lp) = super::super::split(body, par)?;
     let mut c = Ctx::new(body, t, env, lp.clone())?;
     c.classed = par.st.kw("classed").is_some();
@@ -115,6 +159,22 @@ pub fn lower_band(
             if !on("l2.class/carry-init") {
                 g.code.splice(init_at..init_at, init.code);
             }
+        } else if serial {
+            g.raw(format!("seti s{} = {}", t.loop_s(), c.trips.len()));
+            g.raw(format!("loop s{}", t.loop_s()));
+            g.raw("{");
+            g.raw("vbar");
+            g.raw("vsync fill on=unpack");
+            g.raw("vsync fill on=drain");
+            g.raw("vsync pack on=drain");
+            for &d in &c.loads {
+                let d = &c.descs[d];
+                g.raw(format!("vfill a{} -> l1[{}] rel", d.ad, d.buf[0]));
+            }
+            g.raw("vsync unpack on=fill");
+            c.iteration(&mut g, &lp.body, 0, false)?;
+            g.raw("vbar");
+            g.raw("}");
         } else {
             for &d in &c.loads {
                 let d = &c.descs[d];
@@ -138,11 +198,11 @@ pub fn lower_band(
     #[cfg(test)]
     if !c.classed {
         typed::tests::compare(
-            &c, &g, body, par, env, name, t, band, remat, ahead, plan, land, hold, pin,
+            &c, &g, body, par, env, name, t, band, remat, ahead, plan, land, hold, pin, serial,
         );
     }
     let code = banks::rotate(
-        std::mem::take(&mut g.code),
+        crate::lower::vector::gen::fuse(std::mem::take(&mut g.code)),
         body.vcopies,
         &super::super::modulo::Core::of(t),
     );

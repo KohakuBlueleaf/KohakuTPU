@@ -105,9 +105,10 @@ pub(in crate::lower::vector::ctx::band) fn compare(
     land: Option<i64>,
     hold: bool,
     pin: bool,
+    serial: bool,
 ) {
     let (new, z) = flat_band(
-        body, par, env, t, band, remat, ahead, plan, land, hold, pin, false,
+        body, par, env, t, band, remat, ahead, plan, land, hold, pin, serial,
     )
     .unwrap_or_else(|e| panic!("typed band refused legacy success {name}: {e:?}"));
     postbank(old, &new, a, &z, name, t);
