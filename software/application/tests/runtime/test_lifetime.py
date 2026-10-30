@@ -126,9 +126,8 @@ def test_failed_compile_rolls_back_retains_and_scratch():
     k.programs = fail
     with pytest.raises(ValueError, match="compile"):
         dev.submit(k, {"x": at})
-    # The scratch window stays the device's, holding no reference.
-    window = dev.mmu.resolve(dev.windows["dram", None][0])[1]
-    assert dev.dram.used == used + 1024 and dev.dram.references[window] == 0
+    # With no run in flight the scratch window goes with the failed submission.
+    assert not dev.windows and dev.dram.used == used
     assert dev.dram.references[dev.mmu.entries[at].physical] == 0
     dev.free(at)
 
