@@ -1,6 +1,7 @@
 """A unit-ISA mutant the Rust stack carries reaches what a card is sent: the
 first tier-1 card vector listing it, compiled through `_rs`
-with and without the mutant, gives different packages. A mutant applied only
+with and without the mutant, gives different packages, or packages the
+stack's own checks refuse. A mutant applied only
 where some builder never reads it (a table one constructor edits, an id one
 encoder resolves) leaves the bytes equal and fails here. Skipped on a
 `_rs` built without the ``mutants`` feature."""
@@ -15,6 +16,7 @@ from kohakutpu.application.runtime import packages as build
 from kohakutpu.application.runtime.device import Device
 from kohakutpu.language import examples
 from kohakutpu.language.text import module
+from kohakutpu.language.text.syntax import TextError
 from kohakutpu.stack import kernel, rs
 
 #: One mutant per kind of unit-ISA layout point: an opcode table, field
@@ -52,14 +54,25 @@ def source(v) -> tuple:
 def sent(v) -> dict:
     """Each node's lowered package bytes for the vector, every parameter at
     its own 2 MB-aligned address."""
-    mach = Device(kind="offline", board=v["machine"]).machine
+    dev = Device(kind="offline", board=v["machine"])
+    mach = dev.machine
     src, fn, level = source(v)
     with fresh(None):
         c = kernel.compile(src, fn, mach, level=level)
         params = c.l1.body(fn, "l1").params
         binds = {p: 0x200000 * (i + 1) for i, (p, _) in enumerate(params)}
-        built = build.built(c.programs(binds), mach, rs.fetch(mach))
+        progs = build.placed(c.programs(binds), dev.card.nodes)
+        built = build.built(progs, mach, rs.fetch(mach))
     return {n: low.to_bytes() for n, (_, low, _) in built.items()}
+
+
+def mutated(v) -> dict | str:
+    """`sent(v)` under a mutant, or the refusal the stack's own checks
+    (the L1 verifier, board admission) raise on the bytes it changed."""
+    try:
+        return sent(v)
+    except (TextError, ValueError) as e:
+        return f"refused: {e}"
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -69,5 +82,5 @@ def test_a_carried_isa_mutant_changes_the_packages_rust_builds(name):
     v = next(x for x in vectors.load() if x["runner"] in CARD and name in x["mutants"])
     base = sent(v)
     with rs.mutant(name):
-        got = sent(v)
+        got = mutated(v)
     assert got != base, f"{name} leaves {v.id}'s packages unchanged"
