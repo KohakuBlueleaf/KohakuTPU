@@ -427,10 +427,20 @@ fn par_stage(
                         "repeated par requires descriptor advances",
                     )
                 })?;
-                format!(
-                    " repeats={count} advances={}",
-                    fmt(&value(body, &i.par().st, advances, &i.env)?)
-                )
+                // The par's i-th advance steps descriptor a_i: keyed `(i, step)`.
+                let Term::Tuple(steps) = value(body, &i.par().st, advances, &i.env)? else {
+                    return Err(body.reader.fail(
+                        &i.par().st,
+                        "L2.VC.018",
+                        "descriptor advances are a tuple of steps",
+                    ));
+                };
+                let keyed = steps
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ad, step)| Term::Tuple(vec![Term::int(ad as i128), step]))
+                    .collect();
+                format!(" repeats={count} advances={}", fmt(&Term::Tuple(keyed)))
             } else {
                 String::new()
             };

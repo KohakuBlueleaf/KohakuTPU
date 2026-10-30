@@ -241,10 +241,15 @@ pub fn operand_text(o: &Operand) -> Option<String> {
     })
 }
 
+/// Items printed as a Python tuple: `(a, b)`, `(a,)`, `()`.
+fn items_tuple(inner: &[String]) -> String {
+    let comma = if inner.len() == 1 { "," } else { "" };
+    format!("({}{comma})", inner.join(", "))
+}
+
 fn walk(levels: &[(i64, i64)]) -> String {
     let inner: Vec<String> = levels.iter().map(|(n, s)| format!("({n}, {s})")).collect();
-    let comma = if levels.len() == 1 { "," } else { "" };
-    format!("({}{comma})", inner.join(", "))
+    items_tuple(&inner)
 }
 
 pub fn attr(a: &Attr) -> String {
@@ -253,6 +258,7 @@ pub fn attr(a: &Attr) -> String {
         Attr::Str(s) => s.clone(),
         Attr::Walk(w) => walk(w),
         Attr::Perm(p) => py_tuple(p),
+        Attr::Tuple(items) => items_tuple(&items.iter().map(attr).collect::<Vec<_>>()),
         Attr::View(v) => view(v),
         Attr::Index(e) => index(e),
     }

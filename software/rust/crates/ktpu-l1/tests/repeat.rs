@@ -61,6 +61,62 @@ fn cluster_advance_keeps_addresses_in_payload_and_acc_in_register() {
         .all(|s| s.count == 0 && s.flags == ktpu_l0::format::F_IMM));
 }
 
+/// The deltas, in word order, of a repeated send of a two-descriptor image
+/// under `advances`.
+fn advanced(advances: &str) -> ktpu_l1::Result<Vec<u64>> {
+    let machine = Machine::named("multimesh_v9t6").unwrap();
+    let text = format!(
+        "target ktpu.v9\nimage k(p0, p1)\n    desc a0 = p0 walk=(32, 16)\n    desc a1 = p1 walk=(32, 16)\n    halt\nfn f.l1()\n    send vc[0] repeats=3 advances={advances}\n        run k(0x1000, 0x2000)\n"
+    );
+    let module = read(&text, "<advances>").unwrap();
+    let programs = build::programs(&module, "f", &BTreeMap::new(), &machine, None, None)?;
+    let Stmt::Repeat { increments, .. } = &programs[0].program.steps[0] else {
+        panic!("a repeated send is one template");
+    };
+    let mut got = increments.clone();
+    got.sort();
+    Ok(got.iter().map(|i| i.3).collect())
+}
+
+#[test]
+fn l1_vc_010_an_advance_steps_the_descriptor_it_names() {
+    assert_eq!(advanced("((0, 32), (1, 64))").unwrap(), [32, 64]);
+    assert_eq!(advanced("((1, 64), (0, 32))").unwrap(), [32, 64]);
+    assert_eq!(advanced("((1, 32), (0, 64))").unwrap(), [64, 32]);
+}
+
+#[test]
+fn l1_vc_010_advances_cover_the_bases_once() {
+    for (advances, clause, says) in [
+        ("((0, 32),)", "L1.VC.010", "descriptor 1 has no advance"),
+        (
+            "((0, 32), (1, 64), (2, 8))",
+            "L1.VC.010",
+            "steps no descriptor base",
+        ),
+        (
+            "((0, 32), (0, 8), (1, 64))",
+            "L1.VC.010",
+            "has two advances",
+        ),
+        ("(32, 64)", "L1.VC.010", "an advance is (ad, step)"),
+        (
+            "((0, 32, 1), (1, 64))",
+            "L1.VC.010",
+            "an advance is (ad, step)",
+        ),
+        ("5", "L1.VC.010", "a tuple of (ad, step)"),
+        ("((-1, 32), (1, 64))", "L1.VC.010", "no descriptor -1"),
+        ("((0, -32), (1, 64))", "L0.STEP.041", "must be nonnegative"),
+    ] {
+        let Err(error) = advanced(advances) else {
+            panic!("{advances} was accepted");
+        };
+        assert_eq!(error.clause, clause, "{advances}");
+        assert!(error.to_string().contains(says), "{advances}: {error}");
+    }
+}
+
 #[test]
 fn invalid_repeat_count_is_not_silently_a_single_send() {
     let machine = Machine::named("multimesh_v9t6").unwrap();

@@ -350,6 +350,7 @@ impl Walker {
 
     fn attr(&self, st: &Stmt, a: &Attr) -> Result<(), Refusal> {
         match a {
+            Attr::Tuple(items) => items.iter().try_for_each(|a| self.attr(st, a)),
             Attr::View(v) => self.view(st, v),
             Attr::Index(e) => self.index(st, e),
             Attr::Str(s) if !is_name(s) => refuse(

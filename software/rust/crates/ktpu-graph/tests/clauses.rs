@@ -256,6 +256,25 @@ fn dsl_graph_019_stage_gives_the_l2_program() {
 }
 
 #[test]
+fn dsl_graph_020_tuple_attributes_nest() {
+    use ktpu_l1::text::{parse as read_text, Term};
+    for (a, spelt) in [
+        (
+            json!({"tuple": [{"int": 1}, {"tuple": [{"walk": [[4, 32]]}, {"int": 0}]}]}),
+            "(1, (((4, 32),), 0))",
+        ),
+        (json!({"tuple": [{"str": "x"}]}), "(x,)"),
+        (json!({"tuple": []}), "()"),
+    ] {
+        let a: Attr = serde_json::from_value(a).unwrap();
+        assert_eq!(text::attr(&a), spelt);
+        let st = &read_text(&format!("op {spelt}"), "<t>").unwrap()[0];
+        let want: &Term = &st.args[0];
+        assert_eq!(&term::attr(&a), want, "{spelt}");
+    }
+}
+
+#[test]
 fn dsl_idx_009_index_terms_read_as_the_tracers_spelling() {
     use ktpu_l1::text::{parse as read_text, Term};
     // A sum inside an atom is bracketed even when it starts with an atom:

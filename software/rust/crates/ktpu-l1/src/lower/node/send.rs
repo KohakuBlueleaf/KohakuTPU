@@ -104,6 +104,8 @@ impl<'a> NodeReader<'a> {
         let mut descs = Descs::new();
         let mut held: BTreeMap<(u32, u32), Patch> = BTreeMap::new();
         let mut advances = Vec::new();
+        let steps = self.advance_steps(st)?;
+        let mut stepped = BTreeSet::new();
         for s in &st.body {
             match s.op.as_str() {
                 "desc" => {
@@ -126,30 +128,19 @@ impl<'a> NodeReader<'a> {
                     }
                     let mut all = std::mem::take(&mut descs);
                     all.extend(own);
-                    if let Some(Term::Tuple(strides)) = st.kw("advances") {
-                        let bases: Vec<_> = all
-                            .keys()
-                            .enumerate()
-                            .filter(|(_, key)| key.1 == 0)
-                            .collect();
-                        if bases.len() != strides.len() {
-                            return Err(self.fail(
-                                st,
-                                "L1.VC.006",
-                                "one advance for every descriptor base",
-                            ));
-                        }
+                    if let Some(steps) = &steps {
                         let (bit, width) = vec.desc.span("value");
-                        for ((index, _), stride) in bases.into_iter().zip(strides) {
-                            let stride = self.const_(st, stride)?;
-                            if !(0..=u64::MAX as i128).contains(&stride) {
+                        let bases = all.keys().enumerate().filter(|(_, key)| key.1 == 0);
+                        for (index, &(ad, _)) in bases {
+                            let Some(step) = steps.get(&ad) else {
                                 return Err(self.fail(
                                     st,
-                                    "L0.STEP.041",
-                                    "descriptor advance must be nonnegative",
+                                    "L1.VC.010",
+                                    format!("descriptor {ad} has no advance"),
                                 ));
-                            }
-                            advances.push((words.len() + index, bit, width, stride as u64));
+                            };
+                            stepped.insert(ad);
+                            advances.push((words.len() + index, bit, width, *step));
                         }
                     }
                     emit_descs(vec, &all, &mut held, &mut words, &mut fixes)
@@ -185,6 +176,17 @@ impl<'a> NodeReader<'a> {
             }
         }
         emit_descs(vec, &descs, &mut held, &mut words, &mut fixes).map_err(|e| self.at(st, e))?;
+        let unused = steps
+            .iter()
+            .flatten()
+            .find(|(ad, _)| !stepped.contains(*ad));
+        if let Some((ad, _)) = unused {
+            return Err(self.fail(
+                st,
+                "L1.VC.010",
+                format!("the advance of descriptor {ad} steps no descriptor base"),
+            ));
+        }
         if let Some(repeats) = st.kw("repeats") {
             if !fixes.is_empty() {
                 return Err(self.fail(
@@ -242,6 +244,41 @@ impl<'a> NodeReader<'a> {
             self.p.send(c, words, fixes);
         }
         Ok(())
+    }
+
+    /// The steps of `advances=((ad, step), ...)` by descriptor (L1.VC.010).
+    fn advance_steps(&self, st: &Stmt) -> Result<Option<BTreeMap<u32, u64>>> {
+        let Some(term) = st.kw("advances") else {
+            return Ok(None);
+        };
+        let Term::Tuple(entries) = term else {
+            return Err(self.fail(st, "L1.VC.010", "advances is a tuple of (ad, step)"));
+        };
+        let mut steps = BTreeMap::new();
+        for entry in entries {
+            let Term::Tuple(pair) = entry else {
+                return Err(self.fail(st, "L1.VC.010", "an advance is (ad, step)"));
+            };
+            let [ad, step] = pair.as_slice() else {
+                return Err(self.fail(st, "L1.VC.010", "an advance is (ad, step)"));
+            };
+            let ad = self.const_(st, ad)?;
+            let step = self.const_(st, step)?;
+            let Ok(ad) = u32::try_from(ad) else {
+                return Err(self.fail(st, "L1.VC.010", format!("no descriptor {ad}")));
+            };
+            if !(0..=u64::MAX as i128).contains(&step) {
+                return Err(self.fail(st, "L0.STEP.041", "descriptor advance must be nonnegative"));
+            }
+            if steps.insert(ad, step as u64).is_some() {
+                return Err(self.fail(
+                    st,
+                    "L1.VC.010",
+                    format!("descriptor {ad} has two advances"),
+                ));
+            }
+        }
+        Ok(Some(steps))
     }
 
     /// A descriptor's fields; a base written `rN` or `C + rN` is patched

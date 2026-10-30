@@ -315,6 +315,7 @@ pub fn attr(a: &Attr) -> Term {
         Attr::Str(s) => name(s),
         Attr::Walk(w) => Term::Tuple(w.iter().map(|(n, s)| tuple(&[*n, *s])).collect()),
         Attr::Perm(p) => tuple(p),
+        Attr::Tuple(items) => Term::Tuple(items.iter().map(attr).collect()),
         Attr::View(v) => view(v),
         Attr::Index(e) => index(e),
     }

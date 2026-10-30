@@ -327,6 +327,8 @@ pub enum Attr {
     /// `(count, signed byte stride)` levels, outermost first.
     Walk(Vec<(i64, i64)>),
     Perm(Vec<i64>),
+    /// Attributes nested in a tuple (DSL.GRAPH.020).
+    Tuple(Vec<Attr>),
     View(View),
     Index(Index),
 }
