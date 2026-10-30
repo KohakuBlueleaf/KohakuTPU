@@ -797,8 +797,7 @@ class NodeCard:
                 f"debug image (debug=True)"
             )
         single = not isinstance(program, dict)
-        progs = {self.nodes[0]: program} if single else program
-        progs = {self.nodes[0] if n is None else n: p for n, p in progs.items()}
+        progs = B.placed(program, self.nodes)
         self.verify(progs)
         if os.environ.get(RESIDENT_ENV) == "0":
             for cores in self.residents.values():

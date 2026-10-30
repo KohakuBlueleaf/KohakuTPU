@@ -169,6 +169,13 @@ def prebuilt(progs):
     return bool(progs) and all(isinstance(p, Prebuilt) for p in progs.values())
 
 
+def placed(program, nodes):
+    """Each node's program: a bare program, or one keyed ``None`` (unplaced),
+    runs on the first node."""
+    progs = program if isinstance(program, dict) else {None: program}
+    return {nodes[0] if n is None else n: p for n, p in progs.items()}
+
+
 def admit(raw, machine, mesh, bindings=()):
     """Receiving-board reliability policy cannot be disabled by checker mode."""
     cached = os.environ.get("KOHAKUTPU_ADMISSION_CONTEXT", "1") == "1"

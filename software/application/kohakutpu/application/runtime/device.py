@@ -32,7 +32,7 @@ from kohakutpu.application.runtime.arena import OutOfMemory
 from kohakutpu.application.runtime.card import TRANSPORTS, SiliconCard, VerilatorCard
 from kohakutpu.application.runtime.class_library import ClassLibrary
 from kohakutpu.application.runtime.offline import OfflineCard
-from kohakutpu.application.runtime.packages import Prebuilt
+from kohakutpu.application.runtime.packages import Prebuilt, placed
 from kohakutpu.driver.clock.card import load_board
 from kohakutpu.language import machine as MF
 from kohakutpu.language.dsl.kernel import _const_key
@@ -739,7 +739,7 @@ class Device:
                     raise
             single = list(progs) == [None]
             nodes = (
-                tuple(self.card.nodes[0] if n is None else n for n in progs)
+                tuple(placed(progs, self.card.nodes))
                 if hasattr(self.card, "nodes")
                 else tuple(progs)
             )
