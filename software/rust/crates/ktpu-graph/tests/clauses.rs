@@ -1,6 +1,8 @@
 //! One test a clause of `docs/spec/stack/dsl/graph.md` this crate holds:
 //! the text spellings and the refusals of a malformed graph.
 
+mod index_read;
+
 use ktpu_graph::text;
 use ktpu_graph::*;
 use ktpu_machine::Machine;
@@ -256,13 +258,18 @@ fn dsl_graph_019_stage_gives_the_l2_program() {
 #[test]
 fn dsl_idx_009_index_terms_read_as_the_tracers_spelling() {
     use ktpu_l1::text::{parse as read_text, Term};
-    // `(a / b) + 3` inside an atom is unbracketed: `((a / b) + 3 / 2)` reads
-    // as (a / b) + (3 / 2).
+    // A sum inside an atom is bracketed even when it starts with an atom:
+    // `((a / 2) + 3) / 2`, not `(a / 2) + 3 / 2`.
     let inner = json!({"const": 3, "terms": [[{"floor": [var("a", 1), 2]}, 1]]});
+    let slot = json!({"const": 0, "terms": [[{"floor": [var("k", 1), 7]}, 1], [{"var": "t"}, 1]]});
     for (x, spelt) in [
         (
             json!({"const": 0, "terms": [[{"floor": [inner, 2]}, 1]]}),
-            "((a / 2) + 3 / 2)",
+            "(((a / 2) + 3) / 2)",
+        ),
+        (
+            json!({"const": 0, "terms": [[{"mod": [slot, 2]}, 200]]}),
+            "(((k / 7) + t) % 2)*200",
         ),
         (
             json!({"const": 4, "terms": [[{"var": "t"}, -2]]}),
@@ -280,4 +287,97 @@ fn dsl_idx_009_index_terms_read_as_the_tracers_spelling() {
         let want: &Term = &st.args[0];
         assert_eq!(&term::index(&x), want, "{spelt}");
     }
+}
+
+/// xorshift64: the generated indices are the same on every run.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self, n: u64) -> i64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 % n) as i64
+    }
+}
+
+const VARS: [&str; 3] = ["k", "t", "u"];
+
+/// A nested index: 1 to 3 terms of a variable or a `/`, `%`, `*` atom over
+/// smaller indices (positive int divisors), coefficients -3..3, a constant.
+fn nested(r: &mut Rng, depth: u32) -> Index {
+    let mut terms = vec![];
+    for _ in 0..1 + r.next(3) {
+        let atom = match if depth == 0 { 0 } else { r.next(4) } {
+            0 => Atom::Var(VARS[r.next(3) as usize].into()),
+            op => {
+                let a = Box::new(nested(r, depth - 1));
+                match op {
+                    1 => Atom::Floor(a, Box::new(Index::Int(2 + r.next(7)))),
+                    2 => Atom::Mod(a, Box::new(Index::Int(2 + r.next(7)))),
+                    _ => Atom::Mul(a, Box::new(nested(r, depth - 1))),
+                }
+            }
+        };
+        let c = [1, 1, 2, 3, -1, -2, -3][r.next(7) as usize];
+        terms.push((atom, c));
+    }
+    Index::Sym(Sym {
+        konst: r.next(9) - 4,
+        terms,
+    })
+}
+
+/// The generated indices whose printed text reads to another value, with
+/// the text; and how many were compared.
+fn misread() -> (Vec<String>, usize) {
+    let envs: Vec<Vec<(String, i64)>> = [[0, 1, 2], [13, 4, 7], [29, 9, 3]]
+        .iter()
+        .map(|vs| VARS.iter().map(|n| n.to_string()).zip(*vs).collect())
+        .collect();
+    let mut r = Rng(0x9e37_79b9_7f4a_7c15);
+    let mut bad = vec![];
+    let n = 400;
+    for _ in 0..n {
+        let x = nested(&mut r, 3);
+        let s = text::index(&x);
+        if envs
+            .iter()
+            .any(|e| index_read::read(&s, e) != index_read::value(&x, e))
+        {
+            bad.push(s);
+        }
+    }
+    (bad, n)
+}
+
+/// Every generated nested index prints as text that reads to its own value
+/// (DSL.IDX.009): 400 indices, three variable bindings each.
+#[test]
+fn dsl_idx_009_printed_indices_read_to_their_values() {
+    let (bad, n) = misread();
+    assert!(
+        bad.is_empty(),
+        "{} of {n} misread: {:?}",
+        bad.len(),
+        &bad[..bad.len().min(5)]
+    );
+}
+
+/// The shortcut mutant (a sum starting with an atom unbracketed inside
+/// another atom) misreads generated indices, and the clause spellings.
+#[cfg(feature = "mutants")]
+#[test]
+fn dsl_idx_009_the_atom_sum_shortcut_misreads() {
+    let (bad, n) = mutant::with(mutant::ATOM_SUM_SHORTCUT, misread);
+    assert!(!bad.is_empty(), "the shortcut misread none of {n}");
+    let spelt = mutant::with(mutant::ATOM_SUM_SHORTCUT, || {
+        let slot =
+            json!({"const": 0, "terms": [[{"floor": [var("k", 1), 7]}, 1], [{"var": "t"}, 1]]});
+        let x: Index =
+            serde_json::from_value(json!({"const": 0, "terms": [[{"mod": [slot, 2]}, 200]]}))
+                .unwrap();
+        text::index(&x)
+    });
+    assert_eq!(spelt, "((k / 7) + t % 2)*200");
 }

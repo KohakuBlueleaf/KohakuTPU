@@ -7,6 +7,7 @@
 
 pub mod analyse;
 pub mod graph;
+pub mod mutant;
 pub mod term;
 pub mod text;
 

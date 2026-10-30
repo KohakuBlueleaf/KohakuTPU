@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import NoReturn
 
 from kohakutpu.language.dsl.errors import TracerControlFlowError, at_caller
+from kohakutpu.language.dsl.mutant import ATOM_SUM_SHORTCUT, MUTANT
 
 
 def _refuse(what: str, x) -> TracerControlFlowError:
@@ -271,7 +272,11 @@ def var(name: str) -> Sym:
 def _text(x) -> str:
     if isinstance(x, Sym):
         t = x.text()
-        return t if len(x.terms) + bool(x.const) <= 1 or "(" == t[0] else f"({t})"
+        if len(x.terms) + bool(x.const) <= 1:
+            return t
+        if MUTANT.get() == ATOM_SUM_SHORTCUT and t[0] == "(":
+            return t
+        return f"({t})"
     return str(x)
 
 

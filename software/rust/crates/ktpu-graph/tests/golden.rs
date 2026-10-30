@@ -3,9 +3,12 @@
 //! to the same JSON, the program built from it is, as a tree, the program
 //! ktpu-l2 reads from the tracer's text, and the text dump is that text.
 
+mod index_read;
+
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use ktpu_graph::{build, file_of, lower, parse, to_l2, Graph};
+use ktpu_graph::{build, file_of, lower, parse, to_l2, Graph, Index};
 use ktpu_l2::Program;
 use ktpu_machine::Machine;
 use serde_json::Value;
@@ -136,6 +139,114 @@ fn every_e2e_graph_is_the_stage_input_of_its_l2() {
     }
     assert!(seen >= 50, "{seen} traced e2e cases");
     assert!(bad.is_empty(), "{} of {seen} differ: {bad:?}", bad.len());
+}
+
+fn json_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    for e in std::fs::read_dir(dir).unwrap() {
+        let p = e.unwrap().path();
+        if p.is_dir() {
+            json_files(&p, out);
+        } else if p.extension().is_some_and(|x| x == "json") {
+            out.push(p);
+        }
+    }
+}
+
+/// Every graph `v` holds (an object, or a JSON string of one), as text.
+fn graphs_in(v: &Value, out: &mut BTreeSet<String>) {
+    match v {
+        Value::Object(m) if m.get("format").and_then(Value::as_str) == Some("ktpu.graph") => {
+            out.insert(v.to_string());
+        }
+        Value::Object(m) => m.values().for_each(|x| graphs_in(x, out)),
+        Value::Array(xs) => xs.iter().for_each(|x| graphs_in(x, out)),
+        Value::String(s) if s.contains("\"ktpu.graph\"") => {
+            if let Ok(inner) = serde_json::from_str::<Value>(s) {
+                graphs_in(&inner, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Every symbolic index `v` holds (`{"const", "terms"}`), outermost only.
+fn indices_in(v: &Value, out: &mut Vec<Index>) {
+    match v {
+        Value::Object(m) if m.contains_key("const") && m.contains_key("terms") => {
+            out.push(serde_json::from_value(v.clone()).unwrap());
+        }
+        Value::Object(m) => m.values().for_each(|x| indices_in(x, out)),
+        Value::Array(xs) => xs.iter().for_each(|x| indices_in(x, out)),
+        _ => {}
+    }
+}
+
+/// The printed indices of every graph the goldens hold (graph, e2e, kernel
+/// and plan goldens alike) that read to another value than their own, at
+/// four bindings of their variables; and how many values were compared.
+fn golden_misreads() -> (Vec<String>, usize, usize) {
+    let mut files = vec![];
+    json_files(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../golden"),
+        &mut files,
+    );
+    let mut graphs = BTreeSet::new();
+    for f in &files {
+        if let Ok(v) = serde_json::from_str::<Value>(&std::fs::read_to_string(f).unwrap()) {
+            graphs_in(&v, &mut graphs);
+        }
+    }
+    let (mut checked, mut bad) = (0, vec![]);
+    for g in &graphs {
+        let mut xs = vec![];
+        indices_in(&serde_json::from_str(g).unwrap(), &mut xs);
+        for x in xs {
+            let mut names = vec![];
+            index_read::vars(&x, &mut names);
+            let text = ktpu_graph::text::index(&x);
+            for j in 0..4 {
+                let env: Vec<(String, i64)> = names
+                    .iter()
+                    .enumerate()
+                    .map(|(i, n)| (n.clone(), (7 * j + 3 * i as i64 + j * j) % 29))
+                    .collect();
+                let Some(want) = index_read::value(&x, &env) else {
+                    continue;
+                };
+                checked += 1;
+                if index_read::read(&text, &env) != Some(want) {
+                    bad.push(text.clone());
+                }
+            }
+        }
+    }
+    (bad, checked, graphs.len())
+}
+
+/// Every golden index reads to its value (DSL.IDX.009);
+/// graph/DSL.IDX.009.ring_slot_index holds the ring-slot form
+/// `((k / 7 + t) % 2)*16`, a sum starting with an atom inside another atom.
+#[test]
+fn every_golden_index_reads_to_its_value() {
+    let (bad, checked, graphs) = golden_misreads();
+    assert!(graphs >= 1000, "{graphs} graphs");
+    assert!(checked >= 10_000, "{checked} index values");
+    assert!(
+        bad.is_empty(),
+        "{} of {checked} misread: {:?}",
+        bad.len(),
+        &bad[..bad.len().min(5)]
+    );
+}
+
+/// Under `graph.text/atom-sum-shortcut` the ring-slot golden's index
+/// misreads.
+#[cfg(feature = "mutants")]
+#[test]
+fn the_atom_sum_shortcut_misreads_a_golden_index() {
+    use ktpu_graph::mutant;
+    let (bad, _, _) = mutant::with(mutant::ATOM_SUM_SHORTCUT, golden_misreads);
+    assert!(!bad.is_empty(), "the shortcut misread no golden index");
 }
 
 /// The stage's register file is the machine's vector core's (2p.3: the

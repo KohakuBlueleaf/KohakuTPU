@@ -3,11 +3,13 @@ what it refuses (each at the user's source line)."""
 
 from dataclasses import replace
 
+import numpy as np
 import pytest
 
 import kohakutpu.language.dsl as kt
 from kohakutpu.language import machine as MF
 from kohakutpu.language.dsl import expr as E
+from kohakutpu.language.dsl.mutant import ATOM_SUM_SHORTCUT, MUTANT
 from kohakutpu.language.text import module as M
 
 MACHINE = kt.Machine.of(MF.load("multimesh_v9t8"))
@@ -185,6 +187,63 @@ def test_index_arithmetic_is_affine_text():
     # A negative term never leads (the L2 reader would take `-(...)` apart).
     assert E.text(-(c % 2) + 2) == "2 - (c % 2)"
     assert E.evaluate(c * 128 + t * 16, {"c": 1, "t": 3}) == 176
+
+
+ENVS = [{"k": 0, "t": 1, "u": 2}, {"k": 13, "t": 4, "u": 7}, {"k": 29, "t": 9, "u": 3}]
+
+
+def nested(rng, depth):
+    """1 to 3 terms of a variable or a `//`, `%`, `*` over smaller indices
+    (int divisors 2..8), coefficients -3..3, plus a constant."""
+    out = int(rng.integers(-4, 5))
+    for _ in range(int(rng.integers(1, 4))):
+        op = 0 if depth == 0 else int(rng.integers(0, 4))
+        if op == 0:
+            a = E.var("ktu"[int(rng.integers(0, 3))])
+        elif op == 1:
+            a = nested(rng, depth - 1) // int(rng.integers(2, 9))
+        elif op == 2:
+            a = nested(rng, depth - 1) % int(rng.integers(2, 9))
+        else:
+            a = nested(rng, depth - 1) * nested(rng, depth - 1)
+        out = out + a * int(rng.choice([1, 1, 2, 3, -1, -2, -3]))
+    return out
+
+
+def misread():
+    """The generated indices whose text, read with L2's precedence (Python's
+    `//`, `%`, `*` share one left-associative level above `+ -`, as L2's
+    do), is not their value; and how many were compared."""
+    rng = np.random.default_rng(9)
+    xs = [nested(rng, 3) for _ in range(400)]
+    bad = [
+        E.text(x)
+        for x in xs
+        if any(
+            eval(E.text(x).replace("/", "//"), {}, dict(env)) != E.evaluate(x, env)
+            for env in ENVS
+        )
+    ]
+    return bad, len(xs)
+
+
+def test_index_text_reads_back_to_its_value():
+    bad, n = misread()
+    assert not bad, (len(bad), n, bad[:5])
+    k, t = E.var("k"), E.var("t")
+    assert E.text((k // 7 + t) % 2 * 200) == "(((k / 7) + t) % 2)*200"
+
+
+def test_the_atom_sum_shortcut_misreads():
+    token = MUTANT.set(ATOM_SUM_SHORTCUT)
+    try:
+        bad, n = misread()
+        k, t = E.var("k"), E.var("t")
+        spelt = E.text((k // 7 + t) % 2 * 200)
+    finally:
+        MUTANT.reset(token)
+    assert bad, f"the shortcut misread none of {n}"
+    assert spelt == "((k / 7) + t % 2)*200"
 
 
 def test_a_symbolic_index_is_no_python_int():

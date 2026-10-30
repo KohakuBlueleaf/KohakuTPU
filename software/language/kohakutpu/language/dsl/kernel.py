@@ -13,7 +13,6 @@ its buffer to be; the caller converts its tensor first. The cache key holds
 every spec, constant and the machine.
 """
 
-import contextvars
 import dataclasses
 import inspect
 import json
@@ -27,14 +26,11 @@ from typing import Any, cast, overload
 import numpy as np
 
 from kohakutpu.language.dsl.errors import DSLError
+from kohakutpu.language.dsl.mutant import MUTANT as _MUTANT
 from kohakutpu.language.dsl.trace import Trace, recording
 from kohakutpu.language.dsl.types import Machine, TensorSpec
 from kohakutpu.language.dsl.values import Param
 
-#: Active mutation switch (shared with `kohakutpu.stack.rs._MUTANT`).
-_MUTANT: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "rs_mutant", default=None
-)
 #: Specialisations retained in `_TRACES` and per `Kernel._cache`.
 TRACES_KEPT = 4096
 

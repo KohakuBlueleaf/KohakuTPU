@@ -30,5 +30,10 @@ fn a_mutant_build_switches_the_named_mutant_in_its_crate() {
         !ktpu_isa::mutant::on("isa.vector/dim"),
         "switched off after"
     );
+    let shortcut = ktpu_graph::mutant::ATOM_SUM_SHORTCUT;
+    assert_eq!(
+        mutant::with(shortcut, || ktpu_graph::mutant::on(shortcut)),
+        Ok(true)
+    );
     assert!(mutant::with("no.such/mutant", || ()).is_err());
 }

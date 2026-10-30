@@ -26,6 +26,7 @@ pub fn names() -> Vec<&'static str> {
             .chain(ktpu_l1::mutant::NAMES)
             .chain(ktpu_l2::mutant::NAMES)
             .chain(ktpu_verify::mutant::NAMES)
+            .chain(ktpu_graph::mutant::NAMES)
             .chain(ktpu_kernels::mutants::NAMES)
             .chain(ktpu_plan::spec::mutant::NAMES)
         {
@@ -116,6 +117,13 @@ fn switched<T>(n: &'static str, f: impl FnOnce() -> T) -> T {
         let f = move || {
             if carries(ktpu_plan::spec::mutant::NAMES) {
                 ktpu_plan::spec::mutant::with(n, f)
+            } else {
+                f()
+            }
+        };
+        let f = move || {
+            if carries(ktpu_graph::mutant::NAMES) {
+                ktpu_graph::mutant::with(n, f)
             } else {
                 f()
             }

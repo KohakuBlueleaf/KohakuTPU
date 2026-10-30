@@ -6,6 +6,7 @@
 use ktpu_machine::Refusal;
 
 use crate::graph::*;
+use crate::mutant;
 
 /// The annotation column cap (DSL.TEXT.003).
 pub const ANNOT_COL: usize = 48;
@@ -102,7 +103,9 @@ fn operand(x: &Index) -> String {
         Index::Int(v) => v.to_string(),
         Index::Sym(s) => {
             let t = sym(s);
-            if s.terms.len() + usize::from(s.konst != 0) <= 1 || t.starts_with('(') {
+            if s.terms.len() + usize::from(s.konst != 0) <= 1
+                || (mutant::on(mutant::ATOM_SUM_SHORTCUT) && t.starts_with('('))
+            {
                 t
             } else {
                 format!("({t})")

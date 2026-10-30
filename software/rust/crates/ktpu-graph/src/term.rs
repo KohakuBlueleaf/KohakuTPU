@@ -3,13 +3,13 @@
 //! `Program::build` takes them.
 //!
 //! An index is built as the tracer spells it, then folded by the text
-//! grammar's precedence (`ktpu.pest` expr / product / unary): the tracer
-//! leaves a sum that starts with an atom unbracketed inside another atom
-//! (`(a / b) + 3 / 2`), and the tree is the one that spelling reads to.
+//! grammar's precedence (`ktpu.pest` expr / product / unary), so the tree
+//! is the one that spelling reads to.
 
 use ktpu_l1::text::{IntStyle, Stmt as KStmt, Term};
 
 use crate::graph::*;
+use crate::mutant;
 use crate::text;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -70,13 +70,15 @@ fn atom_toks(a: &Atom) -> Vec<Tok> {
 }
 
 /// An index inside an atom or a condition: a sum of several parts is
-/// bracketed unless it starts with an atom (DSL.IDX.009).
+/// bracketed (DSL.IDX.009).
 fn operand_toks(x: &Index) -> Vec<Tok> {
     match x {
         Index::Int(v) => int_toks(*v),
         Index::Sym(s) => {
             let t = sym_toks(s);
-            if s.terms.len() + usize::from(s.konst != 0) <= 1 || t.first() == Some(&Tok::Open) {
+            if s.terms.len() + usize::from(s.konst != 0) <= 1
+                || (mutant::on(mutant::ATOM_SUM_SHORTCUT) && t.first() == Some(&Tok::Open))
+            {
                 t
             } else {
                 let mut out = vec![Tok::Open];

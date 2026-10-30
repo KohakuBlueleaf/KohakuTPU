@@ -39,6 +39,7 @@ mutants = [
     "ktpu-l1/mutants",
     "ktpu-l2/mutants",
     "ktpu-verify/mutants",
+    "ktpu-graph/mutants",
     "ktpu-kernels/mutants",
     "ktpu-plan/mutants",
 ]
