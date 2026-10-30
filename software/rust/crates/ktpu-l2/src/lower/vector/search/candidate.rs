@@ -21,9 +21,10 @@ pub(super) fn lower_band(
     land: Option<i64>,
     hold: bool,
     pin: bool,
+    fits: &Fits,
 ) -> VResult<Cand> {
     let got = crate::lower::vector::ctx::band::typed::lower_band(
-        body, par, env, name, t, band, remat, ahead, plan, land, hold, pin,
+        body, par, env, name, t, band, remat, ahead, plan, land, hold, pin, fits,
     )
     .map(|(m, p, a)| (Arc::new(m), p, a));
     #[cfg(all(test, feature = "witness"))]

@@ -91,10 +91,25 @@ fn every_ruling_has_its_refusal() {
 #[cfg(feature = "mutants")]
 #[test]
 fn search_times_each_text_once() {
+    alike_in_less_work("l2.vector/search-each", Search::timed);
+}
+
+/// The search schedules and encodes each distinct band image once for its
+/// IMEM fit, alike as with every image fitted apart (`l2.vector/fit-each`).
+#[cfg(feature = "mutants")]
+#[test]
+fn search_fits_each_image_once() {
+    alike_in_less_work("l2.vector/fit-each", |s| s.fits.made());
+}
+
+/// Every golden case compiles to the same L1 (or refusal) and choices with
+/// and without `each`, which does at least twice the `work` in all.
+#[cfg(feature = "mutants")]
+fn alike_in_less_work(each: &'static str, work: fn(&Search) -> usize) {
     use ktpu_l2::mutant::{scoped, State};
-    let run = |case: &Value, each: bool| {
+    let run = |case: &Value, apart: bool| {
         let state = State {
-            active: each.then_some("l2.vector/search-each"),
+            active: apart.then_some(each),
             ..State::default()
         };
         scoped(state, || {
@@ -108,7 +123,7 @@ fn search_times_each_text_once() {
                 Ok(c) => c.l1_text,
                 Err(e) => format!("refused {e}"),
             };
-            (out, search.chosen(), search.timed())
+            (out, search.chosen(), work(&search))
         })
     };
     let mut paths: Vec<PathBuf> = std::fs::read_dir(golden_dir())
@@ -118,23 +133,50 @@ fn search_times_each_text_once() {
         .filter(|p| p.extension().is_some_and(|x| x == "json"))
         .collect();
     paths.sort();
-    let (mut once, mut apart, mut cases) = (0, 0, 0);
-    for path in &paths {
-        let case: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-        if case["l2"].as_str().is_none() {
-            continue;
-        }
-        let (a, b) = (run(&case, false), run(&case, true));
-        let name = path.file_stem().unwrap().to_string_lossy().to_string();
+    let cases: Vec<(String, Value)> = paths
+        .iter()
+        .map(|p| {
+            let case: Value = serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap();
+            (p.file_stem().unwrap().to_string_lossy().to_string(), case)
+        })
+        .filter(|(_, case)| case["l2"].as_str().is_some())
+        .collect();
+
+    // Cases run on plain threads: mutant state is thread-local, and a rayon
+    // worker could steal another case's search task under the wrong state.
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let mut done: Vec<_> = std::thread::scope(|s| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut got = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some((_, case)) = cases.get(i) else {
+                            return got;
+                        };
+                        got.push((i, run(case, false), run(case, true)));
+                    }
+                })
+            })
+            .collect();
+        workers.into_iter().flat_map(|w| w.join().unwrap()).collect()
+    });
+    done.sort_by_key(|(i, _, _)| *i);
+
+    let (mut once, mut apart) = (0, 0);
+    for (i, a, b) in &done {
+        let name = &cases[*i].0;
         assert_eq!(a.0, b.0, "{name}: L1");
         assert_eq!(a.1, b.1, "{name}: choices");
-        assert!(a.2 <= b.2, "{name}: {} timings, {} apart", a.2, b.2);
+        assert!(a.2 <= b.2, "{name}: {} under {each}: {}", a.2, b.2);
         once += a.2;
         apart += b.2;
-        cases += 1;
     }
-    eprintln!("{cases} cases: {once} timings, {apart} with every candidate apart");
-    assert!(cases > 150 && once * 2 < apart, "{once} vs {apart}");
+    let n = done.len();
+    eprintln!("{n} cases: {once}, {apart} under {each}");
+    assert!(n == cases.len() && n > 150 && once * 2 < apart, "{once} vs {apart}");
 }
 
 #[cfg(feature = "witness")]

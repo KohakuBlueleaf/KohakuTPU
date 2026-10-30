@@ -4,8 +4,9 @@
 //! in parallel; the choice is the first by (cycles, order tried), so it does
 //! not depend on the thread count.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use indexmap::IndexMap;
 use ktpu_l1::text::{Env, Module};
@@ -84,6 +85,47 @@ type Key = (
     (Option<bool>, Option<bool>),
 );
 
+/// A band image as its fit sees it: the machine's digest, the name-blanked
+/// text (the name only selects the image) and the params.
+type Image = ([u8; 32], String, usize);
+
+/// Each band image's scheduled IMEM words (None: it does not encode), each
+/// made by the first thread to ask.
+#[derive(Debug, Default)]
+pub struct Fits {
+    words: Mutex<HashMap<Image, Arc<OnceLock<Option<usize>>>>>,
+    /// Images scheduled and encoded so far.
+    made: AtomicUsize,
+}
+
+impl Fits {
+    /// The IMEM words `module`'s image `name` takes once scheduled, each
+    /// distinct image made once (`l2.vector/fit-each`: every call apart).
+    pub fn words(&self, module: &Module, name: &str, nparams: usize, t: &Target) -> Option<usize> {
+        let make = || {
+            self.made.fetch_add(1, Ordering::Relaxed);
+            ktpu_l1::sched::schedule_module(module, &t.machine)
+                .and_then(|m| encode::words_of(&m, name, nparams, &t.machine))
+                .ok()
+        };
+        if on("l2.vector/fit-each") {
+            return make();
+        }
+        let key = (
+            t.machine.digest_bytes(),
+            renamed(&module.source, "\0"),
+            nparams,
+        );
+        let cell = self.words.lock().unwrap().entry(key).or_default().clone();
+        *cell.get_or_init(make)
+    }
+
+    /// Distinct images scheduled and encoded so far.
+    pub fn made(&self) -> usize {
+        self.made.load(Ordering::Relaxed)
+    }
+}
+
 /// A search's settings and the choices it remembers.
 #[derive(Debug)]
 pub struct Search {
@@ -102,6 +144,8 @@ pub struct Search {
     retile_choices: Mutex<Vec<(i64, i64)>>,
     /// Distinct candidate images timed so far.
     timed: AtomicUsize,
+    /// Each band image's IMEM words, for its serial fallback.
+    pub fits: Fits,
     #[cfg(feature = "witness")]
     witness: Option<std::sync::Arc<witness::Witness>>,
     #[cfg(feature = "witness")]
@@ -139,6 +183,7 @@ impl Search {
             frozen: AtomicBool::new(false),
             retile_choices: Mutex::new(Vec::new()),
             timed: AtomicUsize::new(0),
+            fits: Fits::default(),
             #[cfg(feature = "witness")]
             witness: None,
             #[cfg(feature = "witness")]
@@ -226,7 +271,7 @@ impl Search {
             );
         }
         lower_band(
-            body, par, env, name, t, band, remat, ahead, plan, land, hold, pin,
+            body, par, env, name, t, band, remat, ahead, plan, land, hold, pin, &self.fits,
         )
     }
 
@@ -291,7 +336,7 @@ impl Search {
                 band as usize
             };
             let (module, params, accesses) = lower_band(
-                body, par, env, name, t, band, false, false, plan, land, true, true,
+                body, par, env, name, t, band, false, false, plan, land, true, true, &self.fits,
             )
             .map_err(|e| match e {
                 VErr::Fail(e) => e,

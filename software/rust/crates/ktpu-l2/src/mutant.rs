@@ -162,6 +162,7 @@ pub const NAMES: &[&str] = &[
     "l2.lower/far-adds-at-once",
     "l2.vector/no-serial-loop",
     "l2.vector/search-each",
+    "l2.vector/fit-each",
     "l2.vector/colour-one",
     "l2.passes/step-near",
     "l2.passes/step-carried-ignored",

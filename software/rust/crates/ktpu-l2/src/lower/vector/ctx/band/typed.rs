@@ -22,6 +22,7 @@ pub(in crate::lower::vector) fn lower_band(
     land: Option<i64>,
     hold: bool,
     pin: bool,
+    fits: &crate::lower::vector::search::Fits,
 ) -> VResult<(Module, Vec<String>, Vec<Access>)> {
     let (c, g) = flat_band(
         body, par, env, t, band, remat, ahead, plan, land, hold, pin, false,
@@ -33,9 +34,9 @@ pub(in crate::lower::vector) fn lower_band(
     );
     let (assigned, _) = crate::lower::vector::assign_typed::assign(&events, &c.pinned, body.vregs);
     let result = image(&c, name, &assigned?).expect("generated band image");
-    let fits = ktpu_l1::sched::schedule_module(&result.0, &t.machine)
-        .and_then(|m| crate::lower::vector::encode::words_of(&m, name, result.1.len(), &t.machine))
-        .is_ok_and(|n| n as i64 <= crate::target::IMEM_ROOM || on("l2.vector/imem-unbounded"));
+    let fits = fits
+        .words(&result.0, name, result.1.len(), t)
+        .is_some_and(|n| n as i64 <= crate::target::IMEM_ROOM || on("l2.vector/imem-unbounded"));
     let (_, lp) = crate::lower::vector::split(body, par)?;
     // Peer streams retain their producer/consumer parity protocol.
     let peer = lp.as_ref().is_some_and(|lp| {
