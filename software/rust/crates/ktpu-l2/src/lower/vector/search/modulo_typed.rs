@@ -20,39 +20,44 @@ pub(in crate::lower::vector) fn reset() {
     COVERAGE.lock().unwrap().clear();
 }
 
-pub(in crate::lower::vector) fn report(cases: usize) {
+/// Checks the counts over `cases`; `whole` (every golden case) also requires
+/// each path to have been taken.
+pub(in crate::lower::vector) fn report(cases: usize, whole: bool) {
     let c = COVERAGE.lock().unwrap();
     eprintln!("typed modulo witness: {cases} cases; {c:?}; mismatches=0");
-    for key in [
-        "trips",
-        "ops",
-        "cross-reads",
-        "predicate",
-        "U",
-        "M",
-        "P",
-        "plans",
-        "scheduled",
-        "refused",
-        "rebuilt-accepted",
-        "tail-explicit",
-        "tail-kernel",
-        "periodicity-comparisons",
-        "L1-fit",
-        "IMEM-fit",
-        "IMEM-reject",
-        "images",
-    ] {
-        assert!(
-            c.get(key).copied().unwrap_or(0) > 0,
-            "missing modulo coverage {key}"
-        );
+    let n = |key: &str| c.get(key).copied().unwrap_or(0);
+    if whole {
+        for key in PATHS {
+            assert!(n(key) > 0, "missing modulo coverage {key}");
+        }
     }
-    assert_eq!(c["plans"], c["scheduled"] + c["refused"]);
-    assert_eq!(c["tail-explicit"], c["scheduled"]);
-    assert_eq!(c["tail-kernel"], c["scheduled"]);
-    assert_eq!(c["images"], c["L1-fit"]);
+    assert_eq!(n("plans"), n("scheduled") + n("refused"));
+    assert_eq!(n("tail-explicit"), n("scheduled"));
+    assert_eq!(n("tail-kernel"), n("scheduled"));
+    assert_eq!(n("images"), n("L1-fit"));
 }
+
+/// The modulo paths the golden cases take between them.
+const PATHS: [&str; 18] = [
+    "trips",
+    "ops",
+    "cross-reads",
+    "predicate",
+    "U",
+    "M",
+    "P",
+    "plans",
+    "scheduled",
+    "refused",
+    "rebuilt-accepted",
+    "tail-explicit",
+    "tail-kernel",
+    "periodicity-comparisons",
+    "L1-fit",
+    "IMEM-fit",
+    "IMEM-reject",
+    "images",
+];
 
 pub(super) fn derive(
     placed: &[Event],

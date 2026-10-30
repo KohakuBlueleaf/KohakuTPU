@@ -328,6 +328,35 @@ fn golden_prebank_exhaustive() {
     );
 }
 
+/// `KTPU_GOLDEN_SHARD=i/n` keeps item i, i+n, ...; a sharded run does not
+/// require every coverage path (only all cases together take them all).
+fn sharded<T>(all: Vec<T>, shard: Option<&str>) -> Vec<T> {
+    let Some(s) = shard else {
+        return all;
+    };
+    let (i, n) = s.split_once('/').expect("KTPU_GOLDEN_SHARD=i/n");
+    let (i, n): (usize, usize) = (i.parse().unwrap(), n.parse().unwrap());
+    all.into_iter().skip(i).step_by(n).collect()
+}
+
+#[test]
+fn the_shards_hold_every_case_once() {
+    for len in [0, 1, 7, 192] {
+        for n in 1..=9 {
+            let mut got: Vec<usize> = (0..n)
+                .flat_map(|i| sharded((0..len).collect(), Some(&format!("{i}/{n}"))))
+                .collect();
+            got.sort();
+            assert_eq!(
+                got,
+                (0..len).collect::<Vec<_>>(),
+                "{len} cases in {n} shards"
+            );
+        }
+        assert_eq!(sharded((0..len).collect::<Vec<_>>(), None).len(), len);
+    }
+}
+
 fn golden_bands() {
     let _guard = GOLDEN_RUN.lock().unwrap();
     COVERAGE.lock().unwrap().clear();
@@ -340,8 +369,9 @@ fn golden_bands() {
         .filter(|p| p.extension().is_some_and(|x| x == "json"))
         .collect();
     paths.sort();
+    let shard = std::env::var("KTPU_GOLDEN_SHARD").ok();
     let mut cases = 0;
-    for path in paths {
+    for path in sharded(paths, shard.as_deref()) {
         let case: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let Some(text) = case["l2"].as_str() else {
@@ -383,22 +413,26 @@ fn golden_bands() {
         }
         cases += 1;
     }
-    assert_eq!(cases, 192);
-    crate::lower::vector::search::modulo_typed::report(cases);
+    let whole = shard.is_none();
+    if whole {
+        assert_eq!(cases, 192);
+    }
+    crate::lower::vector::search::modulo_typed::report(cases, whole);
     let coverage = COVERAGE.lock().unwrap();
+    let n = |key: &str| coverage.get(key).copied().unwrap_or(0);
     eprintln!("pre-bank witness: {cases} cases; {coverage:?}");
     eprintln!(
         "bank witness: {cases} cases; assigned={} images={} refusals={} rotated={}; mismatches=0",
-        coverage["bank-assigned"],
-        coverage["bank-images"],
-        coverage["bank-refusals"],
-        coverage["bank-rotated"]
+        n("bank-assigned"),
+        n("bank-images"),
+        n("bank-refusals"),
+        n("bank-rotated")
     );
-    assert_eq!(coverage["bank-assigned"], coverage["images"]);
-    assert_eq!(
-        coverage["bank-images"] + coverage["bank-refusals"],
-        coverage["images"]
-    );
+    assert_eq!(n("bank-assigned"), n("images"));
+    assert_eq!(n("bank-images") + n("bank-refusals"), n("images"));
+    if !whole {
+        return;
+    }
     for key in [
         "bank-assigned",
         "bank-images",
