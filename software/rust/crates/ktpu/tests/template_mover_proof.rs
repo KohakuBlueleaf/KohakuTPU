@@ -216,18 +216,24 @@ fn zero_counts_negative_addresses_and_exhaustion_have_no_summary() {
     assert!(!check_at(&negative, 1));
     assert!(prove(&negative, 1).is_err());
 
+    // Both dimensions step two words, so neither folds into a one-word run:
+    // n = 1 writes 65535 * 32 runs, past the static write-line budget.
     let mut exhausted = fixture(1);
+    exhausted.package.payloads[1] = put(R_DIM, 1 | (2 << 4) | ((2 * word) << 20));
     exhausted.table.sites[0].constant = 1;
     exhausted.table.sites[0].coefficients = [("n".into(), 65534)].into();
     exhausted.package.payloads[0] = put(R_HDR, 1 | (2 << 44));
     exhausted
         .package
         .payloads
-        .insert(3, put(R_DIM, 3 | (32 << 4) | (word << 20)));
+        .insert(3, put(R_DIM, 3 | (32 << 4) | ((2 * word) << 20)));
     exhausted.package.payloads.insert(4, put(R_AXIS, 0));
     exhausted.package.steps[0].count = exhausted.package.payloads.len() as u64;
     assert!(check_at(&exhausted, 0));
-    assert!(!check_at(&exhausted, 1));
+    let params: Params = [("n".into(), 1)].into();
+    let nodes: ktpu_verify::Nodes = [(0, exhausted.bind(&[], &params).unwrap())].into();
+    let findings = format!("{:?}", check(&[nodes.clone(), nodes], &target()));
+    assert!(findings.contains("budget"), "{findings}");
     assert!(prove(&exhausted, 1).is_err());
     #[cfg(feature = "mutants")]
     for t in [&zero, &negative, &exhausted] {
