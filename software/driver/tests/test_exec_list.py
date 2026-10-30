@@ -1,5 +1,7 @@
 """Queue entry read-ahead and ordering (L0.NQ.053-054), with a serial mutant."""
 
+from pathlib import Path
+
 from kohakuaccel.driver.node.queue import NodeQueue
 from kohakuaccel.driver.node.queue import layout as L
 from kohakuaccel.driver.node.queue.client import PACKAGE_LINE
@@ -8,6 +10,9 @@ from kohakuaccel.driver.transport.memory import MemoryTransport
 
 BASE = 0x10_0000
 BAD = 0x10
+LAYOUT = L.Layout.from_machine(
+    Path(__file__).resolve().parents[3] / "machines/multimesh_v9t6.json"
+)
 
 
 class Interp:
@@ -21,8 +26,8 @@ def pkg(status=0, fill=0) -> bytes:
 
 def node(ahead=True):
     mem = MemoryTransport()
-    fw = SpecFirmware(mem, BASE, Interp(), ahead=ahead)
-    q = NodeQueue(mem, BASE, idle=lambda: None)
+    fw = SpecFirmware(mem, BASE, Interp(), ahead=ahead, layout=LAYOUT)
+    q = NodeQueue(mem, BASE, idle=lambda: None, layout=LAYOUT)
     q.init()
     fw.boot()
     return fw, q
@@ -88,9 +93,9 @@ def test_a_failing_run_reads_nothing_ahead():
 def test_stop_and_nop_read_ahead_still_run_in_their_turn():
     fw, q = node()
     q.submit(pkg())
-    nop = q.submit(None, op=L.OP_NOP)
+    nop = q.submit(None, op=LAYOUT.op_nop)
     q.submit(pkg())
-    stop = q.submit(None, op=L.OP_STOP)
+    stop = q.submit(None, op=LAYOUT.op_stop)
     got = serve(fw, q, 4)
     assert [c.tag for c in got][1::2] == [nop, stop] and all(c.ok for c in got)
     assert [e[1:] for e in fw.events if e[0] == "ahead"] == [(1, 0), (3, 2)]

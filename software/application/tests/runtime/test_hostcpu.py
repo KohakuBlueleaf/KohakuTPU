@@ -21,6 +21,7 @@ from kohakutpu.application.runtime.arena import Arena
 from kohakutpu.application.runtime.card import NodeCard
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.compiler import _rs
+from kohakutpu.stack import rs
 
 
 def sample():
@@ -187,6 +188,14 @@ def test_kernel_cache_library_change_and_explicit_reload(monkeypatch):
 
 def test_mutant_library_change_not_invalidated_is_caught(monkeypatch):
     monkeypatch.setattr(D.Device, "_kernel_key", lambda self, *a: a)
+    monkeypatch.setattr(
+        D.Device,
+        "library",
+        property(
+            lambda self: self._library,
+            lambda self, value: setattr(self, "_library", value),
+        ),
+    )
     with pytest.raises(AssertionError):
         library_witness(monkeypatch)
 
@@ -227,49 +236,99 @@ def test_arena_shortcut_skips_scan_and_undo_is_detected():
         assert not scanned, "the base lookup scanned the arena"
 
 
+def _resident_program(machine_json):
+    source = (
+        "target ktpu.v9\nimage image()\n"
+        "    seti s0 = 1\n    halt\n"
+        "fn k.l1()\n    send vc[0]\n        run image()\n    barrier\n"
+    )
+    compiled = _rs.compile(source, machine_json, "k", l1=True, fetch=True, cache_dir="")
+    raw = compiled["packages"][0]["bytes"]
+    fetch = tuple(json.loads(machine_json)["machine"]["die"]["fetch_port"])
+    return B.Prebuilt(raw, (), machine_json, 0, (), False, fetch)
+
+
 @pytest.mark.parametrize("fast", [False, True])
 def test_stateless_submission_elides_snapshots_without_eliding_residency(
     monkeypatch, fast
 ):
-    calls = []
+    machine = machine_of("multimesh_v9t6", nodes=2)
+    prog = _resident_program(machine.machine_json)
+    full_bytes = B.built({0: prog}, machine, prog.fetch, None)[0][1].to_bytes()
+    temp_cores = _rs.Cores(machine.machine_json)
+    B.built({0: prog}, machine, prog.fetch, {0: temp_cores}, resident=True)
+    omitted_bytes = B.built(
+        {0: prog}, machine, prog.fetch, {0: temp_cores}, resident=True
+    )[0][1].to_bytes()
+    assert len(omitted_bytes) < len(full_bytes)
 
-    class Cores:
-        def snapshot(self):
-            calls.append("snapshot")
-            return self
+    def offline_cell(mode):
+        if mode is None:
+            monkeypatch.delenv("KOHAKUTPU_RESIDENT", raising=False)
+        else:
+            monkeypatch.setenv("KOHAKUTPU_RESIDENT", mode)
+        offline = D.OfflineCard("multimesh_v9t6")
+        first = offline.run(prog)["pkg"].to_bytes()
+        second = offline.run(prog)["pkg"].to_bytes()
+        return first, second
 
-        def restore(self, state):
-            calls.append("restore")
+    def node_card_cell(mode):
+        if mode is None:
+            monkeypatch.delenv("KOHAKUTPU_RESIDENT", raising=False)
+        else:
+            monkeypatch.setenv("KOHAKUTPU_RESIDENT", mode)
+        monkeypatch.setenv("KOHAKUTPU_HOST_SUBMIT_CACHE", str(int(fast)))
+        card = object.__new__(NodeCard)
+        card.nodes, card.debug, card.log = (0, 1), False, None
+        card.residents = {
+            0: _rs.Cores(machine.machine_json),
+            1: _rs.Cores(machine.machine_json),
+        }
+        card.machine_json = machine.machine_json
+        card.machine, card.fetch = machine, prog.fetch
+        card.verify = lambda progs: None
+        submitted = []
+        card._submit = lambda n, raw, bindings, **kw: submitted.append(raw) or len(
+            submitted
+        )
+        B.built({1: prog}, machine, prog.fetch, {1: card.residents[1]}, resident=True)
+        card.submit({0: prog})
+        card.submit({0: prog})
+        peer = B.built(
+            {1: prog},
+            machine,
+            prog.fetch,
+            {1: card.residents[1].snapshot()},
+            resident=True,
+        )[1][1].to_bytes()
+        return submitted[0], submitted[1], peer
 
-        def forget(self):
-            calls.append("forget")
+    def check_all_cells():
+        # Unset or "0" sends images whole on every card, whatever the submit
+        # cache; only "0" also forgets the peer node's residents.
+        for mode in (None, "0", "1", "yes"):
+            want_second = full_bytes if mode in (None, "0") else omitted_bytes
+            assert offline_cell(mode) == (full_bytes, want_second), (
+                "OfflineCard",
+                mode,
+            )
+            want_peer = full_bytes if mode == "0" else omitted_bytes
+            assert node_card_cell(mode) == (full_bytes, want_second, want_peer), (
+                "NodeCard",
+                mode,
+                fast,
+            )
 
-    card = object.__new__(NodeCard)
-    card.nodes, card.debug, card.log = (0,), False, None
-    card.residents = {0: Cores()}
-    card.verify = lambda progs: None
-    card.machine = card.fetch = None
-    card._submit = lambda *a, **kw: 1
-    pkg = SimpleNamespace(to_bytes=lambda: b"wire")
-    monkeypatch.setattr(B, "built", lambda *a: {0: (pkg, pkg, ())})
-    monkeypatch.setenv("KOHAKUTPU_HOST_SUBMIT_CACHE", str(int(fast)))
-    monkeypatch.setenv("KOHAKUTPU_RESIDENT", "0")
-    card.submit(object())
-    assert ("snapshot" in calls) is not fast
-    assert ("restore" in calls) is not fast
-    if not fast:
-        with pytest.raises(AssertionError):
-            assert "snapshot" not in calls, "the stateless path copied cores"
-    calls.clear()
-    monkeypatch.setenv("KOHAKUTPU_RESIDENT", "1")
-    card.submit(object())
-    assert calls == ["snapshot", "restore"]
+    check_all_cells()
+    for name in ("app.resident/unset_is_off", "app.resident/only_one_resides"):
+        assert name in rs.mutants()
+        with rs.mutant(name), pytest.raises(AssertionError):
+            check_all_cells()
 
 
 def test_python_admission_cache_tracks_bindings(monkeypatch):
     def admit(raw, machine, *, bindings, cached_context):
-        monkeypatch.setenv("KOHAKUTPU_ADMISSION_CONTEXT", str(int(cached_context)))
-        B.admit(raw, machine, 0, bindings)
+        B.admit(raw, machine, 0, bindings, cached=cached_context)
 
     relocation_witness(admit)
 
@@ -283,8 +342,8 @@ def noengine_witness(monkeypatch, mutant=False):
     card.machine = card.fetch = None
     card._forget_residents = lambda progs: None
     pkg = SimpleNamespace(to_bytes=lambda: b"plain-wire")
-    monkeypatch.setattr(B, "built", lambda *a: {0: (pkg, pkg, ())})
-    monkeypatch.setattr(B, "admit", lambda raw, *a: admitted.append(raw))
+    monkeypatch.setattr(B, "built", lambda *a, **k: {0: (pkg, pkg, ())})
+    monkeypatch.setattr(B, "admit", lambda raw, *a, **k: admitted.append(raw))
     monkeypatch.setenv("KOHAKUTPU_HOST_SUBMIT_CACHE", "1")
     monkeypatch.setenv("KOHAKUTPU_RESIDENT", "0")
 

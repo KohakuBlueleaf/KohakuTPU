@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from kohakuaccel.driver.node.queue import NodeQueue
+from kohakuaccel.driver.node.queue import layout as QL
 from kohakuaccel.driver.node.queue.double import SpecFirmware
 from kohakuaccel.driver.transport.memory import MemoryTransport
 from kohakutpu.application.runtime.card import NodeCard, PreparedEvents
@@ -18,6 +19,7 @@ from kohakutpu.compiler import _rs
 from kohakutpu.language import machine as MF
 
 MACHINE = (MF.MACHINES / "vlt_v9t6s_1n.json").read_text(encoding="utf-8")
+LAYOUT = QL.Layout.from_machine(MACHINE)
 PACKAGE = _rs.package_build('{"credit": 32}', "[]", MACHINE, defaults=False)
 
 
@@ -28,13 +30,15 @@ def device():
         0x100000,
         spill=lambda n: dev.memory.alloc(n, owner="package"),
         unspill=dev.memory.free,
+        layout=LAYOUT,
     )
     q.init()
-    fw = SpecFirmware(q.mem, q.base)
+    fw = SpecFirmware(q.mem, q.base, layout=LAYOUT)
     fw.boot()
     card = object.__new__(NodeCard)
     card.queues = {0: q}
     card.machine_json = MACHINE
+    card.queue_layout = LAYOUT
     card.nodes = (0,)
     card.runs = 0
     card.debug = False
@@ -42,6 +46,7 @@ def device():
     card.residents = {}
     card._timeout = 1
     card.q = q
+    card.memory = dev.memory
     card.close = dict
     card.drop_spilled = q.drop_spilled
     dev.card = card
@@ -99,24 +104,33 @@ def test_device_wide_budget_includes_other_logs_and_closed_inflight_packages():
     dev, q = device()
     dev.prepared_replay = True
     n = (len(PACKAGE) + 63) // 64 * 64
-    dev.replay_package_bytes = n
+    dev.replay_package_bytes = dev.memory.dram.align
     first, second = recording(dev), recording(dev, PACKAGE + bytes(32))
     dev.prepare_recorded(first)
-    with pytest.raises(MemoryError, match="device byte budget"):
-        dev.prepare_recorded(second)
+    assert first.prepared.selection["pinned_packages"] == 1
+    dev.prepare_recorded(second)
+    assert second.prepared.selection["pinned_packages"] == 0
+    assert second.prepared.selection["streamed_calls"] == 1
+    second.prepared.close()
+    second.prepared = None
     pending = dev.replay(first, wait=False)[0]
     first.close()
     assert q.prepared_bytes == n
-    with pytest.raises(MemoryError):
-        dev.prepare_recorded(second)
+    dev.prepare_recorded(second)
+    assert second.prepared.selection["pinned_packages"] == 0
+    second.prepared.close()
+    second.prepared = None
     dev.collect(pending)
     assert q.prepared_bytes == 0
+    dev.prepare_recorded(second)
+    assert second.prepared.selection["pinned_packages"] == 1
     second.close()
     dev.close()
 
 
 def test_budget_mutant_is_caught(monkeypatch):
     monkeypatch.setattr(NodeQueue, "prepared_bytes", property(lambda self: 0))
+    monkeypatch.setattr(NodeQueue, "prepared_addresses", lambda self: set())
     with pytest.raises((AssertionError, pytest.fail.Exception)):
         test_device_wide_budget_includes_other_logs_and_closed_inflight_packages()
 
@@ -147,7 +161,7 @@ def test_partial_prepare_failure_rolls_back_uploads():
     [
         (PREPARED_REPLAY_ENV, "bad"),
         (REPLAY_PACKAGE_BYTES_ENV, "bad"),
-        (REPLAY_PACKAGE_BYTES_ENV, "0"),
+        (REPLAY_PACKAGE_BYTES_ENV, "-1"),
     ],
 )
 def test_invalid_preparation_config_does_not_open_backend(env, value, monkeypatch):

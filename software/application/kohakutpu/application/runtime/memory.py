@@ -9,7 +9,11 @@ these arenas. Recording pins existing spans instead of reserving a child heap.
     mem.free(a)
 """
 
+import os
+
 from kohakutpu.application.runtime.arena import Arena
+from kohakutpu.compiler import _rs
+from kohakutpu.language.dsl.kernel import _MUTANT
 
 #: The most zero bytes one paint write carries.
 PAINT_CHUNK = 16 << 20
@@ -23,8 +27,9 @@ class CardMemory:
     answers them with an error."""
 
     def __init__(self, dram: tuple, staging: dict, paint=None) -> None:
-        self.dram = Arena(*dram)
-        self.staging = {n: Arena(lo, hi) for n, (lo, hi) in staging.items()}
+        self.arena_cls = _arena_cls()
+        self.dram = self.arena_cls(*dram)
+        self.staging = {n: self.arena_cls(lo, hi) for n, (lo, hi) in staging.items()}
         self.paint = paint
         #: DRAM below this is painted. Every DRAM allocation from below paints
         #: up to its end, so no live span lies past the mark.
@@ -52,7 +57,9 @@ class CardMemory:
         size = arena.live[at]
         if node is None and self.paint is not None:
             _zero(self.paint, at, size)
-        return Arena(at, at + size)
+        if _MUTANT.get() == "app.memory/unlatched_carve":
+            return _arena_cls()(at, at + size)
+        return self.arena_cls(at, at + size)
 
     def free(self, addr: int) -> None:
         for arena in self.arenas():
@@ -79,6 +86,10 @@ class CardMemory:
                 and arena.owners[a] != "package"
             ]:
                 arena.release(at)
+
+
+def _arena_cls():
+    return _rs.Arena if os.environ.get("KTPU_NATIVE_MEMORY", "0") == "1" else Arena
 
 
 def _zero(write, at: int, nbytes: int) -> None:

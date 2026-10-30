@@ -17,6 +17,7 @@ import argparse
 
 from kohakuaccel.driver.daemon.server import DEFAULT_PORT, Daemon
 from kohakuaccel.driver.node.boot import NodeBoot
+from kohakuaccel.driver.node.queue import layout as L
 from kohakuaccel.driver.transport.jtag import JtagTransport
 from kohakuaccel.driver.transport.memory import MemoryTransport
 from kohakuaccel.driver.transport.rebase import UnitGlobal
@@ -24,6 +25,7 @@ from kohakuaccel.driver.transport.verilator import VerilatorTransport
 from kohakutpu.driver.clock.card import CardClocks, load_board
 from kohakutpu.driver.clock.mmcm import REG_STATUS, STATUS_LOCKED
 from kohakutpu.driver.host import board_map
+from kohakutpu.language import machine as MF
 
 
 class WizardClockCtl:
@@ -110,6 +112,10 @@ def main() -> None:
     governed = not args.no_governor and args.backend != "verilator"
     ctl = WizardClockCtl(transport, board) if governed else None
     node_mem, node_loader = node_wiring(transport, board, sim)
+    machine_path = MF.MACHINES / f"{board['name']}.json"
+    queue_layout = (
+        L.Layout.from_machine(machine_path) if machine_path.exists() else None
+    )
     daemon = Daemon(
         transport,
         board=board,
@@ -120,6 +126,7 @@ def main() -> None:
         node_mem=node_mem,
         node_loader=node_loader,
         poll_idle=poll_idle,
+        queue_layout=queue_layout,
     )
     port = daemon.start()
     print(

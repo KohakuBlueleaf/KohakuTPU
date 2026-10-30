@@ -18,28 +18,31 @@ def _pow2(v: int) -> bool:
 class Heap:
     """One region heap. Methods return the firmware's status codes."""
 
-    def __init__(self, base: int, nbytes: int, granule: int, cap: int) -> None:
+    def __init__(
+        self, base: int, nbytes: int, granule: int, cap: int, *, layout: L.Layout
+    ) -> None:
+        self.layout = layout
         self.rc = self._init(base, nbytes, granule, cap)
 
     def _init(self, base: int, nbytes: int, granule: int, cap: int) -> int:
         if not _pow2(granule) or granule < 8 or base % granule or cap < 3:
-            return L.BAD_ARG
+            return self.layout.bad_arg
         nbytes -= nbytes % granule
         if not nbytes:
-            return L.BAD_ARG
+            return self.layout.bad_arg
         self.base, self.bytes, self.granule, self.cap = base, nbytes, granule, cap
         self.blocks = [[0, nbytes, 0, 0]]
         self.used = self.peak = self.live = self.fails = 0
-        return L.OK
+        return self.layout.ok
 
     def alloc(self, nbytes: int, align: int = 0, tag: int = 0) -> tuple[int, int]:
         """``(status, address)``; the address is 0 unless the status is OK."""
         if not nbytes or (align and not _pow2(align)):
-            return L.BAD_ARG, 0
+            return self.layout.bad_arg, 0
         g = self.granule
         if nbytes > self.bytes:
             self.fails += 1
-            return L.NO_MEMORY, 0
+            return self.layout.no_memory, 0
         size = -(-nbytes // g) * g
         a = max(align, g)
         for i, (off, ln, used, _) in enumerate(self.blocks):
@@ -53,7 +56,7 @@ class Heap:
             need = (pad != 0) + (rest != 0)
             if len(self.blocks) + need > self.cap:
                 self.fails += 1
-                return L.NO_SLOTS, 0
+                return self.layout.no_slots, 0
             new = []
             if pad:
                 new.append([off, pad, 0, 0])
@@ -64,9 +67,9 @@ class Heap:
             self.used += size
             self.live += 1
             self.peak = max(self.peak, self.used)
-            return L.OK, self.base + at
+            return self.layout.ok, self.base + at
         self.fails += 1
-        return L.NO_MEMORY, 0
+        return self.layout.no_memory, 0
 
     def free(self, addr: int) -> int:
         off = addr - self.base
@@ -75,7 +78,7 @@ class Heap:
             None,
         )
         if i is None or not 0 <= off < self.bytes:
-            return L.BAD_FREE
+            return self.layout.bad_free
         b = self.blocks[i]
         self.used -= b[1]
         self.live -= 1
@@ -84,7 +87,7 @@ class Heap:
             b[1] += self.blocks.pop(i + 1)[1]
         if i > 0 and not self.blocks[i - 1][2]:
             self.blocks[i - 1][1] += self.blocks.pop(i)[1]
-        return L.OK
+        return self.layout.ok
 
     def stats(self) -> dict:
         free = [b[1] for b in self.blocks if not b[2]]

@@ -5,6 +5,7 @@ runs on a fake clock that each idle advances by one tick, so the bounds are
 checked in the clock's own units, whatever the machine's load."""
 
 from kohakuaccel.driver.node.queue import NodeQueue
+from kohakuaccel.driver.node.queue import layout as QL
 from kohakuaccel.driver.node.queue.double import SpecFirmware
 from kohakuaccel.driver.transport.memory import MemoryTransport
 from kohakutpu.application.runtime import card as C
@@ -12,6 +13,8 @@ from kohakutpu.application.runtime import card as C
 BASE = 0x10_0000
 BOUND = 0.2
 TICK = 0.01
+MACHINE = (C.MACHINES / "multimesh_v9t6.json").read_text(encoding="utf-8")
+LAYOUT = QL.Layout.from_machine(MACHINE)
 
 
 class Win:
@@ -41,7 +44,7 @@ def card(revives: bool):
     queue steps the firmware only after a restart that revives it. Returns
     the card, its loader and its clock (a one-element list, seconds)."""
     mem = MemoryTransport()
-    fw = SpecFirmware(mem, BASE)
+    fw = SpecFirmware(mem, BASE, layout=LAYOUT)
     loader = Loader(fw, revives)
     now = [0.0]
 
@@ -50,13 +53,16 @@ def card(revives: bool):
         if loader.restarts:
             fw.step()
 
-    q = NodeQueue(mem, BASE, idle=idle, timeout=1.0, clock=lambda: now[0])
+    q = NodeQueue(
+        mem, BASE, idle=idle, timeout=1.0, clock=lambda: now[0], layout=LAYOUT
+    )
     q.init()
     fw.boot()
     fw.step()
     c = object.__new__(C.NodeCard)
     c.queues, c.boots, c.nodes, c.fw = {0: q}, {0: (loader, None)}, (0,), None
-    c.machine_json = (C.MACHINES / "multimesh_v9t6.json").read_text(encoding="utf-8")
+    c.machine_json = MACHINE
+    c.queue_layout = LAYOUT
     c.residents = {0: None}
     c._order, c._stdout, c._segs = {}, {}, {}
     c.stop_timeout = BOUND

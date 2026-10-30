@@ -1,5 +1,7 @@
 """Read and classify the final firmware state before a boot deadline expires."""
 
+from pathlib import Path
+
 import pytest
 
 from kohakuaccel.driver.node.boot.args import ERR_QUEUE, EXIT_BOOTARGS
@@ -7,16 +9,23 @@ from kohakuaccel.driver.node.queue import BootRefused, NodeQueue
 from kohakuaccel.driver.node.queue import layout as L
 from kohakuaccel.driver.transport.memory import MemoryTransport
 
+LAYOUT = L.Layout.from_machine(
+    Path(__file__).resolve().parents[3] / "machines/multimesh_v9t6.json"
+)
+
 
 def test_refusal_published_on_deadline_is_not_a_timeout():
     ticks = [0.0]
     mem = MemoryTransport()
-    q = NodeQueue(mem, 0x100000, clock=lambda: ticks[0])
+    q = NodeQueue(mem, 0x100000, clock=lambda: ticks[0], layout=LAYOUT)
     q.init()
 
     def idle():
         ticks[0] = 0.02
-        mem.write_block(q.base + L.FW, L.line(3, 0, 0, EXIT_BOOTARGS | ERR_QUEUE))
+        mem.write_block(
+            q.base + LAYOUT.fw,
+            LAYOUT.line_bytes(LAYOUT.st_fatal, 0, 0, EXIT_BOOTARGS | ERR_QUEUE),
+        )
 
     q._idle = idle
     with pytest.raises(BootRefused, match="queue"):

@@ -35,6 +35,7 @@ from kohakutpu.simulation.package import Reader
 SOFTWARE = pathlib.Path(__file__).resolve().parents[2]
 INC = SOFTWARE / "firmware/kohakuaccel/include/ka"
 BASE = 0x10_0000
+LAYOUT = L.Layout.from_machine(MF.MACHINES / "multimesh_v9t6.json")
 
 
 def package(words=()):
@@ -56,7 +57,7 @@ def c_defines(path: pathlib.Path) -> dict:
 
 def test_queue_layout_matches_the_firmware():
     c = c_defines(INC / "queue/layout.h")
-    assert c["KA_Q_MAGIC"] == L.MAGIC and c["KA_Q_VERSION"] == L.VERSION
+    assert c["KA_Q_MAGIC"] == LAYOUT.magic and c["KA_Q_VERSION"] == LAYOUT.version
     for name in (
         "INFO",
         "FW",
@@ -71,10 +72,12 @@ def test_queue_layout_matches_the_firmware():
         "UNITS",
         "SQ",
     ):
-        assert c[f"KA_Q_{name}"] == getattr(L, name), name
-    assert c["KA_Q_SQ_BYTES"] == L.SQ_BYTES and c["KA_Q_CQ_BYTES"] == L.CQ_BYTES
-    for name in ("NOP", "RUN", "STOP"):
-        assert c[f"KA_SQ_{name}"] == getattr(L, f"OP_{name}"), name
+        assert c[f"KA_Q_{name}"] == getattr(LAYOUT, name.lower()), name
+    assert (
+        c["KA_Q_SQ_BYTES"] == LAYOUT.sq_bytes and c["KA_Q_CQ_BYTES"] == LAYOUT.cq_bytes
+    )
+    for name in ("NOP", "RUN", "STOP", "LIST"):
+        assert c[f"KA_SQ_{name}"] == getattr(LAYOUT, f"op_{name.lower()}"), name
     s = c_defines(INC / "package/status.h")
     for code, name in L.STATUS.items():
         assert s[f"KA_ST_{name}"] == code, name
@@ -86,10 +89,11 @@ def test_queue_layout_matches_the_firmware():
         if k.startswith("KA_WAIT_")
     }
     assert waits == L.WAITS
-    assert L.UNITS + L.LINE + 8 * MAX_UNITS <= L.SQ
+    assert LAYOUT.units + LAYOUT.line + 8 * MAX_UNITS <= LAYOUT.sq
     for name in ("HEAP", "ALLOC", "FREE"):
         assert f"KA_SQ_{name}" not in c
-        assert not hasattr(L, f"OP_{name}")
+        assert name.lower() not in LAYOUT.opcodes
+        assert not hasattr(LAYOUT, f"op_{name.lower()}")
 
 
 def test_boot_block_matches_the_firmware():
@@ -166,9 +170,12 @@ def _queue(**kw):
     mem = HostMemory()
     mailbox = kw.pop("mailbox", None)
     fw = SpecFirmware(
-        mem, BASE, Interpreter(mailbox, reader=Reader()) if mailbox else None
+        mem,
+        BASE,
+        Interpreter(mailbox, reader=Reader()) if mailbox else None,
+        layout=LAYOUT,
     )
-    q = NodeQueue(mem, BASE, idle=lambda: fw.step(), **kw)
+    q = NodeQueue(mem, BASE, idle=lambda: fw.step(), layout=LAYOUT, **kw)
     q.init()
     fw.boot()
     return mem, fw, q
@@ -197,19 +204,19 @@ def test_entries_and_bindings_land_where_the_spec_says():
     mem, _fw, q = _queue(sq_n=4, cq_n=4)
     pkg = package([9])
     tag = q.submit(pkg, bindings=[0xAA, 0xBB])
-    sq = BASE + L.SQ
+    sq = BASE + LAYOUT.sq
     words = [mem.read64(sq + 8 * k) for k in range(8)]
     assert words[0] == 1 | 2 << 16 and words[1] == tag and words[3] == len(pkg)
     assert mem.read_block(words[2], len(pkg)) == pkg
     assert [mem.read64(words[4]), mem.read64(words[4] + 8)] == [0xAA, 0xBB]
-    assert mem.read64(BASE + L.SQ_TAIL) == 1
+    assert mem.read64(BASE + LAYOUT.sq_tail) == 1
     q.wait(tag)
-    assert mem.read64(BASE + L.CQ_HEAD) == 1
+    assert mem.read64(BASE + LAYOUT.cq_head) == 1
 
 
 def test_a_full_submission_ring_waits_for_the_firmware():
     _mem, _fw, q = _queue(sq_n=2, cq_n=8)
-    tags = [q.submit(None, op=L.OP_NOP) for _ in range(5)]
+    tags = [q.submit(None, op=LAYOUT.op_nop) for _ in range(5)]
     for t in tags:
         assert q.wait(t).ok
 
@@ -229,10 +236,12 @@ def test_a_wait_ends_when_the_firmware_goes_fatal():
     code = 0xE000_0000_0000_0005
 
     def trap():
-        mem.write_block(BASE + L.FW, struct.pack("<4Q", L.ST_FATAL, 0, 0, code))
+        mem.write_block(
+            BASE + LAYOUT.fw, struct.pack("<4Q", LAYOUT.st_fatal, 0, 0, code)
+        )
 
     q.idle = trap
-    tag = q.submit(None, op=L.OP_NOP)
+    tag = q.submit(None, op=LAYOUT.op_nop)
     with pytest.raises(FirmwareFatal) as e:
         q.wait(tag, timeout=1.0)
     assert e.value.state == {"state": "fatal", "abi": 0, "done": 0, "fatal": code}
@@ -255,13 +264,13 @@ def _corrupt_boot_block(word: int, value: int) -> bytes:
 )
 def test_a_refused_boot_raises_immediately_naming_its_refusal_code(raw, code, reason):
     mem = HostMemory()
-    fw = SpecFirmware(mem, BASE)
+    fw = SpecFirmware(mem, BASE, layout=LAYOUT)
     ticks = [0.0]
 
     def idle():
         ticks[0] += 0.01
 
-    q = NodeQueue(mem, BASE, idle=idle, clock=lambda: ticks[0])
+    q = NodeQueue(mem, BASE, idle=idle, clock=lambda: ticks[0], layout=LAYOUT)
     q.init()
     # Old firmware behaviour: ka_boot_check exits without writing KA_Q_FW, so
     # the host's wait_ready times out reporting state 'none'.
@@ -306,7 +315,7 @@ class SlowModel:
     def idle(self) -> None:
         self.cycles += IDLE
         self.wall += self.seconds
-        if self.fw.rd(L.SQ_HEAD) == self.fw.rd(L.SQ_TAIL):
+        if self.fw.rd(LAYOUT.sq_head) == self.fw.rd(LAYOUT.sq_tail):
             return
         self.since = self.cycles if self.since is None else self.since
         if self.cycles - self.since >= BOUND:
@@ -319,10 +328,17 @@ class SlowModel:
 
 def _stuck(seconds: float, clock: str):
     mem = HostMemory()
-    fw = SpecFirmware(mem, BASE, Stuck())
+    fw = SpecFirmware(mem, BASE, Stuck(), layout=LAYOUT)
     model = SlowModel(fw, seconds)
     tick = model.modelled if clock == "modelled" else lambda: model.wall
-    q = NodeQueue(mem, BASE, idle=model.idle, clock=tick, timeout=2 * BOUND / SYS_HZ)
+    q = NodeQueue(
+        mem,
+        BASE,
+        idle=model.idle,
+        clock=tick,
+        timeout=2 * BOUND / SYS_HZ,
+        layout=LAYOUT,
+    )
     q.init()
     fw.boot()
     q.wait_ready()
@@ -349,16 +365,16 @@ def test_a_wall_clock_wait_on_a_slow_model_times_out_before_its_firmware():
 def test_a_timeout_names_both_rings_pointers():
     # Inject a lost publication: local tail must not masquerade as device readback.
     mem = HostMemory()
-    SpecFirmware(mem, BASE)
+    SpecFirmware(mem, BASE, layout=LAYOUT)
     ticks = [0.0]
 
     def idle():
         ticks[0] += 0.01
 
-    q = NodeQueue(mem, BASE, idle=idle, clock=lambda: ticks[0])
+    q = NodeQueue(mem, BASE, idle=idle, clock=lambda: ticks[0], layout=LAYOUT)
     q.init()
-    tag = q.submit(None, op=L.OP_NOP)
-    mem.write64(BASE + L.SQ_TAIL, 0)
+    tag = q.submit(None, op=LAYOUT.op_nop)
+    mem.write64(BASE + LAYOUT.sq_tail, 0)
     with pytest.raises(TimeoutError) as e:
         q.wait(tag, timeout=0.02)
     assert (
@@ -384,12 +400,12 @@ def test_a_completion_for_no_package_in_flight_raises_naming_its_tag():
     # The CQ tail published before its entry: the host reads the slot's
     # previous contents (tag 7, never submitted) and refuses it.
     mem = HostMemory()
-    SpecFirmware(mem, BASE)
-    q = NodeQueue(mem, BASE, idle=lambda: None, clock=lambda: 0.0)
+    SpecFirmware(mem, BASE, layout=LAYOUT)
+    q = NodeQueue(mem, BASE, idle=lambda: None, clock=lambda: 0.0, layout=LAYOUT)
     q.init()
-    q.submit(None, op=L.OP_NOP)
+    q.submit(None, op=LAYOUT.op_nop)
     mem.write_block(BASE + q.geo["cq"], struct.pack("<4Q", 7, 0, 0, 0))
-    mem.write_block(BASE + L.CQ_TAIL, L.line(1))
+    mem.write_block(BASE + LAYOUT.cq_tail, LAYOUT.line_bytes(1))
     with pytest.raises(RecordSkew, match="stale completion tag 0x7"):
         q.poll()
     assert q.cq_head == 0
@@ -397,12 +413,14 @@ def test_a_completion_for_no_package_in_flight_raises_naming_its_tag():
 
 def test_a_wait_past_its_wall_clock_alarm_is_over_budget_not_a_timeout():
     mem = HostMemory()
-    fw = SpecFirmware(mem, BASE)
-    q = NodeQueue(mem, BASE, idle=lambda: None, clock=lambda: 0.0, alarm=1e-3)
+    fw = SpecFirmware(mem, BASE, layout=LAYOUT)
+    q = NodeQueue(
+        mem, BASE, idle=lambda: None, clock=lambda: 0.0, alarm=1e-3, layout=LAYOUT
+    )
     q.init()
     fw.boot()
     with pytest.raises(OverBudget) as e:
-        q.wait(q.submit(None, op=L.OP_NOP))
+        q.wait(q.submit(None, op=LAYOUT.op_nop))
     assert not isinstance(e.value, TimeoutError)
 
 
@@ -501,10 +519,10 @@ def test_stdout_wraps_and_stdin_lands_whole_lines():
         assert q.read_stdout() == f"line {k} of a ring, longer than a third of it\n"
     q.stdin("hello")
     # 3 CQ entries end mid-line; the stdout ring starts on the next line.
-    so = BASE + L.SQ + 64 * q.sq_n + 32 * q.cq_n + 32
-    assert so % L.LINE == 0
+    so = BASE + LAYOUT.sq + 64 * q.sq_n + 32 * q.cq_n + 32
+    assert so % LAYOUT.line == 0
     assert mem.read_block(so + 64, 8)[:5] == b"hello"
-    assert mem.read64(BASE + L.SI_WR) == 5
+    assert mem.read64(BASE + LAYOUT.si_wr) == 5
     assert mem.host_writes and all(
-        a % L.LINE == 0 and n % L.LINE == 0 for a, n in mem.host_writes
+        a % LAYOUT.line == 0 and n % LAYOUT.line == 0 for a, n in mem.host_writes
     )

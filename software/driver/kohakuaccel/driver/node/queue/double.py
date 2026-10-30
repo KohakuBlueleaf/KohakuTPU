@@ -23,7 +23,9 @@ class SpecFirmware:
         base: int,
         interp=None,
         ahead: bool = True,
-        record: dict | None = None,
+        record: L.Record | dict | None = None,
+        *,
+        layout: L.Layout,
     ) -> None:
         self.m, self.q = mem, base
         self.interp = interp
@@ -31,6 +33,10 @@ class SpecFirmware:
         self.next = None
         self.events: list[tuple] = []
         self.record = record
+        self.layout = layout
+        self.epoch = 0
+        self.list_index = 0
+        self.item_tag = 0
 
     def rd(self, off):
         return self.m.read64(self.q + off)
@@ -39,10 +45,12 @@ class SpecFirmware:
         self.m.write64(self.q + off, v)
 
     def _fatal(self, code: int) -> None:
-        self.wr(L.FW + 8, L.VERSION)
-        self.wr(L.FW + 16, 0)
-        self.wr(L.FW + 24, code)
-        self.wr(L.FW, L.ST_FATAL)
+        layout = self.layout
+        self.wr(layout.fw + 8 * layout.fw_abi, layout.version)
+        self.wr(layout.fw + 8 * layout.fw_done, 0)
+        self.wr(layout.fw + 8 * layout.fw_fatal, code)
+        self.wr(layout.list_abi, layout.list_version)
+        self.wr(layout.fw + 8 * layout.fw_state, layout.st_fatal)
 
     @staticmethod
     def check_boot(raw: bytes) -> int:
@@ -71,19 +79,21 @@ class SpecFirmware:
         return 0
 
     def boot(self, args: bytes | None = None) -> int:
+        layout = self.layout
         if args is not None:
             bad = self.check_boot(args)
             if bad:
                 self._fatal(B.EXIT_BOOTARGS | bad)
                 return bad
-        if self.rd(L.INFO) != L.MAGIC:
+        if self.rd(layout.info + 8 * layout.info_words["magic"]) != layout.magic:
             self._fatal(B.EXIT_BOOTARGS | B.ERR_QUEUE)
             return B.ERR_QUEUE
-        g, s = self.rd(L.INFO + 16), self.rd(L.INFO + 24)
+        g = self.rd(layout.info + 8 * layout.info_words["rings"])
+        s = self.rd(layout.info + 8 * layout.info_words["stdio"])
         self.sq_n, self.cq_n, self.so, self.si = (
             g & 0xFFFF,
             g >> 16,
-            s & 0xFFFF_FFFF,
+            s & layout.stdio_mask,
             s >> 32,
         )
         if (
@@ -91,78 +101,160 @@ class SpecFirmware:
             or not self.cq_n
             or not self.so
             or not self.si
-            or self.so % L.LINE
-            or self.si % L.LINE
+            or self.so % layout.line
+            or self.si % layout.line
         ):
             self._fatal(B.EXIT_BOOTARGS | B.ERR_QUEUE)
             return B.ERR_QUEUE
-        self.sq = self.q + L.SQ
-        self.cq = self.sq + 64 * self.sq_n
-        self.so_at = -(-(self.cq + 32 * self.cq_n) // L.LINE) * L.LINE
+        self.sq = self.q + layout.sq
+        self.cq = self.sq + layout.sq_bytes * self.sq_n
+        self.so_at = (
+            -(-(self.cq + layout.cq_bytes * self.cq_n) // layout.line) * layout.line
+        )
         self.si_at = self.so_at + self.so
         self.rec_at = self.si_at + self.si
-        self.wr(L.FW + 8, L.VERSION)
-        self.wr(L.FW, L.ST_READY)
+        self.wr(layout.fw + 8 * layout.fw_abi, layout.version)
+        self.epoch = self.rd(layout.epoch)
+        self.wr(layout.list_abi, layout.list_version)
+        self.wr(layout.fw + 8 * layout.fw_state, layout.st_ready)
         return 0
 
     def print(self, text: str):
-        wr = self.rd(L.SO_WR)
+        wr = self.rd(self.layout.so_wr)
         for ch in text.encode():
             at = wr % self.so
             word = self.m.read64(self.so_at + (at & ~7))
             word = (word & ~(0xFF << 8 * (at & 7))) | ch << 8 * (at & 7)
             self.m.write64(self.so_at + (at & ~7), word)
             wr += 1
-        self.wr(L.SO_WR, wr)
+        self.wr(self.layout.so_wr, wr)
 
     def entry(self, i):
-        return [self.m.read64(self.sq + (i % self.sq_n) * 64 + 8 * k) for k in range(8)]
+        return [
+            self.m.read64(self.sq + (i % self.sq_n) * self.layout.sq_bytes + 8 * k)
+            for k in range(self.layout.sq_words)
+        ]
 
     def read_run(self, e):
         """A RUN entry's package bytes and bindings."""
-        nbind = (e[0] >> 16) & 0xFFFF
-        pkg = self.m.read_block(e[2], e[3])
-        binds = [self.m.read64(e[4] + 8 * k) for k in range(nbind)] if e[4] else []
+        layout = self.layout
+        nbind = (e[layout.run_op] >> layout.nbind_shift) & 0xFFFF
+        pkg = self.m.read_block(e[layout.run_pkg], e[layout.run_bytes])
+        binds = (
+            [self.m.read64(e[layout.run_bind] + 8 * k) for k in range(nbind)]
+            if e[layout.run_bind]
+            else []
+        )
         return pkg, binds
 
     def step(self):
-        head, tail = self.rd(L.SQ_HEAD), self.rd(L.SQ_TAIL)
+        layout = self.layout
+        head, tail = self.rd(layout.sq_head), self.rd(layout.sq_tail)
         if head == tail:
             return
         ahead = self.next is not None and self.next[0] == head
         e = self.next[1] if ahead else self.entry(head)
         self.next = None
-        op = e[0] & 0xFF
-        status, value, time = L.OK, 0, {}
-        if op == L.OP_RUN:
+        op = e[layout.run_op] & layout.op_mask
+        self.epoch = self.rd(layout.epoch)
+        self.list_index = self.item_tag = 0
+        status, detail, step_idx, value, time = layout.ok, 0, 0, 0, {}
+        if op == layout.op_run:
             pkg, binds = self.read_run(e)
             self.events.append(("start", head, ahead))
             self.print(f"run {len(pkg)}B {binds}\n")
             if self.interp:
                 res = self.interp.run(pkg, binds)
                 status, value = res.status, res.sent
-                time = getattr(res, "time", {})
+                if self.record is not None:
+                    time = res.time
+                if status != layout.ok:
+                    self.print(
+                        f"[ka] package {e[layout.run_tag]:x} failed: status {status:x} "
+                        f"detail {detail:x} step {step_idx} value {value:x}\n"
+                    )
             # Read only entry words; package bytes remain mutable until execution.
             nxt = head + 1
-            if self.ahead and status == L.OK and nxt != self.rd(L.SQ_TAIL):
+            if self.ahead and status == layout.ok and nxt != self.rd(layout.sq_tail):
                 self.next = (nxt, self.entry(nxt))
                 self.events.append(("ahead", nxt, head))
-        elif op not in (L.OP_NOP, L.OP_STOP):
-            status = 0x40
-        ct = self.rd(L.CQ_TAIL)
-        assert ct - self.rd(L.CQ_HEAD) < self.cq_n
+        elif op == layout.op_list:
+            epoch = e[layout.list_epoch]
+            if (
+                epoch != self.epoch
+                or e[layout.list_version_word] != layout.list_version
+                or e[layout.list_flags]
+            ):
+                status = layout.bad_arg
+                detail = 1 if epoch != self.epoch else 2
+                value = epoch
+            else:
+                for i in range(e[layout.list_count]):
+                    item = [
+                        self.m.read64(e[layout.list_addr] + i * layout.sq_bytes + 8 * k)
+                        for k in range(layout.sq_words)
+                    ]
+                    self.list_index, self.item_tag = i, item[layout.run_tag]
+                    item_op = item[layout.run_op] & layout.op_mask
+                    if item_op != layout.op_run:
+                        status, detail, step_idx, value = layout.bad_op, item_op, 0, 0
+                    else:
+                        pkg, binds = self.read_run(item)
+                        self.events.append(("list-item", i, self.item_tag))
+                        if self.interp:
+                            res = self.interp.run(pkg, binds)
+                            status = res.status
+                            if status != layout.ok:
+                                value = res.sent
+                            else:
+                                value += res.sent
+                            if self.record is not None:
+                                for key, cycles in res.time.items():
+                                    time[key] = time.get(key, 0) + cycles
+                    if status != layout.ok:
+                        self.print(
+                            f"[ka] package {self.item_tag:x} failed: status {status:x} "
+                            f"detail {detail:x} step {step_idx} value {value:x}\n"
+                        )
+                        break
+                    self.list_index = i + 1
+        elif op not in (layout.op_nop, layout.op_stop):
+            status, detail = layout.bad_op, op
+        ct = self.rd(layout.cq_tail)
+        assert ct - self.rd(layout.cq_head) < self.cq_n
         if self.record is not None:
-            self.write_record(ct % self.cq_n, e[1], time)
-        at = self.cq + (ct % self.cq_n) * 32
-        for k, v in enumerate((e[1], status, 0, value)):
-            self.m.write64(at + 8 * k, v)
-        self.wr(L.CQ_TAIL, ct + 1)
+            self.write_record(ct % self.cq_n, e[layout.run_tag], time)
+        at = self.cq + (ct % self.cq_n) * layout.cq_bytes
+        mask = layout.cq_status_mask
+        word1 = (status & mask) | ((detail & mask) << 16) | (step_idx << 32)
+        self.m.write64(at + layout.cq_tag, e[layout.run_tag])
+        self.m.write64(at + layout.cq_status, word1)
+        self.m.write64(at + layout.cq_cycles, 0)
+        self.m.write64(at + layout.cq_value, value)
+        self.wr(layout.cq_tail, ct + 1)
         self.events.append(("complete", head, status))
-        self.wr(L.SQ_HEAD, head + 1)
+        self.wr(layout.sq_head, head + 1)
 
     def write_record(self, slot: int, tag: int, time: dict) -> None:
         """Write the run record before its CQ entry (L0.NQ.056)."""
-        base = self.rec_at + slot * self.record["bytes"]
-        words = {"tag": tag, "so_wr": self.rd(L.SO_WR), **time}
-        for name, off in self.record["fields"].items():
+        nbytes = (
+            self.record.nbytes
+            if isinstance(self.record, L.Record)
+            else self.record["bytes"]
+        )
+        fields = (
+            {k: off for k, (off, _) in self.record.fields.items()}
+            if isinstance(self.record, L.Record)
+            else self.record["fields"]
+        )
+        base = self.rec_at + slot * nbytes
+        words = {
+            "tag": tag,
+            "so_wr": self.rd(self.layout.so_wr),
+            "list_index": self.list_index,
+            "item_tag": self.item_tag,
+            "epoch": self.epoch,
+            **time,
+        }
+        for name, off in fields.items():
             self.m.write64(base + off, words.get(name, 0))

@@ -172,7 +172,7 @@ def test_replay_and_checker_off_still_use_receiving_policy():
     receiver.check = "off"
     with pytest.raises(ValueError, match="forbids mover_quant GO"):
         receiver.replay([("run", {0: (raw, ())})])
-    fake = SimpleNamespace(machine_json=receiver.machine_json)
+    fake = SimpleNamespace(machine_json=receiver.machine_json, admission_cached=True)
     with pytest.raises(ValueError, match="forbids mover_quant GO"):
         NodeCard._submit(fake, 0, raw, ())
 
@@ -250,7 +250,9 @@ def test_prepared_replay_admits_each_package_before_pinning_it():
     pinned = []
     queue = SimpleNamespace(prepared_bytes=0, prepare=pinned.append)
     fake = SimpleNamespace(
-        machine_json=OfflineCard("multimesh_v9t6").machine_json, queues={0: queue}
+        machine_json=OfflineCard("multimesh_v9t6").machine_json,
+        queues={0: queue},
+        admission_cached=True,
     )
     with pytest.raises(ValueError, match="forbids mover_quant GO"):
         NodeCard.prepare_recorded(fake, [("run", {0: (raw, ())})], 1 << 24)

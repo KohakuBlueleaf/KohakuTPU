@@ -27,9 +27,21 @@ from dataclasses import dataclass, field, replace
 
 from kohakuaccel.driver.node.queue import NodeError
 from kohakuaccel.driver.runtime.mmu import SoftwareMMU
-from kohakutpu.application.runtime import generated, launch_boundary
+from kohakutpu.application.runtime import (
+    generated,
+    launch_boundary,
+    native_direct,
+    replay_budget,
+)
 from kohakutpu.application.runtime.arena import OutOfMemory
-from kohakutpu.application.runtime.card import TRANSPORTS, SiliconCard, VerilatorCard
+from kohakutpu.application.runtime.card import (
+    RESIDENT_ENV,
+    TRANSPORTS,
+    ResidentMode,
+    SiliconCard,
+    VerilatorCard,
+    parse_resident_mode,
+)
 from kohakutpu.application.runtime.class_library import ClassLibrary
 from kohakutpu.application.runtime.offline import OfflineCard
 from kohakutpu.application.runtime.packages import Prebuilt, placed
@@ -48,6 +60,7 @@ BUILD_ENV = "KOHAKUTPU_SIM_BUILD"
 NODES_ENV = "KOHAKUTPU_SIM_NODES"
 #: The required board a device opens (boards/<name>.json).
 BOARD_ENV = "KOHAKUTPU_BOARD"
+ON_DEVICE_INIT: list = []
 #: `sim` the Verilated card, `card` the card itself, `offline` nothing
 #: attached (every run compiled, checked and encoded; nothing executed).
 KINDS = ("sim", "card", "offline")
@@ -91,6 +104,7 @@ class Recorded(list):
         self.owner = owner
         self.closed = False
         self.prepared = None
+        self.list_events = self.list_runs = None
 
     def close(self):
         if not self.closed:
@@ -155,6 +169,25 @@ class Device:
         classes: bool | None = None,
         queue_depth: int | None = None,
     ) -> None:
+        self.recipe_epoch = rs._rs.RecipeEpoch()
+        self._library = self._machine = None
+        self.kernels: OrderedDict = OrderedDict()
+        self.specialisations: OrderedDict = OrderedDict()
+        self.eager_schedules = None
+        self.eager_calls = None
+        self.eager_sequences = None
+        self.eager_recipes = None
+        self._recipe_capture = None
+        self._recipe_recording = None
+        self._recipe_submitting = False
+        self.eager_exec = os.environ.get("KTPU_EAGER_EXEC", "0") == "1"
+        self.auto_sequence = os.environ.get("KTPU_AUTO_SEQUENCE", "0") == "1"
+        self.eager_recipe_enabled = os.environ.get("KTPU_EAGER_RECIPE", "0") == "1"
+        self.native_recipe = os.environ.get("KTPU_NATIVE_RECIPE", "0") == "1"
+        self.wire_recipe = os.environ.get("KTPU_WIRE_RECIPE", "0") == "1"
+        self.eager_flush = os.environ.get("KOHAKUTPU_EAGER_FLUSH", "1") == "1"
+        self.specialise_cache = os.environ.get("KTPU_SPECIALISE_CACHE", "1") == "1"
+        self._resident_mode = parse_resident_mode(os.environ.get(RESIDENT_ENV))
         class_mode = os.environ.get("KOHAKUTPU_LIBRARY_CLASSES", "1")
         if classes is None and class_mode not in ("0", "1"):
             raise ValueError("KOHAKUTPU_LIBRARY_CLASSES must be 0 or 1")
@@ -179,11 +212,23 @@ class Device:
         if prepared not in ("0", "1"):
             raise ValueError(f"{PREPARED_REPLAY_ENV} must be 0 or 1")
         self.prepared_replay = prepared == "1"
-        self.replay_package_bytes = int(
-            os.environ.get(REPLAY_PACKAGE_BYTES_ENV, str(16 << 20))
+        self.execution_list = os.environ.get("KOHAKUTPU_EXECUTION_LIST", "0") == "1"
+        if self.execution_list and not self.prepared_replay:
+            raise ValueError("execution lists require prepared replay")
+        replay_bytes = os.environ.get(REPLAY_PACKAGE_BYTES_ENV)
+        self.replay_package_bytes = None if replay_bytes is None else int(replay_bytes)
+        if self.replay_package_bytes is not None and self.replay_package_bytes < 0:
+            raise ValueError("replay package byte budget must be nonnegative")
+        self.replay_package_fraction = float(
+            os.environ.get(
+                replay_budget.FRACTION_ENV, str(replay_budget.DEFAULT_FRACTION)
+            )
         )
-        if self.replay_package_bytes < 1:
-            raise ValueError("replay package byte budget must be positive")
+        if not 0.0 <= self.replay_package_fraction <= 1.0:
+            raise ValueError("replay package fraction must be in [0, 1]")
+        self.replay_overcommit = (
+            os.environ.get(replay_budget.OVERCOMMIT_ENV, "0") == "1"
+        )
         kind = kind or os.environ.get(DEVICE_ENV, "sim")
         if kind not in KINDS:
             raise ValueError(f"{DEVICE_ENV}={kind!r}: one of {', '.join(KINDS)}")
@@ -197,7 +242,11 @@ class Device:
         self.kind, self.nodes = kind, nodes
         if kind == "offline":
             self.build = None
-            self.card = OfflineCard(board, nodes=tuple(range(nodes)))
+            self.card = OfflineCard(
+                board,
+                nodes=tuple(range(nodes)),
+                resident_mode=self._resident_mode,
+            )
         elif kind == "card":
             self.build = None
             self.card = SiliconCard(
@@ -205,6 +254,7 @@ class Device:
                 transport=transport or os.environ.get(TRANSPORT_ENV, "jtag"),
                 nodes=tuple(range(nodes)),
                 profile=os.environ.get(PROFILE_ENV, "idle"),
+                resident_mode=self._resident_mode,
             )
         else:
             build = pathlib.Path(
@@ -220,12 +270,31 @@ class Device:
             )
             self.build = build
             self.card = VerilatorCard(
-                build, board=board, nodes=tuple(range(nodes)), log=log
+                build,
+                board=board,
+                nodes=tuple(range(nodes)),
+                log=log,
+                resident_mode=self._resident_mode,
             )
         self.machine = self.card.machine
         #: The card's memory, which every allocation here comes from.
         self.memory = self.card.memory
-        self.mmu = SoftwareMMU()
+        self.mmu = (
+            rs._rs.NativeMMU()
+            if self.memory.arena_cls is rs._rs.Arena
+            else SoftwareMMU()
+        )
+        try:
+            if os.environ.get("KTPU_NATIVE_DIRECT", "0") == "1":
+                native_direct.attach(self)
+            for callback in ON_DEVICE_INIT:
+                callback()
+        except BaseException as error:
+            try:
+                self.card.close()
+            except BaseException as close_error:  # noqa: BLE001
+                error.add_note(f"close failed: {close_error!r}")
+            raise
         self.closed = False
         self.dram = self.memory.dram
         #: Physical capacity, before queue/scratch reservations.
@@ -267,16 +336,44 @@ class Device:
             "compile_seconds": 0.0,
             "kernel_reuses": 0,
         }
-        #: (graph text, mutant, classes) -> (Compiled, hit kind), newest last
-        #: (`kernel`)
-        self.kernels: OrderedDict = OrderedDict()
-        self.specialisations: OrderedDict = OrderedDict()
         #: folded constants uploaded once, by content (`forms.table`)
         self.tables: dict = {}
         for queue in getattr(self.card, "queues", {}).values():
             queue.spill = lambda size: self._take(
                 lambda: self.memory.alloc(size, owner="package")
             )
+
+    @property
+    def resident_mode(self) -> ResidentMode:
+        if rs._MUTANT.get() == "app.device/unlatched_resident":
+            return parse_resident_mode(os.environ.get(RESIDENT_ENV))
+        return self._resident_mode
+
+    @resident_mode.setter
+    def resident_mode(self, value: str | ResidentMode | None) -> None:
+        mode = parse_resident_mode(value)
+        self._resident_mode = mode
+        self.card.resident_mode = mode
+
+    @property
+    def library(self):
+        return self._library
+
+    @library.setter
+    def library(self, value):
+        if value != self._library:
+            self._invalidate_eager()
+        self._library = value
+
+    @property
+    def machine(self):
+        return self._machine
+
+    @machine.setter
+    def machine(self, value):
+        if value is not self._machine:
+            self._invalidate_eager()
+        self._machine = value
 
     def kernel(self, source, graph=None, traced=None):
         """The `Compiled` of graph `source`, kept by its text: a launch seen
@@ -333,8 +430,22 @@ class Device:
             rs._ZERO_SIGN.get(),
         )
 
+    def _invalidate_eager(self):
+        if rs._MUTANT.get() == "app.device/keeps_eager":
+            return
+        self.recipe_epoch.invalidate()
+        if self.eager_recipes is not None:
+            self.eager_recipes.clear()
+        if self.eager_schedules is not None:
+            self.eager_schedules.clear()
+        if self.eager_calls is not None:
+            self.eager_calls.clear()
+        if self.eager_sequences is not None:
+            self.eager_sequences.clear()
+
     def invalidate_library(self):
         """After replacing entries in the current library, discard compiled views."""
+        self._invalidate_eager()
         self.kernels.clear()
         self.specialisations.clear()
 
@@ -363,7 +474,7 @@ class Device:
             return rs.compile(source, json.loads(source)["name"], self.machine)
 
     def specialise(self, kernel, given, **consts):
-        cached = os.environ.get("KTPU_SPECIALISE_CACHE", "1") == "1"
+        cached = self.specialise_cache
         key = (
             kernel,
             tuple(sorted(given.items())),
@@ -408,8 +519,12 @@ class Device:
     ) -> int:
         if self._placement is not None:
             pool, site, cursors = self._placement
-            return pool.alloc(site, cursors, nbytes, space, node, owner)
-        return self._alloc(nbytes, space, node, owner)
+            address = pool.alloc(site, cursors, nbytes, space, node, owner)
+        else:
+            address = self._alloc(nbytes, space, node, owner)
+        if self._recipe_recording is not None:
+            self._recipe_recording.on_alloc(address, nbytes, space, node, owner)
+        return address
 
     def _alloc(self, nbytes, space, node, owner):
         line = self.line_bytes
@@ -509,6 +624,8 @@ class Device:
     def free(self, addr: int) -> None:
         if self.closed:
             return
+        if self._recipe_recording is not None:
+            self._recipe_recording.on_free(addr)
         entry, physical = self.mmu.resolve(addr, owner=True)
         if physical != entry.physical:
             raise ValueError("RUL.023: only an allocation's base can be freed")
@@ -516,6 +633,8 @@ class Device:
         self.mmu.retire(addr)
 
     def write(self, addr: int, raw: bytes) -> None:
+        if self._recipe_recording is not None:
+            self._recipe_recording.on_write(addr, raw)
         self.wait_address(addr, write=True)
         self._pin_record([addr])
         raw = bytes(raw)
@@ -532,6 +651,8 @@ class Device:
         self.counters["bytes_in"] += len(raw)
 
     def read(self, addr: int, nbytes: int) -> bytes:
+        if self._recipe_recording is not None:
+            self._recipe_recording.on_read()
         self.wait_address(addr)
         self._pin_record([addr])
         n = -(-int(nbytes) // self.card.line) * self.card.line
@@ -591,7 +712,7 @@ class Device:
             yield
         finally:
             self._scope = old
-            if old is None and os.environ.get("KOHAKUTPU_EAGER_FLUSH", "1") == "1":
+            if old is None and self.eager_flush:
                 for queue in getattr(self.card, "queues", {}).values():
                     queue.flush()
 
@@ -660,6 +781,14 @@ class Device:
         At most `max_inflight` runs
         are held; past that the oldest is collected first, and when memory
         pressure collects the oldest and retries after each completion."""
+        if self._recipe_recording is not None and not self._recipe_submitting:
+            self._recipe_submitting = True
+            try:
+                return self._recipe_recording.on_submit(
+                    self.submit, compiled, binds, kind, info
+                )
+            finally:
+                self._recipe_submitting = False
         launch_boundary.before_submit(self)
         self._healthy()
         if self.closed:
@@ -784,9 +913,9 @@ class Device:
                 }
                 self.counters["class_hits"] -= 1
                 self.counters["exact_hits"] += 1
-            use_lower = os.environ.get("KOHAKUTPU_RESIDENT", "0") == "0"
+            use_lower = self.resident_mode.stateless
             for program in progs.values():
-                if not isinstance(program, Prebuilt):
+                if not isinstance(program, Prebuilt) or program.recipe is not None:
                     continue
                 try:
                     program.bound(use_lower)
@@ -813,6 +942,8 @@ class Device:
             )
             if self._scope is not None:
                 s.info["plan"] = self._scope[0]
+            if self._recipe_capture is not None:
+                self._recipe_capture(compiled, full, progs, s)
             publication = getattr(self.card, "publication_epoch", None)
             submitting = True
             if hasattr(self.card, "submit"):
@@ -975,7 +1106,36 @@ class Device:
             and hasattr(self.card, "prepare_recorded")
             and log.prepared is None
         ):
-            log.prepared = self.card.prepare_recorded(log, self.replay_package_bytes)
+            log.prepared = self.card.prepare_recorded(
+                log,
+                self.replay_package_bytes,
+                self.max_inflight,
+                fraction=self.replay_package_fraction,
+                overcommit=self.replay_overcommit,
+            )
+            if self.execution_list:
+                try:
+                    events, groups = self.card.prepare_execution(log.prepared)
+                    log.list_events, log.list_runs = events, []
+                    for group in groups:
+                        runs = [log.runs[i] for i in group]
+                        refs = list(dict.fromkeys(r for run in runs for r in run[3]))
+                        writes = list(dict.fromkeys(r for run in runs for r in run[4]))
+                        nodes = tuple(dict.fromkeys(n for run in runs for n in run[5]))
+                        log.list_runs.append(
+                            (
+                                "replay-list",
+                                "replay",
+                                {"launches": len(group)},
+                                refs,
+                                writes,
+                                nodes,
+                            )
+                        )
+                except BaseException:
+                    log.prepared.close()
+                    log.prepared = None
+                    raise
 
     def _replay_queued(self, log):
         if any(ev[0] == "read" for ev in log):
@@ -988,8 +1148,15 @@ class Device:
             self.card.submit_recorded if prepared is None else self.card.submit_prepared
         )
         metadata = iter(log.runs)
+        events = log if prepared is None else prepared
+        if self.execution_list and prepared is not None:
+            events, metadata, submit = (
+                log.list_events,
+                iter(log.list_runs),
+                self.card.submit_execution,
+            )
         out = []
-        for ev in log if prepared is None else prepared:
+        for ev in events:
             if ev[0] == "write":
                 # Log addresses are physical; the recording owns their spans.
                 refs = [
@@ -1023,7 +1190,12 @@ class Device:
             )
             publication = getattr(self.card, "publication_epoch", None)
             try:
-                s.pending = submit(ev[1])
+                selected_submit = (
+                    self.card.submit_prepared
+                    if self.execution_list and prepared is not None and ev[0] == "run"
+                    else submit
+                )
+                s.pending = selected_submit(ev[1])
             except BaseException:
                 if publication is None or self.card.publication_epoch != publication:
                     self._uncertain.append(s)
@@ -1046,10 +1218,14 @@ class Device:
         finally:
             # No reservation is revoked until card shutdown succeeds.
             result = self.card.close()
+            if self.card.native_direct is not None:
+                self.card.native_direct.close(shutdown=True)
             for queue in getattr(self.card, "queues", {}).values():
                 if hasattr(queue, "discard_packages"):
                     queue.discard_packages()
             self.closed = True
+            if self.eager_recipes is not None:
+                self.eager_recipes.clear()
             for arena in self.memory.arenas():
                 arena.close()
             self.inflight.clear()

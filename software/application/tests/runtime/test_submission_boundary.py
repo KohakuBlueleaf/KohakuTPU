@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from kohakuaccel.driver.node.queue import NodeQueue
+from kohakuaccel.driver.node.queue import layout as QL
 from kohakuaccel.driver.transport.memory import MemoryTransport
 from kohakutpu.application.runtime import packages as B
 from kohakutpu.application.runtime.card import NodeCard
@@ -15,6 +16,7 @@ from kohakutpu.compiler import _rs
 from kohakutpu.language import machine as MF
 
 MACHINE = (MF.MACHINES / "multimesh_v9t6.json").read_text(encoding="utf-8")
+LAYOUT = QL.Layout.from_machine(MACHINE)
 PACKAGE = _rs.package_build('{"credit":32}', "[]", MACHINE, defaults=False)
 
 
@@ -82,7 +84,7 @@ def test_marking_uncertain_on_refusal_is_killed(monkeypatch):
 
 def test_queue_publication_callback_is_after_upload_before_entry_write():
     mem = MemoryTransport()
-    q = NodeQueue(mem, 0x100000)
+    q = NodeQueue(mem, 0x100000, layout=LAYOUT)
     q.init()
     events = []
     original = mem.write_block
@@ -96,7 +98,7 @@ def test_queue_publication_callback_is_after_upload_before_entry_write():
     publish = events.index(("publish", None))
     entry = ("write", q.base + q.geo["sq"])
     assert 0 < publish < events.index(entry)
-    assert events[-1] == ("write", q.base + 0x80)
+    assert events[-1] == ("write", q.base + LAYOUT.sq_tail)
 
 
 def queued_device(nodes=1):
@@ -107,7 +109,7 @@ def queued_device(nodes=1):
     card.debug = False
     card._order, card._stdout, card._segs = {}, {}, {}
     card.mem = MemoryTransport()
-    card.q = NodeQueue(card.mem, 0x100000)
+    card.q = NodeQueue(card.mem, 0x100000, layout=LAYOUT)
     card.q.init()
     card.queues = {0: card.q}
     dev.card = card
@@ -205,7 +207,13 @@ def test_replay_upload_failure_releases_only_the_attempts_pins(monkeypatch, queu
 def test_queue_preparation_failure_releases_its_package(monkeypatch, phase):
     freed, published = [], []
     mem = MemoryTransport()
-    q = NodeQueue(mem, 0x100000, spill=lambda size: 0x800000, unspill=freed.append)
+    q = NodeQueue(
+        mem,
+        0x100000,
+        spill=lambda size: 0x800000,
+        unspill=freed.append,
+        layout=LAYOUT,
+    )
     q.init()
     if phase == "bindings":
         original = mem.write_block
@@ -260,7 +268,7 @@ def test_second_node_preparation_failure_after_first_publication_is_uncertain(
     monkeypatch,
 ):
     dev, offline = queued_device(nodes=2)
-    q = NodeQueue(dev.card.mem, 0x200000)
+    q = NodeQueue(dev.card.mem, 0x200000, layout=LAYOUT)
     q.init()
     dev.card.queues[1] = q
     dev.card.nodes = (0, 1)

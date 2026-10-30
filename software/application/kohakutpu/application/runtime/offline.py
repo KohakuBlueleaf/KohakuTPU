@@ -9,11 +9,18 @@ nothing (compile only: the arrays keep what the host wrote), or a model.
     card.run(program)                              # checked, scheduled, encoded
 """
 
+import os
+
+from kohakuaccel.driver.node.queue import layout as QL
 from kohakutpu.application.runtime import packages as B
 from kohakutpu.application.runtime.card import (
+    _UNSET,
     ARENA,
     Q_SIZE,
+    RESIDENT_ENV,
     NodeCard,
+    ResidentMode,
+    parse_resident_mode,
 )
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.application.runtime.memory import CardMemory
@@ -66,18 +73,29 @@ class OfflineCard:
     built)` (``built``: ``{node: (Package, bindings)}``) runs the packages
     and returns the run's result; None compiles only."""
 
+    _eager_batch = None
+    native_direct = None
+    native_direct_suspended = False
+    _publication_epoch = 0
+    resident_mode = NodeCard.resident_mode
+    submit_cache = NodeCard.submit_cache
+    admission_cached = NodeCard.admission_cached
+    host = None
+
     def __init__(
         self,
         board: str,
         nodes: tuple[int, ...] = (0,),
         check: str = "refuse",
         execute=None,
+        resident_mode: str | ResidentMode | None | object = _UNSET,
     ) -> None:
         self.board = load_board(board)
         mp = board_map(self.board)
         span = max(nodes) + 1
         self.machine = machine_of(self.board, nodes=span)
         self.machine_json = self.machine.machine_json
+        self.queue_layout = QL.Layout.from_machine(self.machine_json)
         b = self.board
         self.fetch = tuple(b["fetch_port"]) if "fetch_port" in b else None
         #: The sysnode clock a run's cycles count, at the board's idle profile.
@@ -102,6 +120,15 @@ class OfflineCard:
         )
         self.log: list | None = None
         self.runs = 0
+        self.queues = {}
+        self._eager_batch = None
+        self.native_direct = None
+        self.native_direct_suspended = False
+        self._publication_epoch = 0
+        self._resident_mode = parse_resident_mode(
+            os.environ.get(RESIDENT_ENV) if resident_mode is _UNSET else resident_mode
+        )
+        self._admission_cached = B.admission_cached()
         self.residents = {n: _rs.Cores(self.machine_json) for n in self.nodes}
         self.resident = self.residents[self.nodes[0]]
 
@@ -129,7 +156,14 @@ class OfflineCard:
         single = not isinstance(program, dict)
         progs = B.placed(program, self.nodes)
         self.verify(progs)
-        both = B.built(progs, self.machine, self.fetch, self.residents)
+        both = B.built(
+            progs,
+            self.machine,
+            self.fetch,
+            self.residents,
+            resident=self.resident_mode.resident,
+            cached=self.admission_cached,
+        )
         built = {n: (pkg, b) for n, (_, pkg, b) in both.items()}
         raw = {n: (pkg.to_bytes(), tuple(b)) for n, (pkg, b) in built.items()}
         if self.log is not None:
@@ -156,6 +190,22 @@ class OfflineCard:
         }
         return {"cycles": 0, "nodes": out}
 
+    def submit_wire(self, raw, debug):
+        """Native preparation already checked admission; execute the resulting bytes."""
+        if self._eager_batch is not None and not self._eager_batch._submitting:
+            return self._eager_batch.wire(raw, debug)
+        if self.log is not None:
+            self.log.append(("run", raw))
+        self.runs += 1
+        built = {
+            n: (B.Package(data, self.machine_json, n), bindings)
+            for n, (data, bindings) in raw.items()
+        }
+        if self.execute is not None:
+            self._publishing()
+            return self.execute(self, built)
+        return {"cycles": 0, "steps": [], "phases": {}}
+
     def replay(self, log: list) -> list:
         """A recorded log again: its writes land, its runs are runs of the
         packages it holds (`execute` given them), each 0 cycles here."""
@@ -168,7 +218,13 @@ class OfflineCard:
                 self.mem.write_block(ev[1], ev[2])
             elif ev[0] == "run":
                 for n, (raw, bindings) in ev[1].items():
-                    B.admit(raw, self.machine_json, n, tuple(bindings))
+                    B.admit(
+                        raw,
+                        self.machine_json,
+                        n,
+                        tuple(bindings),
+                        cached=self.admission_cached,
+                    )
                 cycles.append(0)
         self.runs += sum(1 for ev in log if ev[0] == "run")
         return cycles

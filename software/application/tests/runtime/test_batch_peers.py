@@ -1,5 +1,6 @@
 """All communicating nodes must be published before the first node is waited."""
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -8,6 +9,10 @@ from kohakuaccel.driver.node.queue import NodeQueue
 from kohakuaccel.driver.node.queue import layout as L
 from kohakuaccel.driver.transport.memory import MemoryTransport
 from kohakutpu.application.runtime.card import NodeCard, Pending
+
+LAYOUT = L.Layout.from_machine(
+    Path(__file__).resolve().parents[4] / "machines/multimesh_v9t6.json"
+)
 
 
 class Arrived(Exception):
@@ -19,15 +24,17 @@ def test_partial_batch_publishes_all_peers():
     card.queues = {}
     card.timeout = 1
     for n in (0, 1):
-        q = NodeQueue(MemoryTransport(), 0x100000)
+        q = NodeQueue(MemoryTransport(), 0x100000, layout=LAYOUT)
         q.init()
         q.batch_size = 64
-        q.submit(None, op=L.OP_NOP)
+        q.submit(None, op=LAYOUT.op_nop)
         card.queues[n] = q
     first = card.queues[0]
 
     def wait(*args, **kw):
-        assert all(q.mem.read64(q.base + L.SQ_TAIL) == 1 for q in card.queues.values())
+        assert all(
+            q.mem.read64(q.base + LAYOUT.sq_tail) == 1 for q in card.queues.values()
+        )
         raise Arrived
 
     pending = Pending(False, {n: (1, None) for n in (0, 1)}, {})

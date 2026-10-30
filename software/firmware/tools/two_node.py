@@ -21,6 +21,7 @@ from kohakuaccel.driver.device import mover
 from kohakuaccel.driver.node.boot import BootArgs, NodeBoot
 from kohakuaccel.driver.node.boot.args import REGION_QUEUE, idle_bound
 from kohakuaccel.driver.node.queue import NodeQueue
+from kohakuaccel.driver.node.queue import layout as L
 from kohakuaccel.driver.transport.rebase import UnitGlobal
 from kohakuaccel.driver.transport.verilator import VerilatorTransport
 from kohakutpu.compiler import _rs
@@ -69,10 +70,12 @@ def main() -> int:
     mem = UnitGlobal(t, m["dram"], m["mem"], m["size"], staging=True)
     fails = 0
 
+    machine_json = (MF.MACHINES / "multimesh_v9t8.json").read_text(encoding="utf-8")
+    layout = L.Layout.from_machine(machine_json)
     queues = []
     for i in (0, 1):
         # Each node's queue in its own staging store (bit 39, mesh in [37:36]).
-        q = NodeQueue(mem, 1 << 39 | i << 36, idle=lambda: t.run(600))
+        q = NodeQueue(mem, 1 << 39 | i << 36, idle=lambda: t.run(600), layout=layout)
         q.init()
         NodeBoot(t, m["ctrl"][i], i, sim=t).load(
             a.fw,
@@ -93,7 +96,6 @@ def main() -> int:
     mem.write_block(m["dram"][0] + SRC, blob)
     mem.write_block(m["dram"][1] + DST, bytes(len(blob)))
 
-    machine_json = (MF.MACHINES / "multimesh_v9t8.json").read_text(encoding="utf-8")
     wait, push = packages(m["dram"][0] + SRC, m["dram"][1] + DST, machine_json)
 
     t1 = time.monotonic()

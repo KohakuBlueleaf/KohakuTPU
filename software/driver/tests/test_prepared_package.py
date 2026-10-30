@@ -1,12 +1,18 @@
 """Graph-owned package uploads outlive final completion, never queue reset."""
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from kohakuaccel.driver.node.queue import NodeQueue
+from kohakuaccel.driver.node.queue import layout as L
 from kohakuaccel.driver.node.queue.double import SpecFirmware
 from kohakuaccel.driver.transport.memory import MemoryTransport
+
+LAYOUT = L.Layout.from_machine(
+    Path(__file__).resolve().parents[3] / "machines/multimesh_v9t6.json"
+)
 
 
 def queue():
@@ -17,9 +23,9 @@ def queue():
         used.append(n)
         return at
 
-    q = NodeQueue(mem, 0x100000, spill=allocate, unspill=freed.append)
+    q = NodeQueue(mem, 0x100000, spill=allocate, unspill=freed.append, layout=LAYOUT)
     q.init()
-    fw = SpecFirmware(mem, q.base)
+    fw = SpecFirmware(mem, q.base, layout=LAYOUT)
     fw.boot()
     return q, fw, freed
 

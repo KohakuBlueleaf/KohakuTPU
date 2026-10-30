@@ -22,6 +22,7 @@ from harness.registry import MUTANTS, RUNNERS, SHAPED
 from runners.card import Session
 
 from kohakuaccel.driver.node.queue import NodeQueue, OverBudget
+from kohakuaccel.driver.node.queue import layout as QL
 from kohakuaccel.driver.transport.base import TransportUnavailable
 from kohakuaccel.driver.transport.memory import MemoryTransport
 from kohakutpu.application.runtime import card as RC
@@ -220,7 +221,8 @@ def test_skipped_baseline_skips_its_mutant(monkeypatch):
 def test_poisoned_poisons_debug_region_on_direct_queue_submit():
     mem = MemoryTransport()
     memory = CardMemory((0x10_0000, 0x40_0000), {0: (0x80_0000, 0x90_0000)})
-    q = NodeQueue(mem, 0x80_0000)
+    layout = QL.Layout.from_machine(machine.MACHINES / "multimesh_v9t6.json")
+    q = NodeQueue(mem, 0x80_0000, layout=layout)
     q.init()
     dbg_base, rec, cap = 0x20_0000, 0x480, 0x200
     dbg_size = rec + cap

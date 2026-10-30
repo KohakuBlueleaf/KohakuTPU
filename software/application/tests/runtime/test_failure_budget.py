@@ -6,9 +6,12 @@ import pytest
 
 from kohakuaccel.driver.node.boot.args import bound
 from kohakuaccel.driver.node.queue import NodeError, NodeQueue
+from kohakuaccel.driver.node.queue import layout as QL
 from kohakuaccel.driver.node.queue.double import SpecFirmware
 from kohakuaccel.driver.transport.memory import MemoryTransport
 from kohakutpu.application.runtime import card
+
+LAYOUT = QL.Layout.from_machine(card.MACHINES / "multimesh_v9t6.json")
 
 
 def failed_run():
@@ -19,12 +22,13 @@ def failed_run():
     completion_at = 2 * wait_cycles + hz
     cycles = [0]
     mem = MemoryTransport()
-    q = NodeQueue(mem, 0x100000, clock=lambda: cycles[0] / hz)
+    q = NodeQueue(mem, 0x100000, clock=lambda: cycles[0] / hz, layout=LAYOUT)
     q.init()
     fw = SpecFirmware(
         mem,
         q.base,
         SimpleNamespace(run=lambda *args: SimpleNamespace(status=0x30, sent=0)),
+        layout=LAYOUT,
     )
     fw.boot()
 

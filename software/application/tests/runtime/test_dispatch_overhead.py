@@ -11,7 +11,6 @@ from tinygrad.dtype import dtypes
 from tinygrad.uop.ops import AxisType, UOp
 
 from kohakuaccel.driver.node.queue import NodeQueue
-from kohakuaccel.driver.node.queue import client as Q
 from kohakuaccel.driver.transport.memory import MemoryTransport
 from kohakutpu.application.ktpugrad import inference as I
 from kohakutpu.application.ktpugrad import run as R
@@ -117,8 +116,15 @@ def test_specialisation_hit_skips_trace_and_tracks_layout_library(monkeypatch):
         dev.invalidate_library()
         assert not dev.specialisations
         monkeypatch.setenv("KTPU_SPECIALISE_CACHE", "0")
-        with pytest.raises(AssertionError):
-            assert dev.specialise(kernel, given) is dev.specialise(kernel, given)
+        uncached = D.Device("offline", board="multimesh_v9t6", library="first")
+        monkeypatch.setattr(uncached, "kernel", lambda *a: object())
+        try:
+            with pytest.raises(AssertionError):
+                assert uncached.specialise(kernel, given) is uncached.specialise(
+                    kernel, given
+                )
+        finally:
+            uncached.close()
     finally:
         dev.close()
 
@@ -198,20 +204,26 @@ def test_eager_scope_publishes_before_next_plan_and_undo_is_caught(monkeypatch):
     monkeypatch.setenv("KOHAKUTPU_SUBMIT_BATCH", "4")
     dev = D.Device("offline", board="multimesh_v9t6")
     mem = MemoryTransport()
-    q = NodeQueue(mem, 0x100000)
+    q = NodeQueue(mem, 0x100000, layout=dev.card.queue_layout)
     q.init()
     dev.card.queues = {0: q}
     try:
         with dev.submission_scope("one"):
             q.submit(bytes(32))
-            assert mem.read64(q.base + Q.L.SQ_TAIL) == 0
-        assert mem.read64(q.base + Q.L.SQ_TAIL) == 1
+            assert mem.read64(q.base + q.layout.sq_tail) == 0
+        assert mem.read64(q.base + q.layout.sq_tail) == 1
         monkeypatch.setenv("KOHAKUTPU_EAGER_FLUSH", "0")
-        with dev.submission_scope("two"):
-            q.submit(bytes(32))
-        with pytest.raises(AssertionError):
-            assert mem.read64(q.base + Q.L.SQ_TAIL) == 2
-        q.flush()
+        dev2 = D.Device("offline", board="multimesh_v9t6")
+        dev2.card.queues = {0: q}
+        try:
+            with dev2.submission_scope("two"):
+                q.submit(bytes(32))
+            with pytest.raises(AssertionError):
+                assert mem.read64(q.base + q.layout.sq_tail) == 2
+            q.flush()
+        finally:
+            dev2.card.queues = {}
+            dev2.close()
     finally:
-        del dev.card.queues
+        dev.card.queues = {}
         dev.close()

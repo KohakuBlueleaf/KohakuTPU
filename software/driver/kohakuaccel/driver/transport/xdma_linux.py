@@ -23,6 +23,7 @@ import mmap
 import os
 import pathlib
 import subprocess
+import threading
 import time
 
 from kohakuaccel.driver.transport.base import (
@@ -94,58 +95,65 @@ class XdmaLinux(Transport):
         self._staging = mmap.mmap(-1, max_xfer)
         self._pread = None
         self._fds: list = []
+        self._native_lock = threading.RLock()
+        self.fd_generation = 0
         self._open()
 
     # ------------------------------------------------------------ lifetime
     def _open(self) -> None:
-        if self._pread is None:
+        with self._native_lock:
+            if self._pread is None:
+                try:
+                    libc = ctypes.CDLL(None, use_errno=True)
+                except (OSError, TypeError) as exc:
+                    raise TransportUnavailable(f"not a Linux host ({exc})") from exc
+                # Plain pread into the staging pages: preadv faults the 2025.2
+                # driver (kernel BUG at fs/read_write.c on 6.8).
+                self._pread = libc.pread
+                self._pread.restype = ctypes.c_ssize_t
+                self._pread.argtypes = [
+                    ctypes.c_int,
+                    ctypes.c_void_p,
+                    ctypes.c_size_t,
+                    ctypes.c_longlong,
+                ]
+                self._addr = ctypes.addressof(ctypes.c_char.from_buffer(self._staging))
+            dev = f"/dev/xdma{self.index}"
             try:
-                libc = ctypes.CDLL(None, use_errno=True)
-            except (OSError, TypeError) as exc:
-                raise TransportUnavailable(f"not a Linux host ({exc})") from exc
-            # Plain pread into the staging pages: preadv faults the 2025.2
-            # driver (kernel BUG at fs/read_write.c on 6.8).
-            self._pread = libc.pread
-            self._pread.restype = ctypes.c_ssize_t
-            self._pread.argtypes = [
-                ctypes.c_int,
-                ctypes.c_void_p,
-                ctypes.c_size_t,
-                ctypes.c_longlong,
-            ]
-            self._addr = ctypes.addressof(ctypes.c_char.from_buffer(self._staging))
-        dev = f"/dev/xdma{self.index}"
-        try:
-            self._user = os.open(f"{dev}_user", os.O_RDWR | os.O_SYNC)
-            self._h2c = os.open(f"{dev}_h2c_0", os.O_WRONLY)
-            self._c2h = os.open(f"{dev}_c2h_0", os.O_RDONLY)
-        except OSError as exc:
-            self.close()
-            raise TransportUnavailable(
-                f"cannot open {dev}_*: is xdma.ko loaded and the card enumerated? ({exc})"
-            ) from exc
-        self._fds = [self._user, self._h2c, self._c2h]
-        self._lite = mmap.mmap(
-            self._user,
-            self.lite_bytes,
-            mmap.MAP_SHARED,
-            mmap.PROT_READ | mmap.PROT_WRITE,
-        )
-        # One 32-bit store per access: a bytewise copy is four AXI-Lite writes.
-        self._u32 = memoryview(self._lite).cast("I")
+                self._user = os.open(f"{dev}_user", os.O_RDWR | os.O_SYNC)
+                self._h2c = os.open(f"{dev}_h2c_0", os.O_WRONLY)
+                self._c2h = os.open(f"{dev}_c2h_0", os.O_RDONLY)
+            except OSError as exc:
+                self.close()
+                raise TransportUnavailable(
+                    f"cannot open {dev}_*: is xdma.ko loaded and the card enumerated? ({exc})"
+                ) from exc
+            self._fds = [self._user, self._h2c, self._c2h]
+            self.fd_generation += 1
+            self._lite = mmap.mmap(
+                self._user,
+                self.lite_bytes,
+                mmap.MAP_SHARED,
+                mmap.PROT_READ | mmap.PROT_WRITE,
+            )
+            # One 32-bit store per access: a bytewise copy is four AXI-Lite writes.
+            self._u32 = memoryview(self._lite).cast("I")
 
     def close(self) -> None:
-        u32 = getattr(self, "_u32", None)
-        if u32 is not None:
-            u32.release()
-            self._u32 = None
-            self._lite.close()
-        for fd in getattr(self, "_fds", []):
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-        self._fds = []
+        with self._native_lock:
+            if self._fds:
+                self.fd_generation += 1
+            u32 = getattr(self, "_u32", None)
+            if u32 is not None:
+                u32.release()
+                self._u32 = None
+                self._lite.close()
+            for fd in getattr(self, "_fds", []):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            self._fds = []
 
     def __del__(self) -> None:
         try:
@@ -254,27 +262,28 @@ class XdmaLinux(Transport):
             )
 
     def _retry(self, kind: str, at: int, n: int, xfer) -> None:
-        t0 = time.monotonic()
-        try:
-            xfer(at, n)
-        except OSError as exc:
-            self.faults.append(
-                {
-                    "kind": kind,
-                    "addr": at,
-                    "bytes": n,
-                    "error": str(exc),
-                    "seconds": time.monotonic() - t0,
-                    "after": dict(self.counts),
-                }
-            )
-            if self.recover is None:
-                raise
-            self.close()
-            self.recover()
-            self._open()
-            self.counts["recovered"] += 1
-            xfer(at, n)
+        with self._native_lock:
+            t0 = time.monotonic()
+            try:
+                xfer(at, n)
+            except OSError as exc:
+                self.faults.append(
+                    {
+                        "kind": kind,
+                        "addr": at,
+                        "bytes": n,
+                        "error": str(exc),
+                        "seconds": time.monotonic() - t0,
+                        "after": dict(self.counts),
+                    }
+                )
+                if self.recover is None:
+                    raise
+                self.close()
+                self.recover()
+                self._open()
+                self.counts["recovered"] += 1
+                xfer(at, n)
 
     def __repr__(self) -> str:
         return f"XdmaLinux(xdma{self.index}, {self.counts})"

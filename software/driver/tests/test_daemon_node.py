@@ -25,6 +25,7 @@ from kohakutpu.compiler import _rs
 from kohakutpu.language import machine as MF
 
 BASE, BASE1 = 0x10_0000, 0x50_0000
+LAYOUT = L.Layout.from_machine(MF.MACHINES / "multimesh_v9t6.json")
 
 
 def package(words=()):
@@ -45,7 +46,7 @@ def card():
         for fw in fws.values():
             fw.step()
 
-    d = Daemon(mem, node_mem=mem, poll_idle=step, port=0)
+    d = Daemon(mem, node_mem=mem, poll_idle=step, port=0, queue_layout=LAYOUT)
     port = d.start()
     yield d, port, mem, fws, polls
     d.stop()
@@ -53,7 +54,7 @@ def card():
 
 def _attach(port, fws, mem, node=0, base=BASE, **geo):
     q = RemoteNodeQueue(DaemonClient(port=port), node=node, base=base, **geo)
-    fw = SpecFirmware(mem, base)
+    fw = SpecFirmware(mem, base, layout=LAYOUT)
     fw.boot()
     fws[node] = fw
     return q
@@ -75,7 +76,11 @@ def test_submit_then_wait_and_a_reused_package(card):
     _, port, mem, fws, _ = card
     q = _attach(port, fws, mem)
     pkg = package([1, 2, 3])
-    tags = [q.submit(pkg), q.submit(pkg, bindings=[7]), q.submit(None, qop=L.OP_NOP)]
+    tags = [
+        q.submit(pkg),
+        q.submit(pkg, bindings=[7]),
+        q.submit(None, qop=LAYOUT.op_nop),
+    ]
     assert [q.wait(t).ok for t in reversed(tags)] == [True] * 3
     assert q.counters["cache_hits"] == 1 and q.counters["uploads"] == 1
 
@@ -138,7 +143,7 @@ def test_stop_and_unknown_node(card):
 def test_a_wait_times_out_without_wedging_the_daemon(card):
     _, port, mem, fws, _ = card
     q = _attach(port, fws, mem)
-    tag = q.submit(None, qop=L.OP_NOP)
+    tag = q.submit(None, qop=LAYOUT.op_nop)
     fws.pop(0)  # the firmware stops answering
     with pytest.raises(DaemonError, match="TimeoutError"):
         q.client.call("node_wait", node=0, tag=tag, timeout=0.3)

@@ -8,6 +8,7 @@ from itertools import pairwise
 
 import pytest
 
+from kohakuaccel.driver.node.queue import layout as QL
 from kohakuaccel.driver.node.queue.double import SpecFirmware
 from kohakuaccel.driver.transport.memory import MemoryTransport
 from kohakuaccel.simulation.package import Interpreter
@@ -131,8 +132,10 @@ def test_mark_and_release_free_what_was_placed_since():
 def test_a_spilled_package_never_lands_on_an_array():
     host = MemoryTransport()
     memory = CardMemory((ARENA, ARENA + (8 << 20)), {0: STAGE})
-    fw = SpecFirmware(host, QUEUE, Interpreter(Quiet(), reader=Reader()))
-    q = node_queue(host, QUEUE, memory, idle=fw.step)
+    text = (MF.MACHINES / "multimesh_v9t6.json").read_text(encoding="utf-8")
+    layout = QL.Layout.from_machine(text)
+    fw = SpecFirmware(host, QUEUE, Interpreter(Quiet(), reader=Reader()), layout=layout)
+    q = node_queue(host, QUEUE, memory, idle=fw.step, layout=layout)
     q.init()
     fw.boot()
 
@@ -147,7 +150,6 @@ def test_a_spilled_package_never_lands_on_an_array():
     host.write_block(rec, arrays[rec])
 
     words = (Q_SIZE - q.heap_off) // 32 + 64
-    text = (MF.MACHINES / "multimesh_v9t6.json").read_text(encoding="utf-8")
     big = _rs.package_build(
         '{"credit": 32}',
         json.dumps([["payload", 0xC0DE << 40 | k] for k in range(words)]),

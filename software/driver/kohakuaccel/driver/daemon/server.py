@@ -84,6 +84,7 @@ class Daemon:
         node_loader=None,
         poll_idle=None,
         poll_seconds: float = 0.002,
+        queue_layout: L.Layout | None = None,
     ) -> None:
         self.transport = transport
         self.board = board or {}
@@ -94,6 +95,7 @@ class Daemon:
         self.node_loader = node_loader
         self.poll_idle = poll_idle
         self.poll_seconds = poll_seconds
+        self.queue_layout = queue_layout
         self._nodes: dict[int, NodeQueue] = {}
         self._conns: dict[int, _Conn] = {}
         self._leases: dict[int, tuple[int, int, int, int]] = {}
@@ -336,12 +338,14 @@ class Daemon:
     def _op_node_attach(self, conn, msg):
         if self.node_mem is None:
             raise RuntimeError("daemon runs without node memory (node_mem)")
+        if self.queue_layout is None:
+            raise RuntimeError("daemon runs without queue layout (queue_layout)")
         geo = {
             k: msg[k]
             for k in ("size", "sq_n", "cq_n", "so_bytes", "si_bytes")
             if k in msg
         }
-        q = NodeQueue(self.node_mem, msg["base"], **geo)
+        q = NodeQueue(self.node_mem, msg["base"], layout=self.queue_layout, **geo)
         if msg.get("init", True):
             q.init()
         self._nodes[msg["node"]] = q
@@ -367,7 +371,7 @@ class Daemon:
         return q.submit(
             bytes.fromhex(pkg) if pkg is not None else None,
             msg.get("bindings"),
-            op=msg.get("qop", L.OP_RUN),
+            op=msg.get("qop", q.layout.op_run),
             timeout_cycles=msg.get("timeout_cycles", 0),
             flags=msg.get("flags", 0),
             arg=msg.get("arg", 0),
@@ -398,9 +402,9 @@ class Daemon:
         else:
             sub = dict(msg)
             if op == "node_nop":
-                sub["qop"] = L.OP_NOP
+                sub["qop"] = q.layout.op_nop
             elif op == "node_stop":
-                sub.update(qop=L.OP_STOP, arg=msg.get("value", 0))
+                sub.update(qop=q.layout.op_stop, arg=msg.get("value", 0))
             tag = await self._hw_call(self._submit, q, sub)
         c = await self._until(lambda: q.take(tag), timeout)
         out = dataclasses.asdict(c)

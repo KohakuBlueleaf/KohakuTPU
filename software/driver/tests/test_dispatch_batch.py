@@ -1,5 +1,6 @@
 """Publication ordering, ring wrap, CQ snapshot and bounded resident cache."""
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -12,7 +13,10 @@ from kohakuaccel.driver.node.queue.double import SpecFirmware
 from kohakuaccel.driver.transport.memory import MemoryTransport
 
 BASE = 0x100000
-RECORD = L.Record(1, 128, {"tag": (0, 8), "so_wr": (8, 8), "idle": (96, 8)})
+LAYOUT = L.Layout.from_machine(
+    Path(__file__).resolve().parents[3] / "machines/multimesh_v9t6.json"
+)
+RECORD = L.Record(1, 128, {"tag": (0, 8), "so_wr": (8, 8), "idle": (96, 8)}, 8)
 
 
 class Interpreter:
@@ -21,7 +25,7 @@ class Interpreter:
 
     def run(self, pkg, binds):
         self.seen.append((pkg, binds))
-        return SimpleNamespace(status=0, sent=len(pkg))
+        return SimpleNamespace(status=0, sent=len(pkg), time={})
 
 
 def queue(batch=4, bulk=True, cache=128):
@@ -33,7 +37,14 @@ def queue(batch=4, bulk=True, cache=128):
         return at
 
     q = NodeQueue(
-        mem, BASE, sq_n=4, cq_n=4, record=RECORD, spill=alloc, unspill=freed.append
+        mem,
+        BASE,
+        sq_n=4,
+        cq_n=4,
+        record=RECORD,
+        spill=alloc,
+        unspill=freed.append,
+        layout=LAYOUT,
     )
     q.batch_size, q.cq_bulk, q.resident_bytes = batch, bulk, cache
     q.init()
@@ -43,6 +54,7 @@ def queue(batch=4, bulk=True, cache=128):
         BASE,
         interp,
         record={"bytes": 128, "fields": {k: v[0] for k, v in RECORD.fields.items()}},
+        layout=LAYOUT,
     )
     fw.boot()
     q.idle = fw.step
@@ -56,8 +68,8 @@ def test_publication_after_all_entries_and_bindings():
 
     def write(addr, raw):
         original(addr, raw)
-        if addr == BASE + L.SQ_TAIL:
-            while fw.rd(L.SQ_HEAD) != fw.rd(L.SQ_TAIL):
+        if addr == BASE + LAYOUT.sq_tail:
+            while fw.rd(LAYOUT.sq_head) != fw.rd(LAYOUT.sq_tail):
                 fw.step()
             observed.extend(interp.seen)
 
@@ -72,7 +84,9 @@ def test_early_tail_mutant_is_caught(monkeypatch):
 
     def early(self):
         if self._staged:
-            self.mem.write_block(self.base + L.SQ_TAIL, L.line(self.sq_tail))
+            self.mem.write_block(
+                self.base + LAYOUT.sq_tail, LAYOUT.line_bytes(self.sq_tail)
+            )
         return original(self)
 
     monkeypatch.setattr(NodeQueue, "flush", early)
@@ -106,7 +120,10 @@ def test_bulk_reads_one_snapshot_and_one_ack():
     mem.blocks.clear()
     got = q.poll()
     assert len(got) == 4
-    assert mem.blocks == [(BASE + L.FW, q.geo["end"] - L.FW), (BASE + L.CQ_HEAD, 64)]
+    assert mem.blocks == [
+        (BASE + LAYOUT.fw, q.geo["end"] - LAYOUT.fw),
+        (BASE + LAYOUT.cq_head, 64),
+    ]
 
 
 def test_missing_completion_mutant_is_caught(monkeypatch):
@@ -136,8 +153,8 @@ def test_duplicate_final_never_masks_earlier_failure():
     tags = [q.submit(bytes([i]) * 32) for i in range(4)]
     for _ in tags:
         fw.step()
-    mem.write64(BASE + q.geo["cq"] + L.CQ_BYTES, tags[0])
-    mem.write64(BASE + q.geo["rec"] + L.REC_BYTES, tags[0])
+    mem.write64(BASE + q.geo["cq"] + LAYOUT.cq_bytes, tags[0])
+    mem.write64(BASE + q.geo["rec"] + LAYOUT.rec_bytes, tags[0])
     with pytest.raises(RecordSkew, match="stale"):
         q.poll()
     assert q.cq_head == 0 and not q._done and not freed
@@ -189,7 +206,7 @@ def test_failed_tail_poisoned_until_reset():
     original = mem.write_block
 
     def fail(addr, data):
-        if addr == BASE + L.SQ_TAIL:
+        if addr == BASE + LAYOUT.sq_tail:
             raise OSError("ambiguous tail")
         original(addr, data)
 

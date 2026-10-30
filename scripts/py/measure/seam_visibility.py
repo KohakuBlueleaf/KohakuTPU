@@ -15,8 +15,10 @@ from kohakuaccel.driver.node.queue.double import SpecFirmware
 from kohakuaccel.driver.transport.memory import MemoryTransport
 from kohakuaccel.driver.transport.xdma_linux import XdmaLinux
 from kohakutpu.application.runtime.card import firmware_wait_seconds
+from kohakutpu.language import machine as MF
 
 BASE = 1 << 40
+LAYOUT = L.Layout.from_machine(MF.MACHINES / "multimesh_v9t6.json")
 
 
 class Engine(XdmaLinux):
@@ -41,33 +43,38 @@ class Engine(XdmaLinux):
 
 def setup(head):
     engine, now = Engine(), [0.0]
-    q = NodeQueue(engine, BASE, sq_n=64, cq_n=64, clock=lambda: now[0])
+    q = NodeQueue(engine, BASE, sq_n=64, cq_n=64, clock=lambda: now[0], layout=LAYOUT)
     q.cq_bulk, q.head_cache, q.batch_size, q.backoff = False, True, 1, 0
     q.init()
-    fw = SpecFirmware(engine.memory, BASE)
+    fw = SpecFirmware(engine.memory, BASE, layout=LAYOUT)
     fw.boot()
     q.sq_tail = q.cq_head = q._sq_head_seen = q._tag = head
-    for offset in (L.SQ_TAIL, L.SQ_HEAD, L.CQ_TAIL, L.CQ_HEAD):
+    for offset in (LAYOUT.sq_tail, LAYOUT.sq_head, LAYOUT.cq_tail, LAYOUT.cq_head):
         engine.memory.write64(BASE + offset, head)
-    engine.memory.write64(BASE + L.FW + 16, head)
-    engine.memory.write64(BASE + q.geo["cq"] + head % 64 * L.CQ_BYTES, head + 1 - 64)
+    engine.memory.write64(BASE + LAYOUT.fw + 8 * LAYOUT.fw_done, head)
+    engine.memory.write64(
+        BASE + q.geo["cq"] + head % 64 * LAYOUT.cq_bytes, head + 1 - 64
+    )
     return engine, q, fw, now
 
 
 def step(engine, fw):
     fw.step()
-    engine.memory.write64(BASE + L.FW + 16, engine.memory.read64(BASE + L.SQ_HEAD))
+    engine.memory.write64(
+        BASE + LAYOUT.fw + 8 * LAYOUT.fw_done,
+        engine.memory.read64(BASE + LAYOUT.sq_head),
+    )
 
 
 def final_diagnostic_race():
     engine, q, fw, now = setup(3887)
-    tag = q.submit(None, op=L.OP_NOP)
+    tag = q.submit(None, op=LAYOUT.op_nop)
     polls = []
 
     def read(at):
-        if at == BASE + L.CQ_TAIL:
-            polls.append({"seconds": now[0], "tail": fw.rd(L.CQ_TAIL)})
-        if at == BASE + L.FW and now[0] > 300:
+        if at == BASE + LAYOUT.cq_tail:
+            polls.append({"seconds": now[0], "tail": fw.rd(LAYOUT.cq_tail)})
+        if at == BASE + LAYOUT.fw and now[0] > 300:
             engine.before_read = None
             step(engine, fw)
 
@@ -163,7 +170,7 @@ def ring_walk(count):
     q.idle = lambda: step(engine, fw)
     started = time.monotonic()
     for _ in range(count):
-        tag = q.submit(None, op=L.OP_NOP)
+        tag = q.submit(None, op=LAYOUT.op_nop)
         assert q.wait(tag).tag == tag
     return {
         "count": count,

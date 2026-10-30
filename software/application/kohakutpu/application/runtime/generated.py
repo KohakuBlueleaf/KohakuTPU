@@ -82,6 +82,9 @@ def from_output(dev, graph_data, output, traced=None):
         ),
         scratch=output.get("scratch"),
         bound=output["bound"],
+        recipe_scope=(dev.recipe_epoch, dev.recipe_epoch.generation),
+        native_recipe=dev.native_recipe,
+        wire_recipe=dev.wire_recipe,
     )
 
 

@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[4]
 LAYOUT_H = ROOT / "software/firmware/kohakuaccel/include/ka/queue/layout.h"
 BASE = 0x10_0000
 MACHINE = (MF.MACHINES / "multimesh_v9t6.json").read_text(encoding="utf-8")
+LAYOUT = L.Layout.from_machine(MACHINE)
 PACKAGE = _rs.package_build('{"credit":32}', "[]", MACHINE, defaults=False)
 
 
@@ -39,20 +40,28 @@ class Interp:
 
 def node_card():
     mem = MemoryTransport()
-    rec = {"bytes": L.REC_BYTES, "fields": offsets()}
-    fw = SpecFirmware(mem, BASE, record=rec)
+    rec = {"bytes": LAYOUT.rec_bytes, "fields": offsets()}
+    fw = SpecFirmware(mem, BASE, record=rec, layout=LAYOUT)
     fw.interp = Interp(fw.print)
     schema = {
         "version": 1,
-        "bytes": L.REC_BYTES,
+        "bytes": LAYOUT.rec_bytes,
+        "word": LAYOUT.rec_word,
         "fields": {k: {"offset": o, "width": 8} for k, o in rec["fields"].items()},
     }
-    q = NodeQueue(mem, BASE, idle=lambda: None, record=L.Record.from_schema(schema))
+    q = NodeQueue(
+        mem,
+        BASE,
+        idle=lambda: None,
+        record=L.Record.from_schema(schema),
+        layout=LAYOUT,
+    )
     q.track_ends = True
     q.init()
     fw.boot()
     c = object.__new__(C.NodeCard)
     c.machine_json = MACHINE
+    c.queue_layout = LAYOUT
     c.queues = {0: q}
     c._order, c._stdout, c._segs = {}, {}, {}
     return c, q, fw

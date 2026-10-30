@@ -4,12 +4,13 @@ Calls are unit-global read/write operations (one XDMA transfer below its ceiling
 not Verilator pipe commands. Firmware accesses bypass the counting wrapper.
 """
 
+import os
 from collections import defaultdict
 
-from kohakuaccel.driver.node.queue import layout as L
 from kohakuaccel.driver.node.queue.double import SpecFirmware
 from kohakutpu.application.runtime.card import NodeCard, node_queue
 from kohakutpu.application.runtime.offline import OfflineCard
+from kohakutpu.compiler import _rs
 
 
 class CountingMemory:
@@ -21,17 +22,18 @@ class CountingMemory:
 
     def purpose(self, addr, nbytes, write):
         for q in self.queues.values():
+            layout = q.layout
             off = addr - q.base
-            if off == L.FW and not write and nbytes > L.SQ:
+            if off == layout.fw and not write and nbytes > layout.sq:
                 return "cq_snapshot"
             fixed = {
-                L.SQ_TAIL: "sq_tail",
-                L.SQ_HEAD: "sq_head",
-                L.CQ_TAIL: "cq_poll",
-                L.CQ_HEAD: "cq_ack",
-                L.SO_WR: "stdout",
-                L.SO_RD: "stdout",
-                L.FW: "firmware_state",
+                layout.sq_tail: "sq_tail",
+                layout.sq_head: "sq_head",
+                layout.cq_tail: "cq_poll",
+                layout.cq_head: "cq_ack",
+                layout.so_wr: "stdout",
+                layout.so_rd: "stdout",
+                layout.fw: "firmware_state",
             }
             if off in fixed:
                 return fixed[off]
@@ -80,6 +82,7 @@ class CountingCard(OfflineCard):
     """Completes published work at idle, without predicting tensor values."""
 
     submit = NodeCard.submit
+    submit_wire = NodeCard.submit_wire
     _submit = NodeCard._submit
     collect = NodeCard.collect
     _collect = NodeCard._collect
@@ -89,26 +92,43 @@ class CountingCard(OfflineCard):
     submit_recorded = NodeCard.submit_recorded
     prepare_recorded = NodeCard.prepare_recorded
     submit_prepared = NodeCard.submit_prepared
+    prepare_execution = NodeCard.prepare_execution
+    submit_execution = NodeCard.submit_execution
     record_layout = NodeCard.record_layout
 
-    def __init__(self, board, nodes=(0,)):
-        super().__init__(board, nodes)
+    def __init__(self, board, nodes=(0,), resident_mode=None):
+        super().__init__(board, nodes, resident_mode=resident_mode)
         self.mem = CountingMemory(self.mem, self.memory)
         self.queues = {}
         self.firmware = {}
         self._order, self._stdout, self._segs = {}, {}, {}
         self.timeout = 1
         self.debug = False
+        self.submit_cache = os.environ.get("KOHAKUTPU_HOST_SUBMIT_CACHE", "1") == "1"
+        native_run = (
+            _rs.QueueRun(self.queue_layout)
+            if os.environ.get("KTPU_NATIVE_QUEUE", "0") == "1"
+            else None
+        )
         for n in nodes:
             base = self.memory.staging[n].lo - (1 << 20)
-            q = node_queue(self.mem, base, self.memory, record=self.record_layout(4))
+            q = node_queue(
+                self.mem,
+                base,
+                self.memory,
+                record=self.record_layout(self.queue_layout.version),
+                layout=self.queue_layout,
+            )
+            q.native_run = native_run
             q.init()
             q.track_ends = True
             schema = {
-                "bytes": L.REC_BYTES,
+                "bytes": self.queue_layout.rec_bytes,
                 "fields": {k: v[0] for k, v in q.record.fields.items()},
             }
-            fw = QuietFirmware(self.mem.inner, base, record=schema)
+            fw = QuietFirmware(
+                self.mem.inner, base, record=schema, layout=self.queue_layout
+            )
             fw.boot()
             self.queues[n], self.firmware[n] = q, fw
             q.idle = lambda n=n: self.advance(n)
@@ -122,8 +142,9 @@ class CountingCard(OfflineCard):
 
     def advance(self, node):
         q, fw = self.queues[node], self.firmware[node]
-        while fw.rd(L.SQ_HEAD) != fw.rd(L.SQ_TAIL):
-            if fw.rd(L.CQ_TAIL) - fw.rd(L.CQ_HEAD) >= q.cq_n:
+        layout = q.layout
+        while fw.rd(layout.sq_head) != fw.rd(layout.sq_tail):
+            if fw.rd(layout.cq_tail) - fw.rd(layout.cq_head) >= q.cq_n:
                 break
             fw.step()
 

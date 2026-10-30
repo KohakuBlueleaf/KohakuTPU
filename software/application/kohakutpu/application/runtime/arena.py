@@ -3,9 +3,9 @@
 import bisect
 import os
 
+from kohakutpu.compiler import _rs
 
-class OutOfMemory(MemoryError):
-    """No free span is large enough."""
+OutOfMemory = _rs.OutOfMemory
 
 
 class Arena:
@@ -25,6 +25,7 @@ class Arena:
         self.references: dict = {}
         self.released: set = set()
         self.peak = 0
+        self.high_water = start
         self.allocations = 0
         self.fast_lookup = os.environ.get("KOHAKUTPU_ARENA_LOOKUP", "1") == "1"
 
@@ -36,6 +37,7 @@ class Arena:
         self.allocations += 1
         self.generations[at] = self.allocations
         self.peak = max(self.peak, self.used)
+        self.high_water = max(self.high_water, at + size)
         return at
 
     def alloc(self, nbytes: int, owner: str = "runtime") -> int:
@@ -164,6 +166,18 @@ class Arena:
             "fragmented": self.free - self.largest,
             "owners": owners,
         }
+
+    def free_spans(self) -> list[int]:
+        return [n for _, n in self.free_list]
+
+    def fits(self, sizes) -> bool:
+        spans = self.free_spans()
+        for size in sizes:
+            index = next((i for i, free in enumerate(spans) if free >= size), None)
+            if index is None:
+                return False
+            spans[index] -= size
+        return True
 
     @property
     def free(self) -> int:

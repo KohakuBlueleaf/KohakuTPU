@@ -79,11 +79,16 @@ class Hints(dict):
     """Hints by site, a site keyed by its `repr` (what a hints file holds:
     sites are shapes, dtypes and expressions, never addresses)."""
 
+    revision = 0
+
     def __getitem__(self, site):
         return super().__getitem__(repr(site))
 
     def __setitem__(self, site, value) -> None:
-        super().__setitem__(repr(site), value)
+        key = repr(site)
+        if super().get(key) != value:
+            self.revision += 1
+        super().__setitem__(key, value)
 
     def __contains__(self, site) -> bool:
         return super().__contains__(repr(site))
@@ -92,7 +97,10 @@ class Hints(dict):
         return super().get(repr(site), default)
 
     def setdefault(self, site, value):
-        return super().setdefault(repr(site), value)
+        key = repr(site)
+        if not super().__contains__(key):
+            self.revision += 1
+        return super().setdefault(key, value)
 
 
 def hints(dev) -> dict:

@@ -23,14 +23,24 @@ from kohakuaccel.driver.node.queue import layout as L
 SOFTWARE = pathlib.Path(__file__).resolve().parents[2]
 FW = SOFTWARE / "firmware"
 OUT = SOFTWARE.parent / "build" / "fw" / "host"
+LAYOUT = L.Layout.from_machine(SOFTWARE.parent / "machines" / "multimesh_v9t6.json")
 
-pytestmark = pytest.mark.skipif(shutil.which("wsl") is None, reason="needs WSL gcc")
+pytestmark = pytest.mark.skipif(
+    shutil.which("wsl") is None and shutil.which("gcc") is None,
+    reason="needs gcc or WSL gcc",
+)
 
 
 def wsl(p: pathlib.Path) -> str:
     s = p.resolve().as_posix()
     m = re.match(r"^([A-Za-z]):/(.*)$", s)
     return f"/mnt/{m.group(1).lower()}/{m.group(2)}" if m else s
+
+
+def _shell(cmd: str) -> list[str]:
+    if os.name == "posix" and shutil.which("gcc") is not None:
+        return ["bash", "-lc", cmd]
+    return ["wsl", "-d", "Ubuntu-24.04", "--", "bash", "-lc", cmd]
 
 
 @pytest.fixture(scope="module")
@@ -44,7 +54,7 @@ def trace_bin() -> pathlib.Path:
         f"-o {wsl(exe)}"
     )
     done = subprocess.run(
-        ["wsl", "-d", "Ubuntu-24.04", "--", "bash", "-lc", cmd],
+        _shell(cmd),
         capture_output=True,
         text=True,
         check=False,
@@ -54,8 +64,13 @@ def trace_bin() -> pathlib.Path:
 
 
 def run_trace(exe: pathlib.Path, lines: list[str]) -> list[str]:
+    run_cmd = (
+        [str(exe)]
+        if os.name == "posix" and shutil.which("gcc") is not None
+        else ["wsl", "-d", "Ubuntu-24.04", "--", wsl(exe)]
+    )
     done = subprocess.run(
-        ["wsl", "-d", "Ubuntu-24.04", "--", wsl(exe)],
+        run_cmd,
         input="\n".join(lines) + "\n",
         capture_output=True,
         text=True,
@@ -68,7 +83,7 @@ def run_trace(exe: pathlib.Path, lines: list[str]) -> list[str]:
 def make_trace(seed: int, base: int, nbytes: int, granule: int, cap: int, ops: int):
     """Ops plus the Python heap's expected outputs, in the harness's format."""
     rng = random.Random(seed)
-    ref = Heap(base, nbytes, granule, cap)
+    ref = Heap(base, nbytes, granule, cap, layout=LAYOUT)
     lines = [f"i {base} {nbytes} {granule} {cap}"]
     want = [(ref.rc, 0, len(ref.blocks))]
     live: list[int] = []
@@ -91,7 +106,7 @@ def make_trace(seed: int, base: int, nbytes: int, granule: int, cap: int, ops: i
             )
             lines.append(f"a {size} {align} {k}")
             rc, v = ref.alloc(size, align, k)
-            if rc == L.OK:
+            if rc == LAYOUT.ok:
                 live.append(v)
                 assert v % max(align, granule) == 0 and (v - base) % granule == 0
         want.append((rc, v, len(ref.blocks)))
@@ -138,9 +153,13 @@ def test_c_heap_matches_the_python_policy(trace_bin, seed, base, nbytes, granule
     out = run_trace(trace_bin, lines)
     assert compare(out, want) == 3001
     statuses = {w[0] for w in want if isinstance(w, tuple)}
-    assert L.OK in statuses and L.BAD_FREE in statuses and L.NO_MEMORY in statuses
+    assert (
+        LAYOUT.ok in statuses
+        and LAYOUT.bad_free in statuses
+        and LAYOUT.no_memory in statuses
+    )
     if cap == 5:
-        assert L.NO_SLOTS in statuses
+        assert LAYOUT.no_slots in statuses
 
 
 def test_bad_geometry_is_refused(trace_bin):
@@ -148,4 +167,6 @@ def test_bad_geometry_is_refused(trace_bin):
     lines = [f"i {b} {n} {g} {c}" for b, n, g, c in cases]
     out = run_trace(trace_bin, lines)
     for (b, n, g, c), got in zip(cases, out):
-        assert int(got.split()[0]) == Heap(b, n, g, c).rc == L.BAD_ARG
+        assert (
+            int(got.split()[0]) == Heap(b, n, g, c, layout=LAYOUT).rc == LAYOUT.bad_arg
+        )

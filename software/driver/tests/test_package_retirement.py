@@ -3,10 +3,13 @@
 import pytest
 
 from kohakuaccel.driver.node.queue import NodeQueue
+from kohakuaccel.driver.node.queue import layout as L
 from kohakuaccel.driver.node.queue.double import SpecFirmware
 from kohakuaccel.driver.transport.memory import MemoryTransport
 from kohakutpu.compiler import _rs
 from kohakutpu.language import machine as MF
+
+LAYOUT = L.Layout.from_machine(MF.MACHINES / "multimesh_v9t6.json")
 
 
 def package():
@@ -17,9 +20,11 @@ def package():
 def test_shared_package_retires_at_final_completion():
     mem = MemoryTransport()
     freed = []
-    q = NodeQueue(mem, 0x100000, spill=lambda n: 0x800000, unspill=freed.append)
+    q = NodeQueue(
+        mem, 0x100000, spill=lambda n: 0x800000, unspill=freed.append, layout=LAYOUT
+    )
     q.init()
-    fw = SpecFirmware(mem, q.base)
+    fw = SpecFirmware(mem, q.base, layout=LAYOUT)
     fw.boot()
     raw = package()
     a, b = q.submit(raw), q.submit(raw)
@@ -38,7 +43,9 @@ def test_shared_package_retires_at_final_completion():
 
 def test_failed_upload_returns_spill(monkeypatch):
     mem, freed = MemoryTransport(), []
-    q = NodeQueue(mem, 0x100000, spill=lambda n: 0x800000, unspill=freed.append)
+    q = NodeQueue(
+        mem, 0x100000, spill=lambda n: 0x800000, unspill=freed.append, layout=LAYOUT
+    )
     q.init()
 
     def fail(*args):
@@ -53,7 +60,7 @@ def test_failed_upload_returns_spill(monkeypatch):
 
 def test_failed_recycled_upload_keeps_free_span(monkeypatch):
     mem = MemoryTransport()
-    q = NodeQueue(mem, 0x100000)
+    q = NodeQueue(mem, 0x100000, layout=LAYOUT)
     q.init()
     q._heap_free = [(q.base + q.heap_off, 256)]
     before = list(q._heap_free)
@@ -69,7 +76,7 @@ def test_failed_recycled_upload_keeps_free_span(monkeypatch):
 
 def test_upload_checks_padded_extent():
     mem = MemoryTransport()
-    q = NodeQueue(mem, 0x100000)
+    q = NodeQueue(mem, 0x100000, layout=LAYOUT)
     q.init()
     raw = package()
     assert len(raw) % 64

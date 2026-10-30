@@ -18,7 +18,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from kohakuaccel.driver.node.queue import NodeError
-from kohakuaccel.driver.node.queue import layout as L
 from kohakuaccel.driver.transport.xdma_linux import XdmaLinux
 from kohakutpu.application.runtime.card import NodeCard
 
@@ -30,6 +29,7 @@ class Trace:
         self.recent = deque(maxlen=64)
         self.slowest = []
         self.bases = {}
+        self.queues = {}
         self.retry = XdmaLinux._retry
         self.collect = NodeCard.collect
         self.started = time.monotonic()
@@ -41,8 +41,9 @@ class Trace:
         end = time.monotonic()
         fields = {}
         for node, base in self.bases.items():
+            layout = self.queues[node].layout
             for name in ("SQ_TAIL", "SQ_HEAD", "CQ_TAIL", "CQ_HEAD"):
-                off = base + getattr(L, name) - at
+                off = base + getattr(layout, name.lower()) - at
                 if 0 <= off <= n - 8:
                     fields[f"n{node}:{name}"] = struct.unpack_from(
                         "<Q", transport._staging, off
@@ -73,6 +74,7 @@ class Trace:
 
     def collecting(self, card, pending, *args, **kw):
         self.bases = {n: card.mem._map(q.base) for n, q in card.queues.items()}
+        self.queues = dict(card.queues)
         try:
             return self.collect(card, pending, *args, **kw)
         except (TimeoutError, NodeError) as exc:
@@ -94,11 +96,18 @@ class Trace:
                 name = f"n{node}-tag{tag:x}.pkg"
                 (self.output / name).write_bytes(pkg.to_bytes())
                 q = card.queues[node]
+                layout = q.layout
                 pointers = q.pointers()
-                cq_at = q.base + q.geo["cq"] + q.cq_head % q.cq_n * L.CQ_BYTES
-                cq = struct.unpack("<4Q", q.mem.read_block(cq_at, L.CQ_BYTES))
-                sq_at = q.base + q.geo["sq"] + pointers["sq_head"] % q.sq_n * L.SQ_BYTES
-                sq = struct.unpack("<8Q", q.mem.read_block(sq_at, L.SQ_BYTES))
+                cq_at = q.base + q.geo["cq"] + q.cq_head % q.cq_n * layout.cq_bytes
+                cq = struct.unpack("<4Q", q.mem.read_block(cq_at, layout.cq_bytes))
+                sq_at = (
+                    q.base
+                    + q.geo["sq"]
+                    + pointers["sq_head"] % q.sq_n * layout.sq_bytes
+                )
+                sq = struct.unpack(
+                    f"<{layout.sq_words}Q", q.mem.read_block(sq_at, layout.sq_bytes)
+                )
                 report["nodes"][node] = {
                     "tag": tag,
                     "package": name,

@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from kohakutpu.compiler import _rs
 from kohakutpu.stack import rs
 
+ADMISSION_ENV = "KOHAKUTPU_ADMISSION_CONTEXT"
 REFUSE = (
     "deadlock",
     "rest",
@@ -112,6 +113,7 @@ class Prebuilt:
     images_json: str | None = None
     template_json: str | None = None
     template_params: dict | None = None
+    recipe: object = None
 
     def matches_environment(self, mmu):
         """Compare the certified relation with this submission's physical spans."""
@@ -176,10 +178,16 @@ def placed(program, nodes):
     return {nodes[0] if n is None else n: p for n, p in progs.items()}
 
 
-def admit(raw, machine, mesh, bindings=()):
+def admission_cached():
+    """`KOHAKUTPU_ADMISSION_CONTEXT` "1" (default): admission reuses the
+    receiving board's cached context; any other value admits from scratch.
+    Read once by each card at construction (`NodeCard.admission_cached`)."""
+    return os.environ.get(ADMISSION_ENV, "1") == "1"
+
+
+def admit(raw, machine, mesh=0, bindings=(), cached=True):
     """Receiving-board reliability policy cannot be disabled by checker mode."""
-    cached = os.environ.get("KOHAKUTPU_ADMISSION_CONTEXT", "1") == "1"
-    _admit(raw, machine, mesh, tuple(bindings or ()), cached)
+    _admit(raw, machine, 0 if mesh is None else mesh, tuple(bindings or ()), cached)
 
 
 @lru_cache(maxsize=512)
@@ -191,7 +199,14 @@ def _admit(raw, machine, mesh, bindings, cached=True):
         _rs.package_admit(raw, machine, mesh, list(bindings), cached_context=False)
 
 
-def built(progs, machine, fetch=None, residents=None, after=None):
+def built(
+    progs, machine, fetch=None, residents=None, after=None, resident=False, cached=True
+):
+    """Each node's (plain, lowered, bindings). `resident` False: the node's
+    `residents` entry is forgotten and the lowered package carries its
+    vector images whole; True: images the cores already hold are omitted.
+    `cached` False: admission builds the receiving board's context from
+    scratch and no launch recipe reuses a verdict."""
     if not prebuilt(progs):
         raise TypeError("a run contains only Rust Prebuilt packages")
     want = None if fetch is None else tuple(fetch)
@@ -202,12 +217,20 @@ def built(progs, machine, fetch=None, residents=None, after=None):
                 f"node {n}: the Rust package was built for fetch port {p.fetch}, the runtime's is {want}"
             )
         cores = None if residents is None else residents.get(n)
-        if cores is not None and os.environ.get("KOHAKUTPU_RESIDENT", "0") == "0":
+        if cores is not None and not resident:
             cores.forget()
             cores = None
+        mesh = p.mesh if n is None else n
         # Diagnostics are self-contained; only the submitted package advances state.
-        low = p.bound(True, after, cores=cores)
-        admit(low, machine.machine_json, n)
+        # LaunchRecipe admits with admit_package on cold launch and reuses the verdict
+        # only when invariant() proves patches touch only uninspected address bits.
+        if p.recipe is not None and after is None and cached:
+            if p.machine_json != machine.machine_json or p.mesh != mesh:
+                raise ValueError("launch recipe belongs to another receiving machine")
+            low = p.recipe.launch(p.bindings, p.translations, cores)
+        else:
+            low = p.bound(True, after, cores=cores)
+            admit(low, machine.machine_json, mesh, cached=cached)
         out[n] = (
             Package(
                 lambda p=p, after=after: p.bound(False, after), p.machine_json, p.mesh

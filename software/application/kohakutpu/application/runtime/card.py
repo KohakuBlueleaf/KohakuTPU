@@ -26,6 +26,7 @@ share DRAM (the Xache); each node's queue sits in its own staging store.
 """
 
 import dataclasses
+import enum
 import json
 import os
 import pathlib
@@ -52,16 +53,21 @@ from kohakuaccel.driver.transport.rebase import UnitGlobal
 from kohakuaccel.driver.transport.simdram import SimDram
 from kohakuaccel.driver.transport.verilator import VerilatorTransport
 from kohakuaccel.driver.transport.xdma_linux import XdmaLinux
+from kohakutpu.application.runtime import execution, replay_budget
 from kohakutpu.application.runtime import packages as B
 from kohakutpu.application.runtime import packages as verify
+from kohakutpu.application.runtime.eager_batch import Deferred
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.application.runtime.memory import CardMemory
+from kohakutpu.application.runtime.native_exchange import NativeExchange
+from kohakutpu.application.runtime.native_poll import NativePoll
 from kohakutpu.application.runtime.packing import contract_error
 from kohakutpu.compiler import _rs
 from kohakutpu.driver import units as _units  # noqa: F401  (names MG and VC)
 from kohakutpu.driver.clock.card import BOARDS, CardClocks, load_board
 from kohakutpu.driver.host import SCRATCH_RESERVE, Card, board_map
 from kohakutpu.language import machine as MF
+from kohakutpu.language.dsl.kernel import _MUTANT
 
 ROOT = pathlib.Path(__file__).resolve().parents[5]
 FIRMWARE = ROOT / "build/fw/kohakutpu_node.elf"
@@ -89,6 +95,38 @@ FLAGS_ENV = "KOHAKUTPU_BOOT_FLAGS"
 RESIDENT_ENV = "KOHAKUTPU_RESIDENT"
 #: A directory: a package that fails is kept there (bytes and bindings).
 FAILED_ENV = "KOHAKUTPU_KEEP_FAILED"
+_UNSET = object()
+
+
+class ResidentMode(str, enum.Enum):
+    UNSET = "unset"
+    OFF = "0"
+    ON = "1"
+
+    @property
+    def forget_all(self) -> bool:
+        return self is ResidentMode.OFF
+
+    @property
+    def stateless(self) -> bool:
+        return self in (ResidentMode.UNSET, ResidentMode.OFF)
+
+    @property
+    def resident(self) -> bool:
+        return self is ResidentMode.ON
+
+
+def parse_resident_mode(value: str | ResidentMode | None) -> ResidentMode:
+    if isinstance(value, ResidentMode):
+        return value
+    mutant = _MUTANT.get()
+    if value is None:
+        if mutant == "app.resident/unset_is_off":
+            return ResidentMode.OFF
+        return ResidentMode.UNSET
+    if value == "0" or (value != "1" and mutant == "app.resident/only_one_resides"):
+        return ResidentMode.OFF
+    return ResidentMode.ON
 
 
 def firmware_wait_seconds(host_timeout: float, requested: float | None) -> float:
@@ -169,6 +207,7 @@ class Pending:
     tags: dict
     plain: dict
     result: dict | None = None
+    execution: bool = False
 
 
 class PreparedEvents(list):
@@ -178,6 +217,7 @@ class PreparedEvents(list):
         super().__init__()
         self.source = self.snapshot(source)
         self.uploads = []
+        self.execution_lists = []
         self.closed = False
 
     @staticmethod
@@ -204,6 +244,8 @@ class PreparedEvents(list):
     def close(self):
         if not self.closed:
             self.closed = True
+            for item in self.execution_lists:
+                item.close()
             for upload in self.uploads:
                 upload.close()
             self.uploads.clear()
@@ -218,6 +260,41 @@ class NodeCard:
     host writes through, `idle` what a queue poll does between reads, `boot`
     the firmware placement ("axi" through the load window, "burn" a model's
     arrays), arrays in [ARENA, `arena_end`)."""
+
+    _eager_batch = None
+    native_direct = None
+    native_direct_suspended = False
+    _publication_epoch = 0
+
+    @property
+    def resident_mode(self) -> ResidentMode:
+        if "_resident_mode" in self.__dict__:
+            return self._resident_mode
+        return parse_resident_mode(os.environ.get(RESIDENT_ENV))
+
+    @resident_mode.setter
+    def resident_mode(self, value: str | ResidentMode | None) -> None:
+        self._resident_mode = parse_resident_mode(value)
+
+    @property
+    def submit_cache(self) -> bool:
+        if "_submit_cache" in self.__dict__:
+            return self._submit_cache
+        return os.environ.get("KOHAKUTPU_HOST_SUBMIT_CACHE", "1") == "1"
+
+    @submit_cache.setter
+    def submit_cache(self, value: bool) -> None:
+        self._submit_cache = value
+
+    @property
+    def admission_cached(self) -> bool:
+        if "_admission_cached" in self.__dict__:
+            return self._admission_cached
+        return B.admission_cached()
+
+    @admission_cached.setter
+    def admission_cached(self, value: bool) -> None:
+        self._admission_cached = value
 
     def __init__(
         self,
@@ -241,6 +318,7 @@ class NodeCard:
         stop_timeout: float = 5.0,
         clock=time.monotonic,
         alarm: float = 0.0,
+        resident_mode: str | None | object = _UNSET,
     ) -> None:
         if check not in verify.GATES:
             raise ValueError(f"check={check!r}: one of {verify.GATES}")
@@ -259,6 +337,15 @@ class NodeCard:
         self._order: dict = {}
         self._stdout: dict = {}
         self._segs: dict = {}
+        self._eager_batch = None
+        self.native_direct = None
+        self.native_direct_suspended = False
+        self._publication_epoch = 0
+        self._resident_mode = parse_resident_mode(
+            os.environ.get(RESIDENT_ENV) if resident_mode is _UNSET else resident_mode
+        )
+        self._submit_cache = os.environ.get("KOHAKUTPU_HOST_SUBMIT_CACHE", "1") == "1"
+        self._admission_cached = B.admission_cached()
         self.timeout = timeout
         #: `clock() -> seconds` of the node's time, which every wait counts.
         self.clock = clock
@@ -284,6 +371,9 @@ class NodeCard:
         #: decoder gives codes.
         self.machine_json = (MACHINES / f"{self.board['name']}.json").read_text(
             encoding="utf-8"
+        )
+        self.queue_layout = QL.Layout.from_schema(
+            json.loads(self.machine_json)["machine"]["fw"]["queue"]
         )
         # Programs are built for the units the card enumerates, which must be
         # its board's machine file's; the board gives addresses and clocks.
@@ -334,6 +424,11 @@ class NodeCard:
         self.queues = {}
         #: node -> (its loader, its boot block), for :meth:`restart`
         self.boots = {}
+        native_run = (
+            _rs.QueueRun(self.queue_layout)
+            if os.environ.get("KTPU_NATIVE_QUEUE", "0") == "1"
+            else None
+        )
         for mesh in card.meshes:
             i = mesh.index
             sim = t if boot == "burn" else None
@@ -351,6 +446,7 @@ class NodeCard:
                 timeout=self.timeout,
                 clock=clock,
                 alarm=alarm,
+                layout=self.queue_layout,
             )
             args = BootArgs(
                 queue=q.base,
@@ -359,6 +455,7 @@ class NodeCard:
                 flags=flags,
                 timeout=bound(seconds, hz / 1e6),
             )
+            q.native_run = native_run
             self.queues[i] = q
             self.boots[i] = (loader, args)
         self.q = self.queues[self.nodes[0]]
@@ -387,7 +484,7 @@ class NodeCard:
         record = self.record_layout(got["queue"])
         for i, (loader, args) in self.boots.items():
             loader.win.stop()
-            self.queues[i].speak(got["queue"], record)
+            self.queues[i].speak(got["queue"], record, layout=self.queue_layout)
             self.queues[i].track_ends = True
             self.queues[i].init()
             q = self.queues[i]
@@ -428,16 +525,10 @@ class NodeCard:
             raise
 
     def record_layout(self, version: int) -> "QL.Record | None":
-        """The schema's run record layout, or None before queue version 4."""
-        if version < 4:
+        """The schema's run record layout, or None before the record-ring version."""
+        if version < self.queue_layout.version:
             return None
-        rec = json.loads(self.machine_json)["machine"]["fw"]["queue"].get("record")
-        if rec is None:
-            raise abi.AbiMismatch(
-                f"{self.board['name']}: the image serves queue v{version}; its machine "
-                "file has no fw.queue.record (regenerate machines/)"
-            )
-        return QL.Record.from_schema(rec)
+        return self.queue_layout.record
 
     @property
     def timeout(self) -> float:
@@ -536,11 +627,18 @@ class NodeCard:
         return at
 
     def write(self, at: int, raw: bytes) -> None:
+        if (
+            self._eager_batch is not None
+            and _MUTANT.get() != "app.batch/write_skips_flush"
+        ):
+            self._eager_batch.flush()
         if self.log is not None:
             self.log.append(("write", at, bytes(raw)))
         self.mem.write_block(at, raw)
 
     def get(self, at: int, nbytes: int) -> bytes:
+        if self._eager_batch is not None:
+            self._eager_batch.flush()
         if self.log is not None:
             self.log.append(("read", at, nbytes))
         return self.mem.read_block(at, nbytes)
@@ -585,32 +683,63 @@ class NodeCard:
         self.runs += sum(1 for ev in log if ev[0] == "run")
         return cycles
 
-    def prepare_recorded(self, log, budget):
+    def prepare_recorded(
+        self,
+        log,
+        budget,
+        depth=1,
+        fraction=replay_budget.DEFAULT_FRACTION,
+        overcommit=False,
+    ):
         """Decode and pin immutable recorded packages once, within a byte budget."""
         if any(ev[0] not in ("write", "run") for ev in log):
             raise ValueError("only writes and runs can be prepared")
-        total = sum(
-            (len(raw) + QL.LINE - 1) // QL.LINE * QL.LINE
-            for ev in log
-            if ev[0] == "run"
-            for raw, _ in ev[1].values()
+        for ev in log:
+            if ev[0] == "run":
+                for n, (raw, bindings) in ev[1].items():
+                    # The recorded bindings never change: admitted once here,
+                    # not at each replay's submission.
+                    B.admit(
+                        raw,
+                        self.machine_json,
+                        n,
+                        tuple(bindings or ()),
+                        cached=self.admission_cached,
+                    )
+        budget, selected, counts, workspace = replay_budget.select(
+            self, log, budget, depth, fraction=fraction, overcommit=overcommit
         )
-        held = sum(q.prepared_bytes for q in self.queues.values())
-        if held + total > budget:
-            raise MemoryError("prepared replay packages exceed the device byte budget")
         prepared = PreparedEvents(log)
+        prepared.budget = budget
+        prepared.stream_workspace = workspace
+        prepared.selection = dict(
+            unique_packages=len(counts),
+            pinned_packages=len(selected),
+            streamed_calls=sum(
+                count for key, count in counts.items() if key not in selected
+            ),
+            unique_bytes=sum(
+                replay_budget.padded(len(raw), self.memory.dram.align)
+                for _, raw in counts
+            ),
+        )
+        uploads = {}
         try:
+            # Match the allocation order used by the free-span admission simulation.
+            for n, raw in selected:
+                uploads[n, raw] = self.queues[n].prepare(raw)
+                prepared.uploads.append(uploads[n, raw])
             for ev in log:
                 if ev[0] == "write":
                     prepared.append(ev)
                     continue
                 programs = {}
                 for n, (raw, bindings) in ev[1].items():
-                    # The recorded bindings never change: admitted once here,
-                    # not at each replay's submission.
-                    B.admit(raw, self.machine_json, n, tuple(bindings or ()))
-                    upload = self.queues[n].prepare(raw)
-                    prepared.uploads.append(upload)
+                    key = (n, raw)
+                    if key in selected:
+                        upload = uploads[key]
+                    else:
+                        upload = raw
                     programs[n] = (
                         upload,
                         B.Package(raw, self.machine_json, n),
@@ -622,12 +751,20 @@ class NodeCard:
             raise
         return prepared
 
+    prepare_execution = execution.prepare
+
+    def submit_execution(self, programs):
+        tags = execution.publish(self, programs)
+        return Pending(
+            len(tags) == 1 and self.nodes[0] in tags, tags, {}, execution=True
+        )
+
     def submit_prepared(self, programs):
-        """Publish prepared entries without parsing, hashing or uploading packages."""
+        """Publish admitted entries; pinned uploads bypass transfer, others stream."""
         self._forget_residents(programs)
         tags, plain = {}, {}
         for n, (upload, pkg, bindings) in programs.items():
-            tag = self._submit(n, upload, bindings)
+            tag = self._submit(n, upload, bindings, admitted=True)
             tags[n] = (tag, pkg)
             plain[n] = (pkg, bindings)
         return Pending(len(tags) == 1 and self.nodes[0] in tags, tags, plain)
@@ -707,7 +844,9 @@ class NodeCard:
             buf[rec + off : rec + off + n] = self.mem.read_block(base + rec + off, n)
             at += n
         got = _rs.debug_decode(bytes(buf), self.machine_json)
-        self.mem.write_block(base + DBG_H_RD, QL.line(got["consumed"]))
+        self.mem.write_block(
+            base + DBG_H_RD, self.queue_layout.line_bytes(got["consumed"])
+        )
         return got
 
     @staticmethod
@@ -790,6 +929,8 @@ class NodeCard:
         """`program` checked, built and queued on its nodes without waiting:
         the node runs its queue in order, so the next package is queued while
         this one runs (L0.NQ.047). :meth:`collect` waits for it."""
+        if self._eager_batch is not None:
+            self._eager_batch.flush()
         flags |= QL.RUN_F_TRACE if trace else 0
         if flags & (QL.RUN_F_TRACE | QL.RUN_F_NOENGINE) and not self.debug:
             raise RuntimeError(
@@ -799,24 +940,28 @@ class NodeCard:
         single = not isinstance(program, dict)
         progs = B.placed(program, self.nodes)
         self.verify(progs)
-        if os.environ.get(RESIDENT_ENV) == "0":
+        mode = self.resident_mode
+        if mode.forget_all:
             for cores in self.residents.values():
                 cores.forget()
         # Unlowered: what the firmware path runs (a NOENGINE run, the debug
         # rerun of a failure); lowered: what the dispatch engine runs.
         # A Rust package's cut is the Rust stack's (`_rs.bind(after=)`).
         off = bool(flags & QL.RUN_F_NOENGINE)
-        stateless = (
-            os.environ.get("KOHAKUTPU_HOST_SUBMIT_CACHE", "1") == "1"
-            and os.environ.get(RESIDENT_ENV, "0") == "0"
-        )
+        stateless = self.submit_cache and mode.stateless
         if stateless:
             self._forget_residents(progs)
         predicted = (
             None if stateless else {n: self.residents[n].snapshot() for n in progs}
         )
         both = B.built(
-            progs, self.machine, self.fetch, None if off else predicted, after
+            progs,
+            self.machine,
+            self.fetch,
+            None if off else predicted,
+            after,
+            resident=mode.resident,
+            cached=self.admission_cached,
         )
         plain = {n: (pkg, b) for n, (pkg, _, b) in both.items()}
         lowered = {n: (pkg, b) for n, (_, pkg, b) in both.items()}
@@ -845,10 +990,41 @@ class NodeCard:
             )
         return Pending(single, tags, plain)
 
+    def submit_wire(self, raw, debug):
+        """Already admitted native bytes; publication retains ordinary queue ownership."""
+        if self._eager_batch is not None and not self._eager_batch._submitting:
+            return self._eager_batch.wire(raw, debug)
+        tags, plain = {}, {}
+        for n, (data, bindings) in raw.items():
+            recipe, handles, translations = debug[n]
+            plain[n] = (
+                B.Package(
+                    lambda recipe=recipe, handles=handles, translations=translations: recipe.plain(
+                        handles, translations
+                    ),
+                    self.machine_json,
+                    n,
+                ),
+                (),
+            )
+            pkg = B.Package(data, self.machine_json, n)
+            try:
+                tag = self._submit(n, data, bindings, admitted=True)
+            except Exception:
+                self._forget_residents((n,))
+                raise
+            tags[n] = tag, pkg
+        if self.log is not None:
+            self.log.append(("run", raw))
+        single = len(tags) == 1 and (
+            _MUTANT.get() == "app.card/single_by_count" or self.nodes[0] in tags
+        )
+        return Pending(single, tags, plain)
+
     @property
     def publication_epoch(self) -> int:
         """Monotonic count of attempted queue publications, including failed writes."""
-        return getattr(self, "_publication_epoch", 0)
+        return self._publication_epoch
 
     def _publishing(self) -> None:
         self._publication_epoch = self.publication_epoch + 1
@@ -859,7 +1035,13 @@ class NodeCard:
         report text (`_segment`). `admitted`: the caller's build already
         admitted `raw`."""
         if not admitted and not isinstance(raw, PreparedPackage):
-            B.admit(raw, self.machine_json, n, tuple(bindings or ()))
+            B.admit(
+                raw,
+                self.machine_json,
+                n,
+                tuple(bindings or ()),
+                cached=self.admission_cached,
+            )
         q, order = self.queues[n], self._order.setdefault(n, [])
         if not order:
             # Text of runs nothing here waits for (a replay, a direct
@@ -922,6 +1104,8 @@ class NodeCard:
         """The result of a :meth:`submit`ted run (as :meth:`run` returns it),
         waiting for it; `faults` and `dump` as :meth:`run`'s. Collected
         twice, the first result."""
+        if isinstance(p, Deferred):
+            return p.owner.result(p, faults=faults, dump=dump)
         if p.result is None:
             try:
                 p.result = self._collect(p, faults, dump)
@@ -934,6 +1118,8 @@ class NodeCard:
         return p.result
 
     def _collect(self, p: "Pending", faults: bool, dump) -> dict:
+        if p.execution:
+            return execution.collect(self, p, dump)
         single, tags, plain = p.single, p.tags, p.plain
         # Peers may communicate: publish all of them before waiting on any one.
         if not single:
@@ -1171,6 +1357,8 @@ class VerilatorCard(NodeCard):
     def close(self) -> dict:
         """Stop the model; each vector core's counters from its log."""
         self.stop()
+        for q in self.queues.values():
+            q.discard_packages()
         self.t.close()
         return counters(self.t.model_log)
 
@@ -1217,6 +1405,13 @@ class SiliconCard(NodeCard):
         if transport is None or isinstance(transport, str):
             transport = open_transport(transport or "jtag")
         t = transport
+        native_poll = os.environ.get("KTPU_NATIVE_POLL", "0") == "1"
+        native_exchange = os.environ.get("KTPU_NATIVE_EXCHANGE", "0") == "1"
+        if (native_poll or native_exchange) and not isinstance(t, XdmaLinux):
+            t.close()
+            raise ValueError(
+                "KTPU_NATIVE_POLL / KTPU_NATIVE_EXCHANGE require Linux XDMA"
+            )
         b = load_board(board)
         want = b.get("idle_profile", "low") if profile == "idle" else profile
         if want is not None:
@@ -1238,10 +1433,18 @@ class SiliconCard(NodeCard):
         super().__init__(
             t, t, board, idle=idle, boot="axi", spin=spin, sys_hz=sys_hz, **kw
         )
+        if native_poll:
+            for queue in self.queues.values():
+                queue.native_poll = NativePoll(queue, t)
+        if native_exchange:
+            for queue in self.queues.values():
+                queue.native_exchange = NativeExchange(queue, t)
 
     def close(self) -> dict:
         """Stop every node's firmware; the card keeps its clocks."""
         self.stop()
+        for q in self.queues.values():
+            q.discard_packages()
         return {}
 
 

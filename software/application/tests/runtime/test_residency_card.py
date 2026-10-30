@@ -4,6 +4,7 @@ import json
 import time
 
 import numpy as np
+import pytest
 
 from kohakutpu.application.runtime import packages as B
 from kohakutpu.compiler import _rs
@@ -64,7 +65,18 @@ def imem_count(p, cores=None):
     )
 
 
-def test_same_kernel_twice_and_rebound(dev, monkeypatch):
+@pytest.fixture
+def restores_mode(dev):
+    """The session device latched its residency mode: a test sets the mode on
+    the device, never in the environment, and hands the old one back."""
+    before = dev.resident_mode
+    try:
+        yield
+    finally:
+        dev.resident_mode = before
+
+
+def test_same_kernel_twice_and_rebound(dev, restores_mode):
     assert dev.kind == "sim"
     card = dev.card
     card.alarm = 300
@@ -79,7 +91,7 @@ def test_same_kernel_twice_and_rebound(dev, monkeypatch):
     start = time.perf_counter()
     try:
         for resident in (False, True):
-            monkeypatch.setenv("KOHAKUTPU_RESIDENT", "1" if resident else "0")
+            dev.resident_mode = "1" if resident else "0"
             card.residents[0].forget()
             for _ in range(2):
                 card.write(y, bytes(256))
@@ -114,10 +126,10 @@ def test_same_kernel_twice_and_rebound(dev, monkeypatch):
             card.free(addr)
 
 
-def test_register_counts_and_lowered_engine_values(dev, monkeypatch):
+def test_register_counts_and_lowered_engine_values(dev, restores_mode):
     card = dev.card
     card.alarm = 300
-    monkeypatch.setenv("KOHAKUTPU_RESIDENT", "1")
+    dev.resident_mode = "1"
     x, y = card.alloc(256), card.alloc(256)
     values = np.arange(128, dtype=np.float16)
     p = prebuilt(card.machine_json, x, y)
@@ -165,10 +177,10 @@ def test_register_counts_and_lowered_engine_values(dev, monkeypatch):
         card.free(y)
 
 
-def test_bound_instruction_bytes_change_values(dev, monkeypatch):
+def test_bound_instruction_bytes_change_values(dev, restores_mode):
     card = dev.card
     card.alarm = 300
-    monkeypatch.setenv("KOHAKUTPU_RESIDENT", "1")
+    dev.resident_mode = "1"
     x, y = card.alloc(256), card.alloc(256)
     values = np.arange(128, dtype=np.float16)
     source = SOURCE.replace(
@@ -206,6 +218,7 @@ def test_bound_instruction_bytes_change_values(dev, monkeypatch):
         card.residents[0].forget()
         card.run(p)
         assert card.get(y, 256) == values.tobytes()
+        assert imem_count(p, card.residents[0]) == 0
         assert imem_count(q, card.residents[0]) > 0
         card.run(q)
         assert card.get(y, 256) == (values * np.float16(2)).tobytes()

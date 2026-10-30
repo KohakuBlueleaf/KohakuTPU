@@ -6,6 +6,12 @@ from dataclasses import dataclass
 
 #: Retired allocation records retained in `SoftwareMMU.entries` for inspection.
 RETIRED_KEPT = 4096
+#: Staging/special bit and mesh domain shift (die.address.special_bit, mesh_shift).
+SPECIAL_BIT = 39
+DOMAIN_SHIFT = 36
+#: Non-zero base offset and alignment inside each 64 GiB virtual address domain.
+VIRTUAL_OFFSET = 1 << 32
+VIRTUAL_ALIGN = 256
 
 
 @dataclass(frozen=True)
@@ -53,7 +59,7 @@ class SoftwareMMU:
             gone = self.entries.pop(old, None)
             if gone is None:
                 continue
-            domain = old >> 36
+            domain = old >> DOMAIN_SHIFT
             keys = self._keys.get(domain)
             if keys:
                 idx = bisect.bisect_left(keys, old)
@@ -76,11 +82,13 @@ class SoftwareMMU:
                 self._retire(k)
             self._prune_at = max(256, len(self._live) * 2)
         # Preserve the staging/node bits used by compiler address classification.
-        domain = physical >> 36 if physical & (1 << 39) else 0
-        start = (domain << 36) + (1 << 32)
+        domain = physical >> DOMAIN_SHIFT if physical & (1 << SPECIAL_BIT) else 0
+        start = (domain << DOMAIN_SHIFT) + VIRTUAL_OFFSET
         at = self.next.get(domain, start)
-        size = max(256, (extent + 255) // 256 * 256)
-        if at + size >= (domain << 36) + (1 << 36):
+        size = max(
+            VIRTUAL_ALIGN, (extent + VIRTUAL_ALIGN - 1) // VIRTUAL_ALIGN * VIRTUAL_ALIGN
+        )
+        if at + size >= (domain << DOMAIN_SHIFT) + (1 << DOMAIN_SHIFT):
             raise MemoryError("RUL.023: virtual address domain exhausted")
         self.next[domain] = at + size
         entry = Allocation(at, physical, extent, arena, arena.generations[physical])
@@ -93,7 +101,7 @@ class SoftwareMMU:
         self._sync()
         entry = self.entries.get(address)
         if entry is None:
-            keys = self._keys.get(address >> 36)
+            keys = self._keys.get(address >> DOMAIN_SHIFT)
             if keys:
                 i = bisect.bisect_right(keys, address) - 1
                 if i >= 0:
@@ -116,8 +124,8 @@ class SoftwareMMU:
                 if nbytes < 0 or nbytes > entry.extent - off:
                     raise ValueError("RUL.023: access exceeds allocation extent")
                 return entry, entry.physical + off
-        domain = address >> 36
-        start = (domain << 36) + (1 << 32)
+        domain = address >> DOMAIN_SHIFT
+        start = (domain << DOMAIN_SHIFT) + VIRTUAL_OFFSET
         if start <= address < self._retired_below.get(domain, 0):
             raise ValueError("RUL.023: allocation handle has no live owner")
         raise KeyError(f"RUL.023: unknown allocation handle {address:#x}")
@@ -135,7 +143,7 @@ class SoftwareMMU:
         for address in handles:
             entry = self._live.get(address)
             if entry is None:
-                keys = self._keys.get(address >> 36)
+                keys = self._keys.get(address >> DOMAIN_SHIFT)
                 if keys:
                     i = bisect.bisect_right(keys, address) - 1
                     if i >= 0:

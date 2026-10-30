@@ -41,6 +41,10 @@ class Compiled:
     scratch: list | None = None
     _progs: dict = field(default_factory=dict, repr=False, compare=False)
     _meta: tuple | None = field(default=None, init=False, repr=False, compare=False)
+    _recipes: dict = field(default_factory=dict, init=False, repr=False, compare=False)
+    recipe_scope: tuple | None = field(default=None, repr=False, compare=False)
+    native_recipe: bool = field(default=False, repr=False, compare=False)
+    wire_recipe: bool = field(default=False, repr=False, compare=False)
 
     @property
     def params(self):
@@ -92,6 +96,25 @@ class Compiled:
         out = {}
         for mesh, p in packages.items():
             at = [binds[q] if q in binds else int(q[1:], 16) for q in p["params"]]
+            recipe = None
+            if (
+                self.native_recipe
+                and self.bound is None
+                and not apart
+                and rs._MUTANT.get() is None
+            ):
+                recipe = self._recipes.get(mesh)
+                if recipe is None:
+                    recipe = self._recipes[mesh] = rs._rs.LaunchRecipe(
+                        p["bytes"],
+                        text,
+                        mesh,
+                        p.get("template_json"),
+                        p.get("template_params"),
+                        p.get("images_json"),
+                        self.recipe_scope,
+                        wire=self.wire_recipe,
+                    )
             out[mesh] = build.Prebuilt(
                 p["bytes"],
                 tuple(at),
@@ -103,6 +126,7 @@ class Compiled:
                 images_json=p.get("images_json"),
                 template_json=p.get("template_json"),
                 template_params=p.get("template_params"),
+                recipe=recipe,
             )
         return {None: out[0]} if list(out) == [0] else out
 
@@ -148,6 +172,12 @@ def compile(source, name=None, machine=None, level="l2"):
     text = traced.text if traced else module.source if module else source
     if name is None:
         name = traced.name if traced else (module or M.read(text)).names()[0]
+    owner = rs._COMPILER_OWNER.get()
+    native_recipe = False if owner is None else owner.native_recipe
+    wire_recipe = False if owner is None else owner.wire_recipe
+    scope = (
+        None if owner is None else (owner.recipe_epoch, owner.recipe_epoch.generation)
+    )
     # Include the mutation and zero-sign contexts so a warm compile cannot hide either.
     key = (
         text,
@@ -156,6 +186,9 @@ def compile(source, name=None, machine=None, level="l2"):
         level,
         rs._MUTANT.get(),
         rs._ZERO_SIGN.get(),
+        native_recipe,
+        wire_recipe,
+        None if scope is None else scope[1],
     )
     if key in _cache:
         _cache.move_to_end(key)
@@ -178,6 +211,9 @@ def compile(source, name=None, machine=None, level="l2"):
         level=level,
         bound=rust["bound"],
         scratch=rust.get("scratch"),
+        recipe_scope=scope,
+        native_recipe=native_recipe,
+        wire_recipe=wire_recipe,
     )
     _cache[key] = got
     if len(_cache) > COMPILED_KEPT:

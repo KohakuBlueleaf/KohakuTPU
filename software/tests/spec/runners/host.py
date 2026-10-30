@@ -108,12 +108,23 @@ def completion(c):
     }
 
 
+def _layout(ctx=None, machine=None, name=None) -> QL.Layout:
+    if machine is None and ctx is not None:
+        machine = ctx.get("machine")
+        if name is None and "vector" in ctx:
+            name = ctx["vector"].get("machine", rs.BASE)
+    machine = machine or MF.load(name or rs.BASE)
+    return QL.Layout.from_schema(machine.fw.queue.dict())
+
+
 @runner("l0.queue")
 def queue(inp, ctx):
     base = num(inp.get("base", "0x8000000000"))
     size = num(inp.get("size", QC.REGION_BYTES))
     mem = Mem(base, size)
-    q = QC.NodeQueue(mem, base, size=size, **inp.get("geometry", {}))
+    q = QC.NodeQueue(
+        mem, base, size=size, layout=_layout(ctx), **inp.get("geometry", {})
+    )
     fw = Firmware(mem, q.sq_n, q.cq_n, q.so_bytes)
     line, out = fw.h["KA_Q_LINE"], []
     for act in inp["script"]:
@@ -217,7 +228,7 @@ def queue(inp, ctx):
 @runner("l0.queue.geometry")
 def queue_geometry(inp, ctx):
     try:
-        got = QL.geometry(*inp["args"])
+        got = _layout(ctx).geometry(*inp["args"])
     except ValueError as e:
         return refused(e)
     return {k: hx(v) for k, v in got.items()}
@@ -238,6 +249,8 @@ def host_value(key, machine, name):
             UNITS=machine.fw.engine_units,
         )
         v = FORMAT_OVERRIDES.values.get(attr, fmt[attr])
+    elif mod == "layout" and not hasattr(QL, attr):
+        v = getattr(_layout(machine=machine, name=name), attr.lower())
     else:
         v = getattr(MODULES[mod], attr)
     if match[3] is not None:
@@ -345,20 +358,44 @@ def constant_mutant(name, obj, attr, value):
             yield
 
 
+for _name, _attr, _value in [
+    ("line32", "line", 32),
+    ("magic", "magic", 0x324555455551414B),
+    ("sq_tail", "sq_tail", 0x0C0),
+    ("cq_entry", "cq_bytes", 64),
+    ("sq_entry", "sq_bytes", 32),
+    ("sq_base", "sq", 0x400),
+    ("progress_final", "progress", 0x99),
+    ("so_offset", "so_wr", 0x1C0),
+    ("ok_status", "ok", 1),
+    (
+        "states",
+        "state_names",
+        property(
+            lambda self: {
+                **{code: name for name, code in self.states.items()},
+                1: "stopped",
+                2: "ready",
+            },
+            lambda self, v: None,
+        ),
+    ),
+]:
+    constant_mutant(
+        f"l0.queue/{_name}",
+        QL.Layout,
+        _attr,
+        (
+            _value
+            if isinstance(_value, property)
+            else property(lambda self, v=_value: v, lambda self, v: None)
+        ),
+    )
+
 for _name, _obj, _attr, _value in [
-    ("line32", QL, "LINE", 32),
-    ("magic", QL, "MAGIC", 0x324555455551414B),
-    ("sq_tail", QL, "SQ_TAIL", 0x0C0),
-    ("cq_entry", QL, "CQ_BYTES", 64),
-    ("sq_entry", QL, "SQ_BYTES", 32),
-    ("sq_base", QL, "SQ", 0x400),
     ("status_names", QL, "STATUS", {**QL.STATUS, 0x30: "STALL", 0: "DONE"}),
     ("wait_names", QL, "WAITS", {**QL.WAITS, 2: "engine"}),
-    ("progress_final", QL, "PROGRESS", 0x99),
-    ("so_offset", QL, "SO_WR", 0x1C0),
     ("bindings", QC, "MAX_BINDINGS", 32),
-    ("ok_status", QL, "OK", 1),
-    ("states", QL, "STATES", {**QL.STATES, 1: "stopped", 2: "ready"}),
     ("region_size", C, "Q_SIZE", 0x8_0000),
 ]:
     constant_mutant(f"l0.queue/{_name}", _obj, _attr, _value)

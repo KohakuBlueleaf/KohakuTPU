@@ -19,10 +19,12 @@ import time
 from kohakuaccel.driver.node.boot import BootArgs, NodeBoot
 from kohakuaccel.driver.node.boot.args import REGION_QUEUE, idle_bound
 from kohakuaccel.driver.node.queue import NodeError, NodeQueue
+from kohakuaccel.driver.node.queue import layout as L
 from kohakuaccel.driver.transport.rebase import UnitGlobal
 from kohakuaccel.driver.transport.verilator import VerilatorTransport
 from kohakutpu.driver.clock.card import load_board
 from kohakutpu.driver.host import board_map
+from kohakutpu.language import machine as MF
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 #: The model's DRAM is 16 MB flat SHARED by every mesh (an offset aliases across
@@ -100,9 +102,10 @@ def osprobe(t, m, mem, wait: int) -> int:
 
 
 def dispatcher(t, m, mem, wait: int) -> int:
+    layout = L.Layout.from_machine(MF.MACHINES / "multimesh_v9t8.json")
     queues = []
     for i in (0, 1):
-        q = NodeQueue(mem, 1 << 39 | i << 36, idle=lambda: t.run(600))
+        q = NodeQueue(mem, 1 << 39 | i << 36, idle=lambda: t.run(600), layout=layout)
         q.init()
         NodeBoot(t, m["ctrl"][i], i, sim=t).load(
             ROOT / "build/fw/kohakutpu_node.elf",

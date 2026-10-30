@@ -34,7 +34,8 @@ def test_adjacent_requested_extent_and_physical_reservation(board):
 def boot_probe(monkeypatch, short=False):
     ticks = [0.0]
     transport = MemoryTransport()
-    q = NodeQueue(transport, 0x100000, clock=lambda: ticks[0])
+    layout = QL.Layout.from_machine(memory.MF.MACHINES / "multimesh_v9t6.json")
+    q = NodeQueue(transport, 0x100000, clock=lambda: ticks[0], layout=layout)
     args = SimpleNamespace(regions=[(q.base, q.size, REGION_QUEUE)])
     original = list(args.regions)
     stopped, restored = [], []
@@ -43,8 +44,8 @@ def boot_probe(monkeypatch, short=False):
         ticks[0] += 0.005
         if ticks[0] >= 0.025:
             transport.write_block(
-                q.base + QL.FW,
-                QL.line(QL.ST_FATAL, 0, 0, EXIT_BOOTARGS | ERR_QUEUE),
+                q.base + layout.fw,
+                layout.line_bytes(layout.st_fatal, 0, 0, EXIT_BOOTARGS | ERR_QUEUE),
             )
 
     q._idle = idle

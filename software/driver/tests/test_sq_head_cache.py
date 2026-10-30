@@ -1,11 +1,17 @@
 """A cached observed consumer index saves reads, never invents ring space."""
 
+from pathlib import Path
+
 import pytest
 
 from kohakuaccel.driver.node.queue import NodeQueue
 from kohakuaccel.driver.node.queue import layout as L
 from kohakuaccel.driver.node.queue.double import SpecFirmware
 from kohakuaccel.driver.transport.memory import MemoryTransport
+
+LAYOUT = L.Layout.from_machine(
+    Path(__file__).resolve().parents[3] / "machines/multimesh_v9t6.json"
+)
 
 
 class Memory(MemoryTransport):
@@ -14,7 +20,7 @@ class Memory(MemoryTransport):
         self.head_reads = 0
 
     def read64(self, addr):
-        self.head_reads += addr == 0x100000 + L.SQ_HEAD
+        self.head_reads += addr == 0x100000 + LAYOUT.sq_head
         return super().read64(addr)
 
 
@@ -34,9 +40,10 @@ def queue(cached):
         timeout=2,
         clock=lambda: now[0],
         idle=idle,
+        layout=LAYOUT,
     )
     q.init()
-    fw = SpecFirmware(mem, q.base)
+    fw = SpecFirmware(mem, q.base, layout=LAYOUT)
     fw.boot()
     return mem, q, fw
 
@@ -45,11 +52,11 @@ def queue(cached):
 def test_consumed_slots_only_and_wrap(cached):
     mem, q, fw = queue(cached)
     for _ in range(5):
-        tags = [q.submit(None, op=L.OP_NOP) for _ in range(3)]
-        before = mem.read_block(q.base + L.SQ, 3 * L.SQ_BYTES)
+        tags = [q.submit(None, op=LAYOUT.op_nop) for _ in range(3)]
+        before = mem.read_block(q.base + LAYOUT.sq, 3 * LAYOUT.sq_bytes)
         with pytest.raises(TimeoutError):
-            q.submit(None, op=L.OP_NOP)
-        assert mem.read_block(q.base + L.SQ, 3 * L.SQ_BYTES) == before
+            q.submit(None, op=LAYOUT.op_nop)
+        assert mem.read_block(q.base + LAYOUT.sq, 3 * LAYOUT.sq_bytes) == before
         for _ in tags:
             fw.step()
         assert [q.wait(tag).tag for tag in tags] == tags
@@ -61,7 +68,7 @@ def test_no_consumer_read_until_cached_space_exhausted():
     for cached in (False, True):
         mem, q, _ = queue(cached)
         for _ in range(3):
-            q.submit(None, op=L.OP_NOP)
+            q.submit(None, op=LAYOUT.op_nop)
         counts.append(mem.head_reads)
     assert counts == [3, 0]
 
@@ -94,4 +101,4 @@ def test_no_cache_mutant_is_caught(monkeypatch):
 def test_bad_mode_refused(monkeypatch):
     monkeypatch.setenv("KOHAKUTPU_SQ_HEAD_CACHE", "2")
     with pytest.raises(ValueError, match="must be 0 or 1"):
-        NodeQueue(MemoryTransport(), 0x100000)
+        NodeQueue(MemoryTransport(), 0x100000, layout=LAYOUT)

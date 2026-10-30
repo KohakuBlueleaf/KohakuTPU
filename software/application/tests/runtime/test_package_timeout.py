@@ -2,12 +2,15 @@
 
 import pytest
 
+from kohakuaccel.driver.node.queue import layout as QL
 from kohakuaccel.driver.node.queue.double import SpecFirmware
 from kohakuaccel.driver.transport.memory import MemoryTransport
 from kohakutpu.application.runtime.card import node_queue
 from kohakutpu.application.runtime.memory import CardMemory
 from kohakutpu.compiler import _rs
 from kohakutpu.language import machine as MF
+
+LAYOUT = QL.Layout.from_machine(MF.MACHINES / "multimesh_v9t6.json")
 
 
 def witness(restart=False, shared=False, early_checks=True):
@@ -18,11 +21,11 @@ def witness(restart=False, shared=False, early_checks=True):
     def idle():
         now[0] += 1
 
-    q = node_queue(host, 0x80000000, memory, idle=idle)
+    q = node_queue(host, 0x80000000, memory, idle=idle, layout=LAYOUT)
     q.clock = lambda: now[0]
     q.timeout = 1
     q.init()
-    fw = SpecFirmware(host, q.base)
+    fw = SpecFirmware(host, q.base, layout=LAYOUT)
     fw.boot()
     text = (MF.MACHINES / "multimesh_v9t6.json").read_text(encoding="utf-8")
     raw = _rs.package_build('{"credit": 32}', "[]", text, defaults=False)

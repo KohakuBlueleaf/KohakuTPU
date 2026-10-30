@@ -228,11 +228,14 @@ def adjacent_allocations(inp, ctx):
 @runner("memory.packages")
 def packages(inp, ctx):
     mem, freed = MemoryTransport(), []
-    q = NodeQueue(mem, 0x100000, spill=lambda n: 0x800000, unspill=freed.append)
-    q.init()
-    fw = SpecFirmware(mem, q.base)
-    fw.boot()
     text = (MF.MACHINES / "multimesh_v9t6.json").read_text(encoding="utf-8")
+    layout = QL.Layout.from_machine(text)
+    q = NodeQueue(
+        mem, 0x100000, spill=lambda n: 0x800000, unspill=freed.append, layout=layout
+    )
+    q.init()
+    fw = SpecFirmware(mem, q.base, layout=layout)
+    fw.boot()
     raw = rs._rs.package_build('{"credit": 32}', "[]", text, defaults=False)
     q.submit(raw)
     q.submit(raw)
@@ -480,8 +483,11 @@ def no_record_pins():
 
 @runner("memory.firmware_contract")
 def firmware_contract(inp, ctx):
+    layout = QL.Layout.from_machine(MF.MACHINES / "multimesh_v9t6.json")
     return {
-        "opcodes": sorted(k for k in vars(QL) if k.startswith("OP_")),
+        "opcodes": sorted(
+            f"OP_{k.upper()}" for k, v in layout.opcodes.items() if v < 6
+        ),
         "heap_sources": any(
             "os/heap" in p.as_posix() for p in FWB.sources(FWB.IMAGES["kohakutpu_node"])
         ),

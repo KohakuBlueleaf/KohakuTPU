@@ -4,28 +4,36 @@ full SQ and a drain raise `TimeoutError` within the bound, never wait on.
 The queue runs on a fake clock that each idle advances by one tick, so the
 bounds are checked in the clock's own units, whatever the machine's load."""
 
+from pathlib import Path
+
 import pytest
 
 from kohakuaccel.driver.node.queue import NodeQueue
+from kohakuaccel.driver.node.queue import layout as L
 from kohakuaccel.driver.node.queue.double import SpecFirmware
 from kohakuaccel.driver.transport.memory import MemoryTransport
 
 BASE = 0x10_0000
 BOUND = 0.3
 TICK = 0.01
+LAYOUT = L.Layout.from_machine(
+    Path(__file__).resolve().parents[3] / "machines/multimesh_v9t6.json"
+)
 
 
 def stuck() -> tuple[NodeQueue, list]:
     """A queue whose firmware reported ready and then never runs again, and
     its clock (a one-element list, seconds)."""
     mem = MemoryTransport()
-    fw = SpecFirmware(mem, BASE)
+    fw = SpecFirmware(mem, BASE, layout=LAYOUT)
     now = [0.0]
 
     def idle() -> None:
         now[0] += TICK
 
-    q = NodeQueue(mem, BASE, idle=idle, timeout=BOUND, clock=lambda: now[0])
+    q = NodeQueue(
+        mem, BASE, idle=idle, timeout=BOUND, clock=lambda: now[0], layout=LAYOUT
+    )
     q.init()
     fw.boot()
     fw.step()
