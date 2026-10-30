@@ -124,7 +124,8 @@ class Recorded(list):
 class Submitted:
     """A kernel run queued on the card (`Device.submit`): the spans it
     references (its scratch windows among them), held until it is collected,
-    and the card's pending run or result."""
+    the card's pending run or result, and for a recorded run each window's
+    address with the bytes this run lays out in it (`_extents`)."""
 
     name: str
     kind: str
@@ -137,6 +138,7 @@ class Submitted:
     writes: list = field(default_factory=list)
     nodes: tuple = ()
     error: Exception | None = None
+    extents: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -570,6 +572,15 @@ class Device:
                 self.free(at)
                 del self.windows[key]
 
+    def _extents(self, spans, windowed) -> dict:
+        """Each window's address with the bytes the run of `spans`, at
+        `windowed`, lays out in it (a window can be larger)."""
+        out = {}
+        for name, nbytes, *_ in spans:
+            at = self.mmu.resolve(windowed[name])[0].virtual
+            out[at] = max(out.get(at, 0), windowed[name] - at + int(nbytes))
+        return out
+
     def _windowed(self, spans) -> dict:
         """Each scratch span of one run, `(name, bytes, space, node,
         members)`, at its address in its window: laid out from the window's
@@ -943,6 +954,7 @@ class Device:
             if self._scope is not None:
                 s.info["plan"] = self._scope[0]
             if self._recipe_capture is not None:
+                s.extents = self._extents(spans, windowed)
                 self._recipe_capture(compiled, full, progs, s)
             publication = getattr(self.card, "publication_epoch", None)
             submitting = True

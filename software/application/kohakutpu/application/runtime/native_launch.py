@@ -26,7 +26,7 @@ def descriptor(dev, compiled, full, progs, submitted, explicit):
             space = "dram" if node is None else "stage"
             scratch.append(
                 (
-                    allocation.extent,
+                    submitted.extents[allocation.virtual],
                     space,
                     node,
                     f"scratch:{compiled.name}",

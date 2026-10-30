@@ -9,6 +9,7 @@ from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.ktpugrad.recipe import Recording
 from kohakutpu.application.runtime import device as D
+from kohakutpu.application.runtime import native_launch
 from kohakutpu.application.runtime.card import NodeCard
 from kohakutpu.application.runtime.native_launch import descriptor
 from kohakutpu.compiler import _rs
@@ -127,6 +128,68 @@ def test_native_stateless_submission_forgets_previous_residency(monkeypatch):
         assert any(cores.resident(c) for c in coords)
         dev.collect_through(native.launch(dev, handles))
         assert not any(cores.resident(c) for c in coords)
+    finally:
+        dev.close()
+
+
+def test_a_run_lays_out_its_own_bytes_in_a_larger_window(monkeypatch):
+    dev = device(monkeypatch)
+    line = max(dev.line_bytes, 256)
+    try:
+        at = dev._window(("dram", None), 1 << 20)
+        spans = [("a", line + 1, "dram", None, ()), ("b", 1, "dram", None, ())]
+        windowed = dev._windowed(spans)
+        assert windowed == {"a": at, "b": at + 2 * line}
+        assert dev._extents(spans, windowed) == {at: 2 * line + 1}
+    finally:
+        dev.close()
+
+
+def test_a_native_replay_carries_the_run_sizes_not_the_window(monkeypatch):
+    """RUL.020: the replay's scratch is the run's own bytes, one block a
+    window, with every name in it at its offset; a name the caller bound is
+    the caller's handle."""
+    dev = device(monkeypatch)
+    window = SimpleNamespace(virtual=0x1000, extent=1 << 20, arena=object())
+    resolved = SimpleNamespace(resolve=lambda address: (window, address))
+    fake = SimpleNamespace(
+        mmu=resolved,
+        memory=dev.memory,
+        resident_mode=dev.resident_mode,
+        recipe_epoch=dev.recipe_epoch,
+    )
+    built = SimpleNamespace(NativeSubmit=lambda *fields: fields)
+    monkeypatch.setattr(native_launch, "_rs", built)
+    try:
+        submitted = SimpleNamespace(kind="dsl", info={}, extents={0x1000: 768})
+        fields = descriptor(
+            fake,
+            SimpleNamespace(name="k"),
+            {"given": 0x9000, "a": 0x1000, "b": 0x1200},
+            {},
+            submitted,
+            {"given": 0x9000},
+        )
+    finally:
+        dev.close()
+    assert fields[3] == [(768, "dram", None, "scratch:k")]
+    assert fields[4] == [(0, 0, 0), (1, 0, 0), (1, 0, 0x200)]
+
+
+def test_a_window_free_is_not_a_recorded_operation(monkeypatch):
+    """A window outlives its run and belongs to the device, so a recording
+    replays nothing for it; any other free is the recording's."""
+    dev = device(monkeypatch)
+    try:
+        at = dev._window(("dram", None), 4096)
+        tape = Recording(dev, {})
+        temporary = dev.alloc(4096)
+        tape.on_alloc(temporary, 4096, "dram", None, "temporary")
+        before = list(tape.operations)
+        tape.on_free(at)
+        assert tape.operations == before and tape.unsupported is None
+        tape.on_free(temporary)
+        assert tape.operations[-1] == ("free", ("temp", 0, None, 0))
     finally:
         dev.close()
 

@@ -130,7 +130,8 @@ class Recording:
             )
 
     def on_free(self, address):
-        if not self.depth:
+        windows = (at for at, _ in self.dev.windows.values())
+        if not self.depth and address not in windows:
             ref = self.ref(address)
             if ref[0] == "fixed":
                 self.unsupported = "external free"
