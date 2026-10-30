@@ -9,9 +9,8 @@ import sys
 TOOLS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
 
-from measure import KNOBS
-
 from build import build
+from measure import KNOBS
 
 
 def main():

@@ -8,7 +8,6 @@ from types import SimpleNamespace
 
 import ktpu_pytest_lock
 from examples.tinygrad import queue_measure as Q
-
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import packages as B
 from kohakutpu.compiler import _rs

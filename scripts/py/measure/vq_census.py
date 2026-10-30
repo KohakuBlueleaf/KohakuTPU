@@ -171,14 +171,14 @@ def main():
         rows.append(r)
     counters = next(iter(measured["counters"].values()))["VRES"]
     checks = {
-        key: dict(
-            census=aggregate[key],
-            model=counters["lanes" if key == "lane_slots" else key],
-        )
+        key: {
+            "census": aggregate[key],
+            "model": counters["lanes" if key == "lane_slots" else key],
+        }
         for key in ("fill_words", "drain_words", "lane_slots")
     }
     args.output.write_text(
-        json.dumps(dict(rows=rows, counter_checks=checks), indent=2), encoding="utf-8"
+        json.dumps({"rows": rows, "counter_checks": checks}, indent=2), encoding="utf-8"
     )
     print(json.dumps(checks))
     assert all(p["census"] == p["model"] for p in checks.values()), checks

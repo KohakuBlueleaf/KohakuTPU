@@ -47,10 +47,10 @@ def main():
             work.update(census(negative["compiled"]["l1"]))
         counters = next(iter(measured["counters"].values()))["VRES"]
         checks[run] = {
-            key: dict(
-                census=work[key],
-                model=counters["lanes" if key == "lane_slots" else key],
-            )
+            key: {
+                "census": work[key],
+                "model": counters["lanes" if key == "lane_slots" else key],
+            }
             for key in ("fill_words", "drain_words", "lane_slots")
         }
         assert all(c["census"] == c["model"] for c in checks[run].values()), checks[run]
@@ -74,18 +74,18 @@ def main():
             pb = [p for p in b["graph"]["ports"] if "mask" not in p["name"]]
             assert pa == pb, (model, index)
             wa, wb = census(a["compiled"]["l1"]), census(b["compiled"]["l1"])
-            row = dict(
-                index=index,
-                name=b["label"],
-                previous_name=a["label"],
-                kind=b["kind"],
-                multiplicity=b["multiplicity"],
-                before=before["before"],
-                after=after["after"],
-                work_before=wa,
-                work_after=wb,
-                hashes_equal=before["output_sha256"] == after["output_sha256"],
-            )
+            row = {
+                "index": index,
+                "name": b["label"],
+                "previous_name": a["label"],
+                "kind": b["kind"],
+                "multiplicity": b["multiplicity"],
+                "before": before["before"],
+                "after": after["after"],
+                "work_before": wa,
+                "work_after": wb,
+                "hashes_equal": before["output_sha256"] == after["output_sha256"],
+            }
             rows.append(row)
             for mode in ("before", "after"):
                 counts[mode][b["kind"]] += row[mode] * b["multiplicity"]
@@ -106,18 +106,18 @@ def main():
         (root / f"{model}-roofline.md").write_text(
             "\n".join(lines) + "\n", encoding="utf-8"
         )
-    result = dict(checks=checks, totals=totals, rows=all_rows)
+    result = {"checks": checks, "totals": totals, "rows": all_rows}
     (root / "summary.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(
         json.dumps(
-            dict(
-                checks=checks,
-                totals=totals,
-                changed_hashes={
+            {
+                "checks": checks,
+                "totals": totals,
+                "changed_hashes": {
                     m: [r["index"] for r in rows if not r["hashes_equal"]]
                     for m, rows in all_rows.items()
                 },
-            ),
+            },
             indent=2,
         )
     )

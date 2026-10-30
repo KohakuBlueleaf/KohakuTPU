@@ -115,26 +115,26 @@ def main():
                 if p not in tables:
                     tables[p] = reference(a, side, group, mm.nk).hex()
         step = {k: l[k] for k in ("n", "walk", "at", "dwalk", "dat", "m")}
-        recipe = dict(
-            mm=vars(mm),
-            e=metadata["e"],
-            extras=metadata["extras"],
-            out=metadata["out"],
-            steps={i: [step]},
-        )
-        rec = dict(
-            index=ci,
-            kind="epilogue",
-            consumer_key=e["key"],
-            converts=[es[l["start"]]["key"]],
-            chain_indices=[l["start"], ci],
-            recipe=recipe,
-            allocations=allocations,
-            tables=tables,
-            before=before,
-            after=after,
-            output="out",
-        )
+        recipe = {
+            "mm": vars(mm),
+            "e": metadata["e"],
+            "extras": metadata["extras"],
+            "out": metadata["out"],
+            "steps": {i: [step]},
+        }
+        rec = {
+            "index": ci,
+            "kind": "epilogue",
+            "consumer_key": e["key"],
+            "converts": [es[l["start"]]["key"]],
+            "chain_indices": [l["start"], ci],
+            "recipe": recipe,
+            "allocations": allocations,
+            "tables": tables,
+            "before": before,
+            "after": after,
+            "output": "out",
+        }
         (chains / f"{ci}.json").write_text(json.dumps(rec))
         print(
             ci,

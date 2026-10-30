@@ -41,25 +41,29 @@ def capture(args):
             size = math.prod(spec["shape"]) * ITEM[spec["dtype"]]
             base = entry.virtual
             if base not in allocations:
-                allocations[base] = dict(
-                    data=dev.read(base, entry.extent), extent=entry.extent
-                )
+                allocations[base] = {
+                    "data": dev.read(base, entry.extent),
+                    "extent": entry.extent,
+                }
             offset = binds[name] - base
             allocations[base]["extent"] = max(
                 allocations[base]["extent"], offset + size
             )
-            views[name] = dict(
-                allocation=base, offset=offset, nbytes=size, role=port["role"]
-            )
-        held[key] = dict(
-            key=key,
-            label=graph["name"],
-            source=source,
-            graph=graph,
-            kind=kind,
-            allocations=allocations,
-            views=views,
-        )
+            views[name] = {
+                "allocation": base,
+                "offset": offset,
+                "nbytes": size,
+                "role": port["role"],
+            }
+        held[key] = {
+            "key": key,
+            "label": graph["name"],
+            "source": source,
+            "graph": graph,
+            "kind": kind,
+            "allocations": allocations,
+            "views": views,
+        }
 
     with D.attached(dev):
         prebuild["capture"](
@@ -83,56 +87,64 @@ def capture(args):
             case["changed"] = False
             if result["verdict"]["refused"] or result["bound"] is not None:
                 report.append(
-                    dict(
-                        key=key,
-                        name=case["label"],
-                        status="refused",
-                        verdict=result["verdict"],
-                        bound=result["bound"],
-                    )
+                    {
+                        "key": key,
+                        "name": case["label"],
+                        "status": "refused",
+                        "verdict": result["verdict"],
+                        "bound": result["bound"],
+                    }
                 )
             else:
                 cases.append(case)
                 report.append(
-                    dict(
-                        key=key,
-                        name=case["label"],
-                        status="compiled",
-                        kind=case["kind"],
-                        multiplicity=counts[key],
-                        package_bytes=sum(
+                    {
+                        "key": key,
+                        "name": case["label"],
+                        "status": "compiled",
+                        "kind": case["kind"],
+                        "multiplicity": counts[key],
+                        "package_bytes": sum(
                             len(p["bytes"]) for p in result["packages"].values()
                         ),
-                    )
+                    }
                 )
         except ValueError as error:
             report.append(
-                dict(key=key, name=case["label"], status="refused", error=str(error))
+                {
+                    "key": key,
+                    "name": case["label"],
+                    "status": "refused",
+                    "error": str(error),
+                }
             )
         print(json.dumps(dict(i=i, **report[-1])), flush=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(
         pickle.dumps(
-            dict(machine=dev.machine.machine_json, cases=cases, model=args.model)
+            {"machine": dev.machine.machine_json, "cases": cases, "model": args.model}
         )
     )
     args.output.with_suffix(".json").write_text(
         json.dumps(
-            dict(
-                model=args.model, classes=len(held), launches=len(order), report=report
-            ),
+            {
+                "model": args.model,
+                "classes": len(held),
+                "launches": len(order),
+                "report": report,
+            },
             indent=2,
         ),
         encoding="utf-8",
     )
     print(
         json.dumps(
-            dict(
-                model=args.model,
-                classes=len(held),
-                launches=len(order),
-                compiled=len(cases),
-            )
+            {
+                "model": args.model,
+                "classes": len(held),
+                "launches": len(order),
+                "compiled": len(cases),
+            }
         ),
         flush=True,
     )

@@ -5,8 +5,8 @@ import os
 
 import numpy as np
 import pytest
-from application.tests.runtime.test_packing_model import reference
 
+from application.tests.runtime.test_packing_model import reference
 from kohakutpu.application.kernels import matmul
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import device as D

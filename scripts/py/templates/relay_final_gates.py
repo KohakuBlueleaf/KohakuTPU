@@ -80,7 +80,8 @@ def main():
         results.append(result)
     (OUT / f"final-{group}.json").write_text(
         json.dumps(
-            dict(collection=proc.returncode, tests=len(ids), slices=results), indent=2
+            {"collection": proc.returncode, "tests": len(ids), "slices": results},
+            indent=2,
         ),
         encoding="utf-8",
     )

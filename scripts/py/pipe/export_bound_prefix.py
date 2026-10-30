@@ -97,11 +97,11 @@ def main():
                 )["compiled"]
             )
             c["packages"] = {
-                int(n): dict(
-                    bytes=bytes.fromhex(p["bytes"]),
-                    params=p["params"],
-                    images_json=json.dumps(p["images"]),
-                )
+                int(n): {
+                    "bytes": bytes.fromhex(p["bytes"]),
+                    "params": p["params"],
+                    "images_json": json.dumps(p["images"]),
+                }
                 for n, p in c["packages"].items()
             }
             dev.counters["library_hits"] += 1
@@ -115,16 +115,19 @@ def main():
     write = dev.card.write
 
     def upload(at, raw):
-        events.append(dict(write=at, data=raw.hex()))
+        events.append({"write": at, "data": raw.hex()})
         return write(at, raw)
 
     def execute(card, built):
         pkg, bindings = built[0]
-        events.append(dict(run=pkg.to_bytes().hex(), bindings=bindings))
+        events.append({"run": pkg.to_bytes().hex(), "bindings": bindings})
         print("run", sum("run" in e for e in events), "bindings", bindings, flush=True)
         if sum("run" in e for e in events) == 5:
             raise Done()
-        return dict(cycles=0, nodes={0: dict(cycles=0, steps=[], phases={}, pkg=pkg)})
+        return {
+            "cycles": 0,
+            "nodes": {0: {"cycles": 0, "steps": [], "phases": {}, "pkg": pkg}},
+        }
 
     dev.card.write = upload
     if args.simulate:
@@ -145,12 +148,12 @@ def main():
             items = progs.items() if isinstance(progs, dict) else [(0, progs)]
             recent.append(
                 {
-                    str(n): dict(
-                        bindings=p.bindings,
-                        translations=p.translations,
-                        package=p.package.hex(),
-                        images=p.images_json,
-                    )
+                    str(n): {
+                        "bindings": p.bindings,
+                        "translations": p.translations,
+                        "package": p.package.hex(),
+                        "images": p.images_json,
+                    }
                     for n, p in items
                 }
             )
@@ -178,16 +181,16 @@ def main():
                     if actual != expected[12288:12416]:
                         (base / "first-corruption.json").write_text(
                             json.dumps(
-                                dict(
-                                    count=dev.counters["runs"],
-                                    name=submitted.name,
-                                    address=address,
-                                    physical=physical,
-                                    info=str(submitted.info),
-                                    recent=recent,
-                                    expected=expected[12288:12416].hex(),
-                                    actual=actual.hex(),
-                                )
+                                {
+                                    "count": dev.counters["runs"],
+                                    "name": submitted.name,
+                                    "address": address,
+                                    "physical": physical,
+                                    "info": str(submitted.info),
+                                    "recent": recent,
+                                    "expected": expected[12288:12416].hex(),
+                                    "actual": actual.hex(),
+                                }
                             )
                         )
                         print(
@@ -216,19 +219,19 @@ def main():
                         continue
                     actual = dev.read(address, len(expected))
                     if actual != expected:
-                        entry, physical = dev.mmu.resolve(address)
+                        _entry, physical = dev.mmu.resolve(address)
                         (base / "first-corruption.json").write_text(
                             json.dumps(
-                                dict(
-                                    count=count,
-                                    name=compiled.name,
-                                    address=address,
-                                    physical=physical,
-                                    binds=binds,
-                                    source=compiled.traced.graph_json,
-                                    expected=expected.hex(),
-                                    actual=actual.hex(),
-                                )
+                                {
+                                    "count": count,
+                                    "name": compiled.name,
+                                    "address": address,
+                                    "physical": physical,
+                                    "binds": binds,
+                                    "source": compiled.traced.graph_json,
+                                    "expected": expected.hex(),
+                                    "actual": actual.hex(),
+                                }
                             )
                         )
                         print(
@@ -276,11 +279,11 @@ def main():
                         actual = dev.read(address, len(expected))
                         if actual != expected:
                             bad.append(
-                                dict(
-                                    address=address,
-                                    expected=expected.hex(),
-                                    actual=actual.hex(),
-                                )
+                                {
+                                    "address": address,
+                                    "expected": expected.hex(),
+                                    "actual": actual.hex(),
+                                }
                             )
                     (
                         base

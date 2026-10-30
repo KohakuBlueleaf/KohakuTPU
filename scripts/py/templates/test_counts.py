@@ -4,7 +4,6 @@ import json
 
 import counts
 import pytest
-
 from kohakutpu.compiler import _rs
 from kohakutpu.language import machine as MF
 

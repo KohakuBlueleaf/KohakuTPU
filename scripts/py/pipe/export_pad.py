@@ -41,14 +41,14 @@ def main():
                     with rs.mutant(mutant):
                         c = K.specialise(kernel, given, machine=machine)
                     key = f"{rows}-{side}-{pad}-{batch}-{mutant or 'good'}"
-                    records[key] = dict(
-                        l1=c.l1_text,
-                        verdict=c.verdict,
-                        name=c.name,
-                        rows=rows,
-                        cols=cols,
-                        groups=groups,
-                    )
+                    records[key] = {
+                        "l1": c.l1_text,
+                        "verdict": c.verdict,
+                        "name": c.name,
+                        "rows": rows,
+                        "cols": cols,
+                        "groups": groups,
+                    }
                     print(key, c.verdict["refused"], len(c.verdict["findings"]))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(records, indent=1))

@@ -42,7 +42,7 @@ def main():
             tag = f"{name}-b{batch}"
             folder = out / tag
             folder.mkdir(parents=True, exist_ok=True)
-            row = dict(model=name, batch=batch)
+            row = {"model": name, "batch": batch}
             if args.mode == "cpu":
                 command = [
                     sys.executable,

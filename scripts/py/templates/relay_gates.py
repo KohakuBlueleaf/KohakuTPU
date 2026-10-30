@@ -30,7 +30,12 @@ def run(out, name, command, cwd, seconds, extra=None):
             rc = proc.returncode
         except subprocess.TimeoutExpired:
             rc = 124
-    result = dict(name=name, command=command, code=rc, seconds=time.monotonic() - start)
+    result = {
+        "name": name,
+        "command": command,
+        "code": rc,
+        "seconds": time.monotonic() - start,
+    }
     print(json.dumps(result), flush=True)
     return result
 

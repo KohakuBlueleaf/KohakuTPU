@@ -9,15 +9,14 @@ import time
 from pathlib import Path
 
 import numpy as np
-from vq_census import census
-from vq_model import ROOT, model_counters, packed_reference
-from vq_workload import walk
-
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import generated
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.application.runtime.packing import NonfinitePackingError
 from kohakutpu.stack import rs
+from vq_census import census
+from vq_model import ROOT, model_counters, packed_reference
+from vq_workload import walk
 
 
 def compile_artifact(args):
@@ -59,11 +58,12 @@ def compile_artifact(args):
             )
             cases.append(case)
     # The source graph provides port metadata; packages come from exact L1 below.
-    graph = dict(
-        ports=[
-            dict(name=n, spec=dict(shape=[512, 128], dtype="f16")) for n in ("x", "y")
+    graph = {
+        "ports": [
+            {"name": n, "spec": {"shape": [512, 128], "dtype": "f16"}}
+            for n in ("x", "y")
         ]
-    )
+    }
     source = """target ktpu.v9
 image classify(a, b)
     desc a0=a walk=(32, 8)
@@ -87,9 +87,9 @@ fn classifier.l1(x: f16[512,128] @dram, y: f16[512,128] @dram)
         run classify(x+0, y+0)
     wait vc[0]
 """
-    probe = dict(
-        graph=graph,
-        compiled=rs._rs.compile(
+    probe = {
+        "graph": graph,
+        "compiled": rs._rs.compile(
             source,
             rs.machine_json(machine),
             name="classifier",
@@ -97,7 +97,7 @@ fn classifier.l1(x: f16[512,128] @dram, y: f16[512,128] @dram)
             fetch=True,
             l1=True,
         ),
-    )
+    }
     assert not probe["compiled"]["verdict"]["refused"], probe["compiled"]["verdict"]
     finite = []
     for pipeline, zero in ((0, 0), (1, 0), (0, 1), (1, 1)):
@@ -106,23 +106,30 @@ fn classifier.l1(x: f16[512,128] @dram, y: f16[512,128] @dram)
             source, rs.machine_json(machine), cache_dir="", fetch=True
         )
         assert not compiled["verdict"]["refused"], compiled["verdict"]
-        graph = dict(
-            ports=[
-                dict(name="x", spec=dict(shape=[1984, 32], dtype="f16")),
-                dict(
-                    name="q",
-                    spec=dict(
-                        shape=[1984, 32], dtype="mx7a", layout=[["gm", 496], ["nk", 1]]
-                    ),
-                ),
+        graph = {
+            "ports": [
+                {"name": "x", "spec": {"shape": [1984, 32], "dtype": "f16"}},
+                {
+                    "name": "q",
+                    "spec": {
+                        "shape": [1984, 32],
+                        "dtype": "mx7a",
+                        "layout": [["gm", 496], ["nk", 1]],
+                    },
+                },
             ]
-        )
+        }
         finite.append(
-            dict(graph=graph, compiled=compiled, pipeline=pipeline, zero=zero)
+            {"graph": graph, "compiled": compiled, "pipeline": pipeline, "zero": zero}
         )
     args.output.write_bytes(
         pickle.dumps(
-            dict(machine=machine.machine_json, cases=cases, probe=probe, finite=finite)
+            {
+                "machine": machine.machine_json,
+                "cases": cases,
+                "probe": probe,
+                "finite": finite,
+            }
         )
     )
 
@@ -141,7 +148,7 @@ def execute(args):
     )
     dev.machine = machine_of("vlt_v9t6s_1n", packing_backend="vector_mx7")
     records = []
-    aggregate = dict(fill_words=0, drain_words=0, lane_slots=0)
+    aggregate = {"fill_words": 0, "drain_words": 0, "lane_slots": 0}
 
     def run(compiled, graph, binds):
         result = dev.run(
@@ -155,7 +162,7 @@ def execute(args):
     def publish(record):
         records.append(record)
         args.output.write_text(
-            json.dumps(dict(records=records), indent=2), encoding="utf-8"
+            json.dumps({"records": records}, indent=2), encoding="utf-8"
         )
         print(json.dumps(record), flush=True)
 
@@ -170,14 +177,14 @@ def execute(args):
         assert np.all(got[finite_mask] == 0x3C00)
         assert np.all((got[~finite_mask] & 0x7FFF) > 0x7C00)
         publish(
-            dict(
-                label="classifier-all-fp16",
-                finite=int(finite_mask.sum()),
-                nonfinite=int((~finite_mask).sum()),
-                cycles=cycles,
-                work=work,
-                parity="all 65536 encodings",
-            )
+            {
+                "label": "classifier-all-fp16",
+                "finite": int(finite_mask.sum()),
+                "nonfinite": int((~finite_mask).sum()),
+                "cycles": cycles,
+                "work": work,
+                "parity": "all 65536 encodings",
+            }
         )
         dev.free(x)
         dev.free(y)
@@ -189,14 +196,14 @@ def execute(args):
             cycles, work = run(case["compiled"], case["graph"], {"x": x, "q": q})
             assert dev.read(q, len(expected)) == expected
             publish(
-                dict(
-                    label="all-finite-quant",
-                    pipeline=case["pipeline"],
-                    zero=case["zero"],
-                    cycles=cycles,
-                    work=work,
-                    parity="exact independent MX7 bytes",
-                )
+                {
+                    "label": "all-finite-quant",
+                    "pipeline": case["pipeline"],
+                    "zero": case["zero"],
+                    "cycles": cycles,
+                    "work": work,
+                    "parity": "exact independent MX7 bytes",
+                }
             )
         dev.free(x)
         dev.free(q)
@@ -233,16 +240,16 @@ def execute(args):
                         == bytes([0xD3]) * 128
                     )
                 publish(
-                    dict(
-                        label=case["label"],
-                        model=case["model"],
-                        key=case["key"],
-                        before=case["baseline_cycles"],
-                        pipeline=case["pipeline_cycles"],
-                        after=cycles,
-                        work=work,
-                        parity="exact baseline SHA256",
-                    )
+                    {
+                        "label": case["label"],
+                        "model": case["model"],
+                        "key": case["key"],
+                        "before": case["baseline_cycles"],
+                        "pipeline": case["pipeline_cycles"],
+                        "after": cycles,
+                        "work": work,
+                        "parity": "exact baseline SHA256",
+                    }
                 )
             finally:
                 for address in addresses.values():
@@ -260,9 +267,10 @@ def execute(args):
             for key in aggregate:
                 aggregate[key] += work[key]
             publish(
-                dict(
-                    label="zero-classifier-live-negative-infinity", rejected=str(error)
-                )
+                {
+                    "label": "zero-classifier-live-negative-infinity",
+                    "rejected": str(error),
+                }
             )
         else:
             raise AssertionError("zero classifier accepted infinity")
@@ -277,19 +285,20 @@ def execute(args):
         counters = model_counters(log)
         actual = next(iter(counters.values()))["VRES"]
         checks = {
-            key: dict(
-                census=value, model=actual["lanes" if key == "lane_slots" else key]
-            )
+            key: {
+                "census": value,
+                "model": actual["lanes" if key == "lane_slots" else key],
+            }
             for key, value in aggregate.items()
         }
         args.output.write_text(
             json.dumps(
-                dict(
-                    records=records,
-                    wall_seconds=time.monotonic() - started,
-                    counters=counters,
-                    checks=checks,
-                ),
+                {
+                    "records": records,
+                    "wall_seconds": time.monotonic() - started,
+                    "counters": counters,
+                    "checks": checks,
+                },
                 indent=2,
             ),
             encoding="utf-8",

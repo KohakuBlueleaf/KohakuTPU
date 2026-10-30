@@ -8,7 +8,6 @@ from collections import Counter
 
 from capture import GENERATORS
 from derive import compile_graph, decode
-
 from kohakutpu.application.kernels.classes.policy import ShapeClass
 from kohakutpu.application.runtime.offline import OfflineCard
 from kohakutpu.compiler import _rs

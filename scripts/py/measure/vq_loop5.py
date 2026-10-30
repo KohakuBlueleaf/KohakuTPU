@@ -8,16 +8,15 @@ import pickle
 from pathlib import Path
 
 import numpy as np
-from vq_census import census
-from vq_model import ROOT, dsl_cases, packed_reference
-from vq_workload import walk
-
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes.policy import ShapeClass
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
+from vq_census import census
+from vq_model import ROOT, dsl_cases, packed_reference
+from vq_workload import walk
 
 
 def main():
@@ -52,7 +51,7 @@ def main():
             ]
         args.output.with_name("negative.pkl").write_bytes(pickle.dumps(negative))
         args.output.write_bytes(
-            pickle.dumps(dict(machine=machine.machine_json, cases=cases))
+            pickle.dumps({"machine": machine.machine_json, "cases": cases})
         )
         return
     if args.group == "zero":
@@ -116,15 +115,15 @@ def main():
                 else:
                     expected = np.maximum(live, 0).astype("<f2")
                 cases.append(
-                    dict(
-                        label=f"tail-{dtype}-reduce{int(reduction)}-band{band}",
-                        kind="dsl",
-                        shape=[rows, width],
-                        graph=graph,
-                        inputs=dict(in0=source.tobytes()),
-                        output="out",
-                        expected=expected.tobytes(),
-                    )
+                    {
+                        "label": f"tail-{dtype}-reduce{int(reduction)}-band{band}",
+                        "kind": "dsl",
+                        "shape": [rows, width],
+                        "graph": graph,
+                        "inputs": {"in0": source.tobytes()},
+                        "output": "out",
+                        "expected": expected.tobytes(),
+                    }
                 )
     else:
         for side, rows, cols, rp, cp, pitch, offset, batches in (
@@ -143,24 +142,30 @@ def main():
                 padded[batch * rp : batch * rp + rows, :cols] = source[
                     batch * rows : batch * rows + rows, offset : offset + cols
                 ]
-            parameters = dict(
-                src=dict(kind="full", pitch=pitch, offset=offset, dtype="f16", rows=0),
-                rows=rows,
-                cols=cols,
-                rp=rp,
-                cp=cp,
-                side=side,
-                g=rp // 4,
-                nk=1,
-                batches=batches,
-                schedule=dict(
-                    pipeline=args.value,
-                    zero_classifier=args.value,
-                    stream_axes=args.value,
-                    fill_overlap=args.value,
-                    zero_reuse=args.value,
-                ),
-            )
+            parameters = {
+                "src": {
+                    "kind": "full",
+                    "pitch": pitch,
+                    "offset": offset,
+                    "dtype": "f16",
+                    "rows": 0,
+                },
+                "rows": rows,
+                "cols": cols,
+                "rp": rp,
+                "cp": cp,
+                "side": side,
+                "g": rp // 4,
+                "nk": 1,
+                "batches": batches,
+                "schedule": {
+                    "pipeline": args.value,
+                    "zero_classifier": args.value,
+                    "stream_axes": args.value,
+                    "fill_overlap": args.value,
+                    "zero_reuse": args.value,
+                },
+            }
             graph = json.loads(
                 rs._rs.generate(
                     "matmul.quant_kernel",
@@ -171,18 +176,18 @@ def main():
             )
             n = graph["ports"][0]["spec"]["shape"][0]
             cases.append(
-                dict(
-                    label=f"native-{side}-schedule{args.value}",
-                    graph=graph,
-                    kind="quant",
-                    shape=[rows, cols],
-                    inputs=dict(x=source[:n].tobytes()),
-                    output="q",
-                    expected=packed_reference(padded, side, rp // 4, 1),
-                    read_bytes=0,
-                    write_bytes=0,
-                    math_lane_ops=0,
-                )
+                {
+                    "label": f"native-{side}-schedule{args.value}",
+                    "graph": graph,
+                    "kind": "quant",
+                    "shape": [rows, cols],
+                    "inputs": {"x": source[:n].tobytes()},
+                    "output": "q",
+                    "expected": packed_reference(padded, side, rp // 4, 1),
+                    "read_bytes": 0,
+                    "write_bytes": 0,
+                    "math_lane_ops": 0,
+                }
             )
     for case in cases:
         result = rs._rs.compile(
@@ -199,10 +204,10 @@ def main():
             write_bytes=work["drain_words"] * 32,
             math_lane_ops=work["lane_slots"],
         )
-        print(json.dumps(dict(label=case["label"], work=work)))
+        print(json.dumps({"label": case["label"], "work": work}))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(
-        pickle.dumps(dict(machine=machine.machine_json, cases=cases))
+        pickle.dumps({"machine": machine.machine_json, "cases": cases})
     )
 
 

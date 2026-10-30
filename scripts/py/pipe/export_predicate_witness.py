@@ -36,7 +36,7 @@ def main():
     ):
         with rs.mutant(mutant):
             c = K.compile(SOURCE, name="select", machine=machine)
-        recs[label] = dict(l1=c.l1_text, verdict=c.verdict)
+        recs[label] = {"l1": c.l1_text, "verdict": c.verdict}
         print(label, c.verdict)
     args.output.write_text(json.dumps(recs))
 

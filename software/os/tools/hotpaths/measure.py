@@ -9,10 +9,9 @@ TOOLS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
 
 from boot import load, parse_flags
-from run_core import run
-
 from build import HOT as KNOBS
 from build import build
+from run_core import run
 
 
 def main():

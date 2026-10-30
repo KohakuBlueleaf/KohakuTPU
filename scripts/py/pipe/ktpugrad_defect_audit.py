@@ -25,6 +25,7 @@ def main():
         ],
         capture_output=True,
         text=True,
+        check=False,
     )
     output = args.output
     output.parent.mkdir(parents=True, exist_ok=True)

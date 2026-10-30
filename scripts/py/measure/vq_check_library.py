@@ -21,7 +21,9 @@ def main():
     result = rs._rs.library_get(str(ROOT / "build/vq/loop7-check"), source, machine)
     assert result is not None
     print(
-        json.dumps(dict(identity=identity, hit=True, name=json.loads(source)["name"]))
+        json.dumps(
+            {"identity": identity, "hit": True, "name": json.loads(source)["name"]}
+        )
     )
 
 

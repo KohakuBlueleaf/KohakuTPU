@@ -74,26 +74,26 @@ def main():
         checks = json.loads((directory / f"{model}-roofline.json").read_text())[
             "counter_checks"
         ]
-        doc = dict(
-            model=model,
-            rows=rows,
-            totals=totals,
-            by_kind=by_kind,
-            counter_checks=checks,
-            kind="multiplicity-weighted isolated estimate, not measured whole-step",
-        )
+        doc = {
+            "model": model,
+            "rows": rows,
+            "totals": totals,
+            "by_kind": by_kind,
+            "counter_checks": checks,
+            "kind": "multiplicity-weighted isolated estimate, not measured whole-step",
+        }
         (directory / f"{model}-final-roofline.json").write_text(
             json.dumps(doc, indent=2), encoding="utf-8"
         )
         (directory / f"{model}-roofline.md").write_text(
             "\n".join(text) + "\n", encoding="utf-8"
         )
-        summaries[model] = dict(
-            classes=len(rows),
-            launches=sum(r["multiplicity"] for r in rows),
-            totals=totals,
-            by_kind=by_kind,
-        )
+        summaries[model] = {
+            "classes": len(rows),
+            "launches": sum(r["multiplicity"] for r in rows),
+            "totals": totals,
+            "by_kind": by_kind,
+        }
     (directory / "summary.json").write_text(
         json.dumps(summaries, indent=2), encoding="utf-8"
     )

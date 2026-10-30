@@ -36,15 +36,15 @@ def main():
     def observed_execute(rt, plan, buffers):
         identity = len(asts)
         asts.append(
-            dict(
-                index=identity,
-                kind=plan.kind,
-                shape=plan.out_shape,
-                expression=repr(plan.expr),
-                ast=repr(plan.ast),
-                origin="unresolved_semantic_origin",
-                output_bytes=plan.out_n * plan.out_dtype.itemsize,
-            )
+            {
+                "index": identity,
+                "kind": plan.kind,
+                "shape": plan.out_shape,
+                "expression": repr(plan.expr),
+                "ast": repr(plan.ast),
+                "origin": "unresolved_semantic_origin",
+                "output_bytes": plan.out_n * plan.out_dtype.itemsize,
+            }
         )
         stack.append(identity)
         try:
@@ -61,16 +61,16 @@ def main():
             if p in binds
         }
         rows.append(
-            dict(
-                index=len(rows),
-                ast=stack[-1] if stack else None,
-                name=compiled.name,
-                kind=kind,
-                bound_bytes=sum(sizes.values()),
-                bindings=sizes,
-                cycles=None,
-                boundary="runtime package inside scheduled AST",
-            )
+            {
+                "index": len(rows),
+                "ast": stack[-1] if stack else None,
+                "name": compiled.name,
+                "kind": kind,
+                "bound_bytes": sum(sizes.values()),
+                "bindings": sizes,
+                "cycles": None,
+                "boundary": "runtime package inside scheduled AST",
+            }
         )
         return result
 
@@ -95,16 +95,16 @@ def main():
             )
         dest = ROOT / ".kt/launch-inventory"
         dest.mkdir(parents=True, exist_ok=True)
-        payload = dict(
-            model=args.model,
-            mode=args.mode,
-            steps=steps,
-            asts=asts,
-            launches=rows,
-            kind_counts=dict(Counter(r["kind"] for r in rows)),
-            byte_definition="sum of bound parameter extents, NOT measured DRAM traffic",
-            cycles="offline does not execute; per-AST model cycles unavailable",
-        )
+        payload = {
+            "model": args.model,
+            "mode": args.mode,
+            "steps": steps,
+            "asts": asts,
+            "launches": rows,
+            "kind_counts": dict(Counter(r["kind"] for r in rows)),
+            "byte_definition": "sum of bound parameter extents, NOT measured DRAM traffic",
+            "cycles": "offline does not execute; per-AST model cycles unavailable",
+        }
         (dest / f"{args.model}-{args.mode}.json").write_text(
             json.dumps(payload, indent=2), encoding="utf-8"
         )

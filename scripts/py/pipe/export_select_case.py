@@ -31,20 +31,23 @@ def main():
     for label, mutant in [("before", "l2.predicate-select/off"), ("after", None)]:
         with rs.mutant(mutant):
             c = K.compile(SOURCE, name="k", machine=m)
-        records[label] = dict(
-            name=c.name, l1=c.l1_text, verdict=c.verdict, binds={"x": "x", "y": "y"}
-        )
-    result = dict(
-        index="vsel",
-        kind="golden-review",
-        converts=[],
-        consumer_key="L2.OP.006.vsel",
-        allocations={"x": 2048, "y": 2048},
-        tables={},
-        before=[records["before"]],
-        after=records["after"],
-        output="y",
-    )
+        records[label] = {
+            "name": c.name,
+            "l1": c.l1_text,
+            "verdict": c.verdict,
+            "binds": {"x": "x", "y": "y"},
+        }
+    result = {
+        "index": "vsel",
+        "kind": "golden-review",
+        "converts": [],
+        "consumer_key": "L2.OP.006.vsel",
+        "allocations": {"x": 2048, "y": 2048},
+        "tables": {},
+        "before": [records["before"]],
+        "after": records["after"],
+        "output": "y",
+    }
     args.output.write_text(json.dumps(result))
     print({k: v["verdict"] for k, v in records.items()})
 

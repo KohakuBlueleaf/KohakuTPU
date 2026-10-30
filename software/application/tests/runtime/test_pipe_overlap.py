@@ -1,7 +1,6 @@
 """Output-slot retirement: pack waits for the old drain, not the other slot."""
 
 from application.tests.runtime.test_pipe_batch import model  # noqa: F401
-
 from kohakutpu.stack import kernel as K
 
 

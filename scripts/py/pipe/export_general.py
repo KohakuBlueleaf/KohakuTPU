@@ -76,21 +76,21 @@ def main():
         )
         after = K.specialise(kernel, given, machine=machine)
         for label, compiled in (("before", before), ("after", after)):
-            record = dict(
-                key=row["key"],
-                label=label,
-                name=compiled.name,
-                l1=compiled.l1_text,
-                verdict=compiled.verdict,
-                ports=graph["ports"],
-                rows=rows,
-                cols=cols,
-                rp=rp,
-                cp=cp,
-                g=g,
-                nk=nk,
-                launches=row["launches"],
-            )
+            record = {
+                "key": row["key"],
+                "label": label,
+                "name": compiled.name,
+                "l1": compiled.l1_text,
+                "verdict": compiled.verdict,
+                "ports": graph["ports"],
+                "rows": rows,
+                "cols": cols,
+                "rp": rp,
+                "cp": cp,
+                "g": g,
+                "nk": nk,
+                "launches": row["launches"],
+            }
             (args.output / f"{row['key']}-{label}.json").write_text(json.dumps(record))
         print(
             row["key"][:10],

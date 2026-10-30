@@ -4,7 +4,6 @@ import json
 
 import prebuild
 import pytest
-
 from kohakutpu.application.kernels import convert as KC
 from kohakutpu.application.runtime.class_library import ClassLibrary
 from kohakutpu.application.runtime.device import Device

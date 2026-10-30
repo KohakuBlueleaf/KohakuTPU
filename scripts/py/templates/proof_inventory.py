@@ -31,7 +31,7 @@ def inventory(library, capture, caps=()):
         dimensions = {}
         for name, bounds in table["parameters"].items():
             sites = [
-                dict(site=site, field=field, field_class=kind)
+                {"site": site, "field": field, "field_class": kind}
                 for site, field, kind in zip(
                     table["sites"], certificate["sites"], certificate["classes"]
                 )
@@ -82,19 +82,21 @@ def inventory(library, capture, caps=()):
                     )
                 )
                 measurements.append(
-                    dict(
-                        cap=cap, seconds=time.perf_counter() - started, verdict=verdict
-                    )
+                    {
+                        "cap": cap,
+                        "seconds": time.perf_counter() - started,
+                        "verdict": verdict,
+                    }
                 )
-        rows[path.stem] = dict(
-            measurements=measurements,
-            steps=package["steps"],
-            payloads=package["payloads"],
-            dimensions=dimensions,
-            exhaustive_product=math.prod(
+        rows[path.stem] = {
+            "measurements": measurements,
+            "steps": package["steps"],
+            "payloads": package["payloads"],
+            "dimensions": dimensions,
+            "exhaustive_product": math.prod(
                 dim["width"] for dim in dimensions.values() if not dim["data_only"]
             ),
-        )
+        }
     return rows
 
 

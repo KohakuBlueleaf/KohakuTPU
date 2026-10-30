@@ -12,7 +12,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import matmul as MM
 from kohakutpu.application.kernels import vector as V
@@ -92,19 +91,19 @@ def quant_cases():
                 cp // 32,
                 finite=finite,
             )
-            yield dict(
-                label=f"quant-{label}-finite{int(finite)}-batch{batch}-overlap{overlap}-pipe{pipeline}",
-                kernel=kernel,
-                given=given,
-                inputs={"x": x.tobytes()},
-                output="q",
-                expected=packed_reference(padded, side, rp // 4, cp // 32),
-                read_bytes=live.nbytes,
-                write_bytes=rp * cp,
-                math_lane_ops=None,
-                shape=[rows, cols],
-                kind="quant",
-            )
+            yield {
+                "label": f"quant-{label}-finite{int(finite)}-batch{batch}-overlap{overlap}-pipe{pipeline}",
+                "kernel": kernel,
+                "given": given,
+                "inputs": {"x": x.tobytes()},
+                "output": "q",
+                "expected": packed_reference(padded, side, rp // 4, cp // 32),
+                "read_bytes": live.nbytes,
+                "write_bytes": rp * cp,
+                "math_lane_ops": None,
+                "shape": [rows, cols],
+                "kind": "quant",
+            }
 
 
 def dsl_cases():
@@ -160,19 +159,19 @@ def dsl_cases():
                 1,
                 shape_class=ShapeClass(32, 256) if classed else None,
             )
-            yield dict(
-                label=f"dsl-{label}-class{int(classed)}-w{class_width}-direct{direct}",
-                kernel=kernel,
-                given=given,
-                inputs=inputs,
-                output="out",
-                expected=expected.tobytes(),
-                read_bytes=sum(len(b) for b in inputs.values()),
-                write_bytes=expected.nbytes,
-                math_lane_ops=X.count(expr) * rows * width,
-                shape=[rows, width],
-                kind="dsl",
-            )
+            yield {
+                "label": f"dsl-{label}-class{int(classed)}-w{class_width}-direct{direct}",
+                "kernel": kernel,
+                "given": given,
+                "inputs": inputs,
+                "output": "out",
+                "expected": expected.tobytes(),
+                "read_bytes": sum(len(b) for b in inputs.values()),
+                "write_bytes": expected.nbytes,
+                "math_lane_ops": X.count(expr) * rows * width,
+                "shape": [rows, width],
+                "kind": "dsl",
+            }
 
 
 def compile_cases(args):
@@ -193,18 +192,18 @@ def compile_cases(args):
         compiled.append(case)
         print(
             json.dumps(
-                dict(
-                    label=case["label"],
-                    package_bytes=sum(
+                {
+                    "label": case["label"],
+                    "package_bytes": sum(
                         len(p["bytes"]) for p in output["packages"].values()
                     ),
-                )
+                }
             ),
             flush=True,
         )
     args.artifact.parent.mkdir(parents=True, exist_ok=True)
     args.artifact.write_bytes(
-        pickle.dumps(dict(machine=machine.machine_json, cases=compiled))
+        pickle.dumps({"machine": machine.machine_json, "cases": compiled})
     )
 
 
@@ -289,7 +288,7 @@ def execute(args):
                 records.append(record)
                 print(json.dumps(record), flush=True)
                 args.output.write_text(
-                    json.dumps(dict(records=records), indent=2), encoding="utf-8"
+                    json.dumps({"records": records}, indent=2), encoding="utf-8"
                 )
             finally:
                 for name in case["inputs"]:
@@ -311,7 +310,7 @@ def execute(args):
                 dev.run(comp, {"x": x, "q": q}, kind="quant")
             except NonfinitePackingError as error:
                 records.append(
-                    dict(label="pipeline-live-infinity", rejected=str(error))
+                    {"label": "pipeline-live-infinity", "rejected": str(error)}
                 )
             else:
                 raise AssertionError("pipeline accepted live infinity")
@@ -325,11 +324,11 @@ def execute(args):
             assert args.nonfinite_artifact
         args.output.write_text(
             json.dumps(
-                dict(
-                    records=records,
-                    counters=model_counters(log),
-                    wall_seconds=time.monotonic() - started,
-                ),
+                {
+                    "records": records,
+                    "counters": model_counters(log),
+                    "wall_seconds": time.monotonic() - started,
+                },
                 indent=2,
             ),
             encoding="utf-8",

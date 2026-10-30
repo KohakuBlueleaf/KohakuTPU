@@ -5,11 +5,12 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from templates import prebuild
 from kohakutpu.application.kernels import matmul as MM
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import launch_reductions as LR
+
+from templates import prebuild
 
 
 def main():
@@ -27,74 +28,78 @@ def main():
         start = len(events)
         result = relayout(device, src, n, walk, at, dwalk, m, dst, dat, keep)
         layouts.append(
-            dict(
-                start=start,
-                stop=len(events),
-                src=src,
-                n=n,
-                walk=walk,
-                at=at,
-                dwalk=dwalk,
-                m=m,
-                dst=dst,
-                dat=dat,
-            )
+            {
+                "start": start,
+                "stop": len(events),
+                "src": src,
+                "n": n,
+                "walk": walk,
+                "at": at,
+                "dwalk": dwalk,
+                "m": m,
+                "dst": dst,
+                "dat": dat,
+            }
         )
         return result
 
     def packing(src, rows, cols, rp, cp, side, g, nk, batches=1, **kw):
         result = quant(src, rows, cols, rp, cp, side, g, nk, batches, **kw)
         quants.append(
-            dict(
-                index=len(events),
-                name=result[0].name,
-                rows=rows,
-                cols=cols,
-                rp=rp,
-                cp=cp,
-                side=side,
-                g=g,
-                nk=nk,
-                batches=batches,
-                pitch=src.pitch,
-                offset=src.offset,
-            )
+            {
+                "index": len(events),
+                "name": result[0].name,
+                "rows": rows,
+                "cols": cols,
+                "rp": rp,
+                "cp": cp,
+                "side": side,
+                "g": g,
+                "nk": nk,
+                "batches": batches,
+                "pitch": src.pitch,
+                "offset": src.offset,
+            }
         )
         return result
 
     def column(e, operands, R, W, out, cores, **kwargs):
         result = tree(e, operands, R, W, out, cores, **kwargs)
         trees.append(
-            dict(
-                index=len(events),
-                name=result[0].name,
-                e=FM.generated.expr(e),
-                operands=[vars(o) for o in operands],
-                R=R,
-                W=W,
-                out=vars(out),
-            )
+            {
+                "index": len(events),
+                "name": result[0].name,
+                "e": FM.generated.expr(e),
+                "operands": [vars(o) for o in operands],
+                "R": R,
+                "W": W,
+                "out": vars(out),
+            }
         )
         return result
 
     def selection(steps, src, rows, cols, rp, cp, side, g, nk, batches, board):
         result = select(steps, src, rows, cols, rp, cp, side, g, nk, batches, board)
         queries.append(
-            dict(
-                index=len(events),
-                steps=FM.costs.steps_recipe(steps),
-                quant=FM.costs.quant_recipe(
+            {
+                "index": len(events),
+                "steps": FM.costs.steps_recipe(steps),
+                "quant": FM.costs.quant_recipe(
                     src, rows, cols, rp, cp, side, g, nk, batches
                 ),
-                selected=result,
-            )
+                "selected": result,
+            }
         )
         return result
 
     def admission(steps, board):
         result = eligible(steps, board)
         eligibility.append(
-            dict(index=len(events), steps=FM.costs.steps_recipe(steps), selected=result)
+            {
+                "index": len(events),
+                "steps": FM.costs.steps_recipe(steps),
+                "selected": result,
+            }
         )
         return result
 

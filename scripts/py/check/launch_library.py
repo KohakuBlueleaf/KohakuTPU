@@ -42,7 +42,7 @@ def main():
             ).decode(errors="replace")
         (dest / f"{label}.log").write_text(output, encoding="utf-8")
         results.append(
-            dict(label=label, status=status, seconds=time.monotonic() - start)
+            {"label": label, "status": status, "seconds": time.monotonic() - start}
         )
         (dest / "summary.json").write_text(
             json.dumps(results, indent=2), encoding="utf-8"

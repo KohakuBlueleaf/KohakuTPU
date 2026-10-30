@@ -4,9 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
-from measure import vc_timing as timing
-
 from kohakutpu.compiler import _rs
+from measure import vc_timing as timing
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE_PROGRAM = timing.program

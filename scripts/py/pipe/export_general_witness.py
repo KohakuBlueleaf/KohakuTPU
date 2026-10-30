@@ -33,13 +33,13 @@ def main():
     for mutant in (None, "l2.packing/pad-nonzero"):
         with rs.mutant(mutant):
             c = K.specialise(kernel, given, machine=machine)
-        recs[mutant or "good"] = dict(l1=c.l1_text, name=c.name, verdict=c.verdict)
+        recs[mutant or "good"] = {"l1": c.l1_text, "name": c.name, "verdict": c.verdict}
         print(mutant, c.verdict)
     kernel, given = M.quant_walk_kernel(
         1760, ((2, 800), (5, 160), (3, 32)), 32, 5, 48, 16, 128, "b", 2, 2, 2
     )
     c = K.specialise(kernel, given, machine=machine)
-    recs["walk"] = dict(l1=c.l1_text, name=c.name, verdict=c.verdict)
+    recs["walk"] = {"l1": c.l1_text, "name": c.name, "verdict": c.verdict}
     print("walk", c.verdict)
     args.output.write_text(json.dumps(recs))
 

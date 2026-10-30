@@ -19,12 +19,12 @@ def stage(compiled, binds, library):
         (library / key["machine"] / (key["class"] + ".json")).read_text()
     )
     c = entry["compiled"]
-    return dict(
-        name=c["name"],
-        l1=c["l1"],
-        verdict=c["verdict"],
-        binds=binds,
-        compiled=c,
-        inputs=[p["name"] for p in graph["ports"] if p["role"] == "in"],
-        library_key=key,
-    )
+    return {
+        "name": c["name"],
+        "l1": c["l1"],
+        "verdict": c["verdict"],
+        "binds": binds,
+        "compiled": c,
+        "inputs": [p["name"] for p in graph["ports"] if p["role"] == "in"],
+        "library_key": key,
+    }

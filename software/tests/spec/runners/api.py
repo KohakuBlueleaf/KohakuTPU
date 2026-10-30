@@ -551,7 +551,6 @@ def m_no_key_mask():
         yield
 
 
-
 @mutant("api.rows/flat_logical_rows")
 def m_flat_logical_rows():
     def legacy(dev, t, e, leaves, view, info):

@@ -21,21 +21,21 @@ def census(source, machine, *, mutant=None):
         source, rs.machine_json(machine), cache_dir="", fetch=True, mutant=mutant
     )
     text = result["l1"]
-    return dict(
-        refused=result["verdict"]["refused"],
-        findings=result["verdict"]["findings"],
-        package_bytes=sum(len(p["bytes"]) for p in result["packages"].values()),
-        static_unpacks=len(re.findall(r"(?m)^\s*vunpk ", text)),
-        static_packs=len(re.findall(r"(?m)^\s*vpack ", text)),
-        static_fe_unpack_waits=text.count("vsync fe on=unpack"),
-        static_fe_pack_waits=text.count("vsync fe on=pack"),
-        static_fe_math_waits=text.count("vsync fe on=math"),
-        static_fills=len(re.findall(r"(?m)^\s*vfill ", text)),
-        static_drains=len(re.findall(r"(?m)^\s*vdrain ", text)),
-        cycles=None,
-        achieved_fraction=None,
-        stall_counters=None,
-    )
+    return {
+        "refused": result["verdict"]["refused"],
+        "findings": result["verdict"]["findings"],
+        "package_bytes": sum(len(p["bytes"]) for p in result["packages"].values()),
+        "static_unpacks": len(re.findall(r"(?m)^\s*vunpk ", text)),
+        "static_packs": len(re.findall(r"(?m)^\s*vpack ", text)),
+        "static_fe_unpack_waits": text.count("vsync fe on=unpack"),
+        "static_fe_pack_waits": text.count("vsync fe on=pack"),
+        "static_fe_math_waits": text.count("vsync fe on=math"),
+        "static_fills": len(re.findall(r"(?m)^\s*vfill ", text)),
+        "static_drains": len(re.findall(r"(?m)^\s*vdrain ", text)),
+        "cycles": None,
+        "achieved_fraction": None,
+        "stall_counters": None,
+    }
 
 
 def traffic(read_bytes, write_bytes, lane_ops, machine):
@@ -43,16 +43,16 @@ def traffic(read_bytes, write_bytes, lane_ops, machine):
     word = facts["die"]["word_bytes"]
     lanes = facts["vc"]["lanes"]
     # FILL and DRAIN have separate engines; the shared-link bound is also shown.
-    return dict(
-        read_bytes=read_bytes,
-        write_bytes=write_bytes,
-        bytes_moved=read_bytes + write_bytes,
-        math_lane_ops=lane_ops,
-        ideal_engine_cycles=max(
+    return {
+        "read_bytes": read_bytes,
+        "write_bytes": write_bytes,
+        "bytes_moved": read_bytes + write_bytes,
+        "math_lane_ops": lane_ops,
+        "ideal_engine_cycles": max(
             read_bytes / word, write_bytes / word, lane_ops / lanes
         ),
-        shared_link_cycles=(read_bytes + write_bytes) / word,
-    )
+        "shared_link_cycles": (read_bytes + write_bytes) / word,
+    }
 
 
 def measure():
@@ -112,18 +112,18 @@ def measure():
                 **census(source, machine),
             )
         )
-    return dict(
-        board=machine.board,
-        mode="offline-static",
-        definitions={
+    return {
+        "board": machine.board,
+        "mode": "offline-static",
+        "definitions": {
             "cycles": "null: no model or card executed",
             "static": "instruction occurrences in emitted images, not dynamic counts",
             "math_lane_ops": "issued ALU lane slots, including checked-quant bookkeeping",
             "ideal_engine_cycles": "max(read bytes/word, write bytes/word, math lane ops/lanes); optimistic, excludes MX7 pack service latency",
             "shared_link_cycles": "aggregate data bytes/word; use only for a shared read/write bottleneck",
         },
-        records=records,
-    )
+        "records": records,
+    }
 
 
 def main():

@@ -6,7 +6,6 @@ import json
 import pytest
 from capture import encode
 from derive import decode, parameters, with_parameters
-
 from kohakutpu.application.kernels import convert, expr, vector
 from kohakutpu.application.runtime.offline import OfflineCard
 from kohakutpu.stack import kernel as K

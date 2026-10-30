@@ -6,13 +6,12 @@ import pickle
 from pathlib import Path
 
 import numpy as np
-from vq_census import census
-
 from kohakutpu.application.kernels import relayout as R
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.language import machine as MF
 from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
+from vq_census import census
 
 
 def main():
@@ -68,26 +67,28 @@ def main():
     )
     assert not compiled["verdict"]["refused"], compiled["verdict"]
     work = census(compiled["l1"])
-    record = dict(
-        label=f"pull-tree{args.tree}",
-        kind="convert",
-        shape=[1008, 128],
-        read_bytes=work["fill_words"] * 32,
-        write_bytes=work["drain_words"] * 32,
-        math_lane_ops=work["lane_slots"],
-        graph=graph,
-        compiled=compiled,
-        inputs=dict(
-            src=source.tobytes(), index=pl.index.tobytes(), mask=pl.masks.tobytes()
-        ),
-        output="dst",
-        expected=expected,
-    )
+    record = {
+        "label": f"pull-tree{args.tree}",
+        "kind": "convert",
+        "shape": [1008, 128],
+        "read_bytes": work["fill_words"] * 32,
+        "write_bytes": work["drain_words"] * 32,
+        "math_lane_ops": work["lane_slots"],
+        "graph": graph,
+        "compiled": compiled,
+        "inputs": {
+            "src": source.tobytes(),
+            "index": pl.index.tobytes(),
+            "mask": pl.masks.tobytes(),
+        },
+        "output": "dst",
+        "expected": expected,
+    }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(
-        pickle.dumps(dict(machine=machine.machine_json, cases=[record]))
+        pickle.dumps({"machine": machine.machine_json, "cases": [record]})
     )
-    print(json.dumps(dict(label=record["label"], work=work)))
+    print(json.dumps({"label": record["label"], "work": work}))
 
 
 if __name__ == "__main__":

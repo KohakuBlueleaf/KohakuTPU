@@ -13,10 +13,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from hseam_counting import CountingCard
-from tinygrad import Tensor, schedule
-from tinygrad.dtype import dtypes
-from tinygrad.uop.ops import AxisType, UOp
-
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.ktpugrad import run as R
@@ -25,6 +21,9 @@ from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
+from tinygrad import Tensor, schedule
+from tinygrad.dtype import dtypes
+from tinygrad.uop.ops import AxisType, UOp
 
 
 def main():

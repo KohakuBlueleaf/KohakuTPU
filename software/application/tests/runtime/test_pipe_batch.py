@@ -6,8 +6,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from application.tests.runtime.test_packing_model import reference
 
+from application.tests.runtime.test_packing_model import reference
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.application.runtime.packing import NonfinitePackingError

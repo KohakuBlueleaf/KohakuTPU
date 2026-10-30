@@ -18,9 +18,8 @@ import pytest
 OS = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(OS / "tools"))
 
-import memgap
-
 import build
+import memgap
 
 BUILD = pathlib.Path(os.environ.get("KOS_BUILD", pathlib.Path.home() / "kos/build"))
 XLAT = OS / "tests/xlat"

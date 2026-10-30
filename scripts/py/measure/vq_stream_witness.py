@@ -8,15 +8,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
-from vq_census import census
-from vq_isolated import compile_artifact
-from vq_model import ROOT
-from vq_workload import walk
-
 from kohakutpu.application.kernels import relayout as R
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
+from vq_census import census
+from vq_isolated import compile_artifact
+from vq_model import ROOT
+from vq_workload import walk
 
 
 def main():
@@ -41,19 +40,19 @@ def main():
             work = census(built["compiled"]["l1"])
             ports = {p["name"]: p["spec"] for p in built["graph"]["ports"]}
             records.append(
-                dict(
-                    label=case["label"],
-                    kind="quant",
-                    shape=ports["x"]["shape"],
-                    read_bytes=work["fill_words"] * 32,
-                    write_bytes=work["drain_words"] * 32,
-                    math_lane_ops=work["lane_slots"],
-                    graph=built["graph"],
-                    compiled=built["compiled"],
-                    inputs=dict(x=built["source"]),
-                    output="q",
-                    expected=built["expected"],
-                )
+                {
+                    "label": case["label"],
+                    "kind": "quant",
+                    "shape": ports["x"]["shape"],
+                    "read_bytes": work["fill_words"] * 32,
+                    "write_bytes": work["drain_words"] * 32,
+                    "math_lane_ops": work["lane_slots"],
+                    "graph": built["graph"],
+                    "compiled": built["compiled"],
+                    "inputs": {"x": built["source"]},
+                    "output": "q",
+                    "expected": built["expected"],
+                }
             )
         negative = pickle.loads(
             (ROOT / ".plan/vq/loop2/quant-pipeline.pkl").read_bytes()
@@ -78,7 +77,7 @@ def main():
         )
         assert not case["compiled"]["verdict"]["refused"], case["compiled"]["verdict"]
         args.output.with_name("negative.pkl").write_bytes(
-            pickle.dumps(dict(cases=[case]))
+            pickle.dumps({"cases": [case]})
         )
     else:
         fixture = runpy.run_path(
@@ -107,26 +106,26 @@ def main():
                 assert not compiled["verdict"]["refused"], compiled["verdict"]
                 work = census(compiled["l1"])
                 records.append(
-                    dict(
-                        label=f"pull-slots{slots}-keep{int(keep)}-tree{tree}",
-                        kind="convert",
-                        shape=[4, 128],
-                        read_bytes=work["fill_words"] * 32,
-                        write_bytes=work["drain_words"] * 32,
-                        math_lane_ops=work["lane_slots"],
-                        graph=graph,
-                        compiled=compiled,
-                        inputs=dict(
-                            src=source.tobytes(),
-                            index=plan.index.tobytes(),
-                            mask=plan.masks.tobytes(),
-                        ),
-                        output="dst",
-                        expected=expected,
-                    )
+                    {
+                        "label": f"pull-slots{slots}-keep{int(keep)}-tree{tree}",
+                        "kind": "convert",
+                        "shape": [4, 128],
+                        "read_bytes": work["fill_words"] * 32,
+                        "write_bytes": work["drain_words"] * 32,
+                        "math_lane_ops": work["lane_slots"],
+                        "graph": graph,
+                        "compiled": compiled,
+                        "inputs": {
+                            "src": source.tobytes(),
+                            "index": plan.index.tobytes(),
+                            "mask": plan.masks.tobytes(),
+                        },
+                        "output": "dst",
+                        "expected": expected,
+                    }
                 )
     args.output.write_bytes(
-        pickle.dumps(dict(machine=machine.machine_json, cases=records))
+        pickle.dumps({"machine": machine.machine_json, "cases": records})
     )
     print("compiled", len(records), args.group)
 

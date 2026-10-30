@@ -57,7 +57,11 @@ def main():
         )
         (base / f"arena-witness-{board}.json").write_text(
             json.dumps(
-                dict(source=graph, key=json.loads(result["key"]), tables=rec["tables"])
+                {
+                    "source": graph,
+                    "key": json.loads(result["key"]),
+                    "tables": rec["tables"],
+                }
             )
         )
         print(board, result["key"], flush=True)

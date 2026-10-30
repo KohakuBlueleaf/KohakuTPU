@@ -36,7 +36,7 @@ def _tinygrad_kept():
             vars(mod)["KTPUDevice"] = keep
             try:
                 resolved = TinyDevice.get_class(KD.NAME)
-            except Exception:
+            except Exception:  # noqa: BLE001 -- any failure: not resolvable
                 resolved = None
             if resolved is not keep:
                 TinyDevice.get_class.cache_clear()

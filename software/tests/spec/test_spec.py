@@ -181,7 +181,7 @@ def test_clause(v, session, record_property):
         if v["status"] == "ruling":
             try:
                 got = run(v, ctx)
-            except Exception as e:  # Any failure is "not yet".
+            except Exception as e:  # noqa: BLE001 -- any failure is "not yet"
                 pytest.xfail(f"ruling not yet followed: {e}")
             if got != ctx.get("expect", v["expect"]):
                 pytest.xfail("ruling not yet followed")
@@ -304,7 +304,7 @@ def test_mutant_fails(v, name, session, record_property):
                 ) from e
             record_property("broken_by", f"{type(e).__name__}: {str(e)[:300]}")
             return
-        except Exception as e:  # Any other failure breaks the vector.
+        except Exception as e:  # noqa: BLE001 -- any other failure breaks the vector
             record_property("broken_by", f"{type(e).__name__}: {str(e)[:300]}")
             return
     assert got != ctx.get("expect", v["expect"]), f"mutant {name} does not break {v.id}"

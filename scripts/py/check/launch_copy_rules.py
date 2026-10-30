@@ -49,13 +49,13 @@ def main():
             captured = helper["capture"](dev, 8, False, "lenet")
         dest = ROOT / ".kt/launch-loop2/copy-rules"
         dest.mkdir(parents=True, exist_ok=True)
-        output = dict(
-            rule=args.rule,
-            runs=len(captured["launches"]),
-            kinds=dict(
+        output = {
+            "rule": args.rule,
+            "runs": len(captured["launches"]),
+            "kinds": dict(
                 Counter(captured["sources"][k]["family"] for k in captured["launches"])
             ),
-        )
+        }
         (dest / f"{args.rule}.json").write_text(
             json.dumps(output, indent=2), encoding="utf-8"
         )

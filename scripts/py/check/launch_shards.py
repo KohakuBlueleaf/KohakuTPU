@@ -114,7 +114,7 @@ def main():
                 e.stderr or b""
             ).decode(errors="replace")
         (dest / f"{name}.log").write_text(output, encoding="utf-8")
-        rows.append(dict(name=name, status=status, tail=output.splitlines()[-3:]))
+        rows.append({"name": name, "status": status, "tail": output.splitlines()[-3:]})
         (dest / f"{args.mode}.json").write_text(
             json.dumps(rows, indent=2), encoding="utf-8"
         )

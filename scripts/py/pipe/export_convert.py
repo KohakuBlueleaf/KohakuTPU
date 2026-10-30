@@ -49,19 +49,19 @@ def main():
             print(row["key"][:10], "missing exact source", flush=True)
             continue
         graph = json.loads(row["source"]["source"])
-        graph["machine"] = dict(mg=1, vc=1, nodes=1)
+        graph["machine"] = {"mg": 1, "vc": 1, "nodes": 1}
         graph["body"] = serial(graph["body"])
         for label, mutant in (("before", "l2.predicate-select/off"), ("after", None)):
             with rs.mutant(mutant):
                 c = K.compile(json.dumps(graph), name=graph["name"], machine=machine)
-            rec = dict(
-                key=row["key"],
-                label=label,
-                name=c.name,
-                l1=c.l1_text,
-                verdict=c.verdict,
-                ports=graph["ports"],
-            )
+            rec = {
+                "key": row["key"],
+                "label": label,
+                "name": c.name,
+                "l1": c.l1_text,
+                "verdict": c.verdict,
+                "ports": graph["ports"],
+            }
             (args.output / f"{row['key']}-{label}.json").write_text(json.dumps(rec))
             print(row["key"][:10], label, c.verdict["refused"], flush=True)
 

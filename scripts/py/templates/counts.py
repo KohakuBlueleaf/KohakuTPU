@@ -6,7 +6,6 @@ import pathlib
 from collections import Counter
 
 from derive import parameters
-
 from kohakutpu.application.runtime.offline import OfflineCard
 from kohakutpu.compiler import _rs
 from kohakutpu.stack import rs

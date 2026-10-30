@@ -5,9 +5,9 @@ import os
 from pathlib import Path
 
 import numpy as np
+
 from application.tests.runtime.test_packing_model import reference
 from application.tests.runtime.test_pipe_batch import model  # noqa: F401
-
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import costs
 from kohakutpu.application.runtime.forms import Step

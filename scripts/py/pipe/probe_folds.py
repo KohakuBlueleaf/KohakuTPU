@@ -32,7 +32,7 @@ def main():
         ls = [l for l in layouts if l["start"] <= e["index"] < l["stop"]]
         if not ls:
             records.append(
-                dict(index=e["index"], key=e["key"], plan="not forms.relayout")
+                {"index": e["index"], "key": e["key"], "plan": "not forms.relayout"}
             )
             continue
         l = ls[0]
@@ -50,7 +50,7 @@ def main():
             result = [type(x).__name__ for x in p.parts]
         except RL.Unplanned as exc:
             result = str(exc)
-        records.append(dict(index=e["index"], key=e["key"], plan=result))
+        records.append({"index": e["index"], "key": e["key"], "plan": result})
     (base.parent / "plans.json").write_text(json.dumps(records, indent=2))
     print([(r["index"], r["plan"]) for r in records])
 

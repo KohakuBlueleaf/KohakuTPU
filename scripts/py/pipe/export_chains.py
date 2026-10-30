@@ -113,7 +113,7 @@ def main():
         addresses[first] = "p_x"
         for j, e in enumerate(chain):
             graph = json.loads(sources[e["key"]]["source"])
-            graph["machine"] = dict(mg=1, vc=1, nodes=1)
+            graph["machine"] = {"mg": 1, "vc": 1, "nodes": 1}
             if e["kind"] == "convert":
                 lay = next(l for l in ls if l["start"] == e["index"])
                 original = RL.plan(
@@ -175,20 +175,20 @@ def main():
         c = K.specialise(k, g, machine=machine)
         for p, s in g.items():
             allocations[p] = max(allocations.get(p, 0), s.nbytes())
-        rec = dict(
-            index=index,
-            kind="quant-chain",
-            consumer_key=chain[-1]["key"],
-            converts=[e["key"] for e in chain[:-1]],
-            chain_indices=[e["index"] for e in chain],
-            card_steps=sum(card_cost.get(e["key"], 0) for e in chain),
-            recipe=dict(steps=steps, quant=qr, pad_strategy=strategy),
-            allocations=allocations,
-            tables=tables,
-            before=before,
-            after=stage(c, {p: p for p in g}, library),
-            output="q",
-        )
+        rec = {
+            "index": index,
+            "kind": "quant-chain",
+            "consumer_key": chain[-1]["key"],
+            "converts": [e["key"] for e in chain[:-1]],
+            "chain_indices": [e["index"] for e in chain],
+            "card_steps": sum(card_cost.get(e["key"], 0) for e in chain),
+            "recipe": {"steps": steps, "quant": qr, "pad_strategy": strategy},
+            "allocations": allocations,
+            "tables": tables,
+            "before": before,
+            "after": stage(c, {p: p for p in g}, library),
+            "output": "q",
+        }
         (output / f"{index}.json").write_text(json.dumps(rec))
         print(
             index,

@@ -5,11 +5,10 @@ from pathlib import Path
 
 import numpy as np
 from examples.tinygrad.vit_tiny import seeded_model
+from kohakutpu.application.ktpugrad.nn import place
 from tinygrad import Tensor
 from tinygrad.dtype import dtypes
 from tinygrad.helpers import Context
-
-from kohakutpu.application.ktpugrad.nn import place
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -27,7 +26,9 @@ def main():
     dest = ROOT / ".kt/launch-evidence"
     dest.mkdir(parents=True, exist_ok=True)
     np.savez(dest / "vit-b1-cpu.npz", **{"step0/logits": logits})
-    print(json.dumps(dict(shape=logits.shape, finite=bool(np.isfinite(logits).all()))))
+    print(
+        json.dumps({"shape": logits.shape, "finite": bool(np.isfinite(logits).all())})
+    )
 
 
 if __name__ == "__main__":

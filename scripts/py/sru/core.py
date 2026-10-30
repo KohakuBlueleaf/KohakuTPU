@@ -21,7 +21,6 @@ import e8
 import fn
 import numpy as np
 import red
-
 from kohakutpu.language.numerics import mxfp7
 
 # the finalise's opcodes

@@ -127,18 +127,18 @@ def main():
         folded = K.specialise(after, ag, machine=machine)
         stages.append(stage(baseline, {p: p for p in bg}, library))
         final = stage(folded, {p: p for p in ag}, library)
-        record = dict(
-            index=ci,
-            kind=args.kind,
-            converts=[r["key"] for r in converts],
-            convert_indices=[r["index"] for r in converts],
-            consumer_key=consumer["key"],
-            allocations=allocations,
-            tables=tables,
-            before=stages,
-            after=final,
-            output="out" if args.kind == "rows/DSL" else "q",
-        )
+        record = {
+            "index": ci,
+            "kind": args.kind,
+            "converts": [r["key"] for r in converts],
+            "convert_indices": [r["index"] for r in converts],
+            "consumer_key": consumer["key"],
+            "allocations": allocations,
+            "tables": tables,
+            "before": stages,
+            "after": final,
+            "output": "out" if args.kind == "rows/DSL" else "q",
+        }
         (output / f"{ci}.json").write_text(json.dumps(record))
         print(
             ci,

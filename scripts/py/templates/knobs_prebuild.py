@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 
 import derive
-
 from kohakutpu.application.runtime.offline import OfflineCard
 from kohakutpu.stack import rs
 

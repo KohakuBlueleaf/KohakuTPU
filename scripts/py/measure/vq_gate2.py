@@ -24,7 +24,15 @@ def main():
             check=False,
         )
         (out / f"{crate}.log").write_text(proc.stdout, encoding="utf-8")
-        result = dict(crate=crate, exit=proc.returncode, summaries=[line for line in proc.stdout.splitlines() if line.startswith("test result:")])
+        result = {
+            "crate": crate,
+            "exit": proc.returncode,
+            "summaries": [
+                line
+                for line in proc.stdout.splitlines()
+                if line.startswith("test result:")
+            ],
+        }
         results.append(result)
         print(json.dumps(result), flush=True)
         if proc.returncode:

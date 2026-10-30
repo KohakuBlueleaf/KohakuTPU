@@ -57,7 +57,7 @@ def test_a_session_forced_to_one_node_runs_no_second_node(monkeypatch):
         assert s.dev.card.nodes == (0,)
         try:
             got = RL.card(TWO_NODES, {"session": s})
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- a refusal must name the node
             assert "node" in str(e).lower() or "mesh" in str(e).lower(), e
             return
         assert got["b"][0] != 2, "node 1's store ran on a one-node session"

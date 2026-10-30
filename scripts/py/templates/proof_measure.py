@@ -74,14 +74,14 @@ def measure(library, capture, cap):
             sample_points = len(json.loads(samples))
         except ValueError as error:
             sample_seconds, sample_points, sample_error = None, 0, str(error)
-        classifications[identifier] = dict(
-            verdict=verdict,
-            proof_seconds=proof_seconds,
-            sample_seconds=sample_seconds,
-            sample_points=sample_points,
-            sample_error=sample_error,
-            captured_members=len(members[identifier]),
-        )
+        classifications[identifier] = {
+            "verdict": verdict,
+            "proof_seconds": proof_seconds,
+            "sample_seconds": sample_seconds,
+            "sample_points": sample_points,
+            "sample_error": sample_error,
+            "captured_members": len(members[identifier]),
+        }
         if verdict["status"] != "PROVEN":
             continue
         capability, seconds = timed(
@@ -123,30 +123,30 @@ def measure(library, capture, cap):
         for row in classifications.values()
         if row["verdict"]["status"] == "REFUSED"
     )
-    return dict(
-        board=capture["board"],
-        batch=capture["batch"],
-        cap=cap,
-        templates=len(classifications),
-        counts=dict(counts),
-        refusals_by_property=dict(reasons),
-        source_count=len(capture["sources"]),
-        launch_count=len(capture["launches"]),
-        proven_source_candidates=len(proven_members),
-        proven_launch_candidates=sum(
+    return {
+        "board": capture["board"],
+        "batch": capture["batch"],
+        "cap": cap,
+        "templates": len(classifications),
+        "counts": dict(counts),
+        "refusals_by_property": dict(reasons),
+        "source_count": len(capture["sources"]),
+        "launch_count": len(capture["launches"]),
+        "proven_source_candidates": len(proven_members),
+        "proven_launch_candidates": sum(
             member in proven_members for member in capture["launches"]
         ),
-        compared_member_variants=compared,
-        member_byte_proof_seconds=byte_seconds,
-        capability_bind_seconds=bind_seconds,
-        capability_admission_seconds=admission_seconds,
-        proof_seconds=sum(row["proof_seconds"] for row in classifications.values()),
-        sample_seconds=sum(
+        "compared_member_variants": compared,
+        "member_byte_proof_seconds": byte_seconds,
+        "capability_bind_seconds": bind_seconds,
+        "capability_admission_seconds": admission_seconds,
+        "proof_seconds": sum(row["proof_seconds"] for row in classifications.values()),
+        "sample_seconds": sum(
             row["sample_seconds"] or 0 for row in classifications.values()
         ),
-        classifications=classifications,
-        scope="L0 checker-safety candidates at fixed class extents/addresses; not graph-equivalence admission",
-    )
+        "classifications": classifications,
+        "scope": "L0 checker-safety candidates at fixed class extents/addresses; not graph-equivalence admission",
+    }
 
 
 def main():

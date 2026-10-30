@@ -20,7 +20,6 @@ import cfg as C
 import numpy as np
 import oracle
 import profiles
-
 from kohakutpu.compiler import _rs
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]

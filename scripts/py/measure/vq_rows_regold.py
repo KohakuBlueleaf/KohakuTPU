@@ -63,7 +63,7 @@ def main():
         json.dump(doc, stream, indent=2)
         stream.write("\n")
     shutil.copyfile(dest, original)
-    print(json.dumps(dict(file="plan/" + args.fixture, launches=changes)))
+    print(json.dumps({"file": "plan/" + args.fixture, "launches": changes}))
 
 
 if __name__ == "__main__":

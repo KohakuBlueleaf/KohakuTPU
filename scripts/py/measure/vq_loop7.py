@@ -7,13 +7,12 @@ import os
 import pickle
 from pathlib import Path
 
-from vq_census import census
-from vq_model import ROOT, dsl_cases
-from vq_workload import walk
-
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
+from vq_census import census
+from vq_model import ROOT, dsl_cases
+from vq_workload import walk
 
 
 def main():
@@ -80,10 +79,10 @@ def main():
             write_bytes=work.get("drain_words", 0) * 32,
             math_lane_ops=work.get("lane_slots", 0),
         )
-        print(json.dumps(dict(label=case["label"], work=work)), flush=True)
+        print(json.dumps({"label": case["label"], "work": work}), flush=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(
-        pickle.dumps(dict(machine=machine.machine_json, cases=cases))
+        pickle.dumps({"machine": machine.machine_json, "cases": cases})
     )
 
 

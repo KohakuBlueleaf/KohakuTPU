@@ -18,23 +18,22 @@ import time
 
 import numpy as np
 from examples.tinygrad.mnist_mlp import LeNet, train_step
+from kohakutpu.application.checks.determinism import DeterminismChecker, RepeatComplete
+from kohakutpu.application.checks.step import StepChecker
+from kohakutpu.application.ktpugrad.nn import Adam16, place
+from kohakutpu.application.runtime import device as D
 from tinygrad import Tensor
 from tinygrad.engine.jit import TinyJit
 from tinygrad.helpers import Context
 from tinygrad.nn.datasets import mnist
 from tinygrad.nn.state import get_parameters
 
-from kohakutpu.application.checks.determinism import DeterminismChecker, RepeatComplete
-from kohakutpu.application.checks.step import StepChecker
-from kohakutpu.application.ktpugrad.nn import Adam16, place
-from kohakutpu.application.runtime import device as D
-
 
 def record_loss(result, step, value):
     """Deterministic NaN bits are valid evidence, not JSON numeric literals."""
     if value is not None and not np.isfinite(value):
         result.setdefault("nonfinite_losses", []).append(
-            dict(step=step, value=str(value))
+            {"step": step, "value": str(value)}
         )
         value = None
     result["losses"].append(value)
@@ -94,9 +93,11 @@ def main():
     if args.corrupt and args.device == "offline":
         ap.error("offline does not execute: mutation needs an executing device")
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    result = dict(
-        configuration=vars(args) | {"out": str(args.out)}, rows=[], passed=False
-    )
+    result = {
+        "configuration": vars(args) | {"out": str(args.out)},
+        "rows": [],
+        "passed": False,
+    }
     dev = None
     checker = None
     try:

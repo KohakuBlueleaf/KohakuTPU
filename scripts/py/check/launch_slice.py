@@ -71,12 +71,12 @@ def main():
             ).decode(errors="replace")
         (out / f"{label}.log").write_text(text, encoding="utf-8")
         rows.append(
-            dict(
-                label=label,
-                status=status,
-                seconds=time.monotonic() - start,
-                tests=selected,
-            )
+            {
+                "label": label,
+                "status": status,
+                "seconds": time.monotonic() - start,
+                "tests": selected,
+            }
         )
         print(label, status, round(rows[-1]["seconds"], 2), flush=True)
         return status

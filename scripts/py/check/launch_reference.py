@@ -13,12 +13,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+from kohakutpu.application.ktpugrad.nn import Adam16, place
 from tinygrad import Tensor
 from tinygrad.dtype import dtypes
 from tinygrad.helpers import Context
 from tinygrad.nn.state import get_parameters
-
-from kohakutpu.application.ktpugrad.nn import Adam16, place
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -103,15 +102,15 @@ def main():
     np.savez(dest / f"lenet-b{args.batch}-cpu-stored.npz", **arrays)
     (dest / "reference.json").write_text(
         json.dumps(
-            dict(
-                optimizer="Adam16.schedule_step unchanged",
-                network="tinygrad CPU f32",
-                initial_weights_inputs="f16-rounded then promoted f32",
-                store_roundings="m,rms,err,params,b1_t,b2_t and contiguous y/new: f32->f16->f32",
-                lr=float(np.float16(2e-3)),
-                steps=args.steps,
-                batch=args.batch,
-            ),
+            {
+                "optimizer": "Adam16.schedule_step unchanged",
+                "network": "tinygrad CPU f32",
+                "initial_weights_inputs": "f16-rounded then promoted f32",
+                "store_roundings": "m,rms,err,params,b1_t,b2_t and contiguous y/new: f32->f16->f32",
+                "lr": float(np.float16(2e-3)),
+                "steps": args.steps,
+                "batch": args.batch,
+            },
             indent=2,
         ),
         encoding="utf-8",

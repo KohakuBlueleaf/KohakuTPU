@@ -18,15 +18,14 @@ from unittest.mock import patch
 
 import numpy as np
 from hseam_counting import CountingCard, CountingMemory
+from kohakutpu.application.ktpugrad.device import KTPUGraph
+from kohakutpu.application.ktpugrad.nn import Adam16, place
+from kohakutpu.application.runtime import device as D
 from seam_timeline import HostTimeline
 from tinygrad import Tensor, TinyJit
 from tinygrad import schedule as tiny_schedule
 from tinygrad.helpers import Context
 from tinygrad.nn.state import get_parameters
-
-from kohakutpu.application.ktpugrad.device import KTPUGraph
-from kohakutpu.application.ktpugrad.nn import Adam16, place
-from kohakutpu.application.runtime import device as D
 
 try:
     # The workstation's machine-wide model lock; card hosts do not install it.
@@ -108,19 +107,23 @@ def profile_rows(profile):
     ).stats.items():
         filename = filename.replace("\\", "/")
         rows.append(
-            dict(
-                file=filename,
-                line=line,
-                function=name,
-                primitive_calls=primitive,
-                calls=calls,
-                exclusive_seconds=own,
-                inclusive_seconds=total,
-                callers=[
-                    dict(file=f.replace("\\", "/"), function=n, exclusive_seconds=v[2])
+            {
+                "file": filename,
+                "line": line,
+                "function": name,
+                "primitive_calls": primitive,
+                "calls": calls,
+                "exclusive_seconds": own,
+                "inclusive_seconds": total,
+                "callers": [
+                    {
+                        "file": f.replace("\\", "/"),
+                        "function": n,
+                        "exclusive_seconds": v[2],
+                    }
                     for (f, _, n), v in callers.items()
                 ],
-            )
+            }
         )
     return sorted(rows, key=lambda r: r["exclusive_seconds"], reverse=True)
 
@@ -329,10 +332,10 @@ def measure(args, result):
                     )
             result["counters"] = dict(dev.counters)
             result["jit"] = [
-                dict(
-                    counts=g.counts,
-                    misses=g.misses,
-                    log_events=(
+                {
+                    "counts": g.counts,
+                    "misses": g.misses,
+                    "log_events": (
                         {
                             op: sum(e[0] == op for e in g.log[1])
                             for op in ("run", "write", "read")
@@ -340,7 +343,7 @@ def measure(args, result):
                         if g.log is not None
                         else None
                     ),
-                )
+                }
                 for g in graphs
             ]
             result["status"] = "measured"

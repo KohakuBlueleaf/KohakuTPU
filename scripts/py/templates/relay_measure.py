@@ -8,11 +8,10 @@ from collections import defaultdict
 from unittest.mock import patch
 
 import prebuild
-from tinygrad.tensor import Tensor
-
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import generated as G
+from tinygrad.tensor import Tensor
 
 
 def main():
@@ -71,12 +70,16 @@ def main():
     for kind in sorted({k for step in warm for k in step}):
         count = sum(step.get(kind, [0, 0])[0] for step in warm)
         seconds = sum(step.get(kind, [0, 0])[1] for step in warm)
-        summary[kind] = dict(
-            launches=count, ms_per_launch=1000 * seconds / max(count, 1)
-        )
-    result = dict(
-        steps=records, kinds_by_step=steps, warm_by_kind=summary, counters=dev.counters
-    )
+        summary[kind] = {
+            "launches": count,
+            "ms_per_launch": 1000 * seconds / max(count, 1),
+        }
+    result = {
+        "steps": records,
+        "kinds_by_step": steps,
+        "warm_by_kind": summary,
+        "counters": dev.counters,
+    }
     assert dev.counters["compile_calls"] == dev.counters["library_misses"] == 0
     pathlib.Path(args.output).write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(summary))

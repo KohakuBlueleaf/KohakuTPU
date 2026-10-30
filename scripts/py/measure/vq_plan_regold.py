@@ -122,10 +122,10 @@ def main():
         with backup.open("xb") as stream:
             stream.write(original.read_bytes())
         shutil.copyfile(path, original)
-        files.append(dict(file="plan/" + path.name, launches=changes))
+        files.append({"file": "plan/" + path.name, "launches": changes})
     assert files
     (output / "manifest.json").write_text(
-        json.dumps(dict(schedule=schedule, files=files), indent=2) + "\n",
+        json.dumps({"schedule": schedule, "files": files}, indent=2) + "\n",
         encoding="utf-8",
     )
     run(

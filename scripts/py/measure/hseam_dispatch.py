@@ -12,7 +12,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import ktpu_pytest_lock
-
 from kohakuaccel.driver.node.queue import NodeError
 from kohakutpu.application.runtime import device as D
 

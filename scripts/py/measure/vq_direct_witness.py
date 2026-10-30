@@ -6,14 +6,13 @@ import pickle
 from pathlib import Path
 
 import numpy as np
-from vq_census import census
-
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes.policy import ShapeClass
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
+from vq_census import census
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -34,7 +33,7 @@ def main():
             source[:, offset : offset + width] = values
             for kind in ("sum", "max", "col", "scalar"):
                 operands = [V.Operand("full", pitch=pitch, offset=offset)]
-                inputs = dict(in0=source.tobytes())
+                inputs = {"in0": source.tobytes()}
                 if kind in ("sum", "max"):
                     expr = X.Reduce(kind, X.Load(0))
                     out = V.Operand("row")
@@ -79,22 +78,22 @@ def main():
                 assert not compiled["verdict"]["refused"], compiled["verdict"]
                 work = census(compiled["l1"])
                 cases.append(
-                    dict(
-                        read_bytes=work["fill_words"] * 32,
-                        write_bytes=work["drain_words"] * 32,
-                        math_lane_ops=work["lane_slots"],
-                        label=f"offset-{rows}-{kind}-direct{direct}",
-                        kind="dsl",
-                        shape=[rows, width],
-                        graph=graph,
-                        compiled=compiled,
-                        inputs=inputs,
-                        output="out",
-                        expected=expected.tobytes(),
-                    )
+                    {
+                        "read_bytes": work["fill_words"] * 32,
+                        "write_bytes": work["drain_words"] * 32,
+                        "math_lane_ops": work["lane_slots"],
+                        "label": f"offset-{rows}-{kind}-direct{direct}",
+                        "kind": "dsl",
+                        "shape": [rows, width],
+                        "graph": graph,
+                        "compiled": compiled,
+                        "inputs": inputs,
+                        "output": "out",
+                        "expected": expected.tobytes(),
+                    }
                 )
     (ROOT / ".plan/vq/loop7/direct-witness.pkl").write_bytes(
-        pickle.dumps(dict(machine=machine.machine_json, cases=cases))
+        pickle.dumps({"machine": machine.machine_json, "cases": cases})
     )
     print("compiled", len(cases), "offset witnesses")
 

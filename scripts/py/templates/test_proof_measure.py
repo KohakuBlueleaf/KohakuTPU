@@ -6,7 +6,6 @@ import proof_inventory
 import proof_measure
 import pytest
 import replay_capture
-
 from kohakutpu.application.runtime.class_library import ClassLibrary
 from kohakutpu.application.runtime.device import Device
 from kohakutpu.application.runtime.template_store import TemplateStore

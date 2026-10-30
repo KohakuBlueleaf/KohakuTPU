@@ -34,9 +34,12 @@ def main():
             total.update({k: v * repeat for k, v in work.items()})
             record = next(r for r in result["records"] if r["label"] == case["label"])
             rows.append(
-                dict(
-                    session=run, label=case["label"], cycles=record["cycles"], work=work
-                )
+                {
+                    "session": run,
+                    "label": case["label"],
+                    "cycles": record["cycles"],
+                    "work": work,
+                }
             )
         if run == "run8-offsets":
             negative = pickle.loads((root / "negative-fixed.pkl").read_bytes())[
@@ -46,14 +49,15 @@ def main():
             assert result["records"][-1]["label"] == "pipeline-live-infinity"
         counters = next(iter(result["counters"].values()))["VRES"]
         checks[run] = {
-            k: dict(
-                census=total[k], model=counters["lanes" if k == "lane_slots" else k]
-            )
+            k: {
+                "census": total[k],
+                "model": counters["lanes" if k == "lane_slots" else k],
+            }
             for k in ("lane_slots", "fill_words", "drain_words")
         }
         assert all(c["census"] == c["model"] for c in checks[run].values()), checks[run]
     (root / "roofline.json").write_text(
-        json.dumps(dict(rows=rows, checks=checks), indent=2), encoding="utf-8"
+        json.dumps({"rows": rows, "checks": checks}, indent=2), encoding="utf-8"
     )
     lines = [
         "# Loop7 per-kernel executed-work rooflines",
@@ -69,7 +73,7 @@ def main():
             f"| {row['session']} | {row['label']} | {', '.join(str(c) for c in row['cycles'])} | {w['vector_bytes']:,} | {w.get('mover_read_bytes',0)+w.get('mover_write_bytes',0):,} | {w.get('lane_slots',0):,} | {w['engine_floor_cycles']:,} | {100*w['engine_floor_cycles']/row['cycles'][-1]:.2f}% |"
         )
     (root / "roofline.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(json.dumps(dict(rows=len(rows), checks=checks), indent=2))
+    print(json.dumps({"rows": len(rows), "checks": checks}, indent=2))
 
 
 if __name__ == "__main__":

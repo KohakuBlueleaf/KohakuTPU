@@ -13,7 +13,6 @@ import time
 from collections import Counter, defaultdict
 
 from capture import GENERATORS
-
 from kohakutpu.application.kernels import expr, matmul, vector
 from kohakutpu.application.kernels.classes import values as launch_values
 from kohakutpu.application.kernels.classes.policy import ShapeClass

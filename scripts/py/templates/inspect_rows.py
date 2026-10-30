@@ -5,7 +5,6 @@ import json
 import pathlib
 
 from derive import decode, with_parameters
-
 from kohakutpu.application.kernels import vector
 from kohakutpu.application.kernels.classes.policy import ShapeClass
 from kohakutpu.application.runtime.offline import OfflineCard

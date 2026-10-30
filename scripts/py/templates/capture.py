@@ -14,10 +14,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
-from tinygrad.helpers import Context
-from tinygrad.nn.state import get_parameters
-from tinygrad.tensor import Tensor
-
 from kohakutpu.application.kernels import (
     convert,
     expr,
@@ -30,6 +26,9 @@ from kohakutpu.application.ktpugrad.nn import Adam16, place
 from kohakutpu.application.runtime import device
 from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
+from tinygrad.helpers import Context
+from tinygrad.nn.state import get_parameters
+from tinygrad.tensor import Tensor
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 GENERATORS = (

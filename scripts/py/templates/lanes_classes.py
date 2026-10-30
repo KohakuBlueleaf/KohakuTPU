@@ -103,7 +103,14 @@ def main():
             "proven": 0,
         }
         try:
-            hazard_box = {name: (bounds if name == "blocks" else {"lo": bounds["lo"], "hi": bounds["lo"]}) for name, bounds in box.items()}
+            hazard_box = {
+                name: (
+                    bounds
+                    if name == "blocks"
+                    else {"lo": bounds["lo"], "hi": bounds["lo"]}
+                )
+                for name, bounds in box.items()
+            }
             points = json.loads(rs._rs.template_points(json.dumps(hazard_box)))
             origin = {name: bounds["lo"] for name, bounds in box.items()}
             for i in range(taps):
@@ -143,10 +150,16 @@ def main():
             )
             row["sites"] = len(json.loads(template["template_json"])["sites"])
             package = rs._rs.package_read(template["bytes"], machine_json)
-            bindings = [0x10000000 + i * 0x1000000 for i in range(len(package["buffers"]))]
+            bindings = [
+                0x10000000 + i * 0x1000000 for i in range(len(package["buffers"]))
+            ]
             store = TemplateStore("build/templates", machine_json)
-            row["library_class"] = store.admit(graphs[0], template["bytes"], template["template_json"], bindings)
-            template["bytes"], template["template_json"] = store.load(graphs[0], template["template_json"])
+            row["library_class"] = store.admit(
+                graphs[0], template["bytes"], template["template_json"], bindings
+            )
+            template["bytes"], template["template_json"] = store.load(
+                graphs[0], template["template_json"]
+            )
             unique = {json.dumps(parameters(c), sort_keys=True) for c in cases}
             for raw in sorted(unique):
                 p = json.loads(raw)
@@ -169,16 +182,31 @@ def main():
                 )
                 row["proven"] += sum(parameters(c) == p for c in cases)
             row["confinement"] = json.loads(template["confinement_json"])
-            verified = rs._rs.template_verify({0: template["bytes"]}, {0: template["template_json"]}, {0: bindings}, machine_json, f"lanes-{taps}-{keep}", confined=True)
+            verified = rs._rs.template_verify(
+                {0: template["bytes"]},
+                {0: template["template_json"]},
+                {0: bindings},
+                machine_json,
+                f"lanes-{taps}-{keep}",
+                confined=True,
+            )
             row["verified_bindings"] = len(json.loads(verified))
-            row["verification"] = "confinement-reduced corners/adjacent/seeded checker, twice per binding"
+            row["verification"] = (
+                "confinement-reduced corners/adjacent/seeded checker, twice per binding"
+            )
             artifact = args.output.parent / "lanes-artifacts" / f"{taps}-{keep}"
             artifact.mkdir(parents=True, exist_ok=True)
-            (artifact / "params.json").write_text(json.dumps(compiled[0]["packages"][0]["params"]), encoding="utf-8")
+            (artifact / "params.json").write_text(
+                json.dumps(compiled[0]["packages"][0]["params"]), encoding="utf-8"
+            )
             (artifact / "source.json").write_text(graphs[0], encoding="utf-8")
             (artifact / "package.bin").write_bytes(template["bytes"])
-            (artifact / "table.json").write_text(template["template_json"], encoding="utf-8")
-            (artifact / "confinement.json").write_text(template["confinement_json"], encoding="utf-8")
+            (artifact / "table.json").write_text(
+                template["template_json"], encoding="utf-8"
+            )
+            (artifact / "confinement.json").write_text(
+                template["confinement_json"], encoding="utf-8"
+            )
         except (ValueError, AssertionError) as error:
             row["error"] = str(error)
         row["seconds"] = time.perf_counter() - started
@@ -195,7 +223,10 @@ def main():
             ),
             encoding="utf-8",
         )
-        print({key: value for key, value in row.items() if key != "confinement"}, flush=True)
+        print(
+            {key: value for key, value in row.items() if key != "confinement"},
+            flush=True,
+        )
     if any("error" in result for result in results):
         raise RuntimeError("lanes class derivation refused; see report")
 

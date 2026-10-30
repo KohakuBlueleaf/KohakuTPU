@@ -31,14 +31,14 @@ def parse_rows(path):
         raw = line.split("|")[1]
         depth = (len(raw) - len(raw.lstrip(" ")) - 1) // 2
         inst = cells[0]
-        vals = dict(
-            lut=int(cells[2]),
-            lram=int(cells[4]),
-            ff=int(cells[6]),
-            b36=int(cells[7]),
-            b18=int(cells[8]),
-            uram=int(cells[9]),
-        )
+        vals = {
+            "lut": int(cells[2]),
+            "lram": int(cells[4]),
+            "ff": int(cells[6]),
+            "b36": int(cells[7]),
+            "b18": int(cells[8]),
+            "uram": int(cells[9]),
+        }
         rows.append((depth, inst, cells[1], vals))
     return rows
 
@@ -49,7 +49,7 @@ def add(acc, vals, scale=1.0):
 
 
 def per_die(rows, p):
-    dies = [dict() for _ in range(p)]
+    dies = [{} for _ in range(p)]
     total = {}
     idx = 0
     while idx < len(rows):

@@ -7,12 +7,11 @@ import pickle
 from pathlib import Path
 
 from hseam import workload
-from tinygrad import Tensor
-from tinygrad.helpers import Context
-
 from kohakutpu.application.ktpugrad import memo as M
 from kohakutpu.application.ktpugrad import run as R
 from kohakutpu.application.runtime import device as D
+from tinygrad import Tensor
+from tinygrad.helpers import Context
 
 KNOBS = (
     "KTPU_PLAN_CACHE",

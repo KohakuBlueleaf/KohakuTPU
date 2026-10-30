@@ -34,7 +34,7 @@ def main():
             work.update(census(negative["compiled"]["l1"]))
         actual = next(iter(measured["counters"].values()))["VRES"]
         checks[name] = {
-            k: dict(census=work[k], model=actual["lanes" if k == "lane_slots" else k])
+            k: {"census": work[k], "model": actual["lanes" if k == "lane_slots" else k]}
             for k in ("fill_words", "drain_words", "lane_slots")
         }
         assert all(c["census"] == c["model"] for c in checks[name].values())
@@ -55,15 +55,15 @@ def main():
     for label, r in new.items():
         before = census(old_cases[label]["final"]["l1"])
         after = census(cases[label]["compiled"]["l1"])
-        row = dict(
-            label=label,
-            model=old[label]["model"],
-            before=old[label]["after"],
-            after=r["cycles"][0],
-            before_work=before,
-            after_work=after,
-            reduction=1 - r["cycles"][0] / old[label]["after"],
-        )
+        row = {
+            "label": label,
+            "model": old[label]["model"],
+            "before": old[label]["after"],
+            "after": r["cycles"][0],
+            "before_work": before,
+            "after_work": after,
+            "reduction": 1 - r["cycles"][0] / old[label]["after"],
+        }
         rows.append(row)
     for model in ("lenet", "vit"):
         inventory = json.loads(
@@ -93,17 +93,17 @@ def main():
         )
     (root / "quant-roofline.md").write_text("\n".join(text) + "\n", encoding="utf-8")
     (root / "summary.json").write_text(
-        json.dumps(dict(rows=rows, totals=totals, checks=checks), indent=2),
+        json.dumps({"rows": rows, "totals": totals, "checks": checks}, indent=2),
         encoding="utf-8",
     )
     print(
         json.dumps(
-            dict(
-                totals=totals,
-                regressions=[
+            {
+                "totals": totals,
+                "regressions": [
                     (r["label"], r["reduction"]) for r in rows if r["reduction"] < 0
                 ],
-            ),
+            },
             indent=2,
         )
     )

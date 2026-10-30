@@ -8,12 +8,11 @@ from pathlib import Path
 
 from capture import GENERATORS
 from derive import compile_graph, decode
-from overhead import sizes
-
 from kohakutpu.application.kernels.classes.policy import ShapeClass
 from kohakutpu.application.runtime.offline import OfflineCard
 from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
+from overhead import sizes
 
 
 def main():

@@ -9,7 +9,6 @@ from types import SimpleNamespace
 
 import ktpu_pytest_lock
 import numpy as np
-
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.runtime import device as D

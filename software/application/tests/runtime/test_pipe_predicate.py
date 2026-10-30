@@ -5,8 +5,8 @@ import os
 from pathlib import Path
 
 import numpy as np
-from application.tests.runtime.test_pipe_batch import model  # noqa: F401
 
+from application.tests.runtime.test_pipe_batch import model  # noqa: F401
 from kohakutpu.stack import kernel as K
 
 

@@ -15,11 +15,6 @@ from unittest.mock import patch
 import numpy as np
 from examples.tinygrad.mnist_mlp import HostLearningRate, learning_rate, train_step
 from examples.tinygrad.mnist_models import MODELS as MNIST_MODELS
-from tinygrad import TinyJit
-from tinygrad.helpers import Context
-from tinygrad.nn.state import get_parameters
-from tinygrad.tensor import Tensor
-
 from kohakutpu.application.ktpugrad.device import KTPUGraph
 from kohakutpu.application.ktpugrad.nn import Adam16, place
 from kohakutpu.application.runtime import device as D
@@ -29,6 +24,10 @@ from kohakutpu.application.runtime.class_library import ClassLibrary, structure
 from kohakutpu.application.runtime.template_store import TemplateStore, digest
 from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
+from tinygrad import TinyJit
+from tinygrad.helpers import Context
+from tinygrad.nn.state import get_parameters
+from tinygrad.tensor import Tensor
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 _CAPTURE_PHASE = "setup"
@@ -246,17 +245,17 @@ def capture(
                     )
                 )
             edge_events.append(
-                dict(
-                    index=len(launches) - 1,
-                    key=key,
-                    name=graph["name"],
-                    family=family,
-                    kind=kind,
-                    info=json.loads(json.dumps(info, default=repr)),
-                    ports=ports,
-                    phase=_CAPTURE_PHASE,
-                    capture_pass=_,
-                )
+                {
+                    "index": len(launches) - 1,
+                    "key": key,
+                    "name": graph["name"],
+                    "family": family,
+                    "kind": kind,
+                    "info": json.loads(json.dumps(info, default=repr)),
+                    "ports": ports,
+                    "phase": _CAPTURE_PHASE,
+                    "capture_pass": _,
+                }
             )
         return D.Run(key, 0, 0.0)
 
@@ -940,13 +939,13 @@ def main():
     args.model = args.model_option or args.model
     if args.model is None:
         parser.error("a model is required")
-    recipe = dict(
-        eval_batch=args.eval_batch or args.batch,
-        schedule=args.schedule,
-        warmup=args.warmup,
-        lr_min=args.lr_min,
-        weight_decay=args.weight_decay,
-    )
+    recipe = {
+        "eval_batch": args.eval_batch or args.batch,
+        "schedule": args.schedule,
+        "warmup": args.warmup,
+        "lr_min": args.lr_min,
+        "weight_decay": args.weight_decay,
+    }
     if args.jit and (args.mode != "run" or args.steps < 6):
         parser.error("--jit requires --mode run and --steps >= 6")
     args.output.mkdir(parents=True, exist_ok=True)

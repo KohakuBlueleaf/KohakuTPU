@@ -9,14 +9,13 @@ import time
 from pathlib import Path
 
 import numpy as np
-from vq_census import census
-from vq_model import ROOT, model_counters, packed_reference
-from vq_workload import walk
-
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import generated
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.stack import rs
+from vq_census import census
+from vq_model import ROOT, model_counters, packed_reference
+from vq_workload import walk
 
 
 def compile_artifact(args):
@@ -26,12 +25,12 @@ def compile_artifact(args):
     graph = copy.deepcopy(case["graph"])
     for node in walk(graph["body"]):
         if node.get("op") == "quant":
-            options = dict(
-                pipeline=1,
-                zero_classifier=1,
-                stream_axes=args.axes,
-                fill_overlap=args.fill,
-            )
+            options = {
+                "pipeline": 1,
+                "zero_classifier": 1,
+                "stream_axes": args.axes,
+                "fill_overlap": args.fill,
+            }
             node["kw"] = [p for p in node["kw"] if p[0] not in options]
             node["kw"] += [[k, {"int": v}] for k, v in options.items()]
     result = rs._rs.compile(
@@ -66,12 +65,12 @@ def compile_artifact(args):
     args.output.write_bytes(pickle.dumps(case))
     print(
         json.dumps(
-            dict(
-                kernel=args.kernel,
-                axes=args.axes,
-                fill=args.fill,
-                work=census(result["l1"]),
-            )
+            {
+                "kernel": args.kernel,
+                "axes": args.axes,
+                "fill": args.fill,
+                "work": census(result["l1"]),
+            }
         )
     )
 
@@ -121,11 +120,11 @@ def execute(args):
                     == bytes([0xD3]) * 128
                 )
             records.append(
-                dict(
-                    cycles=result.cycles,
-                    parity="independent bytes",
-                    sha256=hashlib.sha256(output).hexdigest(),
-                )
+                {
+                    "cycles": result.cycles,
+                    "parity": "independent bytes",
+                    "sha256": hashlib.sha256(output).hexdigest(),
+                }
             )
         for address in addresses.values():
             dev.free(address)
@@ -135,20 +134,20 @@ def execute(args):
         work = census(case["compiled"]["l1"])
         actual = next(iter(counters.values()))["VRES"]
         checks = {
-            k: dict(
-                census=work[k] * len(records),
-                model=actual["lanes" if k == "lane_slots" else k],
-            )
+            k: {
+                "census": work[k] * len(records),
+                "model": actual["lanes" if k == "lane_slots" else k],
+            }
             for k in ("fill_words", "drain_words", "lane_slots")
         }
-        document = dict(
-            kernel=case["label"],
-            records=records,
-            counters=counters,
-            work=work,
-            checks=checks,
-            wall_seconds=time.monotonic() - started,
-        )
+        document = {
+            "kernel": case["label"],
+            "records": records,
+            "counters": counters,
+            "work": work,
+            "checks": checks,
+            "wall_seconds": time.monotonic() - started,
+        }
         args.output.write_text(json.dumps(document, indent=2), encoding="utf-8")
         print(json.dumps(document))
         assert all(v["census"] == v["model"] for v in checks.values()), checks

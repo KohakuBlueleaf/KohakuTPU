@@ -6,7 +6,6 @@ import pathlib
 import time
 
 from derive import compile_graph
-
 from kohakutpu.stack import rs
 
 

@@ -36,15 +36,15 @@ def main():
             Operand("full", pitch=q["pitch"], offset=q["offset"]),
             *[q[n] for n in ("rows", "cols", "rp", "cp", "side", "g", "nk", "batches")],
         )
-        rec = dict(
-            index=q["index"],
-            kind="padding",
-            converts=[],
-            consumer_key=e["key"],
-            tables={},
-            output="q",
-            allocations={},
-        )
+        rec = {
+            "index": q["index"],
+            "kind": "padding",
+            "converts": [],
+            "consumer_key": e["key"],
+            "tables": {},
+            "output": "q",
+            "allocations": {},
+        }
         for board in ("vlt_v9t6s_1n", "multimesh_v9t6"):
             for strategy in ("native", "staged"):
                 k, g = MM.quant_kernel(*params, pad_strategy=strategy)

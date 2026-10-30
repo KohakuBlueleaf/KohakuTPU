@@ -83,15 +83,15 @@ def parse(log):
                 body,
             )
             if mm:
-                units[mm.group(1)] = dict(
-                    lut=int(mm.group(2)),
-                    ff=int(mm.group(3)),
-                    lutram=int(mm.group(4)),
-                    srl=int(mm.group(5)),
-                    bram=int(mm.group(6)),
-                    muxf=int(mm.group(7)),
-                    carry=int(mm.group(8)),
-                )
+                units[mm.group(1)] = {
+                    "lut": int(mm.group(2)),
+                    "ff": int(mm.group(3)),
+                    "lutram": int(mm.group(4)),
+                    "srl": int(mm.group(5)),
+                    "bram": int(mm.group(6)),
+                    "muxf": int(mm.group(7)),
+                    "carry": int(mm.group(8)),
+                }
     if not rec:
         return None if "@@@ top" not in text else ("INCOMPLETE", cfg, text)
     return cfg, rec, fmax, units

@@ -11,12 +11,11 @@ import pickle
 import time
 from pathlib import Path
 
-from vq_model import ROOT, model_counters
-
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import generated
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.stack import rs
+from vq_model import ROOT, model_counters
 
 
 def walk(nodes):
@@ -113,21 +112,21 @@ def execute(args):
                         for name, raw in outputs.items()
                     }
                 assert actuals["compiled"] == actuals["after"], case["label"]
-                record = dict(
-                    key=case["key"],
-                    name=case["label"],
-                    kind=case["kind"],
-                    multiplicity=case["multiplicity"],
-                    before=cycles["compiled"],
-                    after=cycles["after"],
-                    changed=case["changed"],
-                    parity="exact" if case["changed"] else "unchanged-package",
-                    output_sha256=actuals["compiled"],
-                )
+                record = {
+                    "key": case["key"],
+                    "name": case["label"],
+                    "kind": case["kind"],
+                    "multiplicity": case["multiplicity"],
+                    "before": cycles["compiled"],
+                    "after": cycles["after"],
+                    "changed": case["changed"],
+                    "parity": "exact" if case["changed"] else "unchanged-package",
+                    "output_sha256": actuals["compiled"],
+                }
                 records.append(record)
                 print(json.dumps(record), flush=True)
                 args.output.write_text(
-                    json.dumps(dict(records=records), indent=2), encoding="utf-8"
+                    json.dumps({"records": records}, indent=2), encoding="utf-8"
                 )
             finally:
                 for address in addresses.values():
@@ -136,13 +135,13 @@ def execute(args):
         dev.close()
         args.output.write_text(
             json.dumps(
-                dict(
-                    model=data["model"],
-                    total_classes=len(data["cases"]),
-                    records=records,
-                    wall_seconds=time.monotonic() - started,
-                    counters=model_counters(log),
-                ),
+                {
+                    "model": data["model"],
+                    "total_classes": len(data["cases"]),
+                    "records": records,
+                    "wall_seconds": time.monotonic() - started,
+                    "counters": model_counters(log),
+                },
                 indent=2,
             ),
             encoding="utf-8",

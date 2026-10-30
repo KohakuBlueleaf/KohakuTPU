@@ -10,8 +10,6 @@ from types import SimpleNamespace
 
 import ktpu_pytest_lock
 import numpy as np
-from lanes_classes import parameters, rotation_recipes
-
 from kohakutpu.application.kernels import lanes as L
 from kohakutpu.application.kernels.classes import lanes as C
 from kohakutpu.application.runtime import device as D
@@ -19,6 +17,7 @@ from kohakutpu.application.runtime import forms
 from kohakutpu.application.runtime.packages import Prebuilt
 from kohakutpu.application.runtime.template_store import TemplateStore
 from kohakutpu.stack import rs
+from lanes_classes import parameters, rotation_recipes
 
 ROOT = Path(__file__).resolve().parents[3]
 

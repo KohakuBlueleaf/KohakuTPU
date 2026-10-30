@@ -55,13 +55,13 @@ def main():
         elapsed = time.monotonic() - tick
         (dest / f"{label}.log").write_text(output, encoding="utf-8")
         results.append(
-            dict(
-                label=label,
-                status=status,
-                seconds=elapsed,
-                files=[p.name for p in batch],
-                tail=output.splitlines()[-3:],
-            )
+            {
+                "label": label,
+                "status": status,
+                "seconds": elapsed,
+                "files": [p.name for p in batch],
+                "tail": output.splitlines()[-3:],
+            }
         )
         print(
             label,

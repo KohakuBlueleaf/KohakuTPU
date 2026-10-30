@@ -9,7 +9,6 @@ from types import SimpleNamespace
 
 import ktpu_pytest_lock
 import numpy as np
-
 from kohakutpu.application.kernels import lanes as L
 from kohakutpu.application.kernels.classes import lanes as C
 from kohakutpu.application.runtime import device as D
