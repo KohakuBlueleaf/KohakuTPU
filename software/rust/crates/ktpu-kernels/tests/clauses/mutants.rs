@@ -69,6 +69,41 @@ fn api_form_010_breaks_under_stat_rows() {
     breaks("api.vector/stat_rows", rows::form_010_facts);
 }
 
+/// A rows stage of trips the card's two vector cores do not divide evenly
+/// deals them differently under the other split; one of even trips alike.
+#[test]
+fn odd_trips_break_under_other_split() {
+    use ktpu_kernels::expr;
+    use ktpu_kernels::gen::vector::{plan, rows_kernel, Kind, Operand, OTHER_SPLIT_MUTANT};
+    use ktpu_kernels::gen::Hw;
+    let m = super::card();
+    let hw = Hw::of(&m);
+    let full = |r| Operand::full(1024, r);
+    let trips = |r: i64| {
+        plan(&[full(r)], Kind::Full, r, 1024, None, None, hw.band, &hw)
+            .unwrap()
+            .nb
+    };
+    let kernel = |r: i64| {
+        let m = m.clone();
+        move || {
+            let e = expr::op("neg", vec![expr::load(0).into()]).unwrap();
+            rows_kernel(&e, &[full(r)], r, 1024, &full(r), None, &m).unwrap()
+        }
+    };
+    let rows: Vec<i64> = (1..64).map(|k| k * hw.band).collect();
+    let odd = *rows
+        .iter()
+        .find(|r| trips(**r) > 2 && trips(**r) % 2 == 1)
+        .unwrap();
+    let even = *rows
+        .iter()
+        .find(|r| trips(**r) > 2 && trips(**r) % 2 == 0)
+        .unwrap();
+    assert_ne!(with(OTHER_SPLIT_MUTANT, kernel(odd)), kernel(odd)());
+    assert_eq!(with(OTHER_SPLIT_MUTANT, kernel(even)), kernel(even)());
+}
+
 /// API.ROW.003's vector runs the planner (`tg.run`); at the generator its
 /// mutant lets a row of 288 columns (no block of 64..256 divides it) be
 /// one block, not nine of 32.

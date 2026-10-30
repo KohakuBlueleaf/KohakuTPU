@@ -163,12 +163,46 @@ pub fn stat_words(r: i64, hw: &Hw) -> i64 {
     cdiv(r, hw.stat_rows())
 }
 
-/// `n` trips over at most `cores` cores (RUL.016): core c starts at trip
-/// `c * h` (`h = ceil(n / cores)`) and runs h, the last the rest; returns
-/// the cores used, each core's first trip and its trip count as indices
+/// How trips are dealt over cores (RUL.016).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Trips {
+    /// Core c starts at trip `c * h` (`h = ceil(n / cores)`) and runs h,
+    /// the last the rest.
+    HChunk,
+    /// Core c starts at trip `c q + ceil(c rem / cores)` (`q, rem =
+    /// divmod(n, cores)`): counts differ by at most one.
+    Balanced,
+}
+
+/// The reverse mutant of the [`Knobs::trips`] default: the other split.
+pub const OTHER_SPLIT_MUTANT: &str = "vector/other-split";
+
+/// The vector generators' knobs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Knobs {
+    /// The split every generator deals its trips by.
+    pub trips: Trips,
+}
+
+/// The one source every generator and Python (`_rs.VECTOR_DEFAULTS`) read:
+/// balanced, every core given work (RUL.016).
+pub fn defaults() -> Knobs {
+    let (chosen, other) = (Trips::Balanced, Trips::HChunk);
+    Knobs {
+        trips: if mutants::on(OTHER_SPLIT_MUTANT) {
+            other
+        } else {
+            chosen
+        },
+    }
+}
+
+/// `n` trips over at most `cores` cores by [`defaults`]' split, as indices
 /// of the core's variable.
 pub struct Split {
     pub cores: i64,
+    trips: Trips,
+    /// The h-chunk's trips a core.
     h: i64,
     n: i64,
 }
@@ -176,36 +210,50 @@ pub struct Split {
 impl Split {
     pub fn start(&self, c: &Idx) -> Idx {
         if self.cores == 1 {
-            Idx::Int(0)
-        } else {
-            c.mul(self.h)
+            return Idx::Int(0);
+        }
+        match self.trips {
+            Trips::HChunk => c.mul(self.h),
+            Trips::Balanced => {
+                let (q, rem) = (self.n / self.cores, self.n % self.cores);
+                c.mul(q).add(c.mul(rem).add(self.cores - 1).div(self.cores))
+            }
         }
     }
 
     pub fn trips(&self, c: &Idx) -> Idx {
-        match self.cores {
-            1 => Idx::Int(self.n),
-            2 => Idx::Int(self.h).add(c.mul(self.n - 2 * self.h)),
-            m => Idx::Int(self.h).add(c.div(m - 1).mul(self.n - m * self.h)),
+        if self.cores == 1 {
+            return Idx::Int(self.n);
+        }
+        match (self.trips, self.cores) {
+            (Trips::HChunk, 2) => Idx::Int(self.h).add(c.mul(self.n - 2 * self.h)),
+            (Trips::HChunk, m) => Idx::Int(self.h).add(c.div(m - 1).mul(self.n - m * self.h)),
+            (Trips::Balanced, _) => self.start(&c.add(1)).sub(self.start(c)),
         }
     }
 }
 
 pub fn split(n: i64, cores: i64) -> Split {
+    let trips = defaults().trips;
     let cores = if mutants::on("api.vector/split_one") {
         1
     } else {
         cores.min(n).max(1)
     };
     if cores == 1 {
-        return Split { cores: 1, h: n, n };
+        return Split {
+            cores: 1,
+            trips,
+            h: n,
+            n,
+        };
     }
     let h = cdiv(n, cores);
-    Split {
-        cores: cdiv(n, h),
-        h,
-        n,
-    }
+    let cores = match trips {
+        Trips::HChunk => cdiv(n, h),
+        Trips::Balanced => cores,
+    };
+    Split { cores, trips, h, n }
 }
 
 /// The widest column block, [`Hw::max_block`] halving down to one GT4

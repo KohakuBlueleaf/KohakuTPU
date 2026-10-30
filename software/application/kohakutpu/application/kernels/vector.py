@@ -9,12 +9,12 @@ statistic (an [blocks, R] one of partials: rows wider than a band's
 registers go in column blocks, a reduction across them leaving partials to
 fold); a statistic moves in trips of 16 rows. `flat_kernel`: N elements as
 128-value rows (f16 or f32), each operand read at the output's index or one
-value of it. A core's trips are a constant of the instance (``h + c * (n -
-2h)`` on two cores).
+value of it. A core's trips are a constant of the instance (`split`).
 """
 
 import functools
 import hashlib
+import json
 import operator
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -22,8 +22,11 @@ from dataclasses import dataclass
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels.classes import flat as class_flat
 from kohakutpu.application.kernels.classes import rows as class_rows
+from kohakutpu.compiler import _rs
 from kohakutpu.language import dsl as kt
 
+#: How `split` deals trips over cores: ktpu-kernels' `vector::defaults`.
+TRIPS = json.loads(_rs.VECTOR_DEFAULTS)["trips"]
 L1_WORDS = 512
 #: L1 words the lowering keeps free beside the operands (landing, slack).
 L1_MARGIN = 16
@@ -103,12 +106,20 @@ def name(prefix: str, *parts) -> str:
 
 
 def split(n: int, cores: int):
-    """``(cores, start(c), trips(c))`` of `n` trips over `cores` cores."""
+    """``(cores, start(c), trips(c))`` of `n` trips over `cores` cores, dealt
+    by `TRIPS`: ``hchunk`` (core c starts at ``c * ceil(n / cores)``, the last
+    the rest) or ``balanced`` (counts differ by at most one)."""
     if cores < 1 or n < 0:
         raise ValueError("split needs a positive core count and nonnegative trips")
     cores = max(1, min(cores, n))
     if cores == 1:
         return 1, (lambda c: 0), (lambda c: n)
+    if TRIPS == "hchunk":
+        h = -(-n // cores)
+        m = -(-n // h)
+        if m == 2:
+            return 2, (lambda c: c * h), (lambda c: h + c * (n - 2 * h))
+        return m, (lambda c: c * h), (lambda c: h + c // (m - 1) * (n - m * h))
     q, rem = divmod(n, cores)
 
     def start(c):

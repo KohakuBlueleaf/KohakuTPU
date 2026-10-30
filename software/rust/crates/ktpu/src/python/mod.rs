@@ -828,6 +828,16 @@ fn mm_knob_table() -> String {
     serde_json::Value::Array(rows).to_string()
 }
 
+/// The vector knobs' defaults (`ktpu_kernels::gen::vector::defaults`), a
+/// JSON object: Python's `vector.TRIPS` (`"hchunk"` or `"balanced"`).
+fn vector_defaults() -> String {
+    let trips = match ktpu_kernels::gen::vector::defaults().trips {
+        ktpu_kernels::gen::vector::Trips::HChunk => "hchunk",
+        ktpu_kernels::gen::vector::Trips::Balanced => "balanced",
+    };
+    serde_json::json!({ "trips": trips }).to_string()
+}
+
 /// mm_plan(args_json, machine_json, mutant=None) -> str: the tiling of a
 /// `matmul.plan` call's arguments (`ktpu_kernels::call::mm_plan`), JSON of
 /// `bt m n k mp kp tm tn nk shared quantum`; ValueError on a refusal.
@@ -897,6 +907,7 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mm_resolved, m)?)?;
     m.add_function(wrap_pyfunction!(mm_takes_f16, m)?)?;
     m.add("MM_KNOBS", mm_knob_table())?;
+    m.add("VECTOR_DEFAULTS", vector_defaults())?;
     m.add_function(wrap_pyfunction!(bind, m)?)?;
     m.add_function(wrap_pyfunction!(bind_cache_stats, m)?)?;
     m.add_function(wrap_pyfunction!(bind_cache_configure, m)?)?;

@@ -5,9 +5,9 @@
 
 use ktpu_graph as g;
 use ktpu_kernels::expr::{self, Expr, OpName, RedOp, E};
-use ktpu_kernels::gen::lanes;
-use ktpu_kernels::{Kind, Mm, Operand};
-use ktpu_machine::Machine;
+use ktpu_kernels::gen::{convert, lanes, matmul, transpose, vector};
+use ktpu_kernels::{Kernel, Kind, Mm, Operand, Side};
+use ktpu_machine::{Machine, Refusal};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -187,4 +187,173 @@ pub fn first_diff(want: &g::Graph, got: &g::Graph) -> String {
         }
     }
     walk(&a, &b, String::new()).unwrap_or_else(|| "no difference".into())
+}
+
+pub enum Got {
+    Kernel(Kernel, Option<i64>),
+    Result(Value),
+}
+
+pub fn s(v: &Value) -> &str {
+    v.as_str().expect("a string")
+}
+
+/// The Rust generator for one recorded call.
+pub fn run(call: &Value, plans: &[&Value], m: &Machine) -> Result<Got, Refusal> {
+    let a = &call["args"];
+    let k = |k: Kernel| Got::Kernel(k, None);
+    Ok(match s(&call["fn"]) {
+        "vector.rows_kernel" => {
+            let bands = a["bands"].as_i64();
+            let (kern, nblk) = vector::rows_kernel(
+                &expr_of(&a["e"]),
+                &operands_of(&a["operands"]),
+                int(&a["R"]),
+                int(&a["W"]),
+                &operand_of(&a["out"]),
+                bands,
+                m,
+            )?;
+            Got::Kernel(kern, Some(nblk))
+        }
+        "vector.flat_kernel" => {
+            let dtypes: Vec<g::Dtype> = a["dtypes"]
+                .as_array()
+                .expect("dtypes")
+                .iter()
+                .map(|d| dtype(s(d)))
+                .collect();
+            let scalars: Vec<(usize, i64)> = a["scalars"]
+                .as_array()
+                .expect("scalars")
+                .iter()
+                .map(|p| (int(&p[0]) as usize, int(&p[1])))
+                .collect();
+            k(vector::flat_kernel(
+                &expr_of(&a["e"]),
+                &dtypes,
+                int(&a["n"]),
+                dtype(s(&a["out_dtype"])),
+                &scalars,
+                m,
+            )?)
+        }
+        "matmul.quant_kernel" => {
+            let side = if s(&a["side"]) == "a" {
+                Side::A
+            } else {
+                Side::B
+            };
+            k(matmul::quant_kernel(
+                &operand_of(&a["src"]),
+                int(&a["rows"]),
+                int(&a["cols"]),
+                int(&a["rp"]),
+                int(&a["cp"]),
+                side,
+                int(&a["g"]),
+                int(&a["nk"]),
+                int(&a["batches"]),
+                m,
+            )?)
+        }
+        "matmul.mm_kernel" => k(matmul::mm_kernel(
+            &mm_of(&a["mm"]),
+            &expr_of(&a["e"]),
+            &operands_of(&a["extras"]),
+            &operand_of(&a["out"]),
+            &matmul::unrecorded().read(a, matmul::Group::Kernel)?,
+            m,
+        )?),
+        "convert.copy_kernel" => k(convert::copy_kernel(int(&a["nbytes"]), m)?),
+        "convert.walk_kernel" => k(convert::walk_kernel(
+            int(&a["src_bytes"]),
+            &walk_of(&a["levels"]),
+            int(&a["at"]),
+            int(&a["dst_bytes"]),
+            &walk_of(&a["dlevels"]),
+            int(&a["dat"]),
+            m,
+        )?),
+        "convert.fill_kernel" => k(convert::fill_kernel(
+            int(&a["dst_bytes"]),
+            &walk_of(&a["dlevels"]),
+            int(&a["dat"]),
+            int(&a["value"]),
+            int(&a["ew"]),
+            m,
+        )?),
+        "convert.cast_kernel" => k(convert::cast_kernel(
+            int(&a["n"]),
+            dtype(s(&a["src"])),
+            dtype(s(&a["dst"])),
+            m,
+        )?),
+        "transpose.transpose_kernel" => k(transpose::transpose_kernel(
+            int(&a["nb"]),
+            int(&a["A"]),
+            int(&a["B"]),
+            m,
+        )?),
+        "transpose.reverse_kernel" => k(transpose::reverse_kernel(
+            int(&a["src_bytes"]),
+            &walk_of(&a["levels"]),
+            int(&a["at"]),
+            int(&a["n"]),
+            m,
+        )?),
+        "lanes.relayout_kernel" => {
+            let want = &a["pl"]["lanes_plan"];
+            let pl = plans
+                .iter()
+                .find_map(|p| {
+                    let pl = lanes_plan(&p["args"], m).ok()?;
+                    (lanes_summary(&pl) == *want).then_some(pl)
+                })
+                .ok_or_else(|| Refusal::new("golden", "no lanes.plan call gives this plan"))?;
+            k(lanes::relayout_kernel(&pl, m)?)
+        }
+        "matmul.plan" => {
+            let mm = matmul::plan(
+                int(&a["bt"]),
+                int(&a["m"]),
+                int(&a["n"]),
+                int(&a["k"]),
+                a["shared"].as_bool().expect("a bool"),
+                int(&a["quantum"]),
+                ktpu_machine::PAIRING,
+                m,
+                &matmul::unrecorded().read(a, matmul::Group::Plan)?,
+            )?;
+            Got::Result(serde_json::json!({"mm": {
+                "bt": mm.bt, "m": mm.m, "n": mm.n, "k": mm.k, "mp": mm.mp, "kp": mm.kp,
+                "tm": mm.tm, "tn": mm.tn, "nk": mm.nk, "shared": mm.shared, "quantum": mm.quantum,
+            }}))
+        }
+        "lanes.plan" => {
+            Got::Result(serde_json::json!({"lanes_plan": lanes_summary(&lanes_plan(a, m)?)}))
+        }
+        "transpose.masks" => {
+            let masks = transpose::masks(m)?;
+            let bits: Vec<u8> = masks.iter().flat_map(|x| x.to_le_bytes()).collect();
+            let vlmax = ktpu_kernels::gen::Hw::of(m).vlmax;
+            Got::Result(serde_json::json!({"array": {
+                "shape": [masks.len() as i64 / vlmax, vlmax], "dtype": "float16", "sha256": sha(&bits),
+            }}))
+        }
+        other => panic!("no Rust generator for {other}"),
+    })
+}
+
+pub fn lanes_plan(a: &Value, m: &Machine) -> Result<lanes::Plan, Refusal> {
+    lanes::plan(
+        int(&a["src_n"]),
+        &walk_of(&a["walk"]),
+        int(&a["at"]),
+        &walk_of(&a["dwalk"]),
+        int(&a["dat"]),
+        int(&a["m"]),
+        a["keep"].as_bool().expect("a bool"),
+        m,
+    )
 }

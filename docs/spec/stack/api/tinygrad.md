@@ -38,7 +38,7 @@ stack's block width), a widest block of 256 columns, and a statistic word of
 
 Generated kernels receive core and cluster counts from the active machine,
 without defaults. Stage trips cover all `node.vc` instances that have work,
-with the balanced, exact-once split of API.ROW.007 (RUL.016).
+with the exact-once split of API.ROW.007, balanced by default (RUL.016).
 Both tensor frontends use `_product` for products: N is padded to whole
 `vc.vlmax / mg.lanes` column blocks from the schema (one vector register
 across a cluster GT4 row band), while logical N is retained.

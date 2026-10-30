@@ -7,6 +7,7 @@ pub const NAMES: &[&str] = &[
     "memory/flat-overrun",
     "memory/reverse-overrun",
     "api.vector/split_one",
+    crate::gen::vector::OTHER_SPLIT_MUTANT,
     "api.vector/bands_one",
     "api.vector/stages_whole",
     "api.vector/l1_small",

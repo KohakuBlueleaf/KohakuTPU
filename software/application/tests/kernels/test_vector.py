@@ -79,20 +79,28 @@ def test_no_row_past_R_is_read_or_written(R):
         assert f": +{R % 4}" in text
 
 
+@pytest.mark.parametrize("deal", ["hchunk", "balanced"])
 @pytest.mark.parametrize("vc", range(1, 5))
 @pytest.mark.parametrize("n", range(34))
-def test_split_covers_every_trip_once(vc, n):
+def test_split_covers_every_trip_once(vc, n, deal, monkeypatch):
     machine = machine_of(
         "multimesh_v9t8",
         nodes=1,
         units={**MACHINE.units, "VC": tuple((2, i + 1) for i in range(vc))},
     )
+    monkeypatch.setattr(V, "TRIPS", deal)
     cores, start, trips = V.split(n, machine.count("VC"))
-    assert cores == max(1, min(vc, n))
     seen = [start(c) + i for c in range(cores) for i in range(trips(c))]
     assert sorted(seen) == list(range(n))
     counts = [trips(c) for c in range(cores)]
-    assert max(counts) - min(counts) <= 1
+    most = max(1, min(vc, n))
+    if deal == "balanced":
+        assert cores == most
+        assert max(counts) - min(counts) <= 1
+    else:
+        h = -(-n // most)
+        assert cores == (-(-n // h) if n else 1)
+        assert all(t == h for t in counts[:-1])
 
 
 @pytest.mark.parametrize("vc", range(1, 5))
