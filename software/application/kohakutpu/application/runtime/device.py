@@ -835,6 +835,8 @@ class Device:
             del self._record_pins[record_mark:]
             for arena, at in references:
                 arena.unretain(at)
+            if not self.inflight:
+                self._release_windows()
             raise
         self.inflight.append(s)
         if self.recording:
