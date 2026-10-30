@@ -3,6 +3,143 @@
 
 from typing import TypedDict
 
+def affected_roots(roots: list, changed: dict) -> list[int]: ...
+def graph_nodes(roots: list, op: object) -> list: ...
+def capture_graph(root: object, buffer_op: object) -> tuple[tuple, list, list[int]]: ...
+def rewrite_roots(
+    roots: list,
+    changed: dict,
+    function_op: object,
+    call_op: object,
+    opaque: object,
+    rebuild_dtype: object,
+) -> list: ...
+
+class CaptureTemplate:
+    def __init__(self, root: object, parameters: list) -> None: ...
+    def instantiate(self, values: tuple) -> object: ...
+
+class DirectWire:
+    slot: int | None
+    def __init__(
+        self,
+        queue: object,
+        transport: object,
+        memory: object,
+        base: int,
+        dram_offset: int,
+        geometry: tuple[int, int, int, int, int],
+        fields: dict[str, tuple[int, int]],
+    ) -> None: ...
+    def close(self, shutdown: bool = False) -> None: ...
+    def available(self) -> bool: ...
+    def submit(self, card: object, raw: bytes) -> dict: ...
+    def write_host(self, card: object, at: int, raw: bytes) -> None: ...
+
+class NativeRun:
+    name: str
+    kind: str
+    info: dict
+    cycles: int
+    wall: float
+
+class QueueLayout:
+    magic: int
+    min_version: int
+    version: int
+    list_version: int
+    line: int
+    sq_bytes: int
+    cq_bytes: int
+    sq_words: int
+    nbind_shift: int
+    stdio_mask: int
+    op_mask: int
+    cq_status_mask: int
+    rec_bytes: int
+    rec_version: int
+    rec_word: int
+    info: int
+    epoch: int
+    fw: int
+    list_abi: int
+    sq_tail: int
+    sq_head: int
+    cq_tail: int
+    cq_head: int
+    so_wr: int
+    so_rd: int
+    si_wr: int
+    si_rd: int
+    units: int
+    heaps: int
+    sq: int
+    cq_tag: int
+    cq_status: int
+    cq_cycles: int
+    cq_value: int
+    info_magic: int
+    info_version: int
+    info_rings: int
+    info_stdio: int
+    info_epoch: int
+    fw_state: int
+    fw_abi: int
+    fw_done: int
+    fw_fatal: int
+    st_none: int
+    st_ready: int
+    st_stopped: int
+    st_fatal: int
+    op_nop: int
+    op_run: int
+    op_stop: int
+    op_list: int
+    run_op: int
+    run_tag: int
+    run_pkg: int
+    run_bytes: int
+    run_bind: int
+    run_timeout: int
+    run_flags: int
+    list_op: int
+    list_tag: int
+    list_addr: int
+    list_count: int
+    list_epoch: int
+    list_version_word: int
+    list_flags: int
+    status_ok: int
+    status_progress: int
+    status_bad_op: int
+    status_bad_arg: int
+    status_unit_fault: int
+    status_mover_fault: int
+    status_timeout: int
+    status_no_memory: int
+    status_no_slots: int
+    status_bad_free: int
+    status_heap_busy: int
+    rec_tag: int
+    rec_so_wr: int
+    rec_list_index: int
+    rec_item_tag: int
+    rec_epoch: int
+    def __init__(self, source: object) -> None: ...
+
+class QueueExchange:
+    def __init__(self, read: int, write: int, layout: object) -> None: ...
+    def run(
+        self,
+        base: int,
+        geo: tuple[int, int, int, int, int],
+        tail: int,
+        head: int,
+        stdout: int,
+        entry: tuple[int, int, int, int, int, int, int, int],
+        seconds: float,
+    ) -> tuple[int, int, bytes, bytes, bytes, int, bool, str | None]: ...
+
 def library_key(source: str, machine_json: str, zero_sign: str | None = None) -> str:
     """Name-free exact graph key, target digest (machine and zero_sign) and
     stage versions as JSON."""
@@ -99,6 +236,180 @@ class Refused(ValueError):
     #: The refusal's message without its clause (set by `mg_encode`,
     #: `sru_words`, `vc_encode` and `Cores.rewrite`).
     reason: str
+
+class OutOfMemory(MemoryError): ...
+
+class Arena:
+    lo: int
+    hi: int
+    align: int
+    closed: bool
+    allocations: int
+    peak: int
+    high_water: int
+    live: dict[int, int]
+    owners: dict[int, str]
+    generations: dict[int, int]
+    requested: dict[int, int]
+    references: dict[int, int]
+    released: set[int]
+    free_list: list[tuple[int, int]]
+    used: int
+    free: int
+    largest: int
+    def __init__(self, lo: int, hi: int, align: int = 256) -> None: ...
+    def alloc(self, nbytes: int, owner: str = "runtime") -> int: ...
+    def alloc_top(self, nbytes: int, owner: str = "reservation") -> int: ...
+    def containing(self, address: int) -> int: ...
+    def retain(self, address: int) -> int: ...
+    def retain_pinned(self, address: int) -> None: ...
+    def reuse_pinned(self, address: int) -> None: ...
+    def release(self, address: int) -> None: ...
+    def unretain(self, address: int) -> None: ...
+    def close(self) -> None: ...
+    def free_spans(self) -> list[int]: ...
+    def fits(self, sizes: list[int]) -> bool: ...
+    def stats(self) -> dict: ...
+
+class Allocation:
+    virtual: int
+    physical: int
+    extent: int
+    generation: int
+    arena: Arena
+    live: bool
+
+class NativeMMU:
+    entries: dict[int, Allocation]
+    special_bit: int
+    domain_shift: int
+    virtual_offset: int
+    virtual_align: int
+    retired_kept: int
+    def __init__(self) -> None: ...
+    def register(self, physical: int, extent: int, arena: Arena) -> int: ...
+    def resolve(
+        self, address: int, nbytes: int = 1, owner: bool = False
+    ) -> tuple[Allocation, int]: ...
+    def retire(self, address: int) -> None: ...
+    def translations(self) -> list[tuple[int, int, int]]: ...
+    def translations_for(self, handles: list[int]) -> list[tuple[int, int, int]]: ...
+
+class Submitted:
+    name: str
+    kind: str
+    info: dict
+    scratch: list[int]
+    t0: float
+    pending: object
+    result: dict | None
+    run: object
+    references: list
+    writes: list
+    nodes: tuple[int, ...]
+    error: Exception | None
+
+class NativeSubmit:
+    def __init__(
+        self,
+        name: str,
+        kind: str,
+        info: dict,
+        scratch: list,
+        bindings: list,
+        packages: list,
+        resident: bool,
+        scope: tuple[RecipeEpoch, int],
+    ) -> None: ...
+    def launch(
+        self,
+        dev: object,
+        handles: list[int],
+        readonly: list[int] = ...,
+        writable: list[int] = ...,
+    ) -> Submitted: ...
+
+class LaunchProgram:
+    def __init__(
+        self, operations: list, effects: list, out: int, scope: tuple[RecipeEpoch, int]
+    ) -> None: ...
+    def launch(self, dev: object, storages: list) -> list: ...
+
+class RecipeMiss: ...
+
+class RecipeTable:
+    hits: int
+    misses: int
+    def __init__(self, limit: int) -> None: ...
+    def clear(self) -> None: ...
+    def launch(
+        self, dev: object, ast: object, buffers: dict, context: tuple
+    ) -> list | RecipeMiss: ...
+    def insert(self, miss: RecipeMiss, entry: object) -> None: ...
+
+def wait_tail(
+    fd: int,
+    address: int,
+    head: int,
+    stdout: int,
+    seconds: float = 0.0001,
+    sleep: float = 0.0,
+    max_polls: int = 0,
+    layout: QueueLayout | None = None,
+) -> tuple[bytes, int]: ...
+
+class QueueRun:
+    layout: QueueLayout
+    def __init__(self, layout: object) -> None: ...
+    def __call__(
+        self,
+        queue: object,
+        package: object,
+        bindings: list[int],
+        publishing: object = None,
+    ) -> int: ...
+
+def queue_run(
+    queue: object,
+    package: object,
+    bindings: list[int],
+    layout: QueueLayout,
+    publishing: object = None,
+) -> int: ...
+
+class RecipeEpoch:
+    def __init__(self) -> None: ...
+    @property
+    def generation(self) -> int: ...
+    def invalidate(self) -> None: ...
+
+class LaunchRecipe:
+    """Retained template, fixed shape parameters and receiving-board admission."""
+
+    def __init__(
+        self,
+        package: bytes,
+        machine_json: str,
+        mesh: int = 0,
+        template_json: str | None = None,
+        params: dict[str, int] | None = None,
+        images_json: str | None = None,
+        scope: tuple[RecipeEpoch, int] | None = None,
+        wire: bool = False,
+    ) -> None: ...
+    @property
+    def admission_invariant(self) -> bool: ...
+    @property
+    def wire_ready(self) -> bool: ...
+    def plain(
+        self, handles: list[int], translations: list[tuple[int, int, int]] | None = None
+    ) -> bytes: ...
+    def launch(
+        self,
+        handles: list[int],
+        translations: list[tuple[int, int, int]] | None = None,
+        cores: Cores | None = None,
+    ) -> bytes: ...
 
 def package_admit(
     package: bytes,

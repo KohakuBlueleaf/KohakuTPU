@@ -15,9 +15,13 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use super::super::LruMap;
 
-type AdmissionContext = (Facts, Arc<ktpu_verify::Target>);
+pub(super) type AdmissionContext = (Facts, Arc<ktpu_verify::Target>);
 
-fn admission_context(machine_json: &str, mesh: u32, cached: bool) -> PyResult<AdmissionContext> {
+pub(super) fn admission_context(
+    machine_json: &str,
+    mesh: u32,
+    cached: bool,
+) -> PyResult<AdmissionContext> {
     static CONTEXTS: OnceLock<Mutex<LruMap<(String, u32), AdmissionContext>>> = OnceLock::new();
     let contexts = CONTEXTS.get_or_init(|| Mutex::new(LruMap::new(64)));
     let key = (machine_json.to_owned(), mesh);
@@ -37,6 +41,14 @@ fn admission_context(machine_json: &str, mesh: u32, cached: bool) -> PyResult<Ad
             .insert(key, context.clone());
     }
     Ok(context)
+}
+
+pub(super) fn admit_package(
+    pkg: &Package,
+    mesh: u32,
+    target: &ktpu_verify::Target,
+) -> PyResult<()> {
+    ktpu_verify::lines::admit(pkg, mesh, target).map_err(PyValueError::new_err)
 }
 
 /// An L0 refusal as `Refused`, its `clause` set.
@@ -672,7 +684,7 @@ fn package_admit(
     let p = p
         .bind(&bindings.unwrap_or_default())
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
-    ktpu_verify::lines::admit(&p, mesh, &t).map_err(PyValueError::new_err)
+    admit_package(&p, mesh, &t)
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

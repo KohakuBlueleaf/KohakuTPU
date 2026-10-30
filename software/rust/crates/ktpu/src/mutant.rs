@@ -6,11 +6,42 @@
 /// The `_rs` bindings' own mutants (`python::bindings`): a refusal given
 /// for the wrong reason, one a group that refuses.
 #[cfg(feature = "mutants")]
-pub const BINDINGS: [&str; 4] = [
+pub const BINDINGS: [&str; 13] = [
     "bindings.isa/reason",
     "bindings.cores/reason",
     "bindings.bind/no_cache",
     "bindings.library/no_cache",
+    "bindings.recipe/unconditional_admission",
+    "bindings.mmu/reuse_handle",
+    "bindings.mmu/own_offset",
+    "bindings.queue/retires_failed",
+    "bindings.poll/cq_only",
+    "bindings.program/leaks_cancelled",
+    "bindings.submit/python_publication",
+    "bindings.capture/drops_tag",
+    "bindings.walk/roots_only",
+];
+
+/// The Python runtime's mutants (`kohakutpu.application`): switched there by
+/// `rs.mutant(name)` and read from `_MUTANT`; no crate carries them.
+#[cfg(feature = "mutants")]
+pub const RUNTIME: [&str; 16] = [
+    "app.resident/unset_is_off",
+    "app.resident/only_one_resides",
+    "app.device/unlatched_resident",
+    "app.device/keeps_eager",
+    "app.memory/unlatched_carve",
+    "app.replay/refuses_unpinned",
+    "app.replay/split_workspace",
+    "app.sequence/ignores_layout",
+    "app.sequence/unlatched",
+    "app.schedule/ignores_layout",
+    "app.schedule/ignores_context",
+    "app.recipe/no_overlap_key",
+    "app.recipe/no_host_identity",
+    "app.capture/reuses_cold",
+    "app.batch/write_skips_flush",
+    "app.card/single_by_count",
 ];
 
 /// Every mutant this build carries (each crate's `NAMES`, in crate order,
@@ -36,6 +67,7 @@ pub fn names() -> Vec<&'static str> {
         }
         out.push(crate::stack::CHECK_REBUILDS);
         out.extend(BINDINGS);
+        out.extend(RUNTIME);
         out.extend(["isa.mover/payloads", "isa.mover/posted"]);
         out.push(crate::stack::BINDS_IGNORED);
         out.push(crate::pipeline::CACHE_ERRORS_REFUSE);
