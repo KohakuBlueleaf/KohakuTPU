@@ -216,14 +216,14 @@ def test_padded_scratch_full_readback_and_guards(dev, monkeypatch, pad_strategy)
         pad_strategy=pad_strategy,
     )
     c = K.specialise(*pair, machine=machine)
-    allocate, free = dev.alloc, dev.free
+    allocate, free = dev._alloc, dev.free
     scratch = {}
-    xa, qa = allocate(raw.nbytes), allocate(512)
+    xa, qa = dev.alloc(raw.nbytes), dev.alloc(512)
 
-    def guarded(nbytes, *args, **kw):
-        if not kw.get("owner", "").startswith("scratch:"):
-            return allocate(nbytes, *args, **kw)
-        base = allocate(nbytes + 256, *args, **kw)
+    def guarded(nbytes, space, node, owner):
+        if not owner.startswith("scratch:window:dram"):
+            return allocate(nbytes, space, node, owner)
+        base = allocate(nbytes + 256, space, node, owner)
         dev.write(base, bytes([0xD3]) * (nbytes + 256))
         scratch[base + 128] = (base, nbytes)
         return base + 128
@@ -232,8 +232,9 @@ def test_padded_scratch_full_readback_and_guards(dev, monkeypatch, pad_strategy)
         if address not in scratch:
             free(address)
 
-    monkeypatch.setattr(dev, "alloc", guarded)
+    monkeypatch.setattr(dev, "_alloc", guarded)
     monkeypatch.setattr(dev, "free", defer)
+    monkeypatch.setattr(dev, "_release_windows", lambda: None)
     try:
         dev.write(xa, raw.tobytes())
         dev.run(c, {"x": xa, "q": qa})
@@ -242,7 +243,7 @@ def test_padded_scratch_full_readback_and_guards(dev, monkeypatch, pad_strategy)
         assert dev.read(qa, 512) == reference(mxfp7.lift(expected, 2), "a", 2, 2)
         assert dev.read(xa, raw.nbytes) == raw.tobytes()
         # L2 packing.md: native padding stages nothing in DRAM; staged fills
-        # one padded FP16 scratch.
+        # one padded FP16 scratch, in the DRAM window (`Device._window`).
         assert len(scratch) == (pad_strategy == "staged")
         for address, (base, nbytes) in scratch.items():
             assert nbytes == expected.nbytes
@@ -250,6 +251,7 @@ def test_padded_scratch_full_readback_and_guards(dev, monkeypatch, pad_strategy)
             assert dev.read(base, 128) == bytes([0xD3]) * 128
             assert dev.read(address + nbytes, 128) == bytes([0xD3]) * 128
     finally:
+        dev.windows = {k: w for k, w in dev.windows.items() if w[0] not in scratch}
         for base, _ in scratch.values():
             free(base)
         free(xa)
