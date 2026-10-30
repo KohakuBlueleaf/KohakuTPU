@@ -104,6 +104,7 @@ impl Fits {
     pub fn words(&self, module: &Module, name: &str, nparams: usize, t: &Target) -> Option<usize> {
         let make = || {
             self.made.fetch_add(1, Ordering::Relaxed);
+            crate::work::FITTED.fetch_add(1, Ordering::Relaxed);
             ktpu_l1::sched::schedule_module(module, &t.machine)
                 .and_then(|m| encode::words_of(&m, name, nparams, &t.machine))
                 .ok()
@@ -493,6 +494,7 @@ impl Search {
                 &t.machine,
             )?;
             self.timed.fetch_add(1, Ordering::Relaxed);
+            crate::work::TIMED.fetch_add(1, Ordering::Relaxed);
             Ok((
                 module.clone(),
                 if on("l2.vector/slowest-first") { -c } else { c },

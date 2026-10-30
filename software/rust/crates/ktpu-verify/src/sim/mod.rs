@@ -275,7 +275,10 @@ impl<'t> Sim<'t> {
             .is_some()
             .then(std::time::Instant::now);
         let mut rounds = 0u64;
+        let before = self.events;
         self.run_rounds(limit, &mut rounds);
+        crate::work::RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        crate::work::EVENTS.fetch_add(self.events - before, std::sync::atomic::Ordering::Relaxed);
         if let Some(t0) = t0 {
             eprintln!(
                 "verify run: {} procs, {} events, {} rounds, {} counters, {:.3}s",

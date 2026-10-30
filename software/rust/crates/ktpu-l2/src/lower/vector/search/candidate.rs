@@ -23,6 +23,7 @@ pub(super) fn lower_band(
     pin: bool,
     fits: &Fits,
 ) -> VResult<Cand> {
+    crate::work::LOWERED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let got = crate::lower::vector::ctx::band::typed::lower_band(
         body, par, env, name, t, band, remat, ahead, plan, land, hold, pin, fits,
     )

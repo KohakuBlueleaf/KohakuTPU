@@ -11,6 +11,7 @@ pub mod mutant;
 pub mod passes;
 pub mod spec;
 pub mod target;
+pub mod work;
 
 use ktpu_machine::Machine;
 

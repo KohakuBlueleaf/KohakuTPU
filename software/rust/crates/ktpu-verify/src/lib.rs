@@ -19,6 +19,7 @@ pub mod mutant;
 pub(crate) mod sim;
 pub mod spec;
 pub mod target;
+pub mod work;
 
 pub use adapter::u256::U256;
 pub use check::gate::{gate, key, overlaps, GateError, Mode, SOURCE_DIGEST as VERSION};
