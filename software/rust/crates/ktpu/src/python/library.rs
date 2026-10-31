@@ -105,10 +105,14 @@ fn card(zero_sign: Option<&str>) -> PyResult<CardStack> {
     })
 }
 
-/// The directory an entry lives under: the machine text and the stack's
+/// The directory an entry lives under: [`Machine::digest`] and the stack's
 /// settings, so each `zero_sign` value keeps its own entries.
-fn target(text: &str, card: &CardStack) -> String {
-    digest(&format!("{text}{}", card.settings()))
+fn target(text: &str, card: &CardStack) -> PyResult<String> {
+    Ok(digest(&format!(
+        "{}{}",
+        machine(text)?.digest(),
+        card.settings()
+    )))
 }
 
 fn stage_versions(card: &CardStack) -> PyResult<BTreeMap<String, String>> {
@@ -128,7 +132,6 @@ fn identity(
     card: &CardStack,
     need_canonical: bool,
 ) -> PyResult<(Key, String, String)> {
-    machine(text)?;
     let mut graph: Value =
         serde_json::from_str(source).map_err(|e| PyValueError::new_err(e.to_string()))?;
     if graph["format"] != "ktpu.graph" {
@@ -152,7 +155,7 @@ fn identity(
         Key {
             schema: 1,
             class,
-            machine: target(text, card),
+            machine: target(text, card)?,
             versions,
         },
         canonical,
@@ -173,9 +176,19 @@ fn error(e: impl std::fmt::Display) -> PyErr {
 /// `zero_sign` on every library call: the value the entry is compiled under
 /// (`_rs.compile`'s; none: the default), part of its key and its directory.
 #[pyfunction]
-#[pyo3(signature = (source, machine_json, zero_sign=None))]
-fn library_key(source: &str, machine_json: &str, zero_sign: Option<&str>) -> PyResult<String> {
-    let (key, _, _) = identity(source, machine_json, &card(zero_sign)?, false)?;
+#[pyo3(signature = (source, machine_json, zero_sign=None, mutant=None))]
+fn library_key(
+    source: &str,
+    machine_json: &str,
+    zero_sign: Option<&str>,
+    mutant: Option<&str>,
+) -> PyResult<String> {
+    let card = card(zero_sign)?;
+    let key = || identity(source, machine_json, &card, false);
+    let (key, _, _) = match mutant {
+        Some(n) => crate::mutant::with(n, key).map_err(PyValueError::new_err)??,
+        None => key()?,
+    };
     serde_json::to_string(&key).map_err(error)
 }
 
@@ -184,8 +197,7 @@ fn library_key(source: &str, machine_json: &str, zero_sign: Option<&str>) -> PyR
 #[pyfunction]
 #[pyo3(signature = (machine_json, zero_sign=None))]
 fn library_machine(machine_json: &str, zero_sign: Option<&str>) -> PyResult<String> {
-    machine(machine_json)?;
-    Ok(target(machine_json, &card(zero_sign)?))
+    target(machine_json, &card(zero_sign)?)
 }
 
 #[pyfunction]

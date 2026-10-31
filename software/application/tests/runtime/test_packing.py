@@ -146,6 +146,12 @@ def test_library_identity_includes_conversion_policy():
     a = json.loads(_rs.library_key(graph, m.machine_json))
     b = json.loads(_rs.library_key(graph, json.dumps(doc)))
     assert a["machine"] != b["machine"]
+    doc = json.loads(m.machine_json)
+    doc["machine"]["fw"]["sections"][".text"] += 32
+    doc["machine"]["fw"]["queue"]["sq_bytes"] += 32
+    moved = json.dumps(doc)
+    assert json.loads(_rs.library_key(graph, moved)) == a
+    assert _rs.library_machine(moved) == _rs.library_machine(m.machine_json)
 
 
 def test_restrictive_admission_checks_mover_and_engine():
@@ -181,9 +187,7 @@ def test_cache_policy_omission_mutant_is_killed(monkeypatch):
     original = _rs.library_key
 
     def ignore_policy(graph, machine):
-        doc = json.loads(machine)
-        doc["machine"]["conversion"]["fp16_mx7"].update(preferred_backend="mover_quant")
-        return original(graph, json.dumps(doc, sort_keys=True))
+        return original(graph, machine, mutant="machine.key/drops-policy")
 
     monkeypatch.setattr(_rs, "library_key", ignore_policy)
     with pytest.raises(AssertionError):

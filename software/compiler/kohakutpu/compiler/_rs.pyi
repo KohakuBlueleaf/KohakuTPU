@@ -141,7 +141,12 @@ class QueueExchange:
         seconds: float,
     ) -> tuple[int, int, bytes, bytes, bytes, int, bool, str | None]: ...
 
-def library_key(source: str, machine_json: str, zero_sign: str | None = None) -> str:
+def library_key(
+    source: str,
+    machine_json: str,
+    zero_sign: str | None = None,
+    mutant: str | None = None,
+) -> str:
     """Name-free exact graph key, target digest (machine and zero_sign) and
     stage versions as JSON."""
 
