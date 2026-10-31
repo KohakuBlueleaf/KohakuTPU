@@ -5,12 +5,12 @@
 //! instruction encodes against it (`ClusterInst::encode(&isa.cluster)`), and
 //! a value outside its field is an `Err` naming the clause it breaks.
 
-pub mod layout;
 pub mod mutant;
 pub mod numerics;
 pub mod reloc;
 pub mod unit;
 
+pub use ka_isa::layout;
 pub use ktpu_machine::{Coord, Machine, Refusal, UnitKind};
 pub use layout::{Decoded, Field, Format, InstSet, W256};
 pub use reloc::{addresses, AddressField, Segment, Target};

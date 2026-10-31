@@ -39,10 +39,14 @@ pub fn with<T>(name: &'static str, f: impl FnOnce() -> T) -> T {
     }
     ACTIVE.with(|a| a.set(Some(name)));
     let _reset = Reset;
-    f()
+    match ka_isa::mutant::NAMES.contains(&name) {
+        true => ka_isa::mutant::with(name, f),
+        false => f(),
+    }
 }
 
-/// Every mutant ktpu-isa carries, by its Python name.
+/// Every mutant ktpu-isa carries, by its Python name; [`with`] switches
+/// those ka-isa reads there too.
 pub const NAMES: &[&str] = &[
     "rul.014/profile-reloaded",
     "rul.053/fault-dropped",
@@ -118,9 +122,9 @@ pub const NAMES: &[&str] = &[
 pub const LOCAL: &[&str] = &["isa.layout/fit_wraps", "isa.vector/rejoin_walk"];
 
 #[cfg(feature = "mutants")]
-pub(crate) use layouts::{cluster, mover, sru, vector};
+pub(crate) use layouts::{cluster, sru, vector};
 #[cfg(not(feature = "mutants"))]
-pub(crate) use off::{cluster, mover, sru, vector};
+pub(crate) use off::{cluster, sru, vector};
 
 #[cfg(not(feature = "mutants"))]
 mod off {
@@ -128,8 +132,6 @@ mod off {
     pub(crate) fn vector(_: &mut crate::VecIsa) {}
     #[inline(always)]
     pub(crate) fn cluster(_: &mut crate::ClusterIsa) {}
-    #[inline(always)]
-    pub(crate) fn mover(_: &mut crate::MoverIsa) {}
     #[inline(always)]
     pub(crate) fn sru(_: &mut crate::SruIsa) {}
 }
@@ -139,7 +141,6 @@ mod layouts {
     use super::on;
     use crate::layout::{Format, InstSet};
     use crate::unit::cluster::{ClusterCfg, ClusterIsa};
-    use crate::unit::mover::MoverIsa;
     use crate::unit::sru::SruIsa;
     use crate::unit::vector::core::{
         MathOp, VBAR, VDRAIN, VFILL, VLOOP, VPACK, VSETI, VSETVL, VSKIPZ, VSYNC, VUNPK,
@@ -341,27 +342,6 @@ mod layouts {
                 isa.post.clone(),
             ],
         );
-    }
-
-    /// The active mover layout mutant applied to the tables `MoverIsa::new`
-    /// built.
-    pub(crate) fn mover(m: &mut MoverIsa) {
-        if on("isa.mover/limits") {
-            m.levels = 7;
-            m.move_words = 1 << 13;
-            m.max_index = 4096;
-            m.word_bytes = 16;
-            m.addr_bits = 41;
-        } else if on("isa.mover/modes") {
-            m.ewidths = [1, 0, 3];
-            let m = &mut m.modes;
-            m.copy = 7;
-            m.fill = 3;
-            m.generate = 4;
-            m.gather = 6;
-            m.scatter = 2;
-            m.transform = 1;
-        }
     }
 
     /// The active SRU layout mutant applied to the tables `SruIsa::new`

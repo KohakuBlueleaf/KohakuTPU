@@ -1,26 +1,9 @@
-//! Where a unit word carries a memory address: the fields a package
-//! relocates (`software/kohakutpu/compiler/kohakutpu/compiler/isa/fields.py`).
+//! Where a KohakuTPU unit word carries a memory address.
 
 use crate::layout::W256;
 use crate::Isa;
+pub use ka_isa::reloc::{AddressField, Segment};
 use ktpu_machine::UnitKind;
-use serde::{Deserialize, Serialize};
-
-/// `width` bits at `bit` of a word hold bits `[shift + width - 1 : shift]`
-/// of a value.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Segment {
-    pub bit: u32,
-    pub width: u32,
-    pub shift: u32,
-}
-
-/// One address a word carries: its segments and the address they hold.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AddressField {
-    pub segments: Vec<Segment>,
-    pub value: u64,
-}
 
 /// The unit a word is a payload for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

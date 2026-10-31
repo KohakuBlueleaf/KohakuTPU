@@ -5,7 +5,7 @@
 //! value outside its field is refused with the field's clause id.
 
 use super::bits::{mask, W256};
-use ktpu_machine::{refuse, Refusal};
+use ka_machine::{refuse, Refusal};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Field {

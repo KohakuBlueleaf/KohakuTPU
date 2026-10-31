@@ -8,9 +8,10 @@ publish.workspace = true
 
 [features]
 # Spec-vector mutants, switched per thread (src/mutant.rs).
-mutants = ["ktpu-machine/mutants"]
+mutants = ["ktpu-machine/mutants", "ka-isa/mutants"]
 
 [dependencies]
+ka-isa.workspace = true
 ktpu-machine.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -1,9 +1,10 @@
 //! One module per unit ISA.
 
 pub mod cluster;
-pub mod mover;
 pub mod sru;
 pub mod vector;
+
+pub use ka_isa::mover;
 
 const fn min(a: u32, b: u32) -> u32 {
     if a < b {

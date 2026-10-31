@@ -1,6 +1,5 @@
 //! The node's memory mover: one move as its 64-bit command-register writes
-//! (`docs/spec/stack/isa/mover.md`, RTL `mm_mover.v`, `mx_tdesc.v`;
-//! `kohakuaccel/compiler/package/mover.py`, `kohakutpu/compiler/encode/mover.py`).
+//! (`docs/spec/stack/isa/mover.md`, RTL `mm_mover.v`, `mx_tdesc.v`).
 //!
 //! A walker is a [`Walk`]: a base, one [`Level`] per level OUTERMOST FIRST
 //! (strides in bytes, whole words), and two windows bounding axes 1 and 2 as
@@ -8,7 +7,7 @@
 
 use crate::layout::{mask, W256};
 use crate::reloc::{AddressField, Segment};
-use ktpu_machine::{refuse, Machine, Refusal};
+use ka_machine::{refuse, MachineFacts, MoverModes, Refusal};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub const R_CTRL: u32 = 0x00;
@@ -62,7 +61,7 @@ pub struct MoverIsa {
     pub word_bytes: u64,
     pub levels: usize,
     pub max_index: u32,
-    pub modes: ktpu_machine::MoverModes,
+    pub modes: MoverModes,
     /// Words one move carries at most ([`MOVE_WORDS`]).
     pub move_words: u64,
     /// CTRL element-width codes of W8, W16, W32 (ISA.MV.041).
@@ -334,25 +333,26 @@ fn fits(clause: &str, name: &str, value: i64, bits: u32, signed: bool) -> Result
 }
 
 impl MoverIsa {
-    pub fn new(m: &Machine) -> MoverIsa {
+    pub fn new<M: MachineFacts + ?Sized>(m: &M) -> MoverIsa {
         let mut isa = MoverIsa::of(m);
         crate::mutant::mover(&mut isa);
         isa
     }
 
     /// The mover's encoding as `m` defines it, no mutant applied.
-    pub fn of(m: &Machine) -> MoverIsa {
-        let wb = m.die.word_bytes as i64;
-        let xf = &m.mover.xform;
+    pub fn of<M: MachineFacts + ?Sized>(m: &M) -> MoverIsa {
+        let wb = m.word_bytes() as i64;
+        let mover = m.mover();
+        let xf = &mover.xform;
         MoverIsa {
             f16_entry_words: (xf.quant_lanes * xf.quant_values) as i64 * 2 / wb,
             mx7_entry_words: xf.quant_lanes as i64,
             gt4_words: xf.gt4_rows as i64,
-            addr_bits: m.die.noc.addr_bits,
-            word_bytes: m.die.word_bytes as u64,
-            levels: m.mover.levels as usize,
-            max_index: m.mover.max_index,
-            modes: m.mover.modes.clone(),
+            addr_bits: m.noc().addr_bits,
+            word_bytes: m.word_bytes() as u64,
+            levels: mover.levels as usize,
+            max_index: mover.max_index,
+            modes: mover.modes.clone(),
             move_words: MOVE_WORDS,
             ewidths: [W8, W16, W32],
         }
