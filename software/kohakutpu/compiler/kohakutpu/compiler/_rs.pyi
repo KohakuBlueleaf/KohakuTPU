@@ -516,6 +516,7 @@ def template_derive(
     machine_json: str,
     mesh: int = 0,
     values_json: str = "{}",
+    confined: bool = False,
 ) -> dict:
     """Derive and sample-prove T1 metadata from precompiled packages."""
 
@@ -803,3 +804,12 @@ def pairs_blocks(
     machine_json: str, pairing: str | None = None, mutant: str | None = None
 ) -> bool: ...
 def l1_cycles(l1_text: str, name: str, machine_json: str) -> int: ...
+def package_link(packages: list[bytes], machine_json: str, mesh: int = 0) -> bytes: ...
+
+class NativeForm:
+    key: object
+    addr: int
+    nbytes: int
+    owned: bool
+    src_st: object
+    def release(self) -> None: ...

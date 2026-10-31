@@ -61,7 +61,7 @@ impl<B: Backend> Run<'_, B> {
         // open); writing, a later miss (another process's entry stays).
         let hit = match self.cache.get(stage.name(), &key) {
             Ok(hit) => hit,
-            Err(e) if crate::mutant::active() == Some(CACHE_ERRORS_REFUSE) => {
+            Err(e) if crate::mutated(CACHE_ERRORS_REFUSE) => {
                 return Err(at(stage)(Refusal::new("STACK.CACHE", e.to_string())));
             }
             Err(_) => None,
@@ -83,7 +83,7 @@ impl<B: Backend> Run<'_, B> {
             }
         };
         if let Err(e) = self.cache.put(stage.name(), &key, &entry) {
-            if crate::mutant::active() == Some(CACHE_ERRORS_REFUSE) {
+            if crate::mutated(CACHE_ERRORS_REFUSE) {
                 return Err(at(stage)(Refusal::new("STACK.CACHE", e.to_string())));
             }
         }

@@ -31,6 +31,17 @@ pub use stack::{CardStack, Stack};
 
 use std::path::{Path, PathBuf};
 
+/// Whether mutant `name` is active; none without the stage crates.
+pub(crate) fn mutated(name: &str) -> bool {
+    #[cfg(feature = "stack")]
+    return mutant::active() == Some(name);
+    #[cfg(not(feature = "stack"))]
+    {
+        let _ = name;
+        false
+    }
+}
+
 /// The mutant under which the cache variables are not read.
 pub const RCACHE_IGNORED: &str = "ktpu.cache/rcache_ignored";
 
@@ -45,7 +56,7 @@ pub fn cache_root() -> Option<PathBuf> {
     if cfg!(target_arch = "wasm32") {
         return None;
     }
-    let named = match mutant::active() == Some(RCACHE_IGNORED) {
+    let named = match mutated(RCACHE_IGNORED) {
         true => None,
         false => CACHE_ENV.iter().find_map(std::env::var_os),
     };

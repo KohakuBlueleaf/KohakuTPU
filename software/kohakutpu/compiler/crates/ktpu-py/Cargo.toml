@@ -9,6 +9,8 @@ publish.workspace = true
 [lib]
 name = "ktpu_py"
 crate-type = ["cdylib", "rlib"]
+# Links only inside a Python process.
+test = false
 
 [features]
 # The stage crates' spec-vector mutants (`_rs.compile(mutant=)`): the spec build

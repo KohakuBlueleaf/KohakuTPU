@@ -242,6 +242,11 @@ impl Target {
 
     /// A stable text of everything the checker reads here, for keys.
     pub fn digest_text(&self) -> String {
-        format!("{:?} {:?}", self.meshes, self.facts)
+        format!(
+            "{:?} {:?} {}",
+            self.meshes,
+            self.facts,
+            self.machine.digest()
+        )
     }
 }

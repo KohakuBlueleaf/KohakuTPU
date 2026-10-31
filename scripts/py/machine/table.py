@@ -253,7 +253,9 @@ def fw_package_copy_bytes(img):
             int(given[-1].removeprefix(flag), 0),
             "software/kohakutpu/firmware/build.py:DEFINES",
         )
-    return img.fw_src_define("kohakuaccel/firmware/package/interp.c", "KA_PKG_COPY_BYTES")
+    return img.fw_src_define(
+        "kohakuaccel/firmware/package/interp.c", "KA_PKG_COPY_BYTES"
+    )
 
 
 def fw_queue_enum(img, name, prefix):
@@ -838,15 +840,15 @@ ROWS = [
     ),
     ("node.spad_base", lambda i: i.rtl(SYSCORE, "SPAD_BASE")),
     ("node.uncached_bit", node_uncached_bit),
-    ("node.ctrl_bytes", lambda i: i.fw_define("hal/node.h", "KA_CTRL_SPAN")),
+    ("node.ctrl_bytes", lambda i: i.fw_define("hal/control.h", "KA_CTRL_SPAN")),
     ("node.console_fifo_bytes", lambda i: i.rtl_array(LOAD_WIN, "con_mem")),
     ("node.rx_depth", lambda i: i.rtl(MBOX, "RQ_DEPTH")),
-    ("node.cq_depth", lambda i: i.fw_define("hal/node.h", "KA_NM_CQ_DEPTH")),
-    ("node.ring_depth", lambda i: i.fw_define("hal/node.h", "KA_IL_RING_DEPTH")),
-    ("node.mover_span", lambda i: i.fw_define("hal/node.h", "KA_MV_SPAN")),
+    ("node.cq_depth", lambda i: i.fw_define("hal/control.h", "KA_NM_CQ_DEPTH")),
+    ("node.ring_depth", lambda i: i.fw_define("hal/control.h", "KA_IL_RING_DEPTH")),
+    ("node.mover_span", lambda i: i.fw_define("hal/control.h", "KA_MV_SPAN")),
     (
         "node.mover_room_writes",
-        lambda i: i.fw_define("hal/node.h", "KA_MV_ROOM_WRITES"),
+        lambda i: i.fw_define("hal/control.h", "KA_MV_ROOM_WRITES"),
     ),
     # The interlink between nodes.
     ("il.slots", lambda i: i.rtl(ILINK, "SIG_SLOTS")),
@@ -924,7 +926,7 @@ ROWS = [
     ),
     ("fw.status", lambda i: i.fw_enum("package/status.h", "ka_status")),
     ("fw.waits", lambda i: i.fw_enum("package/status.h", "ka_wait")),
-    ("fw.signals", lambda i: i.fw_enum("hal/node.h", "KA_SIG_")),
+    ("fw.signals", lambda i: i.fw_enum("hal/control.h", "KA_SIG_")),
 ]
 
 

@@ -38,7 +38,9 @@ def _lines(path: Path) -> tuple:
 
 
 def _firmware_build():
-    spec = importlib.util.spec_from_file_location("fw_build", FW / "kohakutpu" / "firmware" / "build.py")
+    spec = importlib.util.spec_from_file_location(
+        "fw_build", FW / "kohakutpu" / "firmware" / "build.py"
+    )
     if spec is None or spec.loader is None:
         raise SystemExit(f"cannot load {FW / 'kohakutpu' / 'firmware' / 'build.py'}")
     mod = importlib.util.module_from_spec(spec)
