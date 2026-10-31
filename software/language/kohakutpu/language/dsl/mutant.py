@@ -9,3 +9,5 @@ MUTANT: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 #: The index printers leave a sum that starts with an atom unbracketed inside
 #: another atom (ktpu-graph `mutant::ATOM_SUM_SHORTCUT`).
 ATOM_SUM_SHORTCUT = "graph.text/atom-sum-shortcut"
+#: A row op takes its rows from a row broadcast's band, not its statistic.
+ROWS_OF_BANDS = "dsl.ops/rows-of-bands"

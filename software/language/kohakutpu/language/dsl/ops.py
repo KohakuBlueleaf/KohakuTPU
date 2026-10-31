@@ -16,6 +16,7 @@ from kohakutpu.language.dsl import expr as E
 from kohakutpu.language.dsl import graph as G
 from kohakutpu.language.dsl import values as V
 from kohakutpu.language.dsl.errors import DSLError, at_caller
+from kohakutpu.language.dsl.mutant import MUTANT, ROWS_OF_BANDS
 from kohakutpu.language.dsl.trace import Scope, active
 from kohakutpu.language.dsl.types import TensorSpec
 from kohakutpu.language.dsl.values import Param, Unit, Value, ValueView, as_view
@@ -454,7 +455,8 @@ def load(view, *, gt4=None) -> Value:
         raise DSLError(f"a core loads f16 or f32, not {spec.dtype}, at {at_caller()}")
     mode = "gt4" if (spec.tiled or gt4) else None
     shape = v.shape
-    if gt4 and not spec.tiled and (len(shape) == 1 or shape[0] == 1):
+    row_bcast = gt4 and not spec.tiled and (len(shape) == 1 or shape[0] == 1)
+    if row_bcast:
         shape = (4, shape[-1])
     out = _value(
         "load",
@@ -467,6 +469,7 @@ def load(view, *, gt4=None) -> Value:
         nodes=[G.buffer_view(v)],
     )
     out.tiled = spec.tiled
+    out.row_bcast = bool(row_bcast)
     return out
 
 
@@ -503,6 +506,8 @@ def unpack(x, *, lane: int | None = None) -> Value:
     )
     if isinstance(x, Value) and lane is None:
         x.unpacked = out
+    out.lane = lane is not None
+    out.row_bcast = base.row_bcast
     return out
 
 
@@ -540,10 +545,18 @@ def math(op: str, *args: V.Operand) -> Value:
     if not vals:
         raise DSLError(f"{op} of numbers alone: fold it in Python, at {at_caller()}")
     rows = [v for v in vals if not v.stat]
+    # The rows come from the data's rows; a row broadcast's are the band's, so
+    # only with no other rows does a row statistic (one value a row; a lane
+    # broadcast's are not rows) set them.
+    stat_rows = [v.shape[0] for v in vals if v.stat and not v.lane]
+    data_rows = [
+        v.shape[0] for v in rows if not v.row_bcast or MUTANT.get() == ROWS_OF_BANDS
+    ]
     if rows:
         if all(len(v.shape) == 2 for v in rows):
             # A 4-row band broadcasts down the rows, a 32-wide band across them.
-            shape = (max(v.shape[0] for v in rows), max(v.shape[1] for v in rows))
+            n = max(data_rows or stat_rows or [v.shape[0] for v in rows])
+            shape = (n, max(v.shape[1] for v in rows))
         else:
             shape = max((v.shape for v in rows), key=lambda s: (s[0] * s[-1], s))
         modes = {v.mode for v in rows}
@@ -556,7 +569,7 @@ def math(op: str, *args: V.Operand) -> Value:
             raise DSLError(f"{op} runs on rows, not statistics, at {at_caller()}")
         shape, mode = vals[0].shape, None
         bc = False
-    return _value(
+    out = _value(
         op,
         [_operand(r, broadcast=bc) for r in regs],
         "f32",
@@ -566,6 +579,8 @@ def math(op: str, *args: V.Operand) -> Value:
         prefix=_PREFIX.get(op, "e"),
         nodes=[_operand_node(r, broadcast=bc) for r in regs],
     )
+    out.row_bcast = bc and not data_rows and not stat_rows
+    return out
 
 
 _PREFIX = {"cmplt": "m", "cmpgt": "m", "cmpeq": "m", "sel": "o"}

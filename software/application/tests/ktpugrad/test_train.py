@@ -4,6 +4,7 @@ witness, and one backward step of a module."""
 import math
 
 import numpy as np
+import pytest
 from tinygrad import nn
 from tinygrad.helpers import Context
 from tinygrad.nn.state import get_parameters, get_state_dict
@@ -88,3 +89,29 @@ def test_a_module_trains_one_step(dev):
     after = [t.numpy() for t in get_parameters(model)]
     assert all(not np.array_equal(a, b) for a, b in zip(before, after))
     assert again < first
+
+
+@pytest.mark.parametrize("B", [8, 32])
+def test_a_step_reads_every_label(dev, B):
+    """The loss of a step against CPU arithmetic: the one-hot of its labels,
+    which runs fused with its neighbour, holds each row's own label."""
+    Tensor.manual_seed(0)
+    with Context(DEV="CPU"):
+        model = nn.Linear(64, 32)
+    weight, bias = model.weight.numpy(), model.bias.numpy()
+    place(model)
+    xs = RNG.standard_normal((B, 64)).astype(np.float16)
+    ys = RNG.integers(0, 32, B).astype(np.int32)
+    logits = xs.astype(np.float32) @ weight.T + bias
+    log_p = logits - np.log(np.exp(logits).sum(1, keepdims=True))
+    want = -log_p[np.arange(B), ys].mean()
+
+    opt = Adam16(get_parameters(model), lr=1e-2)
+    with Context(TRAINING=1):
+        loss = model(Tensor(xs, device="KTPU")).sparse_categorical_crossentropy(
+            Tensor(ys, device="KTPU")
+        )
+        opt.zero_grad()
+        opt.scale(loss).backward()
+        Tensor.realize(loss, *opt.schedule_step())
+    assert loss.item() == pytest.approx(want, rel=0.02)

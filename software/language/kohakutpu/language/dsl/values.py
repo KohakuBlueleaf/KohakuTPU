@@ -214,6 +214,10 @@ class Value:
         self.block: Any = None
         #: an @l1 value loaded from a ``tile=`` buffer: its bytes are sub-tiles
         self.tiled = False
+        #: a one-row view read as a band: its rows are the band's, not data's
+        self.row_bcast = False
+        #: a statistic of one value every row reads (`unpack` with `lane=`)
+        self.lane = False
 
     # --------------------------------------------------------- describing
     @property

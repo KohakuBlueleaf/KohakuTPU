@@ -10,7 +10,9 @@ from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime.machine import machine_of
+from kohakutpu.language.dsl.mutant import ROWS_OF_BANDS
 from kohakutpu.stack import kernel as K
+from kohakutpu.stack import rs
 
 MACHINE = machine_of("multimesh_v9t8", nodes=1)
 
@@ -123,6 +125,47 @@ def test_split_traces_every_row_once(vc):
             for r in range(first, first + count)
         ]
         assert sorted(seen) == list(range(rows))
+
+
+def test_a_statistic_gives_a_row_broadcast_its_rows():
+    """Against a `col` band, each row reads its own statistic value: one
+    value of 16 rows, stored once, not a band tiled down them."""
+    out = Operand("full", pitch=32, rows=32)
+    text = _l2(
+        X.op("add", X.Load(0), X.Load(1)),
+        [Operand("row", rows=32), Operand("col")],
+        32,
+        32,
+        out,
+    )
+    assert re.search(r"= add .*: f32\[16, 32\] @reg\(gt4\)", text)
+    assert _rows(text, "store", "out") == [(0, 16), (16, 16)]
+    k, given, _ = V.rows_kernel(
+        X.op("add", X.Load(0), X.Load(1)),
+        (Operand("row", rows=32), Operand("col")),
+        32,
+        32,
+        out,
+        3,
+    )
+    with rs.mutant(ROWS_OF_BANDS):
+        mutant = k.trace(given, machine=K.dsl_machine(MACHINE)).text
+    assert re.search(r"= add .*: f32\[4, 32\] @reg\(gt4\)", mutant)
+    assert len(_rows(mutant, "store", "out")) == 8
+
+
+def test_a_lane_gives_a_row_broadcast_no_rows():
+    """A scalar is one value every row reads: its 16 lanes are not rows, so
+    the col band stays a band."""
+    text = _l2(
+        X.op("add", X.Load(0), X.Load(1)),
+        [Operand("scalar", rows=16), Operand("col")],
+        8,
+        32,
+        Operand("full", pitch=32, rows=8),
+    )
+    assert re.search(r"= add .*: f32\[4, 32\] @reg\(gt4\)", text)
+    assert not re.search(r"= add .*: f32\[16, 32\]", text)
 
 
 def test_a_statistic_is_stored_across_the_row():
