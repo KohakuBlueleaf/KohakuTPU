@@ -38,7 +38,7 @@ XP = RNG.standard_normal((4, 8, 64)).astype(np.float16)
 XP[:, 4:] += 4
 IMG = RNG.standard_normal((2, 3, 10, 10)).astype(np.float16)
 WT = (RNG.standard_normal((4, 3, 3, 3)) / 4).astype(np.float16)
-G = RNG.standard_normal((8, 6, 28, 28)).astype(np.float16)
+G = RNG.standard_normal((8, 6, 10, 10)).astype(np.float16)
 
 
 def T(a):
