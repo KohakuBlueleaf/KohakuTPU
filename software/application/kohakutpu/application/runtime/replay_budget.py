@@ -2,7 +2,7 @@
 
 from collections import Counter
 
-from kohakutpu.application.runtime.arena import OutOfMemory
+from kohakutpu.application.runtime.arena import OutOfMemory, place
 from kohakutpu.language.dsl.kernel import _MUTANT
 
 FRACTION_ENV = "KOHAKUTPU_REPLAY_PACKAGE_FRACTION"
@@ -33,7 +33,8 @@ def select(card, log, override, depth, fraction=DEFAULT_FRACTION, overcommit=Fal
     held = held_bytes(card)
     budget = held + int(arena.free * fraction) if override is None else override
     remaining = max(0, budget - held)
-    spans = arena.free_spans()
+    memory = card.memory
+    spans = list(arena.free_list)
     selected = {}
     for node, raw in sorted(counts, key=lambda key: (-counts[key], -len(key[1]))):
         queue = card.queues[node]
@@ -43,11 +44,8 @@ def select(card, log, override, depth, fraction=DEFAULT_FRACTION, overcommit=Fal
         size = padded(len(raw), arena.align)
         if size > remaining:
             continue
-        if not queue.is_cached(raw):
-            index = next((i for i, free in enumerate(spans) if free >= size), None)
-            if index is None:
-                continue
-            spans[index] -= size
+        if not queue.is_cached(raw) and place(spans, size, memory.near(node)) is None:
+            continue
         selected[node, raw] = None
         remaining -= size
     # Pins cannot consume the workspace the same recording needs to stream.
@@ -69,11 +67,13 @@ def select(card, log, override, depth, fraction=DEFAULT_FRACTION, overcommit=Fal
         if workspace and _MUTANT.get() != "app.replay/split_workspace":
             workspace = [sum(workspace)]
         allocations = [
-            padded(len(raw), arena.align)
+            (padded(len(raw), arena.align), memory.near(node))
             for node, raw in selected
             if not card.queues[node].is_cached(raw)
         ]
-        if arena.fits(allocations + workspace):
+        spans = list(arena.free_list)
+        wanted = allocations + [(size, None) for size in workspace]
+        if all(place(spans, size, near) is not None for size, near in wanted):
             break
         removable = [
             key for key in selected if not card.queues[key[0]].has_prepared(key[1])

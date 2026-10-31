@@ -53,6 +53,13 @@
   "dram_mesh_shift": 36,
   "dram_flat_gb": 16,
   "dram_interleave_kb": 16,
+  "dram_homes": 4,
+  "dram_home_of_die": [
+    0,
+    1,
+    2,
+    3
+  ],
   "model": {
     "bench": "card_v9t6s_1n",
     "dram_words": 1048576

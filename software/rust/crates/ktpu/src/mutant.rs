@@ -25,7 +25,8 @@ pub const BINDINGS: [&str; 13] = [
 /// The Python runtime's mutants (`kohakutpu.application`): switched there by
 /// `rs.mutant(name)` and read from `_MUTANT`; no crate carries them.
 #[cfg(feature = "mutants")]
-pub const RUNTIME: [&str; 16] = [
+pub const RUNTIME: [&str; 17] = [
+    "app.arena/home_start_only",
     "app.resident/unset_is_off",
     "app.resident/only_one_resides",
     "app.device/unlatched_resident",

@@ -35,8 +35,9 @@ class DramMap:
     nhome_lg: int  # log2 of the number of homes
 
     @classmethod
-    def of_board(cls, board: dict, homes: int) -> "DramMap":
+    def of_board(cls, board: dict) -> "DramMap":
         ilv = board["dram_interleave_kb"] * 1024
+        homes = board["dram_homes"]
         per_home = board["dram_flat_gb"] * (1 << 30) // homes
         return cls(
             ilv.bit_length() - 1, per_home.bit_length() - 1, homes.bit_length() - 1
@@ -93,7 +94,7 @@ class SimDram(Transport):
                 "sim/verilator/card.vlt"
             )
         self.words = self.dram[0][2]
-        self.map = DramMap.of_board(board, len(self.dram))
+        self.map = DramMap.of_board(board)
         # carray banks per home, in bank order: [home][bank] = (scope, rows, bytes)
         cache: dict = {}
         for s, v, n, e in inner.arrays(".u_xache."):

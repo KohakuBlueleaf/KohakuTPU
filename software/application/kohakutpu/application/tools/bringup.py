@@ -324,7 +324,7 @@ def home_line(board: dict, home: int) -> int:
     """A 32-byte line in the driver's scratch megabyte whose Xache home is
     `home`: the interleave (16 KB granules) puts consecutive granules on
     different homes, so the first granule of the scratch that maps there."""
-    dm = DramMap.of_board(board, board["meshes"])
+    dm = DramMap.of_board(board)
     for k in range(64):
         off = board_map(board)["scratch"] + k * (16 << 10)
         if dm.locate(off)[0] == home:

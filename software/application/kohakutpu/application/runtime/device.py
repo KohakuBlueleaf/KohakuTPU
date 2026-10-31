@@ -24,6 +24,7 @@ from collections import OrderedDict
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from functools import partial
 
 from kohakuaccel.driver.node.queue import NodeError
 from kohakuaccel.driver.runtime.mmu import SoftwareMMU
@@ -43,6 +44,7 @@ from kohakutpu.application.runtime.card import (
     parse_resident_mode,
 )
 from kohakutpu.application.runtime.class_library import ClassLibrary
+from kohakutpu.application.runtime.memory import package_homes
 from kohakutpu.application.runtime.offline import OfflineCard
 from kohakutpu.application.runtime.packages import Prebuilt, placed
 from kohakutpu.driver.clock.card import load_board
@@ -92,6 +94,8 @@ QUEUE_BYTES_ENV = "KOHAKUTPU_QUEUE_BYTES"
 QUEUE_DEPTH_ENV = "KOHAKUTPU_QUEUE_DEPTH"
 PREPARED_REPLAY_ENV = "KOHAKUTPU_PREPARED_REPLAY"
 REPLAY_PACKAGE_BYTES_ENV = "KOHAKUTPU_REPLAY_PACKAGE_BYTES"
+#: Where packages go: `any`, `near` or a home per node (`memory.package_homes`).
+PACKAGE_HOME_ENV = "KOHAKUTPU_PACKAGE_HOME"
 
 
 class Recorded(list):
@@ -281,6 +285,12 @@ class Device:
         self.machine = self.card.machine
         #: The card's memory, which every allocation here comes from.
         self.memory = self.card.memory
+        spec = load_board(board)
+        self.memory.package_homes = package_homes(
+            os.environ.get(PACKAGE_HOME_ENV, "any"), spec
+        )
+        if self.memory.package_homes:
+            self.memory.stripes = (spec["dram_interleave_kb"] << 10, spec["dram_homes"])
         self.mmu = (
             rs._rs.NativeMMU()
             if self.memory.arena_cls is rs._rs.Arena
@@ -340,10 +350,8 @@ class Device:
         }
         #: folded constants uploaded once, by content (`forms.table`)
         self.tables: dict = {}
-        for queue in getattr(self.card, "queues", {}).values():
-            queue.spill = lambda size: self._take(
-                lambda: self.memory.alloc(size, owner="package")
-            )
+        for node, queue in getattr(self.card, "queues", {}).items():
+            queue.spill = partial(self._spill, node)
 
     @property
     def resident_mode(self) -> ResidentMode:
@@ -596,6 +604,11 @@ class Device:
             ends[key] = offsets[name][1] + -(-int(nbytes) // line) * line
         bases = {key: self._window(key, end) for key, end in ends.items()}
         return {name: bases[key] + off for name, (key, off) in offsets.items()}
+
+    def _spill(self, node: int, size: int) -> int:
+        """A queue's package place: the arena's, for `node`."""
+        near = self.memory.near(node)
+        return self._take(lambda: self.memory.alloc(size, "package", near))
 
     def _take(self, alloc) -> int:
         """Retry after each oldest completion, then evict unused packages."""

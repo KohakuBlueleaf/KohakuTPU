@@ -25,4 +25,5 @@ def attach(dev):
         card.mem._map(card.memory.dram.lo) - card.memory.dram.lo,
         (queue.sq_n, queue.cq_n, queue.geo["cq"], queue.geo["rec"], queue.geo["so"]),
         queue.record.fields,
+        card.memory.near(card.nodes[0]),
     )

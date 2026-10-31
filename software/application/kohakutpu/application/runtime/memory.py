@@ -34,10 +34,18 @@ class CardMemory:
         #: DRAM below this is painted. Every DRAM allocation from below paints
         #: up to its end, so no live span lies past the mark.
         self.painted = self.dram.lo
+        #: `(stripe bytes, homes)` of the DRAM interleave; node -> its packages' home.
+        self.stripes = None
+        self.package_homes: dict = {}
 
-    def alloc(self, nbytes: int, owner: str = "runtime") -> int:
-        """`nbytes` of DRAM."""
-        at = self.dram.alloc(nbytes, owner=owner)
+    def near(self, node: int) -> tuple | None:
+        """Where `node`'s packages go (`arena.place`)."""
+        home = self.package_homes.get(node)
+        return None if home is None else (*self.stripes, home)
+
+    def alloc(self, nbytes: int, owner: str = "runtime", near=None) -> int:
+        """`nbytes` of DRAM, on `near`'s home when they fit there."""
+        at = self.dram.alloc(nbytes, owner=owner, near=near)
         end = at + self.dram.live[at]
         if self.paint is not None and end > self.painted:
             _zero(self.paint, self.painted, end - self.painted)
@@ -88,6 +96,17 @@ class CardMemory:
                 arena.release(at)
 
 
+def package_homes(value: str, board: dict) -> dict:
+    """node -> the home its packages start on: `any` none, `near` the home of
+    each node's die, else one home a node (``3`` or ``0,2``)."""
+    if value == "any":
+        return {}
+    if value == "near":
+        homes = board["dram_home_of_die"]
+        return {node: homes[die] for node, die in enumerate(board["chain"])}
+    return dict(enumerate(int(home) for home in value.split(",")))
+
+
 def _arena_cls():
     return _rs.Arena if os.environ.get("KTPU_NATIVE_MEMORY", "0") == "1" else Arena
 
@@ -104,4 +123,4 @@ def _zero(write, at: int, nbytes: int) -> None:
         nbytes -= n
 
 
-__all__ = ["PAINT_CHUNK", "CardMemory"]
+__all__ = ["PAINT_CHUNK", "CardMemory", "package_homes"]

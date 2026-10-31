@@ -39,7 +39,48 @@ pub(crate) struct Arena {
     used_bytes: u64,
 }
 
+/// Where span `(at, n)` holds `size` bytes starting on a home, `near` being
+/// `(stripe bytes, homes, home)`: the bytes that fit one stripe stay on it, so
+/// a size past the stripe starts at one (`arena.home_start`).
+fn home_start(at: u64, n: u64, size: u64, near: (u64, u64, u64)) -> Option<u64> {
+    let (stripe, homes, home) = near;
+    let period = stripe * homes;
+    let mut base = at / period * period + home * stripe;
+    if at + size.min(stripe) > base + stripe {
+        base += period;
+    }
+    let start = at.max(base);
+    (start + size <= at + n).then_some(start)
+}
+
 impl Arena {
+    /// Takes `size` bytes on `near`'s home, or from the first span that holds
+    /// them (`arena.place`).
+    fn place(&mut self, size: u64, near: Option<(u64, u64, u64)>) -> Option<u64> {
+        let on_home = near.and_then(|near| {
+            self.free_spans
+                .iter()
+                .enumerate()
+                .find_map(|(i, &(at, n))| home_start(at, n, size, near).map(|s| (i, s)))
+        });
+        let (i, start) = on_home.or_else(|| {
+            self.free_spans
+                .iter()
+                .position(|&(_, n)| n >= size)
+                .map(|i| (i, self.free_spans[i].0))
+        })?;
+        let (at, n) = self.free_spans[i];
+        let mut rest = Vec::new();
+        if start > at {
+            rest.push((at, start - at));
+        }
+        if at + n > start + size {
+            rest.push((start + size, at + n - start - size));
+        }
+        self.free_spans.splice(i..i + 1, rest);
+        Some(start)
+    }
+
     fn track(
         &mut self,
         py: Python<'_>,
@@ -122,24 +163,24 @@ impl Arena {
         })
     }
 
-    #[pyo3(signature=(nbytes,owner="runtime"))]
-    pub fn alloc(&mut self, py: Python<'_>, nbytes: u64, owner: &str) -> PyResult<u64> {
+    #[pyo3(signature=(nbytes,owner="runtime",near=None))]
+    pub fn alloc(
+        &mut self,
+        py: Python<'_>,
+        nbytes: u64,
+        owner: &str,
+        near: Option<(u64, u64, u64)>,
+    ) -> PyResult<u64> {
         if self.closed {
             return Err(PyRuntimeError::new_err("arena is closed"));
         }
         let size = nbytes.div_ceil(self.align).max(1) * self.align;
-        let Some(i) = self.free_spans.iter().position(|&(_, n)| n >= size) else {
+        let Some(at) = self.place(size, near) else {
             return Err(OutOfMemory::new_err(format!(
                 "{nbytes} bytes do not fit: {} free",
                 self.free()
             )));
         };
-        let (at, n) = self.free_spans[i];
-        if n == size {
-            self.free_spans.remove(i);
-        } else {
-            self.free_spans[i] = (at + size, n - size);
-        }
         self.track(py, at, size, nbytes, owner)
     }
 

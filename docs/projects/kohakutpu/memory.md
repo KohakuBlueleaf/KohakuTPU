@@ -66,6 +66,18 @@ than forgotten. Revisit when one is — and measure the DRAM path first, because
 there is currently no measurement of it to plan against
 ([multi-mesh.md](multi-mesh.md) §8).
 
+**A package's address is a read cost.** DRAM is interleaved over the Xache homes
+in stripes of `dram_interleave_kb` (`dram_homes` of them, `DramMap`), and the
+firmware reads a package through its L1, one line fill at a time, from the
+package's home. The home on each die is `dram_home_of_die`.
+`KOHAKUTPU_PACKAGE_HOME` picks where packages go: `any` is first fit, `near` the
+home of the node's die, and a number or comma list a home per node. One rule
+(`arena.place`) serves the spill and the replay admission: the bytes that fit a
+stripe stay on it, and a package no span holds on its home takes any span, so
+placement refuses nothing. The size of a home-to-home step is measured only: the
+hop path is in [pxache](../kohakuaxi/pxache.md) §2, the fills per run are not
+counted.
+
 ## 2. What exists now
 
 | piece | where | state |

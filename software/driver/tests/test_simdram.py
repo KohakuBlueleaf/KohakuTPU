@@ -9,7 +9,7 @@ import pytest
 
 from kohakuaccel.driver.transport.simdram import LINE, DramMap, SimDram
 
-BOARD = {"dram_interleave_kb": 16, "dram_flat_gb": 16}
+BOARD = {"dram_interleave_kb": 16, "dram_flat_gb": 16, "dram_homes": 4}
 WORDS, ROWS, BANKS, ENT = 4096, 64, 4, 68
 WINDOWS = [0x1_0000_0000, 0x2_0000_0000]
 
@@ -62,7 +62,7 @@ class FakeModel:
 def test_the_map_is_the_cards():
     # card_run.py's measured anchor: flat 0x10000 lands in channel 0 word 0x100,
     # and each 16 KB granule moves to the next home.
-    m = DramMap.of_board(BOARD, 4)
+    m = DramMap.of_board(BOARD)
     assert (m.ilv_lg, m.home_lsb, m.nhome_lg) == (14, 32, 2)
     assert m.locate(0x10000) == (0, 0x4000)
     assert [m.locate(c << 14)[0] for c in range(4)] == [0, 1, 2, 3]

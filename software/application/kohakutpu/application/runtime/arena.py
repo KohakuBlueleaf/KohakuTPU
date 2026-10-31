@@ -4,8 +4,48 @@ import bisect
 import os
 
 from kohakutpu.compiler import _rs
+from kohakutpu.language.dsl.kernel import _MUTANT
 
 OutOfMemory = _rs.OutOfMemory
+
+
+def home_start(at: int, n: int, size: int, near: tuple) -> int | None:
+    """Where span `(at, n)` holds `size` bytes starting on a home, `near`
+    being ``(stripe bytes, homes, home)``: the bytes that fit one stripe stay
+    on it, so a size past the stripe starts at one. None: nowhere."""
+    stripe, homes, home = near
+    period = stripe * homes
+    base = at // period * period + home * stripe
+    stays = 1 if _MUTANT.get() == "app.arena/home_start_only" else min(size, stripe)
+    if at + stays > base + stripe:
+        base += period
+    start = max(at, base)
+    return start if start + size <= at + n else None
+
+
+def place(spans: list, size: int, near: tuple | None = None) -> int | None:
+    """Take `size` bytes from the sorted free `spans` and return their address:
+    the first span that holds them on `near`'s home, or with no such span (or
+    no `near`) the first that holds them at all. None: no span does."""
+    found = None
+    if near is not None:
+        for i, (at, n) in enumerate(spans):
+            start = home_start(at, n, size, near)
+            if start is not None:
+                found = i, start
+                break
+    if found is None:
+        i = next((i for i, (_, n) in enumerate(spans) if n >= size), None)
+        if i is None:
+            return None
+        found = i, spans[i][0]
+    i, start = found
+    at, n = spans[i]
+    rest = [(at, start - at)] if start > at else []
+    if at + n > start + size:
+        rest.append((start + size, at + n - start - size))
+    spans[i : i + 1] = rest
+    return start
 
 
 class Arena:
@@ -40,17 +80,14 @@ class Arena:
         self.high_water = max(self.high_water, at + size)
         return at
 
-    def alloc(self, nbytes: int, owner: str = "runtime") -> int:
+    def alloc(self, nbytes: int, owner: str = "runtime", near=None) -> int:
+        """`nbytes`, on `near`'s home when a span holds them there (`place`)."""
         if self.closed:
             raise RuntimeError("arena is closed")
         size = max(self.align, -(-int(nbytes) // self.align) * self.align)
-        for i, (at, n) in enumerate(self.free_list):
-            if n >= size:
-                if n == size:
-                    self.free_list.pop(i)
-                else:
-                    self.free_list[i] = (at + size, n - size)
-                return self._track(at, size, nbytes, owner)
+        at = place(self.free_list, size, near)
+        if at is not None:
+            return self._track(at, size, nbytes, owner)
         raise OutOfMemory(
             f"{nbytes:,} bytes do not fit: {self.free:,} free in "
             f"{len(self.free_list)} spans, the largest {self.largest:,}"
@@ -192,4 +229,4 @@ class Arena:
         return max((n for _, n in self.free_list), default=0)
 
 
-__all__ = ["Arena", "OutOfMemory"]
+__all__ = ["Arena", "OutOfMemory", "home_start", "place"]

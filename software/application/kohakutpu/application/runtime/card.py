@@ -134,16 +134,16 @@ def firmware_wait_seconds(host_timeout: float, requested: float | None) -> float
     return host_timeout / 3 if requested is None else requested
 
 
-def node_queue(mem, base: int, memory: CardMemory, **kw) -> NodeQueue:
-    """A node's queue at `base`: packages use the shared allocator and retire
-    after their final submitted reference completes."""
+def node_queue(mem, base: int, memory: CardMemory, node: int = 0, **kw) -> NodeQueue:
+    """A node's queue at `base`: packages use the shared allocator, placed for
+    `node`, and retire after their final submitted reference completes."""
     return NodeQueue(
         mem,
         base,
         size=Q_SIZE,
         sq_n=RING,
         cq_n=RING,
-        spill=lambda size: memory.alloc(size, owner="package"),
+        spill=lambda size: memory.alloc(size, owner="package", near=memory.near(node)),
         unspill=memory.free,
         **kw,
     )
@@ -441,6 +441,7 @@ class NodeCard:
                 self.mem,
                 queue_base,
                 self.memory,
+                i,
                 idle=idle,
                 spin=spin,
                 timeout=self.timeout,

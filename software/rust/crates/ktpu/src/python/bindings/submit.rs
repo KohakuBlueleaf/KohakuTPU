@@ -89,7 +89,7 @@ pub(crate) fn allocate(py: Python<'_>, dev: &Bound<'_, PyAny>, spec: &AllocSpec)
         memory.getattr("dram")?.extract()?
     };
     let at = loop {
-        let got = arena.borrow_mut(py).alloc(py, extent, owner);
+        let got = arena.borrow_mut(py).alloc(py, extent, owner, None);
         match got {
             Ok(at) => break at,
             Err(e) if e.is_instance_of::<OutOfMemory>(py) => {
@@ -98,7 +98,7 @@ pub(crate) fn allocate(py: Python<'_>, dev: &Bound<'_, PyAny>, spec: &AllocSpec)
                     dev.call_method1("collect", (inflight.get_item(0)?,))?;
                 } else {
                     dev.getattr("card")?.call_method0("drop_spilled")?;
-                    break arena.borrow_mut(py).alloc(py, extent, owner)?;
+                    break arena.borrow_mut(py).alloc(py, extent, owner, None)?;
                 }
             }
             Err(e) => return Err(e),

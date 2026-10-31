@@ -12,6 +12,7 @@ the driver reads is then the bitstream's own description, never a transcript.
 import argparse
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -23,6 +24,8 @@ import gen_mesh
 import regen_tops
 
 BOARDS = ROOT / "boards"
+#: The Xache every image with one builds.
+XACHE = ROOT / "xilinx-fpga" / "xcvu13p" / "bd" / "kx_pbd_4x4.v"
 #: The reference clock every mesh wizard divides (100 MHz board oscillator).
 REF_MHZ = 100.0
 #: The node's memory address width: the mesh id sits at [ADDR_W-4 +: 2]
@@ -41,6 +44,21 @@ OUTPUTS = (
 JTAG_BURST = 64
 #: Keys a generated board adds that hand-written ones did not carry.
 NEW_KEYS = ("units", "sys_ports")
+
+
+def xache_homes() -> dict:
+    """The Xache's homes and the home on each die: `N`, and `MP` and `HP`, the
+    partition of each master and home (a packed list, last entry first)."""
+    text = XACHE.read_text(encoding="utf-8")
+    homes = int(re.search(r"localparam integer M = \d+, N = (\d+)", text).group(1))
+    die_of = {
+        name: [int(v) for v in re.findall(r"\d+'d(\d+)", braces)][::-1]
+        for name, braces in re.findall(r"\b(MP|HP) = \{(.+?)\}", text)
+    }
+    return {
+        "dram_homes": homes,
+        "dram_home_of_die": [die_of["HP"].index(p) for p in die_of["MP"]],
+    }
 
 
 def die_map(module: str) -> gen_mesh.Mesh:
@@ -105,6 +123,7 @@ def board(
         "dram_mesh_shift": NODE_AW - 4,
         "dram_flat_gb": c.i("DRAM_GB"),
         "dram_interleave_kb": (1 << c.i("KX_ILV_LG")) // 1024,
+        **xache_homes(),
         "mem_words": c.i("DRAM_GB") * (1 << 30) // 32,
         "agent_at_offset_zero": True,
         # The JTAG manager's burst cap every board since v8t8 carries; below

@@ -15,6 +15,7 @@ pub(crate) struct DirectWire {
     transport: Py<PyAny>,
     memory: Py<PyAny>,
     arena: Py<Arena>,
+    near: Option<(u64, u64, u64)>,
     layout: QueueLayout,
     base: u64,
     dram_offset: u64,
@@ -46,6 +47,7 @@ fn word(bytes: &[u8], at: usize) -> u64 {
 #[pymethods]
 impl DirectWire {
     #[new]
+    #[pyo3(signature=(queue,transport,memory,base,dram_offset,geometry,fields,near=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
@@ -56,6 +58,7 @@ impl DirectWire {
         dram_offset: u64,
         geometry: [u64; 5],
         fields: BTreeMap<String, (usize, usize)>,
+        near: Option<(u64, u64, u64)>,
     ) -> PyResult<Self> {
         let q = queue.bind(py);
         let layout = QueueLayout::from_py(&q.getattr("layout")?)?;
@@ -76,6 +79,7 @@ impl DirectWire {
         let t = transport.bind(py);
         Ok(Self {
             arena: memory.bind(py).getattr("dram")?.extract()?,
+            near,
             layout,
             generation: t.getattr("fd_generation")?.extract()?,
             queue_generation: q.getattr("_generation")?.extract()?,
@@ -244,10 +248,10 @@ impl DirectWire {
                     self.arena.borrow_mut(py).release(py, at)?;
                     self.capacity = 0;
                 }
-                let at = self
-                    .arena
-                    .borrow_mut(py)
-                    .alloc(py, raw.len() as u64, "package")?;
+                let at =
+                    self.arena
+                        .borrow_mut(py)
+                        .alloc(py, raw.len() as u64, "package", self.near)?;
                 self.slot = Some(at);
                 self.capacity = self
                     .arena
