@@ -3,8 +3,8 @@ connection: node n's clusters sum their K slice of every output tile, and
 every node but 0 adds its accumulators into node 0's clusters across the
 interlink at full accumulator precision (``kt.drain(acc,
 kt.node[0].mg[u], add=True)``); node 0 drains the sums. M is one tile of
-rows; N's tiles spread over a node's clusters, a cluster sweeping those past
-one each. On one node it is the plain product.
+rows; N's tiles go a node's clusters at a time, each set a stage of its own.
+On one node it is the plain product.
 
 The opposite of the Xache-shared examples (`linear`, `mlp`, ...), where the
 nodes never address one another: here the kernel names the far unit."""
@@ -40,37 +40,24 @@ def splitk(
         f"K = {K} over {m.nodes} nodes in chunks of {kc}",
     )
     h = kt.buffer((M, N), "f16", tile=(tm // 4, tn // 4))
-    ntn = N // tn
-    ncl = min(ntn, m.mg)
-    per = -(-ntn // ncl)
-
-    def tile(n, u, t):
-        acc = kt.zero(tm, tn)
-        for k in kt.range(kn // kc):
-            k0 = n * kn + k * kc
-            a = kt.fill(x[0:tm, k0 : k0 + kc])
-            b = kt.fill(w[t * tn : t * tn + tn, k0 : k0 + kc])
-            acc = kt.gemm(a, b, acc)
-        if m.nodes == 1:
-            kt.drain(acc, h[0:tm, t * tn : t * tn + tn])
-        else:
-            with kt.when(n == 0):
-                kt.drain(acc, h[0:tm, t * tn : t * tn + tn])
-            with kt.when(n != 0):  # into node 0's tile, across the interlink
-                kt.drain(acc, kt.node[0].mg[u], add=True)
-
-    for n in kt.par(m.nodes, on=kt.node):
-        for u in kt.par(ncl, on=kt.mg):
-            if per == 1:
-                tile(n, u, u)
-                continue
-            for i in kt.range(per):
-                t = u + ncl * i
-                if per * ncl == ntn:
-                    tile(n, u, t)
+    tiles = N // tn
+    for t0 in range(0, tiles, m.mg):  # one stage a node's clusters of tiles
+        for n in kt.par(m.nodes, on=kt.node):
+            for u in kt.par(min(m.mg, tiles - t0), on=kt.mg):
+                t = t0 + u
+                acc = kt.zero(tm, tn)
+                for k in kt.range(kn // kc):
+                    k0 = n * kn + k * kc
+                    a = kt.fill(x[0:tm, k0 : k0 + kc])
+                    b = kt.fill(w[t * tn : t * tn + tn, k0 : k0 + kc])
+                    acc = kt.gemm(a, b, acc)
+                if m.nodes == 1:
+                    kt.drain(acc, h[0:tm, t * tn : t * tn + tn])
                 else:
-                    with kt.when(t < ntn):  # the last sweep is short
-                        tile(n, u, t)
+                    with kt.when(n == 0):
+                        kt.drain(acc, h[0:tm, t * tn : t * tn + tn])
+                    with kt.when(n != 0):  # into node 0's tile, over the interlink
+                        kt.drain(acc, kt.node[0].mg[u], add=True)
     for r0, col, rper in core_blocks(M, N, tn, rows, tm):
         for t in kt.range(rper // rows):
             r = r0 + t * rows
