@@ -112,6 +112,7 @@ pub fn kernel(a: &Rows, m: &Machine) -> R<Classed> {
         let bufs = Bufs {
             ins: b[..operands.len()].to_vec(),
             out: b[operands.len()].clone(),
+            maps: Default::default(),
         };
         let bufs = &bufs;
         let hw = &hw;

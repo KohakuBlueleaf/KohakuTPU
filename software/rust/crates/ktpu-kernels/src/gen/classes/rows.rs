@@ -255,6 +255,7 @@ pub fn kernel(a: &Rows, flat: bool, m: &Machine) -> R<Classed> {
         let bufs = Bufs {
             ins: b[..operands.len()].to_vec(),
             out: b[operands.len()].clone(),
+            maps: Default::default(),
         };
         let bufs = &bufs;
         t.par_classed(used, par(), |t, c| {

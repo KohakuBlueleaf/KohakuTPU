@@ -159,8 +159,21 @@ pub fn quant_kernel(
         );
     }
     let kernel = matmul::quant_kernel_looped(
-        src, rows, cols, rp, cp, side, groups, nk, batches, mach, finite, schedule, prepared,
-        staged, true,
+        src,
+        rows,
+        cols,
+        rp,
+        cp,
+        side,
+        groups,
+        nk,
+        batches,
+        mach,
+        finite,
+        schedule,
+        &super::super::prepared::Read::Materialized(prepared.to_vec()),
+        staged,
+        true,
     )?;
     Ok(Classed {
         kernel,

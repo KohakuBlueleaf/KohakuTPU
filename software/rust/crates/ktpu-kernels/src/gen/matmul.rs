@@ -573,7 +573,7 @@ pub fn quant_kernel_looped(
     mach: &Machine,
     finite: bool,
     schedule: &[(&str, i64)],
-    prepared: &[relayout::Plan],
+    prepared: &prepared::Read,
     staged: bool,
     looped: bool,
 ) -> R<Kernel> {

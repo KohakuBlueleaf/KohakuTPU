@@ -157,6 +157,7 @@ fn members(
                 let band = v::Bufs {
                     ins: ins.clone(),
                     out: dst.clone(),
+                    maps: Default::default(),
                 };
                 v::tail_band(t, &band, e, operands, out, &sp, row0, rows, w, hw)?;
             }
@@ -165,6 +166,7 @@ fn members(
         let band = v::Bufs {
             ins: ins.clone(),
             out: dsts[0].clone(),
+            maps: Default::default(),
         };
         for cb in 0..sp.nblk {
             let split = v::split(sp.nb, hw.vc);
