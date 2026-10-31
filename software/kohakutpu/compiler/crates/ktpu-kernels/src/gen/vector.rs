@@ -16,6 +16,7 @@ use crate::trace::control::At;
 use crate::trace::vector::MappedLoad;
 use crate::trace::{fail, Arg, Buf, Idx, Trace, R};
 use ktpu_graph as g;
+use ktpu_isa::unit::vector::DIM_STRIDE_MAX;
 use ktpu_machine::Machine;
 use std::collections::HashMap;
 
@@ -113,6 +114,11 @@ impl Operand {
 
     fn rows_major(&self) -> bool {
         matches!(self.kind, Kind::Full | Kind::Tile)
+    }
+
+    /// Its rows lie further apart than a descriptor's stride reaches.
+    fn wide(&self) -> bool {
+        self.rows_major() && self.pitch * Hw::item(self.dtype) > DIM_STRIDE_MAX
     }
 
     fn divmod(&self) -> R<(i64, i64)> {
@@ -487,6 +493,10 @@ pub fn rows_stage(
     tile_rows: Option<i64>,
     hw: &Hw,
 ) -> R<()> {
+    let plain = |r: &Idx| Origin::rows(&r.add(row0), operands.len());
+    if tile_rows.is_none() && (out.wide() || operands.iter().any(Operand::wide)) {
+        return narrow_stage(t, bufs, e, operands, out, pl, cores, row0, hw);
+    }
     for cb in 0..pl.nblk {
         if let (true, Some(tr)) = (pl.nblk > 1, tile_rows) {
             let per = tr / pl.rows;
@@ -503,8 +513,8 @@ pub fn rows_stage(
                     pl,
                     &first,
                     Idx::Int(per),
-                    row0,
                     cb,
+                    &plain,
                     hw,
                 )
             })?;
@@ -513,14 +523,107 @@ pub fn rows_stage(
         let sp = split(pl.nb, cores);
         t.par(sp.cores, g::UnitKind::Vc, At::Var, |t, c| {
             let (first, trips) = (sp.start(&c), sp.trips(&c));
-            rows_trips(t, bufs, e, operands, out, pl, &first, trips, row0, cb, hw)
+            rows_trips(t, bufs, e, operands, out, pl, &first, trips, cb, &plain, hw)
         })?;
     }
     Ok(())
 }
 
-/// An instance's trips of column block `cb` from band `first`: the
-/// prologue (each `col` operand's block), then one band a trip.
+/// A rows stage past a descriptor's stride: wide operands copied into narrow
+/// scratch a stride's reach of column blocks at a time, a wide output out.
+#[allow(clippy::too_many_arguments)]
+fn narrow_stage(
+    t: &mut Trace,
+    bufs: &Bufs,
+    e: &E,
+    operands: &[Operand],
+    out: &Operand,
+    pl: &Plan,
+    cores: i64,
+    row0: &Idx,
+    hw: &Hw,
+) -> R<()> {
+    let widest = operands
+        .iter()
+        .chain([out])
+        .filter(|o| o.wide())
+        .map(|o| Hw::item(o.dtype))
+        .max()
+        .expect("a wide operand");
+    let per = (DIM_STRIDE_MAX / widest / pl.wc).min(pl.nblk);
+    let pitch = per * pl.wc;
+    let narrow = |o: &Operand| Operand {
+        offset: 0,
+        pitch,
+        rows: pl.rp,
+        ..*o
+    };
+    let moved: Vec<usize> = (0..operands.len())
+        .filter(|i| operands[*i].wide() && !bufs.maps.contains_key(i))
+        .collect();
+    let mut ins = bufs.ins.clone();
+    let mut ops = operands.to_vec();
+    for &i in &moved {
+        ins[i] = t.buffer(&[pl.rp, pitch], operands[i].dtype, vec![])?;
+        ops[i] = narrow(&operands[i]);
+    }
+    let (dst, tail) = if out.wide() {
+        let s = t.buffer(&[pl.rp, pitch], out.dtype, vec![])?;
+        (s, narrow(out))
+    } else {
+        (bufs.out.clone(), *out)
+    };
+    let inner = Bufs {
+        ins,
+        out: dst.clone(),
+        maps: bufs.maps.clone(),
+    };
+    for start in (0..pl.nblk).step_by(per as usize) {
+        let end = (start + per).min(pl.nblk);
+        let cols = (end - start) * pl.wc;
+        let col = start * pl.wc;
+        for &i in &moved {
+            let (rr, cc) = operands[i].divmod()?;
+            let lo = row0.add(rr);
+            let src = bufs.ins[i].at(&[sl(&lo, lo.add(pl.rp)), sl(cc + col, cc + col + cols)])?;
+            let s = inner.ins[i].at(&[sl(0, pl.rp), sl(0, cols)])?;
+            t.copy(&s, &src, None, None)?;
+        }
+        let origin = |r: &Idx| Origin {
+            ins: (0..operands.len())
+                .map(|i| match moved.contains(&i) {
+                    true => (r.clone(), Idx::Int(-col)),
+                    false => (r.add(row0), Idx::Int(0)),
+                })
+                .collect(),
+            out: match out.wide() {
+                true => (r.clone(), Idx::Int(-col)),
+                false => (r.add(row0), Idx::Int(0)),
+            },
+        };
+        for cb in start..end {
+            let sp = split(pl.nb, cores);
+            t.par(sp.cores, g::UnitKind::Vc, At::Var, |t, c| {
+                let (first, trips) = (sp.start(&c), sp.trips(&c));
+                rows_trips(
+                    t, &inner, e, &ops, &tail, pl, &first, trips, cb, &origin, hw,
+                )
+            })?;
+        }
+        if out.wide() {
+            let (rr, cc) = out.divmod()?;
+            let lo = row0.add(rr);
+            let d = bufs
+                .out
+                .at(&[sl(&lo, lo.add(pl.rp)), sl(cc + col, cc + col + cols)])?;
+            t.copy(&d, &dst.at(&[sl(0, pl.rp), sl(0, cols)])?, None, None)?;
+        }
+    }
+    Ok(())
+}
+
+/// An instance's trips of column block `cb` from band `first`: the prologue
+/// (each `col` operand's block), then a band a trip, placed by `origin`.
 #[allow(clippy::too_many_arguments)]
 fn rows_trips(
     t: &mut Trace,
@@ -531,14 +634,13 @@ fn rows_trips(
     pl: &Plan,
     first: &Idx,
     trips: Idx,
-    row0: &Idx,
     cb: i64,
+    origin: &dyn Fn(&Idx) -> Origin,
     hw: &Hw,
 ) -> R<()> {
     let pro = prologue(t, bufs, operands, pl, cb, &Idx::Int(0))?;
     t.range(trips, |t, k| {
-        let r = first.mul(pl.rows).add(k.mul(pl.rows)).add(row0);
-        let at = Origin::rows(&r, operands.len());
+        let at = origin(&first.mul(pl.rows).add(k.mul(pl.rows)));
         rows_block(t, bufs, e, operands, out, pl, &at, cb, &pro, hw)
     })
 }

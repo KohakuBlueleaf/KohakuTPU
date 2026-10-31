@@ -27,6 +27,8 @@ pub const DESC_VALUE_BITS: u32 = 34;
 pub const DESC_VALUE_HI_LSB: u32 = 63;
 /// A dimension's signed byte stride bits, at `value[33:16]`.
 pub const DIM_STRIDE_BITS: u32 = 18;
+/// The widest stride a dimension walks, either way.
+pub const DIM_STRIDE_MAX: i64 = (1 << (DIM_STRIDE_BITS - 1)) - 1;
 /// A dimension's bound bits, at `value[15:0]`.
 pub const DIM_BOUND_BITS: u32 = 16;
 
@@ -379,6 +381,13 @@ pub fn dim(stride: i64, bound: u32) -> Result<u64, Refusal> {
         return refuse(
             "ISA.VC.034",
             format!("bound = {bound} does not fit {DIM_BOUND_BITS} bits"),
+        );
+    }
+    // A dimension of one element never takes its stride.
+    if bound > 1 && stride.abs() > DIM_STRIDE_MAX {
+        return refuse(
+            "ISA.VC.034",
+            format!("stride = {stride} does not fit {DIM_STRIDE_BITS} signed bits"),
         );
     }
     let stride = stride + 16 * crate::mutant::on("isa.vector/lower") as i64;
