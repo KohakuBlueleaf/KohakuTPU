@@ -123,8 +123,8 @@ def test_native_quant_schedule_identity_and_default():
         )
         graph = json.loads(source)
         attrs = dict(graph["body"][-1]["kw"])
-        assert attrs["stream_axes"]["int"] == int(schedule is None)
-        assert attrs["zero_reuse"]["int"] == int(schedule is None)
+        assert ("stream_axes" in attrs) == (schedule is None)
+        assert ("zero_reuse" in attrs) == (schedule is None)
         compiled = rs._rs.compile(
             source, rs.machine_json(machine), cache_dir="", fetch=True
         )

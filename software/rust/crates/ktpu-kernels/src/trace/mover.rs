@@ -15,6 +15,25 @@ enum Kw<'a> {
     Index(&'a View),
 }
 
+/// A quant's keywords after `head`, in the order the DSL writes them; a
+/// schedule keyword is absent at its default (`finite_batch` 1, a flag 0).
+fn quant_kw<'a>(
+    head: (&'a str, Kw<'a>),
+    schedule: &[(&'a str, i64)],
+    pad: bool,
+) -> Vec<(&'a str, Kw<'a>)> {
+    let entry = |&(key, value): &(&'a str, i64)| {
+        let default = i64::from(key == "finite_batch");
+        (key, Kw::Int((value != default).then_some(value)))
+    };
+    let (last, first): (Vec<_>, Vec<_>) = schedule.iter().partition(|(k, _)| *k == "overlap");
+    let mut kw = vec![head];
+    kw.extend(first.iter().map(entry));
+    kw.push(("pad", Kw::Int(pad.then_some(1))));
+    kw.extend(last.iter().map(entry));
+    kw
+}
+
 impl Trace {
     fn mover(
         &mut self,
@@ -104,13 +123,11 @@ impl Trace {
         schedule: &[(&str, i64)],
         pad: bool,
     ) -> R<()> {
-        let mut kw = vec![
-            ("finite", Kw::Int(finite.then_some(1))),
-            ("pad", Kw::Int(pad.then_some(1))),
-        ];
-        if !crate::mutants::on("kernels.quant/no-schedule") {
-            kw.extend(schedule.iter().map(|&(k, v)| (k, Kw::Int(Some(v)))));
-        }
+        let schedule = match crate::mutants::on("kernels.quant/no-schedule") {
+            true => &[],
+            false => schedule,
+        };
+        let kw = quant_kw(("finite", Kw::Int(finite.then_some(1))), schedule, pad);
         self.mover(g::MoverOp::Quant, dst, Some(src), &kw, here())
     }
 
@@ -126,11 +143,7 @@ impl Trace {
         schedule: &[(&str, i64)],
         pad: bool,
     ) -> R<()> {
-        let mut kw = vec![
-            ("status", Kw::Index(status)),
-            ("pad", Kw::Int(pad.then_some(1))),
-        ];
-        kw.extend(schedule.iter().map(|&(k, v)| (k, Kw::Int(Some(v)))));
+        let kw = quant_kw(("status", Kw::Index(status)), schedule, pad);
         self.mover(g::MoverOp::Quant, dst, Some(src), &kw, here())
     }
 

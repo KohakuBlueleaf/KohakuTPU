@@ -117,6 +117,9 @@ fn quant_schedule_emission_reverse_witness() {
     let message = failure
         .downcast_ref::<String>()
         .expect("assertion failure text");
-    assert!(message.contains(".kw: 0 vs 8 items"), "{message}");
+    assert!(
+        message.contains(r#".kw[0][0]: have "pad" want "finite_batch""#),
+        "{message}"
+    );
     eprintln!("quant schedule reverse witness: recorded-step gate rejects removed emission");
 }

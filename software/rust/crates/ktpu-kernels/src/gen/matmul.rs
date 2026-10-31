@@ -583,12 +583,11 @@ pub fn quant_kernel_scheduled(
         ),
         ("q".to_string(), spec(&qs, dtype, lay, g::BufSpace::Dram)?),
     ];
-    // Columns past the source's last block are the vector packing's padding
-    // (`quant pad=1`, L2.MOV.010); the mover packs only whole views.
-    let k_live = cdiv(cols, hw.kblock) * hw.kblock;
-    let pad = vector_packs(nk, mach) && cp > k_live;
-    let zc = if pad { k_live } else { cp };
-    let direct = rows == rp && cols == zc && src.pitch == cols && src.offset == 0 && !staged;
+    // The vector packing pads in the quant (`quant pad=1`, L2.MOV.010) and
+    // takes the schedule; the mover packs only whole views.
+    let vector = vector_packs(nk, mach);
+    let schedule_on: &[(&str, i64)] = if vector { schedule } else { &[] };
+    let scratch = staged || (!vector && (rows != rp || cols != cp));
     let mut key = vec![
         src.py(),
         Py::Int(rows),
@@ -631,25 +630,28 @@ pub fn quant_kernel_scheduled(
     build(&key, mach, ports, given, |t, b| {
         let b = prepared::made_bufs(t, &names, &built, b, &made_in, &shapes, mach)?;
         let (x, q) = (&b[0], &b[1]);
-        if direct {
-            return t.quant_scheduled(
-                &q.whole(),
-                &x.at(&[sl(0, batches * rp), ALL])?,
-                finite,
-                schedule,
-                pad,
-            );
-        }
-        let z = t.buffer(&[batches * rp, zc], g::Dtype::F16, vec![])?;
-        t.fill_value(&z.whole(), 0, None, None)?;
         let (r0, c0) = (src.offset / src.pitch, src.offset % src.pitch);
-        for bi in 0..batches {
-            let dst = z.at(&[sl(bi * rp, bi * rp + rows), sl(0, cols)])?;
-            let lo = r0 + bi * rows;
-            let from = x.at(&[sl(lo, lo + rows), sl(c0, c0 + cols)])?;
-            t.copy(&dst, &from, None, None)?;
+        if scratch {
+            let z = t.buffer(&[batches * rp, cp], g::Dtype::F16, vec![])?;
+            t.fill_value(&z.whole(), 0, None, None)?;
+            for bi in 0..batches {
+                let dst = z.at(&[sl(bi * rp, bi * rp + rows), sl(0, cols)])?;
+                let lo = r0 + bi * rows;
+                let from = x.at(&[sl(lo, lo + rows), sl(c0, c0 + cols)])?;
+                t.copy(&dst, &from, None, None)?;
+            }
+            return t.quant_scheduled(&q.whole(), &z.whole(), finite, schedule_on, false);
         }
-        t.quant_scheduled(&q.whole(), &z.whole(), finite, schedule, pad)
+        // Unpadded row blocks stack contiguously: one quant over the stack.
+        let blocks = if rows == rp { 1 } else { batches };
+        let span = batches / blocks;
+        for b in 0..blocks {
+            let dst = q.at(&[sl(b * span * rp, (b + 1) * span * rp), ALL])?;
+            let lo = r0 + b * span * rows;
+            let from = x.at(&[sl(lo, lo + span * rows), sl(c0, c0 + cols)])?;
+            t.quant_scheduled(&dst, &from, finite, schedule_on, vector)?;
+        }
+        Ok(())
     })
 }
 

@@ -78,25 +78,43 @@ fn pad_k_pairs_the_k_blocks() {
     assert_eq!(at(96, &pad, &mover, Pairing::Unpaired), (96, 1), "unpaired");
 }
 
-/// A K tail past the source's last block packs zeros in the vector
-/// quantiser (`pad=1`): the staged rows hold only the source's blocks.
+/// The vector packing pads rows and columns in the quant (`pad=1`) and takes
+/// the schedule; no scratch stands in front of it.
 #[test]
-fn a_padded_k_tail_quantises_padded() {
+fn a_vector_quant_pads_in_the_quant() {
     let src = Operand::full(96, 0);
-    let direct = mm::quant_kernel(&src, 64, 96, 64, 128, Side::B, 16, 2, 1, &card()).unwrap();
+    let wide = mm::quant_kernel(&src, 64, 96, 64, 128, Side::B, 16, 2, 1, &card()).unwrap();
     assert_eq!(
-        lines(&direct, "quant"),
-        vec![format!("quant q <- x[0 : +64] pad=1 {}", schedule())]
+        lines(&wide, "quant"),
+        vec![format!(
+            "quant q[0 : +64] <- x[0 : +64, 0 : +96] {}",
+            schedule()
+        )]
     );
-    let staged = mm::quant_kernel(&src, 40, 96, 48, 128, Side::B, 12, 2, 1, &card()).unwrap();
-    let t = text(&staged);
-    assert!(t.contains("h1 = buffer  : f16[48, 96]"), "{t}");
+    let tall = mm::quant_kernel(&src, 40, 96, 48, 128, Side::B, 12, 2, 1, &card()).unwrap();
     assert_eq!(
-        lines(&staged, "quant"),
-        vec![format!("quant q <- h1 pad=1 {}", schedule())]
+        lines(&tall, "quant"),
+        vec![format!(
+            "quant q[0 : +48] <- x[0 : +40, 0 : +96] {}",
+            schedule()
+        )]
     );
-    let whole = mm::quant_kernel(&src, 40, 96, 48, 96, Side::B, 12, 2, 1, &card()).unwrap();
-    assert!(!text(&whole).contains("pad="), "{}", text(&whole));
+    assert!(!text(&tall).contains("buffer"), "{}", text(&tall));
+}
+
+/// A mover quant packs whole views: padding goes through a scratch, and the
+/// vector schedule is not written.
+#[test]
+fn a_mover_quant_pads_a_scratch_without_the_schedule() {
+    let m = ktpu_machine::Machine::named("vlt_v9t6s_1n").unwrap();
+    let src = Operand::full(96, 0);
+    let padded = mm::quant_kernel(&src, 40, 96, 48, 128, Side::B, 12, 1, 1, &m).unwrap();
+    assert_eq!(lines(&padded, "quant"), vec!["quant q <- h1"]);
+    let whole = mm::quant_kernel(&src, 48, 96, 48, 96, Side::B, 12, 1, 1, &m).unwrap();
+    assert_eq!(
+        lines(&whole, "quant"),
+        vec!["quant q[0 : +48] <- x[0 : +48, 0 : +96]"]
+    );
 }
 
 /// Two batches of one product tile each: a batch at a time one cluster
@@ -150,13 +168,9 @@ fn batch_tiles_shares_out_every_batchs_tiles() {
     assert_ne!(load(&on), load(&d));
 }
 
-/// The default quant schedule as the L2 text writes it.
-fn schedule() -> String {
-    mm::QUANT_SCHEDULE
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect::<Vec<_>>()
-        .join(" ")
+/// The default vector quant's keywords as the L2 text writes them.
+fn schedule() -> &'static str {
+    "finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1"
 }
 
 /// A call records its group's knobs by name, and a recorded call plans
@@ -265,12 +279,10 @@ fn api_form_006_mxfp7_packing() {
         "mx7a[96, 64] @dram(gm=12, nk=2)"
     );
     let t = text(&k);
-    assert!(t.contains("fill h1 value=0"), "{t}");
     assert!(
-        t.contains("copy h1[48 : +40, 0 : +64] <- x[40 : +40, 0 : +64]"),
+        t.contains("quant q[48 : +48] <- x[40 : +40, 0 : +64]"),
         "{t}"
     );
-    assert!(t.contains("quant q <- h1"), "{t}");
 }
 
 #[test]
