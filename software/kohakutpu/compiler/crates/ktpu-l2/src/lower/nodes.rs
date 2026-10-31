@@ -4,16 +4,20 @@
 
 use super::*;
 
-fn node_vars(stmts: &[Arc<Node>]) -> HashSet<String> {
-    let mut out = HashSet::new();
-    for s in stmts {
-        if let Node::Par(p) = s.as_ref() {
-            if p.kind == "node" {
-                out.insert(p.var.clone());
+/// The variables of the `par`s over nodes.
+pub(super) fn node_vars(stmts: &[Arc<Node>]) -> HashSet<String> {
+    fn walk(stmts: &[Arc<Node>], out: &mut HashSet<String>) {
+        for s in stmts {
+            if let Node::Par(p) = s.as_ref() {
+                if p.kind == "node" {
+                    out.insert(p.var.clone());
+                }
             }
+            walk(s.body(), out);
         }
-        out.extend(node_vars(s.body()));
     }
+    let mut out = HashSet::new();
+    walk(stmts, &mut out);
     out
 }
 
@@ -21,13 +25,12 @@ pub(super) type StageKey = (usize, Vec<(String, i64)>);
 
 /// The same `par` run on every node: its statement and the loop values
 /// around it, the node's own left out.
-pub(super) fn stage_key(body: &Body, insts: &[Instance]) -> StageKey {
-    let mut skip = node_vars(&body.stmts);
-    skip.insert(insts[0].par().var.clone());
+pub(super) fn stage_key(node_vars: &HashSet<String>, insts: &[Instance]) -> StageKey {
+    let own = &insts[0].par().var;
     let mut env: Vec<(String, i64)> = insts[0]
         .env
         .iter()
-        .filter(|(k, _)| !skip.contains(*k))
+        .filter(|(k, _)| *k != own && !node_vars.contains(*k))
         .map(|(k, v)| (k.clone(), if let Val::Int(i) = v { *i as i64 } else { 0 }))
         .collect();
     env.sort();
@@ -38,11 +41,15 @@ pub(super) fn stage_key(body: &Body, insts: &[Instance]) -> StageKey {
 type RemoteAdds = HashMap<(i64, StageKey), Vec<(i64, i64)>>;
 
 /// The [`RemoteAdds`] of every add across nodes (L2.MG.014).
-pub(super) fn remote_adds(body: &Body, stages: &[crate::ir::Stage]) -> Result<RemoteAdds> {
+pub(super) fn remote_adds(
+    body: &Body,
+    stages: &[crate::ir::Stage],
+    node_vars: &HashSet<String>,
+) -> Result<RemoteAdds> {
     let have: HashSet<(i64, StageKey)> = stages
         .iter()
         .filter_map(|s| match &s.x {
-            StageX::Par(x) => Some((s.node, stage_key(body, x))),
+            StageX::Par(x) => Some((s.node, stage_key(node_vars, x))),
             _ => None,
         })
         .collect();
@@ -53,7 +60,7 @@ pub(super) fn remote_adds(body: &Body, stages: &[crate::ir::Stage]) -> Result<Re
             if tgt == src {
                 continue;
             }
-            let key = (tgt, stage_key(body, x));
+            let key = (tgt, stage_key(node_vars, x));
             if !have.contains(&key) {
                 return Err(body.reader.fail(
                     &x[0].par().st,

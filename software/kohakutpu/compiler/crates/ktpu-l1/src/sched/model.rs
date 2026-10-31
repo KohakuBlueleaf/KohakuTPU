@@ -133,14 +133,18 @@ impl<'a> Ruled<'a> {
         let mut enc = self.encoder();
         let mut core = self.core();
         let mut state = UNKNOWN;
-        let mut done = BTreeSet::new();
+        let mut waiting: Vec<usize> = preds.iter().map(|p| p.len()).collect();
+        let mut after = vec![Vec::new(); n];
+        for (k, p) in preds.iter().enumerate() {
+            for &q in p {
+                after[q].push(k);
+            }
+        }
+        let mut ready: BTreeSet<usize> = (0..n).filter(|&k| waiting[k] == 0).collect();
         let mut out = Vec::with_capacity(n);
         while out.len() < n {
             let mut best: Option<(i64, usize)> = None;
-            for k in 0..n {
-                if done.contains(&k) || !preds[k].is_subset(&done) {
-                    continue;
-                }
+            for &k in &ready {
                 let config = enc.config;
                 let (_, start) = Self::step(&mut enc, &mut core, state, &run[k], &texts[k], true)?;
                 let start = start + price * (enc.config - config) as i64;
@@ -150,7 +154,13 @@ impl<'a> Ruled<'a> {
             }
             let (_, k) = best.expect("a ready statement");
             state = Self::step(&mut enc, &mut core, state, &run[k], &texts[k], false)?.0;
-            done.insert(k);
+            ready.remove(&k);
+            for &s in &after[k] {
+                waiting[s] -= 1;
+                if waiting[s] == 0 {
+                    ready.insert(s);
+                }
+            }
             out.push(k);
         }
         let gain = if mutant::on("l1.sched/min-gain") {

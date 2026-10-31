@@ -35,7 +35,7 @@ use adds::{added, added_into, adds};
 use cluster::{Line, ShareKey, Stream};
 use group::{close, grouped};
 use links::{Key, Links};
-use nodes::{add_slot, order_nodes, remote_adds, stage_key};
+use nodes::{add_slot, node_vars, order_nodes, remote_adds, stage_key};
 use rings::{counts, open, spend, streams};
 use share::shared;
 use sync::{Access, Stage, FENCE};
@@ -54,7 +54,7 @@ pub fn lower(p: &Program, t: &Target, search: &Search) -> Result<String> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let cores: Vec<usize> = stages
+    let cores: HashSet<usize> = stages
         .iter()
         .filter_map(|s| match &s.x {
             StageX::Par(x) => Some(
@@ -67,8 +67,7 @@ pub fn lower(p: &Program, t: &Target, search: &Search) -> Result<String> {
         })
         .flatten()
         .collect();
-    let shared =
-        cores.iter().any(|&p| beside_clusters(&body.stmts, p, None)) && !on("l2.lower/fill-alone");
+    let shared = beside_clusters(&body.stmts, &cores, false) && !on("l2.lower/fill-alone");
     body.fill = t.mem(shared);
     let body = body;
     let multi = body
@@ -80,7 +79,8 @@ pub fn lower(p: &Program, t: &Target, search: &Search) -> Result<String> {
     } else {
         None
     };
-    let remote = remote_adds(&body, &stages)?;
+    let node_vars = node_vars(&body.stmts);
+    let remote = remote_adds(&body, &stages, &node_vars)?;
     let mut images: Vec<String> = Vec::new();
     let mut packing_status = Vec::new();
     let mut built_by: IndexMap<i64, Vec<Stage>> = IndexMap::new();
@@ -98,7 +98,7 @@ pub fn lower(p: &Program, t: &Target, search: &Search) -> Result<String> {
         for (i, s) in mine.iter().enumerate() {
             match &s.x {
                 StageX::Par(x) => {
-                    let key = stage_key(&body, x);
+                    let key = stage_key(&node_vars, x);
                     let rem = remote.get(&(n, key)).cloned().unwrap_or_default();
                     let (lines, units, acc, segs) = par_stage(
                         &body,
@@ -318,24 +318,24 @@ fn drains_to_cores(stmts: &[Arc<Node>]) -> bool {
     false
 }
 
-/// Whether vector stage `par` can run while clusters stream (L2.SEARCH.003).
-fn beside_clusters(stmts: &[Arc<Node>], par: usize, lp: Option<&[Arc<Node>]>) -> bool {
+/// Whether a vector stage of `cores` can run while clusters stream
+/// (L2.SEARCH.003): in an outermost loop (`in_loop`) with clusters or drains.
+fn beside_clusters(stmts: &[Arc<Node>], cores: &HashSet<usize>, in_loop: bool) -> bool {
     for s in stmts {
-        if s.uid() == par {
-            return match lp {
-                Some(b) => has_cluster_par(b) || drains_to_cores(b),
-                None => false,
-            };
+        if in_loop && cores.contains(&s.uid()) {
+            return true;
         }
         match s.as_ref() {
-            Node::For(f) if lp.is_none() => {
-                if beside_clusters(&f.body, par, Some(&f.body)) {
+            Node::For(f) if !in_loop => {
+                if (has_cluster_par(&f.body) || drains_to_cores(&f.body))
+                    && beside_clusters(&f.body, cores, true)
+                {
                     return true;
                 }
             }
             Node::Op(_) => {}
             other => {
-                if !other.body().is_empty() && beside_clusters(other.body(), par, lp) {
+                if !other.body().is_empty() && beside_clusters(other.body(), cores, in_loop) {
                     return true;
                 }
             }
