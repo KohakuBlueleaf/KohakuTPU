@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "kohakuaccel/compiler/crates/ka-machine",
     "kohakutpu/compiler/crates/ktpu-machine",
     "kohakutpu/compiler/crates/ktpu-isa",
     "kohakutpu/compiler/crates/ktpu-l0",
@@ -21,6 +22,7 @@ license = "Apache-2.0"
 publish = false
 
 [workspace.dependencies]
+ka-machine = { path = "kohakuaccel/compiler/crates/ka-machine" }
 ktpu-machine = { path = "kohakutpu/compiler/crates/ktpu-machine" }
 ktpu-isa = { path = "kohakutpu/compiler/crates/ktpu-isa" }
 ktpu-l0 = { path = "kohakutpu/compiler/crates/ktpu-l0" }

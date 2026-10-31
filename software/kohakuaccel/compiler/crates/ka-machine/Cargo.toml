@@ -1,0 +1,11 @@
+[package]
+name = "ka-machine"
+description = "The machine facts every KohakuAccel project has, and the framework's view of them."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

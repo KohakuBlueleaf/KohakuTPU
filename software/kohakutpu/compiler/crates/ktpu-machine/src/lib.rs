@@ -6,13 +6,11 @@
 //! dotted path ([`Machine::get`]) and names where it came from
 //! ([`Machine::source`]). [`Machine::digest`] keys the caches.
 
-pub mod canon;
 pub mod card;
 pub mod fill;
 pub mod mutant;
 pub mod packing;
 pub mod pairing;
-pub mod refusal;
 pub mod schema;
 
 use serde_json::Value;
@@ -22,19 +20,21 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
 pub use fill::fill_lost;
+pub use ka_machine::{canon, refuse, refusal, MachineFacts, Refusal};
 pub use pairing::{Pairing, PAIRING};
-pub use refusal::{refuse, Refusal};
 pub use schema::*;
 
-/// The schema definition this build reads: `src/schema/*.rs` in file-name
-/// order (a test holds the list to the directory).
-pub const SCHEMA_SOURCES: [(&str, &str); 6] = [
-    ("card.rs", include_str!("schema/card.rs")),
+/// The schema definition this build reads: ka-machine's `src/schema/*.rs`,
+/// then this crate's, each in file-name order.
+pub const SCHEMA_SOURCES: [(&str, &str); 8] = [
+    ka_machine::SCHEMA_SOURCES[0],
+    ka_machine::SCHEMA_SOURCES[1],
+    ka_machine::SCHEMA_SOURCES[2],
+    ka_machine::SCHEMA_SOURCES[3],
+    ka_machine::SCHEMA_SOURCES[4],
     ("die.rs", include_str!("schema/die.rs")),
-    ("firmware.rs", include_str!("schema/firmware.rs")),
     ("kinds.rs", include_str!("schema/kinds.rs")),
     ("mod.rs", include_str!("schema/mod.rs")),
-    ("system.rs", include_str!("schema/system.rs")),
 ];
 
 /// The version of a schema definition: the first 16 hex digits of sha256
@@ -373,6 +373,49 @@ impl Machine {
     /// The node count of the card (its meshes).
     pub fn nodes(&self) -> u32 {
         self.facts.card.nodes
+    }
+}
+
+impl MachineFacts for Machine {
+    fn machine_name(&self) -> &str {
+        &self.name
+    }
+    fn node_count(&self) -> u32 {
+        self.nodes()
+    }
+    fn fw(&self) -> &Fw {
+        &self.facts.fw
+    }
+    fn node(&self) -> &Node {
+        &self.facts.node
+    }
+    fn unit_depths(&self) -> &UnitDepths {
+        &self.facts.unit
+    }
+    fn il(&self) -> &Il {
+        &self.facts.il
+    }
+    fn mover(&self) -> &Mover {
+        &self.facts.mover
+    }
+    fn noc(&self) -> &Noc {
+        &self.facts.die.noc
+    }
+    fn word_bytes(&self) -> u32 {
+        self.facts.die.word_bytes
+    }
+    fn fetch_port(&self) -> Coord {
+        self.facts.die.fetch_port
+    }
+    fn package_units(&self) -> BTreeMap<String, Vec<Coord>> {
+        [UnitKind::Mg, UnitKind::Vc, UnitKind::Sr]
+            .into_iter()
+            .filter(|k| !self.units(*k).is_empty())
+            .map(|k| (k.tag().to_string(), self.units(k).to_vec()))
+            .collect()
+    }
+    fn unit_faults(&self) -> &BTreeMap<String, u32> {
+        self.facts.vc.fault_names.runtime()
     }
 }
 

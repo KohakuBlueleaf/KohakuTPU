@@ -177,7 +177,7 @@ impl Sr {
         Some(SrFacts {
             count: self.count,
             profile: self.profile.clone()?,
-            buf_words: Runtime((*self.buf_words.runtime())?),
+            buf_words: Runtime::new((*self.buf_words.runtime())?),
             fifo_depth: self.fifo_depth?,
             op_depth: self.op_depth?,
             fin_depth: self.fin_depth?,
@@ -186,7 +186,7 @@ impl Sr {
             ldep: self.ldep?,
             wlead: self.wlead?,
             taps: self.taps?,
-            f16_ieee: Runtime((*self.f16_ieee.runtime())?),
+            f16_ieee: Runtime::new((*self.f16_ieee.runtime())?),
         })
     }
 }

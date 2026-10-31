@@ -1,41 +1,15 @@
-//! The `machine` section of a machine file, one type per section
-//! (`docs/spec/stack/machine.md`). Every struct refuses an unknown key, so a
-//! new fact in the generator is a new field here.
+//! The `machine` section of a machine file: KohakuTPU's sections and the
+//! framework's. Every struct refuses an unknown key, so a new fact in the
+//! generator is a new field here.
 
-pub mod card;
 pub mod die;
-pub mod firmware;
 pub mod kinds;
-pub mod system;
 
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
-pub use card::{Card, Clock, Dram, Host};
-pub use die::{Coord, Die, Noc, Staging, UnitDepths, Units};
-pub use firmware::{Boot, Debug, Fw, FwMemory, Heap, Package, Queue};
+pub use die::{Die, Units};
+pub use ka_machine::schema::*;
 pub use kinds::{Mg, Simt, Sr, SrFacts, SrProfile, Vc, VcTiming};
-pub use system::{Engine, Il, Mover, MoverModes, Node};
-
-/// A fact no compile path reads: the runtime's, a generator's or a tool's.
-/// Every other fact is in [`crate::Machine::digest`], so a field is keyed
-/// unless its type says otherwise. It serialises as null, which keeps it out
-/// of the digest and of [`crate::Machine::get`].
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(transparent)]
-pub struct Runtime<T>(T);
-
-impl<T> Runtime<T> {
-    /// The fact. A compile path never calls this (`compile_reads_no_runtime_fact`).
-    pub fn runtime(&self) -> &T {
-        &self.0
-    }
-}
-
-impl<T> Serialize for Runtime<T> {
-    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_none()
-    }
-}
 
 /// Every fact of one image, nested by path.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]

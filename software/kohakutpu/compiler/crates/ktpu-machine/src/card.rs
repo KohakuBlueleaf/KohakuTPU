@@ -1,7 +1,6 @@
 //! Runtime card topology and addresses, derived only from machine facts.
 
-use crate::schema::die::Address;
-use crate::{mutant, Coord, Machine, Refusal, Sr, Units};
+use crate::{mutant, Address, Coord, Machine, Refusal, Sr, Units};
 
 #[derive(Clone, Debug)]
 pub struct Mesh {

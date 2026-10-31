@@ -177,6 +177,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ka-machine"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ktpu"
 version = "0.1.0"
 dependencies = [
@@ -288,6 +296,7 @@ dependencies = [
 name = "ktpu-machine"
 version = "0.1.0"
 dependencies = [
+ "ka-machine",
  "serde",
  "serde_json",
  "sha2",
