@@ -1,0 +1,40 @@
+target ktpu.v9
+
+fn rows_23aa38b97e.l2(in0: f16[512] @dram, out: f16[16] @dram)
+    h1 = buffer  : f16[2, 16] @dram
+    h2 = buffer  : f16[32] @dram
+    h3 = buffer  : f16[32] @dram
+    h4 = buffer  : f16[2, 16] @dram
+    h5 = buffer  : f16[16] @dram
+    h6 = buffer  : f16[16] @dram
+    par c1 in 0..1 on vc[c1]
+        xl1 = load in0[0 : +256]  : f16[4, 256] @l1(gt4)
+        v1 = unpack xl1           : f32[4, 256] @reg(gt4)
+        for t1 in 0..1
+            s1 = rsum v1  : f32[4] @reg
+            p1 = pack s1  : f16[16] @l1
+            store h4[0, t1*16 : +16] <- p1
+    par c2 in 0..1 on vc[c2]
+        xl2 = load in0[256 : +256]  : f16[4, 256] @l1(gt4)
+        v2 = unpack xl2             : f32[4, 256] @reg(gt4)
+        for t2 in 0..1
+            s2 = rsum v2  : f32[4] @reg
+            p2 = pack s2  : f16[16] @l1
+            store h4[1, t2*16 : +16] <- p2
+    copy h1[:, 0 : +16] <- h4[:, 0 : +16]
+    copy h2 <- h1
+    par c3 in 0..1 on vc[c3]
+        for t3 in 0..1
+            xl3 = load h2[t3*16 : +16]       : f16[16] @l1
+            xl4 = load h2[t3*16 + 16 : +16]  : f16[16] @l1
+            v3 = unpack xl3                  : f32[16] @reg
+            v4 = unpack xl4                  : f32[16] @reg
+            e1 = add v3, v4                  : f32[16] @reg
+            p3 = pack e1                     : f16[16] @l1
+            store h3[t3*16 : +16] <- p3
+    copy h5[0 : +16] <- h3[0 : +16]
+    par c4 in 0..1 on vc[c4]
+        for t4 in 0..1
+            xl5 = load h5[t4*16 : +16]  : f16[16] @l1
+            store h6[t4*16 : +16] <- xl5
+    copy out[0 : +16] <- h6[0 : +16]

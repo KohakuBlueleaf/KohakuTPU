@@ -1,0 +1,4 @@
+target ktpu.v9
+
+fn quant_af4689214a.l2(x: f16[800, 160] @dram, q: mx7a[800, 160] @dram(gm=25, nk=1))
+    quant q[0 : +800] <- x[0 : +800, 0 : +160]

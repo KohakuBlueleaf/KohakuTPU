@@ -1,0 +1,15 @@
+target ktpu.v9
+
+fn flat_af770bad7a.l2(in0: f16[4, 128] @dram, out: f16[4, 128] @dram)
+    par c1 in 0..1 on vc[c1]
+        for t1 in 0..1
+            xl1 = load in0[0 : +4]  : f16[4, 128] @l1
+            v1 = unpack xl1         : f32[4, 128] @reg
+            m1 = cmpeq v1, 0.0      : f32[4, 128] @reg
+            e1 = sub 1.0, m1        : f32[4, 128] @reg
+            m2 = cmplt v1, 0.0      : f32[4, 128] @reg
+            o1 = sel m2, -1.0, 1.0  : f32[4, 128] @reg
+            o2 = sel e1, o1, 0.0    : f32[4, 128] @reg
+            e2 = mul v1, o2         : f32[4, 128] @reg
+            p1 = pack e2            : f16[4, 128] @l1
+            store out[0 : +4] <- p1

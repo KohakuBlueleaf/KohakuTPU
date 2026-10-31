@@ -1,0 +1,17 @@
+target ktpu.v9
+
+fn rows_a6d679bff4.l2(in0: f16[9216, 32] @dram, x1: f16[512, 16] @dram, p1_index0: f32[8] @dram, p1_mask0: f16[1, 128] @dram, in2: f16[9216, 32] @dram, out: f16[9216, 32] @dram)
+    h1 = buffer  : f16[9216, 32] @dram
+    copy h1 <- x1 walk=((8, 2048), (6, 0), (32, 64), (6, 0), (2, 32)) at=0 dwalk=((18432, 32),) dat=0
+    par c1 in 0..2 on vc[c1]
+        for t1 in 0..288
+            xl1 = load in0[c1*4608 + t1*16 : +16, 0 : +32]  : f16[16, 32] @l1(gt4)
+            xl2 = load h1[c1*4608 + t1*16 : +16, 0 : +32]  : f16[16, 32] @l1(gt4)
+            xl3 = load in2[c1*4608 + t1*16 : +16, 0 : +32]  : f16[16, 32] @l1(gt4)
+            v1 = unpack xl3                     : f32[16, 32] @reg(gt4)
+            v2 = unpack xl2                     : f32[16, 32] @reg(gt4)
+            o1 = sel v1, v2, 0.0                : f32[16, 32] @reg(gt4)
+            v3 = unpack xl1                     : f32[16, 32] @reg(gt4)
+            o2 = sel v3, o1, 0.0                : f32[16, 32] @reg(gt4)
+            p1 = pack o2                        : f16[16, 32] @l1(gt4)
+            store out[c1*4608 + t1*16 : +16, 0 : +32] <- p1

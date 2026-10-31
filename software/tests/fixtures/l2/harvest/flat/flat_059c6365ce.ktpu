@@ -1,0 +1,18 @@
+target ktpu.v9
+
+fn flat_059c6365ce.l2(in0: f16[4, 128] @dram, out: f16[4, 128] @dram)
+    par c1 in 0..1 on vc[c1]
+        for t1 in 0..1
+            xl1 = load in0[0 : +4]           : f16[4, 128] @l1
+            v1 = unpack xl1                  : f32[4, 128] @reg
+            e1 = mul v1, v1                  : f32[4, 128] @reg
+            e2 = mul e1, v1                  : f32[4, 128] @reg
+            e3 = mul 0.044715, e2            : f32[4, 128] @reg
+            e4 = add v1, e3                  : f32[4, 128] @reg
+            e5 = mul e4, -2.302208198144325  : f32[4, 128] @reg
+            e6 = exp2 e5                     : f32[4, 128] @reg
+            e7 = add 1.0, e6                 : f32[4, 128] @reg
+            e8 = inv e7                      : f32[4, 128] @reg
+            e9 = mul e8, v1                  : f32[4, 128] @reg
+            p1 = pack e9                     : f16[4, 128] @l1
+            store out[0 : +4] <- p1

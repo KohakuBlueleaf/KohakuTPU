@@ -1,0 +1,205 @@
+target ktpu.v9
+
+image a_vmov(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0 <- l1[0] f16
+    vmov v1, v0
+    vsync pack on=drain slack=1
+    vpack v1 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt
+
+image a_vneg(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0 <- l1[0] f16
+    vneg v1, v0
+    vsync pack on=drain slack=1
+    vpack v1 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt
+
+image a_vabs(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0 <- l1[0] f16
+    vabs v1, v0
+    vsync pack on=drain slack=1
+    vpack v1 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt
+
+image a_vadd(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0 <- l1[0] f16
+    vadd v1, v0, v0[1 :]
+    vsync pack on=drain slack=1
+    vpack v1 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt
+
+image a_vsub(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0 <- l1[0] f16
+    vsub v1, v0, v0[1 :]
+    vsync pack on=drain slack=1
+    vpack v1 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt
+
+image a_vmul(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    seti s0 = -1.5
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0 <- l1[0] f16
+    vmul v1, v0, s0
+    vsync pack on=drain slack=1
+    vpack v1 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt
+
+image a_vfma(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    seti s0 = 0.75
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0 <- l1[0] f16
+    vfma v1, v0, v0[1 :], s0
+    vsync pack on=drain slack=1
+    vpack v1 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt
+
+image a_vfnma(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    seti s0 = 0.75
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0 <- l1[0] f16
+    vfnma v1, v0, v0[1 :], s0
+    vsync pack on=drain slack=1
+    vpack v1 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt
+
+image a_vmax(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0 <- l1[0] f16
+    vmax v1, v0, v0[1 :]
+    vsync pack on=drain slack=1
+    vpack v1 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt
+
+image a_vmin(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0 <- l1[0] f16
+    vmin v1, v0, v0[1 :]
+    vsync pack on=drain slack=1
+    vpack v1 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt
+
+image a_vsel(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0 <- l1[0] f16
+    vsel v1, v0, k0, v0[1 :]
+    vsync pack on=drain slack=1
+    vpack v1 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt
+
+image a_vcmplt(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0 <- l1[0] f16
+    vmov v1, v0
+    vcmplt p1, v0, v0[1 :]
+    vmov v1, k0 if=p1
+    vsync pack on=drain slack=1
+    vpack v1 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt
+
+image a_vcmpgt(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0 <- l1[0] f16
+    vmov v1, v0
+    vcmpgt p2, v0, v0[1 :]
+    vmov v1, k0 unless=p2
+    vsync pack on=drain slack=1
+    vpack v1 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt
+
+image a_vcmpeq(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0 <- l1[0] f16
+    vmov v1, v0
+    vcmpeq p3, v0[1 :], v0[2 :]
+    vmov v1, k0 if=p3
+    vsync pack on=drain slack=1
+    vpack v1 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt
+
+image a_vexp2d(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0 <- l1[0] f16
+    vexp2d v1, v0, k0
+    vsync pack on=drain slack=1
+    vpack v1 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt

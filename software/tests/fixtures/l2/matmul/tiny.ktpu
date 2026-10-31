@@ -1,0 +1,49 @@
+# The sweep forms at 64 x 128, small enough for a stage to run each in a blink.
+target ktpu.v9
+
+fn tiny_matmul.l2(x: mx7a[64, 128] @dram(gm=8, nk=2), w: mx7b[128, 128] @dram(gn=8, nk=2), y: f16[64, 128] @dram(tile=8x8))
+    par u in 0..4 on mg[u]
+        for i in 0..2
+            acc = zero                                  : f32[32, 32] @acc
+            for k in 0..2
+                a = fill x[i*32 : +32, k*64 : +64]      : mx7a[32, 64] @A
+                b = fill w[u*32 : +32, k*64 : +64]      : mx7b[32, 64] @B
+                acc = gemm a, b, acc                    : f32[32, 32] @acc
+            drain acc -> y[i*32 : +32, u*32 : +32]
+
+fn tiny_longk.l2(x: mx7a[64, 256] @dram(gm=8, nk=2), w: mx7b[128, 256] @dram(gn=8, nk=2), y: f16[64, 128] @dram(tile=8x8))
+    par u in 0..4 on mg[u]
+        for i in 0..2
+            acc = zero                                  : f32[32, 32] @acc
+            for k in 0..4
+                a = fill x[i*32 : +32, k*64 : +64]      : mx7a[32, 64] @A
+                b = fill w[u*32 : +32, k*64 : +64]      : mx7b[32, 64] @B
+                acc = gemm a, b, acc                    : f32[32, 32] @acc
+            drain acc -> y[i*32 : +32, u*32 : +32]
+
+fn tiny_q.l2(x: f16[64, 128] @dram(tile=8x16), w: mx7b[128, 128] @dram(gn=8, nk=2), xq: mx7a[64, 128] @dram(gm=8, nk=2), y: f16[64, 128] @dram(tile=8x8))
+    for i in 0..2
+        par c in 0..4 on vc[any]
+            for t in 0..4
+                xl = load x[i*32 + (c % 2)*16 + t*4 : +4, (c / 2)*64 : +64] : f16[4, 64] @l1(gt4)
+                v = unpack xl                                               : f32[4, 64] @reg(gt4)
+                q = pack v                                                  : mx7a[4, 64] @l1
+                store xq[i*32 + (c % 2)*16 + t*4 : +4, (c / 2)*64 : +64] <- q
+        par u in 0..4 on mg[u]
+            acc = zero                                  : f32[32, 32] @acc
+            for k in 0..2
+                a = fill xq[i*32 : +32, k*64 : +64]     : mx7a[32, 64] @A
+                b = fill w[u*32 : +32, k*64 : +64]      : mx7b[32, 64] @B
+                acc = gemm a, b, acc                    : f32[32, 32] @acc
+            drain acc -> y[i*32 : +32, u*32 : +32]
+
+fn tiny_qm.l2(x: f16[64, 128] @dram, w: mx7b[128, 128] @dram(gn=8, nk=2), xq: mx7a[64, 128] @dram(gm=8, nk=2), y: f16[64, 128] @dram(tile=8x8))
+    for i in 0..2
+        quant xq[i*32 : +32, :] <- x[i*32 : +32, :]
+        par u in 0..4 on mg[u]
+            acc = zero                                  : f32[32, 32] @acc
+            for k in 0..2
+                a = fill xq[i*32 : +32, k*64 : +64]     : mx7a[32, 64] @A
+                b = fill w[u*32 : +32, k*64 : +64]      : mx7b[32, 64] @B
+                acc = gemm a, b, acc                    : f32[32, 32] @acc
+            drain acc -> y[i*32 : +32, u*32 : +32]

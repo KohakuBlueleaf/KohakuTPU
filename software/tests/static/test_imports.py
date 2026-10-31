@@ -11,13 +11,12 @@ transitively by induction:
 """
 
 import ast
+import os
 import pathlib
 import subprocess
 import sys
 
-import pytest
-
-SOFTWARE = pathlib.Path(__file__).resolve().parents[1]
+SOFTWARE = pathlib.Path(__file__).resolve().parents[2]
 MEMBERS = (
     "kohakuaccel/compiler",
     "kohakuaccel/driver",
@@ -125,18 +124,28 @@ def modules() -> list[tuple[str, pathlib.Path]]:
     return out
 
 
-@pytest.mark.parametrize("name", [name for name, _ in modules()])
-def test_every_remaining_module_imports(name):
-    template = str(SOFTWARE / "template")
-    code = f"import sys, importlib; sys.path.insert(0, {template!r}); importlib.import_module({name!r})"
+def test_every_module_imports():
+    """All in one process: ~1 s, against ~1 s a module for one process each."""
+    names = [n for n, _ in modules() if not n.endswith("__main__")]
+    code = (
+        "import importlib, sys, traceback\n"
+        f"sys.path[:0] = {[str(SOFTWARE / m) for m in MEMBERS]!r}\n"
+        f"for n in {names!r}:\n"
+        "    try:\n"
+        "        importlib.import_module(n)\n"
+        "    except BaseException as e:\n"
+        "        print(n, repr(e))\n"
+    )
+    env = dict(os.environ, KOHAKUTPU_DEVICE="offline")
     got = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
         timeout=60,
         check=False,
+        env=env,
     )
-    assert got.returncode == 0, f"{name}: {got.stdout}\n{got.stderr}"
+    assert got.returncode == 0 and not got.stdout, got.stdout + got.stderr
 
 
 def test_workspace_obeys_the_rules() -> None:

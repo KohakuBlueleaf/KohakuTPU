@@ -1,0 +1,19 @@
+target ktpu.v9
+
+fn rows_3422ca4a90.l2(in0: f16[8, 128] @dram, in1: f16[128] @dram, out: f16[16] @dram)
+    h1 = buffer  : f16[16, 128] @dram
+    h2 = buffer  : f16[16] @dram
+    fill h1 value=0
+    copy h1[0 : +8] <- in0[0 : +8, 0 : +128]
+    par c1 in 0..1 on vc[c1]
+        xl1 = load in1[0 : +128]  : f16[4, 128] @l1(gt4)
+        v1 = unpack xl1           : f32[4, 128] @reg(gt4)
+        for t1 in 0..1
+            xl2 = load h1[t1*16 : +16, 0 : +128]  : f16[16, 128] @l1(gt4)
+            v2 = unpack xl2                     : f32[16, 128] @reg(gt4)
+            o1 = sel v1, v2, 0.0                : f32[16, 128] @reg(gt4)
+            s1 = rsum o1                        : f32[16] @reg
+            e1 = mul s1, 0.008333333333333333   : f32[16] @reg
+            p1 = pack e1                        : f16[16] @l1
+            store h2[t1*16 : +16] <- p1
+    copy out[0 : +16] <- h2[0 : +16]

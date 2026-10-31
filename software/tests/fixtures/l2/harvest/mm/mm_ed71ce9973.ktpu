@@ -1,0 +1,34 @@
+target ktpu.v9
+
+fn mm_ed71ce9973.l2(a: mx7a[8, 64] @dram(gm=2, nk=1), b: mx7b[256, 64] @dram(gn=64, nk=1), in1: f16[256] @dram, out: f16[8, 256] @dram)
+    h1 = buffer  : f16[8, 256] @dram(tile=2x64)
+    par u1 in 0..1 on mg[u1]
+        for k1 in 0..1
+            acc1 = zero  : f32[8, 256] @acc
+            for k2 in 0..2
+                a1 = fill a[u1*8 + k1*8 : +8, k2*32 : +32]  : mx7a[8, 32] @A
+                b1 = fill b[0 : +256, k2*32 : +32]  : mx7b[256, 32] @B
+                acc1 = gemm a1, b1, acc1        : f32[8, 256] @acc
+            drain acc1 -> h1[u1*8 + k1*8 : +8, 0 : +256]
+    par c1 in 0..2 on vc[c1]
+        xl1 = load in1[0 : +256]  : f16[4, 256] @l1(gt4)
+        v1 = unpack xl1           : f32[4, 256] @reg(gt4)
+        for t1 in 0..1
+            xl2 = load h1[c1*4 + t1*4 : +4, 0 : +256]  : f16[4, 256] @l1(gt4)
+            v2 = unpack xl2                     : f32[4, 256] @reg(gt4)
+            e1 = add v2, v1                     : f32[4, 256] @reg(gt4)
+            e2 = add v2, v1                     : f32[4, 256] @reg(gt4)
+            e3 = add v2, v1                     : f32[4, 256] @reg(gt4)
+            e4 = mul e2, e3                     : f32[4, 256] @reg(gt4)
+            e5 = add v2, v1                     : f32[4, 256] @reg(gt4)
+            e6 = mul e4, e5                     : f32[4, 256] @reg(gt4)
+            e7 = mul 0.044715, e6               : f32[4, 256] @reg(gt4)
+            e8 = add e1, e7                     : f32[4, 256] @reg(gt4)
+            e9 = mul e8, -2.302208198144325     : f32[4, 256] @reg(gt4)
+            e10 = exp2 e9                       : f32[4, 256] @reg(gt4)
+            e11 = add 1.0, e10                  : f32[4, 256] @reg(gt4)
+            e12 = inv e11                       : f32[4, 256] @reg(gt4)
+            e13 = add v2, v1                    : f32[4, 256] @reg(gt4)
+            e14 = mul e12, e13                  : f32[4, 256] @reg(gt4)
+            p1 = pack e14                       : f16[4, 256] @l1(gt4)
+            store out[c1*4 + t1*4 : +4, 0 : +256] <- p1

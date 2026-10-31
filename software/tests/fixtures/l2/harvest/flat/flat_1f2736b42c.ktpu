@@ -1,0 +1,40 @@
+target ktpu.v9
+
+fn flat_1f2736b42c.l2(in0: f16[41, 16] @dram, in1: f16[41, 16] @dram, in2: f16[41, 16] @dram, out: f16[41, 16] @dram)
+    h1 = buffer  : f16[6, 128] @dram
+    h2 = buffer  : f16[6, 128] @dram
+    h3 = buffer  : f16[6, 128] @dram
+    h4 = buffer  : f16[6, 128] @dram
+    fill h1 value=0
+    copy h1 <- in0 walk=((41, 32),) dwalk=((41, 32),)
+    fill h2 value=0
+    copy h2 <- in1 walk=((41, 32),) dwalk=((41, 32),)
+    fill h3 value=0
+    copy h3 <- in2 walk=((41, 32),) dwalk=((41, 32),)
+    par c1 in 0..1 on vc[c1]
+        for t1 in 0..1
+            xl1 = load h1[t1*4 : +4]  : f16[4, 128] @l1
+            xl2 = load h2[t1*4 : +4]  : f16[4, 128] @l1
+            xl3 = load h3[t1*4 : +4]  : f16[4, 128] @l1
+            v1 = unpack xl3           : f32[4, 128] @reg
+            v2 = unpack xl2           : f32[4, 128] @reg
+            o1 = sel v1, v2, 0.0      : f32[4, 128] @reg
+            v3 = unpack xl1           : f32[4, 128] @reg
+            o2 = sel v3, o1, 0.0      : f32[4, 128] @reg
+            e1 = add o2, 1.0          : f32[4, 128] @reg
+            p1 = pack e1              : f16[4, 128] @l1
+            store h4[t1*4 : +4] <- p1
+    par c2 in 0..1 on vc[c2]
+        for t2 in 0..1
+            xl4 = load h1[4 : +2]  : f16[2, 128] @l1
+            xl5 = load h2[4 : +2]  : f16[2, 128] @l1
+            xl6 = load h3[4 : +2]  : f16[2, 128] @l1
+            v4 = unpack xl6        : f32[2, 128] @reg
+            v5 = unpack xl5        : f32[2, 128] @reg
+            o3 = sel v4, v5, 0.0   : f32[2, 128] @reg
+            v6 = unpack xl4        : f32[2, 128] @reg
+            o4 = sel v6, o3, 0.0   : f32[2, 128] @reg
+            e2 = add o4, 1.0       : f32[2, 128] @reg
+            p2 = pack e2           : f16[2, 128] @l1
+            store h4[4 : +2] <- p2
+    copy out <- h4 walk=((41, 32),) dwalk=((41, 32),)

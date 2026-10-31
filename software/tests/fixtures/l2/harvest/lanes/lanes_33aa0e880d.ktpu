@@ -1,0 +1,59 @@
+target ktpu.v9
+
+fn lanes_33aa0e880d.l2(src: f16[3000, 16] @dram, dst: f16[3000, 16] @dram, index: f32[1200] @dram, mask: f16[4, 128] @dram)
+    h1 = buffer  : f16[3004, 16] @dram
+    h2 = buffer  : f16[400, 128] @dram
+    h3 = buffer  : f16[400, 128] @dram
+    h4 = buffer  : f16[400, 128] @dram
+    h5 = buffer  : f16[1600, 32] @dram
+    h6 = buffer  : f16[3200, 16] @dram
+    h7 = buffer  : f16[400, 128] @dram
+    h8 = buffer  : f16[400, 128] @dram
+    h9 = buffer  : f16[3200, 16] @dram
+    copy h1 <- src walk=((3000, 32),) dwalk=((3000, 32),) dat=64
+    gather h3[0 : +400, 0 : +128] <- h1 fp index=index[400 : +400]
+    gather h4[0 : +400, 0 : +128] <- h1 fp index=index[800 : +400]
+    par c1 in 0..2 on vc[c1]
+        xl1 = load mask[0 : +1]  : f16[1, 128] @l1
+        v1 = unpack xl1          : f32[1, 128] @reg
+        for t1 in 0..50
+            xl2 = load h3[c1*100 + t1*2 : +2]  : f16[2, 128] @l1
+            v2 = unpack xl2                    : f32[2, 128] @reg
+            o1 = sel v1, v2, 0.0               : f32[2, 128] @reg
+            p1 = pack o1                       : f16[2, 128] @l1
+            store h2[c1*100 + t1*2 : +2] <- p1
+    par c2 in 0..2 on vc[c2]
+        xl3 = load mask[1 : +1]  : f16[1, 128] @l1
+        v3 = unpack xl3          : f32[1, 128] @reg
+        xl4 = load mask[0 : +1]  : f16[1, 128] @l1
+        v4 = unpack xl4          : f32[1, 128] @reg
+        for t2 in 0..50
+            xl5 = load h3[c2*100 + t2*2 + 200 : +2]  : f16[2, 128] @l1
+            v5 = unpack xl5                     : f32[2, 128] @reg
+            xl6 = load h4[c2*100 + t2*2 + 200 : +2]  : f16[2, 128] @l1
+            v6 = unpack xl6                     : f32[2, 128] @reg
+            e1 = xrot v5, 8.0                   : f32[2, 128] @reg
+            e2 = xrot v6, 8.0                   : f32[2, 128] @reg
+            o2 = sel v3, e1, e2                 : f32[2, 128] @reg
+            o3 = sel v4, o2, 0.0                : f32[2, 128] @reg
+            p2 = pack o3                        : f16[2, 128] @l1
+            store h2[c2*100 + t2*2 + 200 : +2] <- p2
+    scatter h5 <- h2[0 : +400, 0 : +128] fp index=index[0 : +400]
+    gt4 h7 <- h5 walk=((1, 102400), (100, 1024), (8, 32), (4, 256)) dwalk=((1, 102400), (100, 1024), (8, 128))
+    par c3 in 0..2 on vc[c3]
+        xl7 = load mask[2 : +1]  : f16[1, 128] @l1
+        v7 = unpack xl7          : f32[1, 128] @reg
+        xl8 = load mask[3 : +1]  : f16[1, 128] @l1
+        v8 = unpack xl8          : f32[1, 128] @reg
+        for t3 in 0..25
+            xl9 = load h7[c3*200 + t3*8 : +8]  : f16[8, 128] @l1
+            v9 = unpack xl9                    : f32[8, 128] @reg
+            e3 = xlane v9, 5.0                 : f32[8, 128] @reg
+            o4 = sel v7, e3, v9                : f32[8, 128] @reg
+            e4 = xlane o4, 10.0                : f32[8, 128] @reg
+            o5 = sel v8, e4, o4                : f32[8, 128] @reg
+            p3 = pack o5                       : f16[8, 128] @l1
+            store h8[c3*200 + t3*8 : +8] <- p3
+    gt4 h9 <- h8 walk=((1, 102400), (32, 32), (25, 4096), (4, 1024)) dwalk=((1, 102400), (32, 3200), (25, 128))
+    copy h6 <- h9 walk=((1, 102400), (32, 3200), (4, 32), (25, 128)) dwalk=((3200, 32),)
+    copy dst <- h6 walk=((3000, 32),) at=0 dwalk=((3000, 32),) dat=0

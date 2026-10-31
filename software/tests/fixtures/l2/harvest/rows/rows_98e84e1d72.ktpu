@@ -1,0 +1,26 @@
+target ktpu.v9
+
+fn rows_98e84e1d72.l2(in0: f16[5, 192] @dram, in1: f16[192] @dram, out: f16[5, 192] @dram)
+    h1 = buffer  : f16[4, 192] @dram
+    h2 = buffer  : f16[4, 192] @dram
+    par c1 in 0..1 on vc[c1]
+        xl1 = load in1[0 : +192]  : f16[4, 192] @l1(gt4)
+        v1 = unpack xl1           : f32[4, 192] @reg(gt4)
+        for t1 in 0..1
+            xl2 = load in0[t1*4 : +4, 0 : +192] : f16[4, 192] @l1(gt4)
+            v2 = unpack xl2                     : f32[4, 192] @reg(gt4)
+            e1 = add v2, v1                     : f32[4, 192] @reg(gt4)
+            p1 = pack e1                        : f16[4, 192] @l1(gt4)
+            store out[t1*4 : +4, 0 : +192] <- p1
+    fill h1 value=0
+    copy h1[0 : +1] <- in0[4 : +1, 0 : +192]
+    par c2 in 0..1 on vc[c2]
+        xl3 = load in1[0 : +192]  : f16[4, 192] @l1(gt4)
+        v3 = unpack xl3           : f32[4, 192] @reg(gt4)
+        for t2 in 0..1
+            xl4 = load h1[t2*4 : +4, 0 : +192]  : f16[4, 192] @l1(gt4)
+            v4 = unpack xl4                     : f32[4, 192] @reg(gt4)
+            e2 = add v4, v3                     : f32[4, 192] @reg(gt4)
+            p2 = pack e2                        : f16[4, 192] @l1(gt4)
+            store h2[t2*4 : +4, 0 : +192] <- p2
+    copy out[4 : +1, 0 : +192] <- h2[0 : +1]

@@ -1,0 +1,73 @@
+target ktpu.v9
+
+image s_vexp2(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    ainc a0 += 256
+    ainc a1 += 256
+    seti s15 = 64
+    loop s15
+        vsync fill on=unpack
+        vfill a0 -> l1[0] rel
+        vbar
+        vunpk v0 <- l1[0] f16
+        vexp2 v1, v0
+        vsync pack on=drain
+        vpack v1 -> l1[16] f16
+        vsync drain on=pack
+        vdrain a1 <- l1[16] rel
+    halt
+
+image s_vlog2(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    ainc a0 += 256
+    ainc a1 += 256
+    seti s15 = 64
+    loop s15
+        vsync fill on=unpack
+        vfill a0 -> l1[0] rel
+        vbar
+        vunpk v0 <- l1[0] f16
+        vlog2 v1, v0
+        vsync pack on=drain
+        vpack v1 -> l1[16] f16
+        vsync drain on=pack
+        vdrain a1 <- l1[16] rel
+    halt
+
+image s_vinv(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    ainc a0 += 256
+    ainc a1 += 256
+    seti s15 = 64
+    loop s15
+        vsync fill on=unpack
+        vfill a0 -> l1[0] rel
+        vbar
+        vunpk v0 <- l1[0] f16
+        vinv v1, v0
+        vsync pack on=drain
+        vpack v1 -> l1[16] f16
+        vsync drain on=pack
+        vdrain a1 <- l1[16] rel
+    halt
+
+image s_vrsqrt(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    ainc a0 += 256
+    ainc a1 += 256
+    seti s15 = 64
+    loop s15
+        vsync fill on=unpack
+        vfill a0 -> l1[0] rel
+        vbar
+        vunpk v0 <- l1[0] f16
+        vrsqrt v1, v0
+        vsync pack on=drain
+        vpack v1 -> l1[16] f16
+        vsync drain on=pack
+        vdrain a1 <- l1[16] rel
+    halt

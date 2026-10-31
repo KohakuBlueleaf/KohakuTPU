@@ -1,0 +1,23 @@
+target ktpu.v9
+
+fn transpose_39c8715340.l2(x: f16[3072, 16] @dram, mask: f16[2, 128] @dram, y: f16[3072, 16] @dram)
+    h1 = buffer  : f16[384, 128] @dram
+    h2 = buffer  : f16[384, 128] @dram
+    h3 = buffer  : f16[3072, 16] @dram
+    gt4 h1 <- x walk=((1, 98304), (16, 6144), (48, 32), (4, 1536)) dwalk=((1, 98304), (16, 6144), (48, 128))
+    par c1 in 0..2 on vc[c1]
+        xl1 = load mask[0 : +1]  : f16[1, 128] @l1
+        v1 = unpack xl1          : f32[1, 128] @reg
+        xl2 = load mask[1 : +1]  : f16[1, 128] @l1
+        v2 = unpack xl2          : f32[1, 128] @reg
+        for t1 in 0..24
+            xl3 = load h1[c1*192 + t1*8 : +8]  : f16[8, 128] @l1
+            v3 = unpack xl3                    : f32[8, 128] @reg
+            e1 = xlane v3, 5.0                 : f32[8, 128] @reg
+            o1 = sel v1, e1, v3                : f32[8, 128] @reg
+            e2 = xlane o1, 10.0                : f32[8, 128] @reg
+            o2 = sel v2, e2, o1                : f32[8, 128] @reg
+            p1 = pack o2                       : f16[8, 128] @l1
+            store h2[c1*192 + t1*8 : +8] <- p1
+    gt4 h3 <- h2 walk=((1, 98304), (192, 32), (4, 24576), (4, 6144)) dwalk=((1, 98304), (192, 512), (4, 128))
+    copy y <- h3 walk=((1, 98304), (192, 512), (4, 32), (4, 128)) dwalk=((3072, 32),)

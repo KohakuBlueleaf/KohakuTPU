@@ -1,0 +1,21 @@
+target ktpu.v9
+
+fn mm_5da7c79a94.l2(a: mx7a[8, 416] @dram(gm=2, nk=1), b: mx7b[128, 416] @dram(gn=32, nk=1), in1: f16[128] @dram, out: f16[8, 128] @dram)
+    h1 = buffer  : f16[8, 128] @dram(tile=2x32)
+    par u1 in 0..1 on mg[u1]
+        for k1 in 0..1
+            acc1 = zero  : f32[8, 128] @acc
+            for k2 in 0..13
+                a1 = fill a[u1*8 + k1*8 : +8, k2*32 : +32]  : mx7a[8, 32] @A
+                b1 = fill b[0 : +128, k2*32 : +32]  : mx7b[128, 32] @B
+                acc1 = gemm a1, b1, acc1        : f32[8, 128] @acc
+            drain acc1 -> h1[u1*8 + k1*8 : +8, 0 : +128]
+    par c1 in 0..1 on vc[c1]
+        xl1 = load in1[0 : +128]  : f16[4, 128] @l1(gt4)
+        v1 = unpack xl1           : f32[4, 128] @reg(gt4)
+        for t1 in 0..1
+            xl2 = load h1[t1*8 : +8, 0 : +128]  : f16[8, 128] @l1(gt4)
+            v2 = unpack xl2                     : f32[8, 128] @reg(gt4)
+            e1 = add v2, v1                     : f32[8, 128] @reg(gt4)
+            p1 = pack e1                        : f16[8, 128] @l1(gt4)
+            store out[t1*8 : +8, 0 : +128] <- p1

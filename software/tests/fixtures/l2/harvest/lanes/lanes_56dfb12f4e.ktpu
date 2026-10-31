@@ -1,0 +1,5 @@
+target ktpu.v9
+
+fn lanes_56dfb12f4e.l2(src: f16[2352, 16] @dram, dst: f16[2368, 16] @dram, index: f32[8] @dram, mask: f16[1, 128] @dram)
+    fill dst value=0 walk=((2368, 32),) at=0
+    copy dst <- src walk=((2352, 32),) at=0 dwalk=((16, 4736), (147, 32)) dat=0

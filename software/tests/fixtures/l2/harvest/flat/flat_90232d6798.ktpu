@@ -1,0 +1,12 @@
+target ktpu.v9
+
+fn flat_90232d6798.l2(in0: f16[4, 128] @dram, in1: f16[4, 128] @dram, out: f16[4, 128] @dram)
+    par c1 in 0..1 on vc[c1]
+        for t1 in 0..1
+            xl1 = load in0[0 : +4]  : f16[4, 128] @l1
+            xl2 = load in1[0 : +4]  : f16[4, 128] @l1
+            v1 = unpack xl1         : f32[4, 128] @reg
+            v2 = unpack xl2         : f32[4, 128] @reg
+            e1 = add v1, v2         : f32[4, 128] @reg
+            p1 = pack e1            : f16[4, 128] @l1
+            store out[0 : +4] <- p1

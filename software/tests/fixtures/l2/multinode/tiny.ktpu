@@ -1,0 +1,67 @@
+# Two and four nodes at few tokens: tensor parallel with shared fills, and data parallel.
+target ktpu.v9
+
+fn tiny_ffn4.l2(x: mx7a[64, 64] @dram(gm=8, nk=2), w: mx7b[64, 64] @dram(gn=8, nk=2), h: f16[64, 64] @dram(tile=8x8), y: f16[64, 64] @dram(tile=8x8))
+    par n in 0..4 on node[n]
+        par u in 0..2 on mg[u]
+            acc = zero                                              : f32[16, 32] @acc
+            a = fill x[n*16 : +16, 0 : +64]                         : mx7a[16, 64] @A
+            b = fill w[u*32 : +32, 0 : +64]                         : mx7b[32, 64] @B
+            acc = gemm a, b, acc                                    : f32[16, 32] @acc
+            drain acc -> h[n*16 : +16, u*32 : +32]
+        par c in 0..2 on vc[any]
+            for t in 0..4
+                hl = load h[n*16 + t*4 : +4, c*32 : +32]            : f16[4, 32] @l1(gt4)
+                v = unpack hl                                       : f32[4, 32] @reg(gt4)
+                o = mul v, 2.0                                      : f32[4, 32] @reg(gt4)
+                q = pack o                                          : f16[4, 32] @l1(gt4)
+                store y[n*16 + t*4 : +4, c*32 : +32] <- q
+
+fn tiny_share2.l2(x: mx7a[32, 128] @dram(gm=8, nk=2), w: mx7b[256, 128] @dram(gn=8, nk=2), y: f16[32, 256] @dram(tile=8x8))
+    par n in 0..2 on node[n]
+        par u in 0..4 on mg[u]
+            acc = zero                                              : f32[32, 32] @acc
+            for k in 0..2
+                a = fill x[0 : +32, k*64 : +64] share=cross         : mx7a[32, 64] @A
+                b = fill w[(4*n + u)*32 : +32, k*64 : +64]          : mx7b[32, 64] @B
+                acc = gemm a, b, acc                                : f32[32, 32] @acc
+            drain acc -> y[0 : +32, (4*n + u)*32 : +32]
+
+fn tiny_matmul2.l2(x: mx7a[64, 128] @dram(gm=8, nk=2), w: mx7b[256, 128] @dram(gn=8, nk=2), y: f16[64, 256] @dram(tile=8x8))
+    par n in 0..2 on node[n]
+        par u in 0..4 on mg[u]
+            for i in 0..2
+                acc = zero                                          : f32[32, 32] @acc
+                for k in 0..2
+                    a = fill x[i*32 : +32, k*64 : +64] share=cross  : mx7a[32, 64] @A
+                    b = fill w[(4*n + u)*32 : +32, k*64 : +64]      : mx7b[32, 64] @B
+                    acc = gemm a, b, acc                            : f32[32, 32] @acc
+                drain acc -> y[i*32 : +32, (4*n + u)*32 : +32]
+
+fn tiny_ffn2.l2(x: mx7a[64, 128] @dram(gm=8, nk=2), w1: mx7b[128, 128] @dram(gn=16, nk=2), w2: mx7b[128, 128] @dram(gn=8, nk=2), h: f16[64, 128] @dram(tile=8x16), a2: mx7a[64, 128] @dram(gm=8, nk=2), y: f16[64, 128] @dram(tile=8x8))
+    par n in 0..2 on node[n]
+        par u in 0..2 on mg[u]
+            acc = zero                                              : f32[32, 64] @acc
+            for k in 0..2
+                a = fill x[n*32 : +32, k*64 : +64]                  : mx7a[32, 64] @A
+                b = fill w1[u*64 : +64, k*64 : +64]                 : mx7b[64, 64] @B
+                acc = gemm a, b, acc                                : f32[32, 64] @acc
+            drain acc -> h[n*32 : +32, u*64 : +64]
+        par c in 0..4 on vc[any]
+            for t in 0..4
+                hl = load h[n*32 + (c % 2)*16 + t*4 : +4, (c / 2)*64 : +64] : f16[4, 64] @l1(gt4)
+                v = unpack hl                                       : f32[4, 64] @reg(gt4)
+                e = mul v, -1.4426950408889634                      : f32[4, 64] @reg(gt4)
+                e = exp2 e                                          : f32[4, 64] @reg(gt4)
+                e = add e, 1.0                                      : f32[4, 64] @reg(gt4)
+                e = inv e                                           : f32[4, 64] @reg(gt4)
+                o = mul v, e                                        : f32[4, 64] @reg(gt4)
+                q = pack o                                          : mx7a[4, 64] @l1
+                store a2[n*32 + (c % 2)*16 + t*4 : +4, (c / 2)*64 : +64] <- q
+        par u in 0..4 on mg[u]
+            acc = zero                                              : f32[32, 32] @acc
+            for k in 0..2
+                a = fill a2[n*32 : +32, k*64 : +64]                 : mx7a[32, 64] @A
+                b = fill w2[u*32 : +32, k*64 : +64]                 : mx7b[32, 64] @B
+                acc = gemm a, b, acc                                : f32[32, 32] @acc
+            drain acc -> y[n*32 : +32, u*32 : +32]

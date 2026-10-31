@@ -1,0 +1,14 @@
+target ktpu.v9
+
+fn rows_a15723c180.l2(in0: f16[16, 32] @dram, out: f16[16] @dram)
+    par c1 in 0..1 on vc[c1]
+        for t1 in 0..1
+            xl1 = load in0[t1*16 : +16, 0 : +32]  : f16[16, 32] @l1(gt4)
+            v1 = unpack xl1                     : f32[16, 32] @reg(gt4)
+            e1 = mul v1, 1.4426950408889634     : f32[16, 32] @reg(gt4)
+            e2 = exp2 e1                        : f32[16, 32] @reg(gt4)
+            s1 = rsum e2                        : f32[16] @reg
+            e3 = log2 s1                        : f32[16] @reg
+            e4 = mul e3, 0.6931471805599453     : f32[16] @reg
+            p1 = pack e4                        : f16[16] @l1
+            store out[t1*16 : +16] <- p1

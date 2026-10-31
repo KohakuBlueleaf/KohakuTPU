@@ -1,0 +1,67 @@
+# Sweep, core, sweep at 64 tokens: the fused layers, one row block at a time.
+target ktpu.v9
+
+fn tiny_ffn.l2(x: mx7a[64, 128] @dram(gm=8, nk=2), w1: mx7b[128, 128] @dram(gn=16, nk=2), w2: mx7b[128, 128] @dram(gn=8, nk=2), h: f16[64, 128] @dram(tile=8x16), a2: mx7a[64, 128] @dram(gm=8, nk=2), y: f16[64, 128] @dram(tile=8x8))
+    for i in 0..2
+        par u in 0..2 on mg[u]
+            acc = zero                                  : f32[32, 64] @acc
+            for k in 0..2
+                a = fill x[i*32 : +32, k*64 : +64]      : mx7a[32, 64] @A
+                b = fill w1[u*64 : +64, k*64 : +64]     : mx7b[64, 64] @B
+                acc = gemm a, b, acc                    : f32[32, 64] @acc
+            drain acc -> h[i*32 : +32, u*64 : +64]
+        par c in 0..4 on vc[any]
+            for t in 0..4
+                hl = load h[i*32 + (c % 2)*16 + t*4 : +4, (c / 2)*64 : +64] : f16[4, 64] @l1(gt4)
+                v = unpack hl                           : f32[4, 64] @reg(gt4)
+                e = mul v, -1.4426950408889634          : f32[4, 64] @reg(gt4)
+                e = exp2 e                              : f32[4, 64] @reg(gt4)
+                e = add e, 1.0                          : f32[4, 64] @reg(gt4)
+                e = inv e                               : f32[4, 64] @reg(gt4)
+                o = mul v, e                            : f32[4, 64] @reg(gt4)
+                q = pack o                              : mx7a[4, 64] @l1
+                store a2[i*32 + (c % 2)*16 + t*4 : +4, (c / 2)*64 : +64] <- q
+        par u in 0..4 on mg[u]
+            acc = zero                                  : f32[32, 32] @acc
+            for k in 0..2
+                a = fill a2[i*32 : +32, k*64 : +64]     : mx7a[32, 64] @A
+                b = fill w2[u*32 : +32, k*64 : +64]     : mx7b[32, 64] @B
+                acc = gemm a, b, acc                    : f32[32, 32] @acc
+            drain acc -> y[i*32 : +32, u*32 : +32]
+
+fn tiny_swiglu.l2(x: mx7a[64, 128] @dram(gm=8, nk=2), w1: mx7b[128, 128] @dram(gn=16, nk=2), w3: mx7b[128, 128] @dram(gn=16, nk=2), w2: mx7b[128, 128] @dram(gn=8, nk=2), g: f16[64, 128] @dram(tile=8x16), u: f16[64, 128] @dram(tile=8x16), a2: mx7a[64, 128] @dram(gm=8, nk=2), y: f16[64, 128] @dram(tile=8x8))
+    for i in 0..2
+        par c in 0..2 on mg[c]
+            acc = zero                                  : f32[32, 64] @acc
+            for k in 0..2
+                a = fill x[i*32 : +32, k*64 : +64]      : mx7a[32, 64] @A
+                b = fill w1[c*64 : +64, k*64 : +64]     : mx7b[64, 64] @B
+                acc = gemm a, b, acc                    : f32[32, 64] @acc
+            drain acc -> g[i*32 : +32, c*64 : +64]
+            acc = zero                                  : f32[32, 64] @acc
+            for k in 0..2
+                a = fill x[i*32 : +32, k*64 : +64]      : mx7a[32, 64] @A
+                b = fill w3[c*64 : +64, k*64 : +64]     : mx7b[64, 64] @B
+                acc = gemm a, b, acc                    : f32[32, 64] @acc
+            drain acc -> u[i*32 : +32, c*64 : +64]
+        par c in 0..4 on vc[any]
+            for t in 0..4
+                gl = load g[i*32 + (c % 2)*16 + t*4 : +4, (c / 2)*64 : +64] : f16[4, 64] @l1(gt4)
+                ul = load u[i*32 + (c % 2)*16 + t*4 : +4, (c / 2)*64 : +64] : f16[4, 64] @l1(gt4)
+                v = unpack gl                           : f32[4, 64] @reg(gt4)
+                w = unpack ul                           : f32[4, 64] @reg(gt4)
+                e = mul v, -1.4426950408889634          : f32[4, 64] @reg(gt4)
+                e = exp2 e                              : f32[4, 64] @reg(gt4)
+                e = add e, 1.0                          : f32[4, 64] @reg(gt4)
+                e = inv e                               : f32[4, 64] @reg(gt4)
+                o = mul v, e                            : f32[4, 64] @reg(gt4)
+                o = mul o, w                            : f32[4, 64] @reg(gt4)
+                q = pack o                              : mx7a[4, 64] @l1
+                store a2[i*32 + (c % 2)*16 + t*4 : +4, (c / 2)*64 : +64] <- q
+        par c in 0..4 on mg[c]
+            acc = zero                                  : f32[32, 32] @acc
+            for k in 0..2
+                a = fill a2[i*32 : +32, k*64 : +64]     : mx7a[32, 64] @A
+                b = fill w2[c*32 : +32, k*64 : +64]     : mx7b[32, 64] @B
+                acc = gemm a, b, acc                    : f32[32, 32] @acc
+            drain acc -> y[i*32 : +32, c*32 : +32]

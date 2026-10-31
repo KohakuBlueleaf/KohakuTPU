@@ -1,0 +1,100 @@
+# One tile through each vector form, small enough for any stage to run in a blink.
+target ktpu.v9
+
+fn tiny_add.l2(x: f16[16, 128] @dram, y: f16[16, 128] @dram, out: f16[16, 128] @dram)
+    par c in 0..2 on vc[c]
+        for t in 0..1
+            xl = load x[c*8 : +8, :]            : f16[8, 128] @l1
+            yl = load y[c*8 : +8, :]            : f16[8, 128] @l1
+            a = unpack xl                       : f32[8, 128] @reg
+            b = unpack yl                       : f32[8, 128] @reg
+            s = add a, b                        : f32[8, 128] @reg
+            sl = pack s                         : f16[8, 128] @l1
+            store out[c*8 : +8, :] <- sl
+
+fn tiny_unary.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram)
+    par c in 0..1 on vc[c]
+        for t in 0..1
+            xl = load x                         : f16[8, 128] @l1
+            v = unpack xl                       : f32[8, 128] @reg
+            n = neg v                           : f32[8, 128] @reg
+            p = abs n                           : f32[8, 128] @reg
+            l = log2 p                          : f32[8, 128] @reg
+            r = rsqrt p                         : f32[8, 128] @reg
+            m = mov r                           : f32[8, 128] @reg
+            o = add l, m                        : f32[8, 128] @reg
+            ol = pack o                         : f16[8, 128] @l1
+            store y <- ol
+
+fn tiny_compare.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram, out: f16[8, 128] @dram)
+    par c in 0..1 on vc[c]
+        for t in 0..1
+            xl = load x                         : f16[8, 128] @l1
+            yl = load y                         : f16[8, 128] @l1
+            a = unpack xl                       : f32[8, 128] @reg
+            b = unpack yl                       : f32[8, 128] @reg
+            u = max a, b                        : f32[8, 128] @reg
+            w = min a, b                        : f32[8, 128] @reg
+            lt = cmplt a, b                     : f32[8, 128] @reg
+            eq = cmpeq a, b                     : f32[8, 128] @reg
+            gt = cmpgt a, b                     : f32[8, 128] @reg
+            s = sel lt, u, w                    : f32[8, 128] @reg
+            s = sel eq, a, s                    : f32[8, 128] @reg
+            o = sel gt, s, b                    : f32[8, 128] @reg
+            ol = pack o                         : f16[8, 128] @l1
+            store out <- ol
+
+fn tiny_cross.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram)
+    par c in 0..1 on vc[c]
+        for t in 0..1
+            xl = load x                         : f16[8, 128] @l1
+            v = unpack xl                       : f32[8, 128] @reg
+            a = xlane v, 1.0                    : f32[8, 128] @reg
+            b = xrot v, 3.0                     : f32[8, 128] @reg
+            o = fnma a, b, v                    : f32[8, 128] @reg
+            ol = pack o                         : f16[8, 128] @l1
+            store y <- ol
+
+fn tiny_rmax.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram)
+    par c in 0..1 on vc[c]
+        for t in 0..1
+            xl = load x                         : f16[8, 128] @l1
+            v = unpack xl                       : f32[8, 128] @reg
+            m = rmax v                          : f32[8] @reg
+            o = sub v, m[:, *]                  : f32[8, 128] @reg
+            ol = pack o                         : f16[8, 128] @l1
+            store y <- ol
+
+fn tiny_rsum.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram)
+    par c in 0..1 on vc[c]
+        for t in 0..1
+            xl = load x                         : f16[8, 128] @l1
+            v = unpack xl                       : f32[8, 128] @reg
+            m = rsum v                          : f32[8] @reg
+            o = sub v, m[:, *]                  : f32[8, 128] @reg
+            ol = pack o                         : f16[8, 128] @l1
+            store y <- ol
+
+fn tiny_exp2d.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram)
+    par c in 0..1 on vc[c]
+        for t in 0..1
+            xl = load x                         : f16[8, 128] @l1
+            v = unpack xl                       : f32[8, 128] @reg
+            m = rmax v                          : f32[8] @reg
+            o = exp2d v, m[:, *]                : f32[8, 128] @reg
+            ol = pack o                         : f16[8, 128] @l1
+            store y <- ol
+
+fn tiny_softmax.l2(x: f16[8, 128] @dram, y: f16[8, 128] @dram)
+    par c in 0..1 on vc[c]
+        for t in 0..1
+            xl = load x                         : f16[8, 128] @l1
+            v = unpack xl                       : f32[8, 128] @reg
+            s = mul v, 1.4426950408889634       : f32[8, 128] @reg
+            m = rmax s                          : f32[8] @reg
+            p = exp2d s, m[:, *]                : f32[8, 128] @reg
+            l = rsum p                          : f32[8] @reg
+            r = inv l                           : f32[8] @reg
+            o = mul p, r[:, *]                  : f32[8, 128] @reg
+            ol = pack o                         : f16[8, 128] @l1
+            store y <- ol

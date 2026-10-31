@@ -1,0 +1,55 @@
+target ktpu.v9
+
+image i_vadd(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0[1 :] <- l1[0] f16 n=8
+    vunpk v1 <- l1[0] f16
+    vadd v0, v0[1 :], v1
+    vsync pack on=drain slack=1
+    vpack v0 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt
+
+image i_vmul(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    seti s0 = 1.5
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0[1 :] <- l1[0] f16 n=8
+    vmul v0, v0[1 :], s0
+    vsync pack on=drain slack=1
+    vpack v0 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt
+
+image i_vmov(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0[1 :] <- l1[0] f16 n=8
+    vmov v0, v0[1 :]
+    vsync pack on=drain slack=1
+    vpack v0 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt
+
+image i_vsel(in, out)
+    desc a0=in walk=(32, 8)
+    desc a1=out walk=(32, 8)
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0[1 :] <- l1[0] f16 n=8
+    vsel v0, v0[1 :], k0, v0
+    vsync pack on=drain slack=1
+    vpack v0 -> l1[16] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[16] rel
+    halt

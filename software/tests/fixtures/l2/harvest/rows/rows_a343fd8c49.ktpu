@@ -1,0 +1,367 @@
+target ktpu.v9
+
+fn rows_a343fd8c49.l2(in0: f16[8, 1600] @dram, x1: f16[2, 16] @dram, p1_index0: f32[320] @dram, p1_mask0: f16[24, 128] @dram, out: f16[8, 1600] @dram)
+    h1 = buffer  : f16[8, 1600] @dram
+    h2 = buffer  : f16[160, 128] @dram
+    h3 = buffer  : f16[160, 128] @dram
+    h4 = buffer  : f16[160, 128] @dram
+    h5 = buffer  : f16[32, 128] @dram
+    par c1 in 0..2 on vc[c1]
+        xl1 = load p1_mask0[0 : +16]  : f16[16, 128] @l1(gt4)
+        v1 = unpack xl1               : f32[16, 128] @reg(gt4)
+        for t1 in 0..1
+            xl2 = load x1[c1 + t1]     : f16[16] @l1
+            v2 = unpack xl2            : f32[16] @reg
+            o1 = sel v1, v2[:, *], v1  : f32[16, 128] @reg(gt4)
+            p1 = pack o1               : f16[16, 128] @l1(gt4)
+            store h5[c1*16 + t1*16 : +16] <- p1
+    gather h4[0 : +24, 0 : +32] <- h5 fp index=p1_index0[24 : +24]
+    gather h4[24 : +24, 0 : +64] <- h5 fp index=p1_index0[72 : +24]
+    gather h4[48 : +24, 0 : +96] <- h5 fp index=p1_index0[120 : +24]
+    gather h4[72 : +88, 0 : +128] <- h5 fp index=p1_index0[232 : +88]
+    scatter h1 <- h4[0 : +8, 0 : +32] fp index=p1_index0[0 : +8] table_stride=64
+    par c2 in 0..2 on vc[c2]
+        xl3 = load p1_mask0[16 : +1]  : f16[1, 128] @l1
+        v3 = unpack xl3               : f32[1, 128] @reg
+        for t2 in 0..2
+            xl4 = load h4[c2*4 + t2*2 + 8 : +2] : f16[2, 128] @l1
+            v4 = unpack xl4                     : f32[2, 128] @reg
+            o2 = sel v3, v4, 0.0                : f32[2, 128] @reg
+            p2 = pack o2                        : f16[2, 128] @l1
+            store h3[c2*4 + t2*2 + 8 : +2] <- p2
+    scatter h1 <- h3[8 : +8, 0 : +32] fp index=p1_index0[8 : +8] table_stride=64
+    scatter h1 <- h4[24 : +8, 0 : +64] fp index=p1_index0[48 : +8] table_stride=64
+    par c3 in 0..2 on vc[c3]
+        xl5 = load p1_mask0[18 : +1]  : f16[1, 128] @l1
+        v5 = unpack xl5               : f32[1, 128] @reg
+        for t3 in 0..2
+            xl6 = load h4[c3*4 + t3*2 + 32 : +2]  : f16[2, 128] @l1
+            v6 = unpack xl6                     : f32[2, 128] @reg
+            o3 = sel v5, v6, 0.0                : f32[2, 128] @reg
+            p3 = pack o3                        : f16[2, 128] @l1
+            store h3[c3*4 + t3*2 + 32 : +2] <- p3
+    scatter h1 <- h3[32 : +8, 0 : +64] fp index=p1_index0[56 : +8] table_stride=64
+    scatter h1 <- h4[48 : +8, 0 : +96] fp index=p1_index0[96 : +8] table_stride=64
+    par c4 in 0..2 on vc[c4]
+        xl7 = load p1_mask0[20 : +1]  : f16[1, 128] @l1
+        v7 = unpack xl7               : f32[1, 128] @reg
+        for t4 in 0..2
+            xl8 = load h4[c4*4 + t4*2 + 56 : +2]  : f16[2, 128] @l1
+            v8 = unpack xl8                     : f32[2, 128] @reg
+            o4 = sel v7, v8, 0.0                : f32[2, 128] @reg
+            p4 = pack o4                        : f16[2, 128] @l1
+            store h3[c4*4 + t4*2 + 56 : +2] <- p4
+    scatter h1 <- h3[56 : +8, 0 : +96] fp index=p1_index0[104 : +8] table_stride=64
+    scatter h1 <- h4[72 : +72, 0 : +128] fp index=p1_index0[144 : +72] table_stride=64
+    par c5 in 0..2 on vc[c5]
+        xl9 = load p1_mask0[22 : +1]  : f16[1, 128] @l1
+        v9 = unpack xl9               : f32[1, 128] @reg
+        for t5 in 0..2
+            xl10 = load h4[c5*4 + t5*2 + 144 : +2]  : f16[2, 128] @l1
+            v10 = unpack xl10                   : f32[2, 128] @reg
+            o5 = sel v9, v10, 0.0               : f32[2, 128] @reg
+            p5 = pack o5                        : f16[2, 128] @l1
+            store h3[c5*4 + t5*2 + 144 : +2] <- p5
+    scatter h1 <- h3[144 : +8, 0 : +128] fp index=p1_index0[216 : +8] table_stride=64
+    gather h2[16 : +8, 0 : +32] <- h1 fp index=p1_index0[16 : +8] table_stride=64
+    par c6 in 0..2 on vc[c6]
+        xl11 = load p1_mask0[17 : +1]  : f16[1, 128] @l1
+        v11 = unpack xl11              : f32[1, 128] @reg
+        for t6 in 0..2
+            xl12 = load h4[c6*4 + t6*2 + 16 : +2]  : f16[2, 128] @l1
+            v12 = unpack xl12                   : f32[2, 128] @reg
+            xl13 = load h2[c6*4 + t6*2 + 16 : +2]  : f16[2, 128] @l1
+            v13 = unpack xl13                   : f32[2, 128] @reg
+            o6 = sel v11, v12, v13              : f32[2, 128] @reg
+            p6 = pack o6                        : f16[2, 128] @l1
+            store h3[c6*4 + t6*2 + 16 : +2] <- p6
+    scatter h1 <- h3[16 : +8, 0 : +32] fp index=p1_index0[16 : +8] table_stride=64
+    gather h2[40 : +8, 0 : +64] <- h1 fp index=p1_index0[64 : +8] table_stride=64
+    par c7 in 0..2 on vc[c7]
+        xl14 = load p1_mask0[19 : +1]  : f16[1, 128] @l1
+        v14 = unpack xl14              : f32[1, 128] @reg
+        for t7 in 0..2
+            xl15 = load h4[c7*4 + t7*2 + 40 : +2]  : f16[2, 128] @l1
+            v15 = unpack xl15                   : f32[2, 128] @reg
+            xl16 = load h2[c7*4 + t7*2 + 40 : +2]  : f16[2, 128] @l1
+            v16 = unpack xl16                   : f32[2, 128] @reg
+            o7 = sel v14, v15, v16              : f32[2, 128] @reg
+            p7 = pack o7                        : f16[2, 128] @l1
+            store h3[c7*4 + t7*2 + 40 : +2] <- p7
+    scatter h1 <- h3[40 : +8, 0 : +64] fp index=p1_index0[64 : +8] table_stride=64
+    gather h2[64 : +8, 0 : +96] <- h1 fp index=p1_index0[112 : +8] table_stride=64
+    par c8 in 0..2 on vc[c8]
+        xl17 = load p1_mask0[21 : +1]  : f16[1, 128] @l1
+        v17 = unpack xl17              : f32[1, 128] @reg
+        for t8 in 0..2
+            xl18 = load h4[c8*4 + t8*2 + 64 : +2]  : f16[2, 128] @l1
+            v18 = unpack xl18                   : f32[2, 128] @reg
+            xl19 = load h2[c8*4 + t8*2 + 64 : +2]  : f16[2, 128] @l1
+            v19 = unpack xl19                   : f32[2, 128] @reg
+            o8 = sel v17, v18, v19              : f32[2, 128] @reg
+            p8 = pack o8                        : f16[2, 128] @l1
+            store h3[c8*4 + t8*2 + 64 : +2] <- p8
+    scatter h1 <- h3[64 : +8, 0 : +96] fp index=p1_index0[112 : +8] table_stride=64
+    gather h2[152 : +8, 0 : +128] <- h1 fp index=p1_index0[224 : +8] table_stride=64
+    par c9 in 0..2 on vc[c9]
+        xl20 = load p1_mask0[23 : +1]  : f16[1, 128] @l1
+        v20 = unpack xl20              : f32[1, 128] @reg
+        for t9 in 0..2
+            xl21 = load h4[c9*4 + t9*2 + 152 : +2]  : f16[2, 128] @l1
+            v21 = unpack xl21                   : f32[2, 128] @reg
+            xl22 = load h2[c9*4 + t9*2 + 152 : +2]  : f16[2, 128] @l1
+            v22 = unpack xl22                   : f32[2, 128] @reg
+            o9 = sel v20, v21, v22              : f32[2, 128] @reg
+            p9 = pack o9                        : f16[2, 128] @l1
+            store h3[c9*4 + t9*2 + 152 : +2] <- p9
+    scatter h1 <- h3[152 : +8, 0 : +128] fp index=p1_index0[224 : +8] table_stride=64
+    par c10 in 0..1 on vc[c10]
+        for t10 in 0..1
+            xl23 = load in0[t10*8 : +8, 0 : +64]  : f16[8, 64] @l1(gt4)
+            xl24 = load h1[t10*8 : +8, 0 : +64] : f16[8, 64] @l1(gt4)
+            v23 = unpack xl24                   : f32[8, 64] @reg(gt4)
+            e1 = mul v23, -1.0                  : f32[8, 64] @reg(gt4)
+            v24 = unpack xl23                   : f32[8, 64] @reg(gt4)
+            e2 = add v24, e1                    : f32[8, 64] @reg(gt4)
+            p10 = pack e2                       : f16[8, 64] @l1(gt4)
+            store out[t10*8 : +8, 0 : +64] <- p10
+    par c11 in 0..1 on vc[c11]
+        for t11 in 0..1
+            xl25 = load in0[t11*8 : +8, 64 : +64]  : f16[8, 64] @l1(gt4)
+            xl26 = load h1[t11*8 : +8, 64 : +64]  : f16[8, 64] @l1(gt4)
+            v25 = unpack xl26                   : f32[8, 64] @reg(gt4)
+            e3 = mul v25, -1.0                  : f32[8, 64] @reg(gt4)
+            v26 = unpack xl25                   : f32[8, 64] @reg(gt4)
+            e4 = add v26, e3                    : f32[8, 64] @reg(gt4)
+            p11 = pack e4                       : f16[8, 64] @l1(gt4)
+            store out[t11*8 : +8, 64 : +64] <- p11
+    par c12 in 0..1 on vc[c12]
+        for t12 in 0..1
+            xl27 = load in0[t12*8 : +8, 128 : +64]  : f16[8, 64] @l1(gt4)
+            xl28 = load h1[t12*8 : +8, 128 : +64]  : f16[8, 64] @l1(gt4)
+            v27 = unpack xl28                   : f32[8, 64] @reg(gt4)
+            e5 = mul v27, -1.0                  : f32[8, 64] @reg(gt4)
+            v28 = unpack xl27                   : f32[8, 64] @reg(gt4)
+            e6 = add v28, e5                    : f32[8, 64] @reg(gt4)
+            p12 = pack e6                       : f16[8, 64] @l1(gt4)
+            store out[t12*8 : +8, 128 : +64] <- p12
+    par c13 in 0..1 on vc[c13]
+        for t13 in 0..1
+            xl29 = load in0[t13*8 : +8, 192 : +64]  : f16[8, 64] @l1(gt4)
+            xl30 = load h1[t13*8 : +8, 192 : +64]  : f16[8, 64] @l1(gt4)
+            v29 = unpack xl30                   : f32[8, 64] @reg(gt4)
+            e7 = mul v29, -1.0                  : f32[8, 64] @reg(gt4)
+            v30 = unpack xl29                   : f32[8, 64] @reg(gt4)
+            e8 = add v30, e7                    : f32[8, 64] @reg(gt4)
+            p13 = pack e8                       : f16[8, 64] @l1(gt4)
+            store out[t13*8 : +8, 192 : +64] <- p13
+    par c14 in 0..1 on vc[c14]
+        for t14 in 0..1
+            xl31 = load in0[t14*8 : +8, 256 : +64]  : f16[8, 64] @l1(gt4)
+            xl32 = load h1[t14*8 : +8, 256 : +64]  : f16[8, 64] @l1(gt4)
+            v31 = unpack xl32                   : f32[8, 64] @reg(gt4)
+            e9 = mul v31, -1.0                  : f32[8, 64] @reg(gt4)
+            v32 = unpack xl31                   : f32[8, 64] @reg(gt4)
+            e10 = add v32, e9                   : f32[8, 64] @reg(gt4)
+            p14 = pack e10                      : f16[8, 64] @l1(gt4)
+            store out[t14*8 : +8, 256 : +64] <- p14
+    par c15 in 0..1 on vc[c15]
+        for t15 in 0..1
+            xl33 = load in0[t15*8 : +8, 320 : +64]  : f16[8, 64] @l1(gt4)
+            xl34 = load h1[t15*8 : +8, 320 : +64]  : f16[8, 64] @l1(gt4)
+            v33 = unpack xl34                   : f32[8, 64] @reg(gt4)
+            e11 = mul v33, -1.0                 : f32[8, 64] @reg(gt4)
+            v34 = unpack xl33                   : f32[8, 64] @reg(gt4)
+            e12 = add v34, e11                  : f32[8, 64] @reg(gt4)
+            p15 = pack e12                      : f16[8, 64] @l1(gt4)
+            store out[t15*8 : +8, 320 : +64] <- p15
+    par c16 in 0..1 on vc[c16]
+        for t16 in 0..1
+            xl35 = load in0[t16*8 : +8, 384 : +64]  : f16[8, 64] @l1(gt4)
+            xl36 = load h1[t16*8 : +8, 384 : +64]  : f16[8, 64] @l1(gt4)
+            v35 = unpack xl36                   : f32[8, 64] @reg(gt4)
+            e13 = mul v35, -1.0                 : f32[8, 64] @reg(gt4)
+            v36 = unpack xl35                   : f32[8, 64] @reg(gt4)
+            e14 = add v36, e13                  : f32[8, 64] @reg(gt4)
+            p16 = pack e14                      : f16[8, 64] @l1(gt4)
+            store out[t16*8 : +8, 384 : +64] <- p16
+    par c17 in 0..1 on vc[c17]
+        for t17 in 0..1
+            xl37 = load in0[t17*8 : +8, 448 : +64]  : f16[8, 64] @l1(gt4)
+            xl38 = load h1[t17*8 : +8, 448 : +64]  : f16[8, 64] @l1(gt4)
+            v37 = unpack xl38                   : f32[8, 64] @reg(gt4)
+            e15 = mul v37, -1.0                 : f32[8, 64] @reg(gt4)
+            v38 = unpack xl37                   : f32[8, 64] @reg(gt4)
+            e16 = add v38, e15                  : f32[8, 64] @reg(gt4)
+            p17 = pack e16                      : f16[8, 64] @l1(gt4)
+            store out[t17*8 : +8, 448 : +64] <- p17
+    par c18 in 0..1 on vc[c18]
+        for t18 in 0..1
+            xl39 = load in0[t18*8 : +8, 512 : +64]  : f16[8, 64] @l1(gt4)
+            xl40 = load h1[t18*8 : +8, 512 : +64]  : f16[8, 64] @l1(gt4)
+            v39 = unpack xl40                   : f32[8, 64] @reg(gt4)
+            e17 = mul v39, -1.0                 : f32[8, 64] @reg(gt4)
+            v40 = unpack xl39                   : f32[8, 64] @reg(gt4)
+            e18 = add v40, e17                  : f32[8, 64] @reg(gt4)
+            p18 = pack e18                      : f16[8, 64] @l1(gt4)
+            store out[t18*8 : +8, 512 : +64] <- p18
+    par c19 in 0..1 on vc[c19]
+        for t19 in 0..1
+            xl41 = load in0[t19*8 : +8, 576 : +64]  : f16[8, 64] @l1(gt4)
+            xl42 = load h1[t19*8 : +8, 576 : +64]  : f16[8, 64] @l1(gt4)
+            v41 = unpack xl42                   : f32[8, 64] @reg(gt4)
+            e19 = mul v41, -1.0                 : f32[8, 64] @reg(gt4)
+            v42 = unpack xl41                   : f32[8, 64] @reg(gt4)
+            e20 = add v42, e19                  : f32[8, 64] @reg(gt4)
+            p19 = pack e20                      : f16[8, 64] @l1(gt4)
+            store out[t19*8 : +8, 576 : +64] <- p19
+    par c20 in 0..1 on vc[c20]
+        for t20 in 0..1
+            xl43 = load in0[t20*8 : +8, 640 : +64]  : f16[8, 64] @l1(gt4)
+            xl44 = load h1[t20*8 : +8, 640 : +64]  : f16[8, 64] @l1(gt4)
+            v43 = unpack xl44                   : f32[8, 64] @reg(gt4)
+            e21 = mul v43, -1.0                 : f32[8, 64] @reg(gt4)
+            v44 = unpack xl43                   : f32[8, 64] @reg(gt4)
+            e22 = add v44, e21                  : f32[8, 64] @reg(gt4)
+            p20 = pack e22                      : f16[8, 64] @l1(gt4)
+            store out[t20*8 : +8, 640 : +64] <- p20
+    par c21 in 0..1 on vc[c21]
+        for t21 in 0..1
+            xl45 = load in0[t21*8 : +8, 704 : +64]  : f16[8, 64] @l1(gt4)
+            xl46 = load h1[t21*8 : +8, 704 : +64]  : f16[8, 64] @l1(gt4)
+            v45 = unpack xl46                   : f32[8, 64] @reg(gt4)
+            e23 = mul v45, -1.0                 : f32[8, 64] @reg(gt4)
+            v46 = unpack xl45                   : f32[8, 64] @reg(gt4)
+            e24 = add v46, e23                  : f32[8, 64] @reg(gt4)
+            p21 = pack e24                      : f16[8, 64] @l1(gt4)
+            store out[t21*8 : +8, 704 : +64] <- p21
+    par c22 in 0..1 on vc[c22]
+        for t22 in 0..1
+            xl47 = load in0[t22*8 : +8, 768 : +64]  : f16[8, 64] @l1(gt4)
+            xl48 = load h1[t22*8 : +8, 768 : +64]  : f16[8, 64] @l1(gt4)
+            v47 = unpack xl48                   : f32[8, 64] @reg(gt4)
+            e25 = mul v47, -1.0                 : f32[8, 64] @reg(gt4)
+            v48 = unpack xl47                   : f32[8, 64] @reg(gt4)
+            e26 = add v48, e25                  : f32[8, 64] @reg(gt4)
+            p22 = pack e26                      : f16[8, 64] @l1(gt4)
+            store out[t22*8 : +8, 768 : +64] <- p22
+    par c23 in 0..1 on vc[c23]
+        for t23 in 0..1
+            xl49 = load in0[t23*8 : +8, 832 : +64]  : f16[8, 64] @l1(gt4)
+            xl50 = load h1[t23*8 : +8, 832 : +64]  : f16[8, 64] @l1(gt4)
+            v49 = unpack xl50                   : f32[8, 64] @reg(gt4)
+            e27 = mul v49, -1.0                 : f32[8, 64] @reg(gt4)
+            v50 = unpack xl49                   : f32[8, 64] @reg(gt4)
+            e28 = add v50, e27                  : f32[8, 64] @reg(gt4)
+            p23 = pack e28                      : f16[8, 64] @l1(gt4)
+            store out[t23*8 : +8, 832 : +64] <- p23
+    par c24 in 0..1 on vc[c24]
+        for t24 in 0..1
+            xl51 = load in0[t24*8 : +8, 896 : +64]  : f16[8, 64] @l1(gt4)
+            xl52 = load h1[t24*8 : +8, 896 : +64]  : f16[8, 64] @l1(gt4)
+            v51 = unpack xl52                   : f32[8, 64] @reg(gt4)
+            e29 = mul v51, -1.0                 : f32[8, 64] @reg(gt4)
+            v52 = unpack xl51                   : f32[8, 64] @reg(gt4)
+            e30 = add v52, e29                  : f32[8, 64] @reg(gt4)
+            p24 = pack e30                      : f16[8, 64] @l1(gt4)
+            store out[t24*8 : +8, 896 : +64] <- p24
+    par c25 in 0..1 on vc[c25]
+        for t25 in 0..1
+            xl53 = load in0[t25*8 : +8, 960 : +64]  : f16[8, 64] @l1(gt4)
+            xl54 = load h1[t25*8 : +8, 960 : +64]  : f16[8, 64] @l1(gt4)
+            v53 = unpack xl54                   : f32[8, 64] @reg(gt4)
+            e31 = mul v53, -1.0                 : f32[8, 64] @reg(gt4)
+            v54 = unpack xl53                   : f32[8, 64] @reg(gt4)
+            e32 = add v54, e31                  : f32[8, 64] @reg(gt4)
+            p25 = pack e32                      : f16[8, 64] @l1(gt4)
+            store out[t25*8 : +8, 960 : +64] <- p25
+    par c26 in 0..1 on vc[c26]
+        for t26 in 0..1
+            xl55 = load in0[t26*8 : +8, 1024 : +64]  : f16[8, 64] @l1(gt4)
+            xl56 = load h1[t26*8 : +8, 1024 : +64]  : f16[8, 64] @l1(gt4)
+            v55 = unpack xl56                   : f32[8, 64] @reg(gt4)
+            e33 = mul v55, -1.0                 : f32[8, 64] @reg(gt4)
+            v56 = unpack xl55                   : f32[8, 64] @reg(gt4)
+            e34 = add v56, e33                  : f32[8, 64] @reg(gt4)
+            p26 = pack e34                      : f16[8, 64] @l1(gt4)
+            store out[t26*8 : +8, 1024 : +64] <- p26
+    par c27 in 0..1 on vc[c27]
+        for t27 in 0..1
+            xl57 = load in0[t27*8 : +8, 1088 : +64]  : f16[8, 64] @l1(gt4)
+            xl58 = load h1[t27*8 : +8, 1088 : +64]  : f16[8, 64] @l1(gt4)
+            v57 = unpack xl58                   : f32[8, 64] @reg(gt4)
+            e35 = mul v57, -1.0                 : f32[8, 64] @reg(gt4)
+            v58 = unpack xl57                   : f32[8, 64] @reg(gt4)
+            e36 = add v58, e35                  : f32[8, 64] @reg(gt4)
+            p27 = pack e36                      : f16[8, 64] @l1(gt4)
+            store out[t27*8 : +8, 1088 : +64] <- p27
+    par c28 in 0..1 on vc[c28]
+        for t28 in 0..1
+            xl59 = load in0[t28*8 : +8, 1152 : +64]  : f16[8, 64] @l1(gt4)
+            xl60 = load h1[t28*8 : +8, 1152 : +64]  : f16[8, 64] @l1(gt4)
+            v59 = unpack xl60                   : f32[8, 64] @reg(gt4)
+            e37 = mul v59, -1.0                 : f32[8, 64] @reg(gt4)
+            v60 = unpack xl59                   : f32[8, 64] @reg(gt4)
+            e38 = add v60, e37                  : f32[8, 64] @reg(gt4)
+            p28 = pack e38                      : f16[8, 64] @l1(gt4)
+            store out[t28*8 : +8, 1152 : +64] <- p28
+    par c29 in 0..1 on vc[c29]
+        for t29 in 0..1
+            xl61 = load in0[t29*8 : +8, 1216 : +64]  : f16[8, 64] @l1(gt4)
+            xl62 = load h1[t29*8 : +8, 1216 : +64]  : f16[8, 64] @l1(gt4)
+            v61 = unpack xl62                   : f32[8, 64] @reg(gt4)
+            e39 = mul v61, -1.0                 : f32[8, 64] @reg(gt4)
+            v62 = unpack xl61                   : f32[8, 64] @reg(gt4)
+            e40 = add v62, e39                  : f32[8, 64] @reg(gt4)
+            p29 = pack e40                      : f16[8, 64] @l1(gt4)
+            store out[t29*8 : +8, 1216 : +64] <- p29
+    par c30 in 0..1 on vc[c30]
+        for t30 in 0..1
+            xl63 = load in0[t30*8 : +8, 1280 : +64]  : f16[8, 64] @l1(gt4)
+            xl64 = load h1[t30*8 : +8, 1280 : +64]  : f16[8, 64] @l1(gt4)
+            v63 = unpack xl64                   : f32[8, 64] @reg(gt4)
+            e41 = mul v63, -1.0                 : f32[8, 64] @reg(gt4)
+            v64 = unpack xl63                   : f32[8, 64] @reg(gt4)
+            e42 = add v64, e41                  : f32[8, 64] @reg(gt4)
+            p30 = pack e42                      : f16[8, 64] @l1(gt4)
+            store out[t30*8 : +8, 1280 : +64] <- p30
+    par c31 in 0..1 on vc[c31]
+        for t31 in 0..1
+            xl65 = load in0[t31*8 : +8, 1344 : +64]  : f16[8, 64] @l1(gt4)
+            xl66 = load h1[t31*8 : +8, 1344 : +64]  : f16[8, 64] @l1(gt4)
+            v65 = unpack xl66                   : f32[8, 64] @reg(gt4)
+            e43 = mul v65, -1.0                 : f32[8, 64] @reg(gt4)
+            v66 = unpack xl65                   : f32[8, 64] @reg(gt4)
+            e44 = add v66, e43                  : f32[8, 64] @reg(gt4)
+            p31 = pack e44                      : f16[8, 64] @l1(gt4)
+            store out[t31*8 : +8, 1344 : +64] <- p31
+    par c32 in 0..1 on vc[c32]
+        for t32 in 0..1
+            xl67 = load in0[t32*8 : +8, 1408 : +64]  : f16[8, 64] @l1(gt4)
+            xl68 = load h1[t32*8 : +8, 1408 : +64]  : f16[8, 64] @l1(gt4)
+            v67 = unpack xl68                   : f32[8, 64] @reg(gt4)
+            e45 = mul v67, -1.0                 : f32[8, 64] @reg(gt4)
+            v68 = unpack xl67                   : f32[8, 64] @reg(gt4)
+            e46 = add v68, e45                  : f32[8, 64] @reg(gt4)
+            p32 = pack e46                      : f16[8, 64] @l1(gt4)
+            store out[t32*8 : +8, 1408 : +64] <- p32
+    par c33 in 0..1 on vc[c33]
+        for t33 in 0..1
+            xl69 = load in0[t33*8 : +8, 1472 : +64]  : f16[8, 64] @l1(gt4)
+            xl70 = load h1[t33*8 : +8, 1472 : +64]  : f16[8, 64] @l1(gt4)
+            v69 = unpack xl70                   : f32[8, 64] @reg(gt4)
+            e47 = mul v69, -1.0                 : f32[8, 64] @reg(gt4)
+            v70 = unpack xl69                   : f32[8, 64] @reg(gt4)
+            e48 = add v70, e47                  : f32[8, 64] @reg(gt4)
+            p33 = pack e48                      : f16[8, 64] @l1(gt4)
+            store out[t33*8 : +8, 1472 : +64] <- p33
+    par c34 in 0..1 on vc[c34]
+        for t34 in 0..1
+            xl71 = load in0[t34*8 : +8, 1536 : +64]  : f16[8, 64] @l1(gt4)
+            xl72 = load h1[t34*8 : +8, 1536 : +64]  : f16[8, 64] @l1(gt4)
+            v71 = unpack xl72                   : f32[8, 64] @reg(gt4)
+            e49 = mul v71, -1.0                 : f32[8, 64] @reg(gt4)
+            v72 = unpack xl71                   : f32[8, 64] @reg(gt4)
+            e50 = add v72, e49                  : f32[8, 64] @reg(gt4)
+            p34 = pack e50                      : f16[8, 64] @l1(gt4)
+            store out[t34*8 : +8, 1536 : +64] <- p34

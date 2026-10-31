@@ -1,0 +1,275 @@
+target ktpu.v9
+
+fn rows_4dc57f7ddd.l2(in0: f16[64] @dram, x1: f16[4000, 16] @dram, p1_index0: f32[1680] @dram, p1_mask0: f16[15, 128] @dram, in2: f16[1008] @dram, out: f16[1008] @dram)
+    h1 = buffer   : f16[1000, 64] @dram
+    h2 = buffer   : f16[560, 128] @dram
+    h3 = buffer   : f16[4004, 16] @dram
+    h4 = buffer   : f16[560, 128] @dram
+    h5 = buffer   : f16[560, 128] @dram
+    h6 = buffer   : f16[560, 128] @dram
+    h7 = buffer   : f16[2016, 32] @dram
+    h8 = buffer   : f16[4032, 16] @dram
+    h9 = buffer   : f16[504, 128] @dram
+    h10 = buffer  : f16[504, 128] @dram
+    h11 = buffer  : f16[4032, 16] @dram
+    h12 = buffer  : f16[16, 64] @dram
+    h13 = buffer  : f16[16] @dram
+    h14 = buffer  : f16[16] @dram
+    copy h3 <- x1 walk=((4000, 32),) dwalk=((4000, 32),) dat=64
+    gather h5[0 : +32, 0 : +32] <- h3 fp index=p1_index0[32 : +32]
+    gather h6[0 : +32, 0 : +32] <- h3 fp index=p1_index0[64 : +32]
+    gather h5[32 : +32, 0 : +64] <- h3 fp index=p1_index0[128 : +32]
+    gather h6[32 : +32, 0 : +64] <- h3 fp index=p1_index0[160 : +32]
+    gather h5[64 : +32, 0 : +96] <- h3 fp index=p1_index0[224 : +32]
+    gather h6[64 : +32, 0 : +96] <- h3 fp index=p1_index0[256 : +32]
+    gather h5[96 : +464, 0 : +128] <- h3 fp index=p1_index0[752 : +464]
+    gather h6[96 : +464, 0 : +128] <- h3 fp index=p1_index0[1216 : +464]
+    scatter h7 <- h5[0 : +8, 0 : +32] fp index=p1_index0[0 : +8]
+    par c1 in 0..2 on vc[c1]
+        xl1 = load p1_mask0[2 : +1]  : f16[1, 128] @l1
+        v1 = unpack xl1              : f32[1, 128] @reg
+        for t1 in 0..2
+            xl2 = load h5[c1*4 + t1*2 + 8 : +2] : f16[2, 128] @l1
+            v2 = unpack xl2                     : f32[2, 128] @reg
+            o1 = sel v1, v2, 0.0                : f32[2, 128] @reg
+            p1 = pack o1                        : f16[2, 128] @l1
+            store h4[c1*4 + t1*2 + 8 : +2] <- p1
+    par c2 in 0..2 on vc[c2]
+        xl3 = load p1_mask0[0 : +1]  : f16[1, 128] @l1
+        v3 = unpack xl3              : f32[1, 128] @reg
+        xl4 = load p1_mask0[1 : +1]  : f16[1, 128] @l1
+        v4 = unpack xl4              : f32[1, 128] @reg
+        for t2 in 0..2
+            xl5 = load h5[c2*4 + t2*2 + 16 : +2]  : f16[2, 128] @l1
+            v5 = unpack xl5                     : f32[2, 128] @reg
+            xl6 = load h6[c2*4 + t2*2 + 16 : +2]  : f16[2, 128] @l1
+            v6 = unpack xl6                     : f32[2, 128] @reg
+            e1 = xrot v5, 8.0                   : f32[2, 128] @reg
+            e2 = xrot v6, 8.0                   : f32[2, 128] @reg
+            o2 = sel v3, e1, e2                 : f32[2, 128] @reg
+            o3 = sel v4, o2, 0.0                : f32[2, 128] @reg
+            p2 = pack o3                        : f16[2, 128] @l1
+            store h4[c2*4 + t2*2 + 16 : +2] <- p2
+    scatter h7 <- h4[8 : +16, 0 : +32] fp index=p1_index0[8 : +16]
+    scatter h7 <- h5[32 : +8, 0 : +64] fp index=p1_index0[96 : +8]
+    par c3 in 0..2 on vc[c3]
+        xl7 = load p1_mask0[5 : +1]  : f16[1, 128] @l1
+        v7 = unpack xl7              : f32[1, 128] @reg
+        for t3 in 0..2
+            xl8 = load h5[c3*4 + t3*2 + 40 : +2]  : f16[2, 128] @l1
+            v8 = unpack xl8                     : f32[2, 128] @reg
+            o4 = sel v7, v8, 0.0                : f32[2, 128] @reg
+            p3 = pack o4                        : f16[2, 128] @l1
+            store h4[c3*4 + t3*2 + 40 : +2] <- p3
+    par c4 in 0..2 on vc[c4]
+        xl9 = load p1_mask0[0 : +1]   : f16[1, 128] @l1
+        v9 = unpack xl9               : f32[1, 128] @reg
+        xl10 = load p1_mask0[4 : +1]  : f16[1, 128] @l1
+        v10 = unpack xl10             : f32[1, 128] @reg
+        for t4 in 0..2
+            xl11 = load h5[c4*4 + t4*2 + 48 : +2]  : f16[2, 128] @l1
+            v11 = unpack xl11                   : f32[2, 128] @reg
+            xl12 = load h6[c4*4 + t4*2 + 48 : +2]  : f16[2, 128] @l1
+            v12 = unpack xl12                   : f32[2, 128] @reg
+            e3 = xrot v11, 8.0                  : f32[2, 128] @reg
+            e4 = xrot v12, 8.0                  : f32[2, 128] @reg
+            o5 = sel v9, e3, e4                 : f32[2, 128] @reg
+            o6 = sel v10, o5, 0.0               : f32[2, 128] @reg
+            p4 = pack o6                        : f16[2, 128] @l1
+            store h4[c4*4 + t4*2 + 48 : +2] <- p4
+    scatter h7 <- h4[40 : +16, 0 : +64] fp index=p1_index0[104 : +16]
+    scatter h7 <- h5[64 : +8, 0 : +96] fp index=p1_index0[192 : +8]
+    par c5 in 0..2 on vc[c5]
+        xl13 = load p1_mask0[8 : +1]  : f16[1, 128] @l1
+        v13 = unpack xl13             : f32[1, 128] @reg
+        for t5 in 0..2
+            xl14 = load h5[c5*4 + t5*2 + 72 : +2]  : f16[2, 128] @l1
+            v14 = unpack xl14                   : f32[2, 128] @reg
+            o7 = sel v13, v14, 0.0              : f32[2, 128] @reg
+            p5 = pack o7                        : f16[2, 128] @l1
+            store h4[c5*4 + t5*2 + 72 : +2] <- p5
+    par c6 in 0..2 on vc[c6]
+        xl15 = load p1_mask0[0 : +1]  : f16[1, 128] @l1
+        v15 = unpack xl15             : f32[1, 128] @reg
+        xl16 = load p1_mask0[7 : +1]  : f16[1, 128] @l1
+        v16 = unpack xl16             : f32[1, 128] @reg
+        for t6 in 0..2
+            xl17 = load h5[c6*4 + t6*2 + 80 : +2]  : f16[2, 128] @l1
+            v17 = unpack xl17                   : f32[2, 128] @reg
+            xl18 = load h6[c6*4 + t6*2 + 80 : +2]  : f16[2, 128] @l1
+            v18 = unpack xl18                   : f32[2, 128] @reg
+            e5 = xrot v17, 8.0                  : f32[2, 128] @reg
+            e6 = xrot v18, 8.0                  : f32[2, 128] @reg
+            o8 = sel v15, e5, e6                : f32[2, 128] @reg
+            o9 = sel v16, o8, 0.0               : f32[2, 128] @reg
+            p6 = pack o9                        : f16[2, 128] @l1
+            store h4[c6*4 + t6*2 + 80 : +2] <- p6
+    scatter h7 <- h4[72 : +16, 0 : +96] fp index=p1_index0[200 : +16]
+    scatter h7 <- h5[96 : +224, 0 : +128] fp index=p1_index0[288 : +224]
+    par c7 in 0..2 on vc[c7]
+        xl19 = load p1_mask0[10 : +1]  : f16[1, 128] @l1
+        v19 = unpack xl19              : f32[1, 128] @reg
+        for t7 in 0..2
+            xl20 = load h5[c7*4 + t7*2 + 320 : +2]  : f16[2, 128] @l1
+            v20 = unpack xl20                   : f32[2, 128] @reg
+            o10 = sel v19, v20, 0.0             : f32[2, 128] @reg
+            p7 = pack o10                       : f16[2, 128] @l1
+            store h4[c7*4 + t7*2 + 320 : +2] <- p7
+    par c8 in 0..2 on vc[c8]
+        xl21 = load p1_mask0[0 : +1]  : f16[1, 128] @l1
+        v21 = unpack xl21             : f32[1, 128] @reg
+        for t8 in 0..54
+            xl22 = load h5[c8*108 + t8*2 + 328 : +2]  : f16[2, 128] @l1
+            v22 = unpack xl22                   : f32[2, 128] @reg
+            xl23 = load h6[c8*108 + t8*2 + 328 : +2]  : f16[2, 128] @l1
+            v23 = unpack xl23                   : f32[2, 128] @reg
+            e7 = xrot v22, 8.0                  : f32[2, 128] @reg
+            e8 = xrot v23, 8.0                  : f32[2, 128] @reg
+            o11 = sel v21, e7, e8               : f32[2, 128] @reg
+            p8 = pack o11                       : f16[2, 128] @l1
+            store h4[c8*108 + t8*2 + 328 : +2] <- p8
+    par c9 in 0..2 on vc[c9]
+        xl24 = load p1_mask0[0 : +1]   : f16[1, 128] @l1
+        v24 = unpack xl24              : f32[1, 128] @reg
+        xl25 = load p1_mask0[11 : +1]  : f16[1, 128] @l1
+        v25 = unpack xl25              : f32[1, 128] @reg
+        for t9 in 0..2
+            xl26 = load h5[c9*4 + t9*2 + 544 : +2]  : f16[2, 128] @l1
+            v26 = unpack xl26                   : f32[2, 128] @reg
+            xl27 = load h6[c9*4 + t9*2 + 544 : +2]  : f16[2, 128] @l1
+            v27 = unpack xl27                   : f32[2, 128] @reg
+            e9 = xrot v26, 8.0                  : f32[2, 128] @reg
+            e10 = xrot v27, 8.0                 : f32[2, 128] @reg
+            o12 = sel v24, e9, e10              : f32[2, 128] @reg
+            o13 = sel v25, o12, 0.0             : f32[2, 128] @reg
+            p9 = pack o13                       : f16[2, 128] @l1
+            store h4[c9*4 + t9*2 + 544 : +2] <- p9
+    scatter h7 <- h4[320 : +232, 0 : +128] fp index=p1_index0[512 : +232]
+    gather h2[24 : +8, 0 : +32] <- h7 fp index=p1_index0[24 : +8]
+    par c10 in 0..2 on vc[c10]
+        xl28 = load p1_mask0[0 : +1]  : f16[1, 128] @l1
+        v28 = unpack xl28             : f32[1, 128] @reg
+        xl29 = load p1_mask0[3 : +1]  : f16[1, 128] @l1
+        v29 = unpack xl29             : f32[1, 128] @reg
+        for t10 in 0..2
+            xl30 = load h5[c10*4 + t10*2 + 24 : +2]  : f16[2, 128] @l1
+            v30 = unpack xl30                   : f32[2, 128] @reg
+            xl31 = load h6[c10*4 + t10*2 + 24 : +2]  : f16[2, 128] @l1
+            v31 = unpack xl31                   : f32[2, 128] @reg
+            e11 = xrot v30, 8.0                 : f32[2, 128] @reg
+            e12 = xrot v31, 8.0                 : f32[2, 128] @reg
+            o14 = sel v28, e11, e12             : f32[2, 128] @reg
+            xl32 = load h2[c10*4 + t10*2 + 24 : +2]  : f16[2, 128] @l1
+            v32 = unpack xl32                   : f32[2, 128] @reg
+            o15 = sel v29, o14, v32             : f32[2, 128] @reg
+            p10 = pack o15                      : f16[2, 128] @l1
+            store h4[c10*4 + t10*2 + 24 : +2] <- p10
+    scatter h7 <- h4[24 : +8, 0 : +32] fp index=p1_index0[24 : +8]
+    gather h2[56 : +8, 0 : +64] <- h7 fp index=p1_index0[120 : +8]
+    par c11 in 0..2 on vc[c11]
+        xl33 = load p1_mask0[0 : +1]  : f16[1, 128] @l1
+        v33 = unpack xl33             : f32[1, 128] @reg
+        xl34 = load p1_mask0[6 : +1]  : f16[1, 128] @l1
+        v34 = unpack xl34             : f32[1, 128] @reg
+        for t11 in 0..2
+            xl35 = load h5[c11*4 + t11*2 + 56 : +2]  : f16[2, 128] @l1
+            v35 = unpack xl35                   : f32[2, 128] @reg
+            xl36 = load h6[c11*4 + t11*2 + 56 : +2]  : f16[2, 128] @l1
+            v36 = unpack xl36                   : f32[2, 128] @reg
+            e13 = xrot v35, 8.0                 : f32[2, 128] @reg
+            e14 = xrot v36, 8.0                 : f32[2, 128] @reg
+            o16 = sel v33, e13, e14             : f32[2, 128] @reg
+            xl37 = load h2[c11*4 + t11*2 + 56 : +2]  : f16[2, 128] @l1
+            v37 = unpack xl37                   : f32[2, 128] @reg
+            o17 = sel v34, o16, v37             : f32[2, 128] @reg
+            p11 = pack o17                      : f16[2, 128] @l1
+            store h4[c11*4 + t11*2 + 56 : +2] <- p11
+    scatter h7 <- h4[56 : +8, 0 : +64] fp index=p1_index0[120 : +8]
+    gather h2[88 : +8, 0 : +96] <- h7 fp index=p1_index0[216 : +8]
+    par c12 in 0..2 on vc[c12]
+        xl38 = load p1_mask0[0 : +1]  : f16[1, 128] @l1
+        v38 = unpack xl38             : f32[1, 128] @reg
+        xl39 = load p1_mask0[9 : +1]  : f16[1, 128] @l1
+        v39 = unpack xl39             : f32[1, 128] @reg
+        for t12 in 0..2
+            xl40 = load h5[c12*4 + t12*2 + 88 : +2]  : f16[2, 128] @l1
+            v40 = unpack xl40                   : f32[2, 128] @reg
+            xl41 = load h6[c12*4 + t12*2 + 88 : +2]  : f16[2, 128] @l1
+            v41 = unpack xl41                   : f32[2, 128] @reg
+            e15 = xrot v40, 8.0                 : f32[2, 128] @reg
+            e16 = xrot v41, 8.0                 : f32[2, 128] @reg
+            o18 = sel v38, e15, e16             : f32[2, 128] @reg
+            xl42 = load h2[c12*4 + t12*2 + 88 : +2]  : f16[2, 128] @l1
+            v42 = unpack xl42                   : f32[2, 128] @reg
+            o19 = sel v39, o18, v42             : f32[2, 128] @reg
+            p12 = pack o19                      : f16[2, 128] @l1
+            store h4[c12*4 + t12*2 + 88 : +2] <- p12
+    scatter h7 <- h4[88 : +8, 0 : +96] fp index=p1_index0[216 : +8]
+    gather h2[552 : +8, 0 : +128] <- h7 fp index=p1_index0[744 : +8]
+    par c13 in 0..2 on vc[c13]
+        xl43 = load p1_mask0[0 : +1]   : f16[1, 128] @l1
+        v43 = unpack xl43              : f32[1, 128] @reg
+        xl44 = load p1_mask0[12 : +1]  : f16[1, 128] @l1
+        v44 = unpack xl44              : f32[1, 128] @reg
+        for t13 in 0..2
+            xl45 = load h5[c13*4 + t13*2 + 552 : +2]  : f16[2, 128] @l1
+            v45 = unpack xl45                   : f32[2, 128] @reg
+            xl46 = load h6[c13*4 + t13*2 + 552 : +2]  : f16[2, 128] @l1
+            v46 = unpack xl46                   : f32[2, 128] @reg
+            e17 = xrot v45, 8.0                 : f32[2, 128] @reg
+            e18 = xrot v46, 8.0                 : f32[2, 128] @reg
+            o20 = sel v43, e17, e18             : f32[2, 128] @reg
+            xl47 = load h2[c13*4 + t13*2 + 552 : +2]  : f16[2, 128] @l1
+            v47 = unpack xl47                   : f32[2, 128] @reg
+            o21 = sel v44, o20, v47             : f32[2, 128] @reg
+            p13 = pack o21                      : f16[2, 128] @l1
+            store h4[c13*4 + t13*2 + 552 : +2] <- p13
+    scatter h7 <- h4[552 : +8, 0 : +128] fp index=p1_index0[744 : +8]
+    gt4 h9 <- h7 walk=((1, 129024), (16, 8064), (63, 32), (4, 2016)) dwalk=((1, 129024), (16, 8064), (63, 128))
+    par c14 in 0..2 on vc[c14]
+        xl48 = load p1_mask0[13 : +1]  : f16[1, 128] @l1
+        v48 = unpack xl48              : f32[1, 128] @reg
+        xl49 = load p1_mask0[14 : +1]  : f16[1, 128] @l1
+        v49 = unpack xl49              : f32[1, 128] @reg
+        for t14 in 0..((c14 + 2) / 2) + 31 - ((c14 + 1) / 2)
+            xl50 = load h9[c14*248 + ((c14 + 1) / 2)*8 + t14*8 : +8]  : f16[8, 128] @l1
+            v50 = unpack xl50                   : f32[8, 128] @reg
+            e19 = xlane v50, 5.0                : f32[8, 128] @reg
+            o22 = sel v48, e19, v50             : f32[8, 128] @reg
+            e20 = xlane o22, 10.0               : f32[8, 128] @reg
+            o23 = sel v49, e20, o22             : f32[8, 128] @reg
+            p14 = pack o23                      : f16[8, 128] @l1
+            store h10[c14*248 + ((c14 + 1) / 2)*8 + t14*8 : +8] <- p14
+    gt4 h11 <- h10 walk=((1, 129024), (252, 32), (4, 32256), (4, 8064)) dwalk=((1, 129024), (252, 512), (4, 128))
+    copy h8 <- h11 walk=((1, 129024), (252, 512), (4, 32), (4, 128)) dwalk=((4032, 32),)
+    copy h1 <- h8 walk=((4000, 32),) at=0 dwalk=((4000, 32),) dat=0
+    par c15 in 0..2 on vc[c15]
+        xl51 = load in0[0 : +64]  : f16[4, 64] @l1(gt4)
+        v51 = unpack xl51         : f32[4, 64] @reg(gt4)
+        for t15 in 0..31
+            xl52 = load h1[c15*496 + t15*16 : +16, 0 : +64]  : f16[16, 64] @l1(gt4)
+            xl53 = load in2[c15*496 + t15*16 : +16]  : f16[16] @l1
+            v52 = unpack xl52                   : f32[16, 64] @reg(gt4)
+            e21 = mul v51, v52                  : f32[16, 64] @reg(gt4)
+            s1 = rsum e21                       : f32[16] @reg
+            v53 = unpack xl53                   : f32[16] @reg
+            e22 = add s1, v53                   : f32[16] @reg
+            p15 = pack e22                      : f16[16] @l1
+            store out[c15*496 + t15*16 : +16] <- p15
+    fill h12 value=0
+    copy h12[0 : +8] <- h1[992 : +8, 0 : +64]
+    copy h13[0 : +16] <- in2[992 : +16]
+    par c16 in 0..1 on vc[c16]
+        xl54 = load in0[0 : +64]  : f16[4, 64] @l1(gt4)
+        v54 = unpack xl54         : f32[4, 64] @reg(gt4)
+        for t16 in 0..1
+            xl55 = load h12[t16*16 : +16, 0 : +64]  : f16[16, 64] @l1(gt4)
+            xl56 = load h13[t16*16 : +16]       : f16[16] @l1
+            v55 = unpack xl55                   : f32[16, 64] @reg(gt4)
+            e23 = mul v54, v55                  : f32[16, 64] @reg(gt4)
+            s2 = rsum e23                       : f32[16] @reg
+            v56 = unpack xl56                   : f32[16] @reg
+            e24 = add s2, v56                   : f32[16] @reg
+            p16 = pack e24                      : f16[16] @l1
+            store h14[t16*16 : +16] <- p16
+    copy out[992 : +16] <- h14[0 : +16]

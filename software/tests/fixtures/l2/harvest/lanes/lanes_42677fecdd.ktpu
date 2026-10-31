@@ -1,0 +1,27 @@
+target ktpu.v9
+
+fn lanes_42677fecdd.l2(src: f16[800, 16] @dram, dst: f16[800, 16] @dram, index: f32[8] @dram, mask: f16[2, 128] @dram)
+    h1 = buffer  : f16[400, 32] @dram
+    h2 = buffer  : f16[800, 16] @dram
+    h3 = buffer  : f16[104, 128] @dram
+    h4 = buffer  : f16[104, 128] @dram
+    h5 = buffer  : f16[800, 16] @dram
+    copy h1 <- src walk=((800, 32),) at=0 dwalk=((800, 32),) dat=0
+    gt4 h3 <- h1 walk=((1, 25600), (8, 3200), (25, 32), (4, 800)) dwalk=((1, 25600), (8, 3200), (25, 128))
+    par c1 in 0..2 on vc[c1]
+        xl1 = load mask[0 : +1]  : f16[1, 128] @l1
+        v1 = unpack xl1          : f32[1, 128] @reg
+        xl2 = load mask[1 : +1]  : f16[1, 128] @l1
+        v2 = unpack xl2          : f32[1, 128] @reg
+        for t1 in 0..((c1 + 2) / 2) + 6 - ((c1 + 1) / 2)
+            xl3 = load h3[c1*48 + ((c1 + 1) / 2)*8 + t1*8 : +8]  : f16[8, 128] @l1
+            v3 = unpack xl3                     : f32[8, 128] @reg
+            e1 = xlane v3, 5.0                  : f32[8, 128] @reg
+            o1 = sel v1, e1, v3                 : f32[8, 128] @reg
+            e2 = xlane o1, 10.0                 : f32[8, 128] @reg
+            o2 = sel v2, e2, o1                 : f32[8, 128] @reg
+            p1 = pack o2                        : f16[8, 128] @l1
+            store h4[c1*48 + ((c1 + 1) / 2)*8 + t1*8 : +8] <- p1
+    gt4 h5 <- h4 walk=((1, 25600), (100, 32), (2, 12800), (4, 3200)) dwalk=((1, 25600), (100, 256), (2, 128))
+    copy h2 <- h5 walk=((1, 25600), (100, 256), (4, 32), (2, 128)) dwalk=((800, 32),)
+    copy dst <- h2 walk=((800, 32),) at=0 dwalk=((800, 32),) dat=0

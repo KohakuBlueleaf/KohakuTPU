@@ -1,0 +1,89 @@
+"""KohakuAccel OS on ka-emu: each app on every node of a board, with each knob
+that changes its path. Needs `KA_EMU_MODEL` (a directory holding obj_dir/vsim,
+the emulator) and `KOS_IMAGE` (kos.elf)."""
+
+import os
+import pathlib
+import sys
+
+import pytest
+
+OS = pathlib.Path(__file__).resolve().parents[3] / "kohakuaccel" / "os"
+sys.path.insert(0, str(OS / "tools"))
+
+from boot import load, parse_flags
+from run_core import run
+
+MODEL = pathlib.Path(os.environ.get("KA_EMU_MODEL", "build/emu"))
+IMAGE = pathlib.Path(os.environ.get("KOS_IMAGE", "build/os/kos.elf"))
+#: A case's bound: the slowest measured case takes 11 M cycles a node.
+CYCLES = 60_000_000
+TICK = 50_000
+
+SMP = {
+    "hello": ("hello", {}),
+    "preduce": ("preduce 512", {}),
+    "psort": ("psort 256", {}),
+    "pmatmul": ("pmatmul 8", {}),
+    "workq": ("workq 8", {"workq.tasks": 8, "workq.workers": 4}),
+    "stress": ("stress 1 1 2", {"stress.lock_ops": 1 * 4 * 2}),
+    "pipeline": ("pipeline 16", {"pipeline.messages": 16 * 3}),
+    "msgsum": ("msgsum 128", {"msgsum.n": 128}),
+}
+AMP = {
+    "hello": ("hello", {}),
+    "pipeline": ("pipeline 32", {"pipeline.messages": 32}),
+    "msgsum": ("msgsum 256", {"msgsum.n": 256}),
+}
+SMP_KNOBS = [
+    ("", 0, list(SMP)),
+    ("shared_uncached", 0, ["preduce", "psort", "pmatmul"]),
+    ("pt_dram", 0, ["hello", "pipeline"]),
+    ("lock_bakery", 0, ["stress"]),
+    ("poll", 0, ["pipeline", "msgsum"]),
+    ("", TICK, ["workq", "stress"]),
+]
+AMP_KNOBS = [
+    ("", 0, list(AMP)),
+    ("pt_dram", 0, ["hello"]),
+    ("poll", 0, ["pipeline", "msgsum"]),
+    ("", TICK, ["pipeline", "msgsum"]),
+]
+
+
+def cases(knobs):
+    return [
+        pytest.param(app, flags, tick, id=f"{app}-{flags or 'none'}-{tick}")
+        for flags, tick, apps in knobs
+        for app in apps
+    ]
+
+
+def boot(board, cmd, flags, tick):
+    b = load(board)
+    extra = ["--flat"] if b["model"]["shared"] else None
+    return run(b, MODEL, IMAGE, cmd, parse_flags(flags), tick, CYCLES, None, extra)
+
+
+def checked(r, want):
+    assert r["rc"] == 0 and not r["fails"], r["output"][-2000:]
+    for k, v in want.items():
+        assert r["measures"]["0"][k] == v, k
+
+
+@pytest.mark.parametrize("app,flags,tick", cases(AMP_KNOBS))
+def test_amp(app, flags, tick):
+    cmd, want = AMP[app]
+    checked(boot("core2", cmd, flags, tick), want)
+
+
+@pytest.mark.parametrize("app,flags,tick", cases(SMP_KNOBS))
+def test_smp(app, flags, tick):
+    cmd, want = SMP[app]
+    checked(boot("core4s", cmd, flags, tick), want)
+
+
+def test_a_wrong_answer_is_told():
+    r = boot("core2", "msgsum 256", "", 0)
+    with pytest.raises(AssertionError):
+        checked(r, {"msgsum.n": 255})

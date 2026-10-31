@@ -1,0 +1,21 @@
+target ktpu.v9
+
+fn rows_a637d609ea.l2(in0: f16[5, 64] @dram, out: f16[16] @dram)
+    h1 = buffer  : f16[16, 64] @dram
+    h2 = buffer  : f16[16] @dram
+    fill h1 value=0
+    copy h1[0 : +5] <- in0[0 : +5, 0 : +64]
+    par c1 in 0..1 on vc[c1]
+        for t1 in 0..1
+            xl1 = load h1[t1*16 : +16, 0 : +64] : f16[16, 64] @l1(gt4)
+            v1 = unpack xl1                     : f32[16, 64] @reg(gt4)
+            e1 = mul v1, v1                     : f32[16, 64] @reg(gt4)
+            s1 = rsum e1                        : f32[16] @reg
+            e2 = mul s1, 0.015625               : f32[16] @reg
+            e3 = add e2, 1e-06                  : f32[16] @reg
+            e4 = max e3, 1e-30                  : f32[16] @reg
+            e5 = rsqrt e4                       : f32[16] @reg
+            e6 = mul e3, e5                     : f32[16] @reg
+            p1 = pack e6                        : f16[16] @l1
+            store h2[t1*16 : +16] <- p1
+    copy out[0 : +16] <- h2[0 : +16]

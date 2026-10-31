@@ -1,0 +1,4 @@
+{
+  "lenet": {"steps": 110, "accuracy": 0.89},
+  "vit_tiny": {"inputs": 48, "top1": 0.89, "cycles": 5200000000}
+}

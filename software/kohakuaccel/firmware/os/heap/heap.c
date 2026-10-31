@@ -1,5 +1,5 @@
 /* Region heaps (ka/os/heap.h). Plain C over the caller's table: no HAL, so the
- * same file builds natively for the trace test against heap.py. */
+ * same file builds natively for its host test. */
 #include <ka/os/heap.h>
 #include <ka/package/status.h>
 

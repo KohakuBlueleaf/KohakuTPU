@@ -1,0 +1,4 @@
+target ktpu.v9
+
+fn quant_e2cb0a53f7.l2(x: f16[8, 128] @dram, q: mx7a[8, 128] @dram(gm=2, nk=1))
+    quant q[0 : +8] <- x[0 : +8, 0 : +128]

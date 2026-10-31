@@ -1,0 +1,33 @@
+target ktpu.v9
+
+fn lanes_7cc58e39ec.l2(src: f16[10, 16] @dram, dst: f16[5, 16] @dram, index: f32[32] @dram, mask: f16[2, 128] @dram)
+    h1 = buffer  : f16[4, 32] @dram
+    h2 = buffer  : f16[16, 128] @dram
+    h3 = buffer  : f16[16, 128] @dram
+    h4 = buffer  : f16[16, 128] @dram
+    fill h1 value=0 walk=((5, 32),) at=0
+    gather h4[0 : +16, 0 : +32] <- src fp index=index[16 : +16]
+    par c1 in 0..2 on vc[c1]
+        xl1 = load mask[0 : +1]  : f16[1, 128] @l1
+        v1 = unpack xl1          : f32[1, 128] @reg
+        for t1 in 0..2
+            xl2 = load h4[c1*4 + t1*2 : +2]  : f16[2, 128] @l1
+            v2 = unpack xl2                  : f32[2, 128] @reg
+            o1 = sel v1, v2, 0.0             : f32[2, 128] @reg
+            p1 = pack o1                     : f16[2, 128] @l1
+            store h3[c1*4 + t1*2 : +2] <- p1
+    scatter h1 <- h3[0 : +8, 0 : +32] fp index=index[0 : +8]
+    gather h2[8 : +8, 0 : +32] <- h1 fp index=index[8 : +8]
+    par c2 in 0..2 on vc[c2]
+        xl3 = load mask[1 : +1]  : f16[1, 128] @l1
+        v3 = unpack xl3          : f32[1, 128] @reg
+        for t2 in 0..2
+            xl4 = load h4[c2*4 + t2*2 + 8 : +2] : f16[2, 128] @l1
+            v4 = unpack xl4                     : f32[2, 128] @reg
+            xl5 = load h2[c2*4 + t2*2 + 8 : +2] : f16[2, 128] @l1
+            v5 = unpack xl5                     : f32[2, 128] @reg
+            o2 = sel v3, v4, v5                 : f32[2, 128] @reg
+            p2 = pack o2                        : f16[2, 128] @l1
+            store h3[c2*4 + t2*2 + 8 : +2] <- p2
+    scatter h1 <- h3[8 : +8, 0 : +32] fp index=index[8 : +8]
+    copy dst <- h1 walk=((5, 32),) at=0 dwalk=((5, 32),) dat=0

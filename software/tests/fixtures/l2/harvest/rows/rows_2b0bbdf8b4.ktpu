@@ -1,0 +1,20 @@
+target ktpu.v9
+
+fn rows_2b0bbdf8b4.l2(in0: f16[2, 256] @dram, out: f16[1, 256] @dram)
+    h1 = buffer  : f16[4, 256] @dram
+    h2 = buffer  : f16[4, 256] @dram
+    h3 = buffer  : f16[4, 256] @dram
+    fill h1 value=0
+    copy h1[0 : +1] <- in0[0 : +1, 0 : +256]
+    fill h2 value=0
+    copy h2[0 : +1] <- in0[1 : +1, 0 : +256]
+    par c1 in 0..1 on vc[c1]
+        for t1 in 0..1
+            xl1 = load h1[t1*4 : +4, 0 : +256]  : f16[4, 256] @l1(gt4)
+            xl2 = load h2[t1*4 : +4, 0 : +256]  : f16[4, 256] @l1(gt4)
+            v1 = unpack xl1                     : f32[4, 256] @reg(gt4)
+            v2 = unpack xl2                     : f32[4, 256] @reg(gt4)
+            e1 = max v1, v2                     : f32[4, 256] @reg(gt4)
+            p1 = pack e1                        : f16[4, 256] @l1(gt4)
+            store h3[t1*4 : +4, 0 : +256] <- p1
+    copy out[0 : +1, 0 : +256] <- h3[0 : +1]

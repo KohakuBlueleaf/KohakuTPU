@@ -1,0 +1,7 @@
+target ktpu.v9
+
+fn quant_242c02cd40.l2(x: f16[10, 96] @dram, q: mx7b[32, 96] @dram(gn=8, nk=1))
+    h1 = buffer  : f16[32, 96] @dram
+    fill h1 value=0
+    copy h1[0 : +10, 0 : +96] <- x[0 : +10, 0 : +96]
+    quant q <- h1

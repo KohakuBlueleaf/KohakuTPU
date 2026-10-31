@@ -1,0 +1,12 @@
+target ktpu.v9
+
+fn rows_eb00b004f3.l2(x0: f16[32, 16] @dram, out: f16[1, 128] @dram)
+    h1 = buffer  : f16[4, 128] @dram
+    par c1 in 0..1 on vc[c1]
+        for t1 in 0..1
+            xl1 = load x0 read_map=((512, 68, 0, 128, ((8, 32), (16, 1)), ((8, 16), (16, 1))),) read_at=0 read_pitch=0 read_stride=1 read_rows=1  : f16[4, 128] @l1(gt4)
+            v1 = unpack xl1                     : f32[4, 128] @reg(gt4)
+            e1 = add v1, 1.0                    : f32[4, 128] @reg(gt4)
+            p1 = pack e1                        : f16[4, 128] @l1(gt4)
+            store h1[t1*4 : +4, 0 : +128] <- p1
+    copy out[0 : +1, 0 : +128] <- h1[0 : +1]
