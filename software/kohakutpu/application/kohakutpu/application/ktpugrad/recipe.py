@@ -10,7 +10,6 @@ from kohakutpu.application.runtime.storage import Form, StorageView
 from kohakutpu.language.dsl.kernel import _MUTANT
 from kohakutpu.stack.rs import _rs
 
-ENV = "KTPU_EAGER_RECIPE"
 KEPT = 512
 HOST_BYTES = 65536
 

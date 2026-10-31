@@ -1,6 +1,5 @@
 """Copy-elision rule controls and individually reversible performance mutants."""
 
-from contextlib import contextmanager
 from contextvars import ContextVar
 
 RULES = (
@@ -19,15 +18,3 @@ def allowed(name):
     if name not in RULES:
         raise ValueError(f"unknown launch rule: {name}")
     return name != _DISABLED.get()
-
-
-@contextmanager
-def keep_copy(name):
-    """Mutation witness: restore one scheduler/runtime copy boundary."""
-    if name not in RULES:
-        raise ValueError(f"unknown launch rule: {name}")
-    token = _DISABLED.set(name)
-    try:
-        yield
-    finally:
-        _DISABLED.reset(token)

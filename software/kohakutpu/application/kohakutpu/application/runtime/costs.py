@@ -117,15 +117,6 @@ def packing_map(step, src, cols):
     return step["n"], step["at"], row0, col0, tuple(axes)
 
 
-def has_steps(steps, board):
-    """Do not defer a producer unless a measured winning consumer can take it."""
-    wanted = steps_recipe(steps)
-    return any(
-        recipe["steps"] == wanted
-        for recipe, _ in _records("prepared_quant", board).values()
-    )
-
-
 def steps_recipe(steps):
     return [
         dict(

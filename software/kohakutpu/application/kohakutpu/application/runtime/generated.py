@@ -2,13 +2,11 @@
 
 import json
 import os
-from dataclasses import asdict
 from functools import lru_cache
 
 import numpy as np
 
 from kohakutpu.application.kernels import matmul as MM
-from kohakutpu.application.plan.emit import expr
 from kohakutpu.language.dsl import TensorSpec, Traced
 from kohakutpu.language.numerics import fp16
 from kohakutpu.language.text import module as M
@@ -82,59 +80,6 @@ def _call(dev, generator, arguments) -> tuple:
     )
 
 
-def rows_arguments(e, operands, R, W, out) -> dict:
-    """A `vector.rows_kernel` call of `e` over [R, W] rows into `out`."""
-    return {
-        "e": expr(e),
-        "operands": [vars(o) for o in operands],
-        "R": R,
-        "W": W,
-        "out": vars(out),
-    }
-
-
-def in_class(arguments: dict, shape_class) -> dict:
-    """A generator call's arguments in `shape_class`."""
-    return dict(arguments, shape_class=asdict(shape_class))
-
-
-def class_info(dev, generator, arguments) -> dict:
-    """What a class call decided (`_rs.class_info`)."""
-    return json.loads(rs._rs.class_info(*_call(dev, generator, _scheduled(arguments))))
-
-
-def classed(dev, generator, arguments, shape_class=None) -> tuple:
-    """A generator call in `shape_class` (`lanes.class_kernel` none):
-    ``(graph source, what it decided)``."""
-    if shape_class is not None:
-        arguments = in_class(arguments, shape_class)
-    return source(dev, generator, arguments), class_info(dev, generator, arguments)
-
-
-def class_fits(dev, arguments) -> bool:
-    """Whether a `vector.rows_kernel` class call's trip fits a core's L1."""
-    return rs._rs.class_fits(
-        json.dumps(_scheduled(arguments)), rs.machine_json(dev.machine)
-    )
-
-
-def lanes_tables(dev, made) -> dict:
-    """A `lanes.plan` call's classes with their padded tables: ``classes``
-    of ``{class, index (fp32), masks (f16 bits, [taps, vlmax])}``,
-    ``src_words``, ``dst_words``."""
-    got = json.loads(
-        rs._rs.lanes_class_tables(
-            json.dumps(made["made_by"]["args"]), rs.machine_json(dev.machine)
-        )
-    )
-    for c in got["classes"]:
-        c["index"] = np.array(c["index"], np.float32)
-        c["masks"] = np.array(c["masks"], np.uint16).reshape(
-            len(c["class"]["taps"]), -1
-        )
-    return got
-
-
 def launch(dev, generator, arguments, bindings, kind="dsl", info=None):
     compiled = dev.kernel(source(dev, generator, arguments))
     try:
@@ -175,19 +120,6 @@ def walk(
         "dat": int(dat),
     }
     return launch(dev, "convert.walk_kernel", arguments, bindings, kind=kind, info=info)
-
-
-def fill(dev, dst_bytes, dlevels, dat, value, ew, bindings, info=None):
-    arguments = {
-        "dst_bytes": int(dst_bytes),
-        "dlevels": walks(dlevels),
-        "dat": int(dat),
-        "value": int(value),
-        "ew": int(ew),
-    }
-    return launch(
-        dev, "convert.fill_kernel", arguments, bindings, kind="move", info=info
-    )
 
 
 def relayout_plan(gen, n, walk_, at, dwalk, dat, m, keep, z0=0) -> dict:
@@ -233,32 +165,6 @@ def planned(dev, made) -> dict:
     )
 
 
-def transpose_masks(dev):
-    """The `transpose.transpose_kernel` mask table, f16 bits."""
-    return np.array(rs._rs.transpose_masks(rs.machine_json(dev.machine)), np.uint16)
-
-
-def rows_shape(dev, e, operands, R, W, out) -> dict:
-    """``nblk``, the column blocks of `e` over [R, W] rows into `out`, and
-    ``out``, its extents (`_rs.rows_shape`)."""
-    arguments = rows_arguments(e, operands, R, W, out)
-    return json.loads(
-        rs._rs.rows_shape(
-            json.dumps(arguments), rs.machine_json(dev.machine), rs._MUTANT.get()
-        )
-    )
-
-
-def port_shape(dev, operand, R, W) -> tuple:
-    """The extents of a buffer read as `operand` over [R, W] rows."""
-    arguments = {"operand": vars(operand), "R": R, "W": W}
-    return tuple(
-        rs._rs.port_shape(
-            json.dumps(arguments), rs.machine_json(dev.machine), rs._MUTANT.get()
-        )
-    )
-
-
 def from_output(dev, graph_data, output, traced=None):
     name = output["name"]
     return Compiled(
@@ -295,25 +201,4 @@ def from_output(dev, graph_data, output, traced=None):
         recipe_scope=(dev.recipe_epoch, dev.recipe_epoch.generation),
         native_recipe=dev.native_recipe,
         wire_recipe=dev.wire_recipe,
-    )
-
-
-def flat_arguments(expression, dtypes, n, scalars=()) -> dict:
-    """A `vector.flat_kernel` call of `expression` over `n` elements."""
-    return {
-        "e": expr(expression),
-        "dtypes": dtypes,
-        "n": n,
-        "out_dtype": "f16",
-        "scalars": scalars,
-    }
-
-
-def flat(dev, expression, dtypes, n, bindings, info=None, scalars=()):
-    return launch(
-        dev,
-        "vector.flat_kernel",
-        flat_arguments(expression, dtypes, n, scalars),
-        bindings,
-        info=info,
     )

@@ -10,15 +10,6 @@ from kohakutpu.application.kernels import relayout as RL
 from kohakutpu.language import dsl as kt
 
 
-def direct_destination(plans):
-    """The final plan addresses its destination in bytes/words, not row indices."""
-    return all(
-        isinstance(p, (RL.Fill, RL.Words, RL.Runs, RL.Pull))
-        for p in plans[-1].parts
-        if p.dst == "dst"
-    )
-
-
 def input_ports(plans, hw, prefix):
     ports = {prefix + "x": kt.In(plans[0].src_words, hw.lanes)}
     given = {prefix + "x": kt.TensorSpec.make((plans[0].src_words, hw.lanes))}

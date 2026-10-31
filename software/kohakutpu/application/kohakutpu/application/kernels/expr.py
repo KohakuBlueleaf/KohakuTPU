@@ -102,16 +102,6 @@ def op(name: str, *args) -> Op:
     )
 
 
-def loads(e) -> set:
-    if isinstance(e, Load):
-        return {e.i}
-    if isinstance(e, Op):
-        return set().union(*(loads(a) for a in e.args))
-    if isinstance(e, Reduce):
-        return loads(e.arg)
-    return set()
-
-
 def reduces(e) -> list:
     """The outermost reductions in `e`, a node the expression reads twice
     (a mean a layer norm's gradient takes in two places) once."""
@@ -378,7 +368,6 @@ __all__ = [
     "count",
     "emit",
     "evaluate",
-    "loads",
     "op",
     "reduces",
 ]

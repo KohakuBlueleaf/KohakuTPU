@@ -9,7 +9,6 @@ a stride guessed wrong is a wrong address.
 """
 
 from tinygrad.uop import Ops
-from tinygrad.uop.ops import AxisType
 
 
 def envelope(ast):
@@ -44,11 +43,6 @@ def extent(rng) -> int:
     if n is None:
         raise ValueError(f"a range of no constant extent: {rng}")
     return n
-
-
-def reduces(rng) -> bool:
-    """Whether a RANGE is a reduced axis (``(id, AxisType.REDUCE)``)."""
-    return rng.op is Ops.RANGE and rng.arg[-1] is AxisType.REDUCE
 
 
 def affine(idx) -> tuple | None:
@@ -107,6 +101,5 @@ __all__ = [
     "extent",
     "gated",
     "param_of",
-    "reduces",
     "summarise",
 ]

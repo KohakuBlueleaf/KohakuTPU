@@ -13,8 +13,6 @@ lanes and the mover moves everything else.
 4. mover copy: those groups to row-major ``[nb, B, A]``.
 """
 
-from collections import OrderedDict
-
 import numpy as np
 
 from kohakutpu.application.kernels import vector as V
@@ -22,8 +20,6 @@ from kohakutpu.language import dsl as kt
 
 #: Rows of 128 values (8 sub-tiles) a vector-core trip transforms.
 ROWS = 8
-KERNELS_KEPT = 1024
-_kernels: OrderedDict = OrderedDict()
 _MASKS: np.ndarray | None = None
 
 
@@ -37,48 +33,6 @@ def masks() -> np.ndarray:
         _MASKS = np.stack([m1, m2]).astype(np.float16)
         _MASKS.setflags(write=False)
     return _MASKS
-
-
-def transpose_kernel(nb: int, A: int, B: int, cores: int, *, shape_class=None):
-    """Ports ``x`` (f16 [nb, A, B] as words), ``mask`` (`masks()`), ``y``
-    (f16 [nb, B, A] as words). Returns ``(kernel, given)``."""
-    if A % 16 or B % 16:
-        raise ValueError(f"a transpose of {A} x {B}: both multiples of 16")
-    kkey = ("transpose", nb, A, B, cores, shape_class, V.split, kt.Kernel.build)
-    hit = _kernels.get(kkey)
-    if hit is not None:
-        _kernels.move_to_end(kkey)
-        return hit
-    words = nb * A * B // 16
-    lines = words // 8
-    ports = {"x": kt.In(words, 16), "mask": kt.In(2, 128), "y": kt.Out(words, 16)}
-    given = {
-        "x": kt.TensorSpec.make((words, 16)),
-        "mask": kt.TensorSpec.make((2, 128)),
-        "y": kt.TensorSpec.make((words, 16)),
-    }
-    trips = -(-lines // ROWS)
-    ncore = cores if shape_class and shape_class.cores == "all" else min(cores, trips)
-    padded = -(-trips // ncore) * ncore * ROWS if shape_class else trips * ROWS
-
-    def body(x, mask, y):
-        emit(x, mask, 0, y, nb, A, B, cores, shape_class=shape_class)
-
-    result = kt.Kernel.build(V.name("transpose", nb, A, B, shape_class), body, ports)
-    if shape_class:
-        result.class_info = {
-            "transpose": True,
-            "cores": ncore,
-            "padded_rows": padded - lines,
-            "padded_columns": 0,
-            "core_policy": shape_class.cores,
-        }
-    got = (result, given)
-    if KERNELS_KEPT > 0:
-        _kernels[kkey] = got
-        while len(_kernels) > KERNELS_KEPT:
-            _kernels.popitem(last=False)
-    return got
 
 
 def emit(
@@ -170,41 +124,4 @@ def emit(
     )
 
 
-def reverse_kernel(src_bytes: int, levels: tuple, at: int, n: int, cores: int):
-    """``y`` (`n` f16, row-major, written in whole 2 KB trips: the caller's
-    allocation tail takes the rest) := ``x`` walked by `levels` from byte
-    `at` (the last level a row's words stepping back, -32) with each word's
-    16 lanes reversed -- an innermost-axis flip. Returns ``(kernel, given)``."""
-    levels = tuple((int(a), int(b)) for a, b in levels)
-    kkey = ("reverse", src_bytes, levels, at, n, cores, V.split, kt.Kernel.build)
-    hit = _kernels.get(kkey)
-    if hit is not None:
-        _kernels.move_to_end(kkey)
-        return hit
-    sw, words = -(-src_bytes // 32), n // 16
-    trips = -(-words // (8 * ROWS))
-    ports = {"x": kt.In(sw, 16), "y": kt.Out(trips * ROWS, 128)}
-    given = {
-        "x": kt.TensorSpec.make((sw, 16)),
-        "y": kt.TensorSpec.make((trips * ROWS, 128)),
-    }
-
-    def body(x, y):
-        s = kt.buffer((trips * ROWS, 128), "f16")
-        kt.copy(s, x, walk=levels, at=at, dwalk=[(words, 32)])
-        ncore, start, m = V.split(trips, cores)
-        for c in kt.par(ncore, on=kt.vc):
-            for k in kt.range(m(c)):
-                r = (start(c) + k) * ROWS
-                v = kt.unpack(kt.load(s[r : r + ROWS, :]))
-                kt.store(y[r : r + ROWS, :], kt.xlane(v, 15))
-
-    got = (kt.Kernel.build(V.name("reverse", sw, levels, at, n), body, ports), given)
-    if KERNELS_KEPT > 0:
-        _kernels[kkey] = got
-        while len(_kernels) > KERNELS_KEPT:
-            _kernels.popitem(last=False)
-    return got
-
-
-__all__ = ["ROWS", "emit", "masks", "reverse_kernel", "transpose_kernel"]
+__all__ = ["ROWS", "emit", "masks"]

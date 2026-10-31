@@ -1,5 +1,5 @@
 """A `kernels.expr` expression as a JSON node table, a node reached twice stored
-once (the generators emit a shared node once); `parse_expr` reads one back."""
+once (the generators emit a shared node once)."""
 
 import math
 
@@ -43,22 +43,4 @@ def expr(e, seen: dict | None = None) -> dict:
     return {"nodes": nodes, "root": root}
 
 
-def parse_expr(table: dict):
-    """The `kernels.expr` expression of an `expr` node table, bare or under
-    `"expr"` (a generator argument, as ktpu-kernels' `expr::from_table`
-    reads it)."""
-    table = table.get("expr", table)
-    made: list = []
-    for node in table["nodes"]:
-        if "load" in node:
-            made.append(X.Load(node["load"]))
-        elif "const" in node:
-            made.append(X.Const(float(node["const"])))
-        elif "op" in node:
-            made.append(X.Op(node["op"], tuple(made[j] for j in node["args"])))
-        else:
-            made.append(X.Reduce(node["reduce"], made[node["arg"]]))
-    return made[table["root"]]
-
-
-__all__ = ["expr", "number", "parse_expr"]
+__all__ = ["expr", "number"]
