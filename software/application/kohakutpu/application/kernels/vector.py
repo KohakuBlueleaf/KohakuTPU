@@ -442,11 +442,13 @@ def flat_kernel(
     *,
     shape_class=None,
 ):
-    """`e` over `n` elements (every operand at the output's index, but
-    ``(i, lane)`` of `scalars`: f16 value `lane` of operand i's word, every
-    element's), as 128-value rows. Returns ``(kernel, given)``."""
+    """`e` over `n` elements, whole 128-value rows (every operand at the
+    output's index, but ``(i, lane)`` of `scalars`: f16 value `lane` of operand
+    i's word, every element's). Returns ``(kernel, given)``."""
     if shape_class is not None:
         return class_flat.kernel(e, dtypes, n, out_dtype, cores, scalars, shape_class)
+    if n % 128:
+        raise ValueError(f"{n} elements are not whole 128-value rows")
     dtypes = tuple(dtypes)
     scalars = tuple(scalars)
     kkey = (
@@ -473,7 +475,7 @@ def flat_kernel(
     rows = 16
     while rows > 1 and 2 * rows * words > L1_WORDS - L1_MARGIN:
         rows //= 2
-    total = -(-n // 128)
+    total = n // 128
     full, rem = divmod(total, rows)
     ports, given = {}, {}
     for i, d in enumerate(dtypes):

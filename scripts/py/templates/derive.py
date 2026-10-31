@@ -28,7 +28,6 @@ ORDER = (
     "quant",
     "walk",
     "fill",
-    "cast",
     "transpose",
     "copy",
     "reverse",
@@ -126,8 +125,6 @@ def class_key(record, policy, kblock, max_block):
         key = [len(a["levels"]), len(a.get("dlevels", []))]
     elif family == "fill":
         key = [len(a["dlevels"]), a["ew"]]
-    elif family == "cast":
-        key = [a["src"], a["dst"]]
     else:
         key = []
     return canonical([family, key])

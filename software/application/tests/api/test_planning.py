@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 
 from kohakutpu.application import api as kp
-from kohakutpu.application.kernels import convert, lanes, matmul, transpose, vector
 from kohakutpu.application.kernels import expr as X
+from kohakutpu.application.kernels import lanes, matmul, transpose, vector
 from kohakutpu.application.ktpugrad import reference as REF
 from kohakutpu.application.ktpugrad import run as R
 from kohakutpu.application.runtime import device as D
@@ -197,7 +197,6 @@ def test_generated_refusal_has_clause_and_frees_output(offline, monkeypatch):
         (vector.rows_kernel, ("cores",)),
         (vector.flat_kernel, ("cores",)),
         (matmul.mm_kernel, ("cores", "clusters")),
-        (convert.cast_kernel, ("cores",)),
         (lanes.relayout_kernel, ("cores",)),
         (transpose.transpose_kernel, ("cores",)),
         (transpose.reverse_kernel, ("cores",)),

@@ -1,9 +1,7 @@
-"""Form conversions on the card: a copy, a walk or a fill by the mover, an
-element type to another."""
+"""Form conversions on the card: a copy, a walk or a fill by the mover."""
 
 from collections import OrderedDict
 
-from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.language import dsl as kt
 
@@ -135,9 +133,4 @@ def fill_kernel(dst_bytes: int, dlevels: tuple, dat: int, value: int, ew: int):
     return got
 
 
-def cast_kernel(n: int, src: str, dst: str, cores: int):
-    """n values of `src` (f16 / f32) rewritten as `dst`."""
-    return V.flat_kernel(X.Load(0), (src,), n, dst, cores)
-
-
-__all__ = ["cast_kernel", "copy_kernel", "fill_kernel", "walk_kernel"]
+__all__ = ["copy_kernel", "fill_kernel", "walk_kernel"]

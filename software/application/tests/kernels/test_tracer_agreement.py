@@ -21,7 +21,7 @@ CORES = MACHINE.count("VC")
 L0, L1, L2 = X.Load(0), X.Load(1), X.Load(2)
 KINDS = ("full", "tile", "row", "col", "scalar")
 SHAPES = list(itertools.product((4, 5, 8, 16, 20, 32), (32, 64)))
-#: Whole 128-value rows: a tail is a generator's own stage, not a type rule.
+#: Whole 128-value rows: Python's generator takes no others.
 COUNTS = (128, 256, 1024)
 ONE = {"neg": X.op("neg", L0)}
 TWO = {
@@ -129,6 +129,11 @@ def test_both_tracers_give_one_rows_graph(R, W):
         assert got == outcome(rust, case), case
         traced += got is not None
     assert traced
+
+
+def test_python_flat_takes_whole_rows():
+    with pytest.raises(ValueError, match="whole 128-value rows"):
+        V.flat_kernel(X.Load(0), ("f16",), 130, "f16", CORES)
 
 
 @pytest.mark.parametrize("n", COUNTS)

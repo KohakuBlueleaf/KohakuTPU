@@ -38,7 +38,6 @@ GENERATORS = (
     (matmul, "quant_kernel", "quant"),
     (convert, "walk_kernel", "walk"),
     (convert, "fill_kernel", "fill"),
-    (convert, "cast_kernel", "cast"),
     (transpose, "transpose_kernel", "transpose"),
     (transpose, "reverse_kernel", "reverse"),
     (convert, "copy_kernel", "copy"),
