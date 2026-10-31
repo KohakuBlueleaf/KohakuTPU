@@ -102,8 +102,7 @@ def column(
                     plain[f"p{i}_x"] = v.steps[0].src
                     plain.update(FM.step_binds(dev, plans[i], f"p{i}_"))
                 made = {
-                    str(i): [RW._made_by(s) for s in v.steps]
-                    for i, v in pending.items()
+                    str(i): [s.made_by() for s in v.steps] for i, v in pending.items()
                 }
                 return [_launch(dev, e, operands, R, W, out, plain, info, made=made)]
         binds = {

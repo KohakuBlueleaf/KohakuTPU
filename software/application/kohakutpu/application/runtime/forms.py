@@ -389,6 +389,19 @@ class Step:
     dat: int
     m: int
 
+    def made_by(self) -> dict:
+        """The generator's plan of the step (`Step::made_by`)."""
+        return generated.relayout_plan(
+            "relayout.plan",
+            self.n,
+            self.walk,
+            self.at,
+            self.dwalk,
+            self.dat,
+            self.m,
+            False,
+        )
+
 
 class Pending:
     """A dense f16 buffer of `nbytes` that one kernel reads, not made yet:
@@ -490,9 +503,8 @@ def _prepared_quant(dev, steps, src, rows, cols, rp, cp, side, g, nk, batches):
     plans = plans_of(dev, measured)
     if plans is None or not P.direct_destination(plans):
         return None
-    folded_src = Operand("full", **qs["src"])
-    k, given = MM.quant_kernel(
-        folded_src,
+    call = _quant_call(
+        Operand("full", **qs["src"]),
         rows,
         qs["cols"],
         rp,
@@ -501,11 +513,27 @@ def _prepared_quant(dev, steps, src, rows, cols, rp, cp, side, g, nk, batches):
         g,
         nk,
         batches,
-        prepared=plans,
-        hw=RL.hw_for(dev),
-        pad_strategy=recipe.get("pad_strategy", "native"),
+        recipe.get("pad_strategy", "native"),
+        prepared=[s.made_by() for s in measured],
     )
-    return k, given, {"p_x": steps[0].src, **step_binds(dev, plans, "p_")}
+    return call, {"p_x": steps[0].src, **step_binds(dev, plans, "p_")}
+
+
+def _quant_call(src, rows, cols, rp, cp, side, g, nk, batches, strategy, **more):
+    """The `matmul.quant_kernel` arguments of one packing."""
+    return dict(
+        src=vars(src),
+        rows=rows,
+        cols=cols,
+        rp=rp,
+        cp=cp,
+        side=side,
+        g=g,
+        nk=nk,
+        batches=batches,
+        pad_strategy=strategy,
+        **more,
+    )
 
 
 def packed(
@@ -524,8 +552,14 @@ def packed(
             key = ("prepared_mx7", side, src, rows, cols, rp, cp, g, nk, batches)
             if key not in s.holder.valid:
                 f = s.holder.form(key, batches * rp * cp)
-                k, given, binds = prepared
-                launch(dev, k, given, dict(binds, q=f.addr), kind="quant")
+                call, binds = prepared
+                generated.launch(
+                    dev,
+                    "matmul.quant_kernel",
+                    call,
+                    dict(binds, q=f.addr),
+                    kind="quant",
+                )
                 s.holder.made(key)
             return s.holder.forms[key].addr
         s, dtype = s.made(), np.float16
@@ -605,8 +639,14 @@ def packed(
                 batches,
             )
             if prepared is not None:
-                k, given, binds = prepared
-                launch(dev, k, given, dict(binds, q=f.addr), kind="quant")
+                call, binds = prepared
+                generated.launch(
+                    dev,
+                    "matmul.quant_kernel",
+                    call,
+                    dict(binds, q=f.addr),
+                    kind="quant",
+                )
                 st.made(key)
                 return f.addr
             t = Storage(dev, 2 * R * dp)
@@ -622,10 +662,13 @@ def packed(
             if costs.choose("staged_padding", recipe, dev.machine.board)
             else "native"
         )
-        k, given = MM.quant_kernel(
-            src, rows, cols, rp, cp, side, g, nk, batches, pad_strategy=strategy
+        generated.launch(
+            dev,
+            "matmul.quant_kernel",
+            _quant_call(src, rows, cols, rp, cp, side, g, nk, batches, strategy),
+            {"x": base, "q": f.addr},
+            kind="quant",
         )
-        launch(dev, k, given, {"x": base, "q": f.addr}, kind="quant")
     finally:
         for t in tmps:
             t.free()

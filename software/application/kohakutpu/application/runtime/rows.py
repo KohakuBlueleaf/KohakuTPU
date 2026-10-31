@@ -87,20 +87,6 @@ def _launch(dev, e, operands, binds, R, W, out, info, cores):
     return run, given, nblk
 
 
-def _made_by(step) -> dict:
-    """The generator's plan of one `forms.Step` (`Step::made_by`)."""
-    plan = dict(
-        src_n=step.n,
-        walk=step.walk,
-        at=step.at,
-        dwalk=step.dwalk,
-        dat=step.dat,
-        m=step.m,
-        keep=False,
-    )
-    return {"made_by": {"gen": "relayout.plan", "args": plan}}
-
-
 def _prepared(dev, e, operands, binds, R, W, out, out_at, info):
     """One launch of `e` with each bound `forms.Pending` made inside it
     (the generator `prepared.rows_kernel`); None when a pending one's steps
@@ -134,7 +120,7 @@ def _prepared(dev, e, operands, binds, R, W, out, out_at, info):
             "R": R,
             "W": W,
             "out": vars(out),
-            "made": {str(i): [_made_by(s) for s in steps[i]] for i in made},
+            "made": {str(i): [s.made_by() for s in steps[i]] for i in made},
             "alias": {str(i): j for i, j in alias.items()},
         },
         plain,

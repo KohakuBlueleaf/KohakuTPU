@@ -11,8 +11,7 @@ Against Python's:
 - `matmul.mm_kernel` with `made`: the same ports, specs and statements (the
   name carries knobs Python spells differently).
 - `matmul.quant_kernel` with `prepared` (`native` and `staged`): the same
-  ports and made-input statements; after them, Rust and Python agree on
-  exactly the statements they agree on without `prepared`."""
+  ports and statements (the name carries knobs Python spells differently)."""
 
 import hashlib
 import json
@@ -363,14 +362,7 @@ def test_rust_prepared_packing_is_python_packing(name):
     rows, cols, rp, cp, steps, strategy = PACKINGS[name]
     got = quant_rust(rows, cols, rp, cp, steps, strategy)
     want = quant_python(rows, cols, rp, cp, steps, strategy)
-    plain_got = quant_rust(rows, cols, rp, cp, [], strategy)
-    plain_want = quant_python(rows, cols, rp, cp, [], strategy)
-    assert got["ports"] == want["ports"]
-    made = len(want["body"]) - len(plain_want["body"])
-    assert made > 0 and len(got["body"]) - len(plain_got["body"]) == made
-    assert got["body"][:made] == want["body"][:made]
-    agree = [a == b for a, b in zip(got["body"][made:], want["body"][made:])]
-    assert agree == [a == b for a, b in zip(plain_got["body"], plain_want["body"])]
+    assert (got["ports"], got["body"]) == (want["ports"], want["body"])
 
 
 def test_cases_reach_every_branch():
