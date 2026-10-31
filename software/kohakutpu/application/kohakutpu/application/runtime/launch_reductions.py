@@ -194,7 +194,7 @@ def column_tree_kernel(
         cur = None
         if TR.materialized(ops, n, hw.descriptors):
             cur = kt.buffer((n, W), "f16")
-            RW.emit_rows_stages(
+            emit_rows_stages(
                 {**bnd, "out": cur}, red.arg, tuple(ops), n, W, full, cores
             )
         elide_final = R > 1 and post == X.Load(0) and not keep and RW.MUTANT is None
@@ -222,7 +222,7 @@ def column_tree_kernel(
                 }
                 if n % 2 and RW.MUTANT != "drop_member":
                     last = tuple(TR._shift(o, n - 1, W) for o in ops)
-                    RW.emit_rows_stages(
+                    emit_rows_stages(
                         {**bnd, "out": target_buf},
                         red.arg,
                         last,
@@ -231,7 +231,7 @@ def column_tree_kernel(
                         Operand("full", pitch=W, offset=h * W, rows=nxt_rows),
                         cores,
                     )
-                RW.emit_rows_stages(lvl_b, expr_lvl, lvl_ops, h, W, target_op, cores)
+                emit_rows_stages(lvl_b, expr_lvl, lvl_ops, h, W, target_op, cores)
             else:
                 if RW.MUTANT == "drop_member":
                     cur, n = target_buf, nxt_rows
@@ -243,7 +243,7 @@ def column_tree_kernel(
                 )
                 if n % 2:
                     kt.copy(target_buf[h : h + 1, :], cur[n - 1 : n, :])
-                RW.emit_rows_stages(
+                emit_rows_stages(
                     {"in0": cur, "in1": cur, "out": target_buf},
                     expr_lvl,
                     lvl_ops,
@@ -269,7 +269,7 @@ def column_tree_kernel(
             head_ops.append(operands[i])
             head_b[f"in{base + j}"] = p[f"in{i}"]
         head_b["out"] = p["out"]
-        RW.emit_rows_stages(head_b, final, tuple(head_ops), 1, W, out, cores)
+        emit_rows_stages(head_b, final, tuple(head_ops), 1, W, out, cores)
 
     key = V.name(
         "rows",

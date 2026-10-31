@@ -3,8 +3,8 @@
 import bisect
 import os
 
-from kohakutpu.compiler import _rs
 from kohakutpu.language.dsl.kernel import _MUTANT
+from kohakutpu.stack.rs import _rs
 
 OutOfMemory = _rs.OutOfMemory
 

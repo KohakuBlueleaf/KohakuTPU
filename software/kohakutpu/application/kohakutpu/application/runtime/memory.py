@@ -12,8 +12,8 @@ these arenas. Recording pins existing spans instead of reserving a child heap.
 import os
 
 from kohakutpu.application.runtime.arena import Arena
-from kohakutpu.compiler import _rs
 from kohakutpu.language.dsl.kernel import _MUTANT
+from kohakutpu.stack.rs import _rs
 
 #: The most zero bytes one paint write carries.
 PAINT_CHUNK = 16 << 20

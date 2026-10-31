@@ -22,10 +22,10 @@ import sys
 
 import numpy as np
 
-from kohakutpu.compiler import _rs
 from kohakutpu.language import examples
 from kohakutpu.language import machine as MF
 from kohakutpu.simulation.verilator import replay as bench
+from kohakutpu.stack.rs import _rs
 
 MASK = (1 << 256) - 1
 

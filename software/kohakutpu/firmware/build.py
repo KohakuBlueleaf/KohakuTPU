@@ -152,7 +152,11 @@ INCLUDES = ["kohakuaccel/firmware/include"]
 
 #: Sources compiled for size: the instruction window is 32 KB, and the per-word
 #: loops these hold run on the dispatch engine, which issues the words itself.
-SIZE_OPT = ("kohakuaccel/firmware/package/", "kohakuaccel/firmware/os/", "kohakuaccel/firmware/queue/")
+SIZE_OPT = (
+    "kohakuaccel/firmware/package/",
+    "kohakuaccel/firmware/os/",
+    "kohakuaccel/firmware/queue/",
+)
 
 
 def file_flags(src: pathlib.Path, image: str) -> list[str]:

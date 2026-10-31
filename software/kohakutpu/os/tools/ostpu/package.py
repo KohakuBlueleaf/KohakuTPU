@@ -3,7 +3,7 @@
 import json
 import struct
 
-from kohakutpu.compiler import _rs
+from kohakutpu.stack.rs import _rs
 
 
 def operand(value):

@@ -15,8 +15,7 @@ from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes.policy import ShapeClass
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import forms as FM
-from kohakutpu.application.runtime import launch_reductions as LR
-from kohakutpu.compiler import _rs
+from kohakutpu.stack.rs import _rs
 
 #: Whether a multi-stage AST (wide row reduction or column tree reduction) is
 #: compiled into a single kernel package rather than split across launches;
@@ -405,19 +404,9 @@ __all__ = [
     "MUTANT",
     "SINGLE_PACKAGE_AST",
     "RowsError",
-    "emit_rows_stages",
     "rows_of",
     "run",
     "single_package_enabled",
     "stat_bytes",
     "substitute",
-    "wide_fold_kernel",
 ]
-
-
-def emit_rows_stages(*args, **kwargs):
-    return LR.emit_rows_stages(*args, **kwargs)
-
-
-def wide_fold_kernel(*args, **kwargs):
-    return LR.wide_fold_kernel(*args, **kwargs)

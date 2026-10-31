@@ -4,20 +4,22 @@ import contextlib
 import os
 
 from kohakutpu.application.ktpugrad import launch_rules
-from kohakutpu.application.ktpugrad import run as R
 from kohakutpu.application.ktpugrad.launch_emit import flush_multi_stage
 from kohakutpu.application.runtime import launch_boundary
 from kohakutpu.application.runtime import rows as RW
 
+VIEW_FORMS = False
+ELIDE_CONTIGUOUS = True
+HORIZONTAL_FUSION = True
+
 
 def view_forms_enabled() -> bool:
-    return os.environ.get("KTPU_VIEW_FORMS", "1" if R.VIEW_FORMS else "0") == "1"
+    return os.environ.get("KTPU_VIEW_FORMS", "1" if VIEW_FORMS else "0") == "1"
 
 
 def elide_contiguous_enabled() -> bool:
     return (
-        os.environ.get("KTPU_ELIDE_CONTIGUOUS", "1" if R.ELIDE_CONTIGUOUS else "0")
-        == "1"
+        os.environ.get("KTPU_ELIDE_CONTIGUOUS", "1" if ELIDE_CONTIGUOUS else "0") == "1"
     )
 
 
@@ -31,7 +33,7 @@ def single_package_enabled() -> bool:
 
 def horizontal_fusion_enabled() -> bool:
     return (
-        os.environ.get("KTPU_HORIZONTAL_FUSION", "1" if R.HORIZONTAL_FUSION else "0")
+        os.environ.get("KTPU_HORIZONTAL_FUSION", "1" if HORIZONTAL_FUSION else "0")
         == "1"
     )
 
@@ -46,31 +48,32 @@ def knobs(
     mutant: str | None = None,
 ):
     """Temporarily configure the four launch-reduction knobs and optional mutant."""
+    global VIEW_FORMS, ELIDE_CONTIGUOUS, HORIZONTAL_FUSION
     prev = (
-        R.VIEW_FORMS,
-        R.ELIDE_CONTIGUOUS,
+        VIEW_FORMS,
+        ELIDE_CONTIGUOUS,
         RW.SINGLE_PACKAGE_AST,
-        R.HORIZONTAL_FUSION,
+        HORIZONTAL_FUSION,
         RW.MUTANT,
     )
     if view_forms is not None:
-        R.VIEW_FORMS = bool(view_forms)
+        VIEW_FORMS = bool(view_forms)
     if elide_contiguous is not None:
-        R.ELIDE_CONTIGUOUS = bool(elide_contiguous)
+        ELIDE_CONTIGUOUS = bool(elide_contiguous)
     if single_package_ast is not None:
         RW.SINGLE_PACKAGE_AST = bool(single_package_ast)
     if horizontal_fusion is not None:
-        R.HORIZONTAL_FUSION = bool(horizontal_fusion)
+        HORIZONTAL_FUSION = bool(horizontal_fusion)
     if mutant is not None:
         RW.MUTANT = mutant
     try:
         yield
     finally:
         (
-            R.VIEW_FORMS,
-            R.ELIDE_CONTIGUOUS,
+            VIEW_FORMS,
+            ELIDE_CONTIGUOUS,
             RW.SINGLE_PACKAGE_AST,
-            R.HORIZONTAL_FUSION,
+            HORIZONTAL_FUSION,
             RW.MUTANT,
         ) = prev
 

@@ -2,7 +2,7 @@
 
 import os
 
-from kohakutpu.compiler import _rs
+from kohakutpu.stack.rs import _rs
 
 
 class NativePoll:

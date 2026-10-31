@@ -1,7 +1,7 @@
 """Machine-bound Rust package reader for the framework's callback interpreter."""
 
-from kohakutpu.compiler import _rs
 from kohakutpu.language import machine as MF
+from kohakutpu.stack.rs import _rs
 
 
 class Reader:

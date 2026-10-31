@@ -1,6 +1,6 @@
 """Cold construction of native launch descriptors from the admitted submission."""
 
-from kohakutpu.compiler import _rs
+from kohakutpu.stack.rs import _rs
 
 
 def descriptor(dev, compiled, full, progs, submitted, explicit):

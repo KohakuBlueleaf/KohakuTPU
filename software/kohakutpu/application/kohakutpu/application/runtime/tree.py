@@ -17,7 +17,6 @@ from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import costs
 from kohakutpu.application.runtime import forms as FM
-from kohakutpu.application.runtime import launch_reductions as LR
 from kohakutpu.application.runtime import rows as RW
 from kohakutpu.language import machine as MF
 
@@ -199,8 +198,4 @@ def _place(post, acc, base: int):
     return post
 
 
-__all__ = ["OP", "column", "column_tree_kernel", "materialized"]
-
-
-def column_tree_kernel(*args, **kwargs):
-    return LR.column_tree_kernel(*args, **kwargs)
+__all__ = ["OP", "column", "materialized"]

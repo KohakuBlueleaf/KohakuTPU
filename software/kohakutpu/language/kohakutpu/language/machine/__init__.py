@@ -37,9 +37,7 @@ def schema_version() -> str:
     """The schema version of the definition in the tree: every machine file
     is written for it, and a file of another version is refused."""
     paths = [
-        p
-        for d in SCHEMA_DIRS
-        for p in sorted(d.glob("*.rs"), key=lambda p: p.name)
+        p for d in SCHEMA_DIRS for p in sorted(d.glob("*.rs"), key=lambda p: p.name)
     ]
     return schema_version_of([p.read_text(encoding="utf-8") for p in paths])
 

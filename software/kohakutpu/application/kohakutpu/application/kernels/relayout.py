@@ -44,9 +44,9 @@ import numpy as np
 
 from kohakutpu.application.kernels import transpose as TP
 from kohakutpu.application.kernels import vector as V
-from kohakutpu.compiler import _rs
 from kohakutpu.language import dsl as kt
 from kohakutpu.language import machine as MF
+from kohakutpu.stack.rs import _rs
 
 #: Vector-core rows a trip takes.
 ROWS = 2

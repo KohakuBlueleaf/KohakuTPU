@@ -7,8 +7,8 @@ from enum import IntEnum
 from functools import lru_cache
 from types import SimpleNamespace
 
-from kohakutpu.compiler import _rs
 from kohakutpu.stack import rs
+from kohakutpu.stack.rs import _rs
 
 ADMISSION_ENV = "KOHAKUTPU_ADMISSION_CONTEXT"
 REFUSE = (

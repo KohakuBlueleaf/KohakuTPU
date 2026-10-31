@@ -48,9 +48,6 @@ from kohakutpu.language import machine as MF
 from kohakutpu.language.numerics import fp16
 
 #: Launch-reduction knobs (each configurable via `knobs(...)` or environment).
-VIEW_FORMS = False
-ELIDE_CONTIGUOUS = True
-HORIZONTAL_FUSION = True
 
 
 def _reform_one(dev, plan: Plan, a: Access | None, bufs: dict) -> Access | None:
@@ -3033,9 +3030,6 @@ def plan_schedule(items: list, held_ids: set | None = None) -> list:
 
 
 __all__ = [
-    "ELIDE_CONTIGUOUS",
-    "HORIZONTAL_FUSION",
-    "VIEW_FORMS",
     "classify",
     "elide_contiguous_enabled",
     "execute",

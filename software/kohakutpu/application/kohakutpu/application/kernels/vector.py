@@ -22,8 +22,8 @@ from dataclasses import dataclass
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels.classes import flat as class_flat
 from kohakutpu.application.kernels.classes import rows as class_rows
-from kohakutpu.compiler import _rs
 from kohakutpu.language import dsl as kt
+from kohakutpu.stack.rs import _rs
 
 #: How `split` deals trips over cores: ktpu-kernels' `vector::defaults`.
 TRIPS = json.loads(_rs.VECTOR_DEFAULTS)["trips"]

@@ -37,7 +37,7 @@ DEPENDS = {
     "compiler": {"compiler"},
     "stack": {"stack", "compiler", "language", "application"},
     "driver": {"driver", "language"},
-    "simulation": {"simulation", "driver", "compiler", "language"},
+    "simulation": {"simulation", "driver", "stack", "language"},
     "application": set(COMPONENTS),
 }
 

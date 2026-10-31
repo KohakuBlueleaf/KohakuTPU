@@ -9,8 +9,8 @@ from tinygrad.uop import Ops
 from tinygrad.uop.ops import UOp
 
 from kohakutpu.application.runtime import device as D
-from kohakutpu.compiler import _rs
 from kohakutpu.language.dsl.kernel import _MUTANT
+from kohakutpu.stack.rs import _rs
 
 ORIGINAL = tensor.transform_to_call
 KEPT = 128

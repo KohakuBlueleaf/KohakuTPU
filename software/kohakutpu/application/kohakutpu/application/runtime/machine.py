@@ -4,8 +4,8 @@ import json
 import os
 from dataclasses import dataclass, field
 
-from kohakutpu.compiler import _rs
 from kohakutpu.language import machine as MF
+from kohakutpu.stack.rs import _rs
 
 
 @dataclass(frozen=True)

@@ -18,8 +18,8 @@ from kohakutpu.application.kernels import prepared as P
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes import mm as class_mm
 from kohakutpu.application.kernels.vector import Operand
-from kohakutpu.compiler import _rs
 from kohakutpu.language import dsl as kt
+from kohakutpu.stack.rs import _rs
 
 KERNELS_KEPT = 1024
 _kernels: OrderedDict = OrderedDict()

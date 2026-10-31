@@ -24,9 +24,9 @@ from kohakutpu.application.runtime.card import (
 )
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.application.runtime.memory import CardMemory
-from kohakutpu.compiler import _rs
 from kohakutpu.driver.clock.card import load_board
 from kohakutpu.driver.host import board_map
+from kohakutpu.stack.rs import _rs
 
 PAGE = 1 << 20
 

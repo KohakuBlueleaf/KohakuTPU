@@ -7,8 +7,8 @@ from kohakutpu.application.ktpugrad import run
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import launch_boundary, native_launch
 from kohakutpu.application.runtime.storage import Form, StorageView
-from kohakutpu.compiler import _rs
 from kohakutpu.language.dsl.kernel import _MUTANT
+from kohakutpu.stack.rs import _rs
 
 ENV = "KTPU_EAGER_RECIPE"
 KEPT = 512

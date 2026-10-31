@@ -6,7 +6,7 @@ Queue object bookkeeping remains at this boundary, not once per list item.
 """
 
 from kohakuaccel.driver.node.queue.client import Completion
-from kohakutpu.compiler import _rs
+from kohakutpu.stack.rs import _rs
 
 
 class NativeExchange:

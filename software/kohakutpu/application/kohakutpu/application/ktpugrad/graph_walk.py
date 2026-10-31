@@ -7,7 +7,7 @@ from tinygrad.device import Buffer
 from tinygrad.uop import Ops
 from tinygrad.uop.ops import UOp, _rebuild_dtype
 
-from kohakutpu.compiler import _rs
+from kohakutpu.stack.rs import _rs
 
 _ORIGINAL = tensor._apply_map_to_tensors
 ENABLED = False

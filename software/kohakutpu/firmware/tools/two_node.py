@@ -24,10 +24,10 @@ from kohakuaccel.driver.node.queue import NodeQueue
 from kohakuaccel.driver.node.queue import layout as L
 from kohakuaccel.driver.transport.rebase import UnitGlobal
 from kohakuaccel.driver.transport.verilator import VerilatorTransport
-from kohakutpu.compiler import _rs
 from kohakutpu.driver.clock.card import load_board
 from kohakutpu.driver.host import board_map
 from kohakutpu.language import machine as MF
+from kohakutpu.stack.rs import _rs
 
 ROOT = pathlib.Path(__file__).resolve().parents[4]
 SRC, DST = 0x0060_0000, 0x0070_0000

@@ -1,7 +1,7 @@
 """Cold setup of synchronous native eager upload and queue ownership."""
 
 from kohakuaccel.driver.transport.xdma_linux import XdmaLinux
-from kohakutpu.compiler import _rs
+from kohakutpu.stack.rs import _rs
 
 
 def attach(dev):
