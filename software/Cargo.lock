@@ -186,6 +186,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ka-emu"
+version = "0.1.0"
+
+[[package]]
 name = "ka-isa"
 version = "0.1.0"
 dependencies = [
@@ -261,6 +265,7 @@ name = "ktpu-kernels"
 version = "0.1.0"
 dependencies = [
  "ktpu-graph",
+ "ktpu-isa",
  "ktpu-machine",
  "serde",
  "serde_json",
@@ -320,6 +325,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ktpu-perf"
+version = "0.1.0"
+dependencies = [
+ "ktpu",
+ "ktpu-isa",
+ "ktpu-l1",
+ "ktpu-l2",
+ "ktpu-machine",
+ "rayon",
+ "serde_json",
+]
+
+[[package]]
 name = "ktpu-py"
 version = "0.1.0"
 dependencies = [
@@ -332,12 +350,27 @@ dependencies = [
  "ktpu-l1",
  "ktpu-l2",
  "ktpu-machine",
+ "ktpu-sim",
  "ktpu-verify",
  "pyo3",
  "rayon",
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "ktpu-sim"
+version = "0.1.0"
+dependencies = [
+ "ka-emu",
+ "ktpu",
+ "ktpu-isa",
+ "ktpu-l0",
+ "ktpu-l1",
+ "ktpu-machine",
+ "rayon",
+ "serde_json",
 ]
 
 [[package]]

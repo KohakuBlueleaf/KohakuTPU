@@ -1,0 +1,111 @@
+# What the node's dispatch and the mover cost: sends of an empty image, contiguous and
+# strided moves, a kernel's fixed cost from a launch of nothing.
+target ktpu.v9
+
+image idle(x)
+    desc a0 = x walk=(32, 8)
+    vfill a0 -> l1[0]
+    vbar
+    halt
+
+image nothing()
+    halt
+
+fn send_1.l1(x: f16[64] @dram)
+    send vc[0]
+        run idle(x)
+    barrier
+
+fn send_8.l1(x: f16[64] @dram)
+    for i in 0..8
+        send vc[0]
+            run idle(x)
+    barrier
+
+fn send_32.l1(x: f16[64] @dram)
+    for i in 0..32
+        send vc[0]
+            run idle(x)
+    barrier
+
+fn send_two.l1(x: f16[64] @dram)
+    for i in 0..64
+        send vc[i % 2]
+            run nothing()
+    barrier
+
+fn send_words.l1(x: f16[64] @dram, y: f16[64] @dram)
+    for i in 0..64
+        send vc[i % 2]
+            desc a0 = x walk=(32, 8)
+            desc a1 = y walk=(32, 8)
+            desc a2 = x walk=(32, 8)
+            desc a3 = y walk=(32, 8)
+            run nothing()
+    barrier
+
+fn wait_8.l1(x: f16[64] @dram)
+    for i in 0..8
+        send vc[0]
+            run idle(x)
+        wait vc[0]
+    barrier
+
+fn wait_32.l1(x: f16[64] @dram)
+    for i in 0..32
+        send vc[0]
+            run idle(x)
+        wait vc[0]
+    barrier
+
+fn walk_2d.l1(src: f16[2688, 16] @dram, dst: f16[1200, 16] @dram)
+    move
+        copy w(src+0, (48, 1792), (25, 64)) -> w(dst+0, (1200, 32))
+
+fn walk_1d.l1(src: f16[2688, 16] @dram, dst: f16[1200, 16] @dram)
+    move
+        copy w(src+0, (1200, 64)) -> w(dst+0, (1200, 32))
+
+fn copy_64.l1(x: f16[1024] @dram, y: f16[1024] @dram)
+    move
+        copy w(x, (64, 32)) -> w(y, (64, 32))
+
+fn copy_1024.l1(x: f16[16384] @dram, y: f16[16384] @dram)
+    move
+        copy w(x, (1024, 32)) -> w(y, (1024, 32))
+
+fn copy_strided.l1(x: f16[2048] @dram, y: f16[1024] @dram)
+    move
+        copy w(x, (64, 64)) -> w(y, (64, 32))
+
+fn ops_12.l1(x: f16[4096] @dram, y: f16[4096] @dram)
+    move
+        for i in 0..12
+            copy w(x + i*256, (8, 32)) -> w(y + i*256, (8, 32))
+
+fn ops_48.l1(x: f16[4096] @dram, y: f16[4096] @dram)
+    move
+        for i in 0..48
+            copy w(x + i*64, (2, 32)) -> w(y + i*64, (2, 32))
+
+fn fills_12.l1(y: f16[4096] @dram)
+    move
+        for i in 0..12
+            fill w(y + i*256, (8, 32)) value=0
+
+# A gather reads an index and a row an element, a scatter the same the other way.
+fn gather_256.l1(x: f16[1024] @dram, y: f16[65536] @dram, index: f32[256] @dram)
+    move
+        gather x -> w(y, (256, 256), (2, 32)) fp index=index n=256 pitch=32 words=2
+
+fn gather_1024.l1(x: f16[1024] @dram, y: f16[262144] @dram, index: f32[1024] @dram)
+    move
+        gather x -> w(y, (1024, 256), (2, 32)) fp index=index n=1024 pitch=32 words=2
+
+fn scatter_256.l1(x: f16[65536] @dram, y: f16[1024] @dram, index: f32[256] @dram)
+    move
+        scatter w(x, (256, 256), (2, 32)) -> y fp index=index n=256 pitch=32 words=2
+
+fn scatter_1024.l1(x: f16[262144] @dram, y: f16[1024] @dram, index: f32[1024] @dram)
+    move
+        scatter w(x, (1024, 256), (2, 32)) -> y fp index=index n=1024 pitch=32 words=2

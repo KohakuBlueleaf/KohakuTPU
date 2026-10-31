@@ -161,6 +161,11 @@ SUITES = (
         default=False,
     ),
     Suite(
+        "perf",
+        ("tests/perf", f"{COMPILER}/ktpu-l1/src/sched"),
+        per_test=5.0,
+    ),
+    Suite(
         "e2e",
         (),
         budget=900.0,

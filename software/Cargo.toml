@@ -13,6 +13,7 @@ members = [
     "kohakutpu/compiler/crates/ktpu-l2",
     "kohakutpu/compiler/crates/ktpu-verify",
     "kohakutpu/compiler/crates/ktpu-sim",
+    "tests/perf/model",
     "kohakutpu/compiler/crates/ktpu-graph",
     "kohakutpu/compiler/crates/ktpu-kernels",
     "kohakuaccel/compiler/crates/ka-cache",

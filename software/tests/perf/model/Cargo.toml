@@ -1,0 +1,27 @@
+[package]
+name = "ktpu-perf"
+description = "The speed harness: compiler stage timing, floors and the timed model of an L1 run."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ktpu.workspace = true
+ktpu-isa.workspace = true
+ktpu-l1.workspace = true
+ktpu-l2.workspace = true
+ktpu-machine.workspace = true
+rayon.workspace = true
+serde_json.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "compile_speed"
+path = "src/bin/compile_speed.rs"
+
+[[bin]]
+name = "timed"
+path = "src/bin/timed.rs"

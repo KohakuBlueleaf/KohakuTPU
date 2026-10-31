@@ -30,8 +30,29 @@ tests/
 ├── firmware/   host/ on native C, emu/ on ka-emu
 ├── machine/    softmmu, AMP/SMP, interrupts, interlink on core-only Verilator models
 ├── e2e/        whole models on the card: final verification, not debugging
+├── perf/       speed, level by level: see below
 └── fixtures/   tiny L2 per form, the kernels tiny models compile (l2/harvest), anchor images
 ```
+
+Speed follows the same chain. Each level has a floor and a time, and a stage owns
+the ratio it adds, so a loss is named without a long run:
+
+| Level | Read from | Tool in `perf/` |
+|---|---|---|
+| compiler stages | each stage alone on the corpus | `compile_speed`, `speed.py` |
+| math, then form work | a recorded trace's L2 and L1 counts | `record.py`, `waste.py` |
+| one kernel, one step in time | the task graph of its L1 | `timed`, `waste.py` |
+| the model itself | `anchors/` on Verilator, `anchors/memory/` and a whole step on the card | `anchors.py`, `compare.py` |
+| every trace, every machine | the two tiers above, from disk | `matrix.py` |
+
+A trace is made once on the offline device and read by everything else, with no
+tinygrad and no card. Every number in `perf/params.json` names its anchor, and
+`test_anchors.py` fails when breaking a parameter leaves the anchors in budget.
+`test_waste.py` holds each detector to waste put in on purpose. A parameter's `value`
+is what Verilator pins, its `card` what the card pins: DDR4 and a step's cold cache
+exist only there, so `timed --card` reads a step and plain `timed` reads an anchor.
+`compare.py three` reads recorded kernels on the model, Verilator and the card: the
+first gap is the model's, the second is memory.
 
 `KTPU_HARVEST=<dir> pytest -p harvest` (`tests/` on `PYTHONPATH`) writes every
 kernel a double compiles as an L2 fixture: run over `runtime` (materialized

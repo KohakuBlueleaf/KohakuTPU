@@ -1,0 +1,150 @@
+# What a vector image costs beyond its instructions: its words sent to the core, its
+# words held from one send to the next, its loop against the same work flat.
+target ktpu.v9
+
+image long16()
+    for i in 0..16
+        vadd v1, v2, v3
+    halt
+
+image long64()
+    for i in 0..64
+        vadd v1, v2, v3
+    halt
+
+image long256()
+    for i in 0..256
+        vadd v1, v2, v3
+    halt
+
+image looped(n)
+    seti s0 = n
+    skipz s0
+        loop s0
+            vadd v1, v2, v3
+            vadd v4, v5, v6
+            vadd v7, v8, v9
+            vadd v10, v11, v12
+    halt
+
+image packs(n)
+    seti s0 = n
+    loop s0
+        for i in 0..4
+            vpack v{i*4} -> l1[128 + i*4] mx7b
+    halt
+
+image packs16(n)
+    seti s0 = n
+    loop s0
+        for i in 0..4
+            vpack v{i*4} -> l1[128 + i*8] f16
+    halt
+
+image exps(n)
+    seti s0 = n
+    loop s0
+        vexp2d v3, v1, k0
+        vexp2d v7, v5, k0
+        vexp2d v11, v9, k0
+        vexp2d v15, v13, k0
+    halt
+
+image muls(n)
+    seti s0 = n
+    loop s0
+        vmul v1, v0, k0
+        vmul v5, v4, k0
+        vmul v9, v8, k0
+        vmul v13, v12, k0
+    halt
+
+image unpks(n)
+    seti s0 = n
+    loop s0
+        for i in 0..4
+            vunpk v{i*4}[0 :] <- l1[i*4] f16 n=1
+    halt
+
+image unpks16(n)
+    seti s0 = n
+    loop s0
+        for i in 0..4
+            vunpk v{i*4} <- l1[i*16] f16
+    halt
+
+image forms(n)
+    seti s0 = n
+    loop s0
+        vmov v0, k0
+        vsync fe on=math
+        for i in 0..4
+            vunpk v0[i*2 :] <- l1[i] f16 n=1
+    halt
+
+fn pack_mx7.l1()
+    send vc[0]
+        run packs(64)
+    barrier
+
+fn pack_f16.l1()
+    send vc[0]
+        run packs16(64)
+    barrier
+
+fn exp_256.l1()
+    send vc[0]
+        run exps(64)
+    barrier
+
+fn mul_256.l1()
+    send vc[0]
+        run muls(64)
+    barrier
+
+fn unpk_1.l1()
+    send vc[0]
+        run unpks(64)
+    barrier
+
+fn unpk_full.l1()
+    send vc[0]
+        run unpks16(64)
+    barrier
+
+fn fe_sync.l1()
+    send vc[0]
+        run forms(64)
+    barrier
+
+fn long_16.l1()
+    send vc[0]
+        run long16()
+    barrier
+
+fn long_64.l1()
+    send vc[0]
+        run long64()
+    barrier
+
+fn long_256.l1()
+    send vc[0]
+        run long256()
+    barrier
+
+fn again_256.l1()
+    send vc[0]
+        run long256()
+    send vc[0]
+        run long256()
+    barrier
+
+fn loop_64.l1()
+    send vc[0]
+        run looped(16)
+    barrier
+
+fn loop_1024.l1()
+    send vc[0]
+        run looped(256)
+    barrier

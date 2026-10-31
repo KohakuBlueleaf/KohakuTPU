@@ -1,0 +1,62 @@
+# One timing parameter a kernel, each at sizes that split its slope from its start:
+# fill per entry, sweep per unit, drain per sub-tile, the bus under two clusters.
+target ktpu.v9
+
+fn fill_32.l1(a: mx7a[256, 512] @dram(gm=64, nk=4))
+    send mg[0]
+        fill A0 <- a n=32
+    barrier
+
+fn fill_128.l1(a: mx7a[256, 512] @dram(gm=64, nk=4))
+    send mg[0]
+        fill A0 <- a n=128
+    barrier
+
+fn fill_255.l1(a: mx7a[256, 512] @dram(gm=64, nk=4))
+    send mg[0]
+        fill A0 <- a n=255
+    barrier
+
+fn fill_two.l1(a: mx7a[256, 512] @dram(gm=64, nk=4), b: mx7a[256, 512] @dram(gm=64, nk=4))
+    send mg[0]
+        fill A0 <- a n=255
+    send mg[1]
+        fill A0 <- b n=255
+    barrier
+
+fn sweep_16.l1(a: mx7a[64, 64] @dram(gm=16, nk=2), b: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[64, 64] @dram(tile=16x16))
+    send mg[0]
+        fill A0 <- a n=32
+        fill B0 <- b n=32
+        gemm 16x16x2 a=A0 b=B0 acc=0
+        drain y n=256
+    barrier
+
+fn sweep_64.l1(a: mx7a[256, 64] @dram(gm=64, nk=2), b: mx7b[256, 64] @dram(gn=64, nk=2), y: f16[256, 256] @dram(tile=64x64))
+    send mg[0]
+        fill A0 <- a n=128
+        fill B0 <- b n=128
+        gemm 64x64x2 a=A0 b=B0 acc=0
+        drain y n=4096
+    barrier
+
+fn emit_64.l1(a: mx7a[256, 64] @dram(gm=64, nk=2), b: mx7b[256, 64] @dram(gn=64, nk=2), y: f16[256, 256] @dram(tile=64x64))
+    send mg[0]
+        fill A0 <- a n=128
+        fill B0 <- b n=128
+        gemm 64x64x2 a=A0 b=B0 acc=0 emit=y
+        drain y n=4096 fused
+    barrier
+
+fn emit_two.l1(a: mx7a[256, 64] @dram(gm=64, nk=2), b: mx7b[256, 64] @dram(gn=64, nk=2), y: f16[256, 256] @dram(tile=64x64), z: f16[256, 256] @dram(tile=64x64))
+    send mg[0]
+        fill A0 <- a n=128
+        fill B0 <- b n=128
+        gemm 64x64x2 a=A0 b=B0 acc=0 emit=y
+        drain y n=4096 fused
+    send mg[1]
+        fill A0 <- a n=128
+        fill B0 <- b n=128
+        gemm 64x64x2 a=A0 b=B0 acc=0 emit=z
+        drain z n=4096 fused
+    barrier

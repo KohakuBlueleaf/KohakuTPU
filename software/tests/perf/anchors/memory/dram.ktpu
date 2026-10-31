@@ -1,0 +1,61 @@
+# What memory costs past the Xache: walks over 1 MB to 64 MB, only the card can answer,
+# Verilator's DRAM holds one transaction and no DDR4 timing.
+target ktpu.v9
+
+image vread(n, x)
+    desc a0 = x walk=(32, 64)
+    ainc a0 += 2K
+    seti s0 = n
+    loop s0
+        vfill a0 -> l1[0] rel
+        vsync fe on=fill
+    halt
+
+image vwrite(n, x)
+    desc a0 = x walk=(32, 64)
+    ainc a0 += 2K
+    seti s0 = n
+    loop s0
+        vdrain a0 <- l1[0] rel
+    vsync drain on=drain
+    halt
+
+fn mem_copy_1m.l1(x: f16[524288] @dram, y: f16[524288] @dram)
+    move
+        copy w(x, (32, 32768), (1024, 32)) -> w(y, (32, 32768), (1024, 32))
+
+fn mem_copy_4m.l1(x: f16[2097152] @dram, y: f16[2097152] @dram)
+    move
+        copy w(x, (128, 32768), (1024, 32)) -> w(y, (128, 32768), (1024, 32))
+
+fn mem_copy_16m.l1(x: f16[8388608] @dram, y: f16[8388608] @dram)
+    move
+        copy w(x, (512, 32768), (1024, 32)) -> w(y, (512, 32768), (1024, 32))
+
+fn mem_copy_64m.l1(x: f16[33554432] @dram, y: f16[33554432] @dram)
+    move
+        copy w(x, (2048, 32768), (1024, 32)) -> w(y, (2048, 32768), (1024, 32))
+
+fn mem_stride_16m.l1(x: f16[8388608] @dram, y: f16[8388608] @dram)
+    move
+        copy w(x, (32768, 256)) -> w(y, (32768, 256))
+
+fn mem_read_1m.l1(x: f16[524288] @dram)
+    send vc[0]
+        run vread(512, x)
+    barrier
+
+fn mem_read_16m.l1(x: f16[8388608] @dram)
+    send vc[0]
+        run vread(8192, x)
+    barrier
+
+fn mem_write_1m.l1(x: f16[524288] @dram)
+    send vc[0]
+        run vwrite(512, x)
+    barrier
+
+fn mem_write_16m.l1(x: f16[8388608] @dram)
+    send vc[0]
+        run vwrite(8192, x)
+    barrier
