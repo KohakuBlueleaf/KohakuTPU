@@ -1,6 +1,7 @@
 """The sig word's slot field runs a cycle ahead of its count (model host).
 
-    KOS_BUILD=~/kos/build pytest software/os/tests/host/test_sigslot.py -n 1
+    cd software/os/tests/host
+    KOS_BUILD=~/kos/build pytest --rootdir . test_sigslot.py -n 1
 
 tests/sigslot on core2: the first word naming the selected slot carries the
 previous slot's count every time, the next word never does — which is why

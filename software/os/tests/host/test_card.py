@@ -1,8 +1,9 @@
 """KohakuAccel OS on the Verilated card models (model host).
 
+    cd software/os/tests/host
     KOS_CARD_MODELS=~/ktpu/build KOS_OUT=~/kos/out \\
     KOS_DRIVER_PATH=~/ktpu/software/driver:~/ktpu/software/language:~/ktpu/software/compiler \\
-    pytest software/os/tests/host/test_card.py -n 1
+    pytest --rootdir . test_card.py -n 1
 
 Each case runs tools/run_card.py on a fresh card model (no paint: its DRAM
 starts zero) with one interaction: every node exits 0, no FAIL line, and the

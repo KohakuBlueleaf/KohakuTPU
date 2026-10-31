@@ -77,6 +77,9 @@ void k_write(const char *s, uint64_t len)
     }
 }
 
+#ifdef KOS_SMALL_CALL
+__attribute__((minsize))
+#endif
 void k_printf(const char *fmt, ...)
 {
     char b[192];

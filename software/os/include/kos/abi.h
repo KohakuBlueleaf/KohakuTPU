@@ -72,7 +72,74 @@
                                 chan has messages: their number; units' retired/faults into buf, a1 = the count */
 #define SYS_VTOP          28 /* (va, len) -> physical address of a contiguous user range, as units and the mover name it */
 #define SYS_MUNMAP        29 /* (va, size): unmap a contiguous SYS_MMAP range and free its frames */
-#define SYS_NCALLS        30
+#define SYS_DE_RUN        30 /* (entries, count<=16384): DE entries (units, mover), fed in S-mode; synchronous */
+#define SYS_NCALLS        31
+
+/* Dispatch-engine stream & mover ABI (shared by kernel, KDS and host osabi.py) */
+#define KOS_DE_QUEUE_DEPTH      64u
+#define KOS_DE_MAX_ENTRIES      16384u
+#define KOS_DE_GROUP_ENTRIES    3u
+#define KOS_DE_GROUP_BYTES      32u
+#define KOS_DE_CMD_BYTES(n)     ((((uint64_t)(n) + KOS_DE_GROUP_ENTRIES - 1u) / KOS_DE_GROUP_ENTRIES) * KOS_DE_GROUP_BYTES)
+#define KOS_DE_CODE_MASK        0x3fu
+#define KOS_DE_RELOC_FETCH      0x40u /* ARG3 (code 4): add (stream_pa << KOS_DE_FETCH_SHIFT) */
+#define KOS_DE_RELOC_MOVE       0x80u /* MV(0x10) (code 10): add (stream_pa << KOS_DE_MOVE_SHIFT) */
+#define KOS_DE_FETCH_SHIFT      24u
+#define KOS_DE_MOVE_SHIFT       4u
+#define KOS_DE_FETCH_TYPED      (1UL << 24)
+#define KOS_DE_FETCH_REPLY      (1UL << 30)
+#define KOS_DE_FETCH_COORD_SHIFT 40u
+#define KOS_DE_FETCH_Y_SHIFT    4u
+#define KOS_DE_FETCH_TAG        (0x60UL << 8)
+#define KOS_MV_HDR_VALID        (1UL << 44)
+#define KOS_MV_DIM_STRIDE       (32UL << 20)
+#define KOS_MV_DIM_WORDS_SHIFT  4u
+#define KOS_MV_CTRL_GO          (1UL << 16)
+#define KOS_MV_CTRL_1D          (KOS_MV_CTRL_GO | (1UL << 11) | (1UL << 3))
+#define KOS_DE_MB_DST           0u
+#define KOS_DE_MB_ARG0          1u
+#define KOS_DE_MB_ARG1          2u
+#define KOS_DE_MB_ARG2          3u
+#define KOS_DE_MB_ARG3          4u
+#define KOS_DE_MB_GO            5u
+#define KOS_DE_MV_BASE          8u
+#define KOS_DE_MV_CTRL          8u
+#define KOS_DE_MV_HDR           10u
+#define KOS_DE_MV_DIM           11u
+#define KOS_DE_MV_AXIS          12u
+#define KOS_DE_MV_WINDOW        13u
+#define KOS_DE_MV_INDEX         14u
+#define KOS_DE_MV_END           23u
+#define KOS_DE_IL_BASE          24u
+#define KOS_DE_IL_RING          26u
+#define KOS_DE_FETCH_CODE       (KOS_DE_MB_ARG3 | KOS_DE_RELOC_FETCH)
+#define KOS_DE_MOVE_CODE        (KOS_DE_MV_HDR | KOS_DE_RELOC_MOVE)
+#define KOS_DE_WAIT_CODE        32u
+#define KOS_DE_CHECK_ZERO       33u
+#define KOS_DE_MAX_UNITS        16u
+#define KOS_DE_MOVER_SRC        KOS_DE_MAX_UNITS
+#define KOS_DE_CTR_MASK         0xfffu
+#ifndef KOS_DE_TIMEOUT
+#define KOS_DE_TIMEOUT          (1UL << 24)
+#endif
+#define KOS_MOVE_MAX_WORDS      16384u
+#define KDS_LZ_SLICE            0x2000UL
+#define KDS_LZ_USER             (4 * KDS_LZ_SLICE)
+#define KOS_LRING_OFF           0x1000UL
+#define KOS_LRING_SLOTS         64u
+#define KOS_LRING_STEP_SLOT     62u
+#define KOS_LRING_SCRATCH       63u
+#define KOS_LRING_MAX_LAUNCHES  KOS_LRING_STEP_SLOT
+#define KOS_LRING_REC_BYTES     96u
+
+#ifndef __ASSEMBLER__
+#include <stdint.h>
+struct kos_launch_rec {
+    uint64_t cyc_total, cyc_walk, cyc_dep, cyc_xlat;
+    uint64_t cyc_build, cyc_submit, cyc_wait, cyc_retire;
+    uint64_t cyc_sys, syscalls, batches, id;
+};
+#endif
 
 /* SYS_MMAP flags */
 #define KOS_MMAP_UNCACHED 1u /* map through the uncached alias */

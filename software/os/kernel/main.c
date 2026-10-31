@@ -16,6 +16,9 @@ void k_halt(uint64_t code)
     }
 }
 
+#ifdef KOS_SMALL_CALL
+__attribute__((minsize))
+#endif
 void k_main(struct kos_boot *b, uint64_t node)
 {
     (void)b;

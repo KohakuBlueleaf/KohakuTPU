@@ -326,8 +326,12 @@ def main() -> int:
         help="also compile sources under this firmware path for size",
     )
     ap.add_argument("--out", help="the output directory (default build/fw)")
+    ap.add_argument(
+        "-D", dest="defines", action="append", default=[], help="NAME[=VALUE]"
+    )
     a = ap.parse_args()
-    global OUT, SIZE_OPT
+    global OUT, SIZE_OPT, CFLAGS
+    CFLAGS = CFLAGS + [f"-D{d}" for d in a.defines]
     SIZE_OPT = SIZE_OPT + tuple(a.size_opt)
     OUT = pathlib.Path(a.out) if a.out else OUT
     make = build_clang if a.toolchain == "clang" else build

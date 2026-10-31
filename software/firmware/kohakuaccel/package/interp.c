@@ -49,6 +49,13 @@ static union {
     uint64_t next[8];
 } stage;
 static uint64_t entry_at = ~0UL, t_end;
+#ifdef KA_LAUNCH_RING
+#define KA_LRING_QUEUE_OFF 0xFC000UL
+#define KA_LRING_SLOTS     64u
+#define KA_LRING_REC_BYTES 96u
+static uint32_t lring_idx;
+static uint64_t lring_sub, lring_wait;
+#endif
 
 void ka_package_ahead_reset(void) { entry_at = ~0UL; }
 
@@ -600,6 +607,9 @@ static int de_watch(uint64_t stat)
  * registers on every entry (PC profile: 25 cycles a push). */
 static __attribute__((noinline)) int de_refill(void)
 {
+#ifdef KA_LAUNCH_RING
+    uint64_t tw = ka_cycles();
+#endif
     while (!de.room) {
         uint64_t s = ka_ctrl_rd(KA_R_DE_STAT);
         unsigned used = KA_DE_STAT_USED(s);
@@ -608,6 +618,9 @@ static __attribute__((noinline)) int de_refill(void)
             return eng.status;
         }
     }
+#ifdef KA_LAUNCH_RING
+    lring_wait += ka_cycles() - tw;
+#endif
     return 0;
 }
 
@@ -617,7 +630,13 @@ static inline __attribute__((always_inline)) int de_push(unsigned code, uint64_t
         return eng.status;
     }
     --de.room;
+#ifdef KA_LAUNCH_RING
+    uint64_t ts = ka_cycles();
+#endif
     ka_de_queue(code, v);
+#ifdef KA_LAUNCH_RING
+    lring_sub += ka_cycles() - ts;
+#endif
     return 0;
 }
 
@@ -796,10 +815,16 @@ static int de_barrier(void)
 /* Until every queued entry has issued. */
 static int de_drain(void)
 {
+#ifdef KA_LAUNCH_RING
+    uint64_t tw = ka_cycles();
+#endif
     for (;;) {
         uint64_t s = ka_ctrl_rd(KA_R_DE_STAT);
         if (!KA_DE_STAT_USED(s)) {
             de.room = de.cap;
+#ifdef KA_LAUNCH_RING
+            lring_wait += ka_cycles() - tw;
+#endif
             return 0;
         }
         if (de_watch(s)) {
@@ -1421,6 +1446,9 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
 {
     uint64_t t0 = ka_cycles();
     uint64_t idle = t_end ? t0 - t_end : 0;
+#ifdef KA_LAUNCH_RING
+    lring_sub = lring_wait = 0;
+#endif
 
     /* cq_depth 0: no node-wide bound. */
     uint32_t cap = ka_boot.cq_depth ? (uint32_t)ka_boot.cq_depth : 0xffffffffu;
@@ -1562,6 +1590,24 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
     t[KA_PT_LAST] = eng.sent ? eng.t_last - t_bind : 0;
     t[KA_PT_SENT] = eng.sent;
     t[KA_PT_IDLE] = idle;
+#ifdef KA_LAUNCH_RING
+    uint64_t rbase = ka_boot.queue + KA_LRING_QUEUE_OFF + (lring_idx & (KA_LRING_SLOTS - 1)) * KA_LRING_REC_BYTES;
+    uint64_t step_tot = t_steps - t_bind;
+    uint64_t bld = step_tot > lring_sub + lring_wait ? step_tot - lring_sub - lring_wait : 0;
+    ka_st64(rbase + 0, out->cycles);
+    ka_st64(rbase + 8, t_head - t0);
+    ka_st64(rbase + 16, t_bind - t_head);
+    ka_st64(rbase + 24, 0);
+    ka_st64(rbase + 32, bld);
+    ka_st64(rbase + 40, lring_sub);
+    ka_st64(rbase + 48, lring_wait);
+    ka_st64(rbase + 56, t0 + out->cycles - t_steps);
+    ka_st64(rbase + 64, idle);
+    ka_st64(rbase + 72, 0);
+    ka_st64(rbase + 80, eng.sent);
+    ka_st64(rbase + 88, lring_idx++);
+    ka_st64(ka_boot.queue + KA_LRING_QUEUE_OFF + KA_LRING_SLOTS * KA_LRING_REC_BYTES, lring_idx);
+#endif
     if (ka_boot.flags & KA_BOOT_F_TIMING) {
         ka_printf("PKGT head %lu copy %lu bind %lu steps %lu barrier %lu local %lu total %lu "
                   "first %lu last %lu sent %lu idle %lu\n",

@@ -5,7 +5,13 @@ struct out {
     size_t size, n;
 };
 
-static void put(struct out *o, char c)
+#ifdef KOS_SMALL_CALL
+#define FMT_COLD __attribute__((minsize))
+#else
+#define FMT_COLD
+#endif
+
+static FMT_COLD void put(struct out *o, char c)
 {
     if (o->n + 1 < o->size) {
         o->p[o->n] = c;
@@ -13,7 +19,7 @@ static void put(struct out *o, char c)
     ++o->n;
 }
 
-static void num(struct out *o, uint64_t v, unsigned base, int neg, int width, char pad, int left,
+static FMT_COLD void num(struct out *o, uint64_t v, unsigned base, int neg, int width, char pad, int left,
                 int upper)
 {
     char buf[24];
@@ -45,7 +51,7 @@ static void num(struct out *o, uint64_t v, unsigned base, int neg, int width, ch
     }
 }
 
-int kos_vsnprintf(char *out, size_t size, const char *fmt, va_list ap)
+FMT_COLD int kos_vsnprintf(char *out, size_t size, const char *fmt, va_list ap)
 {
     struct out o = {out, size, 0};
     for (; *fmt; ++fmt) {

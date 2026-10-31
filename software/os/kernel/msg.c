@@ -472,6 +472,11 @@ uint64_t k_atomic_local(uint64_t off, unsigned op, uint64_t a, uint64_t b)
 
 /* ---- barriers: node 0 counts arrivals and answers them all ---- */
 
+/* each arrival and each answer is a message between nodes, so the bookkeeping
+ * here is not the cost: kept small, with k_reply out of line */
+#ifdef KOS_SMALL_CALL
+__attribute__((minsize))
+#endif
 void k_bar_arrive(unsigned node, uint64_t req, uint64_t id, uint64_t parties)
 {
     struct kbar *b = 0;

@@ -1,6 +1,7 @@
 """The Sv39 back-to-back access defect and the memory-gap pass (model host).
 
-    KOS_BUILD=~/kos/build pytest software/os/tests/host/test_xlat.py -n 1
+    cd software/os/tests/host
+    KOS_BUILD=~/kos/build pytest --rootdir . test_xlat.py -n 1
 
 tests/xlat runs each case in S with satp on and in M. Built plainly, the four
 back-to-back cases differ (the defect is in the RTL); built through

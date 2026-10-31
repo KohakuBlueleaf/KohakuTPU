@@ -19,14 +19,20 @@ extern char __ushared_start[], __ushared_end[];
 extern struct kos_boot k_boot;
 extern void l0_enter_kernel(uint64_t boot, uint64_t node) __attribute__((noreturn));
 
-void l0_puts(const char *s)
+#ifdef KOS_SMALL_CALL
+#define L0_COLD __attribute__((minsize))
+#else
+#define L0_COLD
+#endif
+
+L0_COLD void l0_puts(const char *s)
 {
     while (*s) {
         hw_wr(HW_R_CONSOLE, (unsigned char)*s++);
     }
 }
 
-void l0_say(const char *fmt, ...)
+L0_COLD void l0_say(const char *fmt, ...)
 {
     char b[160];
     va_list ap;
@@ -43,7 +49,7 @@ void l0_halt(uint64_t code)
     }
 }
 
-static void need(int ok, const char *what)
+static L0_COLD void need(int ok, const char *what)
 {
     if (!ok) {
         l0_say("L0 node %u: %s\n", (unsigned)l0_boot->node, what);
@@ -51,7 +57,7 @@ static void need(int ok, const char *what)
     }
 }
 
-static void map_or_halt(uint64_t va, uint64_t pa, uint64_t size, unsigned attr)
+static L0_COLD void map_or_halt(uint64_t va, uint64_t pa, uint64_t size, unsigned attr)
 {
     int r = mmu_map(va, pa, size, attr, 0);
     if (r) {
@@ -60,7 +66,7 @@ static void map_or_halt(uint64_t va, uint64_t pa, uint64_t size, unsigned attr)
     }
 }
 
-void l0_main(void)
+L0_COLD void l0_main(void)
 {
     volatile struct kos_boot *b = l0_boot;
     if (b->magic != KOS_BOOT_MAGIC || b->version != KOS_BOOT_VERSION) {

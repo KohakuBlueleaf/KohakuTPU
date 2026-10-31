@@ -107,6 +107,10 @@ int64_t k_copy_str(char *dst, uint64_t uva, uint64_t max);
 uint64_t k_uimg(uint64_t va);     /* physical address of a user-image address */
 extern uint64_t k_user_satp;      /* what user mode runs under (k_resume) */
 int k_user_range(uint64_t va, uint64_t len);
+int k_pa_ok(uint64_t pa, uint64_t bytes);
+/* a 32-bit word at physical address pa, through the uncached alias: what a
+ * mover or unit reading DRAM sees */
+static inline volatile uint32_t *k_unc32(uint64_t pa) { return (volatile uint32_t *)(pa | HW_UNC); }
 int k_stack_map(struct thread *t);
 void k_stack_unmap(struct thread *t);
 int64_t k_mmap(uint64_t size, unsigned flags);
@@ -202,6 +206,11 @@ uint64_t k_unit_retired(unsigned u);
 int k_unit_ctrl_start(unsigned u, unsigned index);
 int64_t k_engine_run(unsigned u, const uint64_t *w, unsigned count);
 int64_t k_move(uint64_t src_pa, uint64_t dst_pa, uint64_t words);
+void k_mover_clear(void);
+int64_t k_de_stream(const uint64_t *entries, unsigned count);
+#ifdef KOS_LAUNCH_RING
+extern struct kos_launch_rec k_lring_cur;
+#endif
 void k_pending_add(unsigned kind, unsigned node, uint64_t req, uint64_t a, uint64_t b);
 void k_pending_poll(void);
 #ifdef KOS_REMOTE_BATCH

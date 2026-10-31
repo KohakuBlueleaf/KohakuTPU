@@ -8,12 +8,13 @@ int64_t kds_server(uint64_t arg);
 /* per node: the servers this node started */
 static int64_t started_tid[KOS_MAX_NODES];
 static unsigned started_mask;
+static const struct kds_task *retained_tasks;
+static unsigned retained_tid;
 
 static unsigned self(void) { return (unsigned)kos_sys(SYS_SELF, 0, 0, 0, 0).st; }
 
-static struct kds_msg request(unsigned node, struct kds_msg m)
+static struct kds_msg request_as(unsigned me, unsigned node, struct kds_msg m)
 {
-    unsigned me = self();
     m.gid = KDS_REPLY(me);
     struct kds_msg r = {0, 0, 0, 0, {(uint64_t)KOS_EINVAL, 0, 0, 0}};
     unsigned src;
@@ -21,6 +22,11 @@ static struct kds_msg request(unsigned node, struct kds_msg m)
         kds_recv(KDS_REPLY(me), &r, 0, &src);
     }
     return r;
+}
+
+static struct kds_msg request(unsigned node, struct kds_msg m)
+{
+    return request_as(self(), node, m);
 }
 
 int kds_start(unsigned flags, uint64_t arena_bytes, unsigned node_mask)
@@ -68,6 +74,8 @@ int kds_stop(void)
         }
     }
     started_mask = 0;
+    retained_tasks = 0;
+    retained_tid = 0;
     return bad ? KOS_EFAULT : KOS_OK;
 }
 
@@ -165,20 +173,36 @@ int64_t kds_run(struct kds_graph *g, uint64_t timeout, struct kds_result *r)
 {
     struct kds_result local;
     r = r ? r : &local;
-    memset(r, 0, sizeof *r);
-    if (g->err) {
-        return r->status = g->err;
+    if (g->err || !kds_k) {
+        memset(r, 0, sizeof *r);
+        return r->status = g->err ? g->err : KOS_ENOENT;
     }
-    if (!kds_k) {
-        return r->status = KOS_ENOENT; /* the home is this node's server */
-    }
+#ifdef KOS_LAUNCH_RING
+    kds_lring(KOS_LRING_STEP_SLOT)->cyc_dep = kos_cycles();
+#endif
+    unsigned me = (g->t == retained_tasks && retained_tid) ? retained_tid : self();
     struct kds_msg m = {KM_SUBMIT, 0, 0, 0, {(uint64_t)g->t, g->n, timeout, 0}};
-    struct kds_msg a = request(kds_k->me, m);
+    struct kds_msg a = request_as(me, kds_k->me, m);
     r->status = (int64_t)a.p[0];
     r->failed = a.p[1];
     r->detail = (int64_t)a.p[2];
     r->cycles = a.p[3];
+#ifdef KOS_LAUNCH_RING
+    kds_lring(KOS_LRING_STEP_SLOT)->syscalls = r->cycles;
+    kds_lring(KOS_LRING_STEP_SLOT)->cyc_sys = kos_cycles() - kds_lring(KOS_LRING_STEP_SLOT)->cyc_sys;
+#endif
     return r->status;
+}
+
+int kds_retain(struct kds_graph *g)
+{
+    if (!started_mask) {
+        return KOS_ENOENT;
+    }
+    retained_tasks = g ? g->t : 0;
+    retained_tid = g ? self() : 0;
+    struct kds_msg m = {KM_RETAIN, 0, 0, 0, {g ? (uint64_t)g->t : 0, 0, 0, 0}};
+    return (int)(int64_t)request(kos_node(), m).p[0];
 }
 
 /* ---- memory ---- */

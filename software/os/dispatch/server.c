@@ -96,10 +96,24 @@ static void answer(struct kds_node *k, struct kds_home *h)
 {
     if (!h->answered) {
         h->answered = 1;
-        if (!(k->flags & KDS_F_UNCACHED)) {
-            kos_acquire(); /* the client shares this L1: what units wrote, read fresh */
+#ifdef KOS_LAUNCH_RING
+        uint64_t ta0 = kos_cycles();
+        kds_lring(KOS_LRING_STEP_SLOT)->cyc_retire = 0;
+#endif
+        if (!(k->flags & KDS_F_UNCACHED) && (k->hw_dirty || k->cpu_dirty)) {
+            if (k->hw_dirty) {
+                kos_acquire(); /* the client shares this L1: what units wrote, read fresh */
+            } else {
+                kos_release(); /* CPU tasks wrote cached memory that the host or caller reads */
+            }
             k->hw_dirty = k->cpu_dirty = 0;
+#ifdef KOS_LAUNCH_RING
+            kds_lring(KOS_LRING_STEP_SLOT)->cyc_retire = kos_cycles() - ta0;
+#endif
         }
+#ifdef KOS_LAUNCH_RING
+        kds_lring(KOS_LRING_STEP_SLOT)->cyc_sys = kos_cycles();
+#endif
         reply(k, h->client_node, h->reply, (uint64_t)h->status, h->failed, (uint64_t)h->detail, kos_now() - h->t0);
     }
     if (h->reported == h->parts) {
@@ -144,6 +158,9 @@ void kds_home_ndone(struct kds_node *k, unsigned node, uint32_t gid, int64_t sta
                     uint64_t busy)
 {
     (void)busy;
+    if (node != k->me) {
+        k->hw_dirty = 1;
+    }
     struct kds_home *h = home_of(k, gid);
     if (!h) {
         return;
@@ -183,6 +200,7 @@ static int send_chunk(struct kds_node *k, struct kds_home *h, unsigned j)
 
 static void go(struct kds_node *k, struct kds_home *h)
 {
+    kds_trace(4, h->gid, h->n);
     h->state = HG_RUN;
     k->loading = -1;
     for (unsigned j = 0; j < k->n; ++j) {
@@ -214,8 +232,22 @@ static void start_load(struct kds_node *k, struct kds_home *h)
             }
             continue;
         }
+        if (h->parts == (1u << k->me) && h->t == k->retained &&
+            kds_part_reuse(k, h->gid, h->t, h->n)) {
+            h->contacted |= 1u << j;
+            h->acked |= 1u << j;
+            continue;
+        }
+        kds_trace(2, h->gid, h->count[j]);
         int st = kds_part_open(k, h->gid, k->me, h->count[j]);
         h->contacted |= st ? 0 : 1u << j;
+        if (!st && h->parts == (1u << k->me) && h->t == k->retained) {
+            for (unsigned g = 0; g < KDS_GRAPHS; ++g) {
+                if (k->part[g].gid == h->gid && k->part[g].state == LG_LOADING) {
+                    k->part[g].source = h->t;
+                }
+            }
+        }
         for (uint32_t i = 0; !st && i < h->n; ++i) {
             st = h->t[i].node == j ? kds_part_add(k, h->gid, &h->t[i], 1) : KOS_OK;
         }
@@ -287,6 +319,39 @@ static int64_t check(struct kds_node *k, struct kds_task *t, uint32_t n, uint32_
             }
         }
         switch (x->kind) {
+        case KDS_STAMP:
+            if (x->node != k->me || KDS_REF_NODE(x->a[0]) != k->me || (x->a[0] & 31) ||
+                !kds_arena_va(k, x->a[0]) ||
+                (char *)kds_arena_va(k, x->a[0] + 31) != (char *)kds_arena_va(k, x->a[0]) + 31) {
+                return KOS_EINVAL;
+            }
+            break;
+        case KDS_DE_STREAM: {
+            uint64_t bytes = KOS_DE_CMD_BYTES(x->a[1]) + x->a[2];
+            if (x->node != k->me || !x->a[1] || x->a[1] > KOS_DE_MAX_ENTRIES || (x->a[2] & 31) ||
+                !kds_arena_va(k, x->a[0]) || (x->a[0] & 31) ||
+                (char *)kds_arena_va(k, x->a[0] + bytes - 1) !=
+                    (char *)kds_arena_va(k, x->a[0]) + bytes - 1) {
+                return KOS_EINVAL;
+            }
+            break;
+        }
+        case KDS_LAUNCH_MARK:
+            if (x->node != k->me) {
+                return KOS_EINVAL;
+            }
+            break;
+        case KDS_STREAM:
+            if (x->unit >= k->nunits || !x->a[1] || x->a[1] > KDS_INFLIGHT ||
+                x->a[1] > k->depth[x->unit] || KDS_REF_NODE(x->a[0]) != k->unit_node[x->unit] ||
+                x->node != k->me || !kds_arena_va(k, x->a[0]) || (x->a[0] & 31) ||
+                (char *)kds_arena_va(k, x->a[0] + x->a[1] * 32 - 1) !=
+                    (char *)kds_arena_va(k, x->a[0]) + x->a[1] * 32 - 1) {
+                return KOS_EINVAL;
+            }
+            /* This stream ABI names local arena payloads, not remote pointers. */
+            x->node = k->unit_node[x->unit];
+            break;
         case KDS_UNIT:
             if (x->unit >= k->nunits) {
                 return KOS_EINVAL;
@@ -295,7 +360,7 @@ static int64_t check(struct kds_node *k, struct kds_task *t, uint32_t n, uint32_
             break;
         case KDS_MOVE:
             x->node = (uint8_t)KDS_REF_NODE(x->a[0]);
-            if (!x->a[2] || x->a[2] > 16384 || KDS_REF_NODE(x->a[1]) >= k->n) {
+            if (!x->a[2] || x->a[2] > KOS_MOVE_MAX_WORDS || KDS_REF_NODE(x->a[1]) >= k->n) {
                 return KOS_EINVAL;
             }
             break;
@@ -324,6 +389,10 @@ static int64_t check(struct kds_node *k, struct kds_task *t, uint32_t n, uint32_
 
 static void submit(struct kds_node *k, unsigned src, const struct kds_msg *m)
 {
+#ifdef KOS_LAUNCH_RING
+    uint64_t ts0 = kos_cycles();
+    kds_lring(KOS_LRING_STEP_SLOT)->cyc_xlat = ts0 - kds_lring(KOS_LRING_STEP_SLOT)->cyc_xlat;
+#endif
     struct kds_home *h = 0;
     for (unsigned i = 0; i < KDS_HOMES && !h; ++i) {
         h = k->home[i].state == HG_FREE ? &k->home[i] : 0;
@@ -339,7 +408,22 @@ static void submit(struct kds_node *k, unsigned src, const struct kds_msg *m)
     h->reply = m->gid;
     h->t0 = kos_now();
     h->deadline = m->p[2] ? h->t0 + m->p[2] : 0;
+    uint32_t gid = (uint32_t)k->me << 24 | ((k->seq + 1) & 0xffffff);
+    if (src == k->me && h->t == k->retained && k->loading < 0 &&
+        kds_part_reuse(k, gid, h->t, h->n)) {
+        h->gid = (uint32_t)k->me << 24 | (++k->seq & 0xffffff);
+        h->state = HG_RUN;
+        h->parts = h->contacted = h->acked = 1u << k->me;
+        h->count[k->me] = h->n;
+        kds_part_go(k, h->gid);
+#ifdef KOS_LAUNCH_RING
+        kds_lring(KOS_LRING_STEP_SLOT)->cyc_build = kos_cycles() - ts0;
+        kds_lring(KOS_LRING_STEP_SLOT)->id = 1;
+#endif
+        return;
+    }
     uint32_t bad = 0;
+    kds_trace(1, h->n, 0);
     int64_t st = src == k->me ? check(k, h->t, h->n, &bad) : KOS_EINVAL; /* the records are this node's memory */
     if (st) {
         reply(k, src, m->gid, (uint64_t)st, bad, 0, 0);
@@ -352,6 +436,10 @@ static void submit(struct kds_node *k, unsigned src, const struct kds_msg *m)
     }
     h->state = HG_QUEUED;
     start_next(k);
+#ifdef KOS_LAUNCH_RING
+    kds_lring(KOS_LRING_STEP_SLOT)->cyc_build = kos_cycles() - ts0;
+    kds_lring(KOS_LRING_STEP_SLOT)->id = 0;
+#endif
 }
 
 static void deadlines(struct kds_node *k, uint64_t now, uint64_t *wait)
@@ -413,6 +501,16 @@ static void handle(struct kds_node *k, unsigned src, const struct kds_msg *m)
             struct kds_msg d = {KM_NDONE, 0, 0, m->gid, {(uint64_t)KOS_EAGAIN, 0, 0, 0}};
             kds_post(k, src, KDS_CHAN, &d);
         }
+        break;
+    case KM_RETAIN:
+        for (unsigned g = 0; g < KDS_GRAPHS; ++g) {
+            if (k->part[g].state == LG_CACHED) {
+                kds_arena_free(k, k->part[g].mem);
+                k->part[g].state = LG_FREE;
+            }
+        }
+        k->retained = (const struct kds_task *)m->p[0];
+        reply(k, src, m->gid, KOS_OK, 0, 0, 0);
         break;
     case KM_ALLOC: {
         kds_ref ref = 0;
@@ -517,6 +615,9 @@ int64_t kds_server(uint64_t arg)
         }
         t1 = kos_now();
         k->st.cyc_msgs += t1 - t;
+#ifdef KOS_LAUNCH_RING
+        kds_lring(KOS_LRING_STEP_SLOT)->batches = t1 - t;
+#endif
         if (k->any_ready) {
             kds_parts_run(k); /* runs every ready ring dry */
             k->any_ready = 0;
@@ -544,6 +645,13 @@ int64_t kds_server(uint64_t arg)
         uint64_t target = need == ~0UL ? k->events + (1UL << 62) : k->events + need;
         queued = kos_event(target, wait, k->counts, k->in_flight ? k->nunits : 0, KDS_CHAN, &now);
         t1 = kos_now();
+#ifdef KOS_LAUNCH_RING
+        if (queued > 0) {
+            uint64_t twk = kos_cycles();
+            kds_lring(KOS_LRING_STEP_SLOT)->cyc_dep = twk - kds_lring(KOS_LRING_STEP_SLOT)->cyc_dep;
+            kds_lring(KOS_LRING_STEP_SLOT)->cyc_xlat = twk;
+        }
+#endif
         k->st.cyc_event += t1 - t;
         if (queued >= 0) {
             k->st.waits += !queued;

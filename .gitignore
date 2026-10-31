@@ -213,6 +213,7 @@ cython_debug/
 software/os/tools/*/
 software/os/tools/*.json
 !software/os/tools/hotpaths/
+!software/os/tools/ostpu/
 
 # golden witnesses live in the Hugging Face dataset (golden/fetch.py)
 software/rust/golden/**/*.json

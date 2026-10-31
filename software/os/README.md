@@ -26,7 +26,7 @@ python run_card.py --board card_v9t6_2n --model ~/ktpu/build/t2s/vlt_card_v9t6_2
     --image ~/kos/out/kos.elf --cmd "hello; units; mg; mover"
 
 # host tests
-KOS_BUILD=~/kos/build KOS_OUT=~/kos/out pytest software/os/tests/host -n 1
+cd software/os/tests/host && KOS_BUILD=~/kos/build KOS_OUT=~/kos/out pytest --rootdir . -n 1
 ```
 
 Details of every option: [docs/os/use/building.md](../../docs/os/use/building.md).

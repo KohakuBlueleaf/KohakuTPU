@@ -1,6 +1,7 @@
 """The dispatcher (kds) on the core-only and card models (model host).
 
-    KOS_BUILD=~/kos/build KOS_OUT=~/kos/out pytest software/os/tests/host/test_kds.py -n 1
+    cd software/os/tests/host
+    KOS_BUILD=~/kos/build KOS_OUT=~/kos/out pytest --rootdir . test_kds.py -n 1
 
 Every property has an app that checks it and a mutant image (built here with
 -D KDS_MUT=<n>) that the same app must fail on. Card cases need the card

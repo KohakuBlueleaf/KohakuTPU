@@ -82,6 +82,9 @@ void k_wake(struct thread *t, int64_t result)
     k_ready(t);
 }
 
+#ifdef KOS_SMALL_CALL
+__attribute__((minsize))
+#endif
 struct thread *k_new_thread(uint64_t entry, uint64_t a0, uint64_t a1, const char *name)
 {
     struct thread *t = 0;
@@ -111,6 +114,9 @@ struct thread *k_new_thread(uint64_t entry, uint64_t a0, uint64_t a1, const char
     return t;
 }
 
+#ifdef KOS_SMALL_CALL
+__attribute__((minsize))
+#endif
 void k_exit_thread(struct thread *t, int64_t code)
 {
     t->exit_code = code;
@@ -257,6 +263,7 @@ void k_channel_ready(unsigned chan)
 
 void k_poll(void)
 {
+    k_mover_clear();
     k_units_poll();
     k_msg_poll();
     k_pending_poll();
@@ -343,6 +350,9 @@ struct thread *k_schedule(void)
     }
 }
 
+#ifdef KOS_SMALL_CALL
+__attribute__((minsize))
+#endif
 void k_panic(const char *fmt, ...)
 {
     char b[160];
@@ -454,7 +464,14 @@ void k_trap(uint64_t *frame)
     struct thread *n = k_schedule();
 #endif
     K_PROF(5);
-    n->since = hw_cycles();
+    uint64_t resume_cy = hw_cycles();
+#ifdef KOS_LAUNCH_RING
+    k_lring_cur.cyc_sys += resume_cy - now;
+    if (cause == 8) {
+        ++k_lring_cur.syscalls;
+    }
+#endif
+    n->since = resume_cy;
 #ifdef KOS_SPLIT
     return (struct trap_return){n, old};
 #else

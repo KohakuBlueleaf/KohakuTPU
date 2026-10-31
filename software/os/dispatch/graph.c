@@ -10,7 +10,7 @@
 static struct kds_part *find(struct kds_node *k, uint32_t gid)
 {
     for (unsigned i = 0; i < KDS_GRAPHS; ++i) {
-        if (k->part[i].state != LG_FREE && k->part[i].gid == gid) {
+        if (k->part[i].state != LG_FREE && k->part[i].state != LG_CACHED && k->part[i].gid == gid) {
             return &k->part[i];
         }
     }
@@ -41,7 +41,7 @@ int kds_part_open(struct kds_node *k, uint32_t gid, unsigned home, uint32_t n)
     memset(p, 0, sizeof *p);
     p->gid = gid;
     p->state = LG_LOADING;
-    k->cpu_dirty = 1; /* this node's threads may have written what the part's units read */
+    k->cpu_dirty = k->hw_dirty = 1; /* threads or host may have written what tasks read */
     p->home = home;
     p->n = n;
     p->mem = mem;
@@ -83,6 +83,7 @@ int kds_part_add(struct kds_node *k, uint32_t gid, const struct kds_task *t, uns
     if (!p || p->state != LG_LOADING || p->loaded + cnt > p->n) {
         return KOS_EINVAL;
     }
+    kds_trace(3, p->loaded, p->n);
     memcpy(&p->t[p->loaded], t, cnt * sizeof *t);
     p->loaded += cnt;
     if (p->loaded < p->n) {
@@ -103,6 +104,30 @@ int kds_part_add(struct kds_node *k, uint32_t gid, const struct kds_task *t, uns
     return KOS_OK;
 }
 
+int kds_part_reuse(struct kds_node *k, uint32_t gid, const struct kds_task *source, uint32_t n)
+{
+    for (unsigned g = 0; g < KDS_GRAPHS; ++g) {
+        struct kds_part *p = &k->part[g];
+        if (p->state != LG_CACHED || p->source != source || p->n != n) {
+            continue;
+        }
+        p->gid = gid;
+        p->done = p->rhead = p->rtail = 0;
+        p->busy = 0;
+        for (unsigned i = 0; i < p->n; ++i) {
+            p->remain[i] = p->t[i].npred;
+            if (!p->remain[i]) {
+                push_ready(p, i);
+            }
+        }
+        p->state = LG_LOADED;
+        k->cpu_dirty = k->hw_dirty = 1;
+        kds_trace(8, gid, n);
+        return 1;
+    }
+    return 0;
+}
+
 void kds_part_go(struct kds_node *k, uint32_t gid)
 {
     struct kds_part *p = find(k, gid);
@@ -116,6 +141,9 @@ void kds_part_go(struct kds_node *k, uint32_t gid)
 /* Task `id` (any node's) finished: count down its successors here. */
 static void succ_done(struct kds_part *p, uint32_t id)
 {
+#ifdef KOS_LAUNCH_RING
+    uint64_t td0 = kos_cycles();
+#endif
     uint32_t lo = 0, hi = p->npairs, key = id << 16;
     while (lo < hi) {
         uint32_t mid = (lo + hi) / 2;
@@ -131,12 +159,15 @@ static void succ_done(struct kds_part *p, uint32_t id)
             push_ready(p, i);
         }
     }
+#ifdef KOS_LAUNCH_RING
+    kds_lring(KOS_LRING_SCRATCH)->cyc_dep += kos_cycles() - td0;
+#endif
 }
 
 void kds_part_dep(struct kds_node *k, uint32_t gid, const uint16_t *id, unsigned cnt)
 {
     struct kds_part *p = find(k, gid);
-    if (!p || p->state < LG_LOADED || p->state == LG_ENDED) {
+    if (!p || (p->state != LG_LOADED && p->state != LG_RUN)) {
         return;
     }
     k->hw_dirty = 1; /* a unit on another die may have written memory here */
@@ -149,8 +180,12 @@ void kds_part_dep(struct kds_node *k, uint32_t gid, const uint16_t *id, unsigned
 static void release_part(struct kds_node *k, struct kds_part *p)
 {
     if (p->state == LG_ENDED && !p->inflight) {
-        kds_arena_free(k, p->mem);
-        p->state = LG_FREE;
+        if (!p->status && p->source && p->source == k->retained) {
+            p->state = LG_CACHED;
+        } else {
+            kds_arena_free(k, p->mem);
+            p->state = LG_FREE;
+        }
     }
 }
 
@@ -165,7 +200,7 @@ static void end_part(struct kds_node *k, struct kds_part *p, int64_t status, uin
     p->detail = detail;
     p->state = LG_ENDED;
     p->rhead = p->rtail = 0;
-    for (unsigned u = 0; u < KOS_MAX_UNITS; ++u) {
+    for (unsigned u = 0; u < k->nunits; ++u) {
         p->phead[u] = p->ptail[u] = NONE;
     }
     if (p->home == k->me) {
@@ -190,6 +225,7 @@ int kds_part_abort(struct kds_node *k, uint32_t gid)
 static void complete(struct kds_node *k, struct kds_part *p, unsigned i)
 {
     struct kds_task *t = &p->t[i];
+    kds_trace(6, t->id, p->done);
     ++k->st.tasks;
     succ_done(p, t->id);
     k->any_ready = 1;
@@ -260,6 +296,9 @@ static int64_t run_move(struct kds_node *k, struct kds_task *t)
  * unit's pending list. */
 int kds_parts_run(struct kds_node *k)
 {
+#ifdef KOS_LAUNCH_RING
+    uint64_t tw0 = kos_cycles();
+#endif
     int work = 0;
     for (unsigned g = 0; g < KDS_GRAPHS; ++g) {
         struct kds_part *p = &k->part[g];
@@ -272,10 +311,90 @@ int kds_parts_run(struct kds_node *k)
             p->rhead = (p->rhead + 1) % (p->n + 1);
             struct kds_task *t = &p->t[i];
             work = 1;
+            kds_trace(5, t->id, t->kind);
             switch (t->kind) {
             case KDS_NOP:
                 complete(k, p, i);
                 break;
+            case KDS_LAUNCH_MARK: {
+#ifdef KOS_LAUNCH_RING
+                uint64_t id = t->a[0], now_w = kos_cycles();
+                volatile struct kos_launch_rec *u = kds_lring(KOS_LRING_SCRATCH);
+                u->cyc_walk += now_w - tw0;
+                struct kos_launch_rec krec = {0};
+                kos_de_run((const uint64_t *)&krec, 0);
+                if (id < KOS_LRING_MAX_LAUNCHES) {
+                    volatile struct kos_launch_rec *r = kds_lring((unsigned)id);
+                    r->cyc_total = now_w - u->cyc_total;
+                    r->cyc_walk = u->cyc_walk;
+                    r->cyc_dep = u->cyc_dep;
+                    r->cyc_xlat = krec.cyc_xlat;
+                    r->cyc_build = u->cyc_build;
+                    r->cyc_submit = krec.cyc_submit;
+                    r->cyc_wait = krec.cyc_wait;
+                    r->cyc_retire = u->cyc_retire;
+                    r->cyc_sys = krec.cyc_sys;
+                    r->syscalls = krec.syscalls;
+                    r->batches = u->batches;
+                    r->id = id;
+                }
+                volatile uint64_t *uw = (volatile uint64_t *)u;
+                for (unsigned j = 0; j < 12; ++j) {
+                    uw[j] = 0;
+                }
+                tw0 = kos_cycles();
+                u->cyc_total = tw0;
+#endif
+                complete(k, p, i);
+                break;
+            }
+            case KDS_DE_STREAM: {
+#ifdef KOS_LAUNCH_RING
+                uint64_t trl = kos_cycles();
+                kds_lring(KOS_LRING_STEP_SLOT)->cyc_submit = 0;
+#endif
+                if (k->cpu_dirty && cached(k) && KDS_MUT != 6) {
+                    kos_release();
+                    k->cpu_dirty = 0;
+#ifdef KOS_LAUNCH_RING
+                    kds_lring(KOS_LRING_STEP_SLOT)->cyc_submit = kos_cycles() - trl;
+#endif
+                }
+#ifdef KOS_LAUNCH_RING
+                uint64_t tde = kos_cycles();
+#endif
+                int64_t r = kos_de_run(kds_arena_va(k, t->a[0]), (unsigned)t->a[1]);
+                k->hw_dirty = 1;
+#ifdef KOS_LAUNCH_RING
+                kds_lring(KOS_LRING_STEP_SLOT)->cyc_wait = kos_cycles() - tde;
+                ++kds_lring(KOS_LRING_SCRATCH)->batches;
+#endif
+                if (r) {
+                    uint64_t now;
+                    kos_event(0, KOS_NOWAIT, k->counts, k->nunits, 0, &now);
+                    for (unsigned u = 0; u < k->nunits; ++u) {
+                        if (!k->fcount[u]) {
+                            k->seen_faults[u] = k->counts[2 * u + 1];
+                        }
+                    }
+                    fail(k, p, i, r == KOS_ETIME ? KOS_ETIME : r == KOS_EINVAL ? KOS_EINVAL : KOS_EFAULT, r);
+                } else {
+                    complete(k, p, i);
+                }
+                break;
+            }
+            case KDS_STAMP: {
+                acquire(k);
+                uint64_t *out = kds_arena_va(k, t->a[0]);
+                out[0] = kos_now();
+                out[1] = k->st.tasks;
+                out[2] = k->st.unit_batches;
+                out[3] = t->a[1];
+                kos_release();
+                k->cpu_dirty = 0;
+                complete(k, p, i);
+                break;
+            }
             case KDS_CPU: {
                 acquire(k);
                 int64_t r = ((int64_t(*)(const uint64_t *))t->a[0])(&t->a[1]);
@@ -296,6 +415,7 @@ int kds_parts_run(struct kds_node *k)
                 }
                 break;
             }
+            case KDS_STREAM:
             case KDS_UNIT:
                 for (unsigned j = 0; j < t->npatch; ++j) {
                     struct kds_patch *pt = &t->patch[j];
@@ -318,6 +438,9 @@ int kds_parts_run(struct kds_node *k)
         }
         p->busy += kos_now() - t0;
     }
+#ifdef KOS_LAUNCH_RING
+    kds_lring(KOS_LRING_SCRATCH)->cyc_walk += kos_cycles() - tw0;
+#endif
     return work;
 }
 
@@ -325,6 +448,9 @@ int kds_parts_run(struct kds_node *k)
  * one SYS_ENGINE batch where the engine takes the unit. */
 int kds_units_issue(struct kds_node *k)
 {
+#ifdef KOS_LAUNCH_RING
+    uint64_t tb0 = kos_cycles();
+#endif
     int work = 0, left = 0;
     for (unsigned g = 0; g < KDS_GRAPHS; ++g) {
         struct kds_part *p = &k->part[g];
@@ -333,16 +459,80 @@ int kds_units_issue(struct kds_node *k)
         }
         for (unsigned u = 0; u < k->nunits; ++u) {
             unsigned credit = k->depth[u] < KDS_INFLIGHT ? k->depth[u] : KDS_INFLIGHT;
-            while (p->phead[u] != NONE && k->fcount[u] < credit) {
+            while (p->phead[u] != NONE && k->fwords[u] < credit) {
                 if (k->cpu_dirty && cached(k) && KDS_MUT != 6) {
                     kos_release(); /* what CPU tasks wrote, in DRAM before a unit reads it */
                     k->cpu_dirty = 0;
                 }
-                unsigned room = credit - k->fcount[u], engine = (k->flags & KDS_F_ENGINE) && !k->noengine[u];
+                unsigned room = credit - k->fwords[u], engine = (k->flags & KDS_F_ENGINE) && !k->noengine[u];
+                unsigned head = p->phead[u];
+                if (p->t[head].kind == KDS_STREAM) {
+                    unsigned words = (unsigned)p->t[head].a[1];
+                    if (words > room) {
+                        break;
+                    }
+                    const uint64_t *stream = kds_arena_va(k, p->t[head].a[0]);
+                    int64_t last = 0, error = 0;
+                    unsigned sent = 0;
+                    if (engine) {
+                        while (sent < words) {
+                            unsigned count = words - sent < KDS_BATCH ? words - sent : KDS_BATCH;
+                            kds_trace(7, head, sent);
+                            int64_t ticket = kos_engine(u, &stream[4 * sent], count);
+                            ++k->st.unit_batches;
+#ifdef KOS_LAUNCH_RING
+                            ++kds_lring(KOS_LRING_SCRATCH)->batches;
+#endif
+                            if (ticket < 0) {
+                                error = ticket;
+                                break;
+                            }
+                            last = ticket;
+                            sent += count;
+                        }
+                        if (error && !sent) {
+                            k->noengine[u] = 1;
+                            continue;
+                        }
+                    } else {
+                        for (unsigned j = 0; j < words; ++j) {
+                            int64_t ticket = kos_dispatch(u, &stream[4 * j]);
+                            ++k->st.unit_batches;
+                            if (ticket < 0) {
+                                error = ticket;
+                                break;
+                            }
+                            last = ticket;
+                            ++sent;
+                        }
+                    }
+                    if (!sent) {
+                        fail(k, p, head, KOS_EINVAL, error);
+                        break;
+                    }
+                    unsigned slot = (k->fhead[u] + k->fcount[u]++) % KDS_INFLIGHT;
+                    p->ticket[head] = (uint64_t)last;
+                    k->fly[u][slot].part = (uint8_t)g;
+                    k->fly[u][slot].idx = (uint16_t)head;
+                    k->fwords[u] += sent;
+                    p->t[head].a[1] = sent;
+                    ++p->inflight;
+                    ++k->in_flight;
+                    p->phead[u] = p->next[head];
+                    if (p->phead[u] == NONE) {
+                        p->ptail[u] = NONE;
+                    }
+                    work = 1;
+                    if (error) {
+                        fail(k, p, head, KOS_EINVAL, error);
+                        break;
+                    }
+                    continue;
+                }
                 unsigned max = engine ? (room < KDS_BATCH ? room : KDS_BATCH) : 1, cnt = 0;
                 uint64_t w[4 * KDS_BATCH];
                 uint16_t idx[KDS_BATCH];
-                for (unsigned i = p->phead[u]; i != NONE && cnt < max; i = p->next[i]) {
+                for (unsigned i = p->phead[u]; i != NONE && cnt < max && p->t[i].kind == KDS_UNIT; i = p->next[i]) {
                     memcpy(&w[4 * cnt], p->t[i].a, 32);
                     idx[cnt++] = (uint16_t)i;
                 }
@@ -362,18 +552,25 @@ int kds_units_issue(struct kds_node *k)
                     k->fly[u][slot].idx = (uint16_t)i;
                     ++p->inflight;
                     ++k->in_flight;
+                    ++k->fwords[u];
                     p->phead[u] = p->next[i];
                 }
                 if (p->phead[u] == NONE) {
                     p->ptail[u] = NONE;
                 }
                 ++k->st.unit_batches;
+#ifdef KOS_LAUNCH_RING
+                ++kds_lring(KOS_LRING_SCRATCH)->batches;
+#endif
                 work = 1;
             }
             left |= p->phead[u] != NONE;
         }
     }
     k->any_pending = left;
+#ifdef KOS_LAUNCH_RING
+    kds_lring(KOS_LRING_SCRATCH)->cyc_build += kos_cycles() - tb0;
+#endif
     return work;
 }
 
@@ -411,7 +608,11 @@ uint64_t kds_units_need(struct kds_node *k)
         if (waiting && (n + 1) / 2 < m) {
             m = (n + 1) / 2;
         }
-        need = m < need ? m : need;
+        unsigned slot = (k->fhead[u] + m - 1) % KDS_INFLIGHT;
+        struct kds_part *p = &k->part[k->fly[u][slot].part];
+        int64_t rem = (int64_t)(p->ticket[k->fly[u][slot].idx] - k->counts[2 * u]);
+        uint64_t delta = rem > 0 ? (uint64_t)rem : 1;
+        need = delta < need ? delta : need;
     }
     return need;
 }
@@ -420,6 +621,9 @@ uint64_t kds_units_need(struct kds_node *k)
  * A fault fails the oldest task retired with it. */
 void kds_units_retire(struct kds_node *k)
 {
+#ifdef KOS_LAUNCH_RING
+    uint64_t tr0 = kos_cycles();
+#endif
     for (unsigned u = 0; u < k->nunits; ++u) {
         uint64_t retired = k->counts[2 * u], faults = k->counts[2 * u + 1];
         uint64_t nf = faults - k->seen_faults[u];
@@ -427,11 +631,17 @@ void kds_units_retire(struct kds_node *k)
         while (k->fcount[u]) {
             unsigned g = k->fly[u][k->fhead[u]].part, i = k->fly[u][k->fhead[u]].idx;
             struct kds_part *p = &k->part[g];
+            if (nf && p->state == LG_RUN) {
+                k->hw_dirty = 1;
+                fail(k, p, i, KOS_EFAULT, (int64_t)faults);
+                nf = 0;
+            }
             if ((int64_t)(retired - p->ticket[i]) < 0) {
                 break;
             }
             k->fhead[u] = (k->fhead[u] + 1) % KDS_INFLIGHT;
             --k->fcount[u];
+            k->fwords[u] -= p->t[i].kind == KDS_STREAM ? (unsigned)p->t[i].a[1] : 1;
             --p->inflight;
             --k->in_flight;
             k->hw_dirty = 1;
@@ -446,4 +656,7 @@ void kds_units_retire(struct kds_node *k)
             release_part(k, p);
         }
     }
+#ifdef KOS_LAUNCH_RING
+    kds_lring(KOS_LRING_SCRATCH)->cyc_retire += kos_cycles() - tr0;
+#endif
 }

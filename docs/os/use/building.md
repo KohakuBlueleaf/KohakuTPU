@@ -158,7 +158,7 @@ read) are built by their tests and also run on the repository's
 ## Host tests
 
 ```
-KOS_BUILD=~/kos/build KOS_OUT=~/kos/out pytest software/os/tests/host -n 1
+cd software/os/tests/host && KOS_BUILD=~/kos/build KOS_OUT=~/kos/out pytest --rootdir . -n 1
 ```
 
 | file | needs | cases |

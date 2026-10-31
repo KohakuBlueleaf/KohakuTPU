@@ -63,6 +63,12 @@ static inline uint64_t kos_now(void)
     __asm__ volatile("csrr %0, time" : "=r"(t));
     return t;
 }
+static inline uint64_t kos_cycles(void)
+{
+    uint64_t c;
+    __asm__ volatile("csrr %0, cycle" : "=r"(c));
+    return c;
+}
 void kos_sleep(uint64_t cycles);
 __attribute__((noreturn)) void kos_shutdown(int64_t code);
 
@@ -114,6 +120,14 @@ int kos_unit_wait(unsigned unit, uint64_t ticket, uint64_t timeout, uint64_t *fa
 int kos_unit_ctrl(unsigned unit, unsigned index, uint64_t *value);
 int64_t kos_engine(unsigned unit, const uint64_t *w, unsigned count);
 int64_t kos_move(const void *src, uint64_t dst, uint64_t words, unsigned flags);
+/* A dispatch-engine stream. Unit instruction words pass as SYS_DISPATCH passes
+ * them; every mover walk and instruction fetch names physical addresses that
+ * must lie in the caller's mapped pages, its landing zone or shared memory
+ * (else KOS_EFAULT). */
+static inline int64_t kos_de_run(const uint64_t *entries, unsigned count)
+{
+    return kos_sys(SYS_DE_RUN, (uint64_t)entries, count, 0, 0).st;
+}
 volatile void *kos_land(void); /* this node's landing zone (uncached); KOS_I_LANDPA names it for units */
 /* Wait until the node's retirement count (every unit completion or fault)
  * reaches `target` or channel `chan` has a message; units [0, n)'s retired

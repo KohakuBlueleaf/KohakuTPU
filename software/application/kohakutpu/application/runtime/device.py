@@ -46,6 +46,7 @@ from kohakutpu.application.runtime.card import (
 from kohakutpu.application.runtime.class_library import ClassLibrary
 from kohakutpu.application.runtime.memory import package_homes
 from kohakutpu.application.runtime.offline import OfflineCard
+from kohakutpu.application.runtime.oscard import OSCard
 from kohakutpu.application.runtime.packages import Prebuilt, placed
 from kohakutpu.driver.clock.card import load_board
 from kohakutpu.language import machine as MF
@@ -65,7 +66,7 @@ BOARD_ENV = "KOHAKUTPU_BOARD"
 ON_DEVICE_INIT: list = []
 #: `sim` the Verilated card, `card` the card itself, `offline` nothing
 #: attached (every run compiled, checked and encoded; nothing executed).
-KINDS = ("sim", "card", "offline")
+KINDS = ("sim", "card", "offline", "os")
 #: How a `card` device reaches the card (`card.TRANSPORTS`).
 TRANSPORT_ENV = "KOHAKUTPU_TRANSPORT"
 #: The board clock profile a `card` device requires (`idle`: the board's idle one).
@@ -174,6 +175,8 @@ class Device:
         library=None,
         classes: bool | None = None,
         queue_depth: int | None = None,
+        os_session=None,
+        os_units=None,
     ) -> None:
         self.recipe_epoch = rs._rs.RecipeEpoch()
         self._library = self._machine = None
@@ -246,7 +249,16 @@ class Device:
         whole = load_board(board)["meshes"] if kind == "card" else 1
         nodes = int(nodes or os.environ.get(NODES_ENV) or whole)
         self.kind, self.nodes = kind, nodes
-        if kind == "offline":
+        if kind == "os":
+            if os_session is None or os_units is None:
+                raise ValueError(
+                    "OS device requires a booted os_session and OS unit map"
+                )
+            if nodes != 1:
+                raise ValueError("OS device adapter currently owns one node")
+            self.build = None
+            self.card = OSCard(board, os_session, os_units)
+        elif kind == "offline":
             self.build = None
             self.card = OfflineCard(
                 board,

@@ -1,6 +1,7 @@
 """KohakuAccel OS on the core-only cluster models (run on the model host).
 
-    KOS_BUILD=~/kos/build KOS_OUT=~/kos/out pytest software/os/tests/host -n 1
+    cd software/os/tests/host
+    KOS_BUILD=~/kos/build KOS_OUT=~/kos/out pytest --rootdir . -n 1
 
 Each case boots the image on every node of a board and checks what the apps
 print: no FAIL line, every node exited 0, and the case's own facts.

@@ -50,6 +50,7 @@ enum {
     KM_QUIT,
     KM_READY,      /* server -> starter: p0 status */
     KM_REPLY,      /* server -> client */
+    KM_RETAIN,     /* local client: immutable graph pointer, or zero to release */
 };
 
 /* Messages between clients and servers carry no shared-memory data: plain
@@ -76,10 +77,11 @@ struct kds_extent {
 };
 
 /* ---- a graph part on its executor ---- */
-enum { LG_FREE, LG_LOADING, LG_LOADED, LG_RUN, LG_ENDED };
+enum { LG_FREE, LG_LOADING, LG_LOADED, LG_RUN, LG_ENDED, LG_CACHED };
 struct kds_part {
     uint32_t gid, state;
     unsigned home;
+    const struct kds_task *source;
     uint32_t n, loaded, done, inflight; /* inflight: unit instructions not yet retired */
     int64_t status;
     uint32_t failed;
@@ -140,7 +142,7 @@ struct kds_node {
         uint8_t part;
         uint16_t idx;
     } fly[KOS_MAX_UNITS][KDS_INFLIGHT];
-    unsigned fhead[KOS_MAX_UNITS], fcount[KOS_MAX_UNITS];
+    unsigned fhead[KOS_MAX_UNITS], fcount[KOS_MAX_UNITS], fwords[KOS_MAX_UNITS];
     uint8_t noengine[KOS_MAX_UNITS]; /* SYS_ENGINE refused this unit: SYS_DISPATCH it */
     int cpu_dirty, hw_dirty;         /* the L1 holds CPU writes / units wrote DRAM behind it */
     /* what a loop pass has to visit: user code runs from DRAM, so a pass
@@ -152,6 +154,7 @@ struct kds_node {
     struct kds_home home[KDS_HOMES];
     int loading; /* the home graph loading now, -1 none: one at a time (one landing slice per peer) */
     uint32_t seq;
+    const struct kds_task *retained;
     struct kds_task *stage; /* KDS_CHUNK_TASKS records, contiguous: a part's next chunk for the mover */
     struct kds_dep dep[KOS_MAX_NODES];
     struct kds_out out[KDS_OUTBOX];
@@ -161,6 +164,24 @@ struct kds_node {
 };
 
 extern struct kds_node *kds_k; /* this node's server, null when none */
+
+/* Optional diagnostic sample in the application-owned landing area. */
+static inline void kds_trace(unsigned phase, uint64_t a, uint64_t b)
+{
+#ifdef KDS_TRACE
+    volatile uint64_t *v = (volatile uint64_t *)(KOS_UV_LAND + KDS_LZ_USER + OSTPU_OFF_TRACE);
+    v[1] = phase;
+    v[2] = a;
+    v[3] = b;
+    v[4] = kos_now();
+    __asm__ volatile("fence rw, rw" ::: "memory");
+    ++v[0];
+#else
+    (void)phase; (void)a; (void)b;
+#endif
+}
+
+int kds_part_reuse(struct kds_node *k, uint32_t gid, const struct kds_task *source, uint32_t n);
 
 /* arena.c */
 int kds_arena_init(struct kds_node *k, uint64_t bytes);

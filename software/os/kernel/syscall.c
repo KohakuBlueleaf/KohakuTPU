@@ -21,6 +21,9 @@ static const char *app_name(unsigned i)
     return (const char *)k_uimg((uint64_t)a->name);
 }
 
+#ifdef KOS_SMALL_CALL
+__attribute__((minsize))
+#endif
 int k_find_app(const char *name)
 {
     for (unsigned i = 0; i < napps(); ++i) {
@@ -31,6 +34,9 @@ int k_find_app(const char *name)
     return -1;
 }
 
+#ifdef KOS_SMALL_CALL
+__attribute__((minsize))
+#endif
 int64_t k_run_local(unsigned app, const char *args)
 {
     if (app >= napps()) {
@@ -62,7 +68,7 @@ static uint64_t shared_off(uint64_t va, uint64_t len)
 
 /* The physical address of a user range the mover may touch: one contiguous
  * piece of shared memory or of this node's pages. 0 if it is not. */
-static uint64_t move_pa(uint64_t va, uint64_t len)
+static __attribute__((noinline)) uint64_t move_pa(uint64_t va, uint64_t len)
 {
     uint64_t off = shared_off(va, len);
     if (off != ~0UL) {
@@ -89,6 +95,9 @@ static void ret2(struct thread *t, int64_t st, uint64_t val)
     t->x[11] = val;
 }
 
+#ifdef KOS_SMALL_CALL
+__attribute__((minsize))
+#endif
 static int64_t stat_into(uint64_t what, void *buf, uint64_t max)
 {
     if (what == KOS_S_THREADS) {
@@ -217,6 +226,26 @@ static BUFFER_CALL void engine_user(struct thread *t, uint64_t unit, uint64_t ad
 #endif
     int64_t tk = k_engine_run((unsigned)unit, w, (unsigned)count);
     ret2(t, tk < 0 ? tk : KOS_OK, tk < 0 ? 0 : (uint64_t)tk);
+}
+
+static BUFFER_CALL int64_t de_run_user(uint64_t addr, uint64_t count)
+{
+#ifdef KOS_LAUNCH_RING
+    if (!count) {
+        int64_t r = k_copy_out(addr, &k_lring_cur, sizeof k_lring_cur);
+        memset(&k_lring_cur, 0, sizeof k_lring_cur);
+        return r;
+    }
+#endif
+    if (!count || count > KOS_DE_MAX_ENTRIES) {
+        return KOS_EINVAL;
+    }
+    uint64_t bytes = KOS_DE_CMD_BYTES(count);
+    uint64_t pa = move_pa(addr, bytes);
+    if (!pa || (pa & 31)) {
+        return KOS_EINVAL;
+    }
+    return k_de_stream((const uint64_t *)pa, (unsigned)count);
 }
 
 static BUFFER_CALL void run_user(struct thread *t, uint64_t uname, uint64_t uargs, uint64_t node)
@@ -443,6 +472,9 @@ void k_syscall(struct thread *t)
         k_block(t, W_CTRL, a0, 0, 0);
         return;
     }
+    case SYS_DE_RUN:
+        r = de_run_user(a0, a1);
+        break;
     case SYS_MOVE: {
         uint64_t bytes = a2 * 32;
         uint64_t src = move_pa(a0, bytes), dst;

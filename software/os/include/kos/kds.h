@@ -26,11 +26,23 @@ enum {
                  a buffer of that node or any node's landing zone */
     KDS_CPU,  /* a[0] int64_t (*)(const uint64_t args[3]), a[1..3] its arguments: on `node`;
                  a nonzero return fails the task */
+    KDS_STREAM, /* a[0] local arena ref to 1..32 immutable host-bound instructions,
+                  a[1] count; one dependency task retires at the final ticket */
+    KDS_STAMP, /* a[0] local 32-byte record: cycle, completed tasks, unit calls, label a[1] */
+    KDS_DE_STREAM, /* a[0] local arena ref to a[1] DE entries (unit mailbox and mover
+                      writes, abi.h KOS_DE_*) in groups of three, then a[2] blob bytes;
+                      through SYS_DE_RUN, synchronous */
+    KDS_LAUNCH_MARK, /* a[0] launch index: boundaries for KOS_LAUNCH_RING */
 };
 
 #define KDS_MAXPRED  4
 #define KDS_MAXPATCH 3
 #define KDS_MAXTASKS 65535
+#define KDS_TASK_OFF_HEADER 0u
+#define KDS_TASK_OFF_PRED   8u
+#define KDS_TASK_OFF_WORDS  16u
+#define KDS_TASK_OFF_PATCH  48u
+#define KDS_PATCH_BYTES     16u
 
 /* Write bits [lo, lo + width) of the instruction with (physical address of
  * ref) >> shift. A field split over two places is two patches. */
@@ -90,6 +102,11 @@ int kds_cpu(struct kds_graph *g, unsigned node, int64_t (*fn)(const uint64_t *ar
 /* Run a graph through this node's server; waits until every part has
  * finished, failed or timed out (timeout in cycles, 0 none). */
 int64_t kds_run(struct kds_graph *g, uint64_t timeout, struct kds_result *r);
+/* Retain successful all-local executor arrays across runs of an immutable graph.
+ * One serial caller owns this scope; NULL releases before modifying/freeing g.
+ * Remote partitions keep their normal run lifecycle. Requires a started server;
+ * call outside active runs. Caller keeps every referenced buffer allocated. */
+int kds_retain(struct kds_graph *g);
 
 /* Memory, on any node with a server: 64-byte aligned, a multiple of 64. */
 int64_t kds_alloc(unsigned node, uint64_t bytes, kds_ref *ref);
@@ -115,8 +132,44 @@ struct kds_server_stat {
 int kds_server_stat(struct kds_server_stat *s); /* KOS_ENOENT: no server on this node */
 
 /* The landing zone's first 32 KB belong to the servers while they run:
- * [home * 8 KB, + 8 KB) carries graph parts loaded by `home`. */
-#define KDS_LZ_SLICE 0x2000UL
-#define KDS_LZ_USER  (4 * KDS_LZ_SLICE) /* the first landing-zone byte left to applications */
+ * [home * 8 KB, + 8 KB) carries graph parts loaded by `home` (abi.h KDS_LZ_*). */
+
+/* ostpu resident mailbox ABI at KDS_LZ_USER (shared with host osabi.py) */
+#define OSTPU_MAGIC          0x31555054534fUL
+#define OSTPU_TASK_BYTES     128u
+#define OSTPU_OFF_READY      0u
+#define OSTPU_OFF_REQ        32u
+#define OSTPU_REQ_EPOCH_WORD     1u /* rpad[0] in the request granule */
+#define OSTPU_REQ_WRITE_REF_WORD 2u /* rpad[1]: optional local kds_ref for 4-word client cached write */
+#define OSTPU_REQ_WRITE_VAL_WORD 3u /* rpad[2]: base value for the 4-word client cached write */
+#define OSTPU_OFF_CMD        64u
+#define OSTPU_OFF_DONE       96u
+#define OSTPU_OFF_STATUS     128u
+#define OSTPU_OFF_CAP        160u
+#define OSTPU_OFF_STAT       192u
+#define OSTPU_OFF_TRACE      0x400u
+#define OSTPU_TRACE_WORDS    5u
+#define OSTPU_OFF_PROF       0x500u
+#define OSTPU_PROF_WORDS     8u
+#define OSTPU_OP_RUN         1u
+#define OSTPU_OP_STOP        2u
+
+struct ostpu_mailbox {
+    uint64_t magic, tasks_pa, data_pa, data_ref;
+    uint64_t request, rpad[3];
+    uint64_t op, tasks, repeats, timeout;
+    uint64_t done, dpad[3];
+    int64_t status;
+    uint64_t failed, detail, cycles;
+    uint64_t completed, task_cap, data_bytes, failed_repeat;
+    struct kds_server_stat stat;
+};
+
+#ifdef KOS_LAUNCH_RING
+static inline volatile struct kos_launch_rec *kds_lring(unsigned slot)
+{
+    return (volatile struct kos_launch_rec *)(KOS_UV_LAND + KDS_LZ_USER + KOS_LRING_OFF) + slot;
+}
+#endif
 
 #endif

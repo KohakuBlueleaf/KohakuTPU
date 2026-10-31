@@ -1,6 +1,7 @@
 """The trap-path profile (-D KOS_PROF, the kprof app) on a core model.
 
-    KOS_BUILD=~/kos/build KOS_OUT=~/kos/out pytest software/os/tests/host/test_prof.py
+    cd software/os/tests/host
+    KOS_BUILD=~/kos/build KOS_OUT=~/kos/out pytest --rootdir . test_prof.py
 
 kprof checks that each selection profiled exactly the calls it made and that
 every stage is nonzero; here the kernel's stages must also fit inside the

@@ -6,6 +6,7 @@
 
 #define MAX_FRAMES 8192
 static uint64_t bitmap[MAX_FRAMES / 64];
+static uint64_t umap[MAX_FRAMES / 64];
 static uint64_t nframes, nfree, hint;
 static uint64_t mmap_next;
 
@@ -26,7 +27,13 @@ static void mappings_changed(void)
 
 extern char __u_img_size[];
 
-void k_mem_init(void)
+#ifdef KOS_SMALL_CALL
+#define MEM_COLD __attribute__((minsize))
+#else
+#define MEM_COLD
+#endif
+
+MEM_COLD void k_mem_init(void)
 {
     kn.land_off = KOS_PRIV_LAND_OFF(kn.priv_size);
     kn.log_off = KOS_PRIV_LOG_OFF(kn.priv_size);
@@ -45,7 +52,7 @@ void k_mem_init(void)
 
 uint64_t k_frames_free(void) { return nfree; }
 
-uint64_t k_frame(void)
+MEM_COLD uint64_t k_frame(void)
 {
     for (uint64_t k = 0; k < nframes; ++k) {
         uint64_t i = (hint + k) % nframes;
@@ -61,13 +68,34 @@ uint64_t k_frame(void)
     return 0;
 }
 
-void k_frame_free(uint64_t pa)
+MEM_COLD void k_frame_free(uint64_t pa)
 {
     uint64_t i = (pa - kn.priv) >> 12;
     if (i < nframes && (bitmap[i / 64] >> (i % 64) & 1)) {
         bitmap[i / 64] &= ~(1UL << (i % 64));
+        umap[i / 64] &= ~(1UL << (i % 64));
         ++nfree;
     }
+}
+
+MEM_COLD int k_pa_ok(uint64_t pa, uint64_t bytes)
+{
+    if (!bytes || pa + bytes < pa) {
+        return 0;
+    }
+    uint64_t end = pa + bytes - 1;
+    if ((pa - (kn.priv + kn.land_off) < KOS_USER_LAND_SIZE &&
+         end - (kn.priv + kn.land_off) < KOS_USER_LAND_SIZE) ||
+        (pa - kn.shared < kn.shared_size && end - kn.shared < kn.shared_size)) {
+        return 1;
+    }
+    for (uint64_t p = pa & ~0xfffUL; p <= end; p += 4096) {
+        uint64_t i = (p - kn.priv) >> 12;
+        if (i >= nframes || !(umap[i / 64] >> (i % 64) & 1)) {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 int k_map(uint64_t va, uint64_t pa, uint64_t size, unsigned attr)
@@ -95,43 +123,40 @@ uint64_t k_shared_unc(uint64_t uva)
     return 0;
 }
 
-/* Byte-wise through k_user_pa, a page at a time; KOS_EFAULT on a hole. */
-int k_copy_in(void *dst, uint64_t uva, uint64_t n)
+#ifdef KOS_LAUNCH_RING
+struct kos_launch_rec k_lring_cur;
+#endif
+
+/* Byte-wise through k_user_pa, a page at a time, kernel buffer k to the user
+ * when `out`, else the other way; KOS_EFAULT on a hole. */
+static __attribute__((noinline)) int copy_user(uint64_t uva, uint8_t *k, uint64_t n, int out)
 {
-    uint8_t *d = dst;
+#ifdef KOS_LAUNCH_RING
+    uint64_t t0 = hw_cycles();
+#endif
     while (n) {
         uint64_t pa = k_user_range(uva, 1) ? k_user_pa(uva) : 0, chunk = 4096 - (uva & 0xfff);
         if (!pa) {
             return KOS_EFAULT;
         }
         chunk = chunk < n ? chunk : n;
-        memcpy(d, (const void *)pa, chunk);
-        d += chunk;
+        memcpy(out ? (void *)pa : k, out ? k : (const void *)pa, chunk);
+        k += chunk;
         uva += chunk;
         n -= chunk;
     }
+#ifdef KOS_LAUNCH_RING
+    k_lring_cur.cyc_xlat += hw_cycles() - t0;
+#endif
     return KOS_OK;
 }
 
-int k_copy_out(uint64_t uva, const void *src, uint64_t n)
-{
-    const uint8_t *s = src;
-    while (n) {
-        uint64_t pa = k_user_range(uva, 1) ? k_user_pa(uva) : 0, chunk = 4096 - (uva & 0xfff);
-        if (!pa) {
-            return KOS_EFAULT;
-        }
-        chunk = chunk < n ? chunk : n;
-        memcpy((void *)pa, s, chunk);
-        s += chunk;
-        uva += chunk;
-        n -= chunk;
-    }
-    return KOS_OK;
-}
+int k_copy_in(void *dst, uint64_t uva, uint64_t n) { return copy_user(uva, dst, n, 0); }
+
+int k_copy_out(uint64_t uva, const void *src, uint64_t n) { return copy_user(uva, (uint8_t *)(uintptr_t)src, n, 1); }
 
 /* A user string into dst[max], NUL-terminated; its length or KOS_EFAULT. */
-int64_t k_copy_str(char *dst, uint64_t uva, uint64_t max)
+MEM_COLD int64_t k_copy_str(char *dst, uint64_t uva, uint64_t max)
 {
     uint64_t i = 0;
     while (i + 1 < max) {
@@ -159,7 +184,7 @@ static uint64_t stack_base(struct thread *t)
 }
 
 /* KOS_STACK_SIZE of fresh pages under a guard gap; sp at the top. */
-int k_stack_map(struct thread *t)
+MEM_COLD int k_stack_map(struct thread *t)
 {
     uint64_t top = stack_base(t) + KOS_STACK_SPAN;
     uint64_t pages = KOS_STACK_SIZE >> 12;
@@ -205,7 +230,7 @@ uint64_t k_user_pa(uint64_t va)
     return pa | (va & 0xfff);
 }
 
-void k_stack_unmap(struct thread *t)
+MEM_COLD void k_stack_unmap(struct thread *t)
 {
     uint64_t top = stack_base(t) + KOS_STACK_SPAN;
     for (uint64_t i = 0; i < t->stack_pages; ++i) {
@@ -223,7 +248,7 @@ void k_stack_unmap(struct thread *t)
 static int used(uint64_t i) { return bitmap[i / 64] >> (i % 64) & 1; }
 
 /* `n` physically contiguous zeroed pages; their physical address, 0 if none. */
-static uint64_t frames(uint64_t n)
+static MEM_COLD uint64_t frames(uint64_t n, int user)
 {
     uint64_t first = 0, run = 0;
     for (uint64_t i = 0; i < nframes && run < n; ++i) {
@@ -236,15 +261,18 @@ static uint64_t frames(uint64_t n)
     for (uint64_t k = 0; k < n; ++k) {
         uint64_t i = first + k;
         bitmap[i / 64] |= 1UL << (i % 64);
+        if (user) {
+            umap[i / 64] |= 1UL << (i % 64);
+        }
         --nfree;
         memset((void *)(kn.priv + (i << 12)), 0, 4096);
     }
     return kn.priv + (first << 12);
 }
 
-void *k_alloc(uint64_t bytes)
+MEM_COLD void *k_alloc(uint64_t bytes)
 {
-    uint64_t pa = frames(KOS_ALIGN_UP(bytes, 4096) >> 12);
+    uint64_t pa = frames(KOS_ALIGN_UP(bytes, 4096) >> 12, 0);
     if (!pa) {
         k_panic("no %lu bytes for kernel tables", bytes);
     }
@@ -254,10 +282,10 @@ void *k_alloc(uint64_t bytes)
 /* Private pages for the caller's node, physically contiguous (so the mover
  * and units can take the range whole), zeroed, mapped cached or (flags
  * KOS_MMAP_UNCACHED) through the uncached alias. */
-int64_t k_mmap(uint64_t size, unsigned flags)
+MEM_COLD int64_t k_mmap(uint64_t size, unsigned flags)
 {
     uint64_t n = KOS_ALIGN_UP(size, 4096) >> 12;
-    uint64_t pa = frames(n);
+    uint64_t pa = frames(n, 1);
     if (!pa) {
         return KOS_ENOMEM;
     }
@@ -272,7 +300,7 @@ int64_t k_mmap(uint64_t size, unsigned flags)
 
 /* Unmap [va, va + size) of the mmap area, physically contiguous from pa, and
  * free its frames. */
-int64_t k_munmap(uint64_t va, uint64_t pa, uint64_t size)
+MEM_COLD int64_t k_munmap(uint64_t va, uint64_t pa, uint64_t size)
 {
     uint64_t lo = KOS_UV_MMAP + (uint64_t)kn.me * 0x10000000UL;
     if (!pa || (va | size) & 0xfff || va < lo || va + size > mmap_next) {

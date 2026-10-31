@@ -28,7 +28,13 @@ static volatile uint64_t *table(uint64_t pa)
 
 static uint64_t pte_pa(uint64_t pte) { return ((pte >> 10) << 12) & ((1UL << 40) - 1); }
 
-static uint64_t alloc_table(void)
+#ifdef KOS_SMALL_CALL
+#define MMU_COLD __attribute__((minsize))
+#else
+#define MMU_COLD
+#endif
+
+static MMU_COLD uint64_t alloc_table(void)
 {
     for (uint64_t i = 0; i < l0_mem.pool_pages; ++i) {
         if (!inuse[i]) {
@@ -45,7 +51,7 @@ static uint64_t alloc_table(void)
     return 0;
 }
 
-void mmu_init(void)
+MMU_COLD void mmu_init(void)
 {
     for (unsigned i = 0; i < sizeof inuse; ++i) {
         inuse[i] = 0;
@@ -66,7 +72,7 @@ static int canonical(uint64_t va)
 }
 
 /* The physical ranges a kernel request may name. */
-static int allowed(uint64_t pa, uint64_t size)
+static MMU_COLD int allowed(uint64_t pa, uint64_t size)
 {
     uint64_t end = pa + size;
     if (end < pa) {
@@ -93,7 +99,7 @@ static int allowed(uint64_t pa, uint64_t size)
 static int is_dram(uint64_t pa) { return !(pa & HW_SPECIAL) && pa >= HW_NODE_BASE; }
 
 /* The slot for `va` at `level` (2 root, 0 leaf), building tables on the way. */
-static volatile uint64_t *slot(uint64_t va, int level, int create)
+static MMU_COLD volatile uint64_t *slot(uint64_t va, int level, int create)
 {
     uint64_t t = root;
     for (int l = 2; l > level; --l) {
@@ -117,7 +123,7 @@ static volatile uint64_t *slot(uint64_t va, int level, int create)
     return table(t) + ((va >> (12 + 9 * level)) & 511);
 }
 
-int mmu_map(uint64_t va, uint64_t pa, uint64_t size, unsigned attr, int checked)
+MMU_COLD int mmu_map(uint64_t va, uint64_t pa, uint64_t size, unsigned attr, int checked)
 {
     if ((va | pa | size) & 0xfff || !size || !canonical(va) || !canonical(va + size - 1)) {
         return KOS_EINVAL;
@@ -162,7 +168,7 @@ int mmu_map(uint64_t va, uint64_t pa, uint64_t size, unsigned attr, int checked)
     return KOS_OK;
 }
 
-static volatile uint64_t *leaf(uint64_t va, int *level)
+static MMU_COLD volatile uint64_t *leaf(uint64_t va, int *level)
 {
     uint64_t t = root;
     for (int l = 2; l >= 0; --l) {
@@ -180,7 +186,7 @@ static volatile uint64_t *leaf(uint64_t va, int *level)
     return 0;
 }
 
-int mmu_unmap(uint64_t va, uint64_t size)
+MMU_COLD int mmu_unmap(uint64_t va, uint64_t size)
 {
     if ((va | size) & 0xfff || va < 0x1000000UL || !canonical(va)) {
         return KOS_EINVAL;
