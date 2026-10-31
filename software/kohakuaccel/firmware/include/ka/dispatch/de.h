@@ -8,14 +8,6 @@
 
 #include <ka/hal/node.h>
 
-enum {
-    KA_R_DE      = 0x200, /* W: + 8 * code, queue a write of register `code` */
-    KA_R_DE_STAT = 0x300, /* R: STAT; W: queue a WAIT (code 32) */
-    KA_R_DE_CTL  = 0x308, /* W: [1] clear, [0] enable; R: MOVES */
-    KA_R_DE_MAP  = 0x310, /* W: {valid[31], counter[19:16], y[11:8], x[3:0]} */
-    KA_R_DE_CTR  = 0x380, /* R: + 8 * k, counter k */
-};
-
 #define KA_DE_MAGIC 0xDE01u
 #define KA_DE_WAIT  32u
 /* A WAIT's source past the unit counters: moves done since the clear. */

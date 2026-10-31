@@ -47,6 +47,7 @@ CFLAGS = [
     "-Werror",
     "-Wno-unused-command-line-argument",
     f"-I{(OS / 'include').as_posix()}",
+    f"-I{(OS.parent / 'firmware/include').as_posix()}",
 ]
 
 LIB = ["lib/string.c", "lib/fmt.c"]

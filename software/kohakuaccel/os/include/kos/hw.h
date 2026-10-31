@@ -7,73 +7,97 @@
 
 #include <stdint.h>
 
+#include <ka/hal/control.h>
+
 /* ---- the processor's physical address map ---- */
 #define HW_IMEM_PA   0x00000000UL /* fetch only, host-loaded */
 #define HW_IMEM_SIZE 0x8000UL
 #define HW_SPAD_PA   0x00010000UL
 #define HW_SPAD_SIZE 0x8000UL
-#define HW_CTRL_PA   0x00020000UL
+#define HW_CTRL_PA   KA_CTRL_BASE
 #define HW_NODE_BASE 0x10000000UL /* at or above: the node port (DRAM, staging) */
 #define HW_UNC       (1UL << 38)  /* the uncached alias of DRAM */
 #define HW_SPECIAL   (1UL << 39)  /* staging and apertures, always uncached */
 #define HW_MESH_SHIFT 36
 #define HW_STAGING(m) (HW_SPECIAL | ((uint64_t)(m) << HW_MESH_SHIFT))
 
-/* ---- control region offsets ---- */
+/* ---- control region offsets: `ka/hal/control.h` under the OS's names ---- */
 enum {
-    HW_R_EXIT    = 0x00,
-    HW_R_CONSOLE = 0x08,
-    HW_R_DBELL   = 0x10,
-    HW_R_SATP    = 0x18,
-    HW_R_MVSTAT  = 0x20, /* [33] room [32] busy [31:28] fault [27:0] moves done */
-    HW_R_DBCNT   = 0x28, /* inbound rings, mesh n at [16n+15:16n] */
-    HW_R_STDIN   = 0x30, /* R: {valid[8], byte}; W: pop */
-    HW_R_IRQ     = 0x38, /* W: toggle the host interrupt */
-    HW_R_NM      = 0x40, /* mailbox, 8 registers */
-    HW_R_IL      = 0xC0, /* interlink register k at 0xC0 + k */
-    HW_R_SIG     = 0xE0, /* R: the selected signal slot's word */
-    HW_R_MV      = 0x100, /* mover register k at 0x100 + k */
-    HW_R_RX      = 0x180, /* RX queue: HDR P0 P1 P2 P3 USED */
-    HW_R_DCACHE  = 0x1C8, /* W: [0] flush [1] invalidate; R: busy */
-    HW_R_DE_Q    = 0x200, /* dispatch engine: queue a write of register c at +8c */
-    HW_R_DE_WAIT = 0x300, /* W: queue a WAIT; R: STAT */
-    HW_R_DE_CTL  = 0x308, /* W: [0] enable [1] clear; R: MOVES */
-    HW_R_DE_MAP  = 0x310, /* W: [31] valid [19:16] counter [11:8] y [3:0] x */
-    HW_R_DE_CTR  = 0x380, /* R: counter k at +8k */
+    HW_R_EXIT    = KA_R_EXIT,
+    HW_R_CONSOLE = KA_R_CONSOLE,
+    HW_R_DBELL   = KA_R_DBELL,
+    HW_R_SATP    = KA_R_SATP,
+    HW_R_MVSTAT  = KA_R_MVSTAT,
+    HW_R_DBCNT   = KA_R_DBCNT,
+    HW_R_STDIN   = KA_R_STDIN,
+    HW_R_IRQ     = KA_R_IRQ,
+    HW_R_NM      = KA_R_NM,
+    HW_R_IL      = KA_R_IL,
+    HW_R_SIG     = KA_R_SIG,
+    HW_R_MV      = KA_R_MV,
+    HW_R_RX      = KA_R_RX,
+    HW_R_DCACHE  = KA_R_DCACHE,
+    HW_R_DE_Q    = KA_R_DE,
+    HW_R_DE_WAIT = KA_R_DE_STAT,
+    HW_R_DE_CTL  = KA_R_DE_CTL,
+    HW_R_DE_MAP  = KA_R_DE_MAP,
+    HW_R_DE_CTR  = KA_R_DE_CTR,
 };
 
 enum {
-    HW_IL_CTL     = 0x00, /* [0] enable [1] clear doorbells [2] clear faults [3] clear slots */
-    HW_IL_MESH    = 0x08,
-    HW_IL_RING    = 0x10, /* [1:0] mesh [15:8] slot [31:16] amount [32] fence */
-    HW_IL_CONSUME = 0x20, /* [3:0] slot [63:32] amount */
-    HW_IL_SELECT  = 0x28,
+    HW_IL_CTL     = KA_IL_CTL,
+    HW_IL_MESH    = KA_IL_MESH,
+    HW_IL_RING    = KA_IL_RING,
+    HW_IL_CONSUME = KA_IL_CONSUME,
+    HW_IL_SELECT  = KA_IL_SELECT,
 };
-#define HW_SIG_COUNT(w) ((uint32_t)(w))
-#define HW_SIG_SENT(w)  ((uint32_t)(((w) >> 32) & 0xffffu))
-#define HW_SIG_SLOT(w)  ((unsigned)(((w) >> 50) & 0xfu))
+#define HW_SIG_COUNT(w) KA_SIG_COUNT(w)
+#define HW_SIG_SENT(w)  KA_SIG_SENT(w)
+#define HW_SIG_SLOT(w)  KA_SIG_SLOT(w)
 #define HW_SIG_FAULT(w) ((unsigned)((w) >> 56))
 #define HW_SIG_SLOTS     16u
-#define HW_RING_DEPTH    4u
+#define HW_RING_DEPTH    KA_IL_RING_DEPTH
 
-enum { HW_NM_DST, HW_NM_ARG0, HW_NM_ARG1, HW_NM_ARG2, HW_NM_ARG3, HW_NM_GO, HW_NM_STAT, HW_NM_HEAD };
-#define HW_NM_OFFERED    (1UL << 15)
-#define HW_NM_COUNT(s)   ((unsigned)((s) & 0xffu))
-#define HW_NM_TYPED(t)   ((1UL << 24) | ((uint64_t)((t) & 0xf) << 20))
-#define HW_T_CU_CTRL     0x7
-#define HW_CQ_DEPTH      16u
-#define HW_CQ_Y(w)       ((unsigned)(((w) >> 52) & 0xfu))
-#define HW_CQ_X(w)       ((unsigned)(((w) >> 48) & 0xfu))
-#define HW_CQ_CODE(w)    ((unsigned)(((w) >> 40) & 0xffu))
-#define HW_CQ_ARG(w)     ((uint32_t)(((w) >> 8) & 0xffffffffu))
-enum { HW_SIG_INST = 0, HW_SIG_BATCH = 1, HW_SIG_BARRIER = 2, HW_SIG_DATA = 3, HW_SIG_FAULT_CODE = 4 };
+enum {
+    HW_NM_DST  = KA_NM_DST,
+    HW_NM_ARG0 = KA_NM_ARG0,
+    HW_NM_ARG1 = KA_NM_ARG1,
+    HW_NM_ARG2 = KA_NM_ARG2,
+    HW_NM_ARG3 = KA_NM_ARG3,
+    HW_NM_GO   = KA_NM_GO,
+    HW_NM_STAT = KA_NM_STAT,
+    HW_NM_HEAD = KA_NM_HEAD,
+};
+#define HW_NM_OFFERED    KA_NM_STAT_OFFERED
+#define HW_NM_COUNT(s)   KA_NM_STAT_COUNT(s)
+#define HW_NM_TYPED(t)   KA_NM_TYPED(t)
+#define HW_T_CU_CTRL     KA_T_CU_CTRL
+#define HW_CQ_DEPTH      KA_NM_CQ_DEPTH
+#define HW_CQ_Y(w)       KA_CQ_Y(w)
+#define HW_CQ_X(w)       KA_CQ_X(w)
+#define HW_CQ_CODE(w)    KA_CQ_CODE(w)
+#define HW_CQ_ARG(w)     KA_CQ_ARG(w)
+enum {
+    HW_SIG_INST       = KA_SIG_INST_COMPLETE,
+    HW_SIG_BATCH      = KA_SIG_BATCH_COMPLETE,
+    HW_SIG_BARRIER    = KA_SIG_BARRIER,
+    HW_SIG_DATA       = KA_SIG_DATA_RECEIVED,
+    HW_SIG_FAULT_CODE = KA_SIG_FAULT,
+};
 
-enum { HW_RX_HDR, HW_RX_P0, HW_RX_P1, HW_RX_P2, HW_RX_P3, HW_RX_USED };
+enum {
+    HW_RX_HDR  = KA_RX_HDR,
+    HW_RX_P0   = KA_RX_P0,
+    HW_RX_P1   = KA_RX_P1,
+    HW_RX_P2   = KA_RX_P2,
+    HW_RX_P3   = KA_RX_P3,
+    HW_RX_USED = KA_RX_USED,
+};
 
-#define HW_MV_BUSY(s)  (((s) >> 32) & 1u)
-#define HW_MV_ROOM(s)  (((s) >> 33) & 1u)
-#define HW_MV_FAULT(s) ((unsigned)(((s) >> 28) & 0xfu))
-#define HW_MV_DONE(s)  ((uint32_t)((s) & 0x0fffffffu))
+#define HW_MV_BUSY(s)  KA_MV_BUSY(s)
+#define HW_MV_ROOM(s)  KA_MV_ROOM(s)
+#define HW_MV_FAULT(s) KA_MV_FAULT(s)
+#define HW_MV_DONE(s)  KA_MV_DONE(s)
 
 #define HW_DE_MAGIC(s) ((unsigned)((s) >> 48) == 0xDE01u)
 
@@ -124,8 +148,8 @@ static inline uint64_t hw_time(void)
 }
 
 /* ---- D-cache maintenance: whole-L1 sweeps ---- */
-#define HW_DC_FLUSH 1u
-#define HW_DC_INVAL 2u
+#define HW_DC_FLUSH KA_DCACHE_FLUSH
+#define HW_DC_INVAL KA_DCACHE_INVAL
 /* Busy rises only once the L1 starts its sweep, a few cycles after the write
  * (a read right after it returns 0: M0 measured an 8-cycle "flush" of 64 dirty
  * lines). Every sweep scans all 64 lines, so busy is high for longer than one
