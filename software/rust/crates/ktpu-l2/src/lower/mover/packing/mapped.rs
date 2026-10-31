@@ -33,7 +33,11 @@ fn fill(
     }
     let (_, _, transfers) = shape.descriptor_transfers(t, t.read.pack_gather_words);
     for (i, &(at, offset)) in transfers.iter().enumerate() {
-        if i > 0 && i % t.dma_queue_depth == 0 && !on("l2.readmap/no-pack-throttle") {
+        if i > 0
+            && i % t.dma_queue_depth == 0
+            && !on("l2.readmap/no-pack-throttle")
+            && !on("l2.fill/no-throttle")
+        {
             lines.push("    vsync fe on=fill".into());
         }
         let next =

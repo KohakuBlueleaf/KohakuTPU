@@ -120,11 +120,18 @@ impl Ctx<'_> {
                 shape.descriptor_transfers(self.t, self.t.read.load_gather_words);
             let advance = d.advances[phase % d.advances.len()];
             let depth = self.t.dma_queue_depth;
-            if transfers.len() > 1 && !on("l2.readmap/no-load-throttle") {
+            if transfers.len() > 1
+                && !on("l2.readmap/no-load-throttle")
+                && !on("l2.fill/no-throttle")
+            {
                 g.fixed(ir::sync("fe", "fill", None));
             }
             for (i, &(position, offset)) in transfers.iter().enumerate() {
-                if i > 0 && i % depth == 0 && !on("l2.readmap/no-load-throttle") {
+                if i > 0
+                    && i % depth == 0
+                    && !on("l2.readmap/no-load-throttle")
+                    && !on("l2.fill/no-throttle")
+                {
                     g.fixed(ir::sync("fe", "fill", None));
                 }
                 let next = transfers
