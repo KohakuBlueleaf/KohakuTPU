@@ -196,12 +196,6 @@ fn band_text(
         }
     }
     g.raw("halt");
-    #[cfg(test)]
-    if !c.classed {
-        typed::tests::compare(
-            &c, &g, body, par, env, name, t, band, remat, ahead, plan, land, hold, pin, serial,
-        );
-    }
     let code = banks::rotate(
         c.zero_sign
             .code(

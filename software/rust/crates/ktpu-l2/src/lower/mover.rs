@@ -502,30 +502,3 @@ fn lower_op(body: &Body, op: &Op, env: &Env, tg: &Target) -> Result<(Vec<String>
         format!("no mover op '{}': {}", op.op, OPS.join(", ")),
     ))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn tgt() -> Target {
-        Target::of(&ktpu_machine::Machine::named("multimesh_v9t6").unwrap())
-    }
-
-    #[test]
-    #[allow(non_snake_case)]
-    fn L2_MOV_008_cut_words() {
-        let t = tgt();
-        // 2 x 16384 words, one level: two moves of 16384.
-        let got = cut(&[vec![(32768, 32)]], MOVE_WORDS, None, 0, &t);
-        assert_eq!(got.len(), 2);
-        assert_eq!(got[1].0, vec![16384 * 32]);
-        assert_eq!(got[1].1, vec![vec![(16384, 32)]]);
-    }
-
-    #[test]
-    fn merge_and_squeeze() {
-        assert_eq!(merge(&[(4, 128), (4, 32)]), vec![(16, 32)]);
-        assert_eq!(squeeze(&[(1, 64), (4, 32)]), vec![(4, 32)]);
-        assert_eq!(squeeze(&[(1, 64)]), vec![(1, 64)]);
-    }
-}

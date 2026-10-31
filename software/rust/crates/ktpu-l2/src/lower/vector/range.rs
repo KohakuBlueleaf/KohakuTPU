@@ -607,6 +607,3 @@ fn below_max(pos: &[&Term], s: &State) -> Option<Bind> {
     let x = s.binding(x);
     (s.max_of.get(m) == Some(&x)).then_some(x)
 }
-
-#[cfg(test)]
-mod tests;

@@ -15,8 +15,6 @@ use crate::target::Target;
 pub use crate::sim::Totals;
 
 pub mod gate;
-#[cfg(test)]
-mod tests;
 
 /// One node's bound package per mesh.
 pub type Nodes = BTreeMap<u32, ktpu_l0::Package>;

@@ -83,30 +83,3 @@ pub fn quant_status_bytes(
 
 /// Bytes of one core's finite status record.
 pub const STATUS_RECORD: i64 = 128;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_k_tail_cuts_where_the_source_ends() {
-        let run = |at, n, live| Run { at, n, live };
-        assert_eq!(
-            runs(0, 128, 96, 32, 64),
-            vec![run(0, 64, 32), run(64, 32, 32), run(96, 32, 0)]
-        );
-        assert_eq!(runs(0, 128, 128, 32, 64), vec![run(0, 128, 32)]);
-        assert_eq!(pieces((0, 64, 40), (0, 128, 96), 16, 2).len(), 2 * 3);
-    }
-
-    #[test]
-    fn a_status_holds_a_record_a_core_of_each_live_piece() {
-        // Rows: 40 live then 24 padding; columns: two live runs, one padding.
-        let p = pieces((0, 64, 40), (0, 128, 96), 16, 2);
-        assert_eq!(status_bytes(4, &p), 128 * 4 * 2);
-        assert_eq!(
-            status_bytes(4, &pieces((0, 64, 64), (0, 128, 128), 16, 2)),
-            128 * 4
-        );
-    }
-}

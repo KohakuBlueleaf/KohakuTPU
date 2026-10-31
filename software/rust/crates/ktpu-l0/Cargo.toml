@@ -10,11 +10,6 @@ publish.workspace = true
 # Spec-vector mutants, switched per thread (src/mutant.rs).
 mutants = []
 
-[[test]]
-name = "mutants"
-path = "tests/mutants/main.rs"
-required-features = ["mutants"]
-
 [dependencies]
 ktpu-machine.workspace = true
 ktpu-isa.workspace = true

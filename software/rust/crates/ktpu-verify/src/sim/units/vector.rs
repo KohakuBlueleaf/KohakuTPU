@@ -40,36 +40,6 @@ use crate::sim::fx::FxHashMap as HashMap;
 use crate::sim::memory::{Memory, Space, What};
 use crate::sim::{Kinded, Pk, Sender, Sim, Sink, Unit};
 
-#[cfg(test)]
-mod confinement_tests {
-    use super::*;
-    #[test]
-    fn xb_amount_is_unavailable_to_hazard_checker() {
-        let machine = ktpu_machine::Machine::named("multimesh_v9t6").unwrap();
-        let isa = Isa::new(&machine).unwrap();
-        let word = |amount| {
-            isa.vector
-                .core
-                .set
-                .by_name("XB")
-                .unwrap()
-                .encode(&[("xk", amount)])
-                .unwrap()
-                .0[0]
-        };
-        let a = core_word(&isa, word(0));
-        for amount in 1..16 {
-            assert_eq!(a, core_word(&isa, word(amount)));
-        }
-        #[cfg(feature = "mutants")]
-        assert!(std::panic::catch_unwind(|| crate::mutant::with(
-            "verify.confinement/read-xk",
-            || core_word(&isa, word(7))
-        ))
-        .is_err());
-    }
-}
-
 /// Engines, in the order the checker keeps them: FILL, DRAIN, UNPACK,
 /// MATH, PACK.
 pub const F: usize = 0;

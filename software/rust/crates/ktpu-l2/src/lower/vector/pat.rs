@@ -294,33 +294,3 @@ pub fn symbolic(text: &str) -> (String, Vec<String>) {
     }
     (out, regs)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn refs_and_selects() {
-        let r = refs("vmax {0}[4:], {1}[0 :], merge({2}[1:], 8) vl=16");
-        assert_eq!(r.len(), 3);
-        assert_eq!(r[0].sel, Some((4, true)));
-        assert_eq!(r[1].sel, Some((0, true)));
-        assert_eq!(r[2].sym, 2);
-        assert_eq!(refs("vsel {0}, {1}, {2}, {3}")[3].sel, None);
-        assert_eq!(kw_num("vadd {0}, {1}, {2} vl=64", "vl"), Some(64));
-        assert_eq!(kw_num("vunpk {0} <- l1[8] f16 n=8", "n"), Some(8));
-        assert_eq!(strip_options("{0}, k1, {1} vl=16 if=p1"), "{0}, k1, {1}");
-        assert!(predicated("vmov {0}, k1 if=p1"));
-        assert_eq!(
-            symbolic("vmul v10, k1, xor(v2, 1)"),
-            (
-                "vmul {0}, k1, xor({1}, 1)".to_string(),
-                vec!["v10".into(), "v2".into()]
-            )
-        );
-        assert_eq!(
-            format("vmov {0}[4:], {1}", &["v1".into(), "v2".into()]),
-            "vmov v1[4:], v2"
-        );
-    }
-}

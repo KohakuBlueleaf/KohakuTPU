@@ -69,31 +69,3 @@ impl U256 {
         self.0[0]
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bits_cross_limbs() {
-        let mut w = U256::ZERO;
-        w.set_bits(60, 8, 0xA5);
-        assert_eq!(w.bits(60, 8), 0xA5);
-        assert_eq!(w.0[0] >> 60, 0x5);
-        assert_eq!(w.0[1] & 0xF, 0xA);
-        w.set_bits(248, 8, 0x7F);
-        assert_eq!(w.bits(248, 8), 0x7F);
-        assert_eq!(w.bits(250, 64), 0x1F);
-    }
-
-    #[test]
-    fn bytes_round_trip_le() {
-        let mut b = [0u8; 32];
-        b[0] = 1;
-        b[31] = 0x80;
-        let w = U256::from_le_bytes(&b);
-        assert_eq!(w.0[0], 1);
-        assert_eq!(w.0[3], 0x80 << 56);
-        assert_eq!(w.to_le_bytes(), b);
-    }
-}

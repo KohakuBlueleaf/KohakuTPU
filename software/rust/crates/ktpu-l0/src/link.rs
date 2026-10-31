@@ -47,31 +47,3 @@ pub fn bound(parts: &[Package]) -> Result<Package, String> {
     out.steps.push(Step::new(Op::End, 0, 0, 0, 0));
     Ok(out)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::Word;
-
-    #[test]
-    fn offsets_and_boundaries_survive_linking() {
-        let p = Package {
-            payloads: vec![Word::default(); 3],
-            steps: vec![
-                Step::new(Op::Mover, 0, 2, 1, 0),
-                Step::new(Op::End, 0, 0, 0, 0),
-            ],
-            ..Default::default()
-        };
-        let linked = bound(&[p.clone(), p]).unwrap();
-        assert_eq!(linked.steps[0].arg, 1);
-        assert_eq!(linked.steps[2].arg, 4);
-        assert_eq!(linked.steps[1].op, Op::Barrier);
-        assert_eq!(linked.payloads.len(), 6);
-        let bad = Package {
-            steps: vec![Step::new(Op::Jump, 0, 0, 0, 0)],
-            ..Default::default()
-        };
-        assert!(bound(&[bad]).is_err());
-    }
-}

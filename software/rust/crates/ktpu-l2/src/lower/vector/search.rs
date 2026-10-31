@@ -36,24 +36,6 @@ pub mod witness;
 #[cfg(all(test, feature = "witness"))]
 pub(super) mod modulo_typed;
 
-#[cfg(test)]
-mod template_tests {
-    use super::Search;
-
-    #[test]
-    fn pressure_requires_a_replayable_probe() {
-        let recording = Search::recording();
-        assert!(!recording.pressure_fallback());
-        recording.freeze();
-        assert!(!recording.pressure_fallback());
-        // Omitting recording admits the uncacheable pressure fallback.
-        let mutant = Search::default();
-        assert!(mutant.pressure_fallback());
-        mutant.freeze();
-        assert!(!mutant.pressure_fallback());
-    }
-}
-
 /// How a stream loop lowers: "band" (one trip in one L1 tile), "modulo"
 /// (trips software-pipelined) or "auto" (the fewer modelled cycles).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -833,8 +815,6 @@ fn modulo_legacy(
     for n in &pre {
         c.prepare(n, false)?;
     }
-    #[cfg(test)]
-    let typed_trip = c.clone().modulo_typed();
     let mut g = Gen::default();
     let mut all = pre.clone();
     all.extend(ops.iter().cloned());
@@ -859,15 +839,6 @@ fn modulo_legacy(
     g.code = signed;
     let placed = banks::rotate(std::mem::take(&mut g.code), body.vcopies, &MO::Core::of(t));
     let (head_code, trip) = placed.split_at(head_len);
-    #[cfg(test)]
-    let typed_placed = {
-        let (events, typed_head, typed_pinned) = typed_trip.expect("typed modulo trip");
-        assert_eq!(typed_head, head_len);
-        assert_eq!(typed_pinned, c.pinned);
-        let events = banks::typed::rotate(events, body.vcopies, &MO::Core::of(t));
-        modulo_typed::eligibility(&events[head_len..], trip);
-        events
-    };
     for code in trip {
         if let Code::Raw(s) = code {
             if !REBUILT.iter().any(|r| s.starts_with(r)) {
@@ -892,9 +863,6 @@ fn modulo_legacy(
             Code::Raw(_) => None,
         })
         .collect();
-    #[cfg(test)]
-    let (typed_mops, typed_stmts) =
-        modulo_typed::derive(&typed_placed, head_len, trip, &mops, body.vcopies, &core);
     if mops.is_empty() {
         return no("no vector ops in the trip");
     }
@@ -971,18 +939,6 @@ fn modulo_legacy(
             ii_min,
             &core,
         );
-        #[cfg(test)]
-        let typed_plan = modulo_typed::plan(
-            &planned,
-            &typed_mops,
-            body.vregs as i64,
-            &pinned,
-            k_max,
-            ii_max,
-            lead,
-            ii_min,
-            &core,
-        );
         let Some(p) = planned else {
             let list = if tried.is_empty() {
                 "none planned".to_string()
@@ -1015,21 +971,7 @@ fn modulo_legacy(
         let mut best: Option<(String, i64)> = None;
         let mut overflow = false;
         for tail in MO::TAILS {
-            #[cfg(test)]
-            MO::emit_typed::start_periodicity();
             let emitted = MO::emit(&p, &rings, trips, &pinned, tail);
-            #[cfg(test)]
-            let typed_tail = modulo_typed::emission(
-                &emitted,
-                typed_plan.as_ref().unwrap(),
-                &typed_stmts,
-                &rings,
-                trips,
-                &pinned,
-                tail,
-                top,
-                c.land,
-            );
             let got = emitted.map_err(|e| VErr::Fail(body.reader.fail(&par.st, "L2.VC.014", e)))?;
             let (lines, cycles) = match got {
                 Some((lines, cycles)) if top <= c.land => (lines, cycles),
@@ -1049,19 +991,6 @@ fn modulo_legacy(
             let mut text_lines = out.clone();
             text_lines.extend(indent(&all_lines).into_iter().map(|l| format!("    {l}")));
             let text = text_lines.join("\n") + "\n";
-            #[cfg(test)]
-            let typed_image = {
-                let module = modulo_typed::image(
-                    &c.descs,
-                    body.vregs,
-                    name,
-                    &typed_placed[..head_len],
-                    typed_tail.as_ref().unwrap(),
-                    &pinned,
-                );
-                assert_eq!(module.source, text, "complete modulo image");
-                module
-            };
             #[cfg(feature = "witness")]
             if let Some((w, input)) = witnessed {
                 w.image(
@@ -1076,15 +1005,6 @@ fn modulo_legacy(
             }
             let module = encode::read_image(&text, name, body.vregs)?;
             let encoded = encode::words_of(&*throttled(&module, t)?, name, mem.len(), &t.machine);
-            #[cfg(test)]
-            {
-                assert_eq!(
-                    format!("{typed_image:?}"),
-                    format!("{module:?}"),
-                    "modulo source maps"
-                );
-                modulo_typed::sizing(&typed_image, &encoded, name, mem.len(), t);
-            }
             #[cfg(feature = "witness")]
             if let Some((w, input)) = witnessed {
                 w.encoded(

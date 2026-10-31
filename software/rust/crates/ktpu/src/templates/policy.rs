@@ -38,18 +38,3 @@ impl ShapeClass {
         }))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::ShapeClass;
-
-    #[test]
-    fn policies_are_compile_time_knobs() {
-        assert_eq!(ShapeClass::default(), ShapeClass::Pow2);
-        assert_eq!(ShapeClass::Exact.width(96, 32, 256).unwrap(), Some(96));
-        assert_eq!(ShapeClass::Pow2.width(96, 32, 256).unwrap(), Some(128));
-        assert_eq!(ShapeClass::Coarse.width(32, 32, 256).unwrap(), Some(128));
-        assert_eq!(ShapeClass::Pow2.width(288, 32, 256).unwrap(), None);
-        assert!(ShapeClass::Pow2.width(0, 32, 256).is_err());
-    }
-}

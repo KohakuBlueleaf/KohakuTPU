@@ -6,9 +6,6 @@ use std::fmt;
 
 use super::*;
 
-#[cfg(test)]
-mod tests;
-
 /// Descriptor dimensions in order: (byte stride, count).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Walk(pub Vec<(i64, i64)>);

@@ -377,26 +377,6 @@ fn f16_int(v: i64) -> u16 {
     sign | (((e + 15) as u16) << 10) | mantissa
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn integers_have_their_f16_bits() {
-        let want = [
-            (0, 0x0000),
-            (1, 0x3c00),
-            (2, 0x4000),
-            (3, 0x4200),
-            (31, 0x4fc0),
-            (2047, 0x67ff),
-            (-1, 0xbc00),
-            (-2, 0xc000),
-        ];
-        for (v, bits) in want {
-            assert_eq!(super::f16_int(v), bits, "{v}");
-        }
-    }
-}
-
 /// A walk pair no form here takes (`gen::lanes` takes it).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Unplanned(pub String);

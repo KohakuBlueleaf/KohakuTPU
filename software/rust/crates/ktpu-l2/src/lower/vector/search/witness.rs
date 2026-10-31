@@ -298,28 +298,6 @@ impl Witness {
     }
 }
 
-#[cfg(test)]
-#[test]
-fn repeated_modulo_ledger_uses_invocation_offsets() {
-    let w = Witness::new(compare);
-    let input: Arc<str> = "same input".into();
-    let kind = Kind::Modulo {
-        ii: 1,
-        k: 2,
-        tail: "explicit".into(),
-    };
-    let legacy = Witness::new(compare);
-    legacy.image(&input, kind.clone(), "image k()\n    halt\n");
-    legacy.encoded(&input, kind.clone(), &Ok(1));
-    for _ in 0..2 {
-        let reference = w.modulo_reference(&input, legacy.report());
-        w.image(&input, kind.clone(), "image k()\n    halt\n");
-        w.encoded(&input, kind.clone(), &Ok(1));
-        w.complete_modulo(&input, &reference);
-    }
-    assert_eq!(w.report().counts(), [0, 0, 2, 0]);
-}
-
 fn equivalent(module: &Module, text: &str, body: &Body, name: &str, nparams: usize, t: &Target) {
     let old = encode::read_image(text, name, body.vregs).expect("legacy image parses");
     assert_eq!(

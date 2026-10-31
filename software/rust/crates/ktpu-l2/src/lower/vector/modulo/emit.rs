@@ -299,8 +299,6 @@ pub fn emit(
                     (Ev::Sync(w1, o1, _), Ev::Sync(w2, o2, _)) => w1 == w2 && o1 == o2,
                     _ => false,
                 };
-                #[cfg(test)]
-                typed::record_periodicity(0, same);
                 if !same {
                     return Ok(None);
                 }

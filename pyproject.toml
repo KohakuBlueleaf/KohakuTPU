@@ -5,12 +5,12 @@
 [tool.black]
 line-length = 88
 target-version = ["py313"]
-extend-exclude = "software/"
+extend-exclude = "(software|temp-remove|temp)/"
 
 [tool.ruff]
 line-length = 88
 target-version = "py313"
-extend-exclude = ["software"]
+extend-exclude = ["software", "temp-remove", "temp"]
 
 # Pylance / pyright opened at the repo root: every software member's import
 # root (the namespace packages install through a finder it cannot run).

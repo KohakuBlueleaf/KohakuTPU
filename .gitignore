@@ -103,7 +103,7 @@ docs/_build/
 .pybuilder/
 target/
 # Spec runner package (Python source), not a build directory.
-!software/tests/spec/runners/target/
+!temp-remove/software/tests/spec/runners/target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -163,7 +163,7 @@ celerybeat.pid
 env/
 venv/
 ENV/
-!software/tests/spec/vectors/**/env/
+!temp-remove/software/tests/spec/vectors/**/env/
 env.bak/
 venv.bak/
 
@@ -216,6 +216,6 @@ software/os/tools/*.json
 !software/os/tools/ostpu/
 
 # golden witnesses live in the Hugging Face dataset (golden/fetch.py)
-software/rust/golden/**/*.json
-software/rust/golden/.cache/
-software/rust/golden/.revision
+temp-remove/software/rust/golden/**/*.json
+temp-remove/software/rust/golden/.cache/
+temp-remove/software/rust/golden/.revision

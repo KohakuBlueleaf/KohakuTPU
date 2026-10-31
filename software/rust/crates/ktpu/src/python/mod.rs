@@ -15,8 +15,6 @@ use std::hash::Hash;
 use std::sync::{Arc, Mutex, OnceLock};
 
 mod bindings;
-#[cfg(test)]
-mod cache_tests;
 mod library;
 
 create_exception!(

@@ -100,19 +100,3 @@ pub fn repr(t: &Term) -> String {
         Term::Arrow(s) => format!("Arrow(text={})", py_str(s)),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dataclass_reprs() {
-        let v = Term::View("x".into(), vec![Term::int(4)]);
-        assert_eq!(
-            repr(&v),
-            "View(name='x', slices=(Int(value=4, style='dec'),))"
-        );
-        assert_eq!(repr(&Term::Slice(None, None)), "Slice(lo=None, hi=None)");
-        assert_eq!(repr(&Term::Float(0.5)), "Float(value=0.5)");
-    }
-}

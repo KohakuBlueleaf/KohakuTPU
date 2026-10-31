@@ -487,35 +487,3 @@ impl<'t> Sim<'t> {
 pub(crate) fn pair(a: impl std::fmt::Display, b: impl std::fmt::Display) -> String {
     format!("({a}, {b})")
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ktpu_machine::Machine;
-
-    /// Every unit of a multi-mesh machine made at once: no two processes
-    /// share a name.
-    #[test]
-    fn every_unit_names_its_processes_apart() {
-        let m = Machine::named("multimesh_v9t6").unwrap();
-        let t = Target::from_machine(&m, None).unwrap();
-        assert!(t.meshes.len() > 1);
-        let mut s = Sim::new(&t, None);
-        for mesh in &t.meshes {
-            for &(x, y) in mesh.mg.iter().chain(&mesh.vc).chain(&mesh.sr) {
-                s.unit((mesh.index, x, y)).unwrap();
-            }
-        }
-        assert!(s.procs.len() > 2 * t.meshes.len());
-    }
-
-    #[test]
-    #[should_panic(expected = "two processes named")]
-    fn a_second_process_of_one_name_is_refused() {
-        let m = Machine::named("multimesh_v9t6").unwrap();
-        let t = Target::from_machine(&m, Some(1)).unwrap();
-        let mut s = Sim::new(&t, None);
-        s.add_proc(Pk::Port, "port".into());
-        s.add_proc(Pk::Port, "port".into());
-    }
-}

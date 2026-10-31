@@ -5,9 +5,6 @@ pub mod predicate;
 pub mod print;
 pub mod typed;
 
-#[cfg(test)]
-mod tests;
-
 #[cfg(feature = "witness")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Code {

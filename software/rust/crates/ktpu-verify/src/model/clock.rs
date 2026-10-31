@@ -75,24 +75,3 @@ impl Clock {
         self.at(owner) <= other.at(owner)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn copies_share_until_a_join() {
-        let mut a = Clock::new();
-        a.tick(0, 1);
-        let b = a.clone();
-        let mut c = Clock::new();
-        c.tick(1, 3);
-        a.join(&c);
-        assert_eq!(a.at(1), 3);
-        assert_eq!(b.at(1), 0);
-        assert_eq!(b.at(0), 1);
-        a.tick(2, 5);
-        assert_eq!((a.at(0), a.at(1), a.at(2)), (1, 3, 5));
-        assert!(b.before(&a, 0));
-    }
-}

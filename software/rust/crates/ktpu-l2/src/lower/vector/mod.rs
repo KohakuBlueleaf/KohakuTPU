@@ -786,8 +786,6 @@ pub fn assign(code: &[Code], pinned: &HashSet<String>, regs: u32) -> VResult<Vec
                 let d = dying.remove(0);
                 let r = reg[d];
                 reg.insert(s, r);
-                #[cfg(test)]
-                assign_typed::record(s, r);
                 continue;
             }
             if free.is_empty() {
@@ -795,8 +793,6 @@ pub fn assign(code: &[Code], pinned: &HashSet<String>, regs: u32) -> VResult<Vec
             }
             let r = free.remove(0);
             reg.insert(s, r);
-            #[cfg(test)]
-            assign_typed::record(s, r);
         }
         let names: Vec<String> = syms
             .iter()

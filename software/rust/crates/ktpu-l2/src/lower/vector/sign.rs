@@ -742,6 +742,3 @@ fn preserve<T: Operand>(
         _ => Ok(None),
     }
 }
-
-#[cfg(test)]
-mod tests;

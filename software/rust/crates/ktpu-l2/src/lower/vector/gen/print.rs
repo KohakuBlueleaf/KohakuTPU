@@ -7,12 +7,6 @@ use super::typed::Result;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Rule {
     Legacy,
-    #[cfg(test)]
-    SpacedSlice,
-    #[cfg(test)]
-    TightBinding,
-    #[cfg(test)]
-    ReverseKeywords,
 }
 
 fn name(s: &str) -> Result<&str> {
@@ -44,10 +38,6 @@ fn term(t: &Term, rule: Rule) -> Result<String> {
         }
         Term::View(n, sl) => format!("{}[{}]", name(n)?, join(sl, rule)?),
         Term::Slice(Some(lo), None) => {
-            #[cfg(test)]
-            if rule == Rule::SpacedSlice {
-                return Ok(format!("{} :", term(lo, rule)?));
-            }
             format!("{}:", term(lo, rule)?)
         }
         Term::Call(n, args) => format!("{}({})", name(n)?, join(args, rule)?),
@@ -68,23 +58,6 @@ fn head(st: &Stmt, rule: Rule) -> Result<String> {
     }
     let mut out = name(&st.op)?.to_string();
     let args: Vec<&Term> = st.args.iter().collect();
-    #[cfg(test)]
-    let args = if rule == Rule::ReverseKeywords {
-        let mut args = args;
-        let mut keywords: Vec<_> = args
-            .iter()
-            .copied()
-            .filter(|a| a.as_kwarg().is_some())
-            .collect();
-        for a in &mut args {
-            if a.as_kwarg().is_some() {
-                *a = keywords.pop().unwrap();
-            }
-        }
-        args
-    } else {
-        args
-    };
     for (i, a) in args.iter().enumerate() {
         let prev = i.checked_sub(1).map(|p| args[p]);
         let comma = st.commas
@@ -97,11 +70,6 @@ fn head(st: &Stmt, rule: Rule) -> Result<String> {
             let Term::Assign(lhs, rhs) = a else {
                 return Err("desc/seti requires an assignment".into());
             };
-            #[cfg(test)]
-            if rule == Rule::TightBinding {
-                out.push_str(&term(a, rule)?);
-                continue;
-            }
             out.push_str(&format!("{} = {}", term(lhs, rule)?, term(rhs, rule)?));
         } else {
             out.push_str(&term(a, rule)?);

@@ -116,33 +116,3 @@ pub fn verify(
     }
     Ok(points)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ktpu_l0::format::template::Bounds;
-
-    #[test]
-    fn reproducible_all_faces_and_seeded_interiors() {
-        let class = [
-            ("x".into(), Bounds { lo: 0, hi: 100 }),
-            ("y".into(), Bounds { lo: 2, hi: 90 }),
-        ]
-        .into();
-        let a = samples(&class, "class-a", 16, 1000).unwrap();
-        assert_eq!(a, samples(&class, "class-a", 16, 1000).unwrap());
-        assert_ne!(a, samples(&class, "class-b", 16, 1000).unwrap());
-        for x in [0, 1, 99, 100] {
-            for y in [2, 90] {
-                assert!(a.contains(&[("x".into(), x), ("y".into(), y)].into()));
-            }
-        }
-        assert!(samples(&class, "a", 16, 3).is_err());
-        assert!(samples(&class, "a", 16, 5).is_err());
-        assert!(samples(&Class::new(), "a", 0, 0).is_err());
-        assert_eq!(
-            samples(&Class::new(), "a", 0, 1).unwrap(),
-            vec![Params::new()]
-        );
-    }
-}

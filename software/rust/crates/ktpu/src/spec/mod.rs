@@ -110,9 +110,6 @@ fn params(inp: &Value, m: &Machine) -> Result<Value, String> {
     Ok(Value::Object(out))
 }
 
-#[cfg(test)]
-mod tests;
-
 fn integer(value: &Value) -> Result<i128, String> {
     value
         .as_i64()

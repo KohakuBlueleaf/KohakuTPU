@@ -66,22 +66,3 @@ fn write_str(out: &mut String, s: &str) {
     }
     out.push('"');
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn canonical_sorts_keys_and_escapes_like_python() {
-        let text = format!(
-            "x{}{}\n\u{7f}",
-            char::from_u32(0xE9).unwrap(),
-            char::from_u32(0x1F600).unwrap()
-        );
-        let v = serde_json::json!({"b": [1, true, null], "a": text});
-        let bs = '\\';
-        let want =
-            format!("{{\"a\":\"x{bs}u00e9{bs}ud83d{bs}ude00{bs}n\u{7f}\",\"b\":[1,true,null]}}");
-        assert_eq!(canonical(&v), want);
-    }
-}

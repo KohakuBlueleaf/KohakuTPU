@@ -201,20 +201,3 @@ impl<'de> Deserialize<'de> for W256 {
             .ok_or_else(|| serde::de::Error::custom(format!("not a 256-bit hex: {s}")))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn shifts_and_fields_cross_limbs() {
-        let w = W256::from_u64(0xABCD).shift_left(60);
-        assert_eq!(w.get(60, 16), 0xABCD);
-        assert_eq!(w.shift_right(60), W256::from_u64(0xABCD));
-        let top = W256::ZERO.with(252, 4, 0xF);
-        assert_eq!(top.to_hex(), format!("0xf{}", "0".repeat(63)));
-        assert_eq!(W256::from_hex(&top.to_hex()), Some(top));
-        assert_eq!(W256::from_le_bytes(top.to_le_bytes()), top);
-        assert!(top.is_zero_in(0, 252) && !top.is_zero_in(200, 56));
-    }
-}

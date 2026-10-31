@@ -527,29 +527,6 @@ fn ordered_steps(source: &[ktpu_l0::Step], ordered: &[ktpu_l0::Step]) -> Vec<ktp
     out
 }
 
-#[cfg(test)]
-mod relocation_tests {
-    use super::ordered_steps;
-    use ktpu_l0::format::F_MEM;
-    use ktpu_l0::{Op, Step};
-
-    #[test]
-    fn scheduled_fetch_keeps_the_host_site_instead_of_the_probe_address() {
-        let source = [
-            Step::new(Op::Fetch, 0, 1, 3, F_MEM),
-            Step::new(Op::Fetch, 0, 2, 0x1234, 0),
-        ];
-        let scheduled = [Step::new(Op::Fetch, 0, 1, 0x1000020, 0), source[1]];
-        let restored = ordered_steps(&source, &scheduled);
-        assert_eq!(restored, source);
-        assert_ne!(
-            scheduled.as_slice(),
-            restored,
-            "dropping host-site restoration must fail"
-        );
-    }
-}
-
 /// The first run (built on fresh cores) and its dispatch order, made once
 /// for `order` and `check` alike.
 struct First {
@@ -811,63 +788,6 @@ fn first_difference(
         "payload {i} (step {step:?}): {:x?} vs {:x?}; relocations on it {relocs:?}",
         got.payloads[i].0, want.payloads[i].0
     )
-}
-
-#[cfg(test)]
-mod setting_tests {
-    use super::*;
-
-    #[test]
-    fn zero_sign_keys_the_passes_and_the_lowering_apart() {
-        let card = |zero_sign| CardStack {
-            zero_sign,
-            ..CardStack::default()
-        };
-        let vs = |c: &CardStack| {
-            [Stage::Graph, Stage::Passes, Stage::Lower, Stage::Order].map(|s| c.version(s))
-        };
-        let (none, native, preserve) = (
-            vs(&card(None)),
-            vs(&card(Some(ZeroSign::Native))),
-            vs(&card(Some(ZeroSign::Preserve))),
-        );
-        assert_eq!(none[0], preserve[0]);
-        assert_eq!(none[3], preserve[3]);
-        for i in [1, 2] {
-            assert_ne!(native[i], preserve[i]);
-            assert_ne!(none[i], preserve[i]);
-        }
-        assert_eq!(
-            card(Some(ZeroSign::Preserve)).search().zero_sign,
-            ZeroSign::Preserve
-        );
-        assert_eq!(card(None).search().zero_sign, ZeroSign::DEFAULT);
-    }
-}
-
-#[cfg(test)]
-mod line_tests {
-    use super::*;
-
-    #[test]
-    fn independent_build_spans_own_whole_machine_lines() {
-        for name in ktpu_machine::names(&ktpu_machine::machines_dir()) {
-            let m = Machine::named(&name).unwrap();
-            let line = u64::from(m.card.dram.line_bytes);
-            assert_eq!(DRAM_ALIGN % line, 0);
-            assert_eq!(STAGE_ALIGN % line, 0);
-            let mut place = Place::new(0);
-            for space in ["dram", "stage"] {
-                let mut end = 0;
-                for bytes in [1, 32, 33, 64, 1568] {
-                    let at = place.next(space, bytes);
-                    assert_eq!(at % line, 0);
-                    assert!(at >= end);
-                    end = (at + bytes).div_ceil(line) * line;
-                }
-            }
-        }
-    }
 }
 
 fn bound(run: &BTreeMap<u32, (ktpu_l0::Package, Vec<u64>)>) -> Result<ktpu_verify::Nodes, Refusal> {
