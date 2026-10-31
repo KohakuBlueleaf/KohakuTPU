@@ -1,8 +1,8 @@
 //! Machine-scoped, versioned exact-class artifacts. Reads never invoke a compiler.
 
 use super::{compiled, machine};
-use crate::stack::CardStack;
-use crate::{Backend, Compiled, Stage};
+use ktpu::stack::CardStack;
+use ktpu::{Backend, Compiled, Stage};
 use ktpu_l2::ZeroSign;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -186,7 +186,7 @@ fn library_key(
     let card = card(zero_sign)?;
     let key = || identity(source, machine_json, &card, false);
     let (key, _, _) = match mutant {
-        Some(n) => crate::mutant::with(n, key).map_err(PyValueError::new_err)??,
+        Some(n) => ktpu::mutant::with(n, key).map_err(PyValueError::new_err)??,
         None => key()?,
     };
     serde_json::to_string(&key).map_err(error)
@@ -211,9 +211,9 @@ fn library_get<'py>(
     zero_sign: Option<&str>,
 ) -> PyResult<Option<Bound<'py, PyDict>>> {
     if let Some(n) = mutant {
-        crate::mutant::with(n, || ()).map_err(PyValueError::new_err)?;
+        ktpu::mutant::with(n, || ()).map_err(PyValueError::new_err)?;
     }
-    let no_cache = mutant.is_some() || crate::mutant::active().is_some();
+    let no_cache = mutant.is_some() || ktpu::mutant::active().is_some();
     let (key, _, _) = identity(source, machine_json, &card(zero_sign)?, false)?;
     let dest = path(root, &key);
     let raw = match std::fs::read(&dest) {
@@ -292,12 +292,12 @@ fn library_prebuild<'py>(
     if entry.is_none() {
         let c = py
             .detach(|| {
-                crate::compile(
+                ktpu::compile(
                     &stack,
-                    &crate::Input::Graph(canonical),
+                    &ktpu::Input::Graph(canonical),
                     None,
                     &m,
-                    &crate::Cache::off(),
+                    &ktpu::Cache::off(),
                 )
             })
             .map_err(|e| super::raise(py, &e))?;

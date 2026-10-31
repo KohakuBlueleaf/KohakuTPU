@@ -27,7 +27,7 @@ fn refused(py: Python<'_>, r: Refusal) -> PyErr {
 /// the `bindings.isa/reason` mutant.
 fn reasoned<T>(got: Result<T, Refusal>) -> Result<T, Refusal> {
     match got {
-        Err(r) if crate::mutant::active() == Some("bindings.isa/reason") => Err(Refusal::new(
+        Err(r) if ktpu::mutant::active() == Some("bindings.isa/reason") => Err(Refusal::new(
             r.clause,
             "an address that does not fit the field",
         )),

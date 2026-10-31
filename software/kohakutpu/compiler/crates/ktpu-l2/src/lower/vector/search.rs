@@ -506,15 +506,7 @@ impl Search {
         }
         let mut why = None;
         if self.strategy != Strategy::Band && !on("l2.vector/no-modulo") {
-            match candidate::modulo(
-                body,
-                par,
-                env,
-                name,
-                plan,
-                land,
-                t,
-            ) {
+            match candidate::modulo(body, par, env, name, plan, land, t) {
                 Ok(Ok(c)) => {
                     let cycles = match cands.iter().find(|(d, _)| d.0.source == c.0.source) {
                         Some((_, cycles)) if !each => *cycles,

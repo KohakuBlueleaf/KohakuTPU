@@ -4,8 +4,8 @@
 
 use super::{machine, mutated, Refused};
 use ktpu_isa::W256;
-use ktpu_l0::format as F;
 use ktpu_l0::calls::{builder, call, named};
+use ktpu_l0::format as F;
 use ktpu_l0::{engine, Alu, Cond, Facts, Op, Package};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -349,7 +349,7 @@ fn template_derive<'py>(
     values_json: &str,
     confined: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let recipes: crate::templates::values::Recipes =
+    let recipes: ktpu::templates::values::Recipes =
         serde_json::from_str(values_json).map_err(|e| PyValueError::new_err(e.to_string()))?;
     let f = facts(machine_json, mesh)?;
     let params: Vec<F::template::Params> =
@@ -364,7 +364,7 @@ fn template_derive<'py>(
         .zip(params)
         .enumerate()
         .map(|(i, (raw, params))| {
-            Ok(crate::templates::Sample {
+            Ok(ktpu::templates::Sample {
                 label: format!("sample {i}"),
                 params,
                 package: Package::from_bytes(raw, &f).map_err(|r| refused(py, r))?,
@@ -373,12 +373,12 @@ fn template_derive<'py>(
         .collect::<PyResult<Vec<_>>>()?;
     let (t, certificate) = if confined {
         let (t, cert) =
-            crate::templates::derive_confined(class, &samples, &recipes, &*machine(machine_json)?)
+            ktpu::templates::derive_confined(class, &samples, &recipes, &*machine(machine_json)?)
                 .map_err(PyValueError::new_err)?;
         (t, Some(cert))
     } else {
         (
-            crate::templates::derive_with_values(class, &samples, &recipes)
+            ktpu::templates::derive_with_values(class, &samples, &recipes)
                 .map_err(PyValueError::new_err)?,
             None,
         )
@@ -387,8 +387,8 @@ fn template_derive<'py>(
         let binds = vec![0; s.package.buffers.len()];
         let mut expanded = s.clone();
         expanded.params =
-            crate::templates::values::bind(&recipes, &s.params).map_err(PyValueError::new_err)?;
-        crate::templates::prove(&t, &expanded, &binds, &f).map_err(PyValueError::new_err)?;
+            ktpu::templates::values::bind(&recipes, &s.params).map_err(PyValueError::new_err)?;
+        ktpu::templates::prove(&t, &expanded, &binds, &f).map_err(PyValueError::new_err)?;
     }
     let out = PyDict::new(py);
     out.set_item(
@@ -429,22 +429,22 @@ fn template_prove(
     let f = facts(machine_json, mesh)?;
     let template = F::template::Template {
         package: Package::from_bytes(package, &f).map_err(|r| refused(py, r))?,
-        table: crate::python::template_table(template_json)
+        table: crate::template_table(template_json)
             .map_err(|e| PyValueError::new_err(e.to_string()))?,
     };
-    let sample = crate::templates::Sample {
+    let sample = ktpu::templates::Sample {
         label: label.into(),
         params: serde_json::from_str(params_json)
             .map_err(|e| PyValueError::new_err(e.to_string()))?,
         package: Package::from_bytes(direct, &f).map_err(|r| refused(py, r))?,
     };
-    crate::templates::prove(&template, &sample, &bindings, &f).map_err(PyValueError::new_err)
+    ktpu::templates::prove(&template, &sample, &bindings, &f).map_err(PyValueError::new_err)
 }
 
 #[pyfunction]
 #[pyo3(signature = (width, kblock, max_block, policy="pow2"))]
 fn template_width(width: u64, kblock: u64, max_block: u64, policy: &str) -> PyResult<Option<u64>> {
-    use crate::templates::policy::ShapeClass;
+    use ktpu::templates::policy::ShapeClass;
     let p = match policy {
         "exact" => ShapeClass::Exact,
         "pow2" => ShapeClass::Pow2,
@@ -459,7 +459,7 @@ fn template_width(width: u64, kblock: u64, max_block: u64, policy: &str) -> PyRe
 fn template_points(class_json: &str) -> PyResult<String> {
     let class =
         serde_json::from_str(class_json).map_err(|e| PyValueError::new_err(e.to_string()))?;
-    let points = crate::templates::points(&class, 4096).map_err(PyValueError::new_err)?;
+    let points = ktpu::templates::points(&class, 4096).map_err(PyValueError::new_err)?;
     serde_json::to_string(&points).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
@@ -487,10 +487,9 @@ fn template_certificate(package: &[u8], table: &str, machine_json: &str) -> PyRe
     let t = F::template::Template {
         package: Package::from_bytes(package, &f)
             .map_err(|e| PyValueError::new_err(e.to_string()))?,
-        table: crate::python::template_table(table)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?,
+        table: crate::template_table(table).map_err(|e| PyValueError::new_err(e.to_string()))?,
     };
-    let certificate = crate::templates::confinement::derive(&t, &*machine(machine_json)?)
+    let certificate = ktpu::templates::confinement::derive(&t, &*machine(machine_json)?)
         .map_err(PyValueError::new_err)?;
     serde_json::to_string(&certificate).map_err(|e| PyValueError::new_err(e.to_string()))
 }
@@ -521,7 +520,7 @@ fn template_verify(
                 F::template::Template {
                     package: Package::from_bytes(raw, &f)
                         .map_err(|e| PyValueError::new_err(e.to_string()))?,
-                    table: crate::python::template_table(
+                    table: crate::template_table(
                         tables
                             .get(mesh)
                             .ok_or_else(|| PyValueError::new_err("missing mesh table"))?,
@@ -532,7 +531,7 @@ fn template_verify(
         })
         .collect::<PyResult<_>>()?;
     if mode == "proof" {
-        let verdict = match crate::templates::proof::prove(&templates, &bindings, &m, cap) {
+        let verdict = match ktpu::templates::proof::prove(&templates, &bindings, &m, cap) {
             Ok(proven) => {
                 serde_json::json!({"status": "PROVEN", "certificate": proven.certificate()})
             }
@@ -548,7 +547,7 @@ fn template_verify(
     if confined {
         let certificates = templates
             .values()
-            .map(|t| crate::templates::confinement::derive(t, &m))
+            .map(|t| ktpu::templates::confinement::derive(t, &m))
             .collect::<Result<Vec<_>, _>>()
             .map_err(PyValueError::new_err)?;
         for t in templates.values_mut() {
@@ -562,7 +561,7 @@ fn template_verify(
             }
         }
     }
-    let points = crate::templates::verification::verify(
+    let points = ktpu::templates::verification::verify(
         &templates, &bindings, digest, &target, interior, cap,
     )
     .map_err(PyValueError::new_err)?;
@@ -572,7 +571,7 @@ fn template_verify(
 /// An opaque, in-process proof capability tied to exact contents and addresses.
 #[pyclass(frozen)]
 struct TemplateProof {
-    proven: crate::templates::proof::ProvenBox,
+    proven: ktpu::templates::proof::ProvenBox,
     facts: Facts,
     mesh: u32,
 }
@@ -611,11 +610,10 @@ fn template_certify(
     let template = F::template::Template {
         package: Package::from_bytes(package, &facts)
             .map_err(|e| PyValueError::new_err(e.to_string()))?,
-        table: crate::python::template_table(table)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?,
+        table: crate::template_table(table).map_err(|e| PyValueError::new_err(e.to_string()))?,
     };
     let m = machine(machine_json)?;
-    let proven = crate::templates::proof::prove(
+    let proven = ktpu::templates::proof::prove(
         &[(mesh, template)].into(),
         &[(mesh, bindings)].into(),
         &m,
@@ -665,7 +663,7 @@ fn template_values(recipes_json: &str, shape_json: &str) -> PyResult<String> {
         serde_json::from_str(recipes_json).map_err(|e| PyValueError::new_err(e.to_string()))?;
     let shape =
         serde_json::from_str(shape_json).map_err(|e| PyValueError::new_err(e.to_string()))?;
-    let result = crate::templates::values::bind(&recipes, &shape).map_err(PyValueError::new_err)?;
+    let result = ktpu::templates::values::bind(&recipes, &shape).map_err(PyValueError::new_err)?;
     serde_json::to_string(&result).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 

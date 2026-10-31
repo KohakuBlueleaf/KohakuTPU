@@ -101,15 +101,7 @@ pub(super) fn modulo(
     land: Option<i64>,
     t: &Target,
 ) -> VResult<std::result::Result<Cand, String>> {
-    let got = modulo_module(
-        body,
-        par,
-        env,
-        name,
-        plan,
-        land,
-        t,
-    );
+    let got = modulo_module(body, par, env, name, plan, land, t);
     got
 }
 

@@ -218,7 +218,6 @@ name = "ktpu"
 version = "0.1.0"
 dependencies = [
  "ka-cache",
- "ka-debug",
  "ktpu-graph",
  "ktpu-isa",
  "ktpu-kernels",
@@ -227,7 +226,6 @@ dependencies = [
  "ktpu-l2",
  "ktpu-machine",
  "ktpu-verify",
- "pyo3",
  "rayon",
  "regex",
  "serde",
@@ -319,6 +317,27 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
+]
+
+[[package]]
+name = "ktpu-py"
+version = "0.1.0"
+dependencies = [
+ "ka-debug",
+ "ktpu",
+ "ktpu-graph",
+ "ktpu-isa",
+ "ktpu-kernels",
+ "ktpu-l0",
+ "ktpu-l1",
+ "ktpu-l2",
+ "ktpu-machine",
+ "ktpu-verify",
+ "pyo3",
+ "rayon",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

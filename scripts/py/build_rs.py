@@ -2,8 +2,8 @@
 maturin, for one of the two builds; the one place that names their cargo
 feature sets and target dirs.
 
-    python scripts/py/build_rs.py spec    # spec tests: python + mutants
-    python scripts/py/build_rs.py prod    # production: python only
+    python scripts/py/build_rs.py spec    # spec tests: with mutants
+    python scripts/py/build_rs.py prod    # production
 
 `spec` carries the stage crates' spec-vector mutants (`_rs.MUTANTS`,
 `_rs.compile(mutant=)`); `prod` carries none, and `mutant=` raises there.
@@ -24,10 +24,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 COMPILER = ROOT / "software" / "kohakutpu" / "compiler"
 PACKAGE = COMPILER / "kohakutpu" / "compiler"
 WHEELS = ROOT / "build" / "rs-wheels"
-#: Each build's cargo features of crate ktpu, and its own cargo target dir
+#: Each build's cargo features of crate ktpu-py, and its own cargo target dir
 #: (under build/): short paths fit Windows linker limits; sharing a dir with
 #: another invalidates the other's artifacts on every build.
-FEATURES = {"spec": ["python", "mutants"], "prod": ["python"]}
+FEATURES = {"spec": ["mutants"], "prod": []}
 TARGET = {"spec": "rs", "prod": "rs-prod"}
 
 
@@ -42,8 +42,9 @@ def main() -> int:
     target = a.target_dir or ROOT / "build" / TARGET[a.build]
     env["CARGO_TARGET_DIR"] = str(target)
     out = WHEELS / a.build
-    cmd = ["maturin", "build", "--features", ",".join(FEATURES[a.build])]
-    cmd += ["--out", str(out), "--interpreter", sys.executable]
+    cmd = ["maturin", "build", "--out", str(out), "--interpreter", sys.executable]
+    if FEATURES[a.build]:
+        cmd += ["--features", ",".join(FEATURES[a.build])]
     if a.release:
         cmd.append("--release")
     t0 = time.time()

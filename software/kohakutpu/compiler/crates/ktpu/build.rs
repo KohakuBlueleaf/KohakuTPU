@@ -17,7 +17,10 @@ fn main() {
     for k in watched {
         let dir = digest::dir_of(Path::new(".."), &k);
         println!("cargo:rerun-if-changed={}", dir.join("src").display());
-        println!("cargo:rerun-if-changed={}", dir.join("Cargo.toml").display());
+        println!(
+            "cargo:rerun-if-changed={}",
+            dir.join("Cargo.toml").display()
+        );
     }
     println!("cargo:rerun-if-changed=src/stack");
     println!("cargo:rerun-if-changed=build/digest.rs");

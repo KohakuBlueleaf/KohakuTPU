@@ -1,6 +1,6 @@
 [package]
 name = "ktpu"
-description = "The compiler pipeline and the kohakutpu_rs Python module."
+description = "The compiler pipeline."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -24,7 +24,6 @@ stack = [
     "dep:ktpu-graph",
     "dep:ktpu-kernels",
 ]
-python = ["stack", "dep:pyo3", "dep:ka-debug", "dep:sha2"]
 # The wasm-bindgen exports of the JSON compile path (`json`), for
 # wasm32-unknown-unknown: no disk cache; rayon runs on the calling thread.
 wasm = ["stack", "dep:wasm-bindgen"]
@@ -53,12 +52,10 @@ ktpu-verify = { workspace = true, optional = true }
 ktpu-graph = { workspace = true, optional = true }
 ktpu-kernels = { workspace = true, optional = true }
 regex = "1"
-ka-debug = { workspace = true, optional = true }
 rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-pyo3 = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 wasm-bindgen = { workspace = true, optional = true }
 

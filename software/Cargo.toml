@@ -15,6 +15,7 @@ members = [
     "kohakutpu/compiler/crates/ktpu-kernels",
     "kohakuaccel/compiler/crates/ka-cache",
     "kohakutpu/compiler/crates/ktpu",
+    "kohakutpu/compiler/crates/ktpu-py",
 ]
 
 [workspace.package]

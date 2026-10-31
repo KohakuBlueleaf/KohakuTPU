@@ -140,7 +140,7 @@ impl Cores {
                 .entry(coord)
                 .or_insert_with(|| Resident::new(n, reach));
             match imem::rewrite(&inner.isa, &words, memory) {
-                Err(e) if crate::mutant::active() == Some("bindings.cores/reason") => Err(
+                Err(e) if ktpu::mutant::active() == Some("bindings.cores/reason") => Err(
                     ktpu_l1::Error::new(e.clause, "a program longer than the IMEM"),
                 ),
                 got => got,

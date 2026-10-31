@@ -1,9 +1,9 @@
-//! The extension module `kohakutpu.compiler._rs` (feature `python`), built
-//! by maturin from `software/kohakutpu/compiler/pyproject.toml`; its stub is
+//! The extension module `kohakutpu.compiler._rs`, built by maturin from
+//! `software/kohakutpu/compiler/pyproject.toml`; its stub is
 //! `kohakutpu/compiler/_rs.pyi`.
 
-use crate::stack::{CardStack, Stack};
-use crate::{default_cache, Backend, Cache, Compiled, Input, Refused as StageRefused, Stage};
+use ktpu::stack::{CardStack, Stack};
+use ktpu::{default_cache, Backend, Cache, Compiled, Input, Refused as StageRefused, Stage};
 use ktpu_kernels::call::Call;
 use ktpu_machine::Machine;
 use pyo3::create_exception;
@@ -157,7 +157,7 @@ fn bind_caches() -> &'static Mutex<BindCaches> {
 }
 
 fn machine(json: &str) -> PyResult<Arc<Machine>> {
-    let bypass = crate::mutant::active().is_some();
+    let bypass = ktpu::mutant::active().is_some();
     if !bypass {
         let mut guard = bind_caches().lock().unwrap_or_else(|e| e.into_inner());
         if let Some(m) = guard.machines.get(&json.to_string()) {
@@ -306,7 +306,7 @@ fn py_value<'py>(py: Python<'py>, v: &serde_json::Value) -> PyResult<Bound<'py, 
 /// None: off).
 #[pyfunction]
 fn cache_root() -> Option<String> {
-    crate::cache_root().map(|p| p.to_string_lossy().into_owned())
+    ktpu::cache_root().map(|p| p.to_string_lossy().into_owned())
 }
 
 /// debug_decode(region, machine_json) -> dict: a node's debug region (its
@@ -393,11 +393,11 @@ fn compile<'py>(
         None => cache(cache_dir),
     };
     let run = || match (fetch, zero_sign) {
-        (false, None) => crate::compile(&Stack, &input, name, &m, &c),
-        _ => crate::compile(&card, &input, name, &m, &c),
+        (false, None) => ktpu::compile(&Stack, &input, name, &m, &c),
+        _ => ktpu::compile(&card, &input, name, &m, &c),
     };
     let got = py.detach(|| match mutant {
-        Some(n) => crate::mutant::with(n, run),
+        Some(n) => ktpu::mutant::with(n, run),
         None => Ok(run()),
     });
     let got = got.map_err(PyValueError::new_err)?;
@@ -439,7 +439,7 @@ fn bind<'py>(
         "register" => (ktpu_l0::format::template::CountPath::Register, 1u8),
         _ => return Err(PyValueError::new_err("count_path must be step or register")),
     };
-    let no_cache = mutant.is_some() || crate::mutant::active().is_some();
+    let no_cache = mutant.is_some() || ktpu::mutant::active().is_some();
     let m = if no_cache {
         let parsed = Arc::new(
             Machine::from_json(machine_json).map_err(|e| PyValueError::new_err(e.to_string()))?,
@@ -598,7 +598,7 @@ fn bind<'py>(
         Ok::<_, ktpu_l0::Refusal>((bytes, state))
     };
     let got = match mutant {
-        Some(n) => crate::mutant::with(n, run).map_err(PyValueError::new_err)?,
+        Some(n) => ktpu::mutant::with(n, run).map_err(PyValueError::new_err)?,
         None => run(),
     };
     match got {
@@ -733,8 +733,8 @@ fn compile_many<'py>(
             .build()
             .map_err(|e| e.to_string())?;
         Ok::<_, String>(pool.install(|| match zero_sign {
-            None => crate::compile_each(&Stack, &inputs, &c),
-            Some(_) => crate::compile_each(&card, &inputs, &c),
+            None => ktpu::compile_each(&Stack, &inputs, &c),
+            Some(_) => ktpu::compile_each(&card, &inputs, &c),
         }))
     });
     let got = got.map_err(PyValueError::new_err)?;
@@ -771,7 +771,7 @@ fn template_compile<'py>(
         .unwrap_or(ktpu_l2::ZeroSign::DEFAULT);
     let got = py
         .detach(|| {
-            let compiler = crate::templates::compiler::PinnedCompiler::with_rotation_parameters(
+            let compiler = ktpu::templates::compiler::PinnedCompiler::with_rotation_parameters(
                 representative,
                 &m,
                 parameter_rotations,
@@ -804,7 +804,7 @@ fn generate(
         .map_err(|e| PyValueError::new_err(format!("generator arguments: {e}")))?;
     let run = || ktpu_kernels::call::call(generator, &args, &m);
     let kernel = match mutant {
-        Some(n) => crate::mutant::with(n, run).map_err(PyValueError::new_err)?,
+        Some(n) => ktpu::mutant::with(n, run).map_err(PyValueError::new_err)?,
         None => run(),
     }
     .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -814,7 +814,7 @@ fn generate(
 /// `run` under `mutant`, when one is named.
 fn under<T: Send>(mutant: Option<&str>, run: impl FnOnce() -> T + Send) -> PyResult<T> {
     match mutant {
-        Some(n) => crate::mutant::with(n, run).map_err(PyValueError::new_err),
+        Some(n) => ktpu::mutant::with(n, run).map_err(PyValueError::new_err),
         None => Ok(run()),
     }
 }
@@ -967,7 +967,7 @@ fn pairs_blocks(machine_json: &str, pairing: Option<&str>, mutant: Option<&str>)
         })?,
     };
     match mutant {
-        Some(n) => crate::mutant::with(n, || m.pairs_blocks(p)).map_err(PyValueError::new_err),
+        Some(n) => ktpu::mutant::with(n, || m.pairs_blocks(p)).map_err(PyValueError::new_err),
         None => Ok(m.pairs_blocks(p)),
     }
 }
@@ -1020,7 +1020,7 @@ fn mm_plan(args_json: &str, machine_json: &str, mutant: Option<&str>) -> PyResul
         .map_err(|e| PyValueError::new_err(format!("matmul.plan arguments: {e}")))?;
     let run = || ktpu_kernels::call::mm_plan(&args, &m);
     let p = match mutant {
-        Some(n) => crate::mutant::with(n, run).map_err(PyValueError::new_err)?,
+        Some(n) => ktpu::mutant::with(n, run).map_err(PyValueError::new_err)?,
         None => run(),
     }
     .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -1112,7 +1112,7 @@ fn built_cycles(call: &Call, m: &Machine, root: &Cache) -> Option<i64> {
     let kernel = ktpu_kernels::call::call(&call.gen, &call.args, m).ok()?;
     let source = Input::detect(&serde_json::to_string(&kernel.graph).ok()?);
     let name = kernel.graph.name.as_str();
-    let built = crate::compile(&CardStack::default(), &source, Some(name), m, root).ok()?;
+    let built = ktpu::compile(&CardStack::default(), &source, Some(name), m, root).ok()?;
     let module = ktpu_l1::text::read(&built.l1, "<l1>").ok()?;
     ktpu_l2::cost::cycles(&module, name, &ktpu_l2::target::Target::of(m)).ok()
 }
@@ -1173,7 +1173,7 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     bindings::register(m)?;
     library::register(m)?;
     m.add("Refused", m.py().get_type::<Refused>())?;
-    m.add("MUTANTS", crate::mutant::names())?;
+    m.add("MUTANTS", ktpu::mutant::names())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

@@ -15,8 +15,6 @@ pub mod json;
 pub mod mutant;
 pub mod output;
 pub mod pipeline;
-#[cfg(feature = "python")]
-mod python;
 #[cfg(feature = "stack")]
 pub mod stack;
 #[cfg(feature = "stack")]

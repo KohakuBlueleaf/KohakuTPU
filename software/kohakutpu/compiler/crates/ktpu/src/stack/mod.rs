@@ -57,7 +57,7 @@ impl CardStack {
 
     /// The suffix the passes' and the lowering's version carry: the search
     /// settings given.
-    pub(crate) fn settings(&self) -> String {
+    pub fn settings(&self) -> String {
         let mut s = String::new();
         if let Some(r) = self.ranges {
             s += &format!("+ranges:{r:?}");

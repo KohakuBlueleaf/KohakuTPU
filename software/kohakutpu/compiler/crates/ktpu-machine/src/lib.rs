@@ -20,7 +20,7 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
 pub use fill::fill_lost;
-pub use ka_machine::{canon, refuse, refusal, MachineFacts, Refusal};
+pub use ka_machine::{canon, refusal, refuse, MachineFacts, Refusal};
 pub use pairing::{Pairing, PAIRING};
 pub use schema::*;
 

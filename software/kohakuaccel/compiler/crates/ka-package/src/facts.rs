@@ -94,7 +94,11 @@ impl Facts {
         };
         Facts {
             regs: pick("l0.pkg/regs", 8, m.fw().package.regs as u64),
-            inst_depth: pick("l0.program/inst_depth", 256, m.unit_depths().inst_depth as u64),
+            inst_depth: pick(
+                "l0.program/inst_depth",
+                256,
+                m.unit_depths().inst_depth as u64,
+            ),
             boot_max_units: pick("l0.boot/max_units", 15, m.fw().max_units as u64) as usize,
             package_magic: m.fw().package.magic as u64,
             package_version: m.fw().package.version as u64,

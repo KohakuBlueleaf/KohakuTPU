@@ -1,0 +1,33 @@
+[package]
+name = "ktpu-py"
+description = "The extension module kohakutpu.compiler._rs: the one PyO3 crate."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "ktpu_py"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# The stage crates' spec-vector mutants (`_rs.compile(mutant=)`): the spec build
+# only (scripts/py/build_rs.py).
+mutants = ["ktpu/mutants"]
+
+[dependencies]
+ka-debug.workspace = true
+ktpu.workspace = true
+ktpu-graph.workspace = true
+ktpu-isa.workspace = true
+ktpu-kernels.workspace = true
+ktpu-l0.workspace = true
+ktpu-l1.workspace = true
+ktpu-l2.workspace = true
+ktpu-machine.workspace = true
+ktpu-verify.workspace = true
+pyo3.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true

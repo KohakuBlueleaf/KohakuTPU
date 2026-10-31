@@ -44,7 +44,7 @@ use pyo3::prelude::*;
 /// or as is; a build without the mutant raises `ValueError`.
 fn mutated<T: Send>(mutant: Option<&str>, f: impl FnOnce() -> T + Send) -> PyResult<T> {
     match mutant {
-        Some(n) => crate::mutant::with(n, f).map_err(pyo3::exceptions::PyValueError::new_err),
+        Some(n) => ktpu::mutant::with(n, f).map_err(pyo3::exceptions::PyValueError::new_err),
         None => Ok(f()),
     }
 }
@@ -52,7 +52,7 @@ fn mutated<T: Send>(mutant: Option<&str>, f: impl FnOnce() -> T + Send) -> PyRes
 pub(crate) fn active_mutant(py: Python<'_>) -> PyResult<Option<String>> {
     #[cfg(feature = "mutants")]
     {
-        if let Some(m) = crate::mutant::active() {
+        if let Some(m) = ktpu::mutant::active() {
             return Ok(Some(m.to_string()));
         }
         py.import("kohakutpu.language.dsl.kernel")?
