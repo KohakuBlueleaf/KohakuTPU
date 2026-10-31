@@ -1,7 +1,7 @@
 """Transport backends.
 
 The concrete card backends -- :mod:`kohakuaccel.driver.transport.jtag`,
-:mod:`kohakuaccel.driver.transport.xdma` -- are deliberately NOT imported here.
+:mod:`kohakuaccel.driver.transport.xdma_linux` -- are deliberately NOT imported here.
 Each is one host's answer to "where is the card", and a package that imports
 all of them makes every caller depend on every one.
 """
