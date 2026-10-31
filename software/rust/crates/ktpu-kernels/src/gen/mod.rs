@@ -1,6 +1,7 @@
 //! The generators, one module a Python one (`kernels/*.py`).
 
 pub mod convert;
+pub mod fused;
 pub mod lanes;
 pub mod matmul;
 pub mod prepared;

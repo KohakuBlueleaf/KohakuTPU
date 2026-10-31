@@ -13,20 +13,17 @@ import json
 import os
 import pathlib
 import weakref
-from collections import OrderedDict
 from dataclasses import dataclass, replace
 from functools import lru_cache
 
 import numpy as np
 
-from kohakutpu.application.kernels import lanes as LN
 from kohakutpu.application.kernels import matmul as MM
-from kohakutpu.application.kernels import prepared as P
-from kohakutpu.application.kernels import relayout as RL
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import costs, generated
 from kohakutpu.application.runtime.storage import FLAT, Storage, StorageView
 from kohakutpu.compiler import _rs
+from kohakutpu.language import machine as MF
 from kohakutpu.language.numerics import fp16
 
 F16 = ("f16",)
@@ -238,12 +235,6 @@ def f16(dev, s, dtype, n: int) -> int:
     return f.addr
 
 
-#: Relayout plans by walk (`kernels.lanes.plan`; their tables are each
-#: device's, `table`).
-PLANS_KEPT = 1024
-_plans: OrderedDict = OrderedDict()
-
-
 def relayout(
     dev,
     src: int,
@@ -262,42 +253,31 @@ def relayout(
     from element `dat`; a destination element no walk reaches is 0, or with
     `keep` what `dst` held (`m` values in whole words). One kernel of
     `kernels.relayout`'s forms; a walk pair none takes, `kernels.lanes`."""
-    hw = RL.hw_for(dev)
     # The destination port starts at its line (the words before kept).
-    pad = dst % (hw.line * hw.word) // 2
-    try:
-        rp = RL.plan(n, walk, at, dwalk, dat + pad, m + pad, keep, hw, pad)
-    except RL.Unplanned:
-        rp = None
-    if rp is not None:
-        binds = {
-            "src": src,
-            "dst": dst - 2 * pad,
-            "index": table(dev, rp.index, np.float32),
-            "mask": table(dev, rp.masks),
-        }
-        pl = generated.relayout_plan(
-            "relayout.plan", n, walk, at, dwalk, dat + pad, m + pad, keep, pad
-        )
+    machine = MF.load(dev.machine.board)
+    line = max(machine.get("card.dram.line_bytes"), machine.die.word_bytes)
+    pad = dst % line // 2
+    made = generated.relayout_plan(
+        "relayout.plan", n, walk, at, dwalk, dat + pad, m + pad, keep, pad
+    )
+    rp = generated.planned(dev, made)
+    if "unplanned" not in rp:
+        binds = {"src": src, "dst": dst - 2 * pad} | tables(dev, rp)
         generated.launch(
-            dev, "relayout.relayout_kernel", {"pl": pl}, binds, kind="convert"
+            dev, "relayout.relayout_kernel", {"pl": made}, binds, kind="convert"
         )
         return
-    key = (n, tuple(walk), at, tuple(dwalk), dat, m, keep)
-    pl = _plans.get(key)
-    if pl is None:
-        pl = _plans[key] = LN.plan(n, walk, at, dwalk, dat, m, keep)
-        if len(_plans) > PLANS_KEPT:
-            _plans.popitem(last=False)
-    _plans.move_to_end(key)
-    binds = {
-        "src": src,
-        "dst": dst,
-        "index": table(dev, pl.index, np.float32),
-        "mask": table(dev, pl.masks),
-    }
     made = generated.relayout_plan("lanes.plan", n, walk, at, dwalk, dat, m, keep)
+    binds = {"src": src, "dst": dst} | tables(dev, generated.planned(dev, made))
     generated.launch(dev, "lanes.relayout_kernel", {"pl": made}, binds, kind="convert")
+
+
+def tables(dev, plan: dict) -> dict:
+    """A plan's tables uploaded (`table`), by port."""
+    return {
+        "index": table(dev, plan["index"], np.float32),
+        "mask": table(dev, plan["masks"], np.uint16),
+    }
 
 
 def repitch(
@@ -492,22 +472,17 @@ def composed(dev, read: dict, launches: list) -> bool:
 
 
 def plans_of(dev, steps) -> tuple | None:
-    """The `kernels.relayout` plans of `steps`, None when one is not planned."""
-    hw = RL.hw_for(dev)
-    try:
-        return tuple(
-            RL.plan(s.n, s.walk, s.at, s.dwalk, s.dat, s.m, False, hw) for s in steps
-        )
-    except RL.Unplanned:
-        return None
+    """The `relayout.plan` plans of `steps`, None when one is not planned."""
+    plans = tuple(generated.planned(dev, s.made_by()) for s in steps)
+    return None if any("unplanned" in pl for pl in plans) else plans
 
 
 def step_binds(dev, plans, prefix: str) -> dict:
-    """The tables of `plans` uploaded (`table`), by `relayout.step_ports` name."""
+    """The tables of `plans` uploaded (`tables`), by `relayout.step_ports` name."""
     out = {}
     for i, pl in enumerate(plans):
-        out[f"{prefix}index{i}"] = table(dev, pl.index, np.float32)
-        out[f"{prefix}mask{i}"] = table(dev, pl.masks)
+        got = tables(dev, pl)
+        out[f"{prefix}index{i}"], out[f"{prefix}mask{i}"] = got["index"], got["mask"]
     return out
 
 
@@ -573,7 +548,7 @@ def _prepared_quant(dev, steps, src, rows, cols, rp, cp, side, g, nk, batches):
         for i, v in enumerate(recipe["steps"])
     )
     plans = plans_of(dev, measured)
-    if plans is None or not P.direct_destination(plans):
+    if plans is None or not plans[-1]["direct"]:
         return None
     call = _quant_call(
         Operand("full", **qs["src"]),
@@ -657,20 +632,25 @@ def packed(
         _, src_bytes, levels, at, _, _, _ = vkey
         vbase = st.forms[vkey].addr
         f = st.form(key, batches * rp * cp)
-        k, given = MM.quant_walk_kernel(
-            src_bytes,
-            levels,
-            at,
-            rows,
-            cols,
-            rp,
-            cp,
-            side,
-            g,
-            nk,
-            batches,
+        generated.launch(
+            dev,
+            "matmul.quant_walk_kernel",
+            {
+                "src_bytes": src_bytes,
+                "levels": generated.walks(levels),
+                "at": at,
+                "rows": rows,
+                "cols": cols,
+                "rp": rp,
+                "cp": cp,
+                "side": side,
+                "g": g,
+                "nk": nk,
+                "batches": batches,
+            },
+            {"x": vbase, "q": f.addr},
+            kind="quant",
         )
-        launch(dev, k, given, {"x": vbase, "q": f.addr}, kind="quant")
         st.made(key)
         return f.addr
     n = st.nbytes // item

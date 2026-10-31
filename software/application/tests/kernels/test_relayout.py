@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from kohakutpu.application.kernels import lanes as LN
+from kohakutpu.application.kernels import prepared as P
 from kohakutpu.application.kernels import relayout as R
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
@@ -1052,6 +1053,7 @@ def python_plan(case, tree, monkeypatch):
         "shape": repr(pl.shape()),
         "index": pl.index.astype(np.float64).tolist(),
         "masks": pl.masks.astype(np.float64).tolist(),
+        "direct": P.direct_destination((pl,)),
     }
     return got, pl
 

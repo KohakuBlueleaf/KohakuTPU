@@ -36,7 +36,6 @@ from kohakutpu.application.kernels import transpose as KT
 from kohakutpu.application.kernels import vector as KV
 from kohakutpu.application.ktpugrad import plans as KP
 from kohakutpu.application.runtime import card as RC
-from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime.arena import Arena
 from kohakutpu.compiler import _rs
 from kohakutpu.stack import kernel as K
@@ -282,7 +281,6 @@ def fresh(session):
         es.enter_context(patched(K, "_PROGS", OrderedDict()))
         es.enter_context(patched(DK, "_TRACES", {}))
         es.enter_context(local_trace_caches())
-        es.enter_context(patched(FM, "_plans", OrderedDict()))
         es.enter_context(patched(KL, "_plans", OrderedDict()))
         for mod in (KA, KC, KL, KM, KT, KV):
             es.enter_context(patched(mod, "_kernels", OrderedDict()))

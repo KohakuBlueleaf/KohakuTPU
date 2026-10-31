@@ -4,9 +4,12 @@ import json
 import os
 from functools import lru_cache
 
+import numpy as np
+
 from kohakutpu.application.kernels import matmul as MM
 from kohakutpu.application.plan.emit import expr
 from kohakutpu.language.dsl import TensorSpec, Traced
+from kohakutpu.language.numerics import fp16
 from kohakutpu.language.text import module as M
 from kohakutpu.stack import rs
 from kohakutpu.stack.kernel import Compiled, dsl_machine
@@ -20,7 +23,7 @@ def graph(generator, arguments, machine, mutant):
 def source(dev, generator, arguments):
     """The graph of a generator call under the process's kernel knobs: what
     `launch` compiles, and what a trace-only capture records."""
-    if generator == "matmul.quant_kernel":
+    if generator in ("matmul.quant_kernel", "matmul.quant_walk_kernel"):
         arguments = dict(arguments)
         arguments["schedule"] = {
             name: int(os.environ.get(env, default))
@@ -114,6 +117,65 @@ def relayout_plan(gen, n, walk_, at, dwalk, dat, m, keep, z0=0) -> dict:
     if z0:
         plan["z0"] = int(z0)
     return {"made_by": {"gen": gen, "args": plan}}
+
+
+@lru_cache(maxsize=1024)
+def _planned(gen, arguments, machine, mutant):
+    plan = rs._rs.relayout_plan if gen == "relayout.plan" else rs._rs.lanes_plan
+    got = json.loads(plan(arguments, machine, mutant))
+    if "index" in got:
+        got["index"] = np.array(got["index"], np.float32)
+        if gen == "relayout.plan":
+            got["masks"] = fp16.write(got["masks"]).view(np.uint16)
+        else:
+            got["masks"] = np.array(got["masks"], np.uint16)
+    return got
+
+
+def planned(dev, made) -> dict:
+    """The plan of a `relayout_plan` call on `dev`: its tables ``index``
+    (fp32) and ``masks`` (f16 bits) and, of a `relayout.plan` one, ``direct``
+    (it writes its destination in words, not row indices); ``unplanned`` for
+    a walk pair no form takes."""
+    call = made["made_by"]
+    return _planned(
+        call["gen"],
+        json.dumps(call["args"], sort_keys=True),
+        rs.machine_json(dev.machine),
+        rs._MUTANT.get(),
+    )
+
+
+def transpose_masks(dev):
+    """The `transpose.transpose_kernel` mask table, f16 bits."""
+    return np.array(rs._rs.transpose_masks(rs.machine_json(dev.machine)), np.uint16)
+
+
+def rows_shape(dev, e, operands, R, W, out) -> dict:
+    """``nblk``, the column blocks of `e` over [R, W] rows into `out`, and
+    ``out``, its extents (`_rs.rows_shape`)."""
+    arguments = {
+        "e": expr(e),
+        "operands": [vars(o) for o in operands],
+        "R": R,
+        "W": W,
+        "out": vars(out),
+    }
+    return json.loads(
+        rs._rs.rows_shape(
+            json.dumps(arguments), rs.machine_json(dev.machine), rs._MUTANT.get()
+        )
+    )
+
+
+def port_shape(dev, operand, R, W) -> tuple:
+    """The extents of a buffer read as `operand` over [R, W] rows."""
+    arguments = {"operand": vars(operand), "R": R, "W": W}
+    return tuple(
+        rs._rs.port_shape(
+            json.dumps(arguments), rs.machine_json(dev.machine), rs._MUTANT.get()
+        )
+    )
 
 
 def from_output(dev, graph_data, output, traced=None):

@@ -813,26 +813,88 @@ fn generate(
     serde_json::to_string(&kernel.graph).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
+/// `run` under `mutant`, when one is named.
+fn under<T: Send>(mutant: Option<&str>, run: impl FnOnce() -> T + Send) -> PyResult<T> {
+    match mutant {
+        Some(n) => crate::mutant::with(n, run).map_err(PyValueError::new_err),
+        None => Ok(run()),
+    }
+}
+
 /// relayout_plan(args_json, machine_json) -> str: `relayout.plan`'s plan of
 /// the call's arguments as JSON `{"shape": repr(Plan.shape()), "index":
-/// [..], "masks": [[..], ..]}`, or `{"unplanned": why}`; a refusal raises
-/// `ValueError`.
+/// [..], "masks": [..], "direct": bool}`, or `{"unplanned": why}`; a refusal
+/// raises `ValueError`. `index` is fp32, `masks` f16 bits, `direct`
+/// `prepared::direct_destination` of the plan.
 #[pyfunction]
-fn relayout_plan(args_json: &str, machine_json: &str) -> PyResult<String> {
+#[pyo3(signature = (args_json, machine_json, mutant=None))]
+fn relayout_plan(args_json: &str, machine_json: &str, mutant: Option<&str>) -> PyResult<String> {
     let m = machine(machine_json)?;
     let args = serde_json::from_str(args_json)
         .map_err(|e| PyValueError::new_err(format!("relayout.plan arguments: {e}")))?;
-    let got = ktpu_kernels::call::relayout_plan(&args, &m)
+    let got = under(mutant, || ktpu_kernels::call::relayout_plan(&args, &m))?
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
     Ok(match got {
-        Ok(pl) => serde_json::json!({
-            "shape": ktpu_kernels::gen::relayout::shape_repr(&pl).repr(),
-            "index": pl.index,
-            "masks": pl.masks,
-        }),
+        Ok(pl) => {
+            let direct = ktpu_kernels::gen::prepared::direct_destination(std::slice::from_ref(&pl));
+            serde_json::json!({
+                "shape": ktpu_kernels::gen::relayout::shape_repr(&pl).repr(),
+                "index": pl.index,
+                "masks": pl.masks,
+                "direct": direct,
+            })
+        }
         Err(u) => serde_json::json!({"unplanned": u.0}),
     }
     .to_string())
+}
+
+/// lanes_plan(args_json, machine_json) -> str: `lanes.plan`'s tables of the
+/// call's arguments as JSON `{"index": [..], "masks": [..]}` (fp32, f16
+/// bits); a refusal raises `ValueError`.
+#[pyfunction]
+#[pyo3(signature = (args_json, machine_json, mutant=None))]
+fn lanes_plan(args_json: &str, machine_json: &str, mutant: Option<&str>) -> PyResult<String> {
+    let m = machine(machine_json)?;
+    let args = serde_json::from_str(args_json)
+        .map_err(|e| PyValueError::new_err(format!("lanes.plan arguments: {e}")))?;
+    let pl = under(mutant, || ktpu_kernels::call::lanes_plan(&args, &m))?
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(serde_json::json!({"index": pl.index, "masks": pl.masks}).to_string())
+}
+
+/// rows_shape(args_json, machine_json) -> str: a `vector.rows_kernel` call's
+/// column blocks and `out` extents, JSON `{"nblk", "out"}`; a refusal raises
+/// `ValueError`.
+#[pyfunction]
+#[pyo3(signature = (args_json, machine_json, mutant=None))]
+fn rows_shape(args_json: &str, machine_json: &str, mutant: Option<&str>) -> PyResult<String> {
+    let m = machine(machine_json)?;
+    let args = serde_json::from_str(args_json)
+        .map_err(|e| PyValueError::new_err(format!("vector.rows_kernel arguments: {e}")))?;
+    let got = under(mutant, || ktpu_kernels::call::rows_shape(&args, &m))?
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(serde_json::json!({"nblk": got.pl.nblk, "out": got.out}).to_string())
+}
+
+/// port_shape(args_json, machine_json) -> list[int]: the buffer extents of
+/// `{operand, R, W}` (`vector::port_shape`).
+#[pyfunction]
+#[pyo3(signature = (args_json, machine_json, mutant=None))]
+fn port_shape(args_json: &str, machine_json: &str, mutant: Option<&str>) -> PyResult<Vec<i64>> {
+    let m = machine(machine_json)?;
+    let args = serde_json::from_str(args_json)
+        .map_err(|e| PyValueError::new_err(format!("vector.port arguments: {e}")))?;
+    under(mutant, || ktpu_kernels::call::port_shape(&args, &m))?
+        .map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
+/// transpose_masks(machine_json) -> list[int]: the `mask` table of a
+/// `transpose.transpose_kernel` (`gen::transpose::masks`), f16 bits.
+#[pyfunction]
+fn transpose_masks(machine_json: &str) -> PyResult<Vec<u16>> {
+    let m = machine(machine_json)?;
+    ktpu_kernels::gen::transpose::masks(&m).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
 /// pairs_blocks(machine_json, pairing=None, mutant=None) -> bool: whether a
@@ -1025,6 +1087,10 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(l1_cycles, m)?)?;
     m.add_function(wrap_pyfunction!(pairs_blocks, m)?)?;
     m.add_function(wrap_pyfunction!(relayout_plan, m)?)?;
+    m.add_function(wrap_pyfunction!(lanes_plan, m)?)?;
+    m.add_function(wrap_pyfunction!(rows_shape, m)?)?;
+    m.add_function(wrap_pyfunction!(port_shape, m)?)?;
+    m.add_function(wrap_pyfunction!(transpose_masks, m)?)?;
     m.add("MX7_PAIRING", ktpu_machine::PAIRING.name())?;
     m.add_function(wrap_pyfunction!(mm_knobs, m)?)?;
     m.add_function(wrap_pyfunction!(mm_plan, m)?)?;

@@ -692,6 +692,98 @@ pub fn quant_kernel_scheduled(
     })
 }
 
+/// `batches` [rows, cols] blocks walked from `x` (`src_bytes` bytes) by
+/// `levels` from byte `at`, staged and quantised in one package into
+/// [batches * rp, cp] as [`quant_kernel_scheduled`]: the walk materialises
+/// logical values, never padding.
+#[allow(clippy::too_many_arguments)]
+pub fn quant_walk_kernel(
+    src_bytes: i64,
+    levels: &[(i64, i64)],
+    at: i64,
+    rows: i64,
+    cols: i64,
+    rp: i64,
+    cp: i64,
+    side: Side,
+    groups: i64,
+    nk: i64,
+    batches: i64,
+    mach: &Machine,
+    finite: bool,
+    schedule: &[(&str, i64)],
+) -> R<Kernel> {
+    let hw = Hw::of(mach);
+    let dtype = side.dtype();
+    let lay = side.layout(groups, nk);
+    let xs = [cdiv(src_bytes, hw.word_bytes), hw.lanes];
+    let qs = [batches * rp, cp];
+    let ports = vec![
+        Port::input("x", &xs, g::Dtype::F16),
+        Port::output("q", &qs, dtype).with_layout(lay.clone()),
+    ];
+    let given = vec![
+        (
+            "x".to_string(),
+            spec(&xs, g::Dtype::F16, vec![], g::BufSpace::Dram)?,
+        ),
+        ("q".to_string(), spec(&qs, dtype, lay, g::BufSpace::Dram)?),
+    ];
+    let key = name(
+        "quant",
+        vec![
+            Py::str("walk"),
+            Py::Int(src_bytes),
+            Py::Tuple(levels.iter().map(|(n, s)| Py::ints(&[*n, *s])).collect()),
+            Py::Int(at),
+            Py::Int(rows),
+            Py::Int(cols),
+            Py::Int(rp),
+            Py::Int(cp),
+            Py::str(side.name()),
+            Py::Int(groups),
+            Py::Int(nk),
+            Py::Int(batches),
+            Py::Bool(finite),
+            Py::Tuple(
+                schedule
+                    .iter()
+                    .map(|(k, v)| Py::Tuple(vec![Py::str(k), Py::Int(*v)]))
+                    .collect(),
+            ),
+        ],
+    );
+    let vector = vector_packs(nk, mach);
+    let schedule_on: &[(&str, i64)] = if vector { schedule } else { &[] };
+    build(&key, mach, ports, given, |t, b| {
+        let (x, q) = (&b[0], &b[1]);
+        let z = t.buffer(&[batches * rows, cols], g::Dtype::F16, vec![])?;
+        let dlevels = [(batches * rows * cols / hw.lanes, hw.word_bytes)];
+        t.copy(
+            &z.whole(),
+            &x.whole(),
+            Some((levels, Some(at))),
+            Some((&dlevels, Some(0))),
+        )?;
+        if !vector && (rows != rp || cols != cp) {
+            let padded = t.buffer(&[batches * rp, cp], g::Dtype::F16, vec![])?;
+            t.fill_value(&padded.whole(), 0, None, None)?;
+            for bi in 0..batches {
+                let dst = padded.at(&[sl(bi * rp, bi * rp + rows), sl(0, cols)])?;
+                let from = z.at(&[sl(bi * rows, (bi + 1) * rows), ALL])?;
+                t.copy(&dst, &from, None, None)?;
+            }
+            return t.quant_scheduled(&q.whole(), &padded.whole(), finite, &[], false);
+        }
+        for bi in 0..batches {
+            let dst = q.at(&[sl(bi * rp, (bi + 1) * rp), ALL])?;
+            let from = z.at(&[sl(bi * rows, (bi + 1) * rows), ALL])?;
+            t.quant_scheduled(&dst, &from, finite, schedule_on, vector)?;
+        }
+        Ok(())
+    })
+}
+
 /// Whether a quant into `nk` K blocks a chunk packs on the vector cores
 /// (L2.MOV.018): pairs always, else as the machine prefers.
 pub fn vector_packs(nk: i64, mach: &Machine) -> bool {

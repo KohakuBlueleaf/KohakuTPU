@@ -87,10 +87,10 @@ def test_route_shape_and_alias_admission(monkeypatch):
     monkeypatch.setattr(RW.FM.generated, "launch", lambda *a, **kw: "exact")
     args = (dev, X.Reduce("sum", X.Load(0)), [V.Operand("full", pitch=128)])
     tail = (32, 128, V.Operand("row"), {}, 1)
-    assert RW._launch(*args, dict(in0=0x10000, out=0x20000), *tail)[0] == "class"
-    assert RW._launch(*args, dict(in0=0x10000, out=0x10000), *tail)[0] == "exact"
+    assert RW._launch(*args, dict(in0=0x10000, out=0x20000), *tail) == "class"
+    assert RW._launch(*args, dict(in0=0x10000, out=0x10000), *tail) == "exact"
     monkeypatch.setenv("KTPU_CLASS_ROWS_ROUTE", "0")
-    assert RW._launch(*args, dict(in0=0x10000, out=0x20000), *tail)[0] == "exact"
+    assert RW._launch(*args, dict(in0=0x10000, out=0x20000), *tail) == "exact"
 
 
 def test_route_capacity_falls_back(monkeypatch):
@@ -115,7 +115,7 @@ def test_route_capacity_falls_back(monkeypatch):
             V.Operand("full", pitch=256),
             {},
             1,
-        )[0]
+        )
         == "exact"
     )
     # The class really is infeasible: a forced admission kills this witness.

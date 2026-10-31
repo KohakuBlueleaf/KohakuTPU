@@ -18,7 +18,6 @@ from tinygrad.uop.ops import UOp
 
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import matmul as MM
-from kohakutpu.application.kernels import transpose as TP
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.ktpugrad import fold as F
@@ -847,7 +846,11 @@ def _transpose(dev, plan: Plan, bufs) -> list | None:
                 dev,
                 "transpose.transpose_kernel",
                 {"nb": int(nb), "A": int(A), "B": int(Bp)},
-                {"x": src, "mask": FM.table(dev, TP.masks()), "y": out},
+                {
+                    "x": src,
+                    "mask": FM.table(dev, FM.generated.transpose_masks(dev), np.uint16),
+                    "y": out,
+                },
                 kind="transpose",
                 info={"plan": plan.name},
             )

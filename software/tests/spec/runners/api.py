@@ -649,9 +649,12 @@ def m_stat_rows():
 
 @mutant("api.rows/max_block")
 def m_max_block():
+    def one_block(f):
+        return lambda *args: f(*args) | {"nblk": 1}
+
     with (
         patched(KV, "MAX_BLOCK", 4096),
-        patched(RW, "_blocks", lambda e, operands, rows, width, cores: 1),
+        _wrap(FM.generated, "rows_shape", one_block),
         K.rs.mutant("api.rows/max_block"),
     ):
         yield

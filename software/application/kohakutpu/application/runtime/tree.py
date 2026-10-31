@@ -13,14 +13,13 @@ intermediate an f16 [rows, W] scratch freed after the last level.
 from dataclasses import replace
 
 from kohakutpu.application.kernels import expr as X
-from kohakutpu.application.kernels import prepared as P
-from kohakutpu.application.kernels import relayout as RL
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import costs
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import launch_reductions as LR
 from kohakutpu.application.runtime import rows as RW
+from kohakutpu.language import machine as MF
 
 OP = {"sum": "add", "max": "max", "prod": "mul"}
 
@@ -91,9 +90,7 @@ def column(
         )
         if pending and costs.choose("prepared_tree", recipe, dev.machine.board):
             plans = {i: FM.plans_of(dev, v.steps) for i, v in pending.items()}
-            if all(
-                ps is not None and P.direct_destination(ps) for ps in plans.values()
-            ):
+            if all(ps is not None and ps[-1]["direct"] for ps in plans.values()):
                 plain = {
                     k: v for k, v in binds.items() if not isinstance(v, FM.Pending)
                 }
@@ -126,7 +123,7 @@ def column(
         scratch.append(at)
         return at
 
-    views = RL.hw_for(dev).descriptors
+    views = MF.load(dev.machine.board).vc.descriptors
     try:
         n, ops, bnd = R, list(operands), dict(binds)
         if R % 2 or 2 * len(ops) + 1 > views:

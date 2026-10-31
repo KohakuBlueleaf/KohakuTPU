@@ -69,6 +69,80 @@ fn api_form_010_breaks_under_stat_rows() {
     breaks("api.vector/stat_rows", rows::form_010_facts);
 }
 
+/// Two members of one fused rows stage: under the mutant the second writes
+/// nothing.
+fn fused_facts() -> ktpu_kernels::kernel::Kernel {
+    use ktpu_graph::Dtype;
+    use ktpu_kernels::expr;
+    use ktpu_kernels::gen::fused::{kernel, Named, Package, Step};
+    use ktpu_kernels::gen::vector::Operand;
+    let m = super::card();
+    let full = Operand::full(128, 8);
+    let port = |name: &str, written| {
+        let shape = vec![8, 128];
+        let name = name.to_string();
+        (
+            Named {
+                name,
+                shape,
+                dtype: Dtype::F16,
+            },
+            written,
+        )
+    };
+    let neg = expr::op("neg", vec![expr::load(0).into()]).unwrap();
+    let names = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let package = Package {
+        ports: vec![port("p0", false), port("p1", true), port("p2", true)],
+        scratch: vec![],
+        staged: vec![],
+        steps: vec![Step::Rows {
+            r: 8,
+            w: 128,
+            exprs: vec![neg, expr::load(0)],
+            operands: vec![full],
+            ins: names(&["p0"]),
+            out_operands: vec![full, full],
+            outs: names(&["p1", "p2"]),
+        }],
+    };
+    kernel(&package, "two-members", &m).unwrap()
+}
+
+#[test]
+fn fused_members_break_under_lost_member() {
+    use ktpu_kernels::gen::fused::LOST_MEMBER_MUTANT;
+    breaks(LOST_MEMBER_MUTANT, fused_facts);
+}
+
+/// A walked packing on the vector cores carries the quant schedule.
+fn quant_walk_facts() -> ktpu_kernels::kernel::Kernel {
+    use ktpu_kernels::gen::matmul::{quant_walk_kernel, Side, QUANT_SCHEDULE};
+    let m = super::card();
+    quant_walk_kernel(
+        480,
+        &[(15, 32)],
+        0,
+        5,
+        48,
+        8,
+        64,
+        Side::A,
+        2,
+        2,
+        1,
+        &m,
+        false,
+        QUANT_SCHEDULE,
+    )
+    .unwrap()
+}
+
+#[test]
+fn quant_walk_breaks_under_no_schedule() {
+    breaks("kernels.quant/no-schedule", quant_walk_facts);
+}
+
 /// A rows stage of trips the card's two vector cores do not divide evenly
 /// deals them differently under the other split; one of even trips alike.
 #[test]

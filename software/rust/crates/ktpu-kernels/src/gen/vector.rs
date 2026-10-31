@@ -594,6 +594,24 @@ pub fn rows_block(
     pro: &HashMap<usize, Arg>,
     hw: &Hw,
 ) -> R<()> {
+    let vals = band_values(t, bufs, operands, pl, at, cb, pro, hw)?;
+    let v = expr::emit(t, e, &vals)?;
+    band_store(t, &bufs.out, out, pl, at, cb, v)
+}
+
+/// Every operand's value in one band of rows at `at`, column block `cb`,
+/// `pro` the prologue's.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn band_values(
+    t: &mut Trace,
+    bufs: &Bufs,
+    operands: &[Operand],
+    pl: &Plan,
+    at: &Origin,
+    cb: i64,
+    pro: &HashMap<usize, Arg>,
+    hw: &Hw,
+) -> R<HashMap<usize, Arg>> {
     let col0 = cb * pl.wc;
     let sr = hw.stat_rows();
     let mut vals = pro.clone();
@@ -638,7 +656,19 @@ pub fn rows_block(
             Kind::Col => {}
         }
     }
-    let v = expr::emit(t, e, &vals)?;
+    Ok(vals)
+}
+
+/// `v` into `dst`, read as `out`, for the band at `at` of column block `cb`.
+pub(super) fn band_store(
+    t: &mut Trace,
+    dst: &Buf,
+    out: &Operand,
+    pl: &Plan,
+    at: &Origin,
+    cb: i64,
+    v: Arg,
+) -> R<()> {
     let (r, c) = &at.out;
     if out.kind == Kind::Row {
         let keys = if pl.nblk > 1 {
@@ -646,14 +676,14 @@ pub fn rows_block(
         } else {
             vec![sl(r, r.add(pl.rows))]
         };
-        return t.store(&bufs.out.at(&keys)?, v);
+        return t.store(&dst.at(&keys)?, v);
     }
     let (rr, cc) = out.divmod()?;
     store_over(
         t,
-        &bufs.out,
+        dst,
         &Idx::Int(rr).add(r),
-        &c.add(cc + col0),
+        &c.add(cc + cb * pl.wc),
         pl.rows,
         pl.wc,
         v,
@@ -711,19 +741,25 @@ fn store_over(t: &mut Trace, dst: &Buf, r0: &Idx, c0: &Idx, rows: i64, cols: i64
     Ok(())
 }
 
-/// A kernel computing `e` over [R, W] rows into `out` (API.ROW.001):
-/// returns it and its column blocks; with several blocks a reduction's
-/// output is [blocks, R] partials.
-pub fn rows_kernel(
+/// What a rows kernel's arguments decide: its plan, the rows a trip divides
+/// into, and the extents of `out`.
+pub struct RowsShape {
+    pub pl: Plan,
+    pub quantum: i64,
+    pub out: Vec<i64>,
+}
+
+/// The shape of `e` over [R, W] rows into `out` (API.ROW.001); with several
+/// blocks a reduction's output is [blocks, R] partials.
+pub fn rows_shape(
     e: &E,
     operands: &[Operand],
     r: i64,
     w: i64,
     out: &Operand,
     bands: Option<i64>,
-    m: &Machine,
-) -> R<(Kernel, i64)> {
-    let hw = Hw::of(m);
+    hw: &Hw,
+) -> R<RowsShape> {
     let reduces = expr::reduces(e);
     let stats = operands
         .iter()
@@ -739,13 +775,43 @@ pub fn rows_kernel(
     } else {
         hw.band
     };
-    let pl = plan(operands, out.kind, r, w, bands, None, quantum, &hw)?;
+    let pl = plan(operands, out.kind, r, w, bands, None, quantum, hw)?;
     if pl.nblk > 1 && reduces.len() > 1 {
         return fail(
             "API.ROW.009",
             "several reductions over a row wider than one block",
         );
     }
+    let out = if out.kind == Kind::Row {
+        let rows = out.rows.max(stat_words(r, hw) * hw.stat_rows());
+        if pl.nblk > 1 {
+            vec![pl.nblk, rows]
+        } else {
+            vec![rows]
+        }
+    } else {
+        port_shape(out, r, w, hw)?
+    };
+    Ok(RowsShape { pl, quantum, out })
+}
+
+/// A kernel computing `e` over [R, W] rows into `out` ([`rows_shape`]):
+/// returns it and its column blocks.
+pub fn rows_kernel(
+    e: &E,
+    operands: &[Operand],
+    r: i64,
+    w: i64,
+    out: &Operand,
+    bands: Option<i64>,
+    m: &Machine,
+) -> R<(Kernel, i64)> {
+    let hw = Hw::of(m);
+    let RowsShape {
+        pl,
+        quantum,
+        out: out_shape,
+    } = rows_shape(e, operands, r, w, out, bands, &hw)?;
     let parts = stages(&pl, r, quantum);
     let mut ports = vec![];
     let mut given = vec![];
@@ -757,16 +823,6 @@ pub fn rows_kernel(
             spec(&shape, o.dtype, vec![], g::BufSpace::Dram)?,
         ));
     }
-    let out_shape = if out.kind == Kind::Row {
-        let rows = out.rows.max(stat_words(r, &hw) * hw.stat_rows());
-        if pl.nblk > 1 {
-            vec![pl.nblk, rows]
-        } else {
-            vec![rows]
-        }
-    } else {
-        port_shape(out, r, w, &hw)?
-    };
     ports.push(Port::output("out", &out_shape, g::Dtype::F16));
     given.push(("out".to_string(), f16(&out_shape)?));
     let key = name(
@@ -911,6 +967,50 @@ pub(super) fn tail_band(
     }
 }
 
+/// Rows of `vc.vlmax` values a flat trip takes: at most 16, double-buffered
+/// in the L1 beside `reads` and `outs` a row each, and `scalars` words.
+pub(super) fn flat_rows(reads: &[g::Dtype], scalars: usize, outs: &[g::Dtype], hw: &Hw) -> i64 {
+    let row_words = |d: &g::Dtype| hw.vlmax * Hw::item(*d) / hw.word_bytes;
+    let words: i64 = reads.iter().chain(outs).map(row_words).sum::<i64>() + scalars as i64;
+    let mut rows = 16;
+    while rows > 1 && 2 * rows * words > hw.l1_words - L1_MARGIN {
+        rows /= 2;
+    }
+    rows
+}
+
+/// `total` rows as trips of `rows` over `cores`, each `trip(first row,
+/// rows)`, then the rest a core's run of 4s, a 2 and a 1.
+pub(super) fn flat_trips(
+    t: &mut Trace,
+    total: i64,
+    rows: i64,
+    cores: i64,
+    trip: &dyn Fn(&mut Trace, &Idx, i64) -> R<()>,
+) -> R<()> {
+    let (full, rem) = (total / rows, total % rows);
+    if full > 0 {
+        let sp = split(full, cores);
+        t.par(sp.cores, g::UnitKind::Vc, At::Var, |t, c| {
+            let (first, trips) = (sp.start(&c), sp.trips(&c));
+            t.range(trips, |t, k| {
+                let r = first.mul(rows).add(k.mul(rows));
+                trip(t, &r, rows)
+            })
+        })?;
+    }
+    let mut r = full * rows;
+    for h in [rem / 4 * 4, (rem % 4) & 2, rem % 2] {
+        if h > 0 {
+            t.par(1, g::UnitKind::Vc, At::Var, |t, _| {
+                t.range(1, |t, _| trip(t, &Idx::Int(r), h))
+            })?;
+            r += h;
+        }
+    }
+    Ok(())
+}
+
 /// `e` over `n` elements as rows of `vc.vlmax` values (API.ROW.006): every
 /// operand at the output's index, but `(i, lane)` of `scalars` (value
 /// `lane` of operand i's word, every element's).
@@ -931,22 +1031,16 @@ pub fn flat_kernel(
         }
     }
     let lane_of = |i: usize| lanes.iter().find(|(j, _)| *j == i).map(|(_, l)| *l);
-    let row_words = |d: g::Dtype| hw.vlmax * Hw::item(d) / hw.word_bytes;
-    let mut words: i64 = dtypes
+    let held: Vec<g::Dtype> = dtypes
         .iter()
         .enumerate()
         .filter(|(i, _)| lane_of(*i).is_none())
-        .map(|(_, d)| row_words(*d))
-        .sum();
-    words += lanes.len() as i64 + row_words(out_dtype);
-    let mut rows = 16;
-    while rows > 1 && 2 * rows * words > hw.l1_words - L1_MARGIN {
-        rows /= 2;
-    }
+        .map(|(_, d)| *d)
+        .collect();
+    let rows = flat_rows(&held, lanes.len(), &[out_dtype], &hw);
     let total = cdiv(n, hw.vlmax);
     let exact = n % hw.vlmax != 0 && !mutants::on("memory/flat-overrun");
     let extent = |d: g::Dtype| cdiv(n * Hw::item(d), hw.word_bytes);
-    let (full, rem) = (total / rows, total % rows);
     let mut ports = vec![];
     let mut given = vec![];
     for (i, d) in dtypes.iter().enumerate() {
@@ -1028,25 +1122,7 @@ pub fn flat_kernel(
             padded[dtypes.len()] = t.buffer(&[total, hw.vlmax], out_dtype, vec![])?;
         }
         let b = padded.as_slice();
-        if full > 0 {
-            let sp = split(full, hw.vc);
-            t.par(sp.cores, g::UnitKind::Vc, At::Var, |t, c| {
-                let (first, trips) = (sp.start(&c), sp.trips(&c));
-                t.range(trips, |t, k| {
-                    let r = first.mul(rows).add(k.mul(rows));
-                    trip(t, b, &r, rows)
-                })
-            })?;
-        }
-        let mut r = full * rows;
-        for h in [rem / 4 * 4, (rem % 4) & 2, rem % 2] {
-            if h > 0 {
-                t.par(1, g::UnitKind::Vc, At::Var, |t, _| {
-                    t.range(1, |t, _| trip(t, b, &Idx::Int(r), h))
-                })?;
-                r += h;
-            }
-        }
+        flat_trips(t, total, rows, hw.vc, &|t, r, h| trip(t, b, r, h))?;
         if exact {
             let walk = [(extent(out_dtype), hw.word_bytes)];
             t.copy(

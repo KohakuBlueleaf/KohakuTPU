@@ -54,7 +54,7 @@ def _launch(dev, e, operands, binds, R, W, out, info, cores):
         and V.class_rows.bands_fit(operands, out, W)
         >= (V.STAT_ROWS // 4 if V.holds_stat(operands, out.kind) else 1)
     ):
-        kernel, given, nblk = V.rows_kernel(
+        kernel, given, _ = V.rows_kernel(
             e,
             tuple(operands),
             R,
@@ -69,9 +69,8 @@ def _launch(dev, e, operands, binds, R, W, out, info, cores):
             for i in range(len(operands))
         )
         if kernel.class_info["direct"] and disjoint:
-            return FM.launch(dev, kernel, given, binds, info=info), given, nblk
-    _, given, nblk = V.rows_kernel(e, tuple(operands), R, W, out, cores)
-    run = FM.generated.launch(
+            return FM.launch(dev, kernel, given, binds, info=info)
+    return FM.generated.launch(
         dev,
         "vector.rows_kernel",
         {
@@ -84,7 +83,6 @@ def _launch(dev, e, operands, binds, R, W, out, info, cores):
         binds,
         info=info,
     )
-    return run, given, nblk
 
 
 def _prepared(dev, e, operands, binds, R, W, out, out_at, info):
@@ -166,10 +164,6 @@ def _based(operands, binds: dict, port: str) -> tuple:
     return out, binds
 
 
-def _blocks(e, operands, rows, width, cores):
-    return V.rows_kernel(e, tuple(operands), rows, width, Operand("row"), cores)[2]
-
-
 def run(
     dev, e, operands, binds: dict, R: int, W: int, out: Operand, out_at: int, info=None
 ) -> list:
@@ -183,7 +177,9 @@ def run(
     reds = _reductions(e)
     blocks = 1
     if reds:
-        blocks = _blocks(reds[0], operands, R, W, cores)
+        blocks = FM.generated.rows_shape(dev, reds[0], operands, R, W, Operand("row"))[
+            "nblk"
+        ]
     pend = {k: v for k, v in binds.items() if isinstance(v, FM.Pending)}
     # A reduction's partials across column blocks: one launch reads the
     # operands (then folds of partials), so it makes the pending ones.
@@ -200,15 +196,23 @@ def run(
         # statistic first (an innermost one), read back as a row operand.
         return _stat_first(dev, e, operands, binds, R, W, out, out_at, info)
     if out.kind != "row":
-        one, _, _ = _launch(
-            dev, e, operands, dict(binds, out=out_at), R, W, out, info, cores
-        )
-        return [one]
+        return [
+            _launch(dev, e, operands, dict(binds, out=out_at), R, W, out, info, cores)
+        ]
     if blocks == 1:
-        one, _, _ = _launch(
-            dev, e, operands, dict(binds, out=out_at), R, W, Operand("row"), info, cores
-        )
-        return [one]
+        return [
+            _launch(
+                dev,
+                e,
+                operands,
+                dict(binds, out=out_at),
+                R,
+                W,
+                Operand("row"),
+                info,
+                cores,
+            )
+        ]
     red = reds[0]
     part = Operand("row")
     if single_package_enabled():
@@ -233,9 +237,10 @@ def run(
             dict(info, blocks=blocks),
         )
         return [one]
-    _, given, nblk = V.rows_kernel(red, tuple(operands), R, W, part, cores)
-    rq = given["out"].shape[-1]  # a block's partials, whole words
-    nbytes = given["out"].nbytes()
+    shape = FM.generated.rows_shape(dev, red, operands, R, W, part)
+    nblk = shape["nblk"]
+    rq = shape["out"][-1]  # a block's partials, whole words
+    nbytes = 2 * int(np.prod(shape["out"]))
     parts = [dev.alloc(nbytes), dev.alloc(nbytes)]
     try:
         info1 = dict(info, blocks=nblk)
@@ -247,7 +252,7 @@ def run(
                     k: (v.made().addr if k in pend else v) for k, v in binds.items()
                 }
         if one is None:
-            one, _, _ = _launch(
+            one = _launch(
                 dev, red, operands, dict(binds, out=parts[0]), R, W, part, info1, cores
             )
         runs = [one]

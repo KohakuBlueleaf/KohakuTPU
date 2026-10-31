@@ -11,7 +11,9 @@
 
 use crate::expr;
 use crate::gen::vector::{Kind, Operand};
-use crate::gen::{convert, lanes, matmul, prepared, reductions, relayout, transpose, vector};
+use crate::gen::{
+    convert, fused, lanes, matmul, prepared, reductions, relayout, transpose, vector, Hw,
+};
 use crate::kernel::Kernel;
 use crate::trace::{fail, R};
 use ktpu_graph as g;
@@ -183,6 +185,129 @@ pub fn relayout_plan(a: &Value, m: &Machine) -> R<Result<relayout::Plan, relayou
     )
 }
 
+/// `vector.rows_kernel`'s shape from its call's arguments.
+pub fn rows_shape(a: &Value, m: &Machine) -> R<vector::RowsShape> {
+    vector::rows_shape(
+        &expr::from_table(arg(a, "e")?)?,
+        &operands(arg(a, "operands")?)?,
+        int(a, "R")?,
+        int(a, "W")?,
+        &operand(arg(a, "out")?)?,
+        a.get("bands").and_then(Value::as_i64),
+        &Hw::of(m),
+    )
+}
+
+/// The buffer extents of one `operand` over `R` rows of `W`.
+pub fn port_shape(a: &Value, m: &Machine) -> R<Vec<i64>> {
+    vector::port_shape(
+        &operand(arg(a, "operand")?)?,
+        int(a, "R")?,
+        int(a, "W")?,
+        &Hw::of(m),
+    )
+}
+
+fn names(v: &Value) -> Vec<String> {
+    v.as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|n| n.as_str().map(str::to_string))
+        .collect()
+}
+
+fn exprs(v: &Value) -> R<Vec<expr::E>> {
+    v.as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .map(expr::from_table)
+        .collect()
+}
+
+fn text(a: &Value, k: &str) -> R<String> {
+    match arg(a, k)?.as_str() {
+        Some(v) => Ok(v.to_string()),
+        None => fail("API.OP.001", format!("{k} is not a name")),
+    }
+}
+
+fn named(v: &Value) -> R<fused::Named> {
+    let dims = arg(v, "shape")?.as_array();
+    let shape = dims.map(Vec::as_slice).unwrap_or_default();
+    Ok(fused::Named {
+        name: text(v, "name")?,
+        shape: shape.iter().filter_map(Value::as_i64).collect(),
+        dtype: dtype(arg(v, "dtype")?)?,
+    })
+}
+
+fn dtypes(v: &Value) -> R<Vec<g::Dtype>> {
+    v.as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .map(dtype)
+        .collect()
+}
+
+fn fused_step(s: &Value) -> R<fused::Step> {
+    Ok(match arg(s, "kind")?.as_str() {
+        Some("flat") => fused::Step::Flat {
+            total: int(s, "total")?,
+            dtypes: dtypes(arg(s, "dtypes")?)?,
+            out_dtype: dtype(arg(s, "out_dtype")?)?,
+            exprs: exprs(arg(s, "exprs")?)?,
+            ins: names(arg(s, "ins")?),
+            lanes: walk(arg(s, "lanes")?)?
+                .into_iter()
+                .map(|(i, l)| (i as usize, l))
+                .collect(),
+            outs: names(arg(s, "outs")?),
+        },
+        Some("rows") => fused::Step::Rows {
+            r: int(s, "R")?,
+            w: int(s, "W")?,
+            exprs: exprs(arg(s, "exprs")?)?,
+            operands: operands(arg(s, "operands")?)?,
+            ins: names(arg(s, "ins")?),
+            out_operands: operands(arg(s, "out_operands")?)?,
+            outs: names(arg(s, "outs")?),
+        },
+        Some("copy") => fused::Step::Copy {
+            src: text(s, "src")?,
+            dst: text(s, "dst")?,
+        },
+        _ => return fail("API.OP.001", format!("a fused stage {s}")),
+    })
+}
+
+fn fused_package(a: &Value) -> R<fused::Package> {
+    let list =
+        |k: &str| -> R<Vec<Value>> { Ok(arg(a, k)?.as_array().cloned().unwrap_or_default()) };
+    Ok(fused::Package {
+        ports: list("ports")?
+            .iter()
+            .map(|p| Ok((named(p)?, boolean(p, "written")?)))
+            .collect::<R<_>>()?,
+        scratch: list("scratch")?.iter().map(named).collect::<R<_>>()?,
+        staged: list("staged")?
+            .iter()
+            .map(|s| {
+                Ok(fused::Staged {
+                    scratch: text(s, "scratch")?,
+                    port: text(s, "port")?,
+                    words: int(s, "words")?,
+                    read: boolean(s, "read")?,
+                    written: boolean(s, "written")?,
+                })
+            })
+            .collect::<R<_>>()?,
+        steps: list("steps")?.iter().map(fused_step).collect::<R<_>>()?,
+    })
+}
+
 /// A list of `relayout.plan` calls, each planned (an unplanned one
 /// refused).
 fn plan_list(v: &Value, m: &Machine) -> R<Vec<relayout::Plan>> {
@@ -250,6 +375,31 @@ fn made_reads(a: &Value, m: &Machine) -> R<BTreeMap<usize, prepared::Read>> {
     Ok(made)
 }
 
+fn quant_side(a: &Value) -> R<matmul::Side> {
+    match arg(a, "side")?.as_str() {
+        Some("a") => Ok(matmul::Side::A),
+        Some("b") => Ok(matmul::Side::B),
+        _ => fail("API.FORM.006", format!("a packing side in {a}")),
+    }
+}
+
+/// `schedule`'s keywords over [`matmul::QUANT_SCHEDULE`]'s defaults.
+fn quant_schedule(a: &Value) -> R<Vec<(&'static str, i64)>> {
+    matmul::QUANT_SCHEDULE
+        .iter()
+        .map(|&(key, default)| {
+            let value = a.get("schedule").and_then(|s| s.get(key));
+            match value {
+                None => Ok((key, default)),
+                Some(v) => match v.as_i64() {
+                    Some(v) => Ok((key, v)),
+                    None => fail("API.OP.001", format!("quant schedule {key} is an integer")),
+                },
+            }
+        })
+        .collect()
+}
+
 /// The kernel of one recorded generator call, built for `m`.
 pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
     let e = |k: &str| expr::from_table(arg(a, k)?);
@@ -292,27 +442,26 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
             let out = a.get("out_dtype").map_or(Ok(g::Dtype::F16), dtype)?;
             vector::flat_kernel(&e("e")?, &dtypes, int(a, "n")?, out, &scalars, m)?
         }
+        "matmul.quant_walk_kernel" => matmul::quant_walk_kernel(
+            int(a, "src_bytes")?,
+            &walk(arg(a, "levels")?)?,
+            int(a, "at")?,
+            int(a, "rows")?,
+            int(a, "cols")?,
+            int(a, "rp")?,
+            int(a, "cp")?,
+            quant_side(a)?,
+            int(a, "g")?,
+            int(a, "nk")?,
+            a.get("batches").map_or(Ok(1), |_| int(a, "batches"))?,
+            m,
+            a.get("finite")
+                .map_or(Ok(false), |_| boolean(a, "finite"))?,
+            &quant_schedule(a)?,
+        )?,
         "matmul.quant_kernel" => {
-            let side = match arg(a, "side")?.as_str() {
-                Some("a") => matmul::Side::A,
-                Some("b") => matmul::Side::B,
-                _ => return fail("API.FORM.006", format!("a packing side in {a}")),
-            };
-            let schedule = matmul::QUANT_SCHEDULE
-                .iter()
-                .map(|&(key, default)| {
-                    let value = a.get("schedule").and_then(|s| s.get(key));
-                    match value {
-                        None => Ok((key, default)),
-                        Some(v) => match v.as_i64() {
-                            Some(v) => Ok((key, v)),
-                            None => {
-                                fail("API.OP.001", format!("quant schedule {key} is an integer"))
-                            }
-                        },
-                    }
-                })
-                .collect::<R<Vec<_>>>()?;
+            let side = quant_side(a)?;
+            let schedule = quant_schedule(a)?;
             let staged = match a.get("pad_strategy").map(Value::as_str) {
                 None | Some(Some("native")) => false,
                 Some(Some("staged")) => true,
@@ -350,6 +499,7 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
                 &made_reads(a, m)?,
             )?
         }
+        "fused.kernel" => fused::kernel(&fused_package(a)?, &a.to_string(), m)?,
         "convert.copy_kernel" => convert::copy_kernel(int(a, "nbytes")?, m)?,
         "convert.walk_kernel" => convert::walk_kernel(
             int(a, "src_bytes")?,

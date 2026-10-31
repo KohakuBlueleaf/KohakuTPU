@@ -36,6 +36,7 @@ pub const NAMES: &[&str] = &[
 /// allocation (ktpu-plan's tests/bounds.rs); the forms made before their
 /// kernels; a made operand copied into its port.
 pub const LOCAL: &[&str] = &[
+    crate::gen::fused::LOST_MEMBER_MUTANT,
     crate::gen::matmul::UNRECORDED_MUTANT,
     "kernels.quant/no-schedule",
     "kernels.hw/unit_constants",

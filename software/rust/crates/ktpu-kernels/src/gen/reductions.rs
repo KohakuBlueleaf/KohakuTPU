@@ -140,7 +140,7 @@ fn shift(o: &v::Operand, rows: i64, w: i64) -> v::Operand {
 /// `launch_reductions.emit_rows_stages`: every full and tail row stage of
 /// `e` over [r, w] into the kernel being traced.
 #[allow(clippy::too_many_arguments)]
-fn emit(
+pub(super) fn emit(
     t: &mut Trace,
     ins: Vec<Buf>,
     out: Buf,
