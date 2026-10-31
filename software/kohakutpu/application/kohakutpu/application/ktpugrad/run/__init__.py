@@ -27,8 +27,8 @@ from kohakutpu.application.ktpugrad.launch.config import (
     view_forms_enabled,
 )
 from kohakutpu.application.ktpugrad.launch.emit import flush_multi_stage
-from kohakutpu.application.ktpugrad.plan import fold as F
-from kohakutpu.application.ktpugrad.plan.lower import Plan, Refused
+from kohakutpu.application.ktpugrad.planning import fold as F
+from kohakutpu.application.ktpugrad.planning.lower import Plan, Refused
 from kohakutpu.application.ktpugrad.run.common import _dense, _reform
 from kohakutpu.application.ktpugrad.run.kernels import (
     _flat,

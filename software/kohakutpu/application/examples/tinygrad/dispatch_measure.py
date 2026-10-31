@@ -27,6 +27,7 @@ from kohakutpu.application.ktpugrad.device import KTPUGraph
 from kohakutpu.application.ktpugrad.nn import place
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import generated, packages, rows
+from kohakutpu.language.config import ENV
 
 
 class Phases:
@@ -205,7 +206,7 @@ def measure(args):
                 numeric_execution=args.device != "offline",
                 environment={
                     k: v
-                    for k, v in os.environ.items()
+                    for k, v in ENV.items()
                     if k.startswith(("KTPU_", "KOHAKUTPU_"))
                 },
             )

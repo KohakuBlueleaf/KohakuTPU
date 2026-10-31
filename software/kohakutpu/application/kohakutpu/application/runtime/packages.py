@@ -248,8 +248,9 @@ def findings(progs, mode):
         return []
     if not prebuilt(progs):
         raise TypeError("checker verdict requires Rust Prebuilt packages")
-    first = next(iter(progs.values()))
-    found = list(first.findings)
-    if mode == "refuse" and first.refused:
+    found = []
+    for p in progs.values():
+        found += [f for f in p.findings if f not in found]
+    if mode == "refuse" and any(p.refused for p in progs.values()):
         raise Refused(found)
     return found

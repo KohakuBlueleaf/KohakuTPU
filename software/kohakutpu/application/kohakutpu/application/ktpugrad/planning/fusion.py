@@ -10,7 +10,7 @@ from math import prod
 
 from tinygrad.uop import Ops
 
-from kohakutpu.application.ktpugrad.plan.lower import ALU
+from kohakutpu.application.ktpugrad.planning.lower import ALU
 from kohakutpu.language.config import ENV
 
 

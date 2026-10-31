@@ -273,6 +273,7 @@ class Arena:
 
 class Allocation:
     virtual: int
+    virtual_address: int
     physical: int
     extent: int
     generation: int
@@ -429,6 +430,7 @@ class Package(TypedDict):
     bytes: bytes
     #: The fn parameter each buffer binds, in buffer order.
     params: list[str]
+    images_json: str
 
 class Finding(TypedDict):
     kind: str
@@ -449,6 +451,7 @@ class Compiled(TypedDict):
     l1: str
     #: Each node's package, by mesh.
     packages: dict[int, Package]
+    scratch: list[dict]
     verdict: Verdict
     #: Why the build is not relocatable (STACK.RELOC), else None.
     bound: str | None
@@ -744,7 +747,7 @@ def package_format(machine_json: str, mesh: int = 0) -> dict:
     engine's register codes, `SRC_MOVER`, `CTR_MASK` and `PAYLOAD` bytes."""
 
 MX7_PAIRING: str
-MM_KNOBS: list
+MM_KNOBS: str
 VECTOR_DEFAULTS: str
 ROWS_DEFAULTS: str
 RELAYOUT_DEFAULTS: str
@@ -779,3 +782,24 @@ def buffer_pack(
 def buffer_unpack(
     type_text: str, raw: bytes, machine_json: str, mutant: str | None = None
 ) -> bytes: ...
+def generate(
+    generator: str, args_json: str, machine_json: str, mutant: str | None = None
+) -> str: ...
+def class_info(
+    generator: str, args_json: str, machine_json: str, mutant: str | None = None
+) -> str: ...
+def class_fits(args_json: str, machine_json: str) -> bool: ...
+def lanes_class_tables(args_json: str, machine_json: str) -> str: ...
+def relayout_plan(
+    args_json: str, machine_json: str, mutant: str | None = None
+) -> str: ...
+def lanes_plan(args_json: str, machine_json: str, mutant: str | None = None) -> str: ...
+def rows_shape(args_json: str, machine_json: str, mutant: str | None = None) -> str: ...
+def port_shape(
+    args_json: str, machine_json: str, mutant: str | None = None
+) -> list[int]: ...
+def transpose_masks(machine_json: str) -> list[int]: ...
+def pairs_blocks(
+    machine_json: str, pairing: str | None = None, mutant: str | None = None
+) -> bool: ...
+def l1_cycles(l1_text: str, name: str, machine_json: str) -> int: ...

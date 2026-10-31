@@ -226,7 +226,7 @@ class Collection:
                     stable = False
                     e.add_note(f"failure diagnostics: {diagnostic!r}")
                 if not faults:
-                    raise
+                    raise e
                 out[n] = {
                     "fault": str(e),
                     "debug": e.debug,

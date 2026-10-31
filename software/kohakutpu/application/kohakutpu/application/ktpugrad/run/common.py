@@ -10,8 +10,8 @@ from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.ktpugrad import uops as U
 from kohakutpu.application.ktpugrad.launch.config import view_forms_enabled
 from kohakutpu.application.ktpugrad.launch.views import _remap_view_access
-from kohakutpu.application.ktpugrad.plan import fold as F
-from kohakutpu.application.ktpugrad.plan.lower import Access, Plan, Refused
+from kohakutpu.application.ktpugrad.planning import fold as F
+from kohakutpu.application.ktpugrad.planning.lower import Access, Plan, Refused
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import rows as RW
 from kohakutpu.application.runtime.memory.storage import FLAT, Storage, StorageView
@@ -98,7 +98,12 @@ def _addr(dev, acc, o: Operand, bufs) -> tuple:
     if o.kind in ("row", "scalar"):
         at = FM.f16(dev, st, dt, _n(st, dt))
         return at, replace(o, offset=o.offset + off // np.dtype(dt).itemsize)
-    return FM.f16(dev, s, dt, _n(st, dt) if not off else s.nbytes // dt.itemsize), o
+    return (
+        FM.f16(
+            dev, s, dt, _n(st, dt) if not off else s.nbytes // np.dtype(dt).itemsize
+        ),
+        o,
+    )
 
 
 def _out(dev, plan: Plan, bufs) -> tuple:

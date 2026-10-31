@@ -18,10 +18,10 @@ from tinygrad.engine.jit import GraphRunner
 from tinygrad.renderer import Renderer
 
 from kohakutpu.application.ktpugrad import run as R
-from kohakutpu.application.ktpugrad.capture import recipe
-from kohakutpu.application.ktpugrad.plan import fold as F
-from kohakutpu.application.ktpugrad.plan.lower import Refused
-from kohakutpu.application.ktpugrad.plan.plans import PLANS, KTPUUnsupported
+from kohakutpu.application.ktpugrad.captured import recipe
+from kohakutpu.application.ktpugrad.planning import fold as F
+from kohakutpu.application.ktpugrad.planning.lower import Refused
+from kohakutpu.application.ktpugrad.planning.plans import PLANS, KTPUUnsupported
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime.memory.placement import Placement

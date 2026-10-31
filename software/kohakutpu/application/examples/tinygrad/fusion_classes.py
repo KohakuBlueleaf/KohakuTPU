@@ -16,7 +16,7 @@ from tinygrad import Tensor, tensor
 
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes.policy import ShapeClass
-from kohakutpu.application.ktpugrad.plan import lower
+from kohakutpu.application.ktpugrad.planning import lower
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime.class_library import ClassLibrary
 from kohakutpu.application.runtime.template_store import TemplateStore

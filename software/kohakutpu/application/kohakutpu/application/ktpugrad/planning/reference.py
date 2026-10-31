@@ -6,8 +6,8 @@ import numpy as np
 
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.ktpugrad import uops as U
-from kohakutpu.application.ktpugrad.plan import fold as F
-from kohakutpu.application.ktpugrad.plan.lower import Access, Plan
+from kohakutpu.application.ktpugrad.planning import fold as F
+from kohakutpu.application.ktpugrad.planning.lower import Access, Plan
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime.memory.storage import FLAT
 from kohakutpu.language.numerics import fp16

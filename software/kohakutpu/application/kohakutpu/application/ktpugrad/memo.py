@@ -12,7 +12,7 @@ import numpy as np
 from tinygrad.uop.ops import UOp
 
 from kohakutpu.application.kernels import expr as X
-from kohakutpu.application.ktpugrad.plan.lower import Access, Plan
+from kohakutpu.application.ktpugrad.planning.lower import Access, Plan
 from kohakutpu.language.config import ENV
 
 KEPT = 512

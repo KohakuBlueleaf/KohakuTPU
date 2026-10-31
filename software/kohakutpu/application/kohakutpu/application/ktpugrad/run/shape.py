@@ -11,8 +11,8 @@ from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.ktpugrad import uops as U
 from kohakutpu.application.ktpugrad.launch.config import _active_scope, elide_rule
 from kohakutpu.application.ktpugrad.memo import memo
-from kohakutpu.application.ktpugrad.plan import fold as F
-from kohakutpu.application.ktpugrad.plan.lower import Access, Plan, Refused
+from kohakutpu.application.ktpugrad.planning import fold as F
+from kohakutpu.application.ktpugrad.planning.lower import Access, Plan, Refused
 from kohakutpu.application.ktpugrad.run.common import (
     _addr,
     _dense,

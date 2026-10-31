@@ -13,8 +13,8 @@ from kohakutpu.application.ktpugrad.launch.config import (
     view_forms_enabled,
 )
 from kohakutpu.application.ktpugrad.memo import memo
-from kohakutpu.application.ktpugrad.plan import fold as F
-from kohakutpu.application.ktpugrad.plan.lower import Access, Plan
+from kohakutpu.application.ktpugrad.planning import fold as F
+from kohakutpu.application.ktpugrad.planning.lower import Access, Plan
 from kohakutpu.application.ktpugrad.run.common import (
     ROW_ALIGN,
     _dense,

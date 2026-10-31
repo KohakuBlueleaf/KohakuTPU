@@ -6,7 +6,7 @@ from tinygrad.helpers import perf_counter_us
 from tinygrad.uop import Ops
 
 from kohakutpu.application.ktpugrad import run as R
-from kohakutpu.application.ktpugrad.plan.plans import PLANS
+from kohakutpu.application.ktpugrad.planning.plans import PLANS
 
 
 def try_group(linear, ctx, used, inputs, held, rt, _on_ktpu):

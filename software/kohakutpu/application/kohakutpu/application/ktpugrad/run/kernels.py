@@ -11,9 +11,9 @@ from kohakutpu.application.kernels import matmul as MM
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.ktpugrad import uops as U
 from kohakutpu.application.ktpugrad.launch.config import _active_scope, elide_rule
-from kohakutpu.application.ktpugrad.plan import fold as F
-from kohakutpu.application.ktpugrad.plan import window as W
-from kohakutpu.application.ktpugrad.plan.lower import Access, Plan, Refused
+from kohakutpu.application.ktpugrad.planning import fold as F
+from kohakutpu.application.ktpugrad.planning import window as W
+from kohakutpu.application.ktpugrad.planning.lower import Access, Plan, Refused
 from kohakutpu.application.ktpugrad.run.common import (
     _addr,
     _dense,
@@ -521,7 +521,12 @@ def _rows(dev, plan: Plan, bufs) -> list:
     except RW.RowsError as e:
         raise Refused(str(e)) from None
     finally:
+        scope = _active_scope(dev)
         for t in tmps:
+            if scope is not None:
+                held = [k for k, v in scope.laid_cache.items() if v is t]
+                for k in held:
+                    del scope.laid_cache[k]
             t.free()
     return runs
 

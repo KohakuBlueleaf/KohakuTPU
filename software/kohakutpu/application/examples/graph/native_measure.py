@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import os
 import pickle
 import time
 from pathlib import Path
@@ -29,6 +28,7 @@ from kohakutpu.application.runtime.graph.native import (
     port_bytes,
 )
 from kohakutpu.application.runtime.machine import machine_of
+from kohakutpu.language.config import ENV
 from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
 from kohakutpu.stack.buffer import Buffer
@@ -303,7 +303,7 @@ def compile_artifact(args):
         high["dram"] = -(-high["dram"] // (1 << 20)) * (1 << 20)
         artifact = dict(
             machine=machine,
-            ring_depth=int(os.environ.get("KTPU_MM_EPILOGUE_RING", "0")),
+            ring_depth=int(ENV.get("KTPU_MM_EPILOGUE_RING", "0")),
             peak_flops=2
             * json.loads(machine)["machine"]["mg"]["count"]
             * json.loads(machine)["machine"]["mg"]["macs_per_cycle"],

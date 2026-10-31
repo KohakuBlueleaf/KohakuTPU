@@ -16,7 +16,7 @@ from kohakuaccel.driver.node.queue.client import FirmwareFatal, NodeError, OverB
 from kohakutpu.application.checks.kernels import op_summary
 from kohakutpu.application.ktpugrad import device as KD
 from kohakutpu.application.ktpugrad import run
-from kohakutpu.application.ktpugrad.plan import fold, lower
+from kohakutpu.application.ktpugrad.planning import fold, lower
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime.memory.storage import FLAT

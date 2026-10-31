@@ -5,9 +5,9 @@ from tinygrad.dtype import dtypes
 
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.ktpugrad import uops as U
-from kohakutpu.application.ktpugrad.plan import fold as F
-from kohakutpu.application.ktpugrad.plan import window as W
-from kohakutpu.application.ktpugrad.plan.lower import Access, Plan, Refused
+from kohakutpu.application.ktpugrad.planning import fold as F
+from kohakutpu.application.ktpugrad.planning import window as W
+from kohakutpu.application.ktpugrad.planning.lower import Access, Plan, Refused
 from kohakutpu.application.ktpugrad.run.common import _dense, _n, _size
 from kohakutpu.application.ktpugrad.run.moves import _gather_to, _move
 from kohakutpu.application.ktpugrad.run.shape import _f16_walk

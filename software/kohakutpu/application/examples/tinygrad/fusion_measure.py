@@ -30,8 +30,9 @@ from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels.vector import expr_key
 from kohakutpu.application.ktpugrad import run, seam
 from kohakutpu.application.ktpugrad.nn import Adam16
-from kohakutpu.application.ktpugrad.plan import fusion, lower, reference
+from kohakutpu.application.ktpugrad.planning import fusion, lower, reference
 from kohakutpu.application.runtime import device as D
+from kohakutpu.language.config import ENV
 from kohakutpu.stack import rs
 
 
@@ -277,8 +278,8 @@ def _measure(args):
                 width=args.width,
                 tokens=args.tokens,
                 initialized=args.initialized,
-                local_scratch=os.environ.get("KTPU_LOCAL_SCRATCH", "0"),
-                matmul_ring_depth=int(os.environ.get("KTPU_MATMUL_RING_DEPTH", "0")),
+                local_scratch=ENV.get("KTPU_LOCAL_SCRATCH", "0"),
+                matmul_ring_depth=int(ENV.get("KTPU_MATMUL_RING_DEPTH", "0")),
                 blocks=args.blocks,
                 seconds=seconds,
                 device_launches=(

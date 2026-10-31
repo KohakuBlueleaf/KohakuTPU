@@ -640,6 +640,7 @@ class SiliconCard(NodeCard):
                     k: (got[k], v) for k, v in rates.items() if abs(got[k] - v) > 1e-6
                 }
                 if off:
+                    t.close()
                     raise ClockMismatch(
                         f"node {n} is not at profile {want!r}: (now, want) {off}; "
                         f"set the clocks first (CardClocks.set_all({want!r}))"

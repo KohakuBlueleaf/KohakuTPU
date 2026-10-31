@@ -8,6 +8,7 @@ from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import relayout as RL
 from kohakutpu.application.ktpugrad import run as R
 from kohakutpu.application.ktpugrad import uops as U
+from kohakutpu.application.ktpugrad.run import kernels as RK
 from kohakutpu.application.runtime import rows as RW
 from kohakutpu.application.runtime import tree as TR
 
@@ -37,7 +38,7 @@ class ArithmeticPath:
             if dev is self.device:
                 m, n, k = plan.mnk
                 if self.materialized_reductions or any(
-                    isinstance(a.slot, tuple) and a.slot[0] in ("_tmp", "narrow")
+                    isinstance(a.slot, tuple) and a.slot[0] in ("tmp", "narrow")
                     for a in (plan.a, plan.b)
                 ):
                     self.unsupported.append(
@@ -192,13 +193,18 @@ class ArithmeticPath:
                 )
             return result
 
-        self.stack.enter_context(patch.object(R, "_product", observe_product))
+        for name, observer in (
+            ("_product", observe_product),
+            ("_materialise", observe_materialise),
+            ("_narrow", observe_narrow),
+            ("_flat", observe_flat),
+        ):
+            # `R` for the callers that test the name, `RK` for the calls.
+            self.stack.enter_context(patch.object(R, name, observer))
+            self.stack.enter_context(patch.object(RK, name, observer))
         self.stack.enter_context(patch.object(TR, "column", observe_column))
         self.stack.enter_context(patch.object(RW, "_launch", observe_launch))
         self.stack.enter_context(patch.object(RW, "_launch_wide", observe_launch_wide))
-        self.stack.enter_context(patch.object(R, "_materialise", observe_materialise))
-        self.stack.enter_context(patch.object(R, "_narrow", observe_narrow))
-        self.stack.enter_context(patch.object(R, "_flat", observe_flat))
         return self
 
     def __exit__(self, *exc):

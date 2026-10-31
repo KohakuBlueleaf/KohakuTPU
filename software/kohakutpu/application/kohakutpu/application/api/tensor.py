@@ -21,7 +21,7 @@ from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.ktpugrad import run as R
-from kohakutpu.application.ktpugrad.plan.lower import Access, Plan, Refused
+from kohakutpu.application.ktpugrad.planning.lower import Access, Plan, Refused
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import rows as RW

@@ -194,9 +194,9 @@ ALLOWED = {
         "kohakutpu.stack.x",
         "from kohakutpu.language.text import module",
     ),
-    "simulation imports native binding and driver": (
+    "simulation imports the stack and driver": (
         "kohakutpu.simulation.x",
-        "from kohakutpu.compiler import _rs\nimport kohakuaccel.driver.transport",
+        "from kohakutpu.stack.rs import _rs\nimport kohakuaccel.driver.transport",
     ),
     "third-party and stdlib": ("kohakuaccel.driver.x", "import numpy\nimport os"),
     "relative import inside the component": (
