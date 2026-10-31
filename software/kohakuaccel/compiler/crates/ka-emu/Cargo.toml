@@ -1,0 +1,24 @@
+[package]
+name = "ka-emu"
+description = "An RV64 emulator of the KohakuAccel node processor and its control region: runs firmware and the OS deterministically with no hardware."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+mutants = []
+
+[dependencies]
+
+[[test]]
+name = "firmware_hart"
+path = "../../../../tests/firmware/emu/hart.rs"
+
+[[test]]
+name = "firmware_probe"
+path = "../../../../tests/firmware/emu/probe.rs"
+
+[[test]]
+name = "firmware_queue"
+path = "../../../../tests/firmware/emu/queue.rs"

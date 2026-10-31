@@ -17,9 +17,9 @@ BOARD_ENV = "KOHAKUTPU_BOARD"
 
 ON_DEVICE_INIT: list = []
 
-#: `sim` the Verilated card, `card` the card itself, `offline` nothing
-#: attached (every run compiled, checked and encoded; nothing executed).
-KINDS = ("sim", "card", "offline", "os")
+#: `sim` Verilated, `card` the card, `offline` compiled, checked and encoded
+#: with nothing executed, `double` offline with L2 on the value simulator.
+KINDS = ("sim", "card", "offline", "os", "double")
 
 #: How a `card` device reaches the card (`card.TRANSPORTS`).
 TRANSPORT_ENV = "KOHAKUTPU_TRANSPORT"

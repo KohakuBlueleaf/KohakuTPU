@@ -3,8 +3,9 @@ default (``KOHAKUTPU_DEVICE=sim``, its model build from
 ``KOHAKUTPU_SIM_BUILD``), or the card itself (``KOHAKUTPU_DEVICE=card``)
 over ``KOHAKUTPU_TRANSPORT`` (jtag, the default, or xdma on a Linux host),
 or nothing attached (``KOHAKUTPU_DEVICE=offline``: every run compiled,
-checked and encoded, nothing executed). ``KOHAKUTPU_BOARD`` names the board
-each opens.
+checked and encoded, nothing executed), or ``KOHAKUTPU_DEVICE=double``: the
+same, each run's L2 on the value simulator. ``KOHAKUTPU_BOARD`` names the
+board each opens.
 
     dev = runtime.device()              # opened once, shared
     a = dev.alloc(nbytes)               # an address in the card's DRAM
@@ -57,6 +58,7 @@ from kohakutpu.application.runtime.device.common import (
 from kohakutpu.application.runtime.device.kernels import Kernels
 from kohakutpu.application.runtime.device.replay import Replay
 from kohakutpu.application.runtime.device.submission import Submission
+from kohakutpu.application.runtime.double import DoubleCard
 from kohakutpu.application.runtime.memory import package_homes
 from kohakutpu.application.runtime.native import direct as native_direct
 from kohakutpu.application.runtime.offline import OfflineCard
@@ -162,9 +164,9 @@ class Device(Kernels, Allocation, Submission, Replay):
                 raise ValueError("OS device adapter currently owns one node")
             self.build = None
             self.card = OSCard(board, os_session, os_units)
-        elif kind == "offline":
+        elif kind in ("offline", "double"):
             self.build = None
-            self.card = OfflineCard(
+            self.card = {"offline": OfflineCard, "double": DoubleCard}[kind](
                 board,
                 nodes=tuple(range(nodes)),
                 resident_mode=self._resident_mode,

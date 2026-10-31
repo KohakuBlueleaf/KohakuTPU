@@ -27,6 +27,7 @@ ktpu-l0.workspace = true
 ktpu-l1.workspace = true
 ktpu-l2.workspace = true
 ktpu-machine.workspace = true
+ktpu-sim.workspace = true
 ktpu-verify.workspace = true
 pyo3.workspace = true
 rayon.workspace = true

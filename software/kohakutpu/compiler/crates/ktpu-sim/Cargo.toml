@@ -1,0 +1,51 @@
+[package]
+name = "ktpu-sim"
+description = "Value simulators of the KohakuTPU levels: each runs a level's program as its stage's reference and shares no lowering with the compiler."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ktpu-isa.workspace = true
+ktpu-l0.workspace = true
+ktpu-l1.workspace = true
+ktpu-machine.workspace = true
+
+[dev-dependencies]
+ka-emu.workspace = true
+ktpu = { workspace = true, features = ["mutants"] }
+rayon.workspace = true
+serde_json.workspace = true
+
+[[test]]
+name = "l1_l0"
+path = "../../../../tests/stages/l1_l0/fixtures.rs"
+
+[[test]]
+name = "l1_l0_library"
+path = "../../../../tests/stages/l1_l0/library.rs"
+
+[[test]]
+name = "l2_l1_library"
+path = "../../../../tests/stages/l2_l1/library.rs"
+
+[[test]]
+name = "l2_l1"
+path = "../../../../tests/stages/l2_l1/fixtures.rs"
+
+[[test]]
+name = "l2_passes"
+path = "../../../../tests/stages/l2_passes/fixtures.rs"
+
+[[test]]
+name = "l1_schedule"
+path = "../../../../tests/stages/l1_schedule/fixtures.rs"
+
+[[test]]
+name = "firmware_package"
+path = "../../../../tests/firmware/emu/package.rs"
+
+[[test]]
+name = "anchors_core"
+path = "../../../../tests/anchors/core.rs"

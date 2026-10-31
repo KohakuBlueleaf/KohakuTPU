@@ -251,16 +251,27 @@ fn raise(py: Python<'_>, r: &StageRefused) -> PyErr {
     err
 }
 
-/// l2_of(graph_json, machine_json) -> str: the tracer's graph as L2 text
-/// (the pipeline's graph stage, uncached).
+/// l2_of(graph_json, machine_json, mutant=None) -> str: the tracer's graph as
+/// L2 text (the pipeline's graph stage, uncached).
 #[pyfunction]
-fn l2_of(py: Python<'_>, graph_json: &str, machine_json: &str) -> PyResult<String> {
+#[pyo3(signature = (graph_json, machine_json, mutant=None))]
+fn l2_of(
+    py: Python<'_>,
+    graph_json: &str,
+    machine_json: &str,
+    mutant: Option<&str>,
+) -> PyResult<String> {
     let m = machine(machine_json)?;
-    let got = py.detach(|| {
+    let lower = || {
         Stack
             .graph_to_l2(graph_json, &m)
             .map(|p| Stack.print_l2(&p))
+    };
+    let got = py.detach(|| match mutant {
+        Some(n) => ktpu::mutant::with(n, lower),
+        None => Ok(lower()),
     });
+    let got = got.map_err(PyValueError::new_err)?;
     got.map_err(|refusal| {
         raise(
             py,

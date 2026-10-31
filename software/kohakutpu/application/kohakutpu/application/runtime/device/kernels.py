@@ -104,6 +104,8 @@ class Kernels:
 
     def compile_graph(self, source):
         """Look for a certified class launch before the exact-graph fallback."""
+        if hasattr(self.card, "compile_graph"):
+            return self.card.compile_graph(source)
         machine = rs.machine_json(self.machine)
         if self.library is not None:
             if self.classes:

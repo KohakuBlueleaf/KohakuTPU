@@ -5,12 +5,14 @@ members = [
     "kohakuaccel/compiler/crates/ka-isa",
     "kohakuaccel/compiler/crates/ka-package",
     "kohakuaccel/compiler/crates/ka-debug",
+    "kohakuaccel/compiler/crates/ka-emu",
     "kohakutpu/compiler/crates/ktpu-machine",
     "kohakutpu/compiler/crates/ktpu-isa",
     "kohakutpu/compiler/crates/ktpu-l0",
     "kohakutpu/compiler/crates/ktpu-l1",
     "kohakutpu/compiler/crates/ktpu-l2",
     "kohakutpu/compiler/crates/ktpu-verify",
+    "kohakutpu/compiler/crates/ktpu-sim",
     "kohakutpu/compiler/crates/ktpu-graph",
     "kohakutpu/compiler/crates/ktpu-kernels",
     "kohakuaccel/compiler/crates/ka-cache",
@@ -29,12 +31,14 @@ ka-machine = { path = "kohakuaccel/compiler/crates/ka-machine" }
 ka-isa = { path = "kohakuaccel/compiler/crates/ka-isa" }
 ka-package = { path = "kohakuaccel/compiler/crates/ka-package" }
 ka-debug = { path = "kohakuaccel/compiler/crates/ka-debug" }
+ka-emu = { path = "kohakuaccel/compiler/crates/ka-emu" }
 ktpu-machine = { path = "kohakutpu/compiler/crates/ktpu-machine" }
 ktpu-isa = { path = "kohakutpu/compiler/crates/ktpu-isa" }
 ktpu-l0 = { path = "kohakutpu/compiler/crates/ktpu-l0" }
 ktpu-l1 = { path = "kohakutpu/compiler/crates/ktpu-l1" }
 ktpu-l2 = { path = "kohakutpu/compiler/crates/ktpu-l2" }
 ktpu-verify = { path = "kohakutpu/compiler/crates/ktpu-verify" }
+ktpu-sim = { path = "kohakutpu/compiler/crates/ktpu-sim" }
 ktpu-graph = { path = "kohakutpu/compiler/crates/ktpu-graph" }
 ktpu-kernels = { path = "kohakutpu/compiler/crates/ktpu-kernels" }
 ka-cache = { path = "kohakuaccel/compiler/crates/ka-cache" }
@@ -61,3 +65,10 @@ opt-level = 3
 [profile.release]
 lto = true
 codegen-units = 1
+
+# The test tiers: release speed, rebuilt in seconds.
+[profile.stage]
+inherits = "release"
+lto = "off"
+codegen-units = 16
+incremental = true

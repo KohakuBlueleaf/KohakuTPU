@@ -297,6 +297,9 @@ class Submission:
             submitting = True
             if hasattr(self.card, "submit"):
                 s.pending = self.card.submit(card)
+            elif hasattr(self.card, "run_compiled"):
+                phys = {k: self.mmu.resolve(v)[1] for k, v in full.items()}
+                s.result = self.card.run_compiled(submitted_compiled, phys)
             else:
                 s.result = self.card.run(card)
         except BaseException:
