@@ -93,6 +93,11 @@ pub const KNOBS: &[Knob] = &[
         group: Group::Kernel,
     },
     Knob {
+        name: "activation_any",
+        env: "KTPU_MM_ACTIVATION_ANY",
+        group: Group::Kernel,
+    },
+    Knob {
         name: "quant_ring",
         env: "KTPU_MM_QUANT_RING",
         group: Group::Kernel,
@@ -129,6 +134,8 @@ pub struct Knobs {
     /// A is f16, quantised in the kernel, where its packing is the vector
     /// cores' and its rows whole words.
     pub activation_fp16: bool,
+    /// A is f16 whichever backend packs it, its quant in `@stage`.
+    pub activation_any: bool,
     /// Under the ring with an f16 A: each row tile quantised into `@stage`
     /// slots as the waves reach it (1), or a wave ahead with its finite
     /// check deferred (2); 0 quantises the whole A first.
@@ -155,6 +162,7 @@ pub fn unrecorded() -> Knobs {
         split_vc: false,
         tail_bands: false,
         activation_fp16: false,
+        activation_any: false,
         quant_ring: 0,
         expr_cse: false,
     }
@@ -191,6 +199,7 @@ impl Knobs {
             "split_vc" => self.split_vc.into(),
             "tail_bands" => self.tail_bands.into(),
             "activation_fp16" => self.activation_fp16.into(),
+            "activation_any" => self.activation_any.into(),
             "quant_ring" => self.quant_ring.into(),
             "expr_cse" => self.expr_cse.into(),
             _ => unreachable!("a knob: {name}"),
@@ -216,6 +225,7 @@ impl Knobs {
             "split_vc" => self.split_vc = flag()?,
             "tail_bands" => self.tail_bands = flag()?,
             "activation_fp16" => self.activation_fp16 = flag()?,
+            "activation_any" => self.activation_any = flag()?,
             "quant_ring" => self.quant_ring = int()?,
             "expr_cse" => self.expr_cse = flag()?,
             _ => unreachable!("a knob: {name}"),
@@ -829,7 +839,8 @@ pub fn vector_packs(nk: i64, mach: &Machine) -> bool {
 /// under `knobs` (`activation_fp16`): its quant packs on the vector cores,
 /// which pad rows and columns in place, and A's rows are whole words.
 pub fn takes_f16(k: i64, nk: i64, knobs: &Knobs, mach: &Machine) -> bool {
-    knobs.activation_fp16 && vector_packs(nk, mach) && k % Hw::of(mach).lanes == 0
+    (knobs.activation_any || knobs.activation_fp16 && vector_packs(nk, mach))
+        && k % Hw::of(mach).lanes == 0
 }
 
 /// The checked quant of f16 `src` ([rows, K], rows whole words) into the
@@ -987,6 +998,9 @@ pub fn mm_kernel_made(
     if f16 {
         key_args.push(Py::str("activation_fp16"));
     }
+    if f16 && knobs.activation_any {
+        key_args.push(Py::str("activation_any"));
+    }
     if cse {
         key_args.push(Py::str("expr_cse"));
     }
@@ -1049,7 +1063,11 @@ pub fn mm_kernel_made(
         // An f16 A outside a quant ring: each batch quantised first.
         let mut quantised = canonical.clone();
         if f16 && ring.quant == 0 {
-            let qa = t.buffer(&sa, g::Dtype::Mx7a, lay_a.clone())?;
+            let qa = if knobs.activation_any {
+                t.buffer_in(&sa, g::Dtype::Mx7a, lay_a.clone(), g::BufSpace::Stage)?
+            } else {
+                t.buffer(&sa, g::Dtype::Mx7a, lay_a.clone())?
+            };
             let padded = mm.m < mm.mp || mm.k < mm.kp;
             for bi in 0..mm.bt {
                 let dst = qa.at(&[sl(bi * mm.mp, (bi + 1) * mm.mp), ALL])?;

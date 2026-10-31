@@ -9,11 +9,11 @@ KERNELS_KEPT = 1024
 _kernels: OrderedDict = OrderedDict()
 
 
-def copy_kernel(nbytes: int):
+def copy_kernel(nbytes: int, *, shape_class=None):
     """`nbytes` (whole words, the allocation's tail covering the rest) from
     ``src`` to ``dst`` by the mover. Returns ``(kernel, given)``."""
     words = -(-nbytes // 32)
-    kkey = ("copy", words, kt.Kernel.build)
+    kkey = ("copy", words, shape_class, kt.Kernel.build)
     hit = _kernels.get(kkey)
     if hit is not None:
         _kernels.move_to_end(kkey)
@@ -22,9 +22,27 @@ def copy_kernel(nbytes: int):
     given = {k: kt.TensorSpec.make((words, 16)) for k in ports}
 
     def body(src, dst):
-        kt.copy(dst, src)
+        if shape_class is not None:
+            kt.copy(
+                dst,
+                src,
+                walk=((words, 32),),
+                dwalk=((words, 32),),
+                classed=True,
+                node_loop=2,
+            )
+        else:
+            kt.copy(dst, src)
 
-    got = (kt.Kernel.build(V.name("copy", words, None), body, ports), given)
+    result = kt.Kernel.build(V.name("copy", words, shape_class), body, ports)
+    if shape_class is not None:
+        result.class_info = {
+            "copy": True,
+            "padded_rows": 0,
+            "padded_columns": 0,
+            "core_policy": shape_class.cores,
+        }
+    got = (result, given)
     if KERNELS_KEPT > 0:
         _kernels[kkey] = got
         while len(_kernels) > KERNELS_KEPT:
@@ -39,6 +57,8 @@ def walk_kernel(
     dst_bytes: int,
     dlevels: tuple,
     dat: int,
+    *,
+    shape_class=None,
 ):
     """``dst`` walked by `dlevels` from byte `dat` := ``src`` walked by
     `levels` from byte `at` (``(count, byte stride)``, outermost first, the
@@ -46,7 +66,7 @@ def walk_kernel(
     levels = tuple((int(a), int(b)) for a, b in levels)
     dlevels = tuple((int(a), int(b)) for a, b in dlevels)
     sw, dw = -(-src_bytes // 32), -(-dst_bytes // 32)
-    kkey = ("walk", sw, levels, at, dw, dlevels, dat, kt.Kernel.build)
+    kkey = ("walk", sw, levels, at, dw, dlevels, dat, shape_class, kt.Kernel.build)
     hit = _kernels.get(kkey)
     if hit is not None:
         _kernels.move_to_end(kkey)
@@ -55,14 +75,30 @@ def walk_kernel(
     given = {"src": kt.TensorSpec.make((sw, 16)), "dst": kt.TensorSpec.make((dw, 16))}
 
     def body(src, dst):
-        kt.copy(dst, src, walk=levels, at=at, dwalk=dlevels, dat=dat)
+        kt.copy(
+            dst,
+            src,
+            walk=levels,
+            at=at,
+            dwalk=dlevels,
+            dat=dat,
+            classed=shape_class is not None,
+            node_loop=2 if shape_class else False,
+        )
 
-    got = (
-        kt.Kernel.build(
-            V.name("walk", sw, levels, at, dw, dlevels, dat, None), body, ports
-        ),
-        given,
+    result = kt.Kernel.build(
+        V.name("walk", sw, levels, at, dw, dlevels, dat, shape_class), body, ports
     )
+    if shape_class is not None:
+        result.class_info = {
+            "walk": True,
+            "levels": len(levels),
+            "dlevels": len(dlevels),
+            "padded_rows": 0,
+            "padded_columns": 0,
+            "core_policy": shape_class.cores,
+        }
+    got = (result, given)
     if KERNELS_KEPT > 0:
         _kernels[kkey] = got
         while len(_kernels) > KERNELS_KEPT:

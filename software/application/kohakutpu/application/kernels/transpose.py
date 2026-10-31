@@ -39,28 +39,41 @@ def masks() -> np.ndarray:
     return _MASKS
 
 
-def transpose_kernel(nb: int, A: int, B: int, cores: int):
+def transpose_kernel(nb: int, A: int, B: int, cores: int, *, shape_class=None):
     """Ports ``x`` (f16 [nb, A, B] as words), ``mask`` (`masks()`), ``y``
     (f16 [nb, B, A] as words). Returns ``(kernel, given)``."""
     if A % 16 or B % 16:
         raise ValueError(f"a transpose of {A} x {B}: both multiples of 16")
-    kkey = ("transpose", nb, A, B, cores, V.split, kt.Kernel.build)
+    kkey = ("transpose", nb, A, B, cores, shape_class, V.split, kt.Kernel.build)
     hit = _kernels.get(kkey)
     if hit is not None:
         _kernels.move_to_end(kkey)
         return hit
     words = nb * A * B // 16
+    lines = words // 8
     ports = {"x": kt.In(words, 16), "mask": kt.In(2, 128), "y": kt.Out(words, 16)}
     given = {
         "x": kt.TensorSpec.make((words, 16)),
         "mask": kt.TensorSpec.make((2, 128)),
         "y": kt.TensorSpec.make((words, 16)),
     }
+    trips = -(-lines // ROWS)
+    ncore = cores if shape_class and shape_class.cores == "all" else min(cores, trips)
+    padded = -(-trips // ncore) * ncore * ROWS if shape_class else trips * ROWS
 
     def body(x, mask, y):
-        emit(x, mask, 0, y, nb, A, B, cores)
+        emit(x, mask, 0, y, nb, A, B, cores, shape_class=shape_class)
 
-    got = (kt.Kernel.build(V.name("transpose", nb, A, B, None), body, ports), given)
+    result = kt.Kernel.build(V.name("transpose", nb, A, B, shape_class), body, ports)
+    if shape_class:
+        result.class_info = {
+            "transpose": True,
+            "cores": ncore,
+            "padded_rows": padded - lines,
+            "padded_columns": 0,
+            "core_policy": shape_class.cores,
+        }
+    got = (result, given)
     if KERNELS_KEPT > 0:
         _kernels[kkey] = got
         while len(_kernels) > KERNELS_KEPT:
@@ -78,6 +91,7 @@ def emit(
     B: int,
     cores: int,
     *,
+    shape_class=None,
     scratch_space="dram",
     scratch_node=None,
 ):
@@ -90,25 +104,40 @@ def emit(
     P, rg, cw = 2 * B, A // 4, B // 16
     sub = B // 4  # sub-tiles in a row group of x
     trips = -(-lines // ROWS)
-    padded = trips * ROWS
+    ncore = cores if shape_class and shape_class.cores == "all" else min(cores, trips)
+    padded = -(-trips // ncore) * ncore * ROWS if shape_class else trips * ROWS
     placement = {"space": scratch_space}
     if scratch_node is not None:
         placement["node"] = scratch_node
     s = kt.buffer((padded, 128), "f16", **placement)
     t = kt.buffer((padded, 128), "f16", **placement)
     z = kt.buffer((words, 16), "f16", **placement)
+    if shape_class:
+        seed = kt.buffer((16,), "f16", **placement)
+        kt.fill_value(seed, 0)
+        kt.copy(
+            s,
+            seed,
+            walk=((padded, 0), (8, 0)),
+            dwalk=((padded, 256), (8, 32)),
+            classed=True,
+            node_loop=True,
+        )
     kt.gt4(
         s,
         x,
         walk=[(nb, A * P), (rg, 4 * P), (cw, 32), (4, P)],
         dwalk=[(nb, rg * cw * 128), (rg, cw * 128), (cw, 128)],
+        node_loop=shape_class is not None,
     )
     used, start, n = V.split(trips, cores)
-    for c in kt.par(used, on=kt.vc):
+    if shape_class:
+        used = ncore
+    for c in kt.par(used, on=kt.vc, classed=shape_class is not None):
         m1 = kt.unpack(kt.load(mask[m0 : m0 + 1, :]))
         m2 = kt.unpack(kt.load(mask[m0 + 1 : m0 + 2, :]))
-        for k in kt.range(n(c)):
-            r = (start(c) + k) * ROWS
+        for k in kt.range((trips + used - 1 - c) // used if shape_class else n(c)):
+            r = (c + k * used) * ROWS if shape_class else (start(c) + k) * ROWS
             v = kt.unpack(kt.load(s[r : r + ROWS, :]))
             a = kt.where(m1, kt.xlane(v, 5), v)
             kt.store(t[r : r + ROWS, :], kt.where(m2, kt.xlane(a, 10), a))
@@ -124,6 +153,7 @@ def emit(
             (4, sub * 32),
         ],
         dwalk=[(nb, sub * (A // 16) * 128), (sub, (A // 16) * 128), (A // 16, 128)],
+        node_loop=shape_class is not None,
     )
     kt.copy(
         y,
@@ -135,6 +165,8 @@ def emit(
             (A // 16, 128),
         ],
         dwalk=[(words, 32)],
+        classed=shape_class is not None,
+        node_loop=2 if shape_class else False,
     )
 
 
