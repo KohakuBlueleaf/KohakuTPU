@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kohakuaccel-compiler"
+version = "0.1.0"
+description = "The KohakuAccel backend framework: instruction-layout toolkit"
+requires-python = ">=3.13"
+dependencies = ["numpy>=1.26"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kohakuaccel*"]
+namespaces = true

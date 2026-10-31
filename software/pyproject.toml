@@ -6,13 +6,16 @@
 [project]
 name = "kohaku-software"
 version = "0.1.0"
-description = "KohakuTPU software: language, compiler, driver, simulation, application, template"
+description = "KohakuTPU software: the KohakuAccel framework, KohakuTPU and the template project"
 requires-python = ">=3.13"
 dependencies = [
+    "kohakuaccel-compiler",
+    "kohakuaccel-driver",
+    "kohakuaccel-simulation",
     "kohakutpu-language",
-    "kohaku-compiler",
-    "kohaku-driver",
-    "kohaku-simulation",
+    "kohakutpu-compiler",
+    "kohakutpu-driver",
+    "kohakutpu-simulation",
     "kohakutpu-application",
     "toyaccel",
 ]
@@ -24,13 +27,26 @@ dev = ["pytest>=8.0", "pytest-xdist>=3.6", "ruff>=0.6", "black>=24.0"]
 package = false
 
 [tool.uv.workspace]
-members = ["language", "compiler", "driver", "simulation", "application", "template"]
+members = [
+    "kohakuaccel/compiler",
+    "kohakuaccel/driver",
+    "kohakuaccel/simulation",
+    "kohakutpu/language",
+    "kohakutpu/compiler",
+    "kohakutpu/driver",
+    "kohakutpu/simulation",
+    "kohakutpu/application",
+    "template",
+]
 
 [tool.uv.sources]
+kohakuaccel-compiler = { workspace = true }
+kohakuaccel-driver = { workspace = true }
+kohakuaccel-simulation = { workspace = true }
 kohakutpu-language = { workspace = true }
-kohaku-compiler = { workspace = true }
-kohaku-driver = { workspace = true }
-kohaku-simulation = { workspace = true }
+kohakutpu-compiler = { workspace = true }
+kohakutpu-driver = { workspace = true }
+kohakutpu-simulation = { workspace = true }
 kohakutpu-application = { workspace = true }
 toyaccel = { workspace = true }
 
@@ -63,7 +79,17 @@ extend-immutable-calls = ["kt.In", "kt.Out", "kt.auto", "kohakutpu.language.dsl.
 # Pylance / pyright: every member's import root, so `kohakutpu.*` resolves
 # across members however the editor's interpreter installed them.
 [tool.pyright]
-extraPaths = ["language", "compiler", "driver", "simulation", "application", "template"]
+extraPaths = [
+    "kohakuaccel/compiler",
+    "kohakuaccel/driver",
+    "kohakuaccel/simulation",
+    "kohakutpu/language",
+    "kohakutpu/compiler",
+    "kohakutpu/driver",
+    "kohakutpu/simulation",
+    "kohakutpu/application",
+    "template",
+]
 
 [tool.pytest.ini_options]
 # Every component has a `tests` directory; importlib names a test module by

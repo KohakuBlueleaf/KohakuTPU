@@ -16,11 +16,14 @@ extend-exclude = ["software", "temp-remove", "temp"]
 # root (the namespace packages install through a finder it cannot run).
 [tool.pyright]
 extraPaths = [
-    "software/language",
-    "software/compiler",
-    "software/driver",
-    "software/simulation",
-    "software/application",
+    "software/kohakuaccel/compiler",
+    "software/kohakuaccel/driver",
+    "software/kohakuaccel/simulation",
+    "software/kohakutpu/language",
+    "software/kohakutpu/compiler",
+    "software/kohakutpu/driver",
+    "software/kohakutpu/simulation",
+    "software/kohakutpu/application",
     "software/template",
 ]
 

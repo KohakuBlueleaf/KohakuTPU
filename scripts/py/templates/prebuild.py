@@ -140,7 +140,7 @@ def vit_tiny(
     **recipe,
 ):
     example = runpy.run_path(
-        str(ROOT / "software/application/examples/tinygrad/vit_tiny.py")
+        str(ROOT / "software/kohakutpu/application/examples/tinygrad/vit_tiny.py")
     )
     model = example["seeded_model"](
         blocks=12, seed=17, width=width, image_size=224, realize_ops=realize_ops

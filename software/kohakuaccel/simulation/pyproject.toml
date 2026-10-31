@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kohakuaccel-simulation"
+version = "0.1.0"
+description = "The package interpreter and the simulated machine"
+requires-python = ">=3.13"
+dependencies = ["numpy>=1.26", "kohakuaccel-driver"]
+
+[tool.uv.sources]
+kohakuaccel-driver = { workspace = true }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kohakuaccel*"]
+namespaces = true

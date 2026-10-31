@@ -33,15 +33,15 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
-!software/rust/crates/*/src/build/
-!software/rust/crates/*/build/
+!software/*/compiler/crates/*/src/build/
+!software/*/compiler/crates/*/build/
 develop-eggs/
 dist/
 downloads/
 eggs/
 .eggs/
 lib/
-!software/firmware/**/lib/
+!software/*/firmware/**/lib/
 !sim/**/lib/
 lib64/
 parts/
@@ -208,12 +208,11 @@ cython_debug/
 *.pyd.old-*
 *.pdb
 
-!software/os/lib/
+!software/kohakuaccel/os/lib/
 # KohakuAccel OS run outputs (run_card/run_core --out/--json)
-software/os/tools/*/
-software/os/tools/*.json
-!software/os/tools/hotpaths/
-!software/os/tools/ostpu/
+software/*/os/tools/*/
+software/*/os/tools/*.json
+!software/kohakutpu/os/tools/ostpu/
 
 # golden witnesses live in the Hugging Face dataset (golden/fetch.py)
 temp-remove/software/rust/golden/**/*.json

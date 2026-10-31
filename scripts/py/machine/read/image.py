@@ -22,8 +22,8 @@ import gen_card
 
 TOPS = ROOT / "src" / "kohakutpu" / "top" / "generated"
 SRU_TOPS = ROOT / "src" / "kohakutpu" / "sru" / "top" / "generated"
-FW = ROOT / "software" / "firmware"
-FW_INC = FW / "kohakuaccel" / "include" / "ka"
+FW = ROOT / "software"
+FW_INC = FW / "kohakuaccel" / "firmware" / "include" / "ka"
 FW_BUILD = ROOT / "build" / "fw"
 MEASURED = ROOT / "machines" / "measured.json"
 
@@ -38,9 +38,9 @@ def _lines(path: Path) -> tuple:
 
 
 def _firmware_build():
-    spec = importlib.util.spec_from_file_location("fw_build", FW / "build.py")
+    spec = importlib.util.spec_from_file_location("fw_build", FW / "kohakutpu" / "firmware" / "build.py")
     if spec is None or spec.loader is None:
-        raise SystemExit(f"cannot load {FW / 'build.py'}")
+        raise SystemExit(f"cannot load {FW / 'kohakutpu' / 'firmware' / 'build.py'}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -157,7 +157,7 @@ class Image:
         return value, f"{rel(FW_INC / path)}:{line}"
 
     def fw_src_define(self, path: str, name: str):
-        """A #define of a firmware source file (`path` under software/firmware)."""
+        """A #define of a firmware source file (`path` under software/)."""
         value, line = header.defines(FW / path)[name]
         return value, f"{rel(FW / path)}:{line}"
 
@@ -189,7 +189,7 @@ class Image:
 
     def fw_parts(self):
         mod = _firmware_build()
-        return list(mod.IMAGES[self.fw]), "software/firmware/build.py:IMAGES"
+        return list(mod.IMAGES[self.fw]), "software/kohakutpu/firmware/build.py:IMAGES"
 
     def fw_memory(self):
         mod = _firmware_build()
@@ -197,7 +197,7 @@ class Image:
         return {
             "imem_bytes": imem,
             "spad_bytes": spad,
-        }, "software/firmware/build.py:MEMORY"
+        }, "software/kohakutpu/firmware/build.py:MEMORY"
 
     def fw_unit_classes(self):
         parts = self.fw_parts()[0]
@@ -206,7 +206,7 @@ class Image:
             units = FW / part
             if units.name == "units":
                 classes += sorted(p.stem for p in units.glob("*.c"))
-        return classes, "software/firmware/build.py:IMAGES"
+        return classes, "software/kohakutpu/firmware/build.py:IMAGES"
 
     def measured(self, key: str):
         data = json.loads(MEASURED.read_text(encoding="utf-8"))

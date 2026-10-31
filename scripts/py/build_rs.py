@@ -21,7 +21,7 @@ import time
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-COMPILER = ROOT / "software" / "compiler"
+COMPILER = ROOT / "software" / "kohakutpu" / "compiler"
 PACKAGE = COMPILER / "kohakutpu" / "compiler"
 WHEELS = ROOT / "build" / "rs-wheels"
 #: Each build's cargo features of crate ktpu, and its own cargo target dir

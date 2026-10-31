@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kohakutpu-simulation"
+version = "0.1.0"
+description = "KohakuTPU's package reader and Verilator interfaces"
+requires-python = ">=3.13"
+dependencies = ["numpy>=1.26", "kohakuaccel-simulation", "kohakutpu-driver", "kohakutpu-compiler"]
+
+[tool.uv.sources]
+kohakuaccel-simulation = { workspace = true }
+kohakutpu-driver = { workspace = true }
+kohakutpu-compiler = { workspace = true }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kohakutpu*"]
+namespaces = true

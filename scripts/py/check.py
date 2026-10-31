@@ -34,11 +34,14 @@ from concurrent.futures import ThreadPoolExecutor
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 #: The software workspace's members (software/pyproject.toml).
 SOFTWARE_MEMBERS = (
-    "language",
-    "compiler",
-    "driver",
-    "simulation",
-    "application",
+    "kohakuaccel/compiler",
+    "kohakuaccel/driver",
+    "kohakuaccel/simulation",
+    "kohakutpu/language",
+    "kohakutpu/compiler",
+    "kohakutpu/driver",
+    "kohakutpu/simulation",
+    "kohakutpu/application",
     "template",
 )
 # The repo venv, NOT whatever launched this: it is the interpreter with the

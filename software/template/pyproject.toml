@@ -7,12 +7,12 @@ name = "toyaccel"
 version = "0.1.0"
 description = "A toy accelerator on the KohakuAccel framework: the template a project starts from"
 requires-python = ">=3.13"
-dependencies = ["kohaku-compiler", "kohaku-driver", "kohaku-simulation"]
+dependencies = ["kohakuaccel-compiler", "kohakuaccel-driver", "kohakuaccel-simulation"]
 
 [tool.uv.sources]
-kohaku-compiler = { workspace = true }
-kohaku-driver = { workspace = true }
-kohaku-simulation = { workspace = true }
+kohakuaccel-compiler = { workspace = true }
+kohakuaccel-driver = { workspace = true }
+kohakuaccel-simulation = { workspace = true }
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["maturin>=1.8,<2"]
+build-backend = "maturin"
+
+[project]
+name = "kohakutpu-compiler"
+version = "0.1.0"
+description = "The Rust stack as kohakutpu.compiler._rs, and its Python adapters"
+requires-python = ">=3.13"
+dependencies = ["numpy>=1.26", "kohakutpu-language"]
+
+[tool.uv.sources]
+kohakutpu-language = { workspace = true }
+
+# The Python packages here plus the Rust stack (crates/, crate ktpu) as the
+# extension module kohakutpu.compiler._rs:
+#   cd software/kohakutpu/compiler && VIRTUAL_ENV=../../../.venv maturin develop --uv
+[tool.maturin]
+manifest-path = "crates/ktpu/Cargo.toml"
+python-source = "."
+module-name = "kohakutpu.compiler._rs"
+features = ["python"]

@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kohakuaccel-driver"
+version = "0.1.0"
+description = "Host driver of the KohakuAccel framework: transports, node queues, discovery"
+requires-python = ">=3.13"
+dependencies = ["numpy>=1.26"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kohakuaccel*"]
+namespaces = true

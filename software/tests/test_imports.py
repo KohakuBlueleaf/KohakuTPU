@@ -18,7 +18,17 @@ import sys
 import pytest
 
 SOFTWARE = pathlib.Path(__file__).resolve().parents[1]
-MEMBERS = ("language", "compiler", "driver", "simulation", "application", "template")
+MEMBERS = (
+    "kohakuaccel/compiler",
+    "kohakuaccel/driver",
+    "kohakuaccel/simulation",
+    "kohakutpu/language",
+    "kohakutpu/compiler",
+    "kohakutpu/driver",
+    "kohakutpu/simulation",
+    "kohakutpu/application",
+    "template",
+)
 SIDES = ("kohakuaccel", "kohakutpu", "toyaccel")
 COMPONENTS = ("language", "compiler", "stack", "driver", "simulation", "application")
 

@@ -125,7 +125,7 @@ flowchart LR
 |---|---|
 | **compiler** (`kohakuaccel.compiler`) | the ISA toolkit (a field table becomes an encoder, decoder, validator and disassembler), the L1 program, the package format and builder, the machine description |
 | **driver** (`kohakuaccel.driver`) | transports (JTAG, PCIe, a Verilated card), discovery, node boot, the node queue, the card daemon |
-| **firmware** (`software/firmware/kohakuaccel/`) | the RV64 dispatcher: queue service, package interpreter, unit enumeration and a unit-class registry |
+| **firmware** (`software/kohakuaccel/firmware/`) | the RV64 dispatcher: queue service, package interpreter, unit enumeration and a unit-class registry |
 | **simulation** (`kohakuaccel.simulation`) | the package interpreter and a simulated machine, so a project runs before it has RTL |
 
 The framework imports nothing from any project, and a test fails the moment it
@@ -152,7 +152,7 @@ flowchart LR
   races before it reaches the card
   ([verify.md](docs/projects/kohakutpu/verify.md)).
 - **Firmware:** KohakuTPU writes no dispatcher. It registers two unit classes
-  (`software/firmware/kohakutpu/units/`, the matmul cluster and the vector
+  (`software/kohakutpu/firmware/units/`, the matmul cluster and the vector
   core) with the dispatcher the platform provides.
 
 ```python
@@ -255,7 +255,7 @@ KohakuTPU kernels run on a Verilated card model (setup:
 ```bash
 python scripts/py/card_model.py card_v9_1n_v2 --build-root build/v9g -d VEC_CORE_V2 -G DRAM_WORDS=1048576
 python -m kohakutpu.application.ktpugrad --autoload       # once per environment
-DEV=KTPU python software/application/examples/tinygrad/quickstart.py
+DEV=KTPU python software/kohakutpu/application/examples/tinygrad/quickstart.py
 ```
 
 For the RTL, **Verilator is the inner loop**, **xsim is the gate of record**
@@ -293,7 +293,7 @@ tests/  scripts/     Verilog benches; build, simulate, measure
 
 `src/kohakutpu/` is Verilog and `software/<component>/kohakutpu/` is Python
 (and the firmware C): `src/kohakutpu/vector2/v2_core.v` is hardware,
-`software/compiler/kohakutpu/compiler/encode/vector.py` is its encoder.
+`software/kohakutpu/compiler/kohakutpu/compiler/encode/vector.py` is its encoder.
 
 ## License
 

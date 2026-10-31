@@ -240,7 +240,7 @@ def fw_debug(img):
     )
     feats, src = img.fw_flags("package/debug.h", "KA_DEBUG_F_")
     return {"image": name, "features": feats, "last": last}, (
-        f"software/firmware/build.py:DEFINES; {src}"
+        f"software/kohakutpu/firmware/build.py:DEFINES; {src}"
     )
 
 
@@ -251,9 +251,9 @@ def fw_package_copy_bytes(img):
     if given:
         return (
             int(given[-1].removeprefix(flag), 0),
-            "software/firmware/build.py:DEFINES",
+            "software/kohakutpu/firmware/build.py:DEFINES",
         )
-    return img.fw_src_define("kohakuaccel/package/interp.c", "KA_PKG_COPY_BYTES")
+    return img.fw_src_define("kohakuaccel/firmware/package/interp.c", "KA_PKG_COPY_BYTES")
 
 
 def fw_queue_enum(img, name, prefix):
