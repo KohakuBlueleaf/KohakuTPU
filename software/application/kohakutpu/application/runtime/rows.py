@@ -12,8 +12,6 @@ import numpy as np
 
 from kohakutpu.application.kernels import convert as C
 from kohakutpu.application.kernels import expr as X
-from kohakutpu.application.kernels import prepared as P
-from kohakutpu.application.kernels import relayout as RL
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes.policy import ShapeClass
 from kohakutpu.application.kernels.vector import Operand
@@ -90,10 +88,24 @@ def _launch(dev, e, operands, binds, R, W, out, info, cores):
     return run, given, nblk
 
 
-def _prepared(dev, e, operands, binds, R, W, out, out_at, info, cores):
+def _made_by(step) -> dict:
+    """The generator's plan of one `forms.Step` (`Step::made_by`)."""
+    plan = dict(
+        src_n=step.n,
+        walk=step.walk,
+        at=step.at,
+        dwalk=step.dwalk,
+        dat=step.dat,
+        m=step.m,
+        keep=False,
+    )
+    return {"made_by": {"gen": "relayout.plan", "args": plan}}
+
+
+def _prepared(dev, e, operands, binds, R, W, out, out_at, info):
     """One launch of `e` with each bound `forms.Pending` made inside it
-    (`kernels.prepared.rows_kernel`); None when a pending one's steps are
-    not planned (nothing run)."""
+    (the generator `prepared.rows_kernel`); None when a pending one's steps
+    are not planned (nothing run)."""
     made, steps, alias, first = {}, {}, {}, {}
     for i in range(len(operands)):
         b = binds.get(f"in{i}")
@@ -110,13 +122,25 @@ def _prepared(dev, e, operands, binds, R, W, out, out_at, info, cores):
     plain = {k: v for k, v in binds.items() if not isinstance(v, FM.Pending)}
     ops, plain = _based(list(operands), plain, "in")
     ops = [operands[i] if i in made or i in alias else o for i, o in enumerate(ops)]
-    hw = RL.hw_for(dev)
-    k, given = P.rows_kernel(e, tuple(ops), R, W, out, cores, made, hw, alias)
     plain["out"] = out_at
     for i, plans in made.items():
         plain[f"x{i}"] = steps[i][0].src
         plain |= FM.step_binds(dev, plans, f"p{i}_")
-    return FM.launch(dev, k, given, plain, info=dict(info, prepared=sorted(made)))
+    return FM.generated.launch(
+        dev,
+        "prepared.rows_kernel",
+        {
+            "e": FM.generated.expr(e),
+            "operands": [vars(o) for o in ops],
+            "R": R,
+            "W": W,
+            "out": vars(out),
+            "made": {str(i): [_made_by(s) for s in steps[i]] for i in made},
+            "alias": {str(i): j for i, j in alias.items()},
+        },
+        plain,
+        info=dict(info, prepared=sorted(made)),
+    )
 
 
 def _based(operands, binds: dict, port: str) -> tuple:
@@ -158,7 +182,7 @@ def run(
 ) -> list:
     """Compute `e` (`Load(i)` reading ``binds["in{i}"]`` as `operands[i]`)
     into `out` at `out_at`; returns the runs. A bound `forms.Pending` is
-    made inside the kernel when it is one launch (`kernels.prepared`),
+    made inside the kernel when it is one launch (`prepared.rows_kernel`),
     else by its own relayouts first."""
     _whole_rows(operands, W)
     info = dict(info or {})
@@ -173,7 +197,7 @@ def run(
     partials = blocks > 1 and out.kind == "row" and len(reds) == 1
     if pend:
         if FM.PREPARED and blocks == 1:
-            got = _prepared(dev, e, operands, binds, R, W, out, out_at, info, cores)
+            got = _prepared(dev, e, operands, binds, R, W, out, out_at, info)
             if got is not None:
                 return [got]
         if not (FM.PREPARED and partials):
@@ -225,9 +249,7 @@ def run(
         info1 = dict(info, blocks=nblk)
         one = None
         if pend:
-            one = _prepared(
-                dev, red, operands, binds, R, W, part, parts[0], info1, cores
-            )
+            one = _prepared(dev, red, operands, binds, R, W, part, parts[0], info1)
             if one is None:
                 binds = {
                     k: (v.made().addr if k in pend else v) for k, v in binds.items()

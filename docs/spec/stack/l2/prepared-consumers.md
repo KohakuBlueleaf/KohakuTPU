@@ -5,7 +5,8 @@ and destination walks. It does not allocate its logical tensor until a reader
 requires one. A consumer can execute those relayout steps inside its package,
 using the same relayout planner as a standalone conversion.
 
-`kernels.prepared` supplies this mechanism to rows kernels. The single-package
+The generator `prepared.rows_kernel` supplies this mechanism to rows kernels.
+`kernels.prepared` supplies it to Python's kernels. The single-package
 column reduction tree, `matmul.quant_kernel`, and `matmul.mm_kernel` epilogue
 extras also accept prepared plans.
 They preserve their numerical operations: a tree retains each FP16 partial

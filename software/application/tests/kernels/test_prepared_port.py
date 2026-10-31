@@ -1,10 +1,12 @@
-"""The Rust kernels that make their own operands (`gen::prepared`) against
-Python's.
+"""The Rust kernels that make their own operands (`gen::prepared`).
 
-- `prepared.rows_kernel`: the same graph, name and statements over made
-  operands of one and two relayout steps, a twice-read made buffer
-  (`alias`), plain operands beside made ones, statistic outputs with a tail
-  band, and trips that split unevenly over the cores.
+- `prepared.rows_kernel`: its graph pinned by hash over made operands of one
+  and two relayout steps, a twice-read made buffer (`alias`), plain operands
+  beside made ones, statistic outputs with a tail band, and trips that split
+  unevenly over the cores. The generator has no Python twin.
+
+Against Python's:
+
 - `reductions.column_tree_kernel` with `made`: the same graph.
 - `matmul.mm_kernel` with `made`: the same ports, specs and statements (the
   name carries knobs Python spells differently).
@@ -12,13 +14,13 @@ Python's.
   ports and made-input statements; after them, Rust and Python agree on
   exactly the statements they agree on without `prepared`."""
 
+import hashlib
 import json
 
 import pytest
 
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import matmul as MM
-from kohakutpu.application.kernels import prepared as P
 from kohakutpu.application.kernels import relayout as RL
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.vector import Operand
@@ -160,7 +162,8 @@ def bare(node):
     return node
 
 
-def rust_graph(case) -> dict:
+def graph_hash(case, mutant=None) -> str:
+    """The sha256 head of the generator's graph, `where` aside."""
     e, ops, R, W, out, steps, alias = case
     call = {
         "e": emit.expr(e),
@@ -177,24 +180,33 @@ def rust_graph(case) -> dict:
         "alias": {str(i): j for i, j in alias.items()},
     }
     got = rs._rs.generate(
-        "prepared.rows_kernel", json.dumps(call), rs.machine_json(MACHINE)
+        "prepared.rows_kernel", json.dumps(call), rs.machine_json(MACHINE), mutant
     )
-    return bare(json.loads(got))
+    text = json.dumps(bare(json.loads(got)), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
-def python_graph(case) -> dict:
-    e, ops, R, W, out, steps, alias = case
-    made = {
-        i: [RL.plan(*s[:4], s[4], s[5], False, HW) for s in ss]
-        for i, ss in steps.items()
-    }
-    k, given = P.rows_kernel(e, ops, R, W, out, CORES, made, HW, alias)
-    return bare(json.loads(k.trace(given, machine=K.dsl_machine(MACHINE)).graph_json))
+#: name -> `graph_hash` on `BOARD`, each the graph Python's tracer made.
+GRAPHS = {
+    "halves_of_one_buffer": "6202bd0affe814f6",
+    "made_beside_plain": "0e77cfc9590f340b",
+    "plain_beside_made": "2fa354535caa80ce",
+    "repitched_misaligned_odd_rows": "973642479d8136ab",
+    "repitched_scaled": "905f21ada43c6d42",
+    "transposed_sum": "6974f1850f64169d",
+    "transposed_sum_tail": "70f3bda8a9074ff0",
+    "two_steps": "36bed14ca1aef15d",
+}
 
 
 @pytest.mark.parametrize("name", sorted(CASES))
-def test_rust_kernel_is_python_kernel(name):
-    assert rust_graph(CASES[name]) == python_graph(CASES[name])
+def test_rows_kernel_graph_is_pinned(name):
+    assert graph_hash(CASES[name]) == GRAPHS[name]
+
+
+@pytest.mark.parametrize("name", sorted(CASES))
+def test_mutant_port_pad_moves_the_pin(name):
+    assert graph_hash(CASES[name], "api.vector/port_pad") != GRAPHS[name]
 
 
 #: name -> (e, operands, R, W, out, {operand: [step]}): `prepared_tree`'s

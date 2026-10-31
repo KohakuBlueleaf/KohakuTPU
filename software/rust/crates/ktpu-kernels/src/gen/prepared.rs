@@ -1,6 +1,5 @@
-//! A rows kernel whose laid-out operands it makes itself
-//! (`kernels/prepared.py`): one launch, where the operand's relayout alone
-//! took one (or two, with a repitch).
+//! A rows kernel whose laid-out operands it makes itself: one launch, where
+//! the operand's relayout alone took one (or two, with a repitch).
 
 use super::relayout::{self, scratch_rows, shape_repr};
 use super::vector::{self as v, Bufs, Kind, Operand};

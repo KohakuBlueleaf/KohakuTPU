@@ -1270,12 +1270,13 @@ def relayout_kernel(pl: Plan, hw: Hw):
     return got
 
 
-def emit_steps(plans: tuple, src, tables: dict, prefix: str, hw: Hw, destination=None):
-    """Statements of `plans` inside the kernel being traced, each into a
-    scratch of lines: the first reading `src` (a word table), each next the
-    one before (its lines copied into a word table); `tables` maps
-    ``{prefix}index{i}`` / ``{prefix}mask{i}`` to their ports. Every buffer on
-    the grain (L2.REL.013). Returns the last plan's lines buffer."""
+def emit_steps(plans: tuple, src, tables: dict, prefix: str, hw: Hw, destination):
+    """Statements of `plans` inside the kernel being traced, the last into
+    `destination`, each before it into a scratch of lines: the first reading
+    `src` (a word table), each next the one before (its lines copied into a
+    word table); `tables` maps ``{prefix}index{i}`` / ``{prefix}mask{i}`` to
+    their ports. Every buffer on the grain (L2.REL.013). Returns
+    `destination`."""
     lanes, word = hw.lanes, hw.word
 
     def scratch(n: int, width: int):
@@ -1289,7 +1290,7 @@ def emit_steps(plans: tuple, src, tables: dict, prefix: str, hw: Hw, destination
             cur = w
         dst = (
             destination
-            if destination is not None and i == len(plans) - 1
+            if i == len(plans) - 1
             else scratch(-(-p.dst_words // hw.line), hw.line_values)
         )
         bufs = {"src": cur, "dst": dst}

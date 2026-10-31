@@ -12,11 +12,12 @@ mutant too (`legacy_default/`, `legacy_before/`).
 
 Prediction, for each golden whose default recording differs:
 - everything outside the runs' steps, and each run's `end`, is `before/`'s;
-- each launch reading made operands (`prepared.rows_kernel`, or a `made`
-  argument on `reductions.column_tree_kernel` / `matmul.mm_kernel`) has
-  Python's graph (`P.rows_kernel`, `LR.column_tree_kernel`,
+- each launch with a `made` argument on `reductions.column_tree_kernel` /
+  `matmul.mm_kernel` has Python's graph (`LR.column_tree_kernel`,
   `MM.mm_kernel`; the product's name aside: Python spells its knobs
   differently), its plans `R.plan` of the recorded `relayout.plan` calls;
+- a `prepared.rows_kernel` launch has the generator's own graph, which
+  `test_prepared_port` pins; its tables are checked as the others';
 - each relayout launch is one `before/` launches with the same moves
   (source elements to destination elements, whatever the walks' level
   grouping), each at most once;
@@ -45,7 +46,6 @@ from pathlib import Path
 
 import numpy as np
 from kohakutpu.application.kernels import matmul as MM
-from kohakutpu.application.kernels import prepared as P
 from kohakutpu.application.kernels import relayout as R
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.plan import emit
@@ -125,14 +125,6 @@ class Checker:
         for a call that makes nothing."""
         gen, a = call["gen"], call["args"]
         made = {int(i): plans_of(ps, self.hw) for i, ps in a.get("made", {}).items()}
-        if gen == "prepared.rows_kernel":
-            ops = tuple(Operand(**o) for o in a["operands"])
-            alias = {int(i): j for i, j in a["alias"].items()}
-            k = P.rows_kernel(
-                emit.parse_expr(a["e"]["expr"]), ops, a["R"], a["W"], Operand(**a["out"]),
-                self.cores, made, self.hw, alias,
-            )  # fmt: skip
-            return self.graph(*k), True
         if not made:
             return None
         if gen == "reductions.column_tree_kernel":
@@ -186,6 +178,9 @@ class Checker:
                     assert json.dumps(s["table"]["array"]) in allowed, (name, "table")
             for launch in launches:
                 call = launch.get("call") or {}
+                if call.get("gen") == "prepared.rows_kernel":
+                    made_here += 1
+                    continue
                 got = self.python(call) if call else None
                 if got is not None:
                     want, named = got

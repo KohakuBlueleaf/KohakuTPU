@@ -14,13 +14,13 @@ buffer are caught there.
 """
 
 from collections import Counter
+from dataclasses import replace
+from math import prod
 
 import numpy as np
 import pytest
 from tinygrad.tensor import Tensor
 
-from kohakutpu.application.kernels import prepared as P
-from kohakutpu.application.kernels import relayout as RL
 from kohakutpu.application.ktpugrad import run as R
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
@@ -147,7 +147,7 @@ def test_prepared_on_the_card(dev, monkeypatch, name, record_property):
     """The card (model): numpy (float32) within the case's budget -- an
     MXFP7 product the attention ruling's 0.03, f16 sums 2e-3 -- and the
     unprepared run within the same budget of it (a rows kernel made from
-    `kernels.prepared` may sum in another order; the owner's ruling,
+    `prepared.rows_kernel` may sum in another order; the owner's ruling,
     2026-10-26: precision in a controlled range, not bit identity). Max
     abs / rel recorded."""
     make, want, mx7 = CASES[name]
@@ -225,11 +225,26 @@ def test_ordered_laid_read_on_the_card(dev, monkeypatch, stale, record_property)
 
 
 def test_mutant_steps_skipped_is_caught_on_the_card(dev, monkeypatch):
-    """The steps not run: the consumer reads the source as it lies."""
-    monkeypatch.setattr(RL, "emit_steps", lambda plans, src, *a, **k: src)
-    monkeypatch.setattr(P, "_kernels", type(P._kernels)())
+    """The steps' source walks lost: the consumer reads the source as it lies."""
+    prepared = RW._prepared
+    ran = []
+
+    def lost(step):
+        counts = [c for c, _ in step.walk]
+        walk = tuple((c, prod(counts[i + 1 :])) for i, c in enumerate(counts))
+        return replace(step, walk=walk, at=0)
+
+    def as_it_lies(device, e, operands, binds, *rest):
+        for v in binds.values():
+            if isinstance(v, FM.Pending):
+                v.steps = tuple(lost(s) for s in v.steps)
+        ran.append(prepared(device, e, operands, binds, *rest))
+        return ran[-1]
+
+    monkeypatch.setattr(RW, "_prepared", as_it_lies)
     make, want, _ = CASES["rows_transposed_sum"]
     got = run_card(make, True, monkeypatch)
+    assert ran and None not in ran
     assert close(got, want()) > 2e-3
 
 
@@ -237,18 +252,17 @@ def test_mutant_second_half_from_the_first_is_caught_on_the_card(dev, monkeypatc
     """Down the rows level by level: the twice-read buffer's second reader at
     the first's offset (the alias reading the top half twice). One package
     reads no buffer twice, so this tree needs it off."""
-    orig = P.rows_kernel
+    orig = FM.generated.launch
     moved = []
 
-    def unshifted(e, operands, R, W, out, cores, made, hw, alias=None):
-        ops = list(operands)
-        for i, j in (alias or {}).items():
-            ops[i] = ops[j]
+    def unshifted(device, generator, arguments, bindings, **kw):
+        for i, j in arguments.get("alias", {}).items():
+            arguments["operands"][int(i)] = arguments["operands"][j]
             moved.append(i)
-        return orig(e, tuple(ops), R, W, out, cores, made, hw, alias)
+        return orig(device, generator, arguments, bindings, **kw)
 
     monkeypatch.setenv("KTPU_SINGLE_PACKAGE_AST", "0")
-    monkeypatch.setattr(P, "rows_kernel", unshifted)
+    monkeypatch.setattr(FM.generated, "launch", unshifted)
     make, want, _ = CASES["rows_down_sum"]
     got = run_card(make, True, monkeypatch)
     assert moved
