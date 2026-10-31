@@ -28,16 +28,6 @@ pub(super) fn lower_band(
         body, par, env, name, t, band, remat, ahead, plan, land, hold, pin, fits,
     )
     .map(|(m, p, a)| (Arc::new(m), p, a));
-    #[cfg(all(test, feature = "witness"))]
-    {
-        let old = crate::lower::vector::ctx::lower_band(
-            body, par, env, name, t, band, remat, ahead, plan, land, hold, pin,
-        );
-        assert_eq!(
-            format!("{:?}", got.as_ref().map(|c| (&c.0.source, &c.1, &c.2))),
-            format!("{:?}", old.as_ref().map(|c| (&c.0, &c.1, &c.2)))
-        );
-    }
     got
 }
 
@@ -101,11 +91,6 @@ fn image(
     print::image(name, names, body, c.body.vregs).unwrap()
 }
 
-#[cfg(feature = "witness")]
-pub(super) fn read_reference(c: TextCand, name: &str, vregs: u32) -> VResult<Cand> {
-    Ok((Arc::new(encode::read_image(&c.0, name, vregs)?), c.1, c.2))
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn modulo(
     body: &Body,
@@ -115,34 +100,7 @@ pub(super) fn modulo(
     plan: &Plan,
     land: Option<i64>,
     t: &Target,
-    #[cfg(feature = "witness")] witnessed: Option<(&witness::Witness, &Arc<str>)>,
-    #[cfg(feature = "witness")] reference_only: bool,
 ) -> VResult<std::result::Result<Cand, String>> {
-    #[cfg(feature = "witness")]
-    if reference_only {
-        return match modulo_legacy(body, par, env, name, plan, land, t, witnessed)? {
-            Ok(c) => Ok(Ok(read_reference(c, name, body.vregs)?)),
-            Err(why) => Ok(Err(why)),
-        };
-    }
-    #[cfg(feature = "witness")]
-    let reference = witnessed.map(|(w, input)| {
-        let ledger = witness::Witness::new(witness::compare);
-        let got = modulo_legacy(body, par, env, name, plan, land, t, Some((&ledger, input)));
-        (got, w.modulo_reference(input, ledger.report()))
-    });
-    #[cfg(all(test, feature = "witness"))]
-    let old = modulo_legacy(
-        body,
-        par,
-        env,
-        name,
-        plan,
-        land,
-        t,
-        #[cfg(feature = "witness")]
-        None,
-    );
     let got = modulo_module(
         body,
         par,
@@ -151,37 +109,8 @@ pub(super) fn modulo(
         plan,
         land,
         t,
-        #[cfg(feature = "witness")]
-        witnessed
-            .zip(reference.as_ref())
-            .map(|((w, input), (_, r))| (w, input, r)),
     );
-    #[cfg(feature = "witness")]
-    if let Some((old, report)) = reference {
-        same_modulo(&got, &old);
-        if let Some((w, input)) = witnessed {
-            w.complete_modulo(input, &report);
-        }
-    }
-    #[cfg(all(test, feature = "witness"))]
-    same_modulo(&got, &old);
     got
-}
-
-#[cfg(feature = "witness")]
-fn same_modulo(
-    got: &VResult<std::result::Result<Cand, String>>,
-    old: &VResult<std::result::Result<TextCand, String>>,
-) {
-    let actual = got
-        .as_ref()
-        .map(|r| r.as_ref().map(|c| (&c.0.source, &c.1, &c.2)));
-    let expected = old.as_ref().map(|r| r.as_ref().map(|c| (&c.0, &c.1, &c.2)));
-    assert_eq!(
-        format!("{actual:?}"),
-        format!("{expected:?}"),
-        "modulo choice/refusal"
-    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -193,11 +122,6 @@ fn modulo_module(
     plan: &Plan,
     land: Option<i64>,
     t: &Target,
-    #[cfg(feature = "witness")] witnessed: Option<(
-        &witness::Witness,
-        &Arc<str>,
-        &witness::ModuloReference,
-    )>,
 ) -> VResult<std::result::Result<Cand, String>> {
     let no = |w: &str| Ok(Err(w.to_string()));
     let (pre, lp) = split(body, par)?;
@@ -377,40 +301,11 @@ fn modulo_module(
                 }
             };
             let module = Arc::new(image(&c, name, head, &events, &pinned));
-            #[cfg(feature = "witness")]
-            if let Some((w, input, reference)) = witnessed {
-                w.modulo_image(
-                    input,
-                    witness::Kind::Modulo {
-                        ii: p.ii,
-                        k: p.k,
-                        tail: tail.into(),
-                    },
-                    &module,
-                    reference,
-                    body,
-                    name,
-                    params.len(),
-                    t,
-                );
-            }
             let thrown = match on("l2.vector/modulo-unthrottled") {
                 true => std::borrow::Cow::Borrowed(&*module),
                 false => throttled(&module, t)?,
             };
             let encoded = encode::words_of(&thrown, name, params.len(), &t.machine);
-            #[cfg(feature = "witness")]
-            if let Some((w, input, _)) = witnessed {
-                w.encoded(
-                    input,
-                    witness::Kind::Modulo {
-                        ii: p.ii,
-                        k: p.k,
-                        tail: tail.into(),
-                    },
-                    &encoded,
-                );
-            }
             match encoded {
                 Err(e) => {
                     tried.push(format!("II {} K {} {tail}: {}", p.ii, p.k, first_line(&e)));

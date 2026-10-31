@@ -182,7 +182,6 @@ dependencies = [
  "ktpu-l1",
  "ktpu-l2",
  "ktpu-machine",
- "ktpu-plan",
  "ktpu-verify",
  "pyo3",
  "rayon",
@@ -293,40 +292,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
-]
-
-[[package]]
-name = "ktpu-plan"
-version = "0.1.0"
-dependencies = [
- "ktpu-graph",
- "ktpu-isa",
- "ktpu-kernels",
- "ktpu-machine",
- "ktpu-plan",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "ktpu-spec"
-version = "0.1.0"
-dependencies = [
- "ktpu",
- "ktpu-graph",
- "ktpu-isa",
- "ktpu-kernels",
- "ktpu-l0",
- "ktpu-l1",
- "ktpu-l2",
- "ktpu-machine",
- "ktpu-plan",
- "ktpu-verify",
- "regex",
- "serde",
- "serde_json",
- "sha2",
 ]
 
 [[package]]

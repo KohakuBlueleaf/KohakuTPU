@@ -18,23 +18,12 @@ mod unpack;
 
 mod modulo_typed;
 
-#[cfg(feature = "witness")]
-use super::indent;
-#[cfg(feature = "witness")]
-pub use band::image_text;
-#[cfg(feature = "witness")]
-pub use band::lower_band;
-
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use indexmap::IndexMap;
 use ktpu_l1::text::{Env, Stmt, Term};
 
-#[cfg(feature = "witness")]
-use super::gen::{Code, Gen};
-#[cfg(feature = "witness")]
-use super::tree::{compact, interleave, quantiser_order, tree, tree4, Steps};
 use super::{
     banks, code_of, count_of, guard, is_in, kreg, mode_of, number, numbers, ops_of, risk_of,
     value_name, Desc, FKey, Guard, Guards, Plan, PlanX, RPar, VErr, VResult, Val, Walk, ZeroSign,
@@ -469,42 +458,6 @@ pub fn l1val(d: Option<&Desc>, t: &Type, buf: i64, tg: &Target) -> Val {
         }
     }
     v
-}
-
-/// The pack of register `i` for a store through `d`.
-#[cfg(feature = "witness")]
-pub fn pack_line(d: &Desc, buf: i64, i: i64, mode: &str, dtype: &str) -> String {
-    if d.rows_w != 0 && !on("l2.vector/pack-walk-plain") {
-        let nb = d.rows_w / 2;
-        let (b, j) = (i / nb, i % nb);
-        return format!(
-            "vpack {{0}} -> l1[{}] f16 walk=({}, 1)",
-            buf + 4 * b * d.rows_w + 2 * j,
-            d.rows_w
-        );
-    }
-    if dtype == "f32" {
-        return format!("vpack {{0}} -> l1[{}] f32", buf + i * 16);
-    }
-    format!("vpack {{0}} -> l1[{}] {mode}", buf + i * 8)
-}
-
-/// The unpack of register `i` of an @l1 value.
-#[cfg(feature = "witness")]
-pub fn unpack_line(src: &Val, i: i64) -> String {
-    if src.rows_w == 0 {
-        let mode = if src.unpk.is_empty() {
-            &src.mode
-        } else {
-            &src.unpk
-        };
-        return format!("vunpk {{0}} <- l1[{}] {mode}", src.buf + i * src.per);
-    }
-    let nb = src.rows_w / 2;
-    let (b, j) = (i / nb, i % nb);
-    let base = src.buf + if src.bcast { 0 } else { 4 * b * src.rows_w } + 2 * j;
-    let s0 = if src.bcast { 0 } else { src.rows_w };
-    format!("vunpk {{0}} <- l1[{base}] f16 walk=({s0}, 1)")
 }
 
 mod walks_typed;

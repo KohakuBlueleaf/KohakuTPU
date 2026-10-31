@@ -1,9 +1,6 @@
 //! Load and store views: a view's byte offset, and the walks of `tile=` and
 //! MXFP7 buffers.
 
-#[cfg(any(test, feature = "witness"))]
-use std::fmt;
-
 use super::*;
 
 /// Descriptor dimensions in order: (byte stride, count).
@@ -13,23 +10,6 @@ pub struct Walk(pub Vec<(i64, i64)>);
 impl Walk {
     pub fn flat(stride: i64, count: i64) -> Self {
         Self(vec![(stride, count)])
-    }
-}
-
-/// The descriptor's walk text inside its outer parentheses.
-#[cfg(any(test, feature = "witness"))]
-impl fmt::Display for Walk {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let [(s, n)] = self.0.as_slice() {
-            return write!(f, "{s}, {n}");
-        }
-        for (i, (s, n)) in self.0.iter().enumerate() {
-            if i != 0 {
-                f.write_str(", ")?;
-            }
-            write!(f, "({s}, {n})")?;
-        }
-        Ok(())
     }
 }
 

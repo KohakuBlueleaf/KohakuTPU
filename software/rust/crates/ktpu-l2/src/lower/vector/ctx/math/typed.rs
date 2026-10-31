@@ -4,9 +4,6 @@ use super::*;
 use crate::lower::vector::ctx::emit::typed::{symbol, Emitter};
 use crate::lower::vector::gen::typed::{self as ir, Select, Symbol};
 
-#[cfg(all(test, feature = "witness"))]
-mod tests;
-
 fn result(
     g: &mut Emitter,
     op: &str,

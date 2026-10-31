@@ -4,8 +4,6 @@ use super::*;
 use crate::lower::vector::gen::typed::{self as ir, Event, Select, Symbol};
 
 mod iteration;
-#[cfg(all(test, feature = "witness"))]
-mod tests;
 
 #[derive(Default)]
 pub(in crate::lower::vector::ctx) struct Emitter {

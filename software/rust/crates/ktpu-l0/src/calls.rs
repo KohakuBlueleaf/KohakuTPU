@@ -1,15 +1,83 @@
-//! The `l0.pkg.build` runner: `PackageBuilder` calls by their Python
-//! signatures (positional arguments, then keywords, then defaults).
+//! `PackageBuilder` calls by name, in the forms `_rs.package_build` takes:
+//! positional arguments, then keywords, then defaults.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 
-use super::json::{arr, coord, describe, flag, hx, lines, pairs, refused, u, u_or, word, words};
-use super::Port;
 use crate::build::{AddrField, Addresses, Increment};
 use crate::error::Refusal;
 use crate::format::{Alu, Cond, Kind, Op, Step, ANY_UNIT};
 use crate::word::Word;
 use crate::PackageBuilder;
+
+/// A JSON int, bool, or `"0x.."` / `"-0x.."` / decimal string; None for
+/// anything else.
+fn try_num(v: &Value) -> Option<i128> {
+    match v {
+        Value::Number(n) => n
+            .as_i64()
+            .map(i128::from)
+            .or_else(|| n.as_u64().map(i128::from)),
+        Value::String(s) => {
+            let (neg, s) = match s.strip_prefix('-') {
+                Some(r) => (true, r),
+                None => (false, s.as_str()),
+            };
+            let x = match s.strip_prefix("0x") {
+                Some(h) => i128::from_str_radix(h, 16).ok()?,
+                None => s.parse().ok()?,
+            };
+            Some(if neg { -x } else { x })
+        }
+        Value::Bool(b) => Some(*b as i128),
+        _ => None,
+    }
+}
+
+fn num(v: &Value) -> Result<i128, String> {
+    try_num(v).ok_or_else(|| format!("not a number: {v}"))
+}
+
+/// `num` as the 64-bit two's complement value Python's `& MASK64` takes.
+fn u(v: &Value) -> Result<u64, String> {
+    num(v).map(|x| x as u64)
+}
+
+/// `u`, or `d` when `v` is absent or null.
+fn u_or(v: Option<&Value>, d: u64) -> Result<u64, String> {
+    match v {
+        None | Some(Value::Null) => Ok(d),
+        Some(x) => u(x),
+    }
+}
+
+fn word(v: &Value) -> Result<Word, String> {
+    match v {
+        Value::String(s) if s.starts_with("0x") => {
+            Word::from_hex(s).ok_or_else(|| format!("not a word: {s}"))
+        }
+        _ => u(v).map(Word::from_u64),
+    }
+}
+
+fn arr(v: &Value) -> Result<&Vec<Value>, String> {
+    v.as_array().ok_or_else(|| format!("not a list: {v}"))
+}
+
+fn words(v: &Value) -> Result<Vec<Word>, String> {
+    arr(v)?.iter().map(word).collect()
+}
+
+fn pairs(v: &Value) -> Result<Vec<(u64, u64)>, String> {
+    arr(v)?.iter().map(|p| Ok((u(&p[0])?, u(&p[1])?))).collect()
+}
+
+fn coord(v: &Value) -> Result<(u32, u32), String> {
+    Ok((u(&v[0])? as u32, u(&v[1])? as u32))
+}
+
+fn flag(v: Option<&Value>, d: bool) -> bool {
+    v.and_then(Value::as_bool).unwrap_or(d)
+}
 
 /// A parameter and its default (JSON text), none when required.
 type Param = (&'static str, Option<&'static str>);
@@ -489,50 +557,4 @@ pub fn builder(spec: &Value, f: &crate::Facts) -> Result<PackageBuilder, String>
         Some(c) => Some(coord(c)?),
     };
     Ok(b)
-}
-
-/// `PackageBuilder` calls; the package, the calls' returns, bindings.
-pub fn run(input: &Value, m: Option<&ktpu_machine::Machine>) -> Port {
-    let f = super::facts(m)?;
-    let spec = input.get("builder").unwrap_or(&Value::Null);
-    if spec.get("credit").is_none() && !crate::mutant::on("l0.build/default_credit") {
-        return Ok(json!({"refused": "TypeError"}));
-    }
-    let mut b = builder(spec, &f)?;
-    let mut results = Vec::new();
-    for c in arr(input.get("calls").unwrap_or(&json!([])))? {
-        let c = arr(c)?;
-        let name = c[0].as_str().ok_or("call name")?;
-        let mut args: Vec<Value> = c[1..].to_vec();
-        let kw = match args.last() {
-            Some(Value::Object(o)) => {
-                let o = o.clone();
-                args.pop();
-                o
-            }
-            _ => Map::new(),
-        };
-        match call(&mut b, name, &named(name, &args, &kw)?)? {
-            Ok(r) => results.push(r.map_or(Value::Null, |v| json!(v))),
-            Err(e) => return Ok(refused(&e)),
-        }
-    }
-    let opts = input.get("build").cloned().unwrap_or(json!({}));
-    let pkg = b.build(
-        flag(opts.get("defaults"), true),
-        flag(opts.get("checksum"), false),
-    );
-    let raw = match pkg.to_bytes(&f) {
-        Ok(r) => r,
-        Err(e) => return Ok(refused(&e)),
-    };
-    let mut out = json!({
-        "results": results,
-        "package": describe(&pkg),
-        "bindings": b.bindings().iter().map(|&v| hx(v as i128)).collect::<Vec<_>>(),
-    });
-    if flag(input.get("lines"), false) {
-        out["lines"] = json!(lines(&raw));
-    }
-    Ok(super::keys(out, input))
 }

@@ -205,6 +205,3 @@ pub fn rotate(mut code: Vec<Event>, copies: u32, core: &Core) -> Vec<Event> {
     }
     code
 }
-
-#[cfg(all(test, feature = "witness"))]
-mod tests;

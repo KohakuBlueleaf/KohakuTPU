@@ -1,42 +1,10 @@
 //! Typed allocation with explicit metadata ordering and a test-only legacy trace.
 
 use super::gen::typed::Event;
-#[cfg(all(test, feature = "witness"))]
-use super::Code;
 use super::{HashMap, HashSet, VErr, VResult};
 use ktpu_l1::text::Term;
-#[cfg(all(test, feature = "witness"))]
-use std::cell::RefCell;
 
 type Trace = Vec<(String, u32)>;
-#[cfg(all(test, feature = "witness"))]
-thread_local! {
-    static TRACE: RefCell<Option<Trace>> = const { RefCell::new(None) };
-}
-
-#[cfg(all(test, feature = "witness"))]
-pub(super) fn record(s: &str, r: u32) {
-    TRACE.with_borrow_mut(|trace| {
-        if let Some(trace) = trace {
-            trace.push((s.into(), r));
-        }
-    });
-}
-
-#[cfg(all(test, feature = "witness"))]
-pub(super) fn reference(
-    code: &[Code],
-    pinned: &HashSet<String>,
-    regs: u32,
-) -> (VResult<Vec<String>>, Trace) {
-    TRACE.with_borrow_mut(|trace| {
-        assert!(trace.is_none());
-        *trace = Some(vec![]);
-    });
-    let result = super::assign(code, pinned, regs);
-    let trace = TRACE.with_borrow_mut(|trace| trace.take().unwrap());
-    (result, trace)
-}
 
 fn resolve(t: &mut Term, reg: &HashMap<String, u32>) {
     match t {
@@ -95,8 +63,6 @@ fn allocate(
                 let d = dying.remove(0);
                 let r = reg[d];
                 reg.insert(s.clone(), r);
-                #[cfg(all(test, feature = "witness"))]
-                _trace.push((s.clone(), r));
                 continue;
             }
             if free.is_empty() {
@@ -104,8 +70,6 @@ fn allocate(
             }
             let r = free.remove(0);
             reg.insert(s.clone(), r);
-            #[cfg(all(test, feature = "witness"))]
-            _trace.push((s.clone(), r));
         }
         let mut stmt = stmt.clone();
         for a in &mut stmt.args {

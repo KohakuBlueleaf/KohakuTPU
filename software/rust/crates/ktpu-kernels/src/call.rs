@@ -18,8 +18,16 @@ use crate::kernel::Kernel;
 use crate::trace::{fail, R};
 use ktpu_graph as g;
 use ktpu_machine::Machine;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
+
+/// A generator call: `{gen: "vector.rows_kernel", args: {...}}`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Call {
+    pub gen: String,
+    pub args: Value,
+}
 
 fn arg<'a>(a: &'a Value, k: &str) -> R<&'a Value> {
     match a.get(k) {

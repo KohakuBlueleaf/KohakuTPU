@@ -4,8 +4,8 @@
 
 use crate::stack::{CardStack, Stack};
 use crate::{default_cache, Backend, Cache, Compiled, Input, Refused as StageRefused, Stage};
+use ktpu_kernels::call::Call;
 use ktpu_machine::Machine;
-use ktpu_plan::program::Call;
 use pyo3::create_exception;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -1085,7 +1085,7 @@ fn l1_cycles(l1_text: &str, name: &str, machine_json: &str) -> PyResult<i64> {
 }
 
 /// read_composed(mode, read_json, launches_json, machine_json) -> bool:
-/// `ktpu_plan::run::reads::composed` of `{"gen", "args"}` calls.
+/// `ktpu_kernels::composed::composed` of `{"gen", "args"}` calls.
 #[pyfunction]
 fn read_composed(
     mode: &str,
@@ -1101,7 +1101,7 @@ fn read_composed(
         .ok_or_else(|| PyValueError::new_err(format!("a composed mode {mode:?}")))?;
     let root = cache(None);
     let cost = |c: &Call| built_cycles(c, &m, &root);
-    Ok(ktpu_plan::run::reads::composed(
+    Ok(ktpu_kernels::composed::composed(
         mode, &read, &launches, &m, &cost,
     ))
 }

@@ -13,6 +13,7 @@ mutants = []
 [dependencies]
 ktpu-graph.workspace = true
 ktpu-machine.workspace = true
+serde.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha1_smol = "1"
 

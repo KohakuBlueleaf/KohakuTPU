@@ -9,11 +9,9 @@ members = [
     "crates/ktpu-verify",
     "crates/ktpu-graph",
     "crates/ktpu-kernels",
-    "crates/ktpu-plan",
     "crates/ktpu-cache",
     "crates/ktpu-debug",
     "crates/ktpu",
-    "crates/ktpu-spec",
 ]
 
 [workspace.package]
@@ -31,7 +29,6 @@ ktpu-l2 = { path = "crates/ktpu-l2" }
 ktpu-verify = { path = "crates/ktpu-verify" }
 ktpu-graph = { path = "crates/ktpu-graph" }
 ktpu-kernels = { path = "crates/ktpu-kernels" }
-ktpu-plan = { path = "crates/ktpu-plan" }
 ktpu-cache = { path = "crates/ktpu-cache" }
 ktpu-debug = { path = "crates/ktpu-debug" }
 ktpu = { path = "crates/ktpu" }

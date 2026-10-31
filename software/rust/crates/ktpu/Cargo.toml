@@ -23,7 +23,6 @@ stack = [
     "dep:ktpu-verify",
     "dep:ktpu-graph",
     "dep:ktpu-kernels",
-    "dep:ktpu-plan",
 ]
 python = ["stack", "dep:pyo3", "dep:ktpu-debug", "dep:sha2"]
 # The wasm-bindgen exports of the JSON compile path (`json`), for
@@ -41,7 +40,6 @@ mutants = [
     "ktpu-verify/mutants",
     "ktpu-graph/mutants",
     "ktpu-kernels/mutants",
-    "ktpu-plan/mutants",
 ]
 
 [dependencies]
@@ -54,7 +52,6 @@ ktpu-l2 = { workspace = true, optional = true }
 ktpu-verify = { workspace = true, optional = true }
 ktpu-graph = { workspace = true, optional = true }
 ktpu-kernels = { workspace = true, optional = true }
-ktpu-plan = { workspace = true, optional = true }
 regex = "1"
 ktpu-debug = { workspace = true, optional = true }
 rayon.workspace = true

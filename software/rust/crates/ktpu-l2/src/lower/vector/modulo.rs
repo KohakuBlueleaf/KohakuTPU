@@ -14,17 +14,11 @@ mod sched;
 
 use ktpu_l1::sched::timing::Params;
 
-#[cfg(feature = "witness")]
-use super::pat;
 use crate::target::Target;
 
-#[cfg(feature = "witness")]
-pub use emit::emit;
 pub(super) use emit::typed as emit_typed;
 pub use emit::{Ring, TAILS};
 use ops::link;
-#[cfg(feature = "witness")]
-pub use ops::parse;
 pub use ops::typed::derive;
 pub use ops::MOp;
 pub use sched::{plan, Plan};

@@ -34,7 +34,6 @@ mod program;
 mod queue;
 mod recipe;
 mod recipe_table;
-mod spec;
 mod submit;
 mod wire_recipe;
 
@@ -94,6 +93,5 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     submit::register(m)?;
     program::register(m)?;
     poll::register(m)?;
-    spec::register(m)?;
     Ok(())
 }

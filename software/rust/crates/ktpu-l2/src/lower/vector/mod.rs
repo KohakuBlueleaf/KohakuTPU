@@ -12,8 +12,6 @@ pub mod ctx;
 pub mod encode;
 pub mod gen;
 pub mod modulo;
-#[cfg(feature = "witness")]
-pub mod pat;
 pub mod range;
 pub mod search;
 pub mod sign;
@@ -33,8 +31,6 @@ use super::memory as M;
 use crate::ir::read::bind;
 use crate::ir::{span, value, Body, For, If, Node, Op, Par, Result};
 use crate::target::Target;
-#[cfg(feature = "witness")]
-use gen::Code;
 
 pub use range::{Guards, Ranges, Risk};
 pub use search::Search;
@@ -748,96 +744,6 @@ pub fn max_step(body: &Body, par: &Par, env: &Env, t: &Target) -> VResult<i64> {
 
 mod assign_typed;
 mod decompose;
-
-/// Physical registers v0.. over the emitted order: a symbol holds its
-/// register from its first to its last appearance; a result takes the
-/// register of a source whose last appearance is that instruction.
-#[cfg(feature = "witness")]
-pub fn assign(code: &[Code], pinned: &HashSet<String>, regs: u32) -> VResult<Vec<String>> {
-    let mut last: HashMap<&str, usize> = HashMap::new();
-    for (i, c) in code.iter().enumerate() {
-        if let Code::Op(_, syms) = c {
-            for s in syms {
-                last.insert(s, i);
-            }
-        }
-    }
-    let mut reg: HashMap<&str, u32> = HashMap::new();
-    let mut free: Vec<u32> = (0..regs).collect();
-    let mut out = Vec::new();
-    for (i, c) in code.iter().enumerate() {
-        let (tmpl, syms) = match c {
-            Code::Raw(s) => {
-                out.push(s.clone());
-                continue;
-            }
-            Code::Op(t, s) => (t, s),
-        };
-        let mut dying: Vec<&str> = syms[1..]
-            .iter()
-            .map(|s| s.as_str())
-            .filter(|s| last[s] == i && reg.contains_key(s) && !pinned.contains(*s))
-            .collect();
-        for (j, s) in syms.iter().enumerate() {
-            if reg.contains_key(s.as_str()) {
-                continue;
-            }
-            if j == 0 && !dying.is_empty() {
-                let d = dying.remove(0);
-                let r = reg[d];
-                reg.insert(s, r);
-                continue;
-            }
-            if free.is_empty() {
-                return Err(VErr::Pressure);
-            }
-            let r = free.remove(0);
-            reg.insert(s, r);
-        }
-        let names: Vec<String> = syms
-            .iter()
-            .map(|s| format!("v{}", reg[s.as_str()]))
-            .collect();
-        out.push(pat::format(tmpl, &names));
-        let held: HashSet<u32> = syms
-            .iter()
-            .filter(|s| last[s.as_str()] > i || pinned.contains(*s))
-            .map(|s| reg[s.as_str()])
-            .collect();
-        let mut seen: HashSet<&str> = HashSet::new();
-        for s in syms {
-            if !seen.insert(s) {
-                continue;
-            }
-            let r = reg[s.as_str()];
-            if last[s.as_str()] == i
-                && !pinned.contains(s)
-                && !held.contains(&r)
-                && !free.contains(&r)
-            {
-                free.push(r);
-            }
-        }
-        free.sort();
-    }
-    Ok(out)
-}
-
-#[cfg(feature = "witness")]
-pub fn indent(lines: &[String]) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut depth = 0usize;
-    for ln in lines {
-        if ln == "{" {
-            depth += 1;
-        } else if ln == "}" {
-            depth -= 1;
-        } else {
-            out.push(format!("{}{ln}", "    ".repeat(depth)));
-        }
-    }
-    out
-}
 
 /// An image text with its header's name `name`.
 pub fn renamed(text: &str, name: &str) -> String {

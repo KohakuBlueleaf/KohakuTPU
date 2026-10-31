@@ -5,9 +5,6 @@ use crate::lower::vector::gen::typed::{self as ir, Event, Select, Symbol};
 use crate::lower::vector::sign::ZeroSign;
 use ktpu_l1::text::{Stmt, Term};
 
-#[cfg(all(test, feature = "witness"))]
-pub(crate) mod tests;
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Insn {
     pub stmt: Stmt,

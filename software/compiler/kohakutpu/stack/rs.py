@@ -155,20 +155,3 @@ def bind(
         template_json=template_json,
         params=params,
     )
-
-
-def spec_run(runner, inp, machine, *, vector_id=None, expect=None):
-    return json.loads(
-        _rs.spec_run(
-            runner,
-            json.dumps(inp),
-            machine,
-            _MUTANT.get(),
-            vector_id,
-            json.dumps(expect),
-        )
-    )
-
-
-def spec_runners():
-    return tuple(_rs.SPEC_RUNNERS)

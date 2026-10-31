@@ -10,7 +10,6 @@ pub mod ir;
 pub mod lower;
 pub mod mutant;
 pub mod passes;
-pub mod spec;
 pub mod target;
 pub mod work;
 

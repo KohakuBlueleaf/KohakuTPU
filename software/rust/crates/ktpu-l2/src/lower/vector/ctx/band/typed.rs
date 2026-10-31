@@ -5,9 +5,6 @@ use crate::lower::vector::ctx::emit::typed::Emitter;
 use crate::lower::vector::gen::{print, typed as ir};
 use ktpu_l1::text::Module;
 
-#[cfg(all(test, feature = "witness"))]
-pub(super) mod tests;
-
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lower::vector) fn lower_band(
     body: &Body,

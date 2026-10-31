@@ -8,7 +8,6 @@ publish.workspace = true
 
 [features]
 mutants = ["ktpu-l1/mutants"]
-witness = ["mutants"]
 
 [dependencies]
 ktpu-machine.workspace = true

@@ -97,27 +97,6 @@ impl ZeroSign {
         self.sign(head, Some(trip), lanes)
     }
 
-    /// [`ZeroSign::events`] of the template generator's code.
-    #[cfg(feature = "witness")]
-    pub fn code(
-        self,
-        code: Vec<super::gen::Code>,
-        lanes: Lanes,
-    ) -> Result<Vec<super::gen::Code>, String> {
-        Ok(self.sign(code, None, lanes)?.0)
-    }
-
-    /// [`ZeroSign::trip`] of the template generator's code.
-    #[cfg(feature = "witness")]
-    pub fn code_trip(
-        self,
-        head: Vec<super::gen::Code>,
-        trip: Vec<super::gen::Code>,
-        lanes: Lanes,
-    ) -> Result<(Vec<super::gen::Code>, usize), String> {
-        self.sign(head, Some(trip), lanes)
-    }
-
     fn sign<P: Program>(
         self,
         head: Vec<P>,
@@ -257,53 +236,6 @@ impl Operand for Term {
     }
 }
 
-#[cfg(feature = "witness")]
-impl Operand for String {
-    fn named(name: &str) -> String {
-        name.to_string()
-    }
-    fn when(key: &str) -> String {
-        format!("{key}=p1")
-    }
-    fn is_named(&self, name: &str) -> bool {
-        self == name
-    }
-    fn is_p1(&self) -> bool {
-        self == "p1" || self.starts_with("p1[")
-    }
-    fn at(&self, name: &str) -> String {
-        match self.find('[') {
-            Some(i) => format!("{name}{}", &self[i..]),
-            None => name.to_string(),
-        }
-    }
-    fn select(&self) -> Option<(i64, i64)> {
-        let Some(i) = self.find('[') else {
-            return (!self.contains('(')).then_some((0, 1));
-        };
-        let inner = self[i + 1..].strip_suffix(']')?.trim();
-        match inner.strip_suffix(':') {
-            Some(base) => Some((base.trim().parse().ok()?, 1)),
-            None => Some((inner.parse().ok()?, 0)),
-        }
-    }
-    fn vl(&self) -> Option<Option<i64>> {
-        self.strip_prefix("vl=").map(|n| n.parse().ok())
-    }
-    fn predicates(&self) -> bool {
-        self.starts_with("if=") || self.starts_with("unless=")
-    }
-    fn reads_p1(&self) -> bool {
-        self == "if=p1" || self == "unless=p1"
-    }
-    fn regs(&self) -> BTreeSet<String> {
-        self.split(|c: char| !(c.is_ascii_alphanumeric() || c == '%'))
-            .filter(|n| vector_name(n))
-            .map(str::to_string)
-            .collect()
-    }
-}
-
 /// `op dst, srcs.. opts..`.
 #[derive(Clone, Debug, PartialEq)]
 struct Line<T> {
@@ -332,58 +264,6 @@ impl Line<Term> {
     fn stmt(self) -> Stmt {
         ir::math(&self.op, self.dst, self.srcs, self.opts)
     }
-}
-
-#[cfg(feature = "witness")]
-impl Line<String> {
-    /// The line of a text instruction with operands (None for one without).
-    fn read(line: &str) -> Option<Line<String>> {
-        let op = line.split(' ').next()?;
-        let (args, options) = super::gen::operands(line, op)?;
-        Some(Line {
-            op: op.to_string(),
-            dst: args[0].to_string(),
-            srcs: args[1..].iter().map(|a| a.to_string()).collect(),
-            opts: options.split_whitespace().map(str::to_string).collect(),
-        })
-    }
-
-    fn text(&self) -> String {
-        let mut s = format!("{} {}", self.op, self.dst);
-        for a in &self.srcs {
-            s += &format!(", {a}");
-        }
-        for o in &self.opts {
-            s += &format!(" {o}");
-        }
-        s
-    }
-}
-
-/// `line` as a template over `syms` (each `%N` by its first place there).
-#[cfg(feature = "witness")]
-fn template(line: &str, syms: &[String]) -> String {
-    let b = line.as_bytes();
-    let mut out = String::new();
-    let mut i = 0;
-    while i < b.len() {
-        let j = (i + 1..=b.len())
-            .find(|&j| j == b.len() || !b[j].is_ascii_digit())
-            .unwrap();
-        if b[i] == b'%' && j > i + 1 {
-            let at = syms.iter().position(|s| s == &line[i..j]).unwrap();
-            out += &format!("{{{at}}}");
-            i = j;
-        } else {
-            out += match b[i] {
-                b'{' => "{{",
-                b'}' => "}}",
-                _ => &line[i..i + 1],
-            };
-            i += 1;
-        }
-    }
-    out
 }
 
 /// How a block repeats: a loop runs its body again after its end, a skip
@@ -446,33 +326,6 @@ impl Program for Event {
                 stmt: l.stmt(),
                 syms: syms.clone(),
             })
-            .collect()
-    }
-}
-
-#[cfg(feature = "witness")]
-impl Program for super::gen::Code {
-    type T = String;
-    fn step(&self, before: Option<&Self>) -> Step<String> {
-        use super::gen::Code;
-        match self {
-            Code::Op(t, s) => Step::Op(Line::read(&super::pat::format(t, s)).unwrap()),
-            Code::Raw(r) if r == "{" => Step::Open(match before {
-                Some(Code::Raw(h)) => Block::of(h.split(' ').next().unwrap_or("")),
-                _ => Block::Loop,
-            }),
-            Code::Raw(r) if r == "}" => Step::Close,
-            Code::Raw(r) => Step::Fixed(Line::read(r)),
-        }
-    }
-    fn rebuilt(&self, lines: Vec<Line<String>>) -> Vec<Self> {
-        use super::gen::Code;
-        let Code::Op(_, syms) = self else {
-            unreachable!("only an op is rewritten")
-        };
-        lines
-            .into_iter()
-            .map(|l| Code::Op(template(&l.text(), syms), syms.clone()))
             .collect()
     }
 }

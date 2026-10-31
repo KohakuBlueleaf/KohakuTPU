@@ -9,7 +9,6 @@ pub mod layout;
 pub mod mutant;
 pub mod numerics;
 pub mod reloc;
-pub mod spec;
 pub mod unit;
 
 pub use ktpu_machine::{Coord, Machine, Refusal, UnitKind};

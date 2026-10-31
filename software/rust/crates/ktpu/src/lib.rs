@@ -18,8 +18,6 @@ pub mod pipeline;
 #[cfg(feature = "python")]
 mod python;
 #[cfg(feature = "stack")]
-pub mod spec;
-#[cfg(feature = "stack")]
 pub mod stack;
 #[cfg(feature = "stack")]
 pub mod templates;

@@ -4,9 +4,6 @@ use super::*;
 use crate::lower::vector::gen::typed::Symbol;
 use ktpu_l1::text::{Stmt, Term};
 
-#[cfg(all(test, feature = "witness"))]
-mod tests;
-
 fn refs(t: &Term) -> Vec<(String, u64, u64)> {
     match t {
         Term::Name(n) if n.starts_with('%') => vec![(n.clone(), 0, 1)],
@@ -58,8 +55,6 @@ pub fn derive(st: &Stmt, symbols: &[Symbol], copies: u32, core: &Core) -> MOp {
     };
     let mut out = MOp {
         op: st.op.clone(),
-        #[cfg(feature = "witness")]
-        tmpl: String::new(),
         syms,
         eng: 'M',
         reads: vec![],

@@ -5,7 +5,7 @@
 use super::{machine, mutated, Refused};
 use ktpu_isa::W256;
 use ktpu_l0::format as F;
-use ktpu_l0::spec::build::{builder, call, named};
+use ktpu_l0::calls::{builder, call, named};
 use ktpu_l0::{engine, Alu, Cond, Facts, Op, Package};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -75,7 +75,7 @@ type Built = Result<Result<Package, ktpu_l0::Refusal>, String>;
 
 /// package_build(builder_json, calls_json, machine_json, mesh=0,
 /// defaults=True, checksum=False, lower=False, mutant=None) -> bytes: a
-/// package from `PackageBuilder` calls (`ktpu_l0::spec::build`'s forms: the
+/// package from `PackageBuilder` calls (`ktpu_l0::calls`' forms: the
 /// builder as `{"types": [[x, y, name]], "credit", "mesh", "signature",
 /// "fetch"}`, each call `[name, *args, {kw}]`), built (`defaults`,
 /// `checksum`), with `lower` lowered for the dispatch engine, written.

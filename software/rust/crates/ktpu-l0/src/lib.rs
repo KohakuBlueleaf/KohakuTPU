@@ -7,6 +7,7 @@
 
 pub mod boot;
 pub mod build;
+pub mod calls;
 pub mod engine;
 pub mod error;
 pub mod facts;
@@ -16,7 +17,6 @@ pub mod mover;
 pub mod mutant;
 pub mod program;
 pub mod replay;
-pub mod spec;
 pub mod units;
 pub mod word;
 

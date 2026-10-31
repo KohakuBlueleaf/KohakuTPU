@@ -9,12 +9,12 @@
 //! refusal names its clause.
 
 pub mod call;
+pub mod composed;
 pub mod expr;
 pub mod gen;
 pub mod kernel;
 pub mod mutants;
 pub mod pyrepr;
-pub mod spec;
 pub mod trace;
 
 pub use call::call;

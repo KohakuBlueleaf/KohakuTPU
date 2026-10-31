@@ -16,10 +16,6 @@ use super::ctx::Ctx;
 use candidate::lower_band;
 use ktpu_l1::sched::schedule::whole;
 mod candidate;
-#[cfg(feature = "witness")]
-use super::gen::{Code, Gen};
-#[cfg(feature = "witness")]
-use super::indent;
 use super::modulo as MO;
 use super::range::{self, Ranges};
 use super::sign::ZeroSign;
@@ -29,12 +25,6 @@ use crate::lower::fills::throttled;
 use crate::lower::sync::Access;
 use crate::mutant::on;
 use crate::target::{Target, IMEM_ROOM};
-
-#[cfg(feature = "witness")]
-pub mod witness;
-
-#[cfg(all(test, feature = "witness"))]
-pub(super) mod modulo_typed;
 
 /// How a stream loop lowers: "band" (one trip in one L1 tile), "modulo"
 /// (trips software-pipelined) or "auto" (the fewer modelled cycles).
@@ -148,10 +138,6 @@ pub struct Search {
     timed: AtomicUsize,
     /// Each band image's IMEM words, for its serial fallback.
     pub fits: Fits,
-    #[cfg(feature = "witness")]
-    witness: Option<std::sync::Arc<witness::Witness>>,
-    #[cfg(feature = "witness")]
-    reference: bool,
 }
 
 impl Default for Search {
@@ -172,8 +158,6 @@ pub struct Best {
 }
 
 type Cand = (std::sync::Arc<Module>, Vec<String>, Vec<Access>);
-#[cfg(feature = "witness")]
-type TextCand = (String, Vec<String>, Vec<Access>);
 
 impl Search {
     pub fn new(strategy: Strategy) -> Search {
@@ -189,10 +173,6 @@ impl Search {
             retile_choices: Mutex::new(Vec::new()),
             timed: AtomicUsize::new(0),
             fits: Fits::default(),
-            #[cfg(feature = "witness")]
-            witness: None,
-            #[cfg(feature = "witness")]
-            reference: false,
         }
     }
 
@@ -235,20 +215,6 @@ impl Search {
         self.retile_choices.lock().unwrap().len()
     }
 
-    /// This search with a candidate byte-comparison ledger.
-    #[cfg(feature = "witness")]
-    pub fn witnessed(mut self, witness: std::sync::Arc<witness::Witness>) -> Self {
-        self.witness = Some(witness);
-        self
-    }
-
-    /// Run the retained template generator instead of typed construction.
-    #[cfg(feature = "witness")]
-    pub fn reference(mut self) -> Self {
-        self.reference = true;
-        self
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn band(
         &self,
@@ -265,16 +231,6 @@ impl Search {
         hold: bool,
         pin: bool,
     ) -> VResult<Cand> {
-        #[cfg(feature = "witness")]
-        if self.reference {
-            return candidate::read_reference(
-                super::ctx::lower_band(
-                    body, par, env, name, t, band, remat, ahead, plan, land, hold, pin,
-                )?,
-                name,
-                body.vregs,
-            );
-        }
         lower_band(
             body, par, env, name, t, band, remat, ahead, plan, land, hold, pin, &self.fits,
         )
@@ -373,29 +329,6 @@ impl Search {
         let probe = self.band(
             body, par, env, name, t, 1, false, true, plan, land, hold, pin,
         );
-        #[cfg(feature = "witness")]
-        if let Some(w) = &self.witness {
-            let input = witness::input(self, body, par, env, name, plan, land, t);
-            if self.reference {
-                w.reference_band(
-                    &input,
-                    witness::Kind::Probe((1, false, true, hold, pin)),
-                    &probe,
-                );
-            } else {
-                w.band(
-                    &input,
-                    witness::Kind::Probe((1, false, true, hold, pin)),
-                    &probe,
-                    &super::ctx::lower_band(
-                        body, par, env, name, t, 1, false, true, plan, land, hold, pin,
-                    ),
-                    body,
-                    name,
-                    t,
-                );
-            }
-        }
         let probe = match probe {
             Ok(p) => p,
             Err(VErr::Pressure) if !self.pressure_fallback() => {
@@ -526,43 +459,6 @@ impl Search {
                 })
             })
             .collect();
-        #[cfg(feature = "witness")]
-        let lowered = {
-            let mut lowered = lowered;
-            if !self.reference {
-                if let Some(i) = lowered.iter().position(|c| c.is_ok()) {
-                    if self.witness.as_ref().is_some_and(|w| w.drop_candidate()) {
-                        let _ = lowered.remove(i);
-                        shapes.remove(i);
-                    }
-                }
-            }
-            lowered
-        };
-        #[cfg(feature = "witness")]
-        let witnessed = self.witness.as_ref().map(|w| {
-            let input = witness::input(self, body, par, env, name, plan, land, t);
-            for (&shape, got) in shapes.iter().zip(&lowered) {
-                if self.reference {
-                    w.reference_band(&input, witness::Kind::Band(shape), got);
-                    continue;
-                }
-                let (band, remat, ahead, hold, pin) = shape;
-                let reference = super::ctx::lower_band(
-                    body, par, env, name, t, band, remat, ahead, plan, land, hold, pin,
-                );
-                w.band(
-                    &input,
-                    witness::Kind::Band(shape),
-                    got,
-                    &reference,
-                    body,
-                    name,
-                    t,
-                );
-            }
-            (w.as_ref(), input)
-        });
         // `slot[i]`: candidate i's place in `texts`, the texts to time.
         let mut texts: Vec<&std::sync::Arc<Module>> = Vec::new();
         let mut first: IndexMap<&str, usize> = IndexMap::new();
@@ -618,10 +514,6 @@ impl Search {
                 plan,
                 land,
                 t,
-                #[cfg(feature = "witness")]
-                witnessed.as_ref().map(|(w, input)| (*w, input)),
-                #[cfg(feature = "witness")]
-                self.reference,
             ) {
                 Ok(Ok(c)) => {
                     let cycles = match cands.iter().find(|(d, _)| d.0.source == c.0.source) {
@@ -731,323 +623,6 @@ impl Search {
 /// A shape the lowering cannot take (Python's ValueError): no position.
 fn value_error(_body: &Body, _par: &RPar, m: String) -> ktpu_l1::Error {
     ktpu_l1::Error::new("L2.REF.002", m)
-}
-
-/// Raw lines of one trip of the band lowering the modulo emission rebuilds.
-#[cfg(feature = "witness")]
-const REBUILT: [&str; 4] = [
-    "vbar",
-    "vsync pack on=drain",
-    "vsync drain on=pack",
-    "vdrain ",
-];
-
-/// The stream loop software-pipelined (L2.VC.014): `Ok(Ok(candidate))`, or
-/// `Ok(Err(why))` where the loop is not a plain load -> compute -> store
-/// stream or no image of it fits.
-#[allow(clippy::too_many_arguments)]
-#[cfg(feature = "witness")]
-fn modulo_legacy(
-    body: &Body,
-    par: &RPar,
-    env: &Env,
-    name: &str,
-    plan: &Plan,
-    land: Option<i64>,
-    t: &Target,
-    #[cfg(feature = "witness")] witnessed: Option<(&witness::Witness, &std::sync::Arc<str>)>,
-) -> VResult<std::result::Result<TextCand, String>> {
-    let no = |w: &str| Ok(Err(w.to_string()));
-    let (pre, lp) = split(body, par)?;
-    let Some(lp) = lp else {
-        return no("no stream loop");
-    };
-    let ops = ops_of(&lp.body);
-    if lp.body.iter().any(|o| matches!(o.as_ref(), Node::If(_))) {
-        return no("a sticky block");
-    }
-    if ops
-        .iter()
-        .chain(pre.iter())
-        .any(|o| o.op_name() == "recv" || o.op_name() == "send")
-    {
-        return no("a cluster stream");
-    }
-    let mut c = Ctx::new(body, t, env, Some(lp.clone()))?;
-    c.ahead = true;
-    c.band = 1 << 10;
-    c.remat = false;
-    c.plan = plan.clone();
-    c.land = land.unwrap_or(t.l1_words);
-    c.unit = super::unit_of(body, par, env)?;
-    c.pre = pre.clone();
-    c.guards = par.guards.clone();
-    c.zero_sign = par.zero_sign;
-    for n in &lp.body {
-        if matches!(n.as_ref(), Node::For(_)) {
-            return no("a nested loop");
-        }
-        c.prepare(n, true)?;
-    }
-    if c.rel.is_some() || c.descs.iter().any(|d| d.kind == "send") {
-        return no("a banded unpack or a send");
-    }
-    if c.descs.iter().any(|d| d.shared.is_some()) {
-        return no("a store packed over a load (no L1 room for its own ring)");
-    }
-    if c.descs.iter().any(|d| d.twin.is_some()) {
-        return no("a value stored through several views (one ring a view)");
-    }
-    let packed: Vec<String> = ops
-        .iter()
-        .filter(|o| o.op_name() == "pack")
-        .filter_map(|o| o.target().map(str::to_string))
-        .collect();
-    let stores_loaded = ops.iter().any(|o| {
-        let Node::Op(x) = o.as_ref() else { return false };
-        x.op == "store"
-            && !matches!(x.st.positional().get(2), Some(ktpu_l1::text::Term::Name(n)) if packed.contains(n))
-    });
-    if stores_loaded {
-        return no("a store of loaded bytes");
-    }
-    c.down = c.land;
-    for n in &pre {
-        c.prepare(n, false)?;
-    }
-    let mut g = Gen::default();
-    let mut all = pre.clone();
-    all.extend(ops.iter().cloned());
-    c.constants(&mut g, &all);
-    for n in &pre {
-        c.prologue(&mut g, n)?;
-    }
-    if pre.iter().any(|n| n.op_name() == "unpack") {
-        g.raw("vsync fe on=unpack");
-    }
-    let head_len = g.code.len();
-    match c.iteration(&mut g, &lp.body, 0, false) {
-        Err(VErr::Pressure) => return no("one trip in one band exceeds the registers"),
-        Err(e) => return Err(e),
-        Ok(()) => {}
-    }
-    let trip = super::gen::fuse(g.code.split_off(head_len));
-    let (signed, head_len) = c
-        .zero_sign
-        .code_trip(std::mem::take(&mut g.code), trip, super::sign::Lanes::of(t))
-        .map_err(|e| VErr::Fail(body.reader.fail(&lp.st, "L2.VC.026", e)))?;
-    g.code = signed;
-    let placed = banks::rotate(std::mem::take(&mut g.code), body.vcopies, &MO::Core::of(t));
-    let (head_code, trip) = placed.split_at(head_len);
-    for code in trip {
-        if let Code::Raw(s) = code {
-            if !REBUILT.iter().any(|r| s.starts_with(r)) {
-                return Ok(Err(format!(
-                    "a raw line the emission does not rebuild: {s}"
-                )));
-            }
-        }
-    }
-    let mut pinned_v: Vec<&String> = c.pinned.iter().collect();
-    pinned_v.sort_by_key(|s| s[1..].parse::<i64>().unwrap_or(0));
-    let pinned: std::collections::HashMap<String, i64> = pinned_v
-        .iter()
-        .enumerate()
-        .map(|(r, s)| ((*s).clone(), r as i64))
-        .collect();
-    let core = MO::Core::of(t);
-    let mops: Vec<MO::MOp> = trip
-        .iter()
-        .filter_map(|code| match code {
-            Code::Op(tm, syms) => Some(MO::parse(tm, syms, body.vcopies, &core)),
-            Code::Raw(_) => None,
-        })
-        .collect();
-    if mops.is_empty() {
-        return no("no vector ops in the trip");
-    }
-    let room = c.land - c.top;
-    let streamed: Vec<usize> = (0..c.descs.len())
-        .filter(|&i| c.loads.contains(&i) || c.descs[i].kind == "store")
-        .collect();
-    let per_iter: i64 = streamed.iter().map(|&i| c.descs[i].words).sum();
-    let k_max = 8.min(2 + room / per_iter.max(1));
-    let lower = ['M', 'U', 'P']
-        .iter()
-        .map(|e| {
-            mops.iter()
-                .filter(|o| o.eng == *e)
-                .map(|o| o.occ)
-                .sum::<i64>()
-        })
-        .max()
-        .unwrap();
-    let ii_max = 4 * lower + 400;
-    let lead = MO::lead(c.loads.iter().map(|&i| c.descs[i].words).sum(), body.fill);
-    let mut head: Vec<String> = Vec::new();
-    for code in head_code {
-        match code {
-            Code::Raw(s) => head.push(s.clone()),
-            Code::Op(tm, syms) => {
-                let names: Vec<String> = syms.iter().map(|s| format!("v{}", pinned[s])).collect();
-                head.push(super::pat::format(tm, &names));
-            }
-        }
-    }
-    let mem: Vec<usize> = (0..c.descs.len())
-        .filter(|&i| c.descs[i].to.is_empty())
-        .collect();
-    let params: Vec<String> = mem
-        .iter()
-        .map(|&i| {
-            format!(
-                "{}+{}",
-                c.descs[i].buffer.as_deref().unwrap(),
-                c.descs[i].off
-            )
-        })
-        .collect();
-    let mut out = vec![format!(
-        "image {name}({})",
-        mem.iter()
-            .map(|&i| format!("p_a{}", c.descs[i].ad))
-            .collect::<Vec<_>>()
-            .join(", ")
-    )];
-    for d in &c.descs {
-        out.push(format!(
-            "    desc a{} = p_a{} walk=({})",
-            d.ad, d.ad, d.walk
-        ));
-    }
-    for d in &c.descs {
-        if d.inc != 0 {
-            out.push(format!("    ainc a{} += {}", d.ad, d.inc));
-        }
-    }
-    let trips = c.trips.len() as i64;
-    let mut ii_min = 1;
-    let mut tried: Vec<String> = Vec::new();
-    loop {
-        let planned = MO::plan(
-            &mops,
-            body.vregs as i64,
-            &pinned,
-            k_max,
-            ii_max,
-            lead,
-            ii_min,
-            &core,
-        );
-        let Some(p) = planned else {
-            let list = if tried.is_empty() {
-                "none planned".to_string()
-            } else {
-                tried.join(", ")
-            };
-            return Ok(Err(format!(
-                "no II up to {ii_max} colours in {} registers (K <= {k_max}) with an image in IMEM: {list}",
-                body.vregs
-            )));
-        };
-        let mut top = c.top;
-        let mut rings = Vec::new();
-        for &i in &streamed {
-            let d = &c.descs[i];
-            let own: Vec<i64> = d.buf.iter().take(p.k as usize).copied().collect();
-            let extra: Vec<i64> = (0..p.k - own.len() as i64)
-                .map(|j| top + j * d.words)
-                .collect();
-            top += d.words * extra.len() as i64;
-            let kind = if d.kind == "load" { "load" } else { "store" };
-            rings.push(MO::Ring {
-                ad: d.ad,
-                kind,
-                base: d.buf[0],
-                words: d.words,
-                slots: own.into_iter().chain(extra).collect(),
-            });
-        }
-        let mut best: Option<(String, i64)> = None;
-        let mut overflow = false;
-        for tail in MO::TAILS {
-            let emitted = MO::emit(&p, &rings, trips, &pinned, tail);
-            let got = emitted.map_err(|e| VErr::Fail(body.reader.fail(&par.st, "L2.VC.014", e)))?;
-            let (lines, cycles) = match got {
-                Some((lines, cycles)) if top <= c.land => (lines, cycles),
-                other => {
-                    let what = if other.map(|x| !x.0.is_empty()).unwrap_or(false) {
-                        "L1"
-                    } else {
-                        "no loop body"
-                    };
-                    tried.push(format!("II {} K {} {tail}: {what}", p.ii, p.k));
-                    continue;
-                }
-            };
-            let mut all_lines = head.clone();
-            all_lines.extend(lines);
-            all_lines.push("halt".into());
-            let mut text_lines = out.clone();
-            text_lines.extend(indent(&all_lines).into_iter().map(|l| format!("    {l}")));
-            let text = text_lines.join("\n") + "\n";
-            #[cfg(feature = "witness")]
-            if let Some((w, input)) = witnessed {
-                w.image(
-                    input,
-                    witness::Kind::Modulo {
-                        ii: p.ii,
-                        k: p.k,
-                        tail: tail.into(),
-                    },
-                    &text,
-                );
-            }
-            let module = encode::read_image(&text, name, body.vregs)?;
-            let encoded = encode::words_of(&*throttled(&module, t)?, name, mem.len(), &t.machine);
-            #[cfg(feature = "witness")]
-            if let Some((w, input)) = witnessed {
-                w.encoded(
-                    input,
-                    witness::Kind::Modulo {
-                        ii: p.ii,
-                        k: p.k,
-                        tail: tail.into(),
-                    },
-                    &encoded,
-                );
-            }
-            match encoded {
-                Err(e) => {
-                    tried.push(format!("II {} K {} {tail}: {}", p.ii, p.k, first_line(&e)));
-                    overflow = true;
-                    continue;
-                }
-                Ok(words) => {
-                    tried.push(format!(
-                        "II {} K {} S {} {tail}: {words} words",
-                        p.ii, p.k, p.stages
-                    ));
-                    if words as i64 <= IMEM_ROOM
-                        && best.as_ref().map(|b| cycles < b.1).unwrap_or(true)
-                    {
-                        best = Some((text, cycles));
-                    }
-                }
-            }
-        }
-        if let Some((text, _)) = best {
-            c.top = top;
-            return Ok(Ok((text, params, c.accesses())));
-        }
-        if overflow && p.k <= 2 {
-            return Ok(Err(format!(
-                "two iterations overflow the loop body: {}",
-                tried.join(", ")
-            )));
-        }
-        ii_min = p.ii + 1.max(p.ii / 16);
-    }
 }
 
 /// The first line of an error as Python's `str(TextError)` prints it.

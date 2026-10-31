@@ -23,6 +23,8 @@ pub const NAMES: &[&str] = &[
     "num.stat/32-a-word",
     "num.expr/round-constant-2-15",
     "dsl.kernel/name",
+    "api.forms/composed_never",
+    "api.forms/composed_always",
     crate::gen::reductions::EMITTER_MUTANTS[0].0,
     crate::gen::reductions::EMITTER_MUTANTS[1].0,
     crate::gen::reductions::EMITTER_MUTANTS[2].0,

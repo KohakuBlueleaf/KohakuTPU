@@ -4,9 +4,6 @@ use super::*;
 use crate::lower::vector::gen::typed::{self as ir, Select, Symbol};
 use crate::lower::vector::tree::typed as tt;
 
-#[cfg(all(test, feature = "witness"))]
-mod tests;
-
 fn symbol(s: &str) -> Symbol {
     Symbol(s.strip_prefix('%').unwrap().parse().unwrap())
 }

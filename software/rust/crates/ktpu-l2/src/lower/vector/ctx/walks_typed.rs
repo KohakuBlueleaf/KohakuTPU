@@ -3,9 +3,6 @@
 use super::*;
 use crate::lower::vector::gen::typed::{self as ir, Select, Symbol};
 
-#[cfg(all(test, feature = "witness"))]
-mod tests;
-
 fn walk_option(walk: Walk) -> Term {
     ir::kw("walk", ir::walk(&walk.0).unwrap())
 }

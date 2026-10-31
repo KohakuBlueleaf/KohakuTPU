@@ -3,39 +3,6 @@
 use super::*;
 use crate::lower::vector::gen::typed::{self as ir, Event};
 use ktpu_l1::text::{Stmt, Term};
-#[cfg(all(test, feature = "witness"))]
-use std::cell::RefCell;
-
-#[cfg(all(test, feature = "witness"))]
-mod tests;
-
-#[cfg(all(test, feature = "witness"))]
-thread_local! {
-    static PERIODICITY: RefCell<Option<[Vec<bool>; 2]>> = const { RefCell::new(None) };
-}
-
-#[cfg(all(test, feature = "witness"))]
-pub(in crate::lower::vector) fn start_periodicity() {
-    PERIODICITY.with_borrow_mut(|p| *p = Some(Default::default()));
-}
-
-#[cfg(all(test, feature = "witness"))]
-pub(super) fn record_periodicity(side: usize, same: bool) {
-    PERIODICITY.with_borrow_mut(|p| {
-        if let Some(p) = p {
-            p[side].push(same);
-        }
-    });
-}
-
-#[cfg(all(test, feature = "witness"))]
-pub(in crate::lower::vector) fn check_periodicity() -> (usize, bool) {
-    PERIODICITY.with_borrow_mut(|p| {
-        let [a, z] = p.take().unwrap();
-        assert_eq!(a, z, "every periodicity comparison");
-        (a.len(), a.contains(&false))
-    })
-}
 
 #[derive(Clone, Debug)]
 enum Scheduled {
@@ -300,8 +267,6 @@ pub(in crate::lower::vector) fn emit(
                     }
                     _ => false,
                 };
-                #[cfg(all(test, feature = "witness"))]
-                record_periodicity(1, same);
                 if !same {
                     return Ok(None);
                 }

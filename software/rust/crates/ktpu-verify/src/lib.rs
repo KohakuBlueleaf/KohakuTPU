@@ -17,7 +17,6 @@ mod vector;
 pub use lint::lint;
 pub mod mutant;
 pub(crate) mod sim;
-pub mod spec;
 pub mod target;
 pub mod work;
 

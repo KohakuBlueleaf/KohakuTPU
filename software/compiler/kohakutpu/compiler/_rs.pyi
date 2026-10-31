@@ -189,7 +189,6 @@ MACHINE_SCHEMA: str
 #: build with the `mutants` feature (scripts/py/build_rs.py spec); none in
 #: a production build.
 MUTANTS: list[str]
-SPEC_RUNNERS: list[str]
 #: `compile`'s `zero_sign` when None ("native" or "preserve").
 ZERO_SIGN: str
 ZERO_SIGNS: list[str]
@@ -221,16 +220,6 @@ def global_addr(
     nodes: int | None = None,
 ) -> int:
     """Global memory address; refuses an absent mesh or oversized local base."""
-
-def spec_run(
-    runner: str,
-    input_json: str,
-    machine: str | None = None,
-    mutant: str | None = None,
-    vector_id: str | None = None,
-    expect_json: str | None = None,
-) -> str:
-    """JSON output, or {result, expect} with Rust supersession when an id is given."""
 
 class Refused(ValueError):
     """A stage refused the kernel."""

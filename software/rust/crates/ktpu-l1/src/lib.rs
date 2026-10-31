@@ -7,7 +7,6 @@ pub mod layout;
 pub mod lower;
 pub mod mutant;
 pub mod sched;
-pub mod spec;
 pub mod text;
 
 pub use error::{Error, Result};
