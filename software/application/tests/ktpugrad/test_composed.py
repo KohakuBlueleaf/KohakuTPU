@@ -8,6 +8,7 @@ Offline: which reads compose. On the card model: the values.
 
 import numpy as np
 import pytest
+from tinygrad.tensor import Tensor
 
 from application.tests.ktpugrad.test_prepared import CASES, close, f
 from kohakutpu.application import api as kp
@@ -48,8 +49,13 @@ def test_on_composes_and_off_does_not(monkeypatch, name):
     assert set(launches(monkeypatch, make, "cost")) <= set(on)
 
 
-@pytest.mark.parametrize("name", ["matmul_a_transposed", "matmul_b_transposed"])
-def test_a_composed_contraction_launches_once(monkeypatch, name):
+def test_a_composed_contraction_launches_once(monkeypatch):
+    """A Linear whose weight reads through its transpose and its bias is added
+    in the epilogue: one launch, no materialized kernel after the composed one."""
+    rng = np.random.default_rng(3)
+    x, w, bias = (
+        rng.standard_normal(s).astype(np.float16) for s in ((8, 84), (10, 84), 10)
+    )
     runs = []
     launch = generated.launch
 
@@ -61,7 +67,10 @@ def test_a_composed_contraction_launches_once(monkeypatch, name):
     monkeypatch.setattr(FM, "COMPOSED", "on")
     monkeypatch.setattr(generated, "launch", spied)
     with D.attached(D.Device(kind="offline", board="multimesh_v9t6")) as dev:
-        CASES[name][0]().realize()
+        a = (Tensor(x, device="KTPU").realize() * 2).realize()
+        weight = Tensor(w, device="KTPU").realize()
+        offset = Tensor(bias, device="KTPU").realize()
+        a.linear(weight.transpose(), offset).realize()
         dev.drain()
     assert runs == [True]
 
