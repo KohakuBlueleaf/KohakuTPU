@@ -1,4 +1,4 @@
-//! Scheduler operations and dependences; template parsing is witness-only.
+//! Scheduler operations and dependences.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 

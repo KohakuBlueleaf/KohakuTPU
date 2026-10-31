@@ -1,4 +1,4 @@
-//! The kernel generators the tensor planner (`ktpu-plan`) calls: each
+//! The kernel generators Python's tensor planner calls: each
 //! builds one kernel as a `ktpu_graph::Graph`, the graph the Python
 //! generator's trace gives (`software/kohakutpu/application/kohakutpu/application/kernels`).
 //!

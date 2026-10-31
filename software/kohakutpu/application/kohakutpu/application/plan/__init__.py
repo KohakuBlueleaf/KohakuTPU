@@ -1,2 +1,1 @@
-"""The host side of the Rust tensor planner (`ktpu-plan`): what it is handed
-(`emit`)."""
+"""What the Rust kernel generators are handed: expressions as JSON (`emit`)."""

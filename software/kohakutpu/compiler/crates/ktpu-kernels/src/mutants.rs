@@ -1,4 +1,4 @@
-//! Spec mutants (`software/tests/spec/runners/api.py`): a thread-local
+//! Spec mutants (the spec runners): a thread-local
 //! switch read where the mutated decision is made. Without the `mutants`
 //! feature every switch is off and compiled out.
 
@@ -35,7 +35,7 @@ pub const NAMES: &[&str] = &[
 /// the [R, 32] form RUL.030 refuses; a reduction read twice taken twice;
 /// the contraction knobs unrecorded; the reductions as separate launches;
 /// every relayout `gen::lanes`'; a relayout's destination lines past its
-/// allocation (ktpu-plan's tests/bounds.rs); the forms made before their
+/// allocation; the forms made before their
 /// kernels; a made operand copied into its port.
 pub const LOCAL: &[&str] = &[
     crate::gen::fused::LOST_MEMBER_MUTANT,

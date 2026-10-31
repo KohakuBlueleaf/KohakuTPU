@@ -1,4 +1,4 @@
-//! Spec-vector mutants (`software/tests/spec/runners/l2.py`, `@mutant`):
+//! Spec-vector mutants (the spec runners, `@mutant`):
 //! with the `mutants` feature a thread-local switch names the active mutant
 //! and each mutated point asks [`on`]; without it [`on`] is `false`. The
 //! `l2.banks` runner's switch (bank placement off) is always there. Work a

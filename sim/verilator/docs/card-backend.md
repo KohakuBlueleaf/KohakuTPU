@@ -32,7 +32,7 @@ python scripts/py/gen_card.py --ver v8t8 --sim-mesh ktpu_sim_1x1_1c1v_1m_nol2_pu
     --compute 0,1 -o tests/system/card_v8t8_2n.v --module card_v8t8_2n
 python scripts/py/vlt.py card_v8t8_2n --cc sim/verilator/harness/card_main.cpp \
     --keep --vlt-config sim/verilator/card.vlt
-python software/driver/tools/card/card_run.py --load burn
+python software/kohakutpu/driver/tools/card/card_run.py --load burn
 ```
 
 ## The generated card
@@ -240,8 +240,8 @@ either.
 
 | script | what it checks |
 |---|---|
-| `software/driver/tools/card/card_run.py` | A_CAPS on every node; a block written through one node's memory window reads back through every node and sits in DRAM (backdoor); a mover copy across all four channels; `hello_kohakuaccel` on every node's RV64; station DECERR zero |
-| `software/driver/tools/card/staging_check.py` | a pattern through each node's staging aperture reads back through the window and sits in that node's staging banks (`PE`); DECERR zero |
-| `software/firmware/tools/elf_run.py` | one RV64 ELF on one node; exit status is the program's exit word |
+| `software/kohakutpu/driver/tools/card/card_run.py` | A_CAPS on every node; a block written through one node's memory window reads back through every node and sits in DRAM (backdoor); a mover copy across all four channels; `hello_kohakuaccel` on every node's RV64; station DECERR zero |
+| `software/kohakutpu/driver/tools/card/staging_check.py` | a pattern through each node's staging aperture reads back through the window and sits in that node's staging banks (`PE`); DECERR zero |
+| `software/kohakutpu/firmware/tools/elf_run.py` | one RV64 ELF on one node; exit status is the program's exit word |
 
 Each takes `--build <dir>` for a model built under another `--build-root`.

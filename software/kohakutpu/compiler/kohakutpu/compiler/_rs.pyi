@@ -742,3 +742,40 @@ def package_format(machine_json: str, mesh: int = 0) -> dict:
     """The codes a package reader names: `op`, `alu`, `cond` (name -> code),
     the `F_*` step flags, `REGS`, `MOVER_SKIP`, `ANY_UNIT`, the dispatch
     engine's register codes, `SRC_MOVER`, `CTR_MASK` and `PAYLOAD` bytes."""
+
+MX7_PAIRING: str
+MM_KNOBS: list
+VECTOR_DEFAULTS: str
+ROWS_DEFAULTS: str
+RELAYOUT_DEFAULTS: str
+PREPARED_DEFAULTS: str
+
+def mm_knobs() -> str: ...
+def mm_plan(args_json: str, machine_json: str, mutant: str | None = None) -> str: ...
+def mm_resolved(args_json: str, machine_json: str) -> str: ...
+def mm_takes_f16(args_json: str, machine_json: str) -> bool: ...
+def read_composed(
+    mode: str, read_json: str, launches_json: str, machine_json: str
+) -> bool: ...
+def image(
+    l1_text: str,
+    name: str,
+    args: list[int],
+    machine_json: str,
+    entry: str = "unknown",
+    mutant: str | None = None,
+) -> tuple[list[int], dict]: ...
+def vc_flits(
+    descs: dict[tuple[int, int], int],
+    words: list[int],
+    pc: int,
+    machine_json: str,
+    mutant: str | None = None,
+) -> list[int]: ...
+def buffer(type_text: str, machine_json: str, mutant: str | None = None) -> dict: ...
+def buffer_pack(
+    type_text: str, host: bytes, machine_json: str, mutant: str | None = None
+) -> bytes: ...
+def buffer_unpack(
+    type_text: str, raw: bytes, machine_json: str, mutant: str | None = None
+) -> bytes: ...

@@ -1,4 +1,4 @@
-//! The compiler pipeline and the kohakutpu_rs Python module.
+//! The compiler pipeline.
 //!
 //! ```text
 //! graph (tracer JSON) -> L2 -> passes -> L1 -> schedule -> L0 -> verify

@@ -63,7 +63,7 @@ are load-bearing.
 
 Two rules carry a per-file exemption, each with its reason in a `pyproject.toml`:
 
-- **`BLE001`** in the test-harness trees (`software/*/tests`, `tests/pe/tools`).
+- **`BLE001`** in the test-harness trees (`software/tests`, `tests/pe/tools`).
   A harness that reports every failure has to catch every failure.
 - **`UP031`** in `tests/pe/tools/`. Several hundred `%` format strings across the
   generators and golden models, most of them aligned table rows. Ruff's own fix

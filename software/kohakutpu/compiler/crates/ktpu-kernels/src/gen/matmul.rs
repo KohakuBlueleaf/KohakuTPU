@@ -110,7 +110,7 @@ pub const KNOBS: &[Knob] = &[
 ];
 
 /// A contraction's plan and kernel knobs: the one source the generators,
-/// ktpu-plan and Python (`_rs.mm_knobs`) read.
+/// Python (`_rs.mm_knobs`) reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Knobs {
     /// Balanced, cost-modelled M tiles with a zero-padded tail.

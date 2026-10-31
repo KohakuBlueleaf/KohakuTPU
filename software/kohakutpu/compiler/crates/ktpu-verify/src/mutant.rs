@@ -1,4 +1,4 @@
-//! The spec vectors' checker mutants (`software/tests/spec/runners/isa.py`,
+//! The spec vectors' checker mutants (the spec runners,
 //! `l1.py`, `@mutant`): with the `mutants` feature a thread-local switch
 //! names the one active mutant and each mutated point asks [`on`]; without
 //! it [`on`] is `false` and the points compile out.

@@ -243,9 +243,7 @@ workspace keeps no lock file).
 
 ```bash
 python -m venv .venv && source .venv/bin/activate        # .venv\Scripts\activate on Windows
-uv pip install -e software/language -e software/compiler -e software/driver \
-               -e software/simulation -e software/application -e software/template
-cd software && python -m pytest                           # no hardware, no card model
+cd software && uv sync
 python -m toyaccel.application.run                        # the template project, end to end
 ```
 
@@ -287,13 +285,13 @@ src/kohakutpu/       KohakuTPU: matmul, vector, transform, generated tops
 src/kohakumpe/       a second project: the SIMT and SIMD processing elements
 src/templates/       the extension points, each with its bench
 src/examples/        saxpy, the platform acceptance test (RTL half)
-software/            language, compiler, driver, simulation, firmware, application, template
+software/            kohakuaccel/ (framework), kohakutpu/ (the TPU), template/ (toyaccel)
 tests/  scripts/     Verilog benches; build, simulate, measure
 ```
 
-`src/kohakutpu/` is Verilog and `software/<component>/kohakutpu/` is Python
-(and the firmware C): `src/kohakutpu/vector2/v2_core.v` is hardware,
-`software/kohakutpu/compiler/kohakutpu/compiler/encode/vector.py` is its encoder.
+`src/kohakutpu/` is Verilog and `software/kohakutpu/` is Python, Rust and the
+firmware C: `src/kohakutpu/vector2/v2_core.v` is hardware,
+`software/kohakutpu/compiler/crates/ktpu-isa/` holds its encoder.
 
 ## License
 

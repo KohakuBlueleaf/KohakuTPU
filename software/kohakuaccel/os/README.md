@@ -22,7 +22,7 @@ python run_core.py --board core4s --model ~/kos/build/core4s \
 
 # a Verilated card model, or the card (--jtag)
 PYTHONPATH=../../driver:../../language:../../compiler \
-python run_card.py --board card_v9t6_2n --model ~/ktpu/build/t2s/vlt_card_v9t6_2n \
+python software/kohakutpu/os/tools/run_card.py --board card_v9t6_2n --model ~/ktpu/build/t2s/vlt_card_v9t6_2n \
     --image ~/kos/out/kos.elf --cmd "hello; units; mg; mover"
 
 # host tests

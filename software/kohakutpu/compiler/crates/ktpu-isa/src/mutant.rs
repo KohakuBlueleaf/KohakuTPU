@@ -1,4 +1,4 @@
-//! Spec-vector mutants (`software/tests/spec/runners/isa.py`, `@mutant`):
+//! Spec-vector mutants (the spec runners, `@mutant`):
 //! with the `mutants` feature a thread-local switch names the one active
 //! mutant and each mutated point asks [`on`]; without it [`on`] is `false`
 //! and the points compile out. A layout mutant edits the field tables each
