@@ -9,6 +9,7 @@ from tinygrad.tensor import Tensor
 
 import kohakutpu.application.ktpugrad as kg
 from kohakutpu.application.runtime import device as D
+from kohakutpu.application.runtime import generated
 from kohakutpu.language.examples import dsl as ex
 from kohakutpu.language.numerics.mxfp7 import KBLOCK, value_fp16
 
@@ -296,6 +297,22 @@ def test_program_on_ktpu(dev, rel, name):
         assert rel(qref, want) < MXFP7_BOUND
     else:
         assert rel(got, want) < 2e-2
+
+
+def test_a_padded_box_fills_through_the_generator(dev, monkeypatch):
+    """`_fill`'s route: the box a pad adds runs `convert.fill_kernel` from
+    Rust, the value on its 32 columns and the program's beside them."""
+    made = []
+    graph = generated.graph
+
+    def spy(generator, *a):
+        made.append(generator)
+        return graph(generator, *a)
+
+    monkeypatch.setattr(generated, "graph", spy)
+    got = T(X).pad(((0, 0), (0, 32)), value=1.5).numpy()
+    assert "convert.fill_kernel" in made
+    assert np.array_equal(got, np.pad(X, ((0, 0), (0, 32)), constant_values=1.5))
 
 
 def test_a_dsl_kernel_inside_a_tinygrad_program(dev, rel):

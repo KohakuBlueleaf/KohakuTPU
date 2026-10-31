@@ -859,6 +859,39 @@ def test_relayout_on_the_card_is_exact(dev, name):
     assert ok.all(), f"{name}: {np.flatnonzero(~ok)[:8]}"
 
 
+def test_a_walk_no_form_takes_runs_the_lanes_generator(dev, monkeypatch):
+    """`forms.relayout`'s other route: a walk pair with no axis contiguous on
+    either side is `Unplanned` here, runs `lanes.relayout_kernel` from Rust
+    and moves the values."""
+    case = (64, ((8, 7), (4, 3)), 0, ((8, 5), (4, 2)), 0, 64, False, 0)
+    n, walk, at, dwalk, dat, m, keep, _ = case
+    with pytest.raises(R.Unplanned):
+        R.plan(n, walk, at, dwalk, dat, m, keep, R.hw_for(dev))
+    made = []
+    graph = FM.generated.graph
+
+    def spy(generator, *a):
+        made.append(generator)
+        return graph(generator, *a)
+
+    monkeypatch.setattr(FM.generated, "graph", spy)
+    rng = np.random.default_rng(5)
+    src = bits(rng, n)
+    src[np.isnan(src.view(np.float16))] = 0x3C00
+    s, d = Storage(dev, 2 * n), Storage(dev, 2 * m + 64)
+    try:
+        dev.write(s.addr, src.tobytes())
+        FM.relayout(dev, s.addr, n, walk, at, dwalk, m, d.addr)
+        dev.drain()
+        got = np.frombuffer(dev.read(d.addr, 2 * m), np.uint16)
+    finally:
+        s.free()
+        d.free()
+    assert made == ["lanes.relayout_kernel"]
+    exp = want(src, case, np.zeros(m, np.uint16))[:m]
+    assert ((got == exp) | ((exp == NEG_ZERO) & (got == 0))).all()
+
+
 # ------------------------------------------------------ the Rust port
 #: The machine both sides plan for; Rust's `Hw::of` takes its vector cores.
 MACHINE = machine_of(BOARD, nodes=1)
