@@ -1,0 +1,221 @@
+"""What the card classes share: paths, sizes, modes, pending and prepared events."""
+
+import dataclasses
+import enum
+import json
+
+from kohakuaccel.driver.node.queue import NodeQueue
+from kohakutpu.application.runtime.memory import CardMemory
+from kohakutpu.application.runtime.paths import ROOT
+from kohakutpu.language.dsl.kernel import _MUTANT
+
+FIRMWARE = ROOT / "build/fw/kohakutpu_node.elf"
+
+#: The debug image (RUL.073): trace and failure records in a debug region.
+DEBUG_FIRMWARE = ROOT / "build/fw/kohakutpu_debug.elf"
+
+#: Records the debug region's ring holds (64 bytes each).
+DEBUG_RECORDS = 512
+
+#: The debug region's header and last-completion offsets (ka/package/debug.h).
+DBG_H_WR, DBG_H_RD, DBG_LASTS = 0x30, 0x40, 0x80
+
+MACHINES = ROOT / "machines"
+
+#: Host arrays start past the node queue's alias at 0.
+ARENA = 0x0010_0000
+
+#: The node queue, at the start of each node's staging store.
+Q_SIZE = 0x0010_0000
+
+#: Each node queue's submission and completion ring depth: a replayed step
+#: (`NodeCard.replay`) submits its packages back to back.
+RING = 64
+
+#: Distinct program sets whose static-checker verdicts a card caches (`verify`).
+CHECKED_KEPT = 4096
+
+#: Boot flags OR'ed into every node's (KA_BOOT_F_*: 1 serial, 4 no fetch,
+#: 16 no dispatch engine, 32 no queue entry read ahead).
+FLAGS_ENV = "KOHAKUTPU_BOOT_FLAGS"
+
+#: "0": every package carries its vector images whole (no residency).
+RESIDENT_ENV = "KOHAKUTPU_RESIDENT"
+
+#: A directory: a package that fails is kept there (bytes and bindings).
+FAILED_ENV = "KOHAKUTPU_KEEP_FAILED"
+
+_UNSET = object()
+
+
+class ResidentMode(str, enum.Enum):
+    UNSET = "unset"
+    OFF = "0"
+    ON = "1"
+
+    @property
+    def forget_all(self) -> bool:
+        return self is ResidentMode.OFF
+
+    @property
+    def stateless(self) -> bool:
+        return self in (ResidentMode.UNSET, ResidentMode.OFF)
+
+    @property
+    def resident(self) -> bool:
+        return self is ResidentMode.ON
+
+
+def parse_resident_mode(value: str | ResidentMode | None) -> ResidentMode:
+    if isinstance(value, ResidentMode):
+        return value
+    mutant = _MUTANT.get()
+    if value is None:
+        if mutant == "app.resident/unset_is_off":
+            return ResidentMode.OFF
+        return ResidentMode.UNSET
+    if value == "0" or (value != "1" and mutant == "app.resident/only_one_resides"):
+        return ResidentMode.OFF
+    return ResidentMode.ON
+
+
+def firmware_wait_seconds(host_timeout: float, requested: float | None) -> float:
+    """Default budget: one wait, one failure quiesce, one report/host interval."""
+    return host_timeout / 3 if requested is None else requested
+
+
+def node_queue(mem, base: int, memory: CardMemory, node: int = 0, **kw) -> NodeQueue:
+    """A node's queue at `base`: packages use the shared allocator, placed for
+    `node`, and retire after their final submitted reference completes."""
+    return NodeQueue(
+        mem,
+        base,
+        size=Q_SIZE,
+        sq_n=RING,
+        cq_n=RING,
+        spill=lambda size: memory.alloc(size, owner="package", near=memory.near(node)),
+        unspill=memory.free,
+        **kw,
+    )
+
+
+def cut(pkg, after: int):
+    """`pkg` ending after its step `after`: the host's cut for a dump after
+    step k (RUL.076). Raises `ValueError` for a step the package lacks."""
+    if not 0 <= after < len(pkg.steps):
+        raise ValueError(
+            f"DBG.DUMP.001: no step {after}; the package has {len(pkg.steps)}"
+        )
+    return dataclasses.replace(pkg, steps=pkg.steps[: after + 1])
+
+
+class CardMismatch(RuntimeError):
+    """The card's enumerated units are not the machine programs are built for."""
+
+
+#: The unit kinds a KohakuTPU mesh holds (matmul clusters, vector cores,
+#: Streaming Row Units).
+KINDS = ("MG", "VC", "SR")
+
+
+def enumerated(meshes) -> dict:
+    """``{kind: [coord, ..]}`` of the units every one of `meshes` answered
+    with; meshes that differ raise :class:`CardMismatch` (the machine is one
+    die repeated), and so does a mesh where no unit answered its CU_CAPS read:
+    the machine built from it would have no unit at all."""
+    found = [{k: sorted(m.coords(k)) for k in KINDS} for m in meshes]
+    for m, f in zip(meshes, found):
+        if not any(f.values()):
+            raise CardMismatch(
+                f"mesh {m.index}: no unit answered the host's CU_CAPS reads "
+                f"(endpoints {[(e.coord, e.name) for e in m.endpoints]}); "
+                f"the agent got no reply from any unit"
+            )
+    if any(f != found[0] for f in found):
+        raise CardMismatch(f"the card's meshes hold different units: {found}")
+    return found[0]
+
+
+def build_facts(machine_json: str) -> dict:
+    """`target.machine_of` keywords from a machine file (machines/*.json):
+    the vector cores' register count and read copies, the mover's facts."""
+    m = json.loads(machine_json)["machine"]
+    return {
+        "vregs": m["vc"]["regs"],
+        "vcopies": m["vc"]["rf_copies"],
+        "mover": {"one_word_runs": m["mover"]["one_word_runs"]},
+    }
+
+
+@dataclasses.dataclass
+class Pending:
+    """A submitted run (`NodeCard.submit`): one package and tag per node,
+    the unlowered packages (a failure's debug rerun) and, once collected,
+    the result."""
+
+    single: bool
+    tags: dict
+    plain: dict
+    result: dict | None = None
+    execution: bool = False
+
+
+class PreparedEvents(list):
+    """Replay event wrappers and package uploads owned by one recording."""
+
+    def __init__(self, source):
+        super().__init__()
+        self.source = self.snapshot(source)
+        self.uploads = []
+        self.execution_lists = []
+        self.closed = False
+
+    @staticmethod
+    def snapshot(source):
+        return tuple(
+            (
+                (
+                    "run",
+                    tuple(
+                        sorted(
+                            (n, bytes(raw), tuple(b)) for n, (raw, b) in ev[1].items()
+                        )
+                    ),
+                )
+                if ev[0] == "run"
+                else ("write", ev[1], bytes(ev[2]))
+            )
+            for ev in source
+        )
+
+    def matches(self, source):
+        return not self.closed and self.source == self.snapshot(source)
+
+    def close(self):
+        if not self.closed:
+            self.closed = True
+            for item in self.execution_lists:
+                item.close()
+            for upload in self.uploads:
+                upload.close()
+            self.uploads.clear()
+
+
+class ClockMismatch(RuntimeError):
+    """A node's wizard is not at the profile the card was opened for."""
+
+
+def report(stats: dict) -> list:
+    """One line per busy vector core."""
+    lines = []
+    for core, c in sorted(stats.items()):
+        res, math = c.get("vres", {}), c.get("math", {})
+        if not res.get("busy"):
+            continue
+        lines.append(
+            f"{core}: "
+            + " ".join(f"{k} {v}" for k, v in res.items())
+            + " | math "
+            + " ".join(f"{k} {v}" for k, v in math.items())
+        )
+    return lines

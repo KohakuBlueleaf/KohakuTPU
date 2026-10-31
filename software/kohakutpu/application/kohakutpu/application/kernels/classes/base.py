@@ -8,7 +8,6 @@ from kohakutpu.language import dsl as kt
 
 L1_WORDS = 512
 
-
 #: L1 words the lowering keeps free beside the operands (landing, slack).
 L1_MARGIN = 16
 
