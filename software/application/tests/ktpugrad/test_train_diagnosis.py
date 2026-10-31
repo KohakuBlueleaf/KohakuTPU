@@ -46,6 +46,8 @@ def test_original_with_base_waits(dev, monkeypatch):
 
 def test_first_wrong_training_plan(dev, monkeypatch, tmp_path):
     synchronous_base(dev, monkeypatch)
+    # A fused group's plans run when its last one does: nothing to read per plan.
+    monkeypatch.setenv("KTPU_HORIZONTAL_FUSION", "0")
     original = run.execute
     checked = []
     generated_calls = []
