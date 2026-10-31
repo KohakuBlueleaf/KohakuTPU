@@ -2927,14 +2927,7 @@ def _product_run(
             for i, v in pending.items():
                 del binds[f"in{i}"]
                 binds[f"p{i}_x"] = v.steps[0].src
-            run = FM.generated.launch(
-                dev,
-                "matmul.mm_kernel",
-                read,
-                binds,
-                kind="matmul",
-                info={"plan": plan.name, "mm": mm},
-            )
+            arguments = read
         elif plain and FM.costs.choose("prepared_mm", recipe, dev.machine.board):
             plans = {i: FM.plans_of(dev, v.steps) for i, v in pending.items()}
             arguments["made"] = {

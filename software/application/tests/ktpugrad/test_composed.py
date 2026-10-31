@@ -48,6 +48,24 @@ def test_on_composes_and_off_does_not(monkeypatch, name):
     assert set(launches(monkeypatch, make, "cost")) <= set(on)
 
 
+@pytest.mark.parametrize("name", ["matmul_a_transposed", "matmul_b_transposed"])
+def test_a_composed_contraction_launches_once(monkeypatch, name):
+    runs = []
+    launch = generated.launch
+
+    def spied(dev, generator, arguments, bindings, kind="dsl", info=None):
+        if generator == "matmul.mm_kernel":
+            runs.append(bool(arguments.get("composed")))
+        return launch(dev, generator, arguments, bindings, kind=kind, info=info)
+
+    monkeypatch.setattr(FM, "COMPOSED", "on")
+    monkeypatch.setattr(generated, "launch", spied)
+    with D.attached(D.Device(kind="offline", board="multimesh_v9t6")) as dev:
+        CASES[name][0]().realize()
+        dev.drain()
+    assert runs == [True]
+
+
 def test_the_default_is_the_rust_decision():
     assert FM.COMPOSED == FM._PREPARED_DEFAULTS["composed"] == "on"
 
