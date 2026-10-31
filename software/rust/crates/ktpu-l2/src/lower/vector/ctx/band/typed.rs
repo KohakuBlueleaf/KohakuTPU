@@ -34,9 +34,7 @@ pub(in crate::lower::vector) fn lower_band(
     );
     let (assigned, _) = crate::lower::vector::assign_typed::assign(&events, &c.pinned, body.vregs);
     let result = image(&c, name, &assigned?).expect("generated band image");
-    let fits = fits
-        .words(&result.0, name, result.1.len(), t)
-        .is_some_and(|n| n as i64 <= crate::target::IMEM_ROOM || on("l2.vector/imem-unbounded"));
+    let fits = fits.whole(&result.0, result.1.len(), t) || on("l2.vector/imem-unbounded");
     let (_, lp) = crate::lower::vector::split(body, par)?;
     // Peer streams retain their producer/consumer parity protocol.
     let peer = lp.as_ref().is_some_and(|lp| {

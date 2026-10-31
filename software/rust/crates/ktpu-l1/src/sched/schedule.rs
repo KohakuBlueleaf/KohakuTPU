@@ -1,8 +1,8 @@
 //! The image scheduler (L1.SCHED.001-.006): each run of consecutive math,
 //! unpack and pack statements of an image is list-scheduled under the issue
 //! model (`sched::model`, the timing module's, RUL.063); the reordered image
-//! replaces the written one only where the core's timing (`sched::timing`)
-//! of the whole image is faster.
+//! replaces the written one only where it fits the image room and the core's
+//! timing (`sched::timing`) of the whole image is faster.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -11,11 +11,16 @@ use ktpu_machine::Machine;
 use super::model::Ruled;
 use super::timing;
 use crate::error::Result;
+use crate::lower::image::{words_of, IMEM_ROOM};
 use crate::mutant;
-use crate::text::{emit_at, fmt, read, Expander, Module, Stmt, Term};
+use crate::text::{emit_at, fmt, read, Definition, Expander, Module, Stmt, Term};
 
 /// A reordered run is kept only when the model times it this much faster.
 pub const MIN_GAIN: f64 = 0.01;
+
+/// The prices of a configuration word, in cycles, tried in turn until an
+/// image's order fits (L1.SCHED.007); past the top the written order stands.
+const PRICES: [i64; 10] = [0, 1, 2, 3, 4, 6, 8, 12, 16, 24];
 
 const MOVABLE: [&str; 2] = ["vunpk", "vpack"];
 
@@ -153,37 +158,100 @@ pub fn preds(run: &[Stmt], chunks: u32) -> Vec<BTreeSet<usize>> {
     preds
 }
 
-/// `module` with every image's runs list-scheduled where the core's timing of
-/// the whole image is better than as written; the result is read back
-/// (L1.SCHED.005). Images are expanded first (macros, `for`, `when`).
-pub fn schedule_module(module: &Module, machine: &Machine) -> Result<Module> {
+/// Whether image `name` of `text` encodes within the image room.
+fn fits(text: &str, name: &str, nparams: usize, vregs: u32, machine: &Machine) -> Result<bool> {
+    let mut module = read(text, &format!("<{name}>"))?;
+    module.vregs = vregs;
+    let words = words_of(&module, name, nparams, machine);
+    Ok(words.is_ok_and(|n| n as i64 <= IMEM_ROOM) || mutant::on("l1.sched/unfit"))
+}
+
+/// An image as the scheduler leaves it.
+struct Scheduled {
+    name: String,
+    nparams: usize,
+    text: String,
+    /// The order of the first price decided it.
+    first: bool,
+    /// A reordering, known to fit; else the written order.
+    tuned: bool,
+}
+
+/// Each image of `module` at `prices` (L1.SCHED.005, .007), expanded (macros,
+/// `for`, `when`).
+fn images(
+    module: &Module,
+    copies: u32,
+    prices: &[i64],
+    machine: &Machine,
+) -> Result<Vec<Scheduled>> {
     let r = module.reader();
-    let ruled = Ruled::new(&r, machine, module.vregs, module.vcopies)?;
+    let regs = module.vregs;
+    let ruled = Ruled::new(&r, machine, regs, copies)?;
     let macros = module.macro_table();
-    let mut texts: Vec<String> = Vec::new();
-    if module.target.is_some() {
-        texts.push(format!("{}\n", module.target_line()));
-    }
     let fill = (
         machine.vc.fill_alone.0 as i64,
         machine.vc.fill_alone.1 as i64,
     );
-    for img in module.images.values() {
+    let image = |img: &Definition| -> Result<Scheduled> {
         let body = Expander::new(&macros, &r, true).stmts(&img.stmts, &HashMap::new())?;
         let head = format!("image {}({})\n", img.name, img.params.join(", "));
         let written = format!("{head}{}", emit_at(&body, 1, 48));
-        let mut tuned = format!("{head}{}", emit_at(&ruled.block(&body)?, 1, 48));
         let classed = body.iter().any(|s| s.kw("classed").is_some());
-        if tuned != written && !classed {
-            let (regs, copies) = (module.vregs, module.vcopies);
-            let t = timing::cycles(&tuned, &img.name, regs, copies, fill, machine)?;
-            let w = timing::cycles(&written, &img.name, regs, copies, fill, machine)?;
-            if t >= w {
-                tuned = written;
+        let nparams = img.params.len();
+        let left = |text, first, tuned| Scheduled {
+            name: img.name.clone(),
+            nparams,
+            text,
+            first,
+            tuned,
+        };
+        for &price in prices {
+            let tuned = format!("{head}{}", emit_at(&ruled.block_at(&body, price)?, 1, 48));
+            let mut faster = tuned != written;
+            if faster && !fits(&tuned, &img.name, nparams, regs, machine)? {
+                continue;
             }
+            if faster && !classed {
+                let t = timing::cycles(&tuned, &img.name, regs, copies, fill, machine)?;
+                let w = timing::cycles(&written, &img.name, regs, copies, fill, machine)?;
+                faster = t < w;
+            }
+            return Ok(match faster {
+                true => left(tuned, price == 0, true),
+                false => left(written, price == 0, false),
+            });
         }
-        texts.push(tuned);
+        Ok(left(written, false, false))
+    };
+    module.images.values().map(image).collect()
+}
+
+/// Whether every image of `module` stands within the room at price 0, on a
+/// core of `copies` register-file read copies.
+pub fn whole(module: &Module, copies: u32, machine: &Machine) -> Result<bool> {
+    for s in images(module, copies, &PRICES[..1], machine)? {
+        let room = s.tuned || fits(&s.text, &s.name, s.nparams, module.vregs, machine)?;
+        if !s.first || !room {
+            return Ok(false);
+        }
     }
+    Ok(true)
+}
+
+/// `module` with every image scheduled ([`images`]); the result is read back
+/// (L1.SCHED.005).
+pub fn schedule_module(module: &Module, machine: &Machine) -> Result<Module> {
+    let mut texts: Vec<String> = Vec::new();
+    if module.target.is_some() {
+        texts.push(format!("{}\n", module.target_line()));
+    }
+    let prices = match mutant::on("l1.sched/one-price") {
+        true => &PRICES[..1],
+        false => &PRICES[..],
+    };
+    let scheduled = images(module, module.vcopies, prices, machine)?;
+    texts.extend(scheduled.into_iter().map(|s| s.text));
     for m in module.macros.values() {
         texts.push(format!(
             "macro {}({})\n{}",

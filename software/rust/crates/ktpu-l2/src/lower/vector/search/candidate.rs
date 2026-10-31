@@ -391,7 +391,11 @@ fn modulo_module(
                     t,
                 );
             }
-            let encoded = encode::words_of(&module, name, params.len(), &t.machine);
+            let thrown = match on("l2.vector/modulo-unthrottled") {
+                true => std::borrow::Cow::Borrowed(&*module),
+                false => throttled(&module, t)?,
+            };
+            let encoded = encode::words_of(&thrown, name, params.len(), &t.machine);
             #[cfg(feature = "witness")]
             if let Some((w, input, _)) = witnessed {
                 w.encoded(

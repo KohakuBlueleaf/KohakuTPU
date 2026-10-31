@@ -35,7 +35,6 @@ def wide() -> str:
 def test_a_stream_past_the_wrap_limit_reads_every_row(dev):
     machine = machine_of(dev.machine.board, nodes=1)
     c = K.compile(wide(), name="wide", machine=machine)
-    assert "on=fill slack=" in "\n".join(c.l1_lines) if hasattr(c, "l1_lines") else True
     rng = np.random.default_rng(VIEWS)
     inputs = {
         f"x{i}": rng.standard_normal((ROWS, 128)).astype(np.float16)

@@ -288,7 +288,7 @@ pub(super) fn sizing(
     nparams: usize,
     t: &Target,
 ) {
-    let got = encode::words_of(module, name, nparams, &t.machine);
+    let got = encode::words_of(&*throttled(module, t).unwrap(), name, nparams, &t.machine);
     assert_eq!(
         format!("{got:?}"),
         format!("{expected:?}"),

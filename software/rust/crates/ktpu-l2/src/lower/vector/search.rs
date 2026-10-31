@@ -14,6 +14,7 @@ use rayon::prelude::*;
 
 use super::ctx::Ctx;
 use candidate::lower_band;
+use ktpu_l1::sched::schedule::whole;
 mod candidate;
 #[cfg(feature = "witness")]
 use super::gen::{Code, Gen};
@@ -24,6 +25,7 @@ use super::range::{self, Ranges};
 use super::sign::ZeroSign;
 use super::{banks, encode, numbers, ops_of, renamed, split, Plan, RPar, VErr, VResult};
 use crate::ir::{Body, Node, Result};
+use crate::lower::fills::throttled;
 use crate::lower::sync::Access;
 use crate::mutant::on;
 use crate::target::{Target, IMEM_ROOM};
@@ -94,21 +96,21 @@ type Image = ([u8; 32], String, usize);
 /// made by the first thread to ask.
 #[derive(Debug, Default)]
 pub struct Fits {
-    words: Mutex<HashMap<Image, Arc<OnceLock<Option<usize>>>>>,
+    whole: Mutex<HashMap<Image, Arc<OnceLock<bool>>>>,
     /// Images scheduled and encoded so far.
     made: AtomicUsize,
 }
 
 impl Fits {
-    /// The IMEM words `module`'s image `name` takes once scheduled, each
-    /// distinct image made once (`l2.vector/fit-each`: every call apart).
-    pub fn words(&self, module: &Module, name: &str, nparams: usize, t: &Target) -> Option<usize> {
+    /// Whether `module`, throttled, stands within the image room at price 0,
+    /// each distinct image made once (`l2.vector/fit-each`: every call apart).
+    pub fn whole(&self, module: &Module, nparams: usize, t: &Target) -> bool {
         let make = || {
             self.made.fetch_add(1, Ordering::Relaxed);
             crate::work::FITTED.fetch_add(1, Ordering::Relaxed);
-            ktpu_l1::sched::schedule_module(module, &t.machine)
-                .and_then(|m| encode::words_of(&m, name, nparams, &t.machine))
-                .ok()
+            throttled(module, t)
+                .and_then(|m| whole(&m, m.vcopies, &t.machine))
+                .unwrap_or(false)
         };
         if on("l2.vector/fit-each") {
             return make();
@@ -118,7 +120,7 @@ impl Fits {
             renamed(&module.source, "\0"),
             nparams,
         );
-        let cell = self.words.lock().unwrap().entry(key).or_default().clone();
+        let cell = self.whole.lock().unwrap().entry(key).or_default().clone();
         *cell.get_or_init(make)
     }
 
@@ -657,6 +659,8 @@ impl Search {
         cands.sort_by_key(|c| c.1);
         let mut whys: Vec<String> = Vec::new();
         let mut tried: Vec<(String, usize)> = Vec::new();
+        // The first image that fits, past candidates its schedule outgrows.
+        let mut fit: Option<Best> = None;
         for ((candidate, params, accesses), cycles) in cands {
             let text = &candidate.source;
             // A text tried before encodes as it did: its words are in `whys`.
@@ -669,7 +673,7 @@ impl Search {
                 Some(m) if !each => m,
                 _ => &candidate,
             };
-            match encode::words_of(module, name, params.len(), &t.machine) {
+            match encode::words_of(&*throttled(module, t)?, name, params.len(), &t.machine) {
                 Err(e) => {
                     let w = e.message.lines().next().unwrap_or("").to_string();
                     if !whys.contains(&w) {
@@ -677,12 +681,16 @@ impl Search {
                     }
                 }
                 Ok(words) if words as i64 <= IMEM_ROOM || on("l2.vector/imem-unbounded") => {
-                    return Ok(Best {
+                    let best = Best {
                         text: text.clone(),
                         params,
                         cycles,
                         accesses,
-                    })
+                    };
+                    if on("l2.vector/first-fit") || self.fits.whole(module, best.params.len(), t) {
+                        return Ok(best);
+                    }
+                    fit.get_or_insert(best);
                 }
                 Ok(words) => {
                     let w = format!("{words} IMEM words (an image takes {IMEM_ROOM})");
@@ -691,6 +699,9 @@ impl Search {
                     }
                 }
             }
+        }
+        if let Some(best) = fit {
+            return Ok(best);
         }
         Err(body.reader.fail(
             &par.st,
@@ -1029,7 +1040,7 @@ fn modulo_legacy(
                 );
             }
             let module = encode::read_image(&text, name, body.vregs)?;
-            let encoded = encode::words_of(&module, name, mem.len(), &t.machine);
+            let encoded = encode::words_of(&*throttled(&module, t)?, name, mem.len(), &t.machine);
             #[cfg(test)]
             {
                 assert_eq!(

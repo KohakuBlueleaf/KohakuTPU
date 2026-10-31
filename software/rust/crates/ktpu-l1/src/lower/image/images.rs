@@ -88,6 +88,32 @@ pub(super) fn stmt_words(stmts: &[Stmt], out: &mut BTreeSet<String>) {
     }
 }
 
+/// IMEM words an image may take: the stack's image room.
+pub const IMEM_ROOM: i64 = 1000;
+
+/// Every unit name at one coordinate of the home mesh: a name fills a
+/// descriptor's or a peer drain's field, never adds a word.
+pub struct Anywhere;
+
+impl Units for Anywhere {
+    fn resolve(&self, _st: &Stmt, _t: &Term) -> Result<(u32, (u32, u32))> {
+        Ok((0, (0, 0)))
+    }
+
+    fn home(&self) -> u32 {
+        0
+    }
+}
+
+/// The IMEM words image `name` of `module` encodes to.
+pub fn words_of(module: &Module, name: &str, nparams: usize, m: &Machine) -> Result<usize> {
+    let anywhere = Anywhere;
+    let mut images = Images::new(module, m, UNKNOWN, Some(&anywhere))?;
+    let st = Stmt::new("run", vec![]);
+    let (words, _) = images.call(&st, name, &vec![0; nparams])?;
+    Ok(words.len())
+}
+
 /// An image's leading descriptor statements, the rest, and the parameters the
 /// rest reads (the encoding's key).
 pub(super) struct Plan {

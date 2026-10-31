@@ -1,0 +1,32 @@
+target ktpu.v9
+fn wide.l2(x0: f16[48,128] @dram, x1: f16[48,128] @dram, x2: f16[48,128] @dram, x3: f16[48,128] @dram, x4: f16[48,128] @dram, x5: f16[48,128] @dram, x6: f16[48,128] @dram, y: f16[48,128] @dram)
+    par c in 0..1 on vc[c]
+        for t in 0..48
+            a0 = load x0[t:+1, :] : f16[1,128] @l1
+            v0 = unpack a0 : f32[1,128] @reg
+            a1 = load x1[t:+1, :] : f16[1,128] @l1
+            v1 = unpack a1 : f32[1,128] @reg
+            a2 = load x2[t:+1, :] : f16[1,128] @l1
+            v2 = unpack a2 : f32[1,128] @reg
+            a3 = load x3[t:+1, :] : f16[1,128] @l1
+            v3 = unpack a3 : f32[1,128] @reg
+            a4 = load x4[t:+1, :] : f16[1,128] @l1
+            v4 = unpack a4 : f32[1,128] @reg
+            a5 = load x5[t:+1, :] : f16[1,128] @l1
+            v5 = unpack a5 : f32[1,128] @reg
+            a6 = load x6[t:+1, :] : f16[1,128] @l1
+            v6 = unpack a6 : f32[1,128] @reg
+            w1 = mul v0, v1 : f32[1,128] @reg
+            w2 = mul w1, v2 : f32[1,128] @reg
+            w3 = mul w2, v3 : f32[1,128] @reg
+            w4 = mul w3, v4 : f32[1,128] @reg
+            w5 = mul w4, v5 : f32[1,128] @reg
+            w6 = mul w5, v6 : f32[1,128] @reg
+            w7 = mul w6, v0 : f32[1,128] @reg
+            w8 = mul w7, v1 : f32[1,128] @reg
+            w9 = mul w8, v2 : f32[1,128] @reg
+            w10 = mul w9, v3 : f32[1,128] @reg
+            w11 = mul w10, v4 : f32[1,128] @reg
+            w12 = mul w11, v5 : f32[1,128] @reg
+            q = pack w12 : f16[1,128] @l1
+            store y[t:+1, :] <- q

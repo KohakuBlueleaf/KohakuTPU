@@ -189,6 +189,8 @@ pub const NAMES: &[&str] = &[
     "l1.sched/timing-flat",
     "l1.sched/unstable",
     "l1.sched/fixed-shape",
+    "l1.sched/unfit",
+    "l1.sched/one-price",
     "l1.facts/mx7-fixed",
     "l1.facts/word-32",
     "l1.facts/mx7-byte",

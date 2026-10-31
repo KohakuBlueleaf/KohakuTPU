@@ -103,7 +103,13 @@ impl<'a> Ruled<'a> {
     /// ready statement that starts earliest, ties to the written order; the
     /// written order stands unless the new one is MIN_GAIN faster.
     pub fn order(&self, run: &[Stmt]) -> Result<Vec<usize>> {
-        let mut got = self.list_order(run)?;
+        self.priced(run, 0)
+    }
+
+    /// [`Ruled::order`] with each configuration word a statement takes added
+    /// to its start at `price` cycles (L1.SCHED.007).
+    pub fn priced(&self, run: &[Stmt], price: i64) -> Result<Vec<usize>> {
+        let mut got = self.list_order(run, price)?;
         if mutant::on("l1.sched/unstable") {
             let calls = CALLS.with(|c| {
                 c.set(c.get() + 1);
@@ -116,7 +122,7 @@ impl<'a> Ruled<'a> {
         Ok(got)
     }
 
-    fn list_order(&self, run: &[Stmt]) -> Result<Vec<usize>> {
+    fn list_order(&self, run: &[Stmt], price: i64) -> Result<Vec<usize>> {
         let n = run.len();
         let written: Vec<usize> = (0..n).collect();
         if n < 3 {
@@ -135,7 +141,9 @@ impl<'a> Ruled<'a> {
                 if done.contains(&k) || !preds[k].is_subset(&done) {
                     continue;
                 }
+                let config = enc.config;
                 let (_, start) = Self::step(&mut enc, &mut core, state, &run[k], &texts[k], true)?;
+                let start = start + price * (enc.config - config) as i64;
                 if best.is_none_or(|(s, _)| start < s) {
                     best = Some((start, k));
                 }
@@ -158,6 +166,11 @@ impl<'a> Ruled<'a> {
 
     /// Every run of movable statements of `stmts` reordered, blocks recursed.
     pub fn block(&self, stmts: &[Stmt]) -> Result<Vec<Stmt>> {
+        self.block_at(stmts, 0)
+    }
+
+    /// [`Ruled::block`] at a configuration word's `price`.
+    pub fn block_at(&self, stmts: &[Stmt], price: i64) -> Result<Vec<Stmt>> {
         let mut out = Vec::new();
         let mut run: Vec<Stmt> = Vec::new();
         for st in stmts {
@@ -165,15 +178,17 @@ impl<'a> Ruled<'a> {
                 run.push(st.clone());
                 continue;
             }
-            out.extend(self.order(&run)?.into_iter().map(|k| run[k].clone()));
+            let order = self.priced(&run, price)?;
+            out.extend(order.into_iter().map(|k| run[k].clone()));
             run.clear();
             let mut st = st.clone();
             if !st.body.is_empty() {
-                st.body = self.block(&st.body)?;
+                st.body = self.block_at(&st.body, price)?;
             }
             out.push(st);
         }
-        out.extend(self.order(&run)?.into_iter().map(|k| run[k].clone()));
+        let order = self.priced(&run, price)?;
+        out.extend(order.into_iter().map(|k| run[k].clone()));
         Ok(out)
     }
 }

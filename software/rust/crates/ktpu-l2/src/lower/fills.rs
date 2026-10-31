@@ -7,11 +7,12 @@
 //! reads the syncs and the queues' order and no register dependence, so a fill
 //! it holds is at least the verifier's.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 
 use ktpu_l1::lower::ops::is_math;
 use ktpu_l1::sched::timing::walk_words;
-use ktpu_l1::text::{fmt, read, Stmt, Term};
+use ktpu_l1::text::{fmt, read, Module, Stmt, Term};
 use ktpu_machine::fill_lost;
 
 use crate::ir::Result;
@@ -152,13 +153,9 @@ impl Walk<'_> {
     }
 }
 
-/// `image`'s text with the syncs its fills need, `image` itself when none.
-pub fn throttle(image: String, t: &Target) -> Result<String> {
-    if !image.contains("vfill ") || on("l2.fill/no-throttle") {
-        return Ok(image);
-    }
-    let depth = t.fill_track_depth;
-    let module = read(&image, "<image>")?;
+/// The syncs `module`'s fills need: by the line of the fill each stands
+/// before, as its slack.
+fn syncs_of(module: &Module, depth: u32) -> BTreeMap<u32, u32> {
     let mut syncs = BTreeMap::new();
     for d in module.images.values() {
         loop {
@@ -180,9 +177,11 @@ pub fn throttle(image: String, t: &Target) -> Result<String> {
             *at = slack.min(*at);
         }
     }
-    if syncs.is_empty() {
-        return Ok(image);
-    }
+    syncs
+}
+
+/// `image` with a sync before each line of `syncs`.
+fn with_syncs(image: &str, syncs: &BTreeMap<u32, u32>) -> String {
     let mut lines: Vec<String> = image.lines().map(str::to_string).collect();
     for (&line, slack) in syncs.iter().rev() {
         let at = line as usize - 1;
@@ -190,5 +189,32 @@ pub fn throttle(image: String, t: &Target) -> Result<String> {
         let sync = format!("{}vsync fe on=fill slack={slack}", " ".repeat(indent));
         lines.insert(at, sync);
     }
-    Ok(lines.join("\n"))
+    lines.join("\n")
+}
+
+/// `image`'s text with the syncs its fills need, `image` itself when none.
+pub fn throttle(image: String, t: &Target) -> Result<String> {
+    if !image.contains("vfill ") || on("l2.fill/no-throttle") {
+        return Ok(image);
+    }
+    let syncs = syncs_of(&read(&image, "<image>")?, t.fill_track_depth);
+    match syncs.is_empty() {
+        true => Ok(image),
+        false => Ok(with_syncs(&image, &syncs)),
+    }
+}
+
+/// `module` with [`throttle`]'s syncs: the image the passes after the search
+/// take, and so the one every fit is decided on (L2.SEARCH.001).
+pub fn throttled<'a>(module: &'a Module, t: &Target) -> Result<Cow<'a, Module>> {
+    if on("l2.fill/no-throttle") || on("l2.vector/fit-unthrottled") {
+        return Ok(Cow::Borrowed(module));
+    }
+    let syncs = syncs_of(module, t.fill_track_depth);
+    if syncs.is_empty() {
+        return Ok(Cow::Borrowed(module));
+    }
+    let mut got = read(&with_syncs(&module.source, &syncs), &module.file)?;
+    (got.vregs, got.vcopies) = (module.vregs, module.vcopies);
+    Ok(Cow::Owned(got))
 }

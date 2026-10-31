@@ -25,13 +25,12 @@ pub fn lower_band(
         body, par, env, name, t, band, remat, ahead, plan, land, hold, pin, false,
     )?;
     let fits = crate::lower::vector::encode::read_image(&result.0, name, body.vregs)
-        .map_err(|e| e.to_string())
-        .and_then(|m| ktpu_l1::sched::schedule_module(&m, &t.machine).map_err(|e| e.to_string()))
         .and_then(|m| {
-            crate::lower::vector::encode::words_of(&m, name, result.1.len(), &t.machine)
-                .map_err(|e| e.to_string())
+            let m = crate::lower::fills::throttled(&m, t)?;
+            ktpu_l1::sched::schedule::whole(&m, m.vcopies, &t.machine)
         })
-        .is_ok_and(|n| n as i64 <= crate::target::IMEM_ROOM || on("l2.vector/imem-unbounded"));
+        .unwrap_or(false)
+        || on("l2.vector/imem-unbounded");
     let (_, lp) = super::super::split(body, par)?;
     let peer = lp.as_ref().is_some_and(|lp| {
         ops_of(&lp.body)

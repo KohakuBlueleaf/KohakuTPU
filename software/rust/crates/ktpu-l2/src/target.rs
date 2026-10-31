@@ -9,8 +9,7 @@ use crate::mutant::on;
 /// The top of a receiving core's L1 clusters drain tiles into: the stack's
 /// landing pool, in words.
 pub const POOL: i64 = 256;
-/// IMEM words an image may take: the stack's image room.
-pub const IMEM_ROOM: i64 = 1000;
+pub use ktpu_l1::lower::image::IMEM_ROOM;
 /// Words one move takes at most: the stack's move bound.
 pub const MOVE_WORDS: i64 = 1 << 14;
 
