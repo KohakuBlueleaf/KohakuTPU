@@ -10,6 +10,7 @@ from kohakutpu.application.kernels import matmul as MM
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import card as C
 from kohakutpu.application.runtime import costs
+from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime.device import ROOT
 from kohakutpu.application.runtime.offline import HostMemory, OfflineCard
 from kohakutpu.stack import kernel as K
@@ -126,6 +127,8 @@ def test_prebuild_retraces_profile_for_enumerated_runtime(tmp_path, monkeypatch)
             str(tmp_path / "library"),
         ],
     )
+    # Prebuild attaches its own offline device for the process it owns.
+    monkeypatch.setattr(D, "_device", D._device)
     prebuild["main"]()
     assert observed == [expected]
     assert list(json.loads(target.read_text())["sources"]) == [expected["class"]]
