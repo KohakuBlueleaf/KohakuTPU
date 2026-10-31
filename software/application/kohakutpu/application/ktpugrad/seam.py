@@ -40,7 +40,7 @@ from tinygrad.helpers import (
 from tinygrad.renderer import Estimates
 from tinygrad.schedule import rangeify
 from tinygrad.uop import Ops
-from tinygrad.uop.ops import AxisType, PatternMatcher, ProgramInfo, UOp
+from tinygrad.uop.ops import AxisType, PatternMatcher, ProgramInfo, UOp, UPat
 
 from kohakutpu.application.ktpugrad import (
     auto_sequence,
@@ -155,10 +155,24 @@ def _fix_store_hazard(target, src):
     return None
 
 
+def _laid_reshape(r, p):
+    """A reshape of a permute on the KTPU reads a laid-out buffer: its index
+    would divide, which no loop nest walks (TG.PLAN.010)."""
+    if not _on_ktpu(p.device):
+        return None
+    return r.replace(src=(p.contiguous(), *r.src[1:]))
+
+
 _PM_EARLIEST = PatternMatcher(
     [
-        (pat, _fix_store_hazard if fn is rangeify.fix_store_hazard else fn)
-        for pat, fn in _PM_EARLIEST_ORIG.patterns
+        (
+            UPat(Ops.RESHAPE, src=(UPat(Ops.PERMUTE, name="p"), UPat()), name="r"),
+            _laid_reshape,
+        ),
+        *(
+            (pat, _fix_store_hazard if fn is rangeify.fix_store_hazard else fn)
+            for pat, fn in _PM_EARLIEST_ORIG.patterns
+        ),
     ]
 )
 #: The tensor module's global `realize` runs a schedule with.
