@@ -17,8 +17,9 @@ def graph(generator, arguments, machine, mutant):
     return rs._rs.generate(generator, arguments, machine, mutant)
 
 
-def launch(dev, generator, arguments, bindings, kind="dsl", info=None):
-    machine = rs.machine_json(dev.machine)
+def source(dev, generator, arguments):
+    """The graph of a generator call under the process's kernel knobs: what
+    `launch` compiles, and what a trace-only capture records."""
     if generator == "matmul.quant_kernel":
         arguments = dict(arguments)
         arguments["schedule"] = {
@@ -36,10 +37,16 @@ def launch(dev, generator, arguments, bindings, kind="dsl", info=None):
         }
     if generator == "matmul.mm_kernel":
         arguments = {**MM.kernel_knobs(), **arguments}
-    source = graph(
-        generator, json.dumps(arguments, sort_keys=True), machine, rs._MUTANT.get()
+    return graph(
+        generator,
+        json.dumps(arguments, sort_keys=True),
+        rs.machine_json(dev.machine),
+        rs._MUTANT.get(),
     )
-    compiled = dev.kernel(source)
+
+
+def launch(dev, generator, arguments, bindings, kind="dsl", info=None):
+    compiled = dev.kernel(source(dev, generator, arguments))
     try:
         run = dev.run(compiled, bindings, kind=kind, info=info)
     except Exception as error:
@@ -64,7 +71,9 @@ def copy(dev, nbytes, bindings, info=None):
     )
 
 
-def walk(dev, src_bytes, levels, at, dst_bytes, dlevels, dat, bindings, kind, info=None):
+def walk(
+    dev, src_bytes, levels, at, dst_bytes, dlevels, dat, bindings, kind, info=None
+):
     arguments = {
         "src_bytes": int(src_bytes),
         "levels": walks(levels),
@@ -84,7 +93,9 @@ def fill(dev, dst_bytes, dlevels, dat, value, ew, bindings, info=None):
         "value": int(value),
         "ew": int(ew),
     }
-    return launch(dev, "convert.fill_kernel", arguments, bindings, kind="move", info=info)
+    return launch(
+        dev, "convert.fill_kernel", arguments, bindings, kind="move", info=info
+    )
 
 
 def relayout_plan(gen, n, walk_, at, dwalk, dat, m, keep, z0=0) -> dict:

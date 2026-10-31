@@ -261,12 +261,7 @@ def capture(
         assert device is dev and dev.kind == "offline"
         launch_boundary.before_submit(device)
         try:
-            source = generated.graph(
-                generator,
-                json.dumps(arguments, sort_keys=True),
-                rs.machine_json(dev.machine),
-                None,
-            )
+            source = generated.source(device, generator, arguments)
         except ValueError as error:
             error.add_note(f"generator {generator}: {arguments}")
             raise
