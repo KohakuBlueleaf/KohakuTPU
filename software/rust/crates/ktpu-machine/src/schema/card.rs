@@ -1,22 +1,23 @@
 //! `card`: nodes, chain, die module, clock profiles, DRAM, the host's map.
 
-use serde::{Deserialize, Deserializer};
+use super::Runtime;
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Card {
-    pub name: String,
+    pub name: Runtime<String>,
     pub nodes: u32,
-    pub chain: Vec<u32>,
+    pub chain: Runtime<Vec<u32>>,
     /// The die module the card's image is built from.
-    pub die: String,
+    pub die: Runtime<String>,
     /// Profile name -> clock domain -> MHz.
-    pub profiles: BTreeMap<String, BTreeMap<String, u32>>,
-    pub idle_profile: String,
-    pub clocks: BTreeMap<String, Clock>,
+    pub profiles: Runtime<BTreeMap<String, BTreeMap<String, u32>>>,
+    pub idle_profile: Runtime<String>,
+    pub clocks: Runtime<BTreeMap<String, Clock>>,
     pub dram: Dram,
-    pub host: Host,
+    pub host: Runtime<Host>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -26,13 +27,13 @@ pub struct Clock {
     pub nominal_mhz: u32,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Dram {
-    pub flat_gb: u32,
-    pub interleave_kb: u32,
+    pub flat_gb: Runtime<u32>,
+    pub interleave_kb: Runtime<u32>,
     /// Usable flat DRAM capacity; flat_gb describes the address decoder span.
-    pub bytes: u64,
+    pub bytes: Runtime<u64>,
     /// Xache/DRAM write-line bytes, distinct from the NoC transfer word.
     pub line_bytes: u32,
 }

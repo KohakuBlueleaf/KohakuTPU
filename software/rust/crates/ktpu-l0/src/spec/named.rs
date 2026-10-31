@@ -10,8 +10,9 @@ use serde_json::{json, Value};
 use super::Port;
 use crate::format;
 
-/// The package format's named values (`format/mod.rs`).
-fn format_values() -> Vec<(&'static str, u64)> {
+/// The package format's named values (`format/mod.rs`, and `unbounded`, the
+/// machine's).
+fn format_values(unbounded: u64) -> Vec<(&'static str, u64)> {
     vec![
         ("ALIGN", format::ALIGN as u64),
         ("HEADER_WORDS", format::HEADER_WORDS as u64),
@@ -30,9 +31,9 @@ fn format_values() -> Vec<(&'static str, u64)> {
         (
             "UNBOUNDED",
             if crate::mutant::on("l0.format/unbounded_drift") {
-                format::UNBOUNDED >> 1
+                unbounded >> 1
             } else {
-                format::UNBOUNDED
+                unbounded
             },
         ),
         ("UNBOUND", format::UNBOUND),
@@ -50,7 +51,8 @@ fn format_values() -> Vec<(&'static str, u64)> {
 
 /// `{host, header, equal}` for the input's `module` (only `format`),
 /// `header` and `like`.
-pub fn run(input: &Value, _: Option<&ktpu_machine::Machine>) -> Port {
+pub fn run(input: &Value, m: Option<&ktpu_machine::Machine>) -> Port {
+    let m = m.ok_or("l0.named takes a machine")?;
     let module = input["module"].as_str().unwrap_or_default();
     if module != "format" {
         return Err(format!(
@@ -59,7 +61,7 @@ pub fn run(input: &Value, _: Option<&ktpu_machine::Machine>) -> Port {
     }
     let like = input["like"].as_str().ok_or("l0.named takes like")?;
     let rel = input["header"].as_str().ok_or("l0.named takes header")?;
-    let host: BTreeSet<u64> = format_values()
+    let host: BTreeSet<u64> = format_values(m.fw.package.unbounded)
         .into_iter()
         .filter(|(n, _)| n.contains(like))
         .map(|(_, v)| v)

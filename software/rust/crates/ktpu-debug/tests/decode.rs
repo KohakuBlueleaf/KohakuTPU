@@ -192,7 +192,7 @@ fn dbg_fail_001_failure_report_named_from_the_schema() {
     let vc = 0x5643u64 << 32 | 2 << 8 | 1;
     r.put([2 | 1 << 32, 7, vc, 3 | 2 << 32, 3 | 1 << 32, 4 << 32, 3, 0]);
     let timeout = m.fw.status["KA_ST_TIMEOUT"] as u64;
-    let await_ = m.fw.waits["KA_WAIT_AWAIT"] as u64;
+    let await_ = m.fw.waits.runtime()["KA_WAIT_AWAIT"] as u64;
     let mv = 1u64 << 33 | 6 << 28 | 17;
     r.put([
         3 | 2 << 8 | 2 << 16 | 1 << 32,
@@ -204,7 +204,7 @@ fn dbg_fail_001_failure_report_named_from_the_schema() {
         2,
         0,
     ]);
-    let fault = m.fw.signals["KA_SIG_FAULT"] as u64;
+    let fault = m.fw.signals.runtime()["KA_SIG_FAULT"] as u64;
     r.completion(
         1,
         6,
@@ -248,7 +248,7 @@ fn dbg_fail_001_failure_report_named_from_the_schema() {
 fn dbg_fail_005_engine_issue_count_beside_the_queued_step() {
     let m = machine();
     let timeout = m.fw.status["KA_ST_TIMEOUT"] as u64;
-    let await_ = m.fw.waits["KA_WAIT_AWAIT"] as u64;
+    let await_ = m.fw.waits.runtime()["KA_WAIT_AWAIT"] as u64;
     let mut r = Region::new(64 * 8);
     // ENGINE (op 11) queued at step 3, the engine at issue 9; then a
     // firmware-path failure whose word 7 is not an issue count.
@@ -278,7 +278,7 @@ fn dbg_fail_005_engine_issue_count_beside_the_queued_step() {
 fn rul_032_engine_timeout_decodes_stat() {
     let m = machine();
     let timeout = m.fw.status["KA_ST_TIMEOUT"] as u64;
-    let engine = m.fw.waits["KA_WAIT_ENGINE"] as u64;
+    let engine = m.fw.waits.runtime()["KA_WAIT_ENGINE"] as u64;
     // STAT: magic 0xDE01, depth 2^6, head blocked, enabled, 9 issued, 3 queued.
     let stat = 0xde01u64 << 48 | 6 << 40 | 1 << 33 | 1 << 32 | 9 << 16 | 3;
     let mut r = Region::new(64 * 8);
@@ -337,7 +337,7 @@ fn rul_032_engine_timeout_decodes_stat() {
 fn dbg_fail_003_unit_fault_decoded_by_kind() {
     let m = machine();
     let mut r = Region::new(64 * 8);
-    let fault = m.fw.signals["KA_SIG_FAULT"] as u64;
+    let fault = m.fw.signals.runtime()["KA_SIG_FAULT"] as u64;
     let word = cq(2, 1, fault, 12);
     r.put([2, 9, 0x5643u64 << 32 | 1 << 8 | 2, 0, 0, 0, 1, 0]);
     let unit_fault = m.fw.status["KA_ST_UNIT_FAULT"] as u64;

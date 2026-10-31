@@ -30,13 +30,9 @@ pub const FNV_PRIME: u64 = 0x0000_0100_0000_01B3;
 /// A MOVER / STORE / CTRL pair whose register (address) is this is skipped.
 pub const MOVER_SKIP: u64 = u64::MAX;
 
-/// A unit table credit meaning no credit bound (L0.PKG.035).
+/// A unit table credit meaning no credit bound (L0.PKG.035); the bound it
+/// stands for is [`Facts::unbounded`](crate::facts::Facts::unbounded).
 pub const CREDIT_UNBOUNDED: u64 = 0;
-
-/// The in-flight bound "no credit bound" stands for, past any count a
-/// package reaches (RUL.042): the writer, `engine::lower` and the verifier
-/// read this one value.
-pub const UNBOUNDED: u64 = 1 << 32;
 
 /// A binding meaning "unbound: take the buffer's default"; address 0 binds
 /// like any other (RUL.040).

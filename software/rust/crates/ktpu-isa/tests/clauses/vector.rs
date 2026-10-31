@@ -149,6 +149,19 @@ fn isa_vc_012_imem_and_run_reach() {
 }
 
 #[test]
+fn isa_vc_070_the_machine_names_the_encoder_crossbar_modes() {
+    let less = machine()
+        .with_fact("vc.crossbar_modes", serde_json::json!(["none", "xor"]))
+        .unwrap();
+    let refusal = ktpu_isa::unit::vector::VecCfg::of(&less).unwrap_err();
+    assert_eq!(refusal.clause, "ISA.VC.070");
+    #[cfg(feature = "mutants")]
+    assert!(ktpu_isa::mutant::with("isa.vector/any_crossbar", || {
+        ktpu_isa::unit::vector::VecCfg::of(&less).is_ok()
+    }));
+}
+
+#[test]
 fn isa_vc_030_cu_opcodes() {
     let v = isa().vector;
     let ops: Vec<u64> = [

@@ -325,7 +325,7 @@ impl QueueLayout {
         }
         if let Ok(json) = obj.extract::<&str>() {
             let m = super::machine(json)?;
-            return Self::from_queue(&m.fw.queue);
+            return Self::from_queue(m.fw.queue.runtime());
         }
         if obj.hasattr("schema")? {
             let schema = obj.getattr("schema")?;

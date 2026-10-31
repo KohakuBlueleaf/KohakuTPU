@@ -103,7 +103,7 @@ every other parameter at its `v2_core.v` default.
 
 ## 6. Crossbar and predicates (VCFG XB)
 
-- **ISA.VC.070** `silicon` XB holds xm [2:0], xk [6:3], sh [9:7], xc [10]; it applies to an op only with `om` set. pm and pr are ISA.VC.078. (code: ktpu-isa/src/unit/vector/core.rs; src/kohakutpu/vector2/v2_core.v:654-657,690,1623; evidence: tally image vadd xb xor 408, vmax xb xor 196, vmul xb bcast 1648 and xor 1032)
+- **ISA.VC.070** `silicon` XB holds xm [2:0], xk [6:3], sh [9:7], xc [10]; it applies to an op only with `om` set. pm and pr are ISA.VC.078. `vc.crossbar_modes` names the xm codes in order; a machine naming others is refused. (code: ktpu-isa/src/unit/vector/core.rs; src/kohakutpu/vector2/v2_core.v:654-657,690,1623; evidence: tally image vadd xb xor 408, vmax xb xor 196, vmul xb bcast 1648 and xor 1032)
 - **ISA.VC.071** `silicon` The crossbar acts on the b operand: lane l of b reads lane src(l) of b's register chunk. With `xc` the c operand is the same crossbar output (b's register and chunk), and the c field is not read. (code: src/kohakutpu/vector2/v2_core.v:327-330,622; src/kohakutpu/vector2/v2_lanes.v:11-15; ktpu-l1/src/lower/image/mod.rs; evidence: silicon `vadd v19[0 :], v19[0 :], xor(v19, 8) vl=64` (xor through c with xc))
 - **ISA.VC.072** `silicon` xm 1 xor: src(l) = l ^ xk. (code: src/kohakutpu/vector2/v2_xbar.v:1-6; evidence: tally image xb xor 1636)
 - **ISA.VC.073** `silicon` xm 3 bcast: on beat i every lane reads lane (xk + (i >> sh)) mod 16. (code: src/kohakutpu/vector2/v2_core.v:688; src/kohakutpu/vector2/v2_xbar.v:5; evidence: tally image vmul xb bcast 1648; silicon kernels use sh=0 only)

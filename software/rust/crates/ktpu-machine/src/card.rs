@@ -35,7 +35,7 @@ fn invalid(message: &str) -> Refusal {
 
 impl Card {
     pub fn of(m: &Machine, nodes: Option<u32>, units: Option<Units>) -> Result<Self, Refusal> {
-        let mut a = m.die.address.clone();
+        let mut a = m.die.address.runtime().clone();
         if mutant::on("machine.card/mesh-bits") {
             a.mesh_bits = 2;
         }
@@ -61,12 +61,12 @@ impl Card {
             m.die.stage_bytes()
         }
         .ok_or_else(|| invalid("staging byte size overflows"))?;
-        let aperture = m.die.staging.aperture;
+        let aperture = *m.die.staging.aperture.runtime();
         if stage_bytes == 0
             || stage_bytes > (1u64 << a.aperture_shift)
             || u64::from(aperture) >= (1u64 << a.aperture_bits)
             || aperture >= 64
-            || (m.die.staging.implemented >> aperture) & 1 == 0
+            || (m.die.staging.implemented.runtime() >> aperture) & 1 == 0
         {
             return Err(invalid("staging does not fit an implemented aperture"));
         }
@@ -77,7 +77,7 @@ impl Card {
         let chain: Vec<u32> = if nodes.is_some() {
             (0..count).collect()
         } else {
-            m.card.chain.clone()
+            m.card.chain.runtime().clone()
         };
         let mut sorted = chain.clone();
         sorted.sort_unstable();
@@ -104,7 +104,7 @@ impl Card {
             links: chain.windows(2).map(|p| (p[0], p[1])).collect(),
             fetch: m.die.fetch_port,
             inst_depth: m.unit.inst_depth,
-            stage_flits: m.die.staging.flits,
+            stage_flits: *m.die.staging.flits.runtime(),
             stage_bytes,
             regs: m.vc.regs,
             rf_copies: m.vc.rf_copies,

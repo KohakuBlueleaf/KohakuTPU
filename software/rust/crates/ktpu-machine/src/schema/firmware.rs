@@ -1,48 +1,37 @@
 //! `fw`: the node firmware image, its limits and its formats.
 
-use serde::Deserialize;
+use super::Runtime;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Fw {
-    pub image: String,
+    pub image: Runtime<String>,
     /// Firmware parts built into the image (`kohakuaccel/dispatch`, ...).
-    pub parts: Vec<String>,
+    pub parts: Runtime<Vec<String>>,
     /// Unit classes the image drives (`matmul`, `vector`, ...).
-    pub unit_classes: Vec<String>,
-    pub memory: FwMemory,
+    pub unit_classes: Runtime<Vec<String>>,
+    pub memory: Runtime<FwMemory>,
     /// Section name -> bytes the build uses.
-    pub sections: BTreeMap<String, u64>,
+    pub sections: Runtime<BTreeMap<String, u64>>,
     pub max_units: u32,
     pub max_pkg_units: u32,
     pub engine_units: u32,
     pub fetch_depth: u32,
     pub max_buffers: u32,
-    pub enum_wait: u32,
-    pub heap: Heap,
+    pub enum_wait: Runtime<u32>,
+    pub heap: Runtime<Heap>,
     pub boot: Boot,
-    pub debug: Debug,
-    pub queue: Queue,
+    pub debug: Runtime<Debug>,
+    pub queue: Runtime<Queue>,
     pub package: Package,
     /// `KA_ST_*` name -> code.
     pub status: BTreeMap<String, u32>,
     /// `KA_WAIT_*` name -> code.
-    pub waits: BTreeMap<String, u32>,
+    pub waits: Runtime<BTreeMap<String, u32>>,
     /// `KA_SIG_*` name -> code.
-    pub signals: BTreeMap<String, u32>,
-}
-
-impl Fw {
-    /// Whether the image carries firmware part `part` (`"kohakuaccel/dispatch"`).
-    pub fn has_part(&self, part: &str) -> bool {
-        self.parts.iter().any(|p| p == part)
-    }
-
-    /// Whether the image drives unit class `class` (`"vector"`).
-    pub fn has_unit_class(&self, class: &str) -> bool {
-        self.unit_classes.iter().any(|c| c == class)
-    }
+    pub signals: Runtime<BTreeMap<String, u32>>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -59,16 +48,16 @@ pub struct Heap {
     pub blocks: u32,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Boot {
     pub version: u32,
     /// `KA_BOOT_F_*` name (without the prefix) -> bit.
-    pub flags: BTreeMap<String, u32>,
+    pub flags: Runtime<BTreeMap<String, u32>>,
     /// Entries of the boot block's region table (RUL.024).
     pub regions: u32,
     /// `KA_REGION_*` name (without the prefix) -> use code.
-    pub region_uses: BTreeMap<String, u32>,
+    pub region_uses: Runtime<BTreeMap<String, u32>>,
 }
 
 /// The debug image (RUL.073): its name, the features it carries
@@ -124,13 +113,13 @@ pub struct RecordField {
     pub width: u32,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Package {
     pub magic: u32,
     pub version: u32,
     pub header_bytes: u32,
     pub regs: u32,
-    pub copy_bytes: u32,
+    pub copy_bytes: Runtime<u32>,
     pub unbounded: u64,
 }

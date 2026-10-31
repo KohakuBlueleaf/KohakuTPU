@@ -122,6 +122,8 @@ pub struct PackageBuilder {
     pub spans: Vec<(u64, u64)>,
     regs: u64,
     il_slots: u64,
+    /// Buffers a span may become: the relocation's and the firmware's bound.
+    reloc_buffers: usize,
     buf: HashMap<String, usize>,
     span_buf: HashMap<u64, usize>,
     unit_at: HashMap<(u64, u64, u64), usize>,
@@ -144,6 +146,10 @@ impl PackageBuilder {
             spans: Vec::new(),
             regs: f.regs,
             il_slots: f.il_slots,
+            reloc_buffers: match mutant::on("l0.build/reloc_past_firmware") {
+                true => RELOC_BUFFERS,
+                false => RELOC_BUFFERS.min(f.max_buffers),
+            },
             buf: HashMap::new(),
             span_buf: HashMap::new(),
             unit_at: HashMap::new(),
@@ -245,7 +251,7 @@ impl PackageBuilder {
             let b = match self.span_buf.get(&base) {
                 Some(&b) => b,
                 None => {
-                    if self.buffers.len() >= RELOC_BUFFERS {
+                    if self.buffers.len() >= self.reloc_buffers {
                         continue;
                     }
                     let name = format!("buf{}", self.buffers.len());

@@ -68,7 +68,7 @@ fn fault_codes_are_the_selected_machine_fact() {
         .unwrap()
         .with_fact("vc.faults", json!([5, 9]))
         .unwrap();
-    assert_eq!(ktpu_isa::unit::vector::core::fault_codes(&m), vec![5, 9]);
+    assert_eq!(ktpu_isa::spec::fault_codes(&m), vec![5, 9]);
 }
 
 #[test]

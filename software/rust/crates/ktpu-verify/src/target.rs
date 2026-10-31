@@ -101,6 +101,10 @@ pub struct Facts {
     pub word_bytes: i64,
     /// `card.dram.line_bytes`: independently owned external write line.
     pub line_bytes: i64,
+    /// `fw.package.unbounded`: the node-wide cap (boot `cq_depth` 0: none)
+    /// the card boots with (L0.STEP.008); a table credit of 0 takes it
+    /// (RUL.042).
+    pub unbounded: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -222,6 +226,7 @@ impl Target {
             sr_held: at(m, "sr.held")?.as_i64().unwrap_or(0),
             word_bytes,
             line_bytes: int(m, "card.dram.line_bytes")?,
+            unbounded: int(m, "fw.package.unbounded")?,
         };
         Ok(Target {
             machine,

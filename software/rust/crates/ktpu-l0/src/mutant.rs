@@ -82,6 +82,8 @@ pub const NAMES: &[&str] = &[
     "l0.bind/unchecked",
     "l0.bind/zero_unbound",
     "l0.pkg/unlimited_units",
+    "l0.pkg/unlimited_buffers",
+    "l0.build/reloc_past_firmware",
     "l0.program/no_signature",
     "l0.bind/default_wins",
     "l0.bind/zero_binds",

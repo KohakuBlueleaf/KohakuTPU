@@ -66,15 +66,15 @@ fn machine_view<'py>(
         for (k, v) in [
             ("F_LANES", p.f_lanes),
             ("H_TAPS", p.h_taps),
-            ("HAS_FN", p.has_fn),
-            ("HAS_MANT", p.has_mant),
-            ("FIN_RCP", p.fin_rcp),
-            ("F16_IEEE", p.f16_ieee),
-            ("HAS_MX7", p.has_mx7),
+            ("HAS_FN", *p.has_fn.runtime()),
+            ("HAS_MANT", *p.has_mant.runtime()),
+            ("FIN_RCP", *p.fin_rcp.runtime()),
+            ("F16_IEEE", *p.f16_ieee.runtime()),
+            ("HAS_MX7", *p.has_mx7.runtime()),
         ] {
             sr.set_item(k, v)?;
         }
-        sr.set_item("TAB", p.tab)?;
+        sr.set_item("TAB", p.tab.runtime())?;
     }
     params.set_item("SR", sr)?;
     d.set_item("params", params)?;

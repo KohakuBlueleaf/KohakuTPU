@@ -78,7 +78,7 @@ pub struct Compiled {
     pub scratch: Vec<Scratch>,
     pub verdict: Verdict,
     /// Why the build is not relocatable (STACK.RELOC's message: a word that
-    /// does not follow its buffer, as past L0.BIND.005's 256 buffers), when
+    /// does not follow its buffer, as past L0.BIND.005's buffer bound), when
     /// it is not: the card's packages are then built at each binding.
     pub bound: Option<String>,
 }

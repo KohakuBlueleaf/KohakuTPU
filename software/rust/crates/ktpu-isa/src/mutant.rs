@@ -82,6 +82,7 @@ pub const NAMES: &[&str] = &[
     "isa.vector/dim",
     "isa.vector/regs",
     "isa.vector/consts",
+    "isa.vector/any_crossbar",
     "isa.vector/isa_cfg",
     "isa.vector/model_queues",
     "isa.vector/src_sel",

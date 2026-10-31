@@ -33,6 +33,38 @@ against the tree's definition, Rust (`ktpu_machine::schema_version`) against
 the definition it was built from, so a build older than the files says to
 rebuild.
 
+## The compile key
+
+`Machine::digest` is sha256 of the canonical JSON of the facts a compile path
+can read, and it keys everything compiled for a machine: the stage caches and
+the graph library's `machine` directory (`_rs.library_machine`, with the stack
+settings). A fact is keyed unless its schema field has the type `Runtime<T>`:
+that field is out of the digest and out of `Machine::get`, and reading it takes
+`.runtime()` (`Machine::runtime_fact` by path), which no compile path calls,
+so rustc settles the read set. A
+compile path covers the crates from graph to image plus the generators and
+planners behind a library kernel; a Python generator's reads reach the key
+through the graph it writes. A rebuild that moves a runtime fact (`fw.sections`,
+the queue layout, wait codes) keeps every compiled artifact. `name`, `image`
+and `sources` are not facts and are out of the digest.
+
+`ktpu-machine/tests/key.rs` holds the set to the compile sources: every leaf of
+every machine file moves the digest if and only if it is keyed, no compile
+source reaches one (`.runtime()`, `runtime_fact`, the runtime's `Card::of`) and every keyed field is
+named by a compile source. That last check is by field name, so a name another
+struct also uses passes without a reader of this one.
+
+A compile constant that a machine fact fixes reads that fact, keyed
+(`fw.package.unbounded` through `Facts::unbounded`), or is refused against it
+(`vc.crossbar_modes` against the encoder's `XM_NAMES`, ISA.VC.070). The stack's
+image room `IMEM_ROOM` is its own choice under the keyed `vc.imem_words`;
+`node.imem_bytes` is the node processor's instruction memory, which bounds the
+firmware. Pairs where a keyed fact is derived from a runtime fact
+(`mover.max_index`, `mg.dq_limit`, `mg.acc_bits`) and the bounds a compile
+constant stays under hold on every machine file, by
+`paired_facts_agree_on_every_machine` here and
+`compile_constants_agree_with_every_machine` in `ktpu/tests/machine_key.rs`.
+
 ## Sections
 
 | section | what it holds | source |

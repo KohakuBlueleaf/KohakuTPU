@@ -28,7 +28,7 @@ fn every_machine_view_and_address() {
                 assert_eq!(c.board, name);
                 assert_eq!(c.fetch, m.die.fetch_port);
                 assert_eq!(c.inst_depth, m.unit.inst_depth);
-                assert_eq!(c.stage_flits, m.die.staging.flits);
+                assert_eq!(c.stage_flits, *m.die.staging.flits.runtime());
                 assert_eq!(c.regs, m.vc.regs);
                 assert_eq!(c.rf_copies, m.vc.rf_copies);
                 assert_eq!(c.sr, m.sr);

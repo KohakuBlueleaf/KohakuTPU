@@ -90,4 +90,4 @@ kernel held a `goto` or a field patch, so no package kept a `JUMP` or a
 
 ## Rulings
 
-The disagreements found on this page are ruled in `../rulings.md`: RUL.004, RUL.005, RUL.034, RUL.041.
+The disagreements found on this page are ruled in `../rulings.md`: RUL.004, RUL.005, RUL.034, RUL.041, RUL.100.

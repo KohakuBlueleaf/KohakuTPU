@@ -365,8 +365,8 @@ pub fn stages(case: &Value, m: &Machine) -> Vec<Step> {
             false => Box::leak(base.to_string().into_boxed_str()),
         }
     };
-    // A build that is not relocatable (STACK.RELOC: past L0.BIND.005's 256
-    // buffers) is compared built at the reference's own binds, as the card
+    // A build that is not relocatable (STACK.RELOC: past L0.BIND.005's
+    // buffer bound) is compared built at the reference's own binds, as the card
     // builds it then (`CardStack::binds`).
     let bound = matches!(b.order(&progs, m), Err(e) if e.clause == "STACK.RELOC");
     let binds: Option<BTreeMap<String, i128>> = bound.then(|| {

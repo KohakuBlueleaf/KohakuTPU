@@ -1,0 +1,286 @@
+{
+ "clause": "RUL.100",
+ "tier": 0,
+ "runner": "l0.pkg.bytes",
+ "status": "frozen",
+ "input": {
+  "package": {
+   "units": [
+    {
+     "type": "MG",
+     "x": 0,
+     "y": 0,
+     "credit": 512
+    }
+   ],
+   "buffers": [
+    {
+     "name": "b0",
+     "size": 64
+    },
+    {
+     "name": "b1",
+     "size": 64
+    },
+    {
+     "name": "b2",
+     "size": 64
+    },
+    {
+     "name": "b3",
+     "size": 64
+    },
+    {
+     "name": "b4",
+     "size": 64
+    },
+    {
+     "name": "b5",
+     "size": 64
+    },
+    {
+     "name": "b6",
+     "size": 64
+    },
+    {
+     "name": "b7",
+     "size": 64
+    },
+    {
+     "name": "b8",
+     "size": 64
+    },
+    {
+     "name": "b9",
+     "size": 64
+    },
+    {
+     "name": "b10",
+     "size": 64
+    },
+    {
+     "name": "b11",
+     "size": 64
+    },
+    {
+     "name": "b12",
+     "size": 64
+    },
+    {
+     "name": "b13",
+     "size": 64
+    },
+    {
+     "name": "b14",
+     "size": 64
+    },
+    {
+     "name": "b15",
+     "size": 64
+    },
+    {
+     "name": "b16",
+     "size": 64
+    },
+    {
+     "name": "b17",
+     "size": 64
+    },
+    {
+     "name": "b18",
+     "size": 64
+    },
+    {
+     "name": "b19",
+     "size": 64
+    },
+    {
+     "name": "b20",
+     "size": 64
+    },
+    {
+     "name": "b21",
+     "size": 64
+    },
+    {
+     "name": "b22",
+     "size": 64
+    },
+    {
+     "name": "b23",
+     "size": 64
+    },
+    {
+     "name": "b24",
+     "size": 64
+    },
+    {
+     "name": "b25",
+     "size": 64
+    },
+    {
+     "name": "b26",
+     "size": 64
+    },
+    {
+     "name": "b27",
+     "size": 64
+    },
+    {
+     "name": "b28",
+     "size": 64
+    },
+    {
+     "name": "b29",
+     "size": 64
+    },
+    {
+     "name": "b30",
+     "size": 64
+    },
+    {
+     "name": "b31",
+     "size": 64
+    },
+    {
+     "name": "b32",
+     "size": 64
+    },
+    {
+     "name": "b33",
+     "size": 64
+    },
+    {
+     "name": "b34",
+     "size": 64
+    },
+    {
+     "name": "b35",
+     "size": 64
+    },
+    {
+     "name": "b36",
+     "size": 64
+    },
+    {
+     "name": "b37",
+     "size": 64
+    },
+    {
+     "name": "b38",
+     "size": 64
+    },
+    {
+     "name": "b39",
+     "size": 64
+    },
+    {
+     "name": "b40",
+     "size": 64
+    },
+    {
+     "name": "b41",
+     "size": 64
+    },
+    {
+     "name": "b42",
+     "size": 64
+    },
+    {
+     "name": "b43",
+     "size": 64
+    },
+    {
+     "name": "b44",
+     "size": 64
+    },
+    {
+     "name": "b45",
+     "size": 64
+    },
+    {
+     "name": "b46",
+     "size": 64
+    },
+    {
+     "name": "b47",
+     "size": 64
+    },
+    {
+     "name": "b48",
+     "size": 64
+    },
+    {
+     "name": "b49",
+     "size": 64
+    },
+    {
+     "name": "b50",
+     "size": 64
+    },
+    {
+     "name": "b51",
+     "size": 64
+    },
+    {
+     "name": "b52",
+     "size": 64
+    },
+    {
+     "name": "b53",
+     "size": 64
+    },
+    {
+     "name": "b54",
+     "size": 64
+    },
+    {
+     "name": "b55",
+     "size": 64
+    },
+    {
+     "name": "b56",
+     "size": 64
+    },
+    {
+     "name": "b57",
+     "size": 64
+    },
+    {
+     "name": "b58",
+     "size": 64
+    },
+    {
+     "name": "b59",
+     "size": 64
+    },
+    {
+     "name": "b60",
+     "size": 64
+    },
+    {
+     "name": "b61",
+     "size": 64
+    },
+    {
+     "name": "b62",
+     "size": 64
+    },
+    {
+     "name": "b63",
+     "size": 64
+    },
+    {
+     "name": "b64",
+     "size": 64
+    }
+   ]
+  }
+ },
+ "expect": {
+  "refused": "PackageError"
+ },
+ "mutants": [
+  "l0.pkg/unlimited_buffers"
+ ]
+}

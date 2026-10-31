@@ -18,6 +18,9 @@ pub struct Facts {
     pub package_version: u64,
     pub header_bytes: u64,
     pub regs: u64,
+    /// `fw.package.unbounded`: the in-flight bound "no credit bound" stands
+    /// for, past any count a package reaches (RUL.042).
+    pub unbounded: u64,
     /// `fw.engine_units`: unit counters the dispatch engine keeps; the next
     /// source is the mover's.
     pub engine_units: usize,
@@ -25,6 +28,8 @@ pub struct Facts {
     pub counter_bits: u32,
     /// `fw.max_pkg_units`: units a package table holds (RUL.005).
     pub max_pkg_units: usize,
+    /// `fw.max_buffers`: buffers a package table holds (RUL.100).
+    pub max_buffers: usize,
     /// `node.ring_depth`: rings the interlink queues (RUL.046).
     pub ring_depth: usize,
     /// `node.mover_span`: mover registers are below it.
@@ -95,9 +100,11 @@ impl Facts {
             package_magic: m.fw.package.magic as u64,
             package_version: m.fw.package.version as u64,
             header_bytes: m.fw.package.header_bytes as u64,
+            unbounded: m.fw.package.unbounded,
             engine_units: m.fw.engine_units as usize,
             counter_bits: m.node.engine.counter_bits,
             max_pkg_units: m.fw.max_pkg_units as usize,
+            max_buffers: m.fw.max_buffers as usize,
             ring_depth: m.node.ring_depth as usize,
             mover_span: m.node.mover_span as u64,
             il_slots: m.il.slots as u64,

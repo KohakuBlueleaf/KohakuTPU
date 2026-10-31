@@ -126,6 +126,15 @@ pub fn run(
     }
 }
 
+/// Fault codes raised by the machine's built vector core.
+pub fn fault_codes(machine: &Machine) -> Vec<u32> {
+    let mut codes = machine.vc.faults.runtime().clone();
+    if on("rul.053/fault-dropped") {
+        codes.pop();
+    }
+    codes
+}
+
 fn hx(v: u64) -> Value {
     Value::from(format!("{v:#x}"))
 }
@@ -467,7 +476,7 @@ fn vector_params(input: &Value, k: Option<&Knobs>) -> Result<Value, String> {
         let v = if let Some(path) = name.strip_prefix("m:") {
             fact_read(
                 k.machine
-                    .get(path)
+                    .runtime_fact(path)
                     .cloned()
                     .ok_or_else(|| format!("machine has no {path}"))?,
             )
@@ -568,7 +577,7 @@ fn param(name: &str, k: &Knobs) -> Result<Value, String> {
         "mover.word_bytes" => mv.word_bytes.into(),
         "imem_words" => v.imem_words().into(),
         "run_reach" => (1u32 << v.addr_bits).into(),
-        "faults" => crate::unit::vector::core::fault_codes(m).into(),
+        "faults" => fault_codes(m).into(),
         "mover.move_words" => mv.move_words.into(),
         "mover.ndim" => mv.levels.into(),
         "mover.max_index" => mv.max_index.into(),
@@ -614,7 +623,7 @@ fn param(name: &str, k: &Knobs) -> Result<Value, String> {
         "mg.burst" => m.mg.wburst.into(),
         // ISA.MG.027: a sweep is held while more than dq_depth less two
         // drain bursts are outstanding.
-        "mg.dq_room" => (m.mg.dq_depth - 2 * m.mg.wburst).into(),
+        "mg.dq_room" => (*m.mg.dq_depth.runtime() - 2 * m.mg.wburst).into(),
         "mg.buffers" => {
             let wb = m.die.word_bytes;
             let entry = m.mg.lanes * m.mg.kblock / wb;
@@ -648,8 +657,9 @@ fn param(name: &str, k: &Knobs) -> Result<Value, String> {
         }),
         other if other.starts_with("core.") => {
             let build = &other["core.".len()..];
-            if m.vc.build != build {
-                return Err(format!("the machine's core is {}, not {build}", m.vc.build));
+            let core = m.vc.build.runtime();
+            if core != build {
+                return Err(format!("the machine's core is {core}, not {build}"));
             }
             json!([m.vc.regs, m.vc.rf_copies])
         }

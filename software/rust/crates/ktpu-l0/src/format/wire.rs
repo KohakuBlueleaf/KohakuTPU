@@ -141,7 +141,7 @@ fn ceil_div(a: u128, b: u128) -> u128 {
 }
 
 impl Package {
-    /// The writer's checks (L0.PKG.011, L0.PKG.032).
+    /// The writer's checks (L0.PKG.011, L0.PKG.032, RUL.005, RUL.100).
     pub fn check(&self, f: &Facts) -> Result<()> {
         if self.units.len() > 0xFFFF || self.buffers.len() > 0xFFFF || self.steps.len() > 0xFFFF {
             return refuse!("L0.PKG.011", "a count does not fit its 16-bit header field");
@@ -152,6 +152,17 @@ impl Package {
                 "{} units; a package names at most {}",
                 self.units.len(),
                 f.unit_bound()
+            );
+        }
+        // The builder's mutant is RUL.100's reverse (`reverse_regold`): it takes the writer too.
+        let unlimited =
+            mutant::on("l0.pkg/unlimited_buffers") || mutant::on("l0.build/reloc_past_firmware");
+        if self.buffers.len() > f.max_buffers && !unlimited {
+            return refuse!(
+                "RUL.100",
+                "{} buffers; a package names at most {}",
+                self.buffers.len(),
+                f.max_buffers
             );
         }
         let npay = self.payloads.len() as u128;

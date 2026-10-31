@@ -96,7 +96,11 @@ fn l0_bind_004_split_field_one_relocation_per_segment() {
 
 #[test]
 fn l0_bind_005_past_256_buffers_field_kept_absolute() {
-    let mut b = builder();
+    let f = Facts {
+        max_buffers: 1024,
+        ..f()
+    };
+    let mut b = PackageBuilder::new(&f, f.unit_types(), 512);
     let list: Vec<(u64, u64)> = (0..257).map(|k| (0x1000 * (k + 1), 0x100)).collect();
     b.spans_from(&spans(&list));
     for &(base, _) in &list {

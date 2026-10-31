@@ -83,6 +83,16 @@ impl VecCfg {
                 ),
             );
         }
+        if vc.crossbar_modes != core::XM_NAMES && !crate::mutant::on("isa.vector/any_crossbar") {
+            return refuse(
+                "ISA.VC.070",
+                format!(
+                    "vc.crossbar_modes {:?}, the encoder writes {:?}",
+                    vc.crossbar_modes,
+                    core::XM_NAMES
+                ),
+            );
+        }
         let cfg = VecCfg {
             payload_bits: m.die.noc.data_bits,
             addr_bits,

@@ -31,7 +31,8 @@ fn load(rel: &str) -> Value {
 #[test]
 fn unbound_named_waits_for_the_header_define() {
     let v = load("rul/RUL.042.unbounded_named");
-    let got = ktpu_l0::spec::named::run(&v["input"], None).unwrap();
+    let m = Machine::named(spec::DEFAULT_MACHINE).unwrap();
+    let got = ktpu_l0::spec::named::run(&v["input"], Some(&m)).unwrap();
     assert_eq!(got["host"], true);
     if got["header"] == true {
         assert_eq!(got, v["expect"], "format.h defines it: switch l0.named on");

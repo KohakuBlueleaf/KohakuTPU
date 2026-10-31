@@ -7,9 +7,7 @@ use std::collections::HashMap;
 
 use crate::error::Result;
 use crate::facts::Facts;
-use crate::format::{
-    Op, Package, Step, CREDIT_UNBOUNDED, F_POSTED, MOVER_SKIP, PAYLOAD_BYTES, UNBOUNDED,
-};
+use crate::format::{Op, Package, Step, CREDIT_UNBOUNDED, F_POSTED, MOVER_SKIP, PAYLOAD_BYTES};
 use crate::mutant;
 use crate::refuse;
 use crate::word::{mask64, Word, WordOps};
@@ -191,7 +189,7 @@ impl<'a> Stream<'a> {
 
     fn credit(&self, u: usize) -> i128 {
         match self.pkg.units[u].credit {
-            CREDIT_UNBOUNDED => UNBOUNDED as i128,
+            CREDIT_UNBOUNDED => self.f.unbounded as i128,
             c => c as i128,
         }
     }

@@ -221,10 +221,10 @@ impl Names {
     fn of(m: &Machine) -> Names {
         Names {
             status: invert(&m.fw.status, "KA_ST_"),
-            waits: invert(&m.fw.waits, "KA_WAIT_"),
-            signals: invert(&m.fw.signals, "KA_SIG_"),
-            vc: invert(&m.vc.fault_names, ""),
-            mover: invert(&m.mover.faults, ""),
+            waits: invert(m.fw.waits.runtime(), "KA_WAIT_"),
+            signals: invert(m.fw.signals.runtime(), "KA_SIG_"),
+            vc: invert(m.vc.fault_names.runtime(), ""),
+            mover: invert(m.mover.faults.runtime(), ""),
         }
     }
 

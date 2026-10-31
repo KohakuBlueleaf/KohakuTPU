@@ -68,7 +68,7 @@ fn mismatches(dir: &Path) -> (Vec<String>, Vec<(String, u32, u32)>) {
     let (mut bad, mut seen) = (Vec::new(), Vec::new());
     for name in names(dir) {
         let m = Machine::load(dir.join(format!("{name}.json"))).unwrap();
-        let e = entry(&table, &m.vc.build);
+        let e = entry(&table, m.vc.build.runtime());
         let want = (
             1 << number_after(e, "V2_RW=").unwrap_or(rw),
             number_after(e, "V2_RF_COPIES=").unwrap_or(copies),
@@ -77,7 +77,7 @@ fn mismatches(dir: &Path) -> (Vec<String>, Vec<(String, u32, u32)>) {
         if got != want {
             bad.push(format!("{name}: got {got:?}, want {want:?}"));
         }
-        seen.push((m.vc.build.clone(), got.0, got.1));
+        seen.push((m.vc.build.runtime().clone(), got.0, got.1));
     }
     (bad, seen)
 }

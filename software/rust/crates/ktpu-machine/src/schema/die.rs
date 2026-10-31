@@ -1,7 +1,8 @@
 //! `die`: units by kind with coordinates, system ports, network widths,
 //! staging; and `unit`, the depths every unit shares.
 
-use serde::Deserialize;
+use super::Runtime;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// A unit coordinate `(x, y)` in its mesh, as the file lists it (`[x, y]`).
@@ -29,7 +30,7 @@ impl serde::Serialize for Coord {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Die {
     /// The IR target the die's programs are written for (the `target` line
@@ -41,11 +42,11 @@ pub struct Die {
     pub noc: Noc,
     pub word_bytes: u32,
     pub staging: Staging,
-    pub address: Address,
+    pub address: Runtime<Address>,
 }
 
 /// Every unit of each kind, in unit-index order (`mg[J]` is `mg[J]`).
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Units {
     pub mg: Vec<Coord>,
@@ -54,25 +55,25 @@ pub struct Units {
     pub simt: Vec<Coord>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Noc {
-    pub flit_bits: u32,
+    pub flit_bits: Runtime<u32>,
     pub data_bits: u32,
     pub addr_bits: u32,
     pub pos_bits: u32,
-    pub router_depth: u32,
+    pub router_depth: Runtime<u32>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Staging {
     pub entry_words: u32,
-    pub aperture: u32,
-    pub implemented: u64,
+    pub aperture: Runtime<u32>,
+    pub implemented: Runtime<u64>,
     pub banks: u32,
     pub entries: u32,
-    pub flits: u32,
+    pub flits: Runtime<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -101,10 +102,10 @@ impl Die {
 }
 
 /// `unit`: instruction and receive FIFO depths, the CU_DATA burst limit.
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct UnitDepths {
     pub inst_depth: u32,
-    pub recv_depth: u32,
+    pub recv_depth: Runtime<u32>,
     pub burst_words: u32,
 }

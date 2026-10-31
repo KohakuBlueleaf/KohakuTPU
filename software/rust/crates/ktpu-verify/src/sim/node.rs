@@ -25,9 +25,6 @@ use crate::model::finding::Kind;
 
 use super::{Pk, Sender, Sim, Sink, Take};
 
-/// The node-wide cap (boot `cq_depth` 0: none) the card boots with
-/// (L0.STEP.008): a table credit of 0 takes it (RUL.042).
-pub const CAP: i64 = ktpu_l0::format::UNBOUNDED as i64;
 /// A fetch run's most words: its 8-bit count (L0.STEP.045).
 pub const FETCH_RUN: i64 = 255;
 const MASK: u64 = u64::MAX;
@@ -167,6 +164,7 @@ impl Sim<'_> {
             units.push(u);
         }
         let n = units.len();
+        let cap = self.t.facts.unbounded;
         let mut node = Node {
             proc,
             mesh,
@@ -177,7 +175,7 @@ impl Sim<'_> {
             credit: pkg
                 .units
                 .iter()
-                .map(|u| if u.credit == 0 { CAP } else { u.credit as i64 })
+                .map(|u| if u.credit == 0 { cap } else { u.credit as i64 })
                 .collect(),
             fetch: pkg.units.iter().map(|u| u.fetch >> 16 != 0).collect(),
             sent: vec![0; n],

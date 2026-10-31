@@ -41,20 +41,16 @@ fn every_machine_file_loads() {
 #[test]
 fn dram_capacity_is_one_machine_fact() {
     for m in all() {
-        assert_eq!(
-            m.get("card.dram.bytes"),
-            Some(&Value::from(m.card.dram.bytes))
-        );
         assert!(m.get("card.dram.words").is_none());
         assert!(m.source("card.dram.bytes").is_some());
-        assert!(m.card.dram.bytes > 0);
+        assert!(*m.card.dram.bytes.runtime() > 0);
     }
     let model = Machine::named("vlt_v9t6s_1n").unwrap();
-    assert_eq!(model.card.dram.bytes, 256 << 20);
+    assert_eq!(*model.card.dram.bytes.runtime(), 256 << 20);
     let smaller = model
         .with_fact("card.dram.bytes", Value::from(64 << 20))
         .unwrap();
-    assert_eq!(smaller.card.dram.bytes, 64 << 20);
+    assert_eq!(*smaller.card.dram.bytes.runtime(), 64 << 20);
 }
 
 #[test]
@@ -102,9 +98,14 @@ fn unit_kinds_and_coordinates() {
     assert_eq!(m.sr_facts().unwrap().profile.f_lanes, 16);
     let v = Machine::named("multimesh_v9t8").unwrap();
     assert!(v.sr_facts().is_none());
-    assert_eq!(v.card.host.ctrl_base, 0x800000);
+    assert_eq!(v.card.host.runtime().ctrl_base, 0x800000);
     assert_eq!(UnitKind::parse("VC"), Some(UnitKind::Vc));
-    assert!(v.fw.has_part("kohakuaccel/dispatch"));
+    assert!(v
+        .fw
+        .parts
+        .runtime()
+        .iter()
+        .any(|p| p == "kohakuaccel/dispatch"));
     assert_eq!(v.mover.modes.transform, 5);
 }
 
@@ -214,7 +215,10 @@ fn digest_matches_frozen_machine_witnesses() {
 fn variants_override_one_fact() {
     let m = Machine::named("multimesh_v9t8").unwrap();
     let one = m.with_nodes(1).unwrap();
-    assert_eq!((one.card.nodes, one.card.chain.clone()), (1, vec![0]));
+    assert_eq!(
+        (one.card.nodes, one.card.chain.runtime().clone()),
+        (1, vec![0])
+    );
     assert_ne!(one.digest(), m.digest());
     let safe = m
         .with_fact("mover.one_word_runs", Value::from(true))

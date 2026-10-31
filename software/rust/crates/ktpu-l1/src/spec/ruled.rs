@@ -49,7 +49,7 @@ pub fn ruled(inp: &Value, m: &Machine) -> Port {
             // unbounded credit the zero credit field.
             let unbounded = match crate::mutant::on("l1.ruled/before") {
                 true => ktpu_l0::format::CREDIT_UNBOUNDED,
-                false => ktpu_l0::format::UNBOUNDED,
+                false => m.fw.package.unbounded,
             };
             Ok(json!({"format_names_it": unbounded > ktpu_l0::format::CREDIT_UNBOUNDED}))
         }

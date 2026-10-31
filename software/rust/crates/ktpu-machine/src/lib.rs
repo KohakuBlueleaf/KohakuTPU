@@ -147,6 +147,7 @@ pub struct Machine {
     facts: Facts,
     sources: BTreeMap<String, String>,
     raw: Value,
+    keyed: Value,
     digest: [u8; 32],
     doc: Value,
 }
@@ -282,17 +283,18 @@ impl Machine {
             Some(s) => serde_json::from_value(s.clone())?,
             None => return Err(MachineError::Missing("sources")),
         };
-        let mut keyed = doc.clone();
-        if let Value::Object(map) = &mut keyed {
-            map.remove("sources");
+        let keyed = serde_json::to_value(&facts)?;
+        let digest = Sha256::digest(digest_input(&raw, &keyed).as_bytes()).into();
+        if mutant::on("machine.key/reads-runtime") {
+            facts.fw.package.magic ^= *facts.node.spad_bytes.runtime();
         }
-        let digest = Sha256::digest(canon::canonical(&keyed).as_bytes()).into();
         Ok(Machine {
             name,
             image,
             facts,
             sources,
             raw,
+            keyed,
             digest,
             doc,
         })
@@ -303,9 +305,10 @@ impl Machine {
         &self.facts
     }
 
-    /// sha256 of the file's canonical JSON ([`canon::canonical`]) without
-    /// `sources`, lowercase hex: two files with the same facts, name and image
-    /// have the same digest, whatever their provenance text.
+    /// sha256 of the canonical JSON ([`canon::canonical`]) of the facts a
+    /// compile path can read, every field but a [`Runtime`] one, lowercase
+    /// hex. Name, image and provenance are not in it, so a firmware rebuild
+    /// that moves only a runtime fact keeps every compiled artifact.
     pub fn digest(&self) -> String {
         self.digest.iter().map(|b| format!("{b:02x}")).collect()
     }
@@ -315,8 +318,20 @@ impl Machine {
         self.digest
     }
 
-    /// The value at dotted `path` (`"vc.lanes"`), or None.
+    /// The value at dotted `path` (`"vc.lanes"`), or None; a [`Runtime`] fact
+    /// is None, so a path cannot read past the digest.
     pub fn get(&self, path: &str) -> Option<&Value> {
+        let walk = |root| {
+            path.split('.')
+                .try_fold(root, |node: &Value, key| node.get(key))
+        };
+        let got = walk(&self.keyed)?;
+        (!got.is_null() || walk(&self.raw)?.is_null()).then_some(got)
+    }
+
+    /// The value at dotted `path`, a [`Runtime`] fact too. A compile path
+    /// never calls this (`compile_reads_no_runtime_fact`).
+    pub fn runtime_fact(&self, path: &str) -> Option<&Value> {
         path.split('.')
             .try_fold(&self.raw, |node, key| node.get(key))
     }
@@ -359,6 +374,24 @@ impl Machine {
     pub fn nodes(&self) -> u32 {
         self.facts.card.nodes
     }
+}
+
+/// What [`Machine::digest`] hashes: the canonical JSON of the `keyed` facts.
+fn digest_input(raw: &Value, keyed: &Value) -> String {
+    if mutant::on("machine.key/whole-file") {
+        return canon::canonical(raw);
+    }
+    if mutant::on("machine.key/drops-fact") {
+        let mut less = keyed.clone();
+        less["vc"]["sregs"] = Value::Null;
+        return canon::canonical(&less);
+    }
+    if mutant::on("machine.key/drops-policy") {
+        let mut less = keyed.clone();
+        less["conversion"] = Value::Null;
+        return canon::canonical(&less);
+    }
+    canon::canonical(keyed)
 }
 
 /// Where machine files live: `KTPU_MACHINES`, else the repository's

@@ -3,6 +3,7 @@
  "tier": 0,
  "runner": "l0.named",
  "status": "frozen",
+ "machine": "multimesh_v9t6",
  "input": {
   "module": "format",
   "header": "package/format.h",

@@ -1,5 +1,5 @@
 """An L2 kernel whose Rust build is not relocatable (STACK.RELOC: past
-L0.BIND.005's 256 buffers a span keeps its absolute addresses) is built at
+L0.BIND.005's buffer bound a span keeps its absolute addresses) is built at
 each binding instead, visibly: `Compiled.bound` says why, `BOUND_BUILDS`
 counts the builds, and `BOUND_FALLBACK` off refuses it as before."""
 

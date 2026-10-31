@@ -2,7 +2,7 @@
 //! (`golden/e2e/kernels-lanes-TG.RUN.012.relayout`): 2177 L2 temporaries in
 //! one arena keep the package relocatable (STACK.RELOC passes, no bound
 //! build); with `l1.layout/no-arena` each temporary is its own buffer, past
-//! L0.BIND.005's 256: STACK.RELOC fires and the compile is a bound build
+//! L0.BIND.005's bound: STACK.RELOC fires and the compile is a bound build
 //! (`Compiled::bound`, no packages).
 
 #![cfg(feature = "stack")]

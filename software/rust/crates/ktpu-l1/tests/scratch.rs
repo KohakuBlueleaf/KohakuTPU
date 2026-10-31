@@ -1,6 +1,6 @@
 //! Scratch arenas (`layout::scratch`, `build::programs_in`): a body with
-//! more scratch parameters than a package has relocation buffers (256,
-//! L0.BIND.005) builds relocatable, its package bound at shifted addresses
+//! more scratch parameters than a package has relocation buffers
+//! (L0.BIND.005) builds relocatable, its package bound at shifted addresses
 //! equal to the package built at them; with one span a parameter it is not.
 
 use std::collections::{BTreeMap, BTreeSet};

@@ -48,4 +48,8 @@ pub const NAMES: &[&str] = &[
     "rul.001/unbuilt",
     "rul.001/missing-core",
     "machine.pairing/mover-paired",
+    "machine.key/whole-file",
+    "machine.key/drops-fact",
+    "machine.key/drops-policy",
+    "machine.key/reads-runtime",
 ];

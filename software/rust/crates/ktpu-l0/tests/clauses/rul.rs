@@ -2,8 +2,10 @@
 //! the API (a refusal names the ruling).
 
 use super::*;
-use ktpu_l0::format::{signature, Op, UNBOUND, UNBOUNDED};
+use ktpu_l0::build::{AddrField, PackageBuilder};
+use ktpu_l0::format::{signature, Op, UNBOUND};
 use ktpu_l0::units::machine_units;
+use ktpu_l0::word::Word;
 use ktpu_l0::{engine, replay, Buffer, Kind, Program, Reloc, Step};
 
 fn bound_package(addend: i128, width: u64) -> Package {
@@ -76,6 +78,47 @@ fn rul_005_units_past_the_smallest_bound_refused() {
 }
 
 #[test]
+fn rul_100_buffers_past_the_firmware_table_refused() {
+    let f = f();
+    assert_eq!(f.max_buffers, 64);
+    let with = |n: usize| {
+        let mut p = pkg(vec![mg(0, 0)], vec![], vec![]);
+        p.buffers = (0..n)
+            .map(|i| Buffer {
+                name: format!("b{i}"),
+                size: 64,
+                default: 0x1000,
+                kind: Kind::Temp,
+                mesh: 0,
+            })
+            .collect();
+        p
+    };
+    assert_eq!(with(65).to_bytes(&f).unwrap_err().clause, "RUL.100");
+    assert!(with(64).to_bytes(&f).is_ok());
+}
+
+#[test]
+fn rul_100_spans_past_the_table_keep_their_addresses() {
+    let f = f();
+    let at = |i: u64| 0x1000 + i * 0x1000;
+    let mut b = PackageBuilder::new(&f, Default::default(), 0);
+    b.spans_from(&(0..70).map(|i| (at(i), 0x100)).collect());
+    let fields = |w: &Word, _: &str| {
+        vec![AddrField {
+            value: w.0[0],
+            segments: vec![(0, 64, 0)],
+        }]
+    };
+    for i in 0..70 {
+        b.payload(Word([at(i), 0, 0, 0]), Some(&fields), "MG");
+    }
+    assert_eq!((b.buffers.len(), b.relocs.len()), (64, 64));
+    assert_eq!(b.payloads[63].0[0], 0);
+    assert_eq!(b.payloads[64].0[0], at(64));
+}
+
+#[test]
 fn rul_039_addend_outside_buffer_refused() {
     let err = bound_package(100, 40).bind(&[0x8000]).unwrap_err();
     assert_eq!(err.clause, "RUL.039");
@@ -116,6 +159,14 @@ fn ruling_mutants_break_the_checks() {
         (
             "l0.pkg/unlimited_units",
             rul_005_units_past_the_smallest_bound_refused,
+        ),
+        (
+            "l0.pkg/unlimited_buffers",
+            rul_100_buffers_past_the_firmware_table_refused,
+        ),
+        (
+            "l0.build/reloc_past_firmware",
+            rul_100_spans_past_the_table_keep_their_addresses,
         ),
         ("l0.bind/unchecked", rul_039_addend_outside_buffer_refused),
         (
@@ -177,15 +228,19 @@ fn rul_042_one_unbounded_value() {
         vec![Step::new(Op::Dispatch, 0, 3, 0, 0)],
         vec![1, 2, 3],
     );
-    let low = engine::lower(&p, &f()).unwrap();
-    let credit_waits = low
-        .steps
-        .iter()
-        .flat_map(|s| engine::entries(&low, s))
-        .filter(|e| e.0 == engine::WAIT && e.1 != 3)
-        .count();
-    assert_eq!(credit_waits, 0);
-    assert_eq!(UNBOUNDED, 1 << 32);
+    let credit_waits = |f: &ktpu_l0::Facts| {
+        let low = engine::lower(&p, f).unwrap();
+        low.steps
+            .iter()
+            .flat_map(|s| engine::entries(&low, s))
+            .filter(|e| e.0 == engine::WAIT && e.1 != 3)
+            .count()
+    };
+    let mut bound = f();
+    assert_eq!(bound.unbounded, 1 << 32);
+    assert_eq!(credit_waits(&bound), 0);
+    bound.unbounded = 2;
+    assert!(credit_waits(&bound) > 0);
 }
 
 /// `n` back-to-back rings, lowered: (RING steps kept, RING entries).

@@ -163,15 +163,8 @@ pub const XM_XOR: u32 = 1;
 pub const XM_ROT: u32 = 2;
 pub const XM_BCAST: u32 = 3;
 pub const XM_MERGE: u32 = 4;
-
-/// Fault codes raised by the machine's built vector core.
-pub fn fault_codes(machine: &ktpu_machine::Machine) -> Vec<u32> {
-    let mut codes = machine.vc.faults.clone();
-    if crate::mutant::on("rul.053/fault-dropped") {
-        codes.pop();
-    }
-    codes
-}
+/// Their names, each at its code (`vc.crossbar_modes`).
+pub const XM_NAMES: [&str; 5] = ["none", "xor", "rot", "bcast", "merge"];
 
 /// A math operand's source: vector register, S[reg & 15], K[reg & 3].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
