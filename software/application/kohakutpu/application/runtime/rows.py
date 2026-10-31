@@ -44,6 +44,7 @@ def _launch(dev, e, operands, binds, R, W, out, info, cores):
     operands, binds = _based(operands, binds, "in")
     if "out" in binds:
         (out,), binds = _based([out], binds, "out")
+    arguments = FM.generated.rows_arguments(e, operands, R, W, out)
     if os.environ.get("KTPU_CLASS_ROWS_ROUTE", "0") == "1" and (
         os.environ.get("KTPU_CLASS_ROWS_DIRECT", "0") == "1"
         and 0 < W <= V.MAX_BLOCK
@@ -51,38 +52,19 @@ def _launch(dev, e, operands, binds, R, W, out, info, cores):
         and W & (W - 1) == 0
         and out.dtype == "f16"
         and all(o.dtype == "f16" and o.kind != "tile" for o in operands)
-        and V.class_rows.bands_fit(operands, out, W)
-        >= (V.STAT_ROWS // 4 if V.holds_stat(operands, out.kind) else 1)
     ):
-        kernel, given, _ = V.rows_kernel(
-            e,
-            tuple(operands),
-            R,
-            W,
-            out,
-            cores,
-            shape_class=ShapeClass(32, V.MAX_BLOCK),
-        )
-        disjoint = all(
-            binds[f"in{i}"] + given[f"in{i}"].nbytes() <= binds["out"]
-            or binds["out"] + given["out"].nbytes() <= binds[f"in{i}"]
-            for i in range(len(operands))
-        )
-        if kernel.class_info["direct"] and disjoint:
-            return FM.launch(dev, kernel, given, binds, info=info)
-    return FM.generated.launch(
-        dev,
-        "vector.rows_kernel",
-        {
-            "e": FM.generated.expr(e),
-            "operands": [vars(o) for o in operands],
-            "R": R,
-            "W": W,
-            "out": vars(out),
-        },
-        binds,
-        info=info,
-    )
+        classed = FM.generated.in_class(arguments, ShapeClass(32, V.MAX_BLOCK))
+        if FM.generated.class_fits(dev, classed):
+            made = FM.generated.class_info(dev, "vector.rows_kernel", classed)
+            nbytes = made["nbytes"]
+            disjoint = all(
+                binds[f"in{i}"] + nbytes[f"in{i}"] <= binds["out"]
+                or binds["out"] + nbytes["out"] <= binds[f"in{i}"]
+                for i in range(len(operands))
+            )
+            if made["direct"] and disjoint:
+                arguments = classed
+    return FM.generated.launch(dev, "vector.rows_kernel", arguments, binds, info=info)
 
 
 def _prepared(dev, e, operands, binds, R, W, out, out_at, info):

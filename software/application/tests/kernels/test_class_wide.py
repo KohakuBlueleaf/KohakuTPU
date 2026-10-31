@@ -1,14 +1,14 @@
 """Wide rows use a fixed block-major stream, including broadcast operands."""
 
-import json
+from types import SimpleNamespace
 
 import pytest
 
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes.policy import ShapeClass
+from kohakutpu.application.runtime import generated as G
 from kohakutpu.application.runtime.offline import OfflineCard
-from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
 
 
@@ -22,29 +22,23 @@ def test_wide_broadcasts_compile(kind, core_policy, rows, width):
         V.Operand("full", pitch=width),
         V.Operand(kind, pitch=width if kind == "full" else 0),
     )
-    kernel, given, blocks = V.rows_kernel(
-        e,
-        operands,
-        rows,
-        width,
-        V.Operand("full", pitch=width),
-        machine.count("VC"),
-        shape_class=ShapeClass(32, 256, cores=core_policy),
+    source, info = G.classed(
+        SimpleNamespace(machine=machine),
+        "vector.rows_kernel",
+        G.rows_arguments(e, operands, rows, width, V.Operand("full", pitch=width)),
+        ShapeClass(32, 256, cores=core_policy),
     )
-    trace = kernel.trace(given, machine=K.dsl_machine(machine))
-    result = rs._rs.compile(
-        json.dumps(trace.graph), rs.machine_json(machine), cache_dir="", fetch=True
-    )
+    result = rs._rs.compile(source, rs.machine_json(machine), cache_dir="", fetch=True)
     assert not result["verdict"]["refused"], result["verdict"]
-    assert blocks == width // 32
+    assert info["blocks"] == width // 32
     assert result["packages"] and result["bound"] is None
-    assert result["l1"].count("loop s15") == kernel.class_info["cores"]
+    assert result["l1"].count("loop s15") == info["cores"]
     assert "linear_move" not in result["l1"]
     assert "    copy " in result["l1"]
     assert all(f["clause"] != "L1.VER.017" for f in result["verdict"]["findings"])
     assert "wait moves\n" not in result["l1"]
     broken = rs._rs.compile(
-        json.dumps(trace.graph),
+        source,
         rs.machine_json(machine),
         cache_dir="",
         fetch=True,

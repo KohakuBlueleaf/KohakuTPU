@@ -2,6 +2,7 @@
 
 import json
 import re
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +10,7 @@ from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import matmul as MM
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes.policy import ShapeClass
+from kohakutpu.application.runtime import generated as G
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
@@ -56,18 +58,19 @@ def class_compile(band, monkeypatch, mutant=None):
         monkeypatch.delenv("KTPU_CLASS_BAND", raising=False)
     else:
         monkeypatch.setenv("KTPU_CLASS_BAND", str(band))
-    kernel, given, _ = V.rows_kernel(
-        X.Reduce("sum", X.Load(0)),
-        (V.Operand("full", pitch=128),),
-        32,
-        128,
-        V.Operand("row"),
-        1,
-        shape_class=ShapeClass(32, 256),
-    )
     machine = machine_of("vlt_v9t6s_1n")
-    graph = kernel.trace(given, machine=K.dsl_machine(machine)).graph
-    source = json.dumps(graph)
+    source, _ = G.classed(
+        SimpleNamespace(machine=machine),
+        "vector.rows_kernel",
+        G.rows_arguments(
+            X.Reduce("sum", X.Load(0)),
+            (V.Operand("full", pitch=128),),
+            32,
+            128,
+            V.Operand("row"),
+        ),
+        ShapeClass(32, 256),
+    )
     result = rs._rs.compile(
         source, rs.machine_json(machine), cache_dir="", fetch=True, mutant=mutant
     )

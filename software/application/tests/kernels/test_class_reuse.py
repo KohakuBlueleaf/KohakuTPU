@@ -1,6 +1,7 @@
 """Byte-equality witnesses across a rows class, including all interior tails."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -8,27 +9,35 @@ from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes import values
 from kohakutpu.application.kernels.classes.policy import ShapeClass
+from kohakutpu.application.runtime import generated as G
 from kohakutpu.application.runtime.offline import OfflineCard
-from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
+
+
+def member(machine, e, rows, output, shape_class):
+    """The class source of `e` over [rows, 96], named alike across rows."""
+    source, info = G.classed(
+        SimpleNamespace(machine=machine),
+        "vector.rows_kernel",
+        G.rows_arguments(e, (V.Operand("full", pitch=96),), rows, 96, output),
+        shape_class,
+    )
+    return json.dumps(dict(json.loads(source), name="template")), info
 
 
 def test_class_walk_has_fixed_payload_count_under_singleton_mutant():
     machine = OfflineCard("multimesh_v9t6").machine
 
     def build(rows, mutant):
-        kernel, given, _ = V.rows_kernel(
+        source, _ = member(
+            machine,
             X.Load(0),
-            (V.Operand("full", pitch=96),),
             rows,
-            96,
             V.Operand("full", pitch=96),
-            machine.count("VC"),
-            shape_class=ShapeClass(32, 256),
+            ShapeClass(32, 256),
         )
-        graph = kernel.trace(given, machine=K.dsl_machine(machine)).graph
         result = rs._rs.compile(
-            json.dumps(dict(graph, name="template")),
+            source,
             rs.machine_json(machine),
             cache_dir="",
             fetch=True,
@@ -60,24 +69,10 @@ def test_one_template_all_row_counts(stat):
         output = V.Operand("row") if stat else V.Operand("full", pitch=96)
         if stat:
             expression = X.Reduce("sum", expression)
-        kernel, given, _ = V.rows_kernel(
-            expression,
-            (V.Operand("full", pitch=96),),
-            rows,
-            96,
-            output,
-            machine.count("VC"),
-            shape_class=shape_class,
-        )
-        graph = kernel.trace(given, machine=K.dsl_machine(machine)).graph
-        result = rs._rs.compile(
-            json.dumps(dict(graph, name="template")),
-            machine_json,
-            cache_dir="",
-            fetch=True,
-        )
+        source, info = member(machine, expression, rows, output, shape_class)
+        result = rs._rs.compile(source, machine_json, cache_dir="", fetch=True)
         assert not result["verdict"]["refused"]
-        return result["packages"][0], kernel.class_info
+        return result["packages"][0], info
 
     bounds = {"R": {"lo": 1, "hi": 65}, "W": {"lo": 96, "hi": 96}}
     points = json.loads(rs._rs.template_points(json.dumps(bounds)))

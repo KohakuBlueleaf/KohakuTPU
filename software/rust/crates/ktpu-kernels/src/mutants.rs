@@ -37,6 +37,7 @@ pub const NAMES: &[&str] = &[
 /// kernels; a made operand copied into its port.
 pub const LOCAL: &[&str] = &[
     crate::gen::fused::LOST_MEMBER_MUTANT,
+    crate::trace::control::BANDLESS_MUTANT,
     crate::gen::matmul::UNRECORDED_MUTANT,
     "kernels.quant/no-schedule",
     "kernels.hw/unit_constants",

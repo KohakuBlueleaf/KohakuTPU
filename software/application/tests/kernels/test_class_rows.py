@@ -2,15 +2,25 @@
 
 import json
 import re
+from types import SimpleNamespace
 
 import pytest
 
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes.policy import ShapeClass
+from kohakutpu.application.runtime import generated as G
 from kohakutpu.application.runtime.offline import OfflineCard
-from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
+
+
+def rows_class(machine, e, operand, rows, width, output, shape_class):
+    return G.classed(
+        SimpleNamespace(machine=machine),
+        "vector.rows_kernel",
+        G.rows_arguments(e, (operand,), rows, width, output),
+        shape_class,
+    )
 
 
 @pytest.mark.parametrize("core_policy", ["all", "min"])
@@ -23,24 +33,21 @@ def test_rows_class_compiles(core_policy, rows, width, reduction):
     if reduction:
         e = X.Reduce(reduction, e)
     output = V.Operand("row") if reduction else V.Operand("full", pitch=width)
-    kernel, given, blocks = V.rows_kernel(
+    source, info = rows_class(
+        machine,
         e,
-        (V.Operand("full", pitch=width, rows=rows),),
+        V.Operand("full", pitch=width, rows=rows),
         rows,
         width,
         output,
-        machine.count("VC"),
-        shape_class=ShapeClass(32, 256, cores=core_policy),
+        ShapeClass(32, 256, cores=core_policy),
     )
-    traced = kernel.trace(given, machine=K.dsl_machine(machine))
-    assert "classed=1" in traced.text
-    result = rs._rs.compile(
-        json.dumps(traced.graph), rs.machine_json(machine), cache_dir="", fetch=True
-    )
+    assert '"classed":true' in source
+    result = rs._rs.compile(source, rs.machine_json(machine), cache_dir="", fetch=True)
     assert not result["verdict"]["refused"], result["verdict"]
     assert result["packages"] and not result["bound"], result["bound"]
     assert "skipz" in result["l1"]
-    assert blocks == 1
+    assert info["blocks"] == 1
     assert "slack=0" in result["l1"]
     if core_policy == "all":
         assert sum(
@@ -53,20 +60,19 @@ def test_rows_class_compiles(core_policy, rows, width, reduction):
 )
 def test_class_guard_mask_and_image_shape_mutations(mutant):
     machine = OfflineCard("multimesh_v9t6").machine
-    kernel, given, _ = V.rows_kernel(
+    source, _ = rows_class(
+        machine,
         X.Reduce("sum", X.Load(0)),
-        (V.Operand("full", pitch=96),),
+        V.Operand("full", pitch=96),
         32,
         96,
         V.Operand("row"),
-        machine.count("VC"),
-        shape_class=ShapeClass(32, 256),
+        ShapeClass(32, 256),
     )
-    trace = kernel.trace(given, machine=K.dsl_machine(machine))
 
     def compile_one(mutation):
         return rs._rs.compile(
-            json.dumps(trace.graph),
+            source,
             rs.machine_json(machine),
             cache_dir="",
             fetch=True,
@@ -92,27 +98,26 @@ def _class_chain(depth):
     e = X.Load(0)
     for _ in range(depth):
         e = X.op("add", e, 1.0)
-    kernel, given, _ = V.rows_kernel(
+    source, info = rows_class(
+        machine,
         e,
-        (V.Operand("full", pitch=128),),
+        V.Operand("full", pitch=128),
         32,
         128,
         V.Operand("full", pitch=128),
-        machine.count("VC"),
-        shape_class=ShapeClass(32, 256, cores="min"),
+        ShapeClass(32, 256, cores="min"),
     )
-    trace = kernel.trace(given, machine=K.dsl_machine(machine))
-    return machine, kernel, trace
+    return machine, info, source
 
 
 def test_class_loop_is_serial_when_two_trips_overflow():
-    machine, kernel, trace = _class_chain(32)
-    args = (json.dumps(trace.graph), rs.machine_json(machine))
+    machine, info, source = _class_chain(32)
+    args = (source, rs.machine_json(machine))
     result = rs._rs.compile(*args, cache_dir="", fetch=True)
     assert not result["verdict"]["refused"], result["verdict"]
     text = result["l1"]
     loops = re.findall(r"(?m)^    loop s15\n((?:        .*\n)+)", text)
-    assert len(loops) == kernel.class_info["cores"]
+    assert len(loops) == info["cores"]
     assert text.count("skipz ") == 2 * len(loops)
     for body in loops:
         assert body.count("vadd ") == 32 * 16
@@ -129,13 +134,15 @@ def test_class_loop_is_serial_when_two_trips_overflow():
     )
     with pytest.raises(rs._rs.Refused, match=r'ISA.VC.043.*VLOOP: field "body"'):
         rs._rs.compile(
-            doubled, rs.machine_json(machine), trace.name, l1=True, cache_dir=""
+            doubled,
+            rs.machine_json(machine),
+            json.loads(source)["name"],
+            l1=True,
+            cache_dir="",
         )
 
 
 def test_class_single_trip_overflow_is_refused():
-    machine, _, trace = _class_chain(64)
+    machine, _, source = _class_chain(64)
     with pytest.raises(rs._rs.Refused, match=r'ISA.VC.043.*VLOOP: field "body"'):
-        rs._rs.compile(
-            json.dumps(trace.graph), rs.machine_json(machine), cache_dir="", fetch=True
-        )
+        rs._rs.compile(source, rs.machine_json(machine), cache_dir="", fetch=True)

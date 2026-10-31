@@ -49,6 +49,14 @@ impl From<f64> for Arg {
     }
 }
 
+/// How a reduction folds: `valid_cols` the columns of real data, `carry` its
+/// accumulator kept across the enclosing loop (classed trips).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Fold {
+    pub valid_cols: Option<i64>,
+    pub carry: bool,
+}
+
 /// A float operand as the graph holds it (`inf`, `-inf`, `nan` by name).
 pub fn number(x: f64) -> g::Number {
     if x.is_finite() {
@@ -314,6 +322,12 @@ impl Trace {
     /// `sN = rmax X` / `rsum X` (DSL.VEC.013): a row statistic.
     #[track_caller]
     pub fn reduce(&mut self, op: Op, x: Arg) -> R<V> {
+        self.reduce_over(op, x, Fold::default())
+    }
+
+    /// [`Trace::reduce`] under `fold`.
+    #[track_caller]
+    pub fn reduce_over(&mut self, op: Op, x: Arg, fold: Fold) -> R<V> {
         let at = here();
         self.need(Some(g::UnitKind::Vc), op.name())?;
         if !matches!(op, Op::Rmax | Op::Rsum) {
@@ -334,7 +348,14 @@ impl Trace {
         let shape = vec![self.value(base).shape[0]];
         let args = vec![self.value_arg(base)];
         let ty = (g::Dtype::F32, shape, g::ValSpace::Reg, None);
-        Ok(self.new_value(op, args, vec![], ty, "s", None, at))
+        let mut kw = vec![];
+        if let Some(cols) = fold.valid_cols {
+            kw.push(("valid_cols".to_string(), g::Attr::Int(cols)));
+        }
+        if fold.carry {
+            kw.push(("carry".to_string(), g::Attr::Int(1)));
+        }
+        Ok(self.new_value(op, args, kw, ty, "s", None, at))
     }
 
     /// `pN = pack X : DTYPE` (DSL.VEC.014, .016, .031). A statistic packs

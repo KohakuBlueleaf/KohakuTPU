@@ -115,6 +115,37 @@ fn fused_members_break_under_lost_member() {
     breaks(LOST_MEMBER_MUTANT, fused_facts);
 }
 
+/// A class rows kernel carries its band schedule.
+fn class_rows_facts() -> ktpu_kernels::kernel::Kernel {
+    use ktpu_kernels::expr;
+    use ktpu_kernels::gen::classes::{rows, Cores, Policy, Rows, ShapeClass, SCHEDULE};
+    use ktpu_kernels::gen::vector::Operand;
+    let class = ShapeClass {
+        kblock: 32,
+        max_block: 256,
+        policy: Policy::Pow2,
+        cores: Cores::All,
+    };
+    let (full, e) = (Operand::full(128, 32), expr::load(0));
+    let a = Rows {
+        e: &e,
+        operands: &[full],
+        r: 32,
+        w: 128,
+        out: &full,
+        bands: None,
+        class: &class,
+        schedule: &SCHEDULE,
+    };
+    rows::kernel(&a, false, &super::card()).unwrap().kernel
+}
+
+#[test]
+fn class_rows_break_under_bandless() {
+    use ktpu_kernels::trace::control::BANDLESS_MUTANT;
+    breaks(BANDLESS_MUTANT, class_rows_facts);
+}
+
 /// A walked packing on the vector cores carries the quant schedule.
 fn quant_walk_facts() -> ktpu_kernels::kernel::Kernel {
     use ktpu_kernels::gen::matmul::{quant_walk_kernel, Side, QUANT_SCHEDULE};

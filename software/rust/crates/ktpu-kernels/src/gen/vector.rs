@@ -693,7 +693,15 @@ pub(super) fn band_store(
 /// `v` over the [rows, cols] window of `dst` at (r0, c0): packed once, then
 /// stored over each of its bands (a row broadcast is one band of 4 rows,
 /// repeated down).
-fn store_over(t: &mut Trace, dst: &Buf, r0: &Idx, c0: &Idx, rows: i64, cols: i64, v: Arg) -> R<()> {
+pub(super) fn store_over(
+    t: &mut Trace,
+    dst: &Buf,
+    r0: &Idx,
+    c0: &Idx,
+    rows: i64,
+    cols: i64,
+    v: Arg,
+) -> R<()> {
     let mut v = v;
     if let Arg::Val(x) = v {
         let xv = t.value(x);

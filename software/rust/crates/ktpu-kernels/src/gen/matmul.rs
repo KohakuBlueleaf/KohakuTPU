@@ -552,6 +552,31 @@ pub fn quant_kernel_scheduled(
     prepared: &prepared::Read,
     staged: bool,
 ) -> R<Kernel> {
+    quant_kernel_looped(
+        src, rows, cols, rp, cp, side, groups, nk, batches, mach, finite, schedule, prepared,
+        staged, false,
+    )
+}
+
+/// [`quant_kernel_scheduled`], with `looped` its entries a fixed node loop.
+#[allow(clippy::too_many_arguments)]
+pub fn quant_kernel_looped(
+    src: &Operand,
+    rows: i64,
+    cols: i64,
+    rp: i64,
+    cp: i64,
+    side: Side,
+    groups: i64,
+    nk: i64,
+    batches: i64,
+    mach: &Machine,
+    finite: bool,
+    schedule: &[(&str, i64)],
+    prepared: &[relayout::Plan],
+    staged: bool,
+    looped: bool,
+) -> R<Kernel> {
     let hw = Hw::of(mach);
     let dtype = side.dtype();
     let lay = side.layout(groups, nk);
@@ -651,7 +676,17 @@ pub fn quant_kernel_scheduled(
     if staged {
         key.push(Py::str("staged"));
     }
+    if looped {
+        key.push(Py::str("looped"));
+    }
     let key = name("quant", key);
+    let quant = |t: &mut Trace, dst: &View, from: &View, on: &[(&str, i64)], pad: bool| {
+        if looped {
+            t.quant_looped(dst, from, finite, on, pad)
+        } else {
+            t.quant_scheduled(dst, from, finite, on, pad)
+        }
+    };
     let names: Vec<String> = ports.iter().map(|p| p.name.clone()).collect();
     let made_in: Vec<prepared::MadeInput> = if any {
         vec![prepared::MadeInput {
@@ -677,7 +712,7 @@ pub fn quant_kernel_scheduled(
                 let from = x.at(&[sl(lo, lo + rows), sl(c0, c0 + cols)])?;
                 t.copy(&dst, &from, None, None)?;
             }
-            return t.quant_scheduled(&q.whole(), &z.whole(), finite, schedule_on, false);
+            return quant(t, &q.whole(), &z.whole(), schedule_on, false);
         }
         // Unpadded row blocks stack contiguously: one quant over the stack.
         let blocks = if rows == rp { 1 } else { batches };
@@ -686,7 +721,7 @@ pub fn quant_kernel_scheduled(
             let dst = q.at(&[sl(b * span * rp, (b + 1) * span * rp), ALL])?;
             let lo = r0 + b * span * rows;
             let from = x.at(&[sl(lo, lo + span * rows), sl(c0, c0 + cols)])?;
-            t.quant_scheduled(&dst, &from, finite, schedule_on, vector)?;
+            quant(t, &dst, &from, schedule_on, vector)?;
         }
         Ok(())
     })

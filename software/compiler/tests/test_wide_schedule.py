@@ -1,37 +1,40 @@
 """Wide class schedules keep independent maps and distinguish template keys."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes.policy import ShapeClass
+from kohakutpu.application.runtime import generated as G
 from kohakutpu.application.runtime.machine import machine_of
-from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
 
 
 def compile_wide(monkeypatch, width, direct, rows=16):
     monkeypatch.setenv("KTPU_CLASS_WIDE_WIDTH", str(width))
     monkeypatch.setenv("KTPU_CLASS_WIDE_DIRECT", str(direct))
-    kernel, given, _ = V.rows_kernel(
-        X.op("max", X.Load(0), 0.0),
-        (V.Operand("full", pitch=512),),
-        rows,
-        512,
-        V.Operand("full", pitch=512),
-        1,
-        shape_class=ShapeClass(32, 256),
-    )
     machine = machine_of("vlt_v9t6s_1n")
-    source = json.dumps(kernel.trace(given, machine=K.dsl_machine(machine)).graph)
+    source, info = G.classed(
+        SimpleNamespace(machine=machine),
+        "vector.rows_kernel",
+        G.rows_arguments(
+            X.op("max", X.Load(0), 0.0),
+            (V.Operand("full", pitch=512),),
+            rows,
+            512,
+            V.Operand("full", pitch=512),
+        ),
+        ShapeClass(32, 256),
+    )
     compiled = rs._rs.compile(
         source, rs.machine_json(machine), cache_dir="", fetch=True
     )
     assert not compiled["verdict"]["refused"], compiled["verdict"]
     key = json.loads(rs._rs.library_key(source, rs.machine_json(machine)))
-    return kernel.class_info, compiled, key
+    return info, compiled, key
 
 
 def test_wide_width_reverse_witness(monkeypatch):

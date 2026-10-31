@@ -20,7 +20,26 @@ fn prefix(kind: g::UnitKind) -> &'static str {
     }
 }
 
-fn par_node(v: &str, lo: &Idx, hi: &Idx, kind: g::UnitKind, at: Option<&Idx>) -> g::Node {
+/// The reverse mutant of a classed `par`'s band: no schedule recorded.
+pub const BANDLESS_MUTANT: &str = "kernels.class/bandless";
+
+/// A classed `par`'s schedule (DSL.CTRL.014): its row-band iterations, and
+/// the repeats of a node-level row band with each read's advance.
+#[derive(Clone, Debug, Default)]
+pub struct Classed {
+    pub band: Option<i64>,
+    pub repeats: Option<i64>,
+    pub advances: Vec<i64>,
+}
+
+fn par_node(
+    v: &str,
+    lo: &Idx,
+    hi: &Idx,
+    kind: g::UnitKind,
+    at: Option<&Idx>,
+    classed: Option<&Classed>,
+) -> g::Node {
     g::Node::Par {
         var: v.to_string(),
         lo: lo.graph(),
@@ -29,10 +48,12 @@ fn par_node(v: &str, lo: &Idx, hi: &Idx, kind: g::UnitKind, at: Option<&Idx>) ->
             kind,
             index: at.map(Idx::graph),
         },
-        classed: false,
-        class_band: None,
-        repeats: None,
-        advances: vec![],
+        classed: classed.is_some(),
+        class_band: classed
+            .and_then(|c| c.band)
+            .filter(|_| !crate::mutants::on(BANDLESS_MUTANT)),
+        repeats: classed.and_then(|c| c.repeats),
+        advances: classed.map_or(vec![], |c| c.advances.clone()),
         body: vec![],
     }
 }
@@ -71,12 +92,36 @@ impl Trace {
         let v = self.fresh(prefix(on));
         let sym = var(&v);
         let unit = (at == At::Var).then_some(&sym);
-        let node = par_node(&v, &lo, &hi, on, unit);
+        let node = par_node(&v, &lo, &hi, on, unit, None);
         let scope = Scope {
             kind: (on != g::UnitKind::Node).then_some(on),
             in_loop: false,
             sticky: false,
             node: on == g::UnitKind::Node || self.scope().node,
+        };
+        self.block(node, at_line, scope, |t| body(t, sym.clone()))
+    }
+
+    /// `par v in 0..n on vc[v] classed=1 ..`: this node's vector cores, one
+    /// image a core (DSL.CTRL.014).
+    #[track_caller]
+    pub fn par_classed(
+        &mut self,
+        n: i64,
+        classed: Classed,
+        body: impl FnOnce(&mut Trace, Idx) -> R<()>,
+    ) -> R<()> {
+        let at_line = here();
+        let on = g::UnitKind::Vc;
+        let v = self.fresh(prefix(on));
+        let sym = var(&v);
+        let (lo, hi) = (Idx::Int(0), Idx::Int(n));
+        let node = par_node(&v, &lo, &hi, on, Some(&sym), Some(&classed));
+        let scope = Scope {
+            kind: Some(on),
+            in_loop: false,
+            sticky: false,
+            node: self.scope().node,
         };
         self.block(node, at_line, scope, |t| body(t, sym.clone()))
     }
@@ -111,6 +156,7 @@ impl Trace {
             &Idx::Int(used),
             g::UnitKind::Node,
             Some(&var(&nv)),
+            None,
         );
         let outer = Scope {
             kind: None,
@@ -127,6 +173,7 @@ impl Trace {
                 &Idx::Int(share),
                 on,
                 (at == At::Var).then_some(&unit),
+                None,
             );
             let scope = Scope {
                 kind: Some(on),

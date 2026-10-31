@@ -11,14 +11,15 @@
 //! 3. mover GT4 again: the sub-tiles of each output row group back to rows;
 //! 4. mover copy: those groups to row-major `[nb, B, A]`.
 
+use super::classes::{core_trips, trip_row, Cores, ShapeClass};
 use super::vector::split;
 use super::{cdiv, Hw};
 use crate::kernel::{build, Kernel, Port};
 use crate::pyrepr::{name, Py};
 use crate::trace::buffer::{f16, sl, Buf, ALL};
-use crate::trace::control::At;
+use crate::trace::control::{At, Classed};
 use crate::trace::mover::Walk;
-use crate::trace::{fail, Arg, Trace, R};
+use crate::trace::{fail, Arg, Idx, Trace, R};
 use ktpu_graph as g;
 use ktpu_machine::Machine;
 
@@ -62,6 +63,15 @@ pub fn masks(m: &Machine) -> R<Vec<u16>> {
 /// Ports `x` (f16 [nb, A, B] as words), `mask` ([`masks`]), `y` (f16
 /// [nb, B, A] as words).
 pub fn transpose_kernel(nb: i64, a: i64, b: i64, m: &Machine) -> R<Kernel> {
+    transposed(nb, a, b, None, m)
+}
+
+/// [`transpose_kernel`] in class `class`.
+pub fn classed(nb: i64, a: i64, b: i64, class: &ShapeClass, m: &Machine) -> R<Kernel> {
+    transposed(nb, a, b, Some(class), m)
+}
+
+fn transposed(nb: i64, a: i64, b: i64, class: Option<&ShapeClass>, m: &Machine) -> R<Kernel> {
     let hw = Hw::of(m);
     let (lanes, vl) = (hw.lanes, hw.vlmax);
     let s = swaps(&hw)?;
@@ -83,15 +93,29 @@ pub fn transpose_kernel(nb: i64, a: i64, b: i64, m: &Machine) -> R<Kernel> {
         ("mask".to_string(), f16(&ms)?),
         ("y".to_string(), f16(&xs)?),
     ];
-    let key = name("transpose", vec![Py::Int(nb), Py::Int(a), Py::Int(b)]);
+    let mut parts = vec![Py::Int(nb), Py::Int(a), Py::Int(b)];
+    parts.extend(class.map(ShapeClass::py));
+    let key = name("transpose", parts);
     build(&key, m, ports, given, |t, bufs| {
-        emit(t, &bufs[0], &bufs[1], 0, &bufs[2], nb, a, b, &hw)
+        emit(
+            t,
+            &bufs[0],
+            &bufs[1],
+            0,
+            &bufs[2],
+            nb,
+            a,
+            b,
+            class.map(|c| c.cores),
+            &hw,
+        )
     })
 }
 
 /// The transpose's statements in the kernel being traced: `x` (f16 [nb, A,
 /// B] as words) into `y` ([nb, B, A]), the lane masks at rows `m0`.. of
-/// `mask` ([`masks`]); its trips split over the cores ([`split`]).
+/// `mask` ([`masks`]); its trips split over the cores ([`split`]), or under
+/// `class`'s policy with its scratch padded to whole rounds and node loops.
 #[allow(clippy::too_many_arguments)]
 pub fn emit(
     t: &mut Trace,
@@ -102,6 +126,7 @@ pub fn emit(
     nb: i64,
     a: i64,
     b: i64,
+    class: Option<Cores>,
     hw: &Hw,
 ) -> R<()> {
     let (lanes, vl, wb, band) = (hw.lanes, hw.vlmax, hw.word_bytes, hw.band);
@@ -114,22 +139,35 @@ pub fn emit(
     let trips = cdiv(lines, ROWS);
     // A GT4 group: a band's consecutive words.
     let sw = band * wb;
-    let st = t.buffer(&[trips * ROWS, vl], g::Dtype::F16, vec![])?;
-    let tt = t.buffer(&[trips * ROWS, vl], g::Dtype::F16, vec![])?;
+    let used = class.map(|c| c.used(hw.vc, trips));
+    let padded = used.map_or(trips, |n| cdiv(trips, n) * n) * ROWS;
+    let st = t.buffer(&[padded, vl], g::Dtype::F16, vec![])?;
+    let tt = t.buffer(&[padded, vl], g::Dtype::F16, vec![])?;
     let z = t.buffer(&[words, lanes], g::Dtype::F16, vec![])?;
+    if class.is_some() {
+        let seed = t.buffer(&[lanes], g::Dtype::F16, vec![])?;
+        t.fill_value(&seed.whole(), 0, None, None)?;
+        let row = vl / lanes;
+        t.copy_classed(
+            &st.whole(),
+            &seed.whole(),
+            (&[(padded, 0), (row, 0)], None),
+            (&[(padded, row * wb), (row, wb)], None),
+            Some(1),
+        )?;
+    }
+    let looped = class.is_some();
     let walk: &Walk = &[(nb, a * p), (rg, band * p), (cw, wb), (band, p)];
     let dwalk: &Walk = &[(nb, rg * cw * sw), (rg, cw * sw), (cw, sw)];
-    t.gt4(&st.whole(), &x.whole(), walk, dwalk)?;
-    let sp = split(trips, hw.vc);
-    t.par(sp.cores, g::UnitKind::Vc, At::Var, |t, c| {
+    t.gt4_looped(&st.whole(), &x.whole(), walk, dwalk, looped)?;
+    let core = |t: &mut Trace, count: Idx, row: &dyn Fn(&Idx) -> Idx| -> R<()> {
         let mut ms = vec![];
         for i in m0..m0 + s {
             let l = t.load(&mask.at(&[sl(i, i + 1), ALL])?, false)?;
             ms.push(t.unpack(l, None)?);
         }
-        let first = sp.start(&c);
-        t.range(sp.trips(&c), |t, k| {
-            let r = first.add(k).mul(ROWS);
+        t.range(count, |t, k| {
+            let r = row(&k);
             let lv = t.load(&st.at(&[sl(&r, r.add(ROWS)), ALL])?, false)?;
             let mut v = t.unpack(lv, None)?;
             for (i, mi) in ms.iter().enumerate() {
@@ -138,7 +176,19 @@ pub fn emit(
             }
             t.store(&tt.at(&[sl(&r, r.add(ROWS)), ALL])?, Arg::Val(v))
         })
-    })?;
+    };
+    match used {
+        Some(n) => t.par_classed(n, Classed::default(), |t, c| {
+            core(t, core_trips(trips, n, &c), &|k| trip_row(&c, k, n, ROWS))
+        })?,
+        None => {
+            let sp = split(trips, hw.vc);
+            t.par(sp.cores, g::UnitKind::Vc, At::Var, |t, c| {
+                let first = sp.start(&c);
+                core(t, sp.trips(&c), &|k| first.add(k).mul(ROWS))
+            })?
+        }
+    }
     let walk: &Walk = &[
         (nb, rg * sub * wb),
         (sub, wb),
@@ -146,9 +196,12 @@ pub fn emit(
         (band, sub * wb),
     ];
     let dwalk: &Walk = &[(nb, sub * al * sw), (sub, al * sw), (al, sw)];
-    t.gt4(&z.whole(), &tt.whole(), walk, dwalk)?;
+    t.gt4_looped(&z.whole(), &tt.whole(), walk, dwalk, looped)?;
     let walk: &Walk = &[(nb, sub * al * sw), (sub, al * sw), (band, wb), (al, sw)];
     let dwalk: &Walk = &[(words, wb)];
+    if looped {
+        return t.copy_classed(&y.whole(), &z.whole(), (walk, None), (dwalk, None), Some(2));
+    }
     t.copy(
         &y.whole(),
         &z.whole(),

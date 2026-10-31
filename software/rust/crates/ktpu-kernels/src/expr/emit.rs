@@ -4,6 +4,7 @@
 //! polynomial, a truncation through a rounding constant.
 
 use super::{fold, Expr, OpName, RedOp, E};
+use crate::trace::vector::Fold;
 use crate::trace::{fail, Arg, Trace, R};
 use ktpu_graph::ValueOp as Op;
 use std::collections::HashMap;
@@ -30,8 +31,13 @@ fn two_pi_lo() -> f64 {
 /// `e` over `values` (operand i -> a traced value): a node reached twice
 /// is emitted once; a constant subexpression folds to a number.
 pub fn emit(t: &mut Trace, e: &E, values: &HashMap<usize, Arg>) -> R<Arg> {
+    emit_over(t, e, values, Fold::default())
+}
+
+/// [`emit`], every reduction under `fold`.
+pub fn emit_over(t: &mut Trace, e: &E, values: &HashMap<usize, Arg>, fold: Fold) -> R<Arg> {
     let mut memo = HashMap::new();
-    Emitter { t, values }.go(e, &mut memo)
+    Emitter { t, values, fold }.go(e, &mut memo)
 }
 
 /// The lane arithmetic the rounding patterns are written in: the trace's
@@ -132,6 +138,7 @@ impl<F: Fn(f64) -> f64> Arith for Lanes<F> {
 struct Emitter<'a> {
     t: &'a mut Trace,
     values: &'a HashMap<usize, Arg>,
+    fold: Fold,
 }
 
 impl Arith for Emitter<'_> {
@@ -336,10 +343,14 @@ impl Emitter<'_> {
         self.mul(r, acc)
     }
 
+    fn rsum(&mut self, x: Arg) -> R<Arg> {
+        Ok(Arg::Val(self.t.reduce_over(Op::Rsum, x, self.fold)?))
+    }
+
     fn reduce(&mut self, r: RedOp, x: Arg) -> R<Arg> {
         match r {
-            RedOp::Sum => Ok(Arg::Val(self.t.reduce(Op::Rsum, x)?)),
-            RedOp::Max => Ok(Arg::Val(self.t.reduce(Op::Rmax, x)?)),
+            RedOp::Sum => self.rsum(x),
+            RedOp::Max => Ok(Arg::Val(self.t.reduce_over(Op::Rmax, x, self.fold)?)),
             RedOp::Prod => {
                 // sign * 2^sum(log2 |x|), 0 if any element is 0: statistic
                 // math holds no compare, so the parity is arithmetic.
@@ -348,9 +359,9 @@ impl Emitter<'_> {
                 let ax = self.math(Op::Abs, &[x])?;
                 let nz = self.add(ax, zero)?;
                 let l = self.math(Op::Log2, &[nz])?;
-                let s = Arg::Val(self.t.reduce(Op::Rsum, l)?);
+                let s = self.rsum(l)?;
                 let mag = self.math(Op::Exp2, &[s])?;
-                let n = Arg::Val(self.t.reduce(Op::Rsum, neg)?);
+                let n = self.rsum(neg)?;
                 let h = self.mul(n, Arg::Num(0.5))?;
                 let h = self.sub(h, Arg::Num(0.25))?;
                 let half = round(self, h)?;
@@ -359,7 +370,7 @@ impl Emitter<'_> {
                 let odd2 = self.mul(odd, Arg::Num(2.0))?;
                 let sign = self.sub(Arg::Num(1.0), odd2)?;
                 let sm = self.mul(sign, mag)?;
-                let zs = Arg::Val(self.t.reduce(Op::Rsum, zero)?);
+                let zs = self.rsum(zero)?;
                 let any = self.math(Op::Min, &[zs, Arg::Num(1.0)])?;
                 let keep = self.sub(Arg::Num(1.0), any)?;
                 self.mul(sm, keep)

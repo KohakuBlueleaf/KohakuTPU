@@ -19,6 +19,7 @@ each of its mutants must break a user.
 import json
 import math
 import re
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -26,6 +27,7 @@ import pytest
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes.policy import ShapeClass
+from kohakutpu.application.runtime import generated as G
 from kohakutpu.application.runtime.offline import OfflineCard
 from kohakutpu.language.l1 import ops
 from kohakutpu.language.numerics import e8m15, fp16
@@ -45,7 +47,6 @@ from kohakutpu.language.text.syntax import (
     View,
     fmt,
 )
-from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
 
 MACHINE = "multimesh_v9t6"
@@ -592,16 +593,13 @@ o = mul p, r[:, *] : f32[{r}, {c}] {reg}
 
 def classed(e, out):
     machine = OfflineCard(MACHINE).machine
-    kernel, given, _ = V.rows_kernel(
-        e,
-        (V.Operand("full", pitch=128),),
-        32,
-        128,
-        out,
-        machine.count("VC"),
-        shape_class=ShapeClass(32, 256),
-    )
-    return json.dumps(kernel.trace(given, machine=K.dsl_machine(machine)).graph)
+    arguments = G.rows_arguments(e, (V.Operand("full", pitch=128),), 32, 128, out)
+    return G.classed(
+        SimpleNamespace(machine=machine),
+        "vector.rows_kernel",
+        arguments,
+        ShapeClass(32, 256),
+    )[0]
 
 
 def two_inputs(shape, body="o = exp2d v, u : f32[{r}, {c}] @reg"):

@@ -12,7 +12,7 @@
 use crate::expr;
 use crate::gen::vector::{Kind, Operand};
 use crate::gen::{
-    convert, fused, lanes, matmul, prepared, reductions, relayout, transpose, vector, Hw,
+    classes, convert, fused, lanes, matmul, prepared, reductions, relayout, transpose, vector, Hw,
 };
 use crate::kernel::Kernel;
 use crate::trace::{fail, R};
@@ -400,8 +400,167 @@ fn quant_schedule(a: &Value) -> R<Vec<(&'static str, i64)>> {
         .collect()
 }
 
+fn class_of(v: &Value) -> R<classes::ShapeClass> {
+    let policy = arg(v, "policy")?.as_str().and_then(classes::Policy::parse);
+    let cores = arg(v, "cores")?.as_str().and_then(classes::Cores::parse);
+    let (Some(policy), Some(cores)) = (policy, cores) else {
+        return fail("API.OP.001", format!("a shape class {v}"));
+    };
+    Ok(classes::ShapeClass {
+        kblock: int(v, "kblock")?,
+        max_block: int(v, "max_block")?,
+        policy,
+        cores,
+    })
+}
+
+/// `class_schedule`'s knobs over [`classes::SCHEDULE`].
+fn class_schedule(a: &Value) -> classes::Schedule {
+    let k = a.get("class_schedule").unwrap_or(&Value::Null);
+    let flag = |key: &str| k.get(key).and_then(Value::as_bool).unwrap_or(false);
+    let d = classes::SCHEDULE;
+    classes::Schedule {
+        band: k.get("band").and_then(Value::as_i64).unwrap_or(d.band),
+        wide_width: k.get("wide_width").and_then(Value::as_i64),
+        rows_direct: flag("rows_direct"),
+        wide_direct: flag("wide_direct"),
+    }
+}
+
+/// `class_rows`'s call to [`classes::rows`] with the arguments it reads.
+fn class_rows<T>(a: &Value, run: impl FnOnce(&classes::Rows) -> R<T>) -> R<T> {
+    let e = expr::from_table(arg(a, "e")?)?;
+    let ops = operands(arg(a, "operands")?)?;
+    let out = operand(arg(a, "out")?)?;
+    let class = class_of(arg(a, "shape_class")?)?;
+    let schedule = class_schedule(a);
+    run(&classes::Rows {
+        e: &e,
+        operands: &ops,
+        r: int(a, "R")?,
+        w: int(a, "W")?,
+        out: &out,
+        bands: a.get("bands").and_then(Value::as_i64),
+        class: &class,
+        schedule: &schedule,
+    })
+}
+
+/// Whether a `vector.rows_kernel` call's class stages fit the L1.
+pub fn class_fits(a: &Value, m: &Machine) -> R<bool> {
+    class_rows(a, |rows| classes::rows::fits(rows, m))
+}
+
+fn lanes_class(v: &Value) -> R<lanes::Class> {
+    Ok(lanes::Class {
+        taps: walk(arg(v, "taps")?)?,
+        words: int(v, "words")?,
+        keep: boolean(v, "keep")?,
+    })
+}
+
+/// The class kernel of one generator call taking a `shape_class`.
+pub fn classed(gen: &str, a: &Value, m: &Machine) -> R<classes::Classed> {
+    if gen == "vector.rows_kernel" {
+        return class_rows(a, |rows| classes::rows::kernel(rows, false, m));
+    }
+    if gen == "lanes.class_kernel" {
+        let policy = arg(a, "core_policy")?.as_str();
+        let Some(cores) = policy.and_then(classes::Cores::parse) else {
+            return fail("API.OP.001", format!("a core policy in {a}"));
+        };
+        return classes::lanes::kernel(
+            &lanes_class(arg(a, "class")?)?,
+            int(a, "src_words")?,
+            int(a, "dst_words")?,
+            cores,
+            m,
+        );
+    }
+    let class = class_of(arg(a, "shape_class")?)?;
+    match gen {
+        "vector.flat_kernel" => {
+            let scalars = walk(a.get("scalars").unwrap_or(&Value::Null))?;
+            let scalars: Vec<(usize, i64)> =
+                scalars.into_iter().map(|(i, l)| (i as usize, l)).collect();
+            classes::rows::flat_kernel(
+                &expr::from_table(arg(a, "e")?)?,
+                &dtypes(arg(a, "dtypes")?)?,
+                int(a, "n")?,
+                a.get("out_dtype").map_or(Ok(g::Dtype::F16), dtype)?,
+                &scalars,
+                &class,
+                &class_schedule(a),
+                m,
+            )
+        }
+        "convert.copy_kernel" => classes::moves::copy_kernel(int(a, "nbytes")?, &class, m),
+        "convert.walk_kernel" => classes::moves::walk_kernel(
+            int(a, "src_bytes")?,
+            &walk(arg(a, "levels")?)?,
+            int(a, "at")?,
+            int(a, "dst_bytes")?,
+            &walk(arg(a, "dlevels")?)?,
+            int(a, "dat")?,
+            &class,
+            m,
+        ),
+        "transpose.transpose_kernel" => {
+            classes::moves::transpose_kernel(int(a, "nb")?, int(a, "A")?, int(a, "B")?, &class, m)
+        }
+        "matmul.quant_kernel" => classes::moves::quant_kernel(
+            &operand(arg(a, "src")?)?,
+            int(a, "rows")?,
+            int(a, "cols")?,
+            int(a, "rp")?,
+            int(a, "cp")?,
+            quant_side(a)?,
+            int(a, "g")?,
+            int(a, "nk")?,
+            a.get("batches").map_or(Ok(1), |_| int(a, "batches"))?,
+            &class,
+            a.get("class_direct").and_then(Value::as_bool),
+            m,
+            a.get("finite")
+                .map_or(Ok(false), |_| boolean(a, "finite"))?,
+            &quant_schedule(a)?,
+            &plan_list(a.get("prepared").unwrap_or(&Value::Null), m)?,
+            a.get("pad_strategy").and_then(Value::as_str) == Some("staged"),
+        ),
+        "matmul.mm_kernel" => classes::mm::kernel(
+            &mm_plan(made_by(arg(a, "mm")?, "matmul.plan")?, m)?,
+            &expr::from_table(arg(a, "e")?)?,
+            &operands(arg(a, "extras")?)?,
+            &operand(arg(a, "out")?)?,
+            &class,
+            m,
+        ),
+        other => fail("API.OP.001", format!("no class of generator {other:?}")),
+    }
+}
+
+/// What a class call decided, with each port's `nbytes`.
+pub fn class_info(gen: &str, a: &Value, m: &Machine) -> R<Value> {
+    let got = classed(gen, a, m)?;
+    let nbytes: serde_json::Map<String, Value> = got
+        .kernel
+        .given
+        .iter()
+        .map(|(port, s)| {
+            let n = s.shape.iter().product::<i64>() * Hw::item(s.dtype);
+            (port.clone(), n.into())
+        })
+        .collect();
+    let mut info = got.info;
+    info["nbytes"] = nbytes.into();
+    Ok(info)
+}
+
 /// The kernel of one recorded generator call, built for `m`.
 pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
+    if a.get("shape_class").is_some() || gen == "lanes.class_kernel" {
+        return Ok(classed(gen, a, m)?.kernel);
+    }
     let e = |k: &str| expr::from_table(arg(a, k)?);
     Ok(match gen {
         "reductions.wide_fold_kernel" => {

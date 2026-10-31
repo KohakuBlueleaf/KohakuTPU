@@ -1,15 +1,15 @@
 """Flat classes preserve scalar lane semantics and cover element-count tails."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from kohakutpu.application.kernels import expr as X
-from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes import values
 from kohakutpu.application.kernels.classes.policy import ShapeClass
+from kohakutpu.application.runtime import generated as G
 from kohakutpu.application.runtime.offline import OfflineCard
-from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
 
 
@@ -21,17 +21,21 @@ def test_flat_class_tail_bind_and_scalar_lane(dtype, lane):
     policy = ShapeClass(32, 256)
 
     def compile_n(n):
-        kernel, given = V.flat_kernel(
-            X.op("add", X.Load(0), X.Load(1)),
-            (dtype, "f16"),
-            n,
-            dtype,
-            2,
-            ((1, lane),),
-            shape_class=policy,
+        source, info = G.classed(
+            SimpleNamespace(machine=machine),
+            "vector.flat_kernel",
+            {
+                "e": G.expr(X.op("add", X.Load(0), X.Load(1))),
+                "dtypes": [dtype, "f16"],
+                "n": n,
+                "out_dtype": dtype,
+                "scalars": [[1, lane]],
+            },
+            policy,
         )
-        assert given["out"].shape == (-(-n // 128), 128)
-        graph = kernel.trace(given, machine=K.dsl_machine(machine)).graph
+        graph = json.loads(source)
+        out = next(p for p in graph["ports"] if p["name"] == "out")
+        assert out["spec"]["shape"] == [-(-n // 128), 128]
         result = rs._rs.compile(
             json.dumps(dict(graph, name="template")),
             machine_json,
@@ -40,7 +44,7 @@ def test_flat_class_tail_bind_and_scalar_lane(dtype, lane):
         )
         assert not result["verdict"]["refused"]
         assert f"lane={lane}" in result["l1"]
-        return result["packages"][0], kernel.class_info
+        return result["packages"][0], info
 
     bounds = {"n": {"lo": 1, "hi": 2049}}
     points = json.loads(rs._rs.template_points(json.dumps(bounds)))

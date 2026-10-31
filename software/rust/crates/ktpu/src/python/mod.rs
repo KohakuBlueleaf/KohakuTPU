@@ -821,6 +821,64 @@ fn under<T: Send>(mutant: Option<&str>, run: impl FnOnce() -> T + Send) -> PyRes
     }
 }
 
+/// class_info(generator, args_json, machine_json) -> str: what a class
+/// generator call decided, JSON (`call::class_info`).
+#[pyfunction]
+#[pyo3(signature = (generator, args_json, machine_json, mutant=None))]
+fn class_info(
+    generator: &str,
+    args_json: &str,
+    machine_json: &str,
+    mutant: Option<&str>,
+) -> PyResult<String> {
+    let m = machine(machine_json)?;
+    let args = serde_json::from_str(args_json)
+        .map_err(|e| PyValueError::new_err(format!("generator arguments: {e}")))?;
+    let got = under(mutant, || {
+        ktpu_kernels::call::class_info(generator, &args, &m)
+    })?
+    .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(got.to_string())
+}
+
+/// class_fits(args_json, machine_json) -> bool: whether a `vector.rows_kernel`
+/// call's class stages fit a core's L1.
+#[pyfunction]
+fn class_fits(args_json: &str, machine_json: &str) -> PyResult<bool> {
+    let m = machine(machine_json)?;
+    let args = serde_json::from_str(args_json)
+        .map_err(|e| PyValueError::new_err(format!("vector.rows_kernel arguments: {e}")))?;
+    ktpu_kernels::call::class_fits(&args, &m).map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
+/// lanes_class_tables(args_json, machine_json) -> str: `lanes.plan`'s classes
+/// each with its padded tables, a JSON list of `{"class": {"taps", "words",
+/// "keep"}, "index", "masks"}`, and the plan's word counts.
+#[pyfunction]
+fn lanes_class_tables(args_json: &str, machine_json: &str) -> PyResult<String> {
+    let m = machine(machine_json)?;
+    let args = serde_json::from_str(args_json)
+        .map_err(|e| PyValueError::new_err(format!("lanes.plan arguments: {e}")))?;
+    let pl = ktpu_kernels::call::lanes_plan(&args, &m)
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let classes: Vec<_> = ktpu_kernels::gen::classes::lanes::tables(&pl, &m)
+        .into_iter()
+        .map(|c| {
+            serde_json::json!({
+                "class": {"taps": c.class.taps, "words": c.class.words, "keep": c.class.keep},
+                "index": c.index,
+                "masks": c.masks,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "classes": classes,
+        "src_words": pl.src_words,
+        "dst_words": pl.dst_words,
+    })
+    .to_string())
+}
+
 /// relayout_plan(args_json, machine_json) -> str: `relayout.plan`'s plan of
 /// the call's arguments as JSON `{"shape": repr(Plan.shape()), "index":
 /// [..], "masks": [..], "direct": bool}`, or `{"unplanned": why}`; a refusal
@@ -1090,6 +1148,9 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(lanes_plan, m)?)?;
     m.add_function(wrap_pyfunction!(rows_shape, m)?)?;
     m.add_function(wrap_pyfunction!(port_shape, m)?)?;
+    m.add_function(wrap_pyfunction!(class_info, m)?)?;
+    m.add_function(wrap_pyfunction!(class_fits, m)?)?;
+    m.add_function(wrap_pyfunction!(lanes_class_tables, m)?)?;
     m.add_function(wrap_pyfunction!(transpose_masks, m)?)?;
     m.add("MX7_PAIRING", ktpu_machine::PAIRING.name())?;
     m.add_function(wrap_pyfunction!(mm_knobs, m)?)?;

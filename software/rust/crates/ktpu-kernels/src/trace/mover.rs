@@ -100,6 +100,28 @@ impl Trace {
         self.mover(g::MoverOp::Copy, dst, Some(src), &kw, at)
     }
 
+    /// A classed copy (DSL.MOV.001): one fixed stream whatever the counts,
+    /// its `node_loop` outer levels node loops.
+    #[track_caller]
+    pub fn copy_classed(
+        &mut self,
+        dst: &View,
+        src: &View,
+        walk: (&Walk, Option<i64>),
+        dwalk: (&Walk, Option<i64>),
+        node_loop: Option<i64>,
+    ) -> R<()> {
+        let kw = [
+            ("classed", Kw::Int(Some(1))),
+            ("node_loop", Kw::Int(node_loop)),
+            ("walk", Kw::Walk(Some(walk.0))),
+            ("at", Kw::Int(walk.1)),
+            ("dwalk", Kw::Walk(Some(dwalk.0))),
+            ("dat", Kw::Int(dwalk.1)),
+        ];
+        self.mover(g::MoverOp::Copy, dst, Some(src), &kw, here())
+    }
+
     /// `quant DST <- SRC` (DSL.MOV.003).
     #[track_caller]
     pub fn quant(&mut self, dst: &View, src: &View) -> R<()> {
@@ -150,6 +172,25 @@ impl Trace {
         self.mover(g::MoverOp::Quant, dst, Some(src), &kw, here())
     }
 
+    /// [`Trace::quant_scheduled`] over a fixed node loop of entries.
+    #[track_caller]
+    pub fn quant_looped(
+        &mut self,
+        dst: &View,
+        src: &View,
+        finite: bool,
+        schedule: &[(&str, i64)],
+        pad: bool,
+    ) -> R<()> {
+        let mut kw = vec![("node_loop", Kw::Int(Some(1)))];
+        kw.extend(quant_kw(
+            ("finite", Kw::Int(finite.then_some(1))),
+            schedule,
+            pad,
+        ));
+        self.mover(g::MoverOp::Quant, dst, Some(src), &kw, here())
+    }
+
     /// A checked [`Trace::quant_scheduled`] whose finite status drains into
     /// `status` with no barrier, checked by a later [`Trace::quant_check`]
     /// (L2.MOV.010).
@@ -176,6 +217,19 @@ impl Trace {
     /// `gt4 DST <- SRC walk=.. dwalk=..` (DSL.MOV.004): whole buffers.
     #[track_caller]
     pub fn gt4(&mut self, dst: &View, src: &View, walk: &Walk, dwalk: &Walk) -> R<()> {
+        self.gt4_looped(dst, src, walk, dwalk, false)
+    }
+
+    /// [`Trace::gt4`], with `node_loop` over a fixed node loop.
+    #[track_caller]
+    pub fn gt4_looped(
+        &mut self,
+        dst: &View,
+        src: &View,
+        walk: &Walk,
+        dwalk: &Walk,
+        node_loop: bool,
+    ) -> R<()> {
         let at = here();
         if !(src.whole && dst.whole) {
             return fail(
@@ -184,6 +238,7 @@ impl Trace {
             );
         }
         let kw = [
+            ("node_loop", Kw::Int(node_loop.then_some(1))),
             ("walk", Kw::Walk(Some(walk))),
             ("at", Kw::Int(None)),
             ("dwalk", Kw::Walk(Some(dwalk))),
@@ -254,5 +309,31 @@ impl Trace {
             ("table_stride", Kw::Int(table_stride)),
         ];
         self.mover(g::MoverOp::Scatter, dst, Some(src), &kw, at)
+    }
+
+    /// `gemm_tiles DST <- LHS rhs=RHS ..`: a packed product to stacked tile
+    /// rows on fixed node loops.
+    #[track_caller]
+    #[allow(clippy::too_many_arguments)]
+    pub fn gemm_tiles(
+        &mut self,
+        dst: &View,
+        lhs: &View,
+        rhs: &View,
+        batches: i64,
+        rows: i64,
+        cols: i64,
+        clusters: i64,
+        shared: bool,
+    ) -> R<()> {
+        let kw = [
+            ("rhs", Kw::Index(rhs)),
+            ("batches", Kw::Int(Some(batches))),
+            ("rows", Kw::Int(Some(rows))),
+            ("cols", Kw::Int(Some(cols))),
+            ("clusters", Kw::Int(Some(clusters))),
+            ("shared", Kw::Int(Some(i64::from(shared)))),
+        ];
+        self.mover(g::MoverOp::GemmTiles, dst, Some(lhs), &kw, here())
     }
 }

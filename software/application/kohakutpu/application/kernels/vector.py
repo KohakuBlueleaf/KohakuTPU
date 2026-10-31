@@ -20,8 +20,6 @@ from collections import OrderedDict
 from dataclasses import dataclass
 
 from kohakutpu.application.kernels import expr as X
-from kohakutpu.application.kernels.classes import flat as class_flat
-from kohakutpu.application.kernels.classes import rows as class_rows
 from kohakutpu.compiler import _rs
 from kohakutpu.language import dsl as kt
 
@@ -324,14 +322,10 @@ def rows_kernel(
     out: Operand,
     cores: int,
     bands=None,
-    *,
-    shape_class=None,
 ):
     """A DSL kernel computing `e` over [R, W] rows into `out`. Returns
     ``(kernel, given, column blocks)``; with several blocks a reduction's
     output is [blocks, ceil(R / 16) * 16] compact partials."""
-    if shape_class is not None:
-        return class_rows.kernel(e, operands, R, W, out, cores, bands, shape_class)
     operands = tuple(operands)
     kkey = (
         "rows",
@@ -439,14 +433,10 @@ def flat_kernel(
     out_dtype: str,
     cores: int,
     scalars: tuple = (),
-    *,
-    shape_class=None,
 ):
     """`e` over `n` elements, whole 128-value rows (every operand at the
     output's index, but ``(i, lane)`` of `scalars`: f16 value `lane` of operand
     i's word, every element's). Returns ``(kernel, given)``."""
-    if shape_class is not None:
-        return class_flat.kernel(e, dtypes, n, out_dtype, cores, scalars, shape_class)
     if n % 128:
         raise ValueError(f"{n} elements are not whole 128-value rows")
     dtypes = tuple(dtypes)

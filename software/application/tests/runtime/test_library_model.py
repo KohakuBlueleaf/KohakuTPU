@@ -12,9 +12,7 @@ from tinygrad.helpers import Context
 from tinygrad.tensor import Tensor
 
 from kohakutpu.application.kernels import expr as X
-from kohakutpu.application.kernels import lanes as L
 from kohakutpu.application.kernels import vector as V
-from kohakutpu.application.kernels.classes import lanes as C
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms, generated
 from kohakutpu.stack import kernel as K
@@ -61,24 +59,29 @@ def test_library_activation_on_model(dev, tmp_path):
 def test_class_lanes_values(dev, keep):
     src = np.arange(64, dtype=np.float16)
     initial = np.arange(32, dtype=np.float16) + 200
-    plan = L.plan(64, ((3, 17), (7, 1)), 0, ((3, 9), (7, 1)), 0, 32, keep)
+    made = generated.relayout_plan(
+        "lanes.plan", 64, ((3, 17), (7, 1)), 0, ((3, 9), (7, 1)), 0, 32, keep
+    )
+    plan = generated.lanes_tables(dev, made)
     x, y = dev.alloc(128), dev.alloc(64)
     try:
         dev.write(x, src.tobytes())
         dev.write(y, (initial if keep else np.zeros(32, np.float16)).tobytes())
-        for cls, index, masks in C.tables(plan):
-            kernel, given = C.kernel(
-                cls, plan.src_words, plan.dst_words, dev.machine.count("VC")
-            )
-            forms.launch(
+        for c in plan["classes"]:
+            generated.launch(
                 dev,
-                kernel,
-                given,
+                "lanes.class_kernel",
+                {
+                    "class": c["class"],
+                    "src_words": plan["src_words"],
+                    "dst_words": plan["dst_words"],
+                    "core_policy": "all",
+                },
                 {
                     "src": x,
                     "dst": y,
-                    "index": forms.table(dev, index, np.float32),
-                    "mask": forms.table(dev, masks),
+                    "index": forms.table(dev, c["index"], np.float32),
+                    "mask": forms.table(dev, c["masks"]),
                 },
             )
         actual = np.frombuffer(dev.read(y, 64), np.float16)

@@ -16,7 +16,6 @@ from dataclasses import dataclass
 
 from kohakutpu.application.kernels import prepared as P
 from kohakutpu.application.kernels import vector as V
-from kohakutpu.application.kernels.classes import mm as class_mm
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.compiler import _rs
 from kohakutpu.language import dsl as kt
@@ -135,8 +134,6 @@ def quant_kernel(
     nk: int,
     batches: int = 1,
     *,
-    shape_class=None,
-    class_direct=None,
     finite=False,
     prepared=(),
     hw=None,
@@ -174,8 +171,6 @@ def quant_kernel(
         g,
         nk,
         batches,
-        shape_class,
-        class_direct,
         finite,
         finite_batch,
         overlap,
@@ -201,12 +196,6 @@ def quant_kernel(
         "x": kt.TensorSpec.make((srows, src.pitch), src.dtype),
         "q": kt.TensorSpec.make((batches * rp, cp), dtype, lay),
     }
-    direct = rows == rp and cols == cp and src.pitch == cp and src.offset == 0
-    if shape_class is not None and class_direct is not None:
-        if class_direct and not direct:
-            raise ValueError("direct quant class requires unpadded contiguous input")
-        direct = class_direct
-
     if prepared:
         ports.pop("x")
         given.pop("x")
@@ -245,7 +234,6 @@ def quant_kernel(
                 fill_overlap=fill_overlap if vector else False,
                 zero_reuse=zero_reuse if vector else False,
                 overlap=drain_overlap,
-                node_loop=shape_class is not None,
             )
             return
         # unpadded row blocks stack contiguously: one quant over the stack
@@ -264,7 +252,6 @@ def quant_kernel(
                 fill_overlap=fill_overlap if vector else False,
                 zero_reuse=zero_reuse if vector else False,
                 overlap=drain_overlap,
-                node_loop=shape_class is not None,
                 pad=vector,
             )
 
@@ -273,7 +260,7 @@ def quant_kernel(
         V.name(
             "quant",
             *key,
-            shape_class,
+            None,
             *([tuple(p.shape() for p in prepared)] if prepared else []),
             *([pad_strategy] if pad_strategy != "native" else []),
             *(["classifier_overlap"] if classifier_overlap else []),
@@ -286,17 +273,6 @@ def quant_kernel(
         body,
         ports,
     )
-    if shape_class is not None:
-        result.class_info = {
-            "quant": True,
-            "direct": direct,
-            "g": g,
-            "nk": nk,
-            "kblock": shape_class.kblock,
-            "padded_rows": batches * (rp - rows),
-            "padded_columns": cp - cols,
-            "core_policy": shape_class.cores,
-        }
     got = (result, given)
     if KERNELS_KEPT > 0:
         _kernels[kkey] = got
@@ -448,14 +424,11 @@ def mm_kernel(
     clusters: int,
     cores: int,
     *,
-    shape_class=None,
     made=None,
     hw=None,
 ):
     """The kernel for `mm`: ports ``a`` (mx7a), ``b`` (mx7b), ``in1..`` the
     epilogue's operands (`Load(i)`), ``out``. Returns ``(kernel, given)``."""
-    if shape_class is not None:
-        return class_mm.kernel(mm, e, extras, out, clusters, cores, shape_class)
     extras = tuple(extras)
     made = dict(made or {})
     prepkey = tuple(sorted((i, tuple(p.shape() for p in ps)) for i, ps in made.items()))

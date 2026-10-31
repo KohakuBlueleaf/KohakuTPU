@@ -2,12 +2,14 @@
 
 import json
 import re
+from types import SimpleNamespace
 
 import pytest
 
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes.policy import ShapeClass
+from kohakutpu.application.runtime import generated as G
 from kohakutpu.application.runtime.offline import OfflineCard
 from kohakutpu.language import dsl as kt
 from kohakutpu.stack import kernel as K
@@ -20,23 +22,23 @@ from kohakutpu.stack import rs
 def test_wide_fold_repeats_row_bands(rows, policy, op):
     machine = OfflineCard("multimesh_v9t6").machine
     expr = X.Reduce(op, X.op("add", X.Load(0), X.Load(1)))
-    kernel, given, _ = V.rows_kernel(
-        expr,
-        (V.Operand("full", pitch=416), V.Operand("col")),
-        rows,
-        416,
-        V.Operand("row"),
-        2,
-        shape_class=ShapeClass(32, 256, cores=policy),
+    source, info = G.classed(
+        SimpleNamespace(machine=machine),
+        "vector.rows_kernel",
+        G.rows_arguments(
+            expr,
+            (V.Operand("full", pitch=416), V.Operand("col")),
+            rows,
+            416,
+            V.Operand("row"),
+        ),
+        ShapeClass(32, 256, cores=policy),
     )
-    graph = kernel.trace(given, machine=K.dsl_machine(machine)).graph
-    result = rs._rs.compile(
-        json.dumps(graph), rs.machine_json(machine), cache_dir="", fetch=True
-    )
+    result = rs._rs.compile(source, rs.machine_json(machine), cache_dir="", fetch=True)
     assert not result["verdict"]["refused"], result["verdict"]
     assert "repeats=" in result["l1"]
     assert "advances=" in result["l1"]
-    assert result["l1"].count("loop s15") == kernel.class_info["cores"]
+    assert result["l1"].count("loop s15") == info["cores"]
 
 
 @pytest.mark.parametrize("op", ["rsum", "rmax"])

@@ -218,13 +218,13 @@ pub fn plan(
 }
 
 /// Rows of the scratch from `first` on, indexed from 0.
-struct Rows<'a> {
-    buf: &'a Buf,
-    first: i64,
+pub(super) struct Rows<'a> {
+    pub(super) buf: &'a Buf,
+    pub(super) first: i64,
 }
 
 impl Rows<'_> {
-    fn at(&self, lo: &Idx, hi: &Idx, cols: Key) -> R<View> {
+    pub(super) fn at(&self, lo: &Idx, hi: &Idx, cols: Key) -> R<View> {
         let lo = Idx::Int(self.first).add(lo);
         let hi = Idx::Int(self.first).add(hi);
         self.buf.at(&[Key::Span(lo, hi), cols])

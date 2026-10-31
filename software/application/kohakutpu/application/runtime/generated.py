@@ -2,6 +2,7 @@
 
 import json
 import os
+from dataclasses import asdict
 from functools import lru_cache
 
 import numpy as np
@@ -40,12 +41,85 @@ def source(dev, generator, arguments):
         }
     if generator == "matmul.mm_kernel":
         arguments = {**MM.kernel_knobs(), **arguments}
-    return graph(
+    return graph(*_call(dev, generator, _scheduled(arguments)))
+
+
+def _scheduled(arguments: dict) -> dict:
+    """`arguments`, a class call's with the `KTPU_CLASS_*` knobs."""
+    if "shape_class" not in arguments:
+        return arguments
+    width = os.environ.get("KTPU_CLASS_WIDE_WIDTH")
+    return dict(
+        arguments,
+        class_schedule={
+            "band": int(os.environ.get("KTPU_CLASS_BAND", "4")),
+            "wide_width": int(width) if width else None,
+            "rows_direct": os.environ.get("KTPU_CLASS_ROWS_DIRECT", "0") == "1",
+            "wide_direct": os.environ.get("KTPU_CLASS_WIDE_DIRECT", "0") == "1",
+        },
+    )
+
+
+def _call(dev, generator, arguments) -> tuple:
+    return (
         generator,
         json.dumps(arguments, sort_keys=True),
         rs.machine_json(dev.machine),
         rs._MUTANT.get(),
     )
+
+
+def rows_arguments(e, operands, R, W, out) -> dict:
+    """A `vector.rows_kernel` call of `e` over [R, W] rows into `out`."""
+    return {
+        "e": expr(e),
+        "operands": [vars(o) for o in operands],
+        "R": R,
+        "W": W,
+        "out": vars(out),
+    }
+
+
+def in_class(arguments: dict, shape_class) -> dict:
+    """A generator call's arguments in `shape_class`."""
+    return dict(arguments, shape_class=asdict(shape_class))
+
+
+def class_info(dev, generator, arguments) -> dict:
+    """What a class call decided (`_rs.class_info`)."""
+    return json.loads(rs._rs.class_info(*_call(dev, generator, _scheduled(arguments))))
+
+
+def classed(dev, generator, arguments, shape_class=None) -> tuple:
+    """A generator call in `shape_class` (`lanes.class_kernel` none):
+    ``(graph source, what it decided)``."""
+    if shape_class is not None:
+        arguments = in_class(arguments, shape_class)
+    return source(dev, generator, arguments), class_info(dev, generator, arguments)
+
+
+def class_fits(dev, arguments) -> bool:
+    """Whether a `vector.rows_kernel` class call's trip fits a core's L1."""
+    return rs._rs.class_fits(
+        json.dumps(_scheduled(arguments)), rs.machine_json(dev.machine)
+    )
+
+
+def lanes_tables(dev, made) -> dict:
+    """A `lanes.plan` call's classes with their padded tables: ``classes``
+    of ``{class, index (fp32), masks (f16 bits, [taps, vlmax])}``,
+    ``src_words``, ``dst_words``."""
+    got = json.loads(
+        rs._rs.lanes_class_tables(
+            json.dumps(made["made_by"]["args"]), rs.machine_json(dev.machine)
+        )
+    )
+    for c in got["classes"]:
+        c["index"] = np.array(c["index"], np.float32)
+        c["masks"] = np.array(c["masks"], np.uint16).reshape(
+            len(c["class"]["taps"]), -1
+        )
+    return got
 
 
 def launch(dev, generator, arguments, bindings, kind="dsl", info=None):
@@ -154,13 +228,7 @@ def transpose_masks(dev):
 def rows_shape(dev, e, operands, R, W, out) -> dict:
     """``nblk``, the column blocks of `e` over [R, W] rows into `out`, and
     ``out``, its extents (`_rs.rows_shape`)."""
-    arguments = {
-        "e": expr(e),
-        "operands": [vars(o) for o in operands],
-        "R": R,
-        "W": W,
-        "out": vars(out),
-    }
+    arguments = rows_arguments(e, operands, R, W, out)
     return json.loads(
         rs._rs.rows_shape(
             json.dumps(arguments), rs.machine_json(dev.machine), rs._MUTANT.get()
@@ -217,17 +285,22 @@ def from_output(dev, graph_data, output, traced=None):
     )
 
 
+def flat_arguments(expression, dtypes, n, scalars=()) -> dict:
+    """A `vector.flat_kernel` call of `expression` over `n` elements."""
+    return {
+        "e": expr(expression),
+        "dtypes": dtypes,
+        "n": n,
+        "out_dtype": "f16",
+        "scalars": scalars,
+    }
+
+
 def flat(dev, expression, dtypes, n, bindings, info=None, scalars=()):
     return launch(
         dev,
         "vector.flat_kernel",
-        {
-            "e": expr(expression),
-            "dtypes": dtypes,
-            "n": n,
-            "out_dtype": "f16",
-            "scalars": scalars,
-        },
+        flat_arguments(expression, dtypes, n, scalars),
         bindings,
         info=info,
     )

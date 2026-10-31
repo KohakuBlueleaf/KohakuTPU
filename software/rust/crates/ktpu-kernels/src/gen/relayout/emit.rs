@@ -187,6 +187,7 @@ fn emit(t: &mut Trace, part: &Part, bufs: &Bufs, index: &Buf, mask: &Buf, cx: &C
             x.nb,
             x.a,
             x.b,
+            None,
             &cx.gen,
         ),
         Part::Runs(r) => emit_runs(t, r, bufs, index, mask, hw),
