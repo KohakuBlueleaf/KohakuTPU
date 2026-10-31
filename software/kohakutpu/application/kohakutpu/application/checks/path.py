@@ -119,12 +119,12 @@ class ArithmeticPath:
                         stage="rows",
                         rows=rows,
                         width=width,
-                        blocks=result[2],
+                        blocks=info.get("blocks", 1),
                         output=out.kind,
                         expression=repr(e),
                         reductions=[r.op for r in X.reduces(e)],
                         formats=["f16", "E8M15", "f16"],
-                        name=result[0].name,
+                        name=result.name,
                         source="runtime/rows.py:run,_launch; kernels/vector.py:rows_kernel",
                     )
                 )
@@ -174,20 +174,20 @@ class ArithmeticPath:
                 )
             return result
 
-        def observe_launch_wide(dev, e, operands, binds, rows, width, out, info, cores):
-            result = launch_wide(dev, e, operands, binds, rows, width, out, info, cores)
+        def observe_launch_wide(dev, e, operands, binds, rows, width, out, info):
+            result = launch_wide(dev, e, operands, binds, rows, width, out, info)
             if dev is self.device:
                 self.stages.append(
                     dict(
                         stage="rows",
                         rows=rows,
                         width=width,
-                        blocks=result[2],
+                        blocks=info.get("blocks", 1),
                         output=out.kind,
                         expression=repr(e),
                         reductions=[r.op for r in X.reduces(e)],
                         formats=["f16", "E8M15", "f16"],
-                        name=result[0].name,
+                        name=result.name,
                         source="runtime/rows.py:run,_launch_wide",
                     )
                 )

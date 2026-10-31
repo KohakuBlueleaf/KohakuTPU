@@ -486,9 +486,7 @@ def main():
     parser.add_argument("--warm", action="store_true")
     parser.add_argument("--width", type=int, default=192)
     parser.add_argument("--artifact", type=Path, required=True)
-    parser.add_argument(
-        "--library", type=Path, default=Path("../.plan/gfuse/native-library")
-    )
+    parser.add_argument("--library", type=Path, default=Path("build/native-library"))
     parser.add_argument("--output", type=Path)
     parser.add_argument("--firmware", type=Path)
     parser.add_argument("--execution-list", action="store_true")
