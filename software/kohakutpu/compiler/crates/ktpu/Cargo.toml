@@ -44,7 +44,7 @@ mutants = [
 
 [dependencies]
 ktpu-machine.workspace = true
-ktpu-cache.workspace = true
+ka-cache.workspace = true
 ktpu-isa = { workspace = true, optional = true }
 ktpu-l0 = { workspace = true, optional = true }
 ktpu-l1 = { workspace = true, optional = true }

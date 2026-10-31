@@ -1,6 +1,6 @@
-//! The stage caches (`ktpu-cache`) and the hex form bytes take in JSON.
+//! The stage caches (`ka-cache`) and the hex form bytes take in JSON.
 
-pub use ktpu_cache::{Cache, Key};
+pub use ka_cache::{Cache, Key};
 
 /// Lowercase hex.
 pub fn hex(bytes: &[u8]) -> String {

@@ -1,6 +1,6 @@
 //! Each cached stage's version: a digest of the sources of the stage crates
-//! it runs, their `ktpu-*` dependencies (transitively), and this crate's
-//! `src/stack` (the glue). Shared by `build.rs` and `tests/stage_version.rs`.
+//! it runs, their `ktpu-*` and `ka-*` dependencies (transitively), and this
+//! crate's `src/stack` (the glue).
 
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -19,16 +19,25 @@ pub const STAGES: &[(&str, &[&str])] = &[
 /// A file's bytes, None when it cannot be read.
 pub type Read<'a> = &'a dyn Fn(&Path) -> Option<Vec<u8>>;
 
-/// The `ktpu-*` crates `[dependencies]` of `krate`'s Cargo.toml names.
+/// The directory of crate `k`, from `crates` (the project's crate directory):
+/// a `ka-*` crate is the framework's.
+pub fn dir_of(crates: &Path, k: &str) -> PathBuf {
+    match k.starts_with("ka-") {
+        true => crates.join("../../../kohakuaccel/compiler/crates").join(k),
+        false => crates.join(k),
+    }
+}
+
+/// The `ktpu-*` and `ka-*` crates `[dependencies]` of `krate`'s Cargo.toml names.
 fn deps(crates: &Path, krate: &str, read: Read) -> Vec<String> {
-    let toml = read(&crates.join(krate).join("Cargo.toml")).unwrap_or_default();
+    let toml = read(&dir_of(crates, krate).join("Cargo.toml")).unwrap_or_default();
     let mut on = false;
     let mut out = Vec::new();
     for line in String::from_utf8_lossy(&toml).lines() {
         let line = line.trim();
         if line.starts_with('[') {
             on = line == "[dependencies]";
-        } else if on && line.starts_with("ktpu-") {
+        } else if on && (line.starts_with("ktpu-") || line.starts_with("ka-")) {
             let name: String = line
                 .chars()
                 .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
@@ -39,7 +48,7 @@ fn deps(crates: &Path, krate: &str, read: Read) -> Vec<String> {
     out
 }
 
-/// `roots` and every `ktpu-*` crate they depend on.
+/// `roots` and every `ktpu-*` and `ka-*` crate they depend on.
 pub fn closure(crates: &Path, roots: &[&str], read: Read) -> BTreeSet<String> {
     let mut seen = BTreeSet::new();
     let mut todo: Vec<String> = roots.iter().map(|s| s.to_string()).collect();
@@ -65,16 +74,17 @@ fn files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// The source files a stage's version covers, relative to `crates`.
+/// The source files a stage's version covers, each `<crate>/<path>`.
 pub fn sources(crates: &Path, roots: &[&str], read: Read) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for k in closure(crates, roots, read) {
         out.push(PathBuf::from(&k).join("Cargo.toml"));
+        let dir = dir_of(crates, &k);
         let mut fs = Vec::new();
-        files(&crates.join(&k).join("src"), &mut fs);
+        files(&dir.join("src"), &mut fs);
         out.extend(
             fs.iter()
-                .filter_map(|p| p.strip_prefix(crates).ok().map(Path::to_path_buf)),
+                .filter_map(|p| p.strip_prefix(&dir).ok().map(|r| Path::new(&k).join(r))),
         );
     }
     let mut glue = Vec::new();
@@ -93,7 +103,9 @@ pub fn version(crates: &Path, roots: &[&str], read: Read) -> String {
     for p in sources(crates, roots, read) {
         h.update(p.to_string_lossy().replace('\\', "/").as_bytes());
         h.update([0]);
-        h.update(read(&crates.join(&p)).unwrap_or_default());
+        let krate = p.iter().next().and_then(|c| c.to_str()).unwrap_or_default();
+        let rest = p.strip_prefix(krate).unwrap_or(&p);
+        h.update(read(&dir_of(crates, krate).join(rest)).unwrap_or_default());
     }
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }

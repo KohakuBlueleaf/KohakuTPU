@@ -9,7 +9,7 @@ members = [
     "kohakutpu/compiler/crates/ktpu-verify",
     "kohakutpu/compiler/crates/ktpu-graph",
     "kohakutpu/compiler/crates/ktpu-kernels",
-    "kohakutpu/compiler/crates/ktpu-cache",
+    "kohakuaccel/compiler/crates/ka-cache",
     "kohakutpu/compiler/crates/ktpu-debug",
     "kohakutpu/compiler/crates/ktpu",
 ]
@@ -29,7 +29,7 @@ ktpu-l2 = { path = "kohakutpu/compiler/crates/ktpu-l2" }
 ktpu-verify = { path = "kohakutpu/compiler/crates/ktpu-verify" }
 ktpu-graph = { path = "kohakutpu/compiler/crates/ktpu-graph" }
 ktpu-kernels = { path = "kohakutpu/compiler/crates/ktpu-kernels" }
-ktpu-cache = { path = "kohakutpu/compiler/crates/ktpu-cache" }
+ka-cache = { path = "kohakuaccel/compiler/crates/ka-cache" }
 ktpu-debug = { path = "kohakutpu/compiler/crates/ktpu-debug" }
 ktpu = { path = "kohakutpu/compiler/crates/ktpu" }
 serde = { version = "1", features = ["derive"] }
