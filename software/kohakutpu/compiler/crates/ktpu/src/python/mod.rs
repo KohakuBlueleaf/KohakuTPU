@@ -310,7 +310,7 @@ fn cache_root() -> Option<String> {
 }
 
 /// debug_decode(region, machine_json) -> dict: a node's debug region (its
-/// per-step trace and report) decoded (`ktpu_debug::decode_json`).
+/// per-step trace and report) decoded (`ka_debug::decode_json`).
 #[pyfunction]
 fn debug_decode<'py>(
     py: Python<'py>,
@@ -318,7 +318,7 @@ fn debug_decode<'py>(
     machine_json: &str,
 ) -> PyResult<Bound<'py, PyAny>> {
     let m = machine(machine_json)?;
-    match ktpu_debug::decode_json(region, &m) {
+    match ka_debug::decode_json(region, &*m) {
         Ok(v) => py_value(py, &v),
         Err(e) => {
             let err = Refused::new_err(e.to_string());

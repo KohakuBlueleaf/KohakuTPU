@@ -4,6 +4,7 @@ members = [
     "kohakuaccel/compiler/crates/ka-machine",
     "kohakuaccel/compiler/crates/ka-isa",
     "kohakuaccel/compiler/crates/ka-package",
+    "kohakuaccel/compiler/crates/ka-debug",
     "kohakutpu/compiler/crates/ktpu-machine",
     "kohakutpu/compiler/crates/ktpu-isa",
     "kohakutpu/compiler/crates/ktpu-l0",
@@ -13,7 +14,6 @@ members = [
     "kohakutpu/compiler/crates/ktpu-graph",
     "kohakutpu/compiler/crates/ktpu-kernels",
     "kohakuaccel/compiler/crates/ka-cache",
-    "kohakutpu/compiler/crates/ktpu-debug",
     "kohakutpu/compiler/crates/ktpu",
 ]
 
@@ -27,6 +27,7 @@ publish = false
 ka-machine = { path = "kohakuaccel/compiler/crates/ka-machine" }
 ka-isa = { path = "kohakuaccel/compiler/crates/ka-isa" }
 ka-package = { path = "kohakuaccel/compiler/crates/ka-package" }
+ka-debug = { path = "kohakuaccel/compiler/crates/ka-debug" }
 ktpu-machine = { path = "kohakutpu/compiler/crates/ktpu-machine" }
 ktpu-isa = { path = "kohakutpu/compiler/crates/ktpu-isa" }
 ktpu-l0 = { path = "kohakutpu/compiler/crates/ktpu-l0" }
@@ -36,7 +37,6 @@ ktpu-verify = { path = "kohakutpu/compiler/crates/ktpu-verify" }
 ktpu-graph = { path = "kohakutpu/compiler/crates/ktpu-graph" }
 ktpu-kernels = { path = "kohakutpu/compiler/crates/ktpu-kernels" }
 ka-cache = { path = "kohakuaccel/compiler/crates/ka-cache" }
-ktpu-debug = { path = "kohakutpu/compiler/crates/ktpu-debug" }
 ktpu = { path = "kohakutpu/compiler/crates/ktpu" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

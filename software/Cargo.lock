@@ -177,6 +177,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ka-debug"
+version = "0.1.0"
+dependencies = [
+ "ka-machine",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ka-isa"
 version = "0.1.0"
 dependencies = [
@@ -209,7 +218,7 @@ name = "ktpu"
 version = "0.1.0"
 dependencies = [
  "ka-cache",
- "ktpu-debug",
+ "ka-debug",
  "ktpu-graph",
  "ktpu-isa",
  "ktpu-kernels",
@@ -226,15 +235,6 @@ dependencies = [
  "sha2",
  "thiserror",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "ktpu-debug"
-version = "0.1.0"
-dependencies = [
- "ktpu-machine",
- "serde",
- "serde_json",
 ]
 
 [[package]]

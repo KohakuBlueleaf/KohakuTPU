@@ -24,7 +24,7 @@ stack = [
     "dep:ktpu-graph",
     "dep:ktpu-kernels",
 ]
-python = ["stack", "dep:pyo3", "dep:ktpu-debug", "dep:sha2"]
+python = ["stack", "dep:pyo3", "dep:ka-debug", "dep:sha2"]
 # The wasm-bindgen exports of the JSON compile path (`json`), for
 # wasm32-unknown-unknown: no disk cache; rayon runs on the calling thread.
 wasm = ["stack", "dep:wasm-bindgen"]
@@ -53,7 +53,7 @@ ktpu-verify = { workspace = true, optional = true }
 ktpu-graph = { workspace = true, optional = true }
 ktpu-kernels = { workspace = true, optional = true }
 regex = "1"
-ktpu-debug = { workspace = true, optional = true }
+ka-debug = { workspace = true, optional = true }
 rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -2,12 +2,12 @@
 //! firmware.md, RUL.080): the debug region's bytes, read after a completion,
 //! as typed per-package results. Every name comes from the machine schema,
 //! which the generator reads from the firmware headers and the RTL
-//! (`fw.status`, `fw.waits`, `fw.signals`, `vc.fault_names`, `mover.faults`).
+//! (`fw.status`, `fw.waits`, `fw.signals`, the unit faults, `mover.faults`).
 //! A record the decoder cannot read is an `Err` (DBG.API.002), never skipped.
 
 pub mod layout;
 
-use ktpu_machine::{refuse, Machine, Refusal};
+use ka_machine::{refuse, MachineFacts, Refusal};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -218,13 +218,13 @@ fn invert(t: &BTreeMap<String, u32>, prefix: &str) -> BTreeMap<u32, String> {
 }
 
 impl Names {
-    fn of(m: &Machine) -> Names {
+    fn of<M: MachineFacts + ?Sized>(m: &M) -> Names {
         Names {
-            status: invert(&m.fw.status, "KA_ST_"),
-            waits: invert(m.fw.waits.runtime(), "KA_WAIT_"),
-            signals: invert(m.fw.signals.runtime(), "KA_SIG_"),
-            vc: invert(m.vc.fault_names.runtime(), ""),
-            mover: invert(m.mover.faults.runtime(), ""),
+            status: invert(&m.fw().status, "KA_ST_"),
+            waits: invert(m.fw().waits.runtime(), "KA_WAIT_"),
+            signals: invert(m.fw().signals.runtime(), "KA_SIG_"),
+            vc: invert(m.unit_faults(), ""),
+            mover: invert(m.mover().faults.runtime(), ""),
         }
     }
 
@@ -289,7 +289,7 @@ fn pair(w: u64) -> (u32, u32) {
 /// Decode `region` (the debug region's bytes as read after a completion)
 /// against `m`'s names. Records run from the host's read position to the
 /// firmware's write position.
-pub fn decode(region: &[u8], m: &Machine) -> Result<Report, Refusal> {
+pub fn decode<M: MachineFacts + ?Sized>(region: &[u8], m: &M) -> Result<Report, Refusal> {
     if word(region, layout::H_MAGIC)? != layout::MAGIC {
         return refuse("DBG.API.002", "the region holds no debug header (KADBG1)");
     }
@@ -489,7 +489,10 @@ pub fn decode(region: &[u8], m: &Machine) -> Result<Report, Refusal> {
 }
 
 /// [`decode`] as JSON, for the Python host (`_rs`).
-pub fn decode_json(region: &[u8], m: &Machine) -> Result<serde_json::Value, Refusal> {
+pub fn decode_json<M: MachineFacts + ?Sized>(
+    region: &[u8],
+    m: &M,
+) -> Result<serde_json::Value, Refusal> {
     let r = decode(region, m)?;
     serde_json::to_value(r).map_err(|e| Refusal::new("DBG.API.002", e.to_string()))
 }
