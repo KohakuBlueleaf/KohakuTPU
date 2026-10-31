@@ -1,11 +1,13 @@
 """Machine-specific Rust kernel generation and the shared driver binding path."""
 
 import json
+from dataclasses import asdict
 from functools import lru_cache
 
 import numpy as np
 
 from kohakutpu.application.kernels import matmul as MM
+from kohakutpu.application.plan.emit import expr
 from kohakutpu.language.config import ENV
 from kohakutpu.language.dsl import TensorSpec, Traced
 from kohakutpu.language.numerics import fp16
@@ -201,4 +203,92 @@ def from_output(dev, graph_data, output, traced=None):
         recipe_scope=(dev.recipe_epoch, dev.recipe_epoch.generation),
         native_recipe=dev.native_recipe,
         wire_recipe=dev.wire_recipe,
+    )
+
+
+def rows_arguments(e, operands, R, W, out) -> dict:
+    """A `vector.rows_kernel` call of `e` over [R, W] rows into `out`."""
+    return {
+        "e": expr(e),
+        "operands": [vars(o) for o in operands],
+        "R": R,
+        "W": W,
+        "out": vars(out),
+    }
+
+
+def in_class(arguments: dict, shape_class) -> dict:
+    """A generator call's arguments in `shape_class`."""
+    return dict(arguments, shape_class=asdict(shape_class))
+
+
+def class_info(dev, generator, arguments) -> dict:
+    """What a class call decided (`_rs.class_info`)."""
+    return json.loads(rs._rs.class_info(*_call(dev, generator, _scheduled(arguments))))
+
+
+def class_fits(dev, arguments) -> bool:
+    """Whether a `vector.rows_kernel` class call's trip fits a core's L1."""
+    return rs._rs.class_fits(
+        json.dumps(_scheduled(arguments)), rs.machine_json(dev.machine)
+    )
+
+
+def fill(dev, dst_bytes, dlevels, dat, value, ew, bindings, info=None):
+    arguments = {
+        "dst_bytes": int(dst_bytes),
+        "dlevels": walks(dlevels),
+        "dat": int(dat),
+        "value": int(value),
+        "ew": int(ew),
+    }
+    return launch(
+        dev, "convert.fill_kernel", arguments, bindings, kind="move", info=info
+    )
+
+
+def transpose_masks(dev):
+    """The `transpose.transpose_kernel` mask table, f16 bits."""
+    return np.array(rs._rs.transpose_masks(rs.machine_json(dev.machine)), np.uint16)
+
+
+def rows_shape(dev, e, operands, R, W, out) -> dict:
+    """``nblk``, the column blocks of `e` over [R, W] rows into `out`, and
+    ``out``, its extents (`_rs.rows_shape`)."""
+    arguments = rows_arguments(e, operands, R, W, out)
+    return json.loads(
+        rs._rs.rows_shape(
+            json.dumps(arguments), rs.machine_json(dev.machine), rs._MUTANT.get()
+        )
+    )
+
+
+def port_shape(dev, operand, R, W) -> tuple:
+    """The extents of a buffer read as `operand` over [R, W] rows."""
+    arguments = {"operand": vars(operand), "R": R, "W": W}
+    return tuple(
+        rs._rs.port_shape(
+            json.dumps(arguments), rs.machine_json(dev.machine), rs._MUTANT.get()
+        )
+    )
+
+
+def flat_arguments(expression, dtypes, n, scalars=()) -> dict:
+    """A `vector.flat_kernel` call of `expression` over `n` elements."""
+    return {
+        "e": expr(expression),
+        "dtypes": dtypes,
+        "n": n,
+        "out_dtype": "f16",
+        "scalars": scalars,
+    }
+
+
+def flat(dev, expression, dtypes, n, bindings, info=None, scalars=()):
+    return launch(
+        dev,
+        "vector.flat_kernel",
+        flat_arguments(expression, dtypes, n, scalars),
+        bindings,
+        info=info,
     )

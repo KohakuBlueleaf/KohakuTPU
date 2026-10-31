@@ -130,3 +130,12 @@ def steps_recipe(steps):
         )
         for s in steps
     ]
+
+
+def has_steps(steps, board):
+    """Do not defer a producer unless a measured winning consumer can take it."""
+    wanted = steps_recipe(steps)
+    return any(
+        recipe["steps"] == wanted
+        for recipe, _ in _records("prepared_quant", board).values()
+    )
