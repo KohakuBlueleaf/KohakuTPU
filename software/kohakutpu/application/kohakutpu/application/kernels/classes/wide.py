@@ -1,12 +1,12 @@
 """Wide elementwise rows streamed in block-major scratch order."""
 
 import math
-import os
 
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels.classes import base as V
 from kohakutpu.application.kernels.classes import fold
 from kohakutpu.language import dsl as kt
+from kohakutpu.language.config import ENV
 
 
 def zero(buf, rows, words):
@@ -25,7 +25,7 @@ def zero(buf, rows, words):
 def kernel(e, operands, R, W, out, cores, bands, shape_class):
     if X.reduces(e) or out.kind == "row":
         return fold.kernel(e, operands, R, W, out, cores, bands, shape_class)
-    preferred = int(os.environ.get("KTPU_CLASS_WIDE_WIDTH", str(shape_class.kblock)))
+    preferred = int(ENV.get("KTPU_CLASS_WIDE_WIDTH", str(shape_class.kblock)))
     if (
         preferred % shape_class.kblock
         or not shape_class.kblock <= preferred <= shape_class.max_block
@@ -49,7 +49,7 @@ def kernel(e, operands, R, W, out, cores, bands, shape_class):
     ports["out"] = kt.Out(*V.port(out, R, W)[1].shape, dtype=out.dtype)
     given["out"] = V.port(out, R, W)[1]
 
-    direct = os.environ.get("KTPU_CLASS_WIDE_DIRECT", "0") == "1" and R % height == 0
+    direct = ENV.get("KTPU_CLASS_WIDE_DIRECT", "0") == "1" and R % height == 0
     if direct:
         used = min(used, R // height)
 

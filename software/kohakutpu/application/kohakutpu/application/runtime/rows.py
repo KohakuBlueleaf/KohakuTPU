@@ -5,7 +5,6 @@ the expression around the reduction; any other reduction across such a row
 is computed first, as a statistic the rest reads."""
 
 import json
-import os
 from dataclasses import replace
 
 import numpy as np
@@ -15,6 +14,7 @@ from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes.policy import ShapeClass
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import forms as FM
+from kohakutpu.language.config import ENV
 from kohakutpu.stack.rs import _rs
 
 #: Whether a multi-stage AST (wide row reduction or column tree reduction) is
@@ -27,10 +27,7 @@ MUTANT: str | None = None
 
 
 def single_package_enabled() -> bool:
-    return (
-        os.environ.get("KTPU_SINGLE_PACKAGE_AST", "1" if SINGLE_PACKAGE_AST else "0")
-        == "1"
-    )
+    return ENV.get("KTPU_SINGLE_PACKAGE_AST", "1" if SINGLE_PACKAGE_AST else "0") == "1"
 
 
 class RowsError(RuntimeError):
@@ -44,8 +41,8 @@ def _launch(dev, e, operands, binds, R, W, out, info, cores):
     if "out" in binds:
         (out,), binds = _based([out], binds, "out")
     arguments = FM.generated.rows_arguments(e, operands, R, W, out)
-    if os.environ.get("KTPU_CLASS_ROWS_ROUTE", "0") == "1" and (
-        os.environ.get("KTPU_CLASS_ROWS_DIRECT", "0") == "1"
+    if ENV.get("KTPU_CLASS_ROWS_ROUTE", "0") == "1" and (
+        ENV.get("KTPU_CLASS_ROWS_DIRECT", "0") == "1"
         and 0 < W <= V.MAX_BLOCK
         and W % 32 == 0
         and W & (W - 1) == 0

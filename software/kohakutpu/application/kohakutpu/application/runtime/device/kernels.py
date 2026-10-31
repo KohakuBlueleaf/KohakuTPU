@@ -1,12 +1,12 @@
 """Compiling a kernel for this device, and the compiled-kernel cache."""
 
 import json
-import os
 
 from kohakutpu.application.runtime import generated
 from kohakutpu.application.runtime.class_library import ClassLibrary
 from kohakutpu.application.runtime.device.common import KERNELS_KEPT
 from kohakutpu.application.runtime.graph.storage import stage_graph
+from kohakutpu.language.config import ENV
 from kohakutpu.language.dsl.kernel import _const_key
 from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
@@ -18,7 +18,7 @@ class Kernels:
         before reuses it (its bound programs included), so a repeated eager
         step reads no library entry and builds nothing. A library entry's
         reuse still counts as a library hit (class or exact)."""
-        if os.environ.get("KTPU_LOCAL_SCRATCH", "0") == "1":
+        if ENV.get("KTPU_LOCAL_SCRATCH", "0") == "1":
             if self.nodes != 1:
                 raise ValueError(
                     "local scratch placement requires a single-node device"
@@ -26,7 +26,7 @@ class Kernels:
             original = json.loads(source) if graph is None else graph
             # Queue/package storage shares staging; reserve a configurable fraction.
             capacity = min(a.hi - a.lo for a in self.memory.staging.values())
-            budget = int(os.environ.get("KTPU_LOCAL_SCRATCH_BYTES", capacity // 2))
+            budget = int(ENV.get("KTPU_LOCAL_SCRATCH_BYTES", capacity // 2))
             graph = stage_graph(
                 original, rs.machine_json(self.machine), min(budget, capacity)
             )

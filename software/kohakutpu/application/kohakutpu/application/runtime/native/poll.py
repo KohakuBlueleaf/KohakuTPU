@@ -1,7 +1,6 @@
 """Native bounded queue polling over the XDMA transport's current file handle."""
 
-import os
-
+from kohakutpu.language.config import ENV
 from kohakutpu.stack.rs import _rs
 
 
@@ -12,7 +11,7 @@ class NativePoll:
         self.layout = _rs.QueueLayout(queue.layout) if layout is None else layout
         self.span = self.layout.so_wr + self.layout.line - self.layout.fw
         self.address = queue.mem._map(queue.base + self.layout.fw, self.span)
-        self.sleep = float(os.environ.get("KTPU_NATIVE_POLL_SLEEP", "0"))
+        self.sleep = float(ENV.get("KTPU_NATIVE_POLL_SLEEP", "0"))
         self.result = None
 
     def capture(self, address, nbytes):

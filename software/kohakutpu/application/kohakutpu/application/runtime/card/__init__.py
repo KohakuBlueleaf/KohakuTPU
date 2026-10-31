@@ -83,6 +83,7 @@ from kohakutpu.driver import units as _units  # noqa: F401  (names MG and VC)
 from kohakutpu.driver.clock.card import BOARDS, CardClocks, load_board
 from kohakutpu.driver.host import SCRATCH_RESERVE, Card, board_map
 from kohakutpu.language import machine as MF
+from kohakutpu.language.config import ENV
 from kohakutpu.language.dsl.kernel import _MUTANT
 from kohakutpu.stack.rs import _rs
 
@@ -104,7 +105,7 @@ class NodeCard(Recording, Submission, Collection):
     def resident_mode(self) -> ResidentMode:
         if "_resident_mode" in self.__dict__:
             return self._resident_mode
-        return parse_resident_mode(os.environ.get(RESIDENT_ENV))
+        return parse_resident_mode(ENV.get(RESIDENT_ENV))
 
     @resident_mode.setter
     def resident_mode(self, value: str | ResidentMode | None) -> None:
@@ -114,7 +115,7 @@ class NodeCard(Recording, Submission, Collection):
     def submit_cache(self) -> bool:
         if "_submit_cache" in self.__dict__:
             return self._submit_cache
-        return os.environ.get("KOHAKUTPU_HOST_SUBMIT_CACHE", "1") == "1"
+        return ENV.get("KOHAKUTPU_HOST_SUBMIT_CACHE", "1") == "1"
 
     @submit_cache.setter
     def submit_cache(self, value: bool) -> None:
@@ -176,9 +177,9 @@ class NodeCard(Recording, Submission, Collection):
         self.native_direct_suspended = False
         self._publication_epoch = 0
         self._resident_mode = parse_resident_mode(
-            os.environ.get(RESIDENT_ENV) if resident_mode is _UNSET else resident_mode
+            ENV.get(RESIDENT_ENV) if resident_mode is _UNSET else resident_mode
         )
-        self._submit_cache = os.environ.get("KOHAKUTPU_HOST_SUBMIT_CACHE", "1") == "1"
+        self._submit_cache = ENV.get("KOHAKUTPU_HOST_SUBMIT_CACHE", "1") == "1"
         self._admission_cached = B.admission_cached()
         self.timeout = timeout
         #: `clock() -> seconds` of the node's time, which every wait counts.
@@ -245,7 +246,7 @@ class NodeCard(Recording, Submission, Collection):
             paint=self.mem.write_block if self.paint else None,
         )
         # Timing comes from run records; PKGT text is opt-in via FLAGS_ENV.
-        flags = (F_STEPS if steps else 0) | int(os.environ.get(FLAGS_ENV, "0"), 0)
+        flags = (F_STEPS if steps else 0) | int(ENV.get(FLAGS_ENV, "0"), 0)
         # The firmware's wait bound, from seconds at the profile's sysnode clock
         # (RUL.033), inside the host's own wait (DBG.SESS.003).
         hz = sys_hz or self.board["profiles"][self.board["idle_profile"]]["sys"] * 1e6
@@ -260,7 +261,7 @@ class NodeCard(Recording, Submission, Collection):
         self.boots = {}
         native_run = (
             _rs.QueueRun(self.queue_layout)
-            if os.environ.get("KTPU_NATIVE_QUEUE", "0") == "1"
+            if ENV.get("KTPU_NATIVE_QUEUE", "0") == "1"
             else None
         )
         for mesh in card.meshes:
@@ -522,7 +523,7 @@ class VerilatorCard(NodeCard):
     def __init__(
         self, build, board: str | None = None, log=None, args=(), **kw
     ) -> None:
-        board = board or os.environ.get("KOHAKUTPU_BOARD")
+        board = board or ENV.get("KOHAKUTPU_BOARD")
         if not board:
             raise ValueError("RUL.011: name a board with board= or KOHAKUTPU_BOARD")
         MF.load(board)
@@ -595,7 +596,7 @@ def open_transport(kind: str = "jtag"):
     if kind == "jtag":
         return JtagTransport()
     if kind == "xdma":
-        return XdmaLinux(recover="auto" if os.environ.get("XDMA_KO") else None)
+        return XdmaLinux(recover="auto" if ENV.get("XDMA_KO") else None)
     raise ValueError(f"transport {kind!r}: one of {TRANSPORTS}")
 
 
@@ -622,8 +623,8 @@ class SiliconCard(NodeCard):
         if transport is None or isinstance(transport, str):
             transport = open_transport(transport or "jtag")
         t = transport
-        native_poll = os.environ.get("KTPU_NATIVE_POLL", "0") == "1"
-        native_exchange = os.environ.get("KTPU_NATIVE_EXCHANGE", "0") == "1"
+        native_poll = ENV.get("KTPU_NATIVE_POLL", "0") == "1"
+        native_exchange = ENV.get("KTPU_NATIVE_EXCHANGE", "0") == "1"
         if (native_poll or native_exchange) and not isinstance(t, XdmaLinux):
             t.close()
             raise ValueError(

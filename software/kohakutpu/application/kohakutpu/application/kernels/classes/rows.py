@@ -1,11 +1,10 @@
 """Rows staged into class-width scratch, with one fixed trip and a masked tail."""
 
-import os
-
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels.classes import base as V
 from kohakutpu.application.kernels.classes import wide
 from kohakutpu.language import dsl as kt
+from kohakutpu.language.config import ENV
 
 
 def bands_fit(operands, out, width):
@@ -24,7 +23,7 @@ def bands_fit(operands, out, width):
 def kernel(e, operands, R, W, out, cores, bands, shape_class, *, flat=False):
     if W > shape_class.max_block:
         return wide.kernel(e, operands, R, W, out, cores, bands, shape_class)
-    class_band = int(os.environ.get("KTPU_CLASS_BAND", "4"))
+    class_band = int(ENV.get("KTPU_CLASS_BAND", "4"))
     width = shape_class.width(W)
     quantum = V.STAT_ROWS if V.holds_stat(operands, out.kind) and not flat else 4
     fit = bands_fit(operands, out, width)
@@ -50,7 +49,7 @@ def kernel(e, operands, R, W, out, cores, bands, shape_class, *, flat=False):
     given["out"] = kt.TensorSpec.make(out_shape, out.dtype)
 
     direct = (
-        os.environ.get("KTPU_CLASS_ROWS_DIRECT", "0") == "1"
+        ENV.get("KTPU_CLASS_ROWS_DIRECT", "0") == "1"
         and not flat
         and W == width
         and R % pl.rows == 0

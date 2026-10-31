@@ -6,11 +6,11 @@ content identity and stage versions; it never compiles or interprets instruction
 
 import hashlib
 import json
-import os
 import time
 from collections import OrderedDict
 from pathlib import Path
 
+from kohakutpu.language.config import ENV
 from kohakutpu.stack import rs
 
 STORE_KEPT = 512
@@ -27,12 +27,12 @@ class TemplateStore:
     def __init__(self, root, machine_json, verification=None):
         self.root = Path(root)
         self.machine = machine_json
-        self.verification = verification or os.environ.get(
+        self.verification = verification or ENV.get(
             "KOHAKUTPU_TEMPLATE_VERIFICATION", "sample"
         )
         if self.verification not in ("sample", "proof", "both"):
             raise ValueError("template verification: sample, proof or both")
-        self.proof_cap = int(os.environ.get("KOHAKUTPU_TEMPLATE_PROOF_CAP", "2048"))
+        self.proof_cap = int(ENV.get("KOHAKUTPU_TEMPLATE_PROOF_CAP", "2048"))
 
     def identity(self, source, table, environment=None):
         metadata = json.loads(table)

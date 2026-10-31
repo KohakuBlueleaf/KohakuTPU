@@ -1,12 +1,11 @@
 """Exact graph reachability at the eager seam, with no retained graph cache."""
 
-import os
-
 from tinygrad import tensor
 from tinygrad.device import Buffer
 from tinygrad.uop import Ops
 from tinygrad.uop.ops import UOp, _rebuild_dtype
 
+from kohakutpu.language.config import ENV
 from kohakutpu.stack.rs import _rs
 
 _ORIGINAL = tensor._apply_map_to_tensors
@@ -16,8 +15,8 @@ REWRITE = False
 
 def refresh():
     global ENABLED, REWRITE
-    ENABLED = os.environ.get("KTPU_NATIVE_GRAPH_WALK", "0") == "1"
-    REWRITE = os.environ.get("KTPU_NATIVE_GRAPH_REWRITE", "0") == "1"
+    ENABLED = ENV.get("KTPU_NATIVE_GRAPH_WALK", "0") == "1"
+    REWRITE = ENV.get("KTPU_NATIVE_GRAPH_REWRITE", "0") == "1"
     return ENABLED
 
 

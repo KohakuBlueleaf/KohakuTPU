@@ -1,12 +1,12 @@
 """Same-shape forward calls use TinyJit/KTPUGraph; no model-specific paths."""
 
-import os
 from collections import OrderedDict
 
 from tinygrad import TinyJit
 from tinygrad.helpers import Context
 
 from kohakutpu.application.runtime import device as D
+from kohakutpu.language.config import ENV
 
 SIGNATURES_KEPT = 8
 
@@ -22,9 +22,7 @@ class Inference:
     def __init__(self, forward, replay=None):
         self.forward = forward
         self.replay = (
-            os.environ.get("KTPU_INFERENCE_REPLAY", "1") == "1"
-            if replay is None
-            else replay
+            ENV.get("KTPU_INFERENCE_REPLAY", "1") == "1" if replay is None else replay
         )
         self.jits = OrderedDict()
 

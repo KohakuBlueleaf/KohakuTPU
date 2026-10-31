@@ -1,6 +1,5 @@
 """Automatic address-parametric capture at a concrete eager realization boundary."""
 
-import os
 from collections import Counter
 
 from tinygrad import tensor
@@ -9,6 +8,7 @@ from tinygrad.uop import Ops
 from tinygrad.uop.ops import UOp
 
 from kohakutpu.application.runtime import device as D
+from kohakutpu.language.config import ENV
 from kohakutpu.language.dsl.kernel import _MUTANT
 from kohakutpu.stack.rs import _rs
 
@@ -19,7 +19,7 @@ ENABLED = False
 
 def refresh():
     global ENABLED
-    ENABLED = os.environ.get("KTPU_EAGER_CALL_CAPTURE", "0") == "1"
+    ENABLED = ENV.get("KTPU_EAGER_CALL_CAPTURE", "0") == "1"
     return ENABLED
 
 
@@ -32,9 +32,7 @@ class Captures:
         self.placeholders = {}
         self.counts = Counter()
         self.native = (
-            os.environ.get("KTPU_NATIVE_CAPTURE", "0") == "1"
-            if native is None
-            else native
+            ENV.get("KTPU_NATIVE_CAPTURE", "0") == "1" if native is None else native
         )
 
     def clear(self):

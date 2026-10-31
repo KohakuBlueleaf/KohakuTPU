@@ -4,7 +4,6 @@ These estimates cut scheduler edges, not an already lowered kernel. They do not
 claim to bound a consumer's total IMEM, L1, or MG/VC schedule.
 """
 
-import os
 from collections import Counter
 from dataclasses import dataclass
 from math import prod
@@ -12,6 +11,7 @@ from math import prod
 from tinygrad.uop import Ops
 
 from kohakutpu.application.ktpugrad.plan.lower import ALU
+from kohakutpu.language.config import ENV
 
 
 @dataclass(frozen=True)
@@ -65,7 +65,7 @@ class FusionBudget:
     def environment(cls):
         return cls(
             **{
-                name: int(os.environ.get(f"KTPU_FUSE_{name.upper()}", default))
+                name: int(ENV.get(f"KTPU_FUSE_{name.upper()}", default))
                 for name, default in vars(cls()).items()
             }
         )

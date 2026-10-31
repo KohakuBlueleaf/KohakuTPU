@@ -17,15 +17,16 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 
+from kohakutpu.language.config import ENV
+
 ROOT = pathlib.Path(__file__).resolve().parents[6]
 #: The replay bench's memory, in 32-byte words.
 WORDS = 4096
 BUILD = ROOT / "build" / "vl2"
 VLT_ENV = pathlib.Path(
-    os.environ.get(
+    ENV.get(
         "KOHAKU_VLT_ENV",
-        pathlib.Path(os.environ.get("USERPROFILE", "~"))
-        / "micromamba/envs/vlt/Library",
+        pathlib.Path(ENV.get("USERPROFILE", "~")) / "micromamba/envs/vlt/Library",
     )
 )
 PAYLOAD = (1 << 256) - 1
@@ -55,7 +56,7 @@ def vsim(build: pathlib.Path = BUILD) -> pathlib.Path:
 
 def build_model(build: pathlib.Path = BUILD, defines=()) -> None:
     """Build the replay model under `build`. Raises if no `vsim` results."""
-    env = dict(os.environ)
+    env = ENV.copy()
     if os.name == "nt":
         env["PATH"] = str(VLT_ENV / "bin") + os.pathsep + env["PATH"]
         env["VERILATOR_ROOT"] = str(VLT_ENV)

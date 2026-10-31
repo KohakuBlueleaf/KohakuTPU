@@ -65,6 +65,7 @@ from kohakutpu.application.runtime.os.card import OSCard
 from kohakutpu.application.runtime.paths import ROOT
 from kohakutpu.driver.clock.card import load_board
 from kohakutpu.language import machine as MF
+from kohakutpu.language.config import ENV
 from kohakutpu.stack import rs
 from kohakutpu.stack.kernel import arena_name
 
@@ -101,65 +102,57 @@ class Device(Kernels, Allocation, Submission, Replay):
         self._recipe_capture = None
         self._recipe_recording = None
         self._recipe_submitting = False
-        self.eager_exec = os.environ.get("KTPU_EAGER_EXEC", "0") == "1"
-        self.auto_sequence = os.environ.get("KTPU_AUTO_SEQUENCE", "0") == "1"
-        self.eager_recipe_enabled = os.environ.get("KTPU_EAGER_RECIPE", "0") == "1"
-        self.native_recipe = os.environ.get("KTPU_NATIVE_RECIPE", "0") == "1"
-        self.wire_recipe = os.environ.get("KTPU_WIRE_RECIPE", "0") == "1"
-        self.eager_flush = os.environ.get("KOHAKUTPU_EAGER_FLUSH", "1") == "1"
-        self.specialise_cache = os.environ.get("KTPU_SPECIALISE_CACHE", "1") == "1"
-        self._resident_mode = parse_resident_mode(os.environ.get(RESIDENT_ENV))
-        class_mode = os.environ.get("KOHAKUTPU_LIBRARY_CLASSES", "1")
+        self.eager_exec = ENV.get("KTPU_EAGER_EXEC", "0") == "1"
+        self.auto_sequence = ENV.get("KTPU_AUTO_SEQUENCE", "0") == "1"
+        self.eager_recipe_enabled = ENV.get("KTPU_EAGER_RECIPE", "0") == "1"
+        self.native_recipe = ENV.get("KTPU_NATIVE_RECIPE", "0") == "1"
+        self.wire_recipe = ENV.get("KTPU_WIRE_RECIPE", "0") == "1"
+        self.eager_flush = ENV.get("KOHAKUTPU_EAGER_FLUSH", "1") == "1"
+        self.specialise_cache = ENV.get("KTPU_SPECIALISE_CACHE", "1") == "1"
+        self._resident_mode = parse_resident_mode(ENV.get(RESIDENT_ENV))
+        class_mode = ENV.get("KOHAKUTPU_LIBRARY_CLASSES", "1")
         if classes is None and class_mode not in ("0", "1"):
             raise ValueError("KOHAKUTPU_LIBRARY_CLASSES must be 0 or 1")
         self.classes = class_mode == "1" if classes is None else classes
-        mode = os.environ.get(QUEUE_ENV, "1")
+        mode = ENV.get(QUEUE_ENV, "1")
         if queued is None and mode not in ("0", "1"):
             raise ValueError(f"{QUEUE_ENV} must be 0 or 1")
         self.queued = mode == "1" if queued is None else queued
-        budget = (
-            queue_bytes if queue_bytes is not None else os.environ.get(QUEUE_BYTES_ENV)
-        )
+        budget = queue_bytes if queue_bytes is not None else ENV.get(QUEUE_BYTES_ENV)
         budget = None if budget is None else int(budget)
         if budget is not None and budget < 1:
             raise ValueError("queue_bytes must be positive")
-        depth = (
-            queue_depth if queue_depth is not None else os.environ.get(QUEUE_DEPTH_ENV)
-        )
+        depth = queue_depth if queue_depth is not None else ENV.get(QUEUE_DEPTH_ENV)
         depth = MAX_INFLIGHT if depth is None else int(depth)
         if depth is not None and depth < 1:
             raise ValueError("queue_depth must be positive or None")
-        prepared = os.environ.get(PREPARED_REPLAY_ENV, "1")
+        prepared = ENV.get(PREPARED_REPLAY_ENV, "1")
         if prepared not in ("0", "1"):
             raise ValueError(f"{PREPARED_REPLAY_ENV} must be 0 or 1")
         self.prepared_replay = prepared == "1"
-        self.execution_list = os.environ.get("KOHAKUTPU_EXECUTION_LIST", "0") == "1"
+        self.execution_list = ENV.get("KOHAKUTPU_EXECUTION_LIST", "0") == "1"
         if self.execution_list and not self.prepared_replay:
             raise ValueError("execution lists require prepared replay")
-        replay_bytes = os.environ.get(REPLAY_PACKAGE_BYTES_ENV)
+        replay_bytes = ENV.get(REPLAY_PACKAGE_BYTES_ENV)
         self.replay_package_bytes = None if replay_bytes is None else int(replay_bytes)
         if self.replay_package_bytes is not None and self.replay_package_bytes < 0:
             raise ValueError("replay package byte budget must be nonnegative")
         self.replay_package_fraction = float(
-            os.environ.get(
-                replay_budget.FRACTION_ENV, str(replay_budget.DEFAULT_FRACTION)
-            )
+            ENV.get(replay_budget.FRACTION_ENV, str(replay_budget.DEFAULT_FRACTION))
         )
         if not 0.0 <= self.replay_package_fraction <= 1.0:
             raise ValueError("replay package fraction must be in [0, 1]")
-        self.replay_overcommit = (
-            os.environ.get(replay_budget.OVERCOMMIT_ENV, "0") == "1"
-        )
-        kind = kind or os.environ.get(DEVICE_ENV, "sim")
+        self.replay_overcommit = ENV.get(replay_budget.OVERCOMMIT_ENV, "0") == "1"
+        kind = kind or ENV.get(DEVICE_ENV, "sim")
         if kind not in KINDS:
             raise ValueError(f"{DEVICE_ENV}={kind!r}: one of {', '.join(KINDS)}")
-        board = board or os.environ.get(BOARD_ENV)
+        board = board or ENV.get(BOARD_ENV)
         if not board:
             raise ValueError("RUL.011: name a board with board= or KOHAKUTPU_BOARD")
         self.line_bytes = MF.load(board).get("card.dram.line_bytes")
         # The card itself runs on every node its board has.
         whole = load_board(board)["meshes"] if kind == "card" else 1
-        nodes = int(nodes or os.environ.get(NODES_ENV) or whole)
+        nodes = int(nodes or ENV.get(NODES_ENV) or whole)
         self.kind, self.nodes = kind, nodes
         if kind == "os":
             if os_session is None or os_units is None:
@@ -181,15 +174,13 @@ class Device(Kernels, Allocation, Submission, Replay):
             self.build = None
             self.card = SiliconCard(
                 board,
-                transport=transport or os.environ.get(TRANSPORT_ENV, "jtag"),
+                transport=transport or ENV.get(TRANSPORT_ENV, "jtag"),
                 nodes=tuple(range(nodes)),
-                profile=os.environ.get(PROFILE_ENV, "idle"),
+                profile=ENV.get(PROFILE_ENV, "idle"),
                 resident_mode=self._resident_mode,
             )
         else:
-            build = pathlib.Path(
-                build or os.environ.get(BUILD_ENV) or default_build(nodes)
-            )
+            build = pathlib.Path(build or ENV.get(BUILD_ENV) or default_build(nodes))
             if not build.exists():
                 raise FileNotFoundError(
                     f"no card model at {build}; build one (scripts/py/card_model.py) "
@@ -211,7 +202,7 @@ class Device(Kernels, Allocation, Submission, Replay):
         self.memory = self.card.memory
         spec = load_board(board)
         self.memory.package_homes = package_homes(
-            os.environ.get(PACKAGE_HOME_ENV, "near"), spec
+            ENV.get(PACKAGE_HOME_ENV, "near"), spec
         )
         if self.memory.package_homes:
             self.memory.stripes = (spec["dram_interleave_kb"] << 10, spec["dram_homes"])
@@ -221,7 +212,7 @@ class Device(Kernels, Allocation, Submission, Replay):
             else SoftwareMMU()
         )
         try:
-            if os.environ.get("KTPU_NATIVE_DIRECT", "0") == "1":
+            if ENV.get("KTPU_NATIVE_DIRECT", "0") == "1":
                 native_direct.attach(self)
             for callback in ON_DEVICE_INIT:
                 callback()
@@ -281,7 +272,7 @@ class Device(Kernels, Allocation, Submission, Replay):
     @property
     def resident_mode(self) -> ResidentMode:
         if rs._MUTANT.get() == "app.device/unlatched_resident":
-            return parse_resident_mode(os.environ.get(RESIDENT_ENV))
+            return parse_resident_mode(ENV.get(RESIDENT_ENV))
         return self._resident_mode
 
     @resident_mode.setter

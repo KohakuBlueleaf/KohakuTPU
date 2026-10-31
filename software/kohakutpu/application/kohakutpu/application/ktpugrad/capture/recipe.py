@@ -1,6 +1,5 @@
 """Cold eager planning records an address-parametric launch program."""
 
-import os
 from collections import Counter
 
 from kohakutpu.application.ktpugrad import run
@@ -8,6 +7,7 @@ from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import launch_boundary
 from kohakutpu.application.runtime.memory.storage import Form, StorageView
 from kohakutpu.application.runtime.native import launch as native_launch
+from kohakutpu.language.config import ENV
 from kohakutpu.language.dsl.kernel import _MUTANT
 from kohakutpu.stack.rs import _rs
 
@@ -313,8 +313,8 @@ class Recipes:
     def __init__(self):
         self.entries = {}
         self.counts = Counter()
-        self.native_program = os.environ.get("KTPU_NATIVE_PROGRAM", "0") == "1"
-        self.host_recipe = os.environ.get("KTPU_HOST_RECIPE", "0") == "1"
+        self.native_program = ENV.get("KTPU_NATIVE_PROGRAM", "0") == "1"
+        self.host_recipe = ENV.get("KTPU_HOST_RECIPE", "0") == "1"
         self.native = _rs.RecipeTable(KEPT) if self.native_program else None
 
     def clear(self):

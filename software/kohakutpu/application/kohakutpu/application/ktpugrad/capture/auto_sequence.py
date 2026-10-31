@@ -1,6 +1,5 @@
 """Recognize complete eager sequences without speculating past a realization."""
 
-import os
 from collections import Counter
 from contextlib import nullcontext
 
@@ -9,6 +8,7 @@ from tinygrad.uop import Ops
 
 from kohakutpu.application.ktpugrad.plan.plans import PLANS
 from kohakutpu.application.runtime.eager_batch import batching
+from kohakutpu.language.config import ENV
 from kohakutpu.language.dsl.kernel import _MUTANT
 
 KEPT = 128
@@ -41,7 +41,7 @@ class Sequences:
 
 def scope(rt, linear, inputs):
     enabled = (
-        os.environ.get("KTPU_AUTO_SEQUENCE", "0") == "1"
+        ENV.get("KTPU_AUTO_SEQUENCE", "0") == "1"
         if _MUTANT.get() == "app.sequence/unlatched"
         else rt.auto_sequence
     )

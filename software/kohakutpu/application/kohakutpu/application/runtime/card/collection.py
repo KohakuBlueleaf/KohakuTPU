@@ -2,7 +2,6 @@
 
 import dataclasses
 import json
-import os
 import pathlib
 import re
 import sys
@@ -20,6 +19,7 @@ from kohakutpu.application.runtime.card.common import (
 )
 from kohakutpu.application.runtime.eager_batch import Deferred
 from kohakutpu.application.runtime.memory.packing import contract_error
+from kohakutpu.language.config import ENV
 from kohakutpu.stack.rs import _rs
 
 
@@ -39,7 +39,7 @@ class Collection:
         pending.clear()
 
     def _keep_failed(self, pkg, bindings, error: NodeError, node: int) -> None:
-        where = os.environ.get(FAILED_ENV)
+        where = ENV.get(FAILED_ENV)
         if not where:
             return
         d = pathlib.Path(where)

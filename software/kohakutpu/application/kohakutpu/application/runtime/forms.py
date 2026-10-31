@@ -10,7 +10,6 @@ unwritten. Elements move between layouts by `relayout` (`kernels.lanes`).
 
 import hashlib
 import json
-import os
 import pathlib
 import weakref
 from dataclasses import dataclass, replace
@@ -24,6 +23,7 @@ from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import costs, generated
 from kohakutpu.application.runtime.memory.storage import FLAT, Storage, StorageView
 from kohakutpu.language import machine as MF
+from kohakutpu.language.config import ENV
 from kohakutpu.language.numerics import fp16
 from kohakutpu.stack.rs import _rs
 
@@ -428,18 +428,15 @@ _PREPARED_DEFAULTS = json.loads(_rs.PREPARED_DEFAULTS)
 #: Whether a `Pending` operand is made inside the kernel that reads it (else
 #: by its own relayouts first).
 PREPARED = (
-    os.environ.get("KTPU_PREPARED", "1" if _PREPARED_DEFAULTS["prepared"] else "0")
-    == "1"
+    ENV.get("KTPU_PREPARED", "1" if _PREPARED_DEFAULTS["prepared"] else "0") == "1"
 )
 #: A pending packing folds only with a measured winning recipe.
 PREPARED_QUANT = (
-    os.environ.get(
-        "KTPU_PREPARED_QUANT", "1" if _PREPARED_DEFAULTS["prepared_quant"] else "0"
-    )
+    ENV.get("KTPU_PREPARED_QUANT", "1" if _PREPARED_DEFAULTS["prepared_quant"] else "0")
     == "1"
 )
 #: When a pending read is composed (`prepared::Composed`): off, on or cost.
-COMPOSED = os.environ.get("KTPU_COMPOSED", _PREPARED_DEFAULTS["composed"])
+COMPOSED = ENV.get("KTPU_COMPOSED", _PREPARED_DEFAULTS["composed"])
 
 
 def made_by(s: Step) -> dict:

@@ -12,6 +12,7 @@ these arenas. Recording pins existing spans instead of reserving a child heap.
 import os
 
 from kohakutpu.application.runtime.memory.arena import Arena
+from kohakutpu.language.config import ENV
 from kohakutpu.language.dsl.kernel import _MUTANT
 from kohakutpu.stack.rs import _rs
 
@@ -117,7 +118,7 @@ def package_homes(value: str, board: dict) -> dict:
 
 
 def _arena_cls():
-    return _rs.Arena if os.environ.get("KTPU_NATIVE_MEMORY", "0") == "1" else Arena
+    return _rs.Arena if ENV.get("KTPU_NATIVE_MEMORY", "0") == "1" else Arena
 
 
 def _zero(write, at: int, nbytes: int) -> None:

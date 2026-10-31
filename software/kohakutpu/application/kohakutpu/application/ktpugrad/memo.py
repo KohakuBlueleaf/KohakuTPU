@@ -5,7 +5,6 @@ and hints are interpreted by the runner on every call, after these decisions.
 """
 
 import dataclasses
-import os
 from collections import OrderedDict
 from functools import wraps
 
@@ -14,6 +13,7 @@ from tinygrad.uop.ops import UOp
 
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.ktpugrad.plan.lower import Access, Plan
+from kohakutpu.language.config import ENV
 
 KEPT = 512
 ENV = "KTPU_PLAN_CACHE"
@@ -89,7 +89,7 @@ def memo(fn):
 
     @wraps(fn)
     def call(*args, **kwargs):
-        if os.environ.get(ENV, "1") == "0":
+        if ENV.get(ENV, "1") == "0":
             return fn(*args, **kwargs)
         key = (freeze(args), freeze(kwargs))
         if key in cache:

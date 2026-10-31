@@ -1,8 +1,8 @@
 """A first-fit allocator over one address range, spans coalesced on free."""
 
 import bisect
-import os
 
+from kohakutpu.language.config import ENV
 from kohakutpu.language.dsl.kernel import _MUTANT
 from kohakutpu.stack.rs import _rs
 
@@ -67,7 +67,7 @@ class Arena:
         self.peak = 0
         self.high_water = start
         self.allocations = 0
-        self.fast_lookup = os.environ.get("KOHAKUTPU_ARENA_LOOKUP", "1") == "1"
+        self.fast_lookup = ENV.get("KOHAKUTPU_ARENA_LOOKUP", "1") == "1"
 
     def _track(self, at: int, size: int, nbytes: int, owner: str) -> int:
         self.live[at] = size

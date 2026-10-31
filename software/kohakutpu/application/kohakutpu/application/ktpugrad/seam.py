@@ -18,7 +18,6 @@ tinygrad's own. Pinned while installed (the traps each one avoids):
 | buffer lifetime | last read | a schedule holds every buffer it names to its end: `run_linear` frees each KTPU intermediate after its last kernel |
 """
 
-import os
 from dataclasses import replace
 
 from tinygrad import tensor
@@ -56,6 +55,7 @@ from kohakutpu.application.ktpugrad.plan import fusion
 from kohakutpu.application.ktpugrad.plan import lower as L
 from kohakutpu.application.ktpugrad.plan.plans import PLAN_ASTS, PLANS, KTPUUnsupported
 from kohakutpu.application.runtime import device as D
+from kohakutpu.language.config import ENV
 
 #: The realize module's global the engine calls by name: patched as an attribute.
 SEAM = "to_program"
@@ -348,7 +348,7 @@ def install() -> None:
         v.value = want  # pyright: ignore[reportAttributeAccessIssue]  (process-wide)
     rangeify.DEVICE_MAX_BUFS[NAME] = MAX_BUFS
     global FUSE_MODE, FUSE_BUDGET
-    FUSE_MODE = os.environ.get(FUSE_ENV, "elementwise")
+    FUSE_MODE = ENV.get(FUSE_ENV, "elementwise")
     if FUSE_MODE not in FUSE_MODES:
         raise ValueError(f"{FUSE_ENV}={FUSE_MODE!r}: one of {FUSE_MODES}")
     FUSE_BUDGET = fusion.FusionBudget.environment()

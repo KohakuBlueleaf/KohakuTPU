@@ -1,10 +1,10 @@
 """Recorded programs and their replay."""
 
-import os
 import time
 
 from kohakutpu.application.runtime.device.common import Recorded, Run, Submitted
 from kohakutpu.application.runtime.graph import recorded as native_recorded
+from kohakutpu.language.config import ENV
 
 
 class Replay:
@@ -34,7 +34,7 @@ class Replay:
         self._record_runs = []
         self._record_templates = []
         self.recording = False
-        if os.environ.get("KTPU_GRAPH_FUSE", "0") == "1":
+        if ENV.get("KTPU_GRAPH_FUSE", "0") == "1":
             try:
                 log.native = native_recorded.from_environment(log)
             except BaseException:

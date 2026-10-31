@@ -2,7 +2,6 @@
 
 import functools
 import json
-import os
 from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -10,6 +9,7 @@ from pathlib import Path
 from kohakutpu.application.runtime import packages as build
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.language import machine as MF
+from kohakutpu.language.config import ENV
 from kohakutpu.language.dsl import Machine, Traced
 from kohakutpu.language.text import module as M
 from kohakutpu.language.text.syntax import Call, Int, Stmt, TextError, emit, parse
@@ -254,7 +254,7 @@ def specialise(kernel, given, machine=None, **consts):
 
 
 def _dump(c):
-    where = os.environ.get(DUMP_ENV)
+    where = ENV.get(DUMP_ENV)
     if where:
         d = Path(where)
         d.mkdir(parents=True, exist_ok=True)

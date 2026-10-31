@@ -1,12 +1,12 @@
 """Launch controls and lifetime of a deferred elementwise group."""
 
 import contextlib
-import os
 
 from kohakutpu.application.ktpugrad.launch import rules as launch_rules
 from kohakutpu.application.ktpugrad.launch.emit import flush_multi_stage
 from kohakutpu.application.runtime import launch_boundary
 from kohakutpu.application.runtime import rows as RW
+from kohakutpu.language.config import ENV
 
 VIEW_FORMS = False
 ELIDE_CONTIGUOUS = True
@@ -14,13 +14,11 @@ HORIZONTAL_FUSION = True
 
 
 def view_forms_enabled() -> bool:
-    return os.environ.get("KTPU_VIEW_FORMS", "1" if VIEW_FORMS else "0") == "1"
+    return ENV.get("KTPU_VIEW_FORMS", "1" if VIEW_FORMS else "0") == "1"
 
 
 def elide_contiguous_enabled() -> bool:
-    return (
-        os.environ.get("KTPU_ELIDE_CONTIGUOUS", "1" if ELIDE_CONTIGUOUS else "0") == "1"
-    )
+    return ENV.get("KTPU_ELIDE_CONTIGUOUS", "1" if ELIDE_CONTIGUOUS else "0") == "1"
 
 
 def elide_rule(name: str) -> bool:
@@ -32,10 +30,7 @@ def single_package_enabled() -> bool:
 
 
 def horizontal_fusion_enabled() -> bool:
-    return (
-        os.environ.get("KTPU_HORIZONTAL_FUSION", "1" if HORIZONTAL_FUSION else "0")
-        == "1"
-    )
+    return ENV.get("KTPU_HORIZONTAL_FUSION", "1" if HORIZONTAL_FUSION else "0") == "1"
 
 
 @contextlib.contextmanager

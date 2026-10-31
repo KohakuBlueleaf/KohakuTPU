@@ -1,12 +1,12 @@
 """Machine-specific Rust kernel generation and the shared driver binding path."""
 
 import json
-import os
 from functools import lru_cache
 
 import numpy as np
 
 from kohakutpu.application.kernels import matmul as MM
+from kohakutpu.language.config import ENV
 from kohakutpu.language.dsl import TensorSpec, Traced
 from kohakutpu.language.numerics import fp16
 from kohakutpu.language.text import module as M
@@ -28,7 +28,7 @@ def graph(generator, arguments, machine, mutant):
         # Qualify the generator at its cached production boundary, not on hits.
         scratch = json.loads(source)["scratch"]
         if not scratch or any(p["spec"]["space"] != "stage" for p in scratch):
-            raise ValueError("ring lowering requires the MMEFF ring-capable compiler")
+            raise ValueError("ring lowering requires the ring-capable compiler")
     return source
 
 
@@ -38,7 +38,7 @@ def source(dev, generator, arguments):
     if generator in ("matmul.quant_kernel", "matmul.quant_walk_kernel"):
         arguments = dict(arguments)
         arguments["schedule"] = {
-            name: int(os.environ.get(env, default))
+            name: int(ENV.get(env, default))
             for name, env, default in (
                 ("finite_batch", "KTPU_PIPE_FINITE_BATCH", "4"),
                 ("overlap", "KTPU_PIPE_OVERLAP", "1"),
@@ -59,14 +59,14 @@ def _scheduled(arguments: dict) -> dict:
     """`arguments`, a class call's with the `KTPU_CLASS_*` knobs."""
     if "shape_class" not in arguments:
         return arguments
-    width = os.environ.get("KTPU_CLASS_WIDE_WIDTH")
+    width = ENV.get("KTPU_CLASS_WIDE_WIDTH")
     return dict(
         arguments,
         class_schedule={
-            "band": int(os.environ.get("KTPU_CLASS_BAND", "4")),
+            "band": int(ENV.get("KTPU_CLASS_BAND", "4")),
             "wide_width": int(width) if width else None,
-            "rows_direct": os.environ.get("KTPU_CLASS_ROWS_DIRECT", "0") == "1",
-            "wide_direct": os.environ.get("KTPU_CLASS_WIDE_DIRECT", "0") == "1",
+            "rows_direct": ENV.get("KTPU_CLASS_ROWS_DIRECT", "0") == "1",
+            "wide_direct": ENV.get("KTPU_CLASS_WIDE_DIRECT", "0") == "1",
         },
     )
 

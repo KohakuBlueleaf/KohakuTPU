@@ -4,11 +4,11 @@ import contextlib
 import contextvars
 import functools
 import json
-import os
 import time
 
 from kohakutpu.compiler import _rs
 from kohakutpu.language import machine as MF
+from kohakutpu.language.config import ENV
 from kohakutpu.language.dsl.kernel import _MUTANT
 from kohakutpu.language.text.syntax import TextError
 
@@ -28,7 +28,7 @@ def compiler_owner(device):
 
 
 def machine_json(spec):
-    named = os.environ.get(MACHINE_ENV)
+    named = ENV.get(MACHINE_ENV)
     if named:
         return (MF.MACHINES / f"{named}.json").read_text(encoding="utf-8")
     if isinstance(spec, str):

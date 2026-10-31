@@ -10,7 +10,6 @@ residual, statistics as `vector.Operand`s) and store row-major f16.
 """
 
 import json
-import os
 from collections import OrderedDict
 from dataclasses import dataclass
 
@@ -19,6 +18,7 @@ from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes import mm as class_mm
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.language import dsl as kt
+from kohakutpu.language.config import ENV
 from kohakutpu.stack.rs import _rs
 
 KERNELS_KEPT = 1024
@@ -51,7 +51,7 @@ class Mm:
 def stack_pairing() -> str:
     """The pairing contractions are planned under (RUL.099): ``KTPU_MX7_PAIRING``,
     else ktpu-machine's ``PAIRING``."""
-    return os.environ.get("KTPU_MX7_PAIRING", _rs.MX7_PAIRING)
+    return ENV.get("KTPU_MX7_PAIRING", _rs.MX7_PAIRING)
 
 
 def pairing_arg() -> dict:
@@ -145,14 +145,14 @@ def quant_kernel(
     """`batches` row blocks of [rows, cols] (each `src.offset + b * rows *
     pitch`) quantised into [batches * rp, cp] in the A (`side` "a") or B
     packing, tiles of `g` lane groups. Padding rows and columns are zero."""
-    finite_batch = int(os.environ.get("KTPU_PIPE_FINITE_BATCH", "4"))
-    overlap = os.environ.get("KTPU_PIPE_OVERLAP", "1") == "1"
-    classifier_overlap = os.environ.get("KTPU_QUANT_CLASSIFIER_OVERLAP", "0") == "1"
-    pipeline = os.environ.get("KTPU_QUANT_PIPELINE", "1") == "1"
-    zero_classifier = os.environ.get("KTPU_QUANT_ZERO_CLASSIFIER", "1") == "1"
-    stream_axes = os.environ.get("KTPU_QUANT_STREAM_AXES", "1") == "1"
-    fill_overlap = os.environ.get("KTPU_QUANT_FILL_OVERLAP", "1") == "1"
-    zero_reuse = os.environ.get("KTPU_QUANT_ZERO_REUSE", "1") == "1"
+    finite_batch = int(ENV.get("KTPU_PIPE_FINITE_BATCH", "4"))
+    overlap = ENV.get("KTPU_PIPE_OVERLAP", "1") == "1"
+    classifier_overlap = ENV.get("KTPU_QUANT_CLASSIFIER_OVERLAP", "0") == "1"
+    pipeline = ENV.get("KTPU_QUANT_PIPELINE", "1") == "1"
+    zero_classifier = ENV.get("KTPU_QUANT_ZERO_CLASSIFIER", "1") == "1"
+    stream_axes = ENV.get("KTPU_QUANT_STREAM_AXES", "1") == "1"
+    fill_overlap = ENV.get("KTPU_QUANT_FILL_OVERLAP", "1") == "1"
+    zero_reuse = ENV.get("KTPU_QUANT_ZERO_REUSE", "1") == "1"
     dtype = "mx7a" if side == "a" else "mx7b"
     lay = dict(gm=g, nk=nk) if side == "a" else dict(gn=g, nk=nk)
     if cols % 16 or src.pitch % 16 or src.offset % 16:

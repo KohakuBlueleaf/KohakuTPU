@@ -1,0 +1,108 @@
+/* The node processor's control region, 1 KB at 0x2_0000
+ * (docs/spec/control-registers.md s7), and the dispatch engine's window in it
+ * (docs/spec/dispatch-engine.md): offsets and field decoders only. The one map
+ * both the firmware (`ka/hal/node.h`) and the OS (`kos/hw.h`) read. */
+#ifndef KA_HAL_CONTROL_H
+#define KA_HAL_CONTROL_H
+
+#include <stdint.h>
+
+#define KA_CTRL_BASE 0x00020000UL
+
+enum {
+    KA_R_EXIT    = 0x00, /* W: end the run, the word reaches HR_EXIT */
+    KA_R_CONSOLE = 0x08, /* W: one console byte (the load window's 256-B FIFO) */
+    KA_R_DBELL   = 0x10, /* R: the host's doorbell bit */
+    KA_R_SATP    = 0x18, /* R: satp mirror */
+    KA_R_MVSTAT  = 0x20, /* R: [33] room, [32] busy, [31:28] fault, [27:0] moves done */
+    KA_R_DBCNT   = 0x28, /* R: inbound doorbell counts, mesh n at [16n+15:16n] */
+    KA_R_STDIN   = 0x30, /* R: {valid[8], byte}; W: pop */
+    KA_R_IRQ     = 0x38, /* W: toggle the host interrupt line; R: its level */
+    KA_R_NM      = 0x40,  /* the dispatch mailbox, 8 registers */
+    KA_R_IL      = 0xC0,  /* interlink config register 0x80 + k at 0xC0 + k */
+    KA_R_SIG     = 0xE0,  /* R: the selected signal slot's word (KA_SIG_*) */
+    KA_R_MV      = 0x100, /* mover register k at 0x100 + k, k < 0x80 */
+    KA_R_RX      = 0x180, /* RX queue: HDR, P0..P3, USED (8 bytes apart) */
+    KA_R_DCACHE  = 0x1C8, /* W: [0] flush, [1] invalidate; R: busy */
+    KA_R_XF_SEL  = 0x1D0, /* transform bank config: {id[15:8], addr[7:0]} */
+    KA_R_XF_DATA = 0x1D8, /* ... and its data; the write is the strobe */
+    KA_R_DE      = 0x200, /* W: + 8 * code, queue a write of register `code` */
+    KA_R_DE_STAT = 0x300, /* R: STAT; W: queue a WAIT (code 32) */
+    KA_R_DE_CTL  = 0x308, /* W: [1] clear, [0] enable; R: MOVES */
+    KA_R_DE_MAP  = 0x310, /* W: {valid[31], counter[19:16], y[11:8], x[3:0]} */
+    KA_R_DE_CTR  = 0x380, /* R: + 8 * k, counter k */
+};
+
+#define KA_MV_SPAN 0x80
+/* The control region's end: offsets a package's LOAD may read. */
+#define KA_CTRL_SPAN 0x400
+
+/* Interlink registers, from KA_R_IL (control-registers.md s7.4). */
+enum {
+    KA_IL_CTL     = 0x00, /* [0] enable, [1] clear doorbells, [2] clear faults, [3] clear slots */
+    KA_IL_MESH    = 0x08,
+    KA_IL_RING    = 0x10, /* [1:0] mesh, [15:8] slot, [31:16] amount (0 counts 1), [32] fence */
+    KA_IL_CONSUME = 0x20, /* [3:0] slot, [63:32] amount */
+    KA_IL_SELECT  = 0x28, /* [3:0] the slot KA_R_SIG reports */
+};
+/* KA_R_SIG: [31:0] count, [47:32] rings sent, [53:50] the selected slot. */
+#define KA_SIG_COUNT(w) ((uint32_t)(w))
+#define KA_SIG_SENT(w)  ((uint32_t)(((w) >> 32) & 0xffffu))
+#define KA_SIG_SLOT(w)  ((unsigned)(((w) >> 50) & 0xfu))
+/* Rings the interlink queues before it drops one. */
+#define KA_IL_RING_DEPTH 4u
+
+/* M_DST: [24] send the type in [23:20] instead of CU_INST. */
+#define KA_NM_TYPED(t) ((1UL << 24) | ((uint64_t)((t) & 0xf) << 20))
+#define KA_T_CU_CTRL   0x7
+#define KA_T_MEM_RD_REQ 0x0
+
+/* RX queue registers, index * 8 from KA_R_RX. HDR is {valid[63], header[31:0]}
+ * with src x at [23:20], src y at [19:16], type at [15:12]; a write pops. */
+enum { KA_RX_HDR = 0, KA_RX_P0 = 1, KA_RX_P1 = 2, KA_RX_P2 = 3, KA_RX_P3 = 4, KA_RX_USED = 5 };
+
+/* Mailbox registers, index * 8 from KA_R_NM. */
+enum {
+    KA_NM_DST  = 0, /* x [3:0], y [11:8] */
+    KA_NM_ARG0 = 1, /* payload [63:0] */
+    KA_NM_ARG1 = 2,
+    KA_NM_ARG2 = 3,
+    KA_NM_ARG3 = 4, /* payload [255:192]; a unit's opcode is [63:60] */
+    KA_NM_GO   = 5,
+    KA_NM_STAT = 6, /* [7:0] queued, [15] offered */
+    KA_NM_HEAD = 7, /* R: oldest completion; W: pop */
+};
+
+#define KA_NM_STAT_COUNT(s) ((unsigned)((s) & 0xffu))
+#define KA_NM_STAT_OFFERED  (1UL << 15)
+
+/* The completion queue's depth (rv64_syscore CQ_DEPTH). A FULL queue holds the
+ * node's one inbound link in sn_hub, memory traffic behind it included. */
+#define KA_NM_CQ_DEPTH 16u
+
+/* A completion word: [55:52] src_y, [51:48] src_x, [47:40] code, [39:8] arg. */
+#define KA_CQ_Y(w)    ((unsigned)(((w) >> 52) & 0xfu))
+#define KA_CQ_X(w)    ((unsigned)(((w) >> 48) & 0xfu))
+#define KA_CQ_CODE(w) ((unsigned)(((w) >> 40) & 0xffu))
+#define KA_CQ_ARG(w)  ((uint32_t)(((w) >> 8) & 0xffffffffu))
+
+/* Centrally allocated CU_SIGNAL codes (kohakuaccel/driver/device/registers.py). */
+enum {
+    KA_SIG_INST_COMPLETE  = 0x00,
+    KA_SIG_BATCH_COMPLETE = 0x01,
+    KA_SIG_BARRIER        = 0x02,
+    KA_SIG_DATA_RECEIVED  = 0x03,
+    KA_SIG_FAULT          = 0x04,
+};
+
+/* ROOM: the mover's configuration queue takes KA_MV_ROOM_WRITES more writes. */
+#define KA_MV_ROOM(s)  (((s) >> 33) & 1u)
+#define KA_MV_ROOM_WRITES 8u
+#define KA_MV_BUSY(s)  (((s) >> 32) & 1u)
+#define KA_MV_FAULT(s) ((unsigned)(((s) >> 28) & 0xfu))
+#define KA_MV_DONE(s)  ((uint32_t)((s) & 0x0fffffffu))
+
+#define KA_DCACHE_FLUSH 1u
+#define KA_DCACHE_INVAL 2u
+
+#endif

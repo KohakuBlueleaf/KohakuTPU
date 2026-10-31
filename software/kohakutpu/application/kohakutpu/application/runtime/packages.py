@@ -1,12 +1,12 @@
 """Rust-built run packages and checker verdicts carried by the runtime."""
 
 import json
-import os
 from dataclasses import dataclass
 from enum import IntEnum
 from functools import lru_cache
 from types import SimpleNamespace
 
+from kohakutpu.language.config import ENV
 from kohakutpu.stack import rs
 from kohakutpu.stack.rs import _rs
 
@@ -182,7 +182,7 @@ def admission_cached():
     """`KOHAKUTPU_ADMISSION_CONTEXT` "1" (default): admission reuses the
     receiving board's cached context; any other value admits from scratch.
     Read once by each card at construction (`NodeCard.admission_cached`)."""
-    return os.environ.get(ADMISSION_ENV, "1") == "1"
+    return ENV.get(ADMISSION_ENV, "1") == "1"
 
 
 def admit(raw, machine, mesh=0, bindings=(), cached=True):

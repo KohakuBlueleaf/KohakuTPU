@@ -3,7 +3,6 @@
 import argparse
 import gzip
 import json
-import os
 import pathlib
 import pickle
 import struct
@@ -40,6 +39,7 @@ from kohakutpu.application.runtime.os.graph import (
     Graph,
     ResidentGraph,
 )
+from kohakutpu.language.config import ENV
 
 
 def decode_step_ring(raw_rec):
@@ -84,13 +84,13 @@ def run_os_capture(capture, a, board, out):
         (u["mesh"], u["x"], u["y"]): int.from_bytes(u["type"].encode(), "big")
         for u in board["units"]
     }
-    de_stream_on = os.environ.get("KOHAKUTPU_OS_DE_STREAM", "0") == "1"
-    de_fetch_on = os.environ.get("KOHAKUTPU_OS_DE_FETCH", "1") == "1"
-    lring_on = os.environ.get("KOHAKUTPU_OS_LAUNCH_RING", "0") == "1"
-    stamps_on = os.environ.get("KOHAKUTPU_OS_STAMPS", "0") == "1"
+    de_stream_on = ENV.get("KOHAKUTPU_OS_DE_STREAM", "0") == "1"
+    de_fetch_on = ENV.get("KOHAKUTPU_OS_DE_FETCH", "1") == "1"
+    lring_on = ENV.get("KOHAKUTPU_OS_LAUNCH_RING", "0") == "1"
+    stamps_on = ENV.get("KOHAKUTPU_OS_STAMPS", "0") == "1"
     de_fuse_on = (
         de_stream_on
-        and os.environ.get("KOHAKUTPU_OS_DE_FUSE", "0") == "1"
+        and ENV.get("KOHAKUTPU_OS_DE_FUSE", "0") == "1"
         and not lring_on
         and not stamps_on
     )
@@ -143,7 +143,7 @@ def run_os_capture(capture, a, board, out):
                 batch=a.segment,
                 compact=True,
                 movers=True,
-                prune=os.environ.get("KOHAKUTPU_OS_PRUNE", "0") == "1",
+                prune=ENV.get("KOHAKUTPU_OS_PRUNE", "0") == "1",
                 de_stream=de_stream_on,
                 de_fetch=de_fetch_on,
                 de_fuse=de_fuse_on,

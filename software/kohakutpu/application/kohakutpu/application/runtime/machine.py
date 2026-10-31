@@ -1,10 +1,10 @@
 """Runtime topology and addresses from the Rust machine view."""
 
 import json
-import os
 from dataclasses import dataclass, field
 
 from kohakutpu.language import machine as MF
+from kohakutpu.language.config import ENV
 from kohakutpu.stack.rs import _rs
 
 
@@ -87,7 +87,7 @@ def machine_of(
     text = (MF.MACHINES / f"{name}.json").read_text(encoding="utf-8")
     doc = json.loads(text)
     facts = doc["machine"]
-    packing_backend = packing_backend or os.environ.get("KTPU_FP16_MX7_BACKEND")
+    packing_backend = packing_backend or ENV.get("KTPU_FP16_MX7_BACKEND")
     if packing_backend:
         policy = facts["conversion"]["fp16_mx7"]
         if packing_backend not in policy["allowed_backends"]:
@@ -100,7 +100,7 @@ def machine_of(
         ("vector_cores", packing_cores, "KTPU_MX7_CORES"),
         ("vector_looped", packing_looped, "KTPU_MX7_LOOPED"),
     ):
-        value = explicit if explicit is not None else os.environ.get(env)
+        value = explicit if explicit is not None else ENV.get(env)
         if value is not None:
             value = int(value)
             if key == "vector_looped":

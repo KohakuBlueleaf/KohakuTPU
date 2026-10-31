@@ -9,8 +9,6 @@ nothing (compile only: the arrays keep what the host wrote), or a model.
     card.run(program)                              # checked, scheduled, encoded
 """
 
-import os
-
 from kohakuaccel.driver.node.queue import layout as QL
 from kohakutpu.application.runtime import packages as B
 from kohakutpu.application.runtime.card import (
@@ -26,6 +24,7 @@ from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.application.runtime.memory import CardMemory
 from kohakutpu.driver.clock.card import load_board
 from kohakutpu.driver.host import board_map
+from kohakutpu.language.config import ENV
 from kohakutpu.stack.rs import _rs
 
 PAGE = 1 << 20
@@ -126,7 +125,7 @@ class OfflineCard:
         self.native_direct_suspended = False
         self._publication_epoch = 0
         self._resident_mode = parse_resident_mode(
-            os.environ.get(RESIDENT_ENV) if resident_mode is _UNSET else resident_mode
+            ENV.get(RESIDENT_ENV) if resident_mode is _UNSET else resident_mode
         )
         self._admission_cached = B.admission_cached()
         self.residents = {n: _rs.Cores(self.machine_json) for n in self.nodes}

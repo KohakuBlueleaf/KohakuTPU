@@ -1,7 +1,6 @@
 """Opt-in native preparation of eager recordings, preserving host-effect boundaries."""
 
 import json
-import os
 import time
 from dataclasses import dataclass, field
 
@@ -12,6 +11,7 @@ from kohakutpu.application.runtime.graph.native import (
     local_scratch,
     port_bytes,
 )
+from kohakutpu.language.config import ENV
 from kohakutpu.stack.kernel import arena_name
 
 
@@ -248,7 +248,7 @@ def from_environment(log):
     return prepare(
         log,
         **{
-            key: os.environ.get("KTPU_GRAPH_" + key.upper(), default) == "1"
+            key: ENV.get("KTPU_GRAPH_" + key.upper(), default) == "1"
             for key, default in (
                 ("quant", "1"),
                 ("elementwise", "1"),

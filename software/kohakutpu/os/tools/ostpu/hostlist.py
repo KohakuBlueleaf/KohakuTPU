@@ -3,7 +3,6 @@
 import argparse
 import gzip
 import json
-import os
 import pathlib
 import pickle
 import struct
@@ -19,6 +18,7 @@ from relocate import relocate
 
 from kohakutpu.application.runtime import card as runtime
 from kohakutpu.application.runtime.os import abi as A
+from kohakutpu.language.config import ENV
 
 
 def run_firmware_capture(
@@ -59,7 +59,7 @@ def run_firmware_capture(
             workload=capture["workload"],
             backend="HOSTL-LIST" if use_lists else "FW-RUN",
             runtime=str(pathlib.Path(runtime.__file__).resolve()),
-            knobs={k: v for k, v in os.environ.items() if k.startswith("KOHAKUTPU_")},
+            knobs={k: v for k, v in ENV.items() if k.startswith("KOHAKUTPU_")},
             results=[],
         )
         base = card.alloc(capture["extent"])

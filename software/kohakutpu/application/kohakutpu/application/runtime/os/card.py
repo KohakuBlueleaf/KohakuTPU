@@ -8,7 +8,6 @@ Firmware remains the default Device backend.
 """
 
 import json
-import os
 
 from kohakutpu.application.runtime import packages as B
 from kohakutpu.application.runtime import replay_budget
@@ -22,6 +21,7 @@ from kohakutpu.application.runtime.os.graph import (
     Graph,
     Task,
 )
+from kohakutpu.language.config import ENV
 
 
 def movers_enabled(machine_json):
@@ -29,9 +29,7 @@ def movers_enabled(machine_json):
     stream (SYS_DE_RUN), so a machine without the dispatch engine lowers them
     as MOVERS=0 does."""
     engine = json.loads(machine_json)["machine"]["node"].get("engine", {})
-    return (
-        os.environ.get("KOHAKUTPU_OS_MOVERS", "0") == "1" and engine.get("depth", 0) > 0
-    )
+    return ENV.get("KOHAKUTPU_OS_MOVERS", "0") == "1" and engine.get("depth", 0) > 0
 
 
 class PhysicalMemory:
@@ -75,15 +73,15 @@ class OSCard(OfflineCard):
         self.resident_program = None
         self.last_result = None
         self.submissions = 0
-        self.segment = int(os.environ.get("KOHAKUTPU_OS_SEGMENT", "1"))
-        self.compact = os.environ.get("KOHAKUTPU_OS_COMPACT", "0") == "1"
+        self.segment = int(ENV.get("KOHAKUTPU_OS_SEGMENT", "1"))
+        self.compact = ENV.get("KOHAKUTPU_OS_COMPACT", "0") == "1"
         self.movers = movers_enabled(self.machine_json)
-        self.prune = os.environ.get("KOHAKUTPU_OS_PRUNE", "0") == "1"
-        self.stamps = os.environ.get("KOHAKUTPU_OS_STAMPS", "0") == "1"
-        self.de_stream = os.environ.get("KOHAKUTPU_OS_DE_STREAM", "0") == "1"
-        self.de_fetch = os.environ.get("KOHAKUTPU_OS_DE_FETCH", "1") == "1"
-        self.de_fuse = os.environ.get("KOHAKUTPU_OS_DE_FUSE", "0") == "1"
-        self.launch_ring = os.environ.get("KOHAKUTPU_OS_LAUNCH_RING", "0") == "1"
+        self.prune = ENV.get("KOHAKUTPU_OS_PRUNE", "0") == "1"
+        self.stamps = ENV.get("KOHAKUTPU_OS_STAMPS", "0") == "1"
+        self.de_stream = ENV.get("KOHAKUTPU_OS_DE_STREAM", "0") == "1"
+        self.de_fetch = ENV.get("KOHAKUTPU_OS_DE_FETCH", "1") == "1"
+        self.de_fuse = ENV.get("KOHAKUTPU_OS_DE_FUSE", "0") == "1"
+        self.launch_ring = ENV.get("KOHAKUTPU_OS_LAUNCH_RING", "0") == "1"
 
     def _execute(self, graph, repeats=1):
         self.session.prepare(graph)

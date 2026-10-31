@@ -1,11 +1,10 @@
 """Parameterized eager schedules owned by the KTPU seam, never by tinygrad."""
 
-import os
-
 from tinygrad.engine import realize
 from tinygrad.uop import Ops
 from tinygrad.uop.ops import UOp
 
+from kohakutpu.language.config import ENV
 from kohakutpu.language.dsl.kernel import _MUTANT
 
 KEPT = 128
@@ -15,7 +14,7 @@ ENABLED = False
 
 def refresh():
     global ENABLED
-    ENABLED = os.environ.get(ENV, "0") == "1"
+    ENABLED = ENV.get(ENV, "0") == "1"
     return ENABLED
 
 

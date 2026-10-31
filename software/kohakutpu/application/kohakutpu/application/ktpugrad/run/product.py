@@ -1,6 +1,5 @@
 """The product runner: packing plans, pending forms, table boxes."""
 
-import os
 from dataclasses import replace
 
 import numpy as np
@@ -31,6 +30,7 @@ from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import rows as RW
 from kohakutpu.application.runtime.memory.storage import FLAT, Storage, StorageView
 from kohakutpu.language import machine as MF
+from kohakutpu.language.config import ENV
 
 
 def _box(plan: Plan, box: dict, bufs, sel: dict) -> tuple:
@@ -282,7 +282,7 @@ def _product_run(
             # A is f16 only where its producer laid it out for the kernel.
             "activation_fp16": f16,
         }
-        ring_depth = int(os.environ.get("KTPU_MATMUL_RING_DEPTH", "0"))
+        ring_depth = int(ENV.get("KTPU_MATMUL_RING_DEPTH", "0"))
         if ring_depth:
             arguments["ring_depth"] = ring_depth
             arguments["tail_bands"] = True
