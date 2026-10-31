@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from kohakuaccel.driver.transport.simdram import DramMap
+from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime.arena import Arena, place
 from kohakutpu.application.runtime.memory import CardMemory, package_homes
 from kohakutpu.application.runtime.replay_budget import select
@@ -156,6 +157,25 @@ def test_each_node_takes_its_own_home():
 )
 def test_the_knob(value, homes):
     assert package_homes(value, board("multimesh_v9t6")) == homes
+
+
+@pytest.mark.parametrize(
+    "value, homes", [(None, {0: 0}), ("any", {}), ("near", {0: 0}), ("3", {0: 3})]
+)
+def test_a_device_latches_the_knob(monkeypatch, value, homes):
+    if value is None:
+        monkeypatch.delenv(D.PACKAGE_HOME_ENV, raising=False)
+    else:
+        monkeypatch.setenv(D.PACKAGE_HOME_ENV, value)
+    dev = D.Device(kind="offline", board="vlt_v9t6s_1n")
+    try:
+        monkeypatch.setenv(D.PACKAGE_HOME_ENV, "2")
+        assert dev.memory.package_homes == homes
+        at = dev.memory.alloc(256, "package", dev.memory.near(0))
+        if homes:
+            assert on_home(at, 256)[0] == homes[0]
+    finally:
+        dev.close()
 
 
 def board(name):

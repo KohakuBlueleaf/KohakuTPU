@@ -287,7 +287,7 @@ class Device:
         self.memory = self.card.memory
         spec = load_board(board)
         self.memory.package_homes = package_homes(
-            os.environ.get(PACKAGE_HOME_ENV, "any"), spec
+            os.environ.get(PACKAGE_HOME_ENV, "near"), spec
         )
         if self.memory.package_homes:
             self.memory.stripes = (spec["dram_interleave_kb"] << 10, spec["dram_homes"])
