@@ -2904,48 +2904,34 @@ def _product_run(
             out=arguments["out"],
             steps={i: FM.costs.steps_recipe(v.steps) for i, v in pending.items()},
         )
-        # The prepared product is the kernel of no kernel knob.
+        # The prepared product is the DRAM product: a kernel of no ring.
+        depth = MM.resolved(arguments, dev.machine.machine_json)["knobs"]["ring_depth"]
         if (
             pending
-            and MM.resolved(arguments, dev.machine.machine_json)["plain"]
+            and depth == 0
             and FM.costs.choose("prepared_mm", recipe, dev.machine.board)
         ):
             plans = {i: FM.plans_of(dev, v.steps) for i, v in pending.items()}
-            kernel, given = MM.mm_kernel(
-                mm,
-                plan.expr,
-                extras,
-                Operand(**arguments["out"]),
-                dev.machine.count("MG"),
-                dev.machine.count("VC"),
-                made=plans,
-                hw=FM.RL.hw_for(dev),
-            )
+            arguments["made"] = {
+                str(i): [s.made_by() for s in v.steps] for i, v in pending.items()
+            }
             for i, v in pending.items():
                 del binds[f"in{i}"]
                 binds[f"p{i}_x"] = v.steps[0].src
                 binds.update(FM.step_binds(dev, plans[i], f"p{i}_"))
-            run = FM.launch(
-                dev,
-                kernel,
-                given,
-                binds,
-                kind="matmul",
-                info={"plan": plan.name, "mm": mm},
-            )
         else:
             binds = {
                 k: v.made().addr if isinstance(v, FM.Pending) else v
                 for k, v in binds.items()
             }
-            run = FM.generated.launch(
-                dev,
-                "matmul.mm_kernel",
-                arguments,
-                binds,
-                kind="matmul",
-                info={"plan": plan.name, "mm": mm},
-            )
+        run = FM.generated.launch(
+            dev,
+            "matmul.mm_kernel",
+            arguments,
+            binds,
+            kind="matmul",
+            info={"plan": plan.name, "mm": mm},
+        )
         if not padded:
             _wrote(dev, plan, bufs, key)
             return [run]

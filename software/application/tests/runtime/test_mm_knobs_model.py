@@ -11,6 +11,7 @@ from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import matmul as MM
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.plan.emit import expr as table
+from kohakutpu.application.runtime import forms as FM
 from kohakutpu.stack import rs
 
 
@@ -20,29 +21,32 @@ def source(dev, args):
     )
 
 
-def port_bytes(src):
-    """Each port's bytes in the generated graph `src`."""
+def port_bytes(src, bound=()):
+    """Each port's bytes in the generated graph `src`, `bound` ports aside."""
     item = {"f16": 2, "mx7a": 1, "mx7b": 1}
     return {
         p["name"]: int(np.prod(p["spec"]["shape"])) * item[p["spec"]["dtype"]]
         for p in json.loads(src)["ports"]
+        if p["name"] not in bound
     }
 
 
-def product(dev, args, data, rows, n):
+def product(dev, args, data, rows, n, bound=None):
     """The generated `matmul.mm_kernel` of `args` over the bytes `data` by
     port (each port bound to their first bytes, zero-extended to its
-    extent): its f16 output's first [rows, n] bytes."""
+    extent; the ports of `bound` to their addresses): its f16 output's first
+    [rows, n] bytes."""
     src = source(dev, args)
     comp, _ = Z.compiled(dev, src)
-    sizes = port_bytes(src)
+    bound = bound or {}
+    sizes = port_bytes(src, bound)
     binds = {name: dev.alloc(size) for name, size in sizes.items()}
     try:
         for name, at in binds.items():
             fill = bytes([0xD3]) if name == "out" else bytes(1)
             got = data.get(name, b"")[: sizes[name]]
             dev.write(at, got + fill * (sizes[name] - len(got)))
-        dev.run(comp, binds, kind="matmul")
+        dev.run(comp, {**binds, **bound}, kind="matmul")
         return dev.read(binds["out"], rows * n * 2)
     finally:
         for at in binds.values():
@@ -95,6 +99,40 @@ def test_batch_tiles_computes_the_batched_product(dev, bt, m, n, k):
     for i in range(bt):
         ai, bi = a[i * mm.mp : (i + 1) * mm.mp], b[i * n : (i + 1) * n]
         assert Z.error(got[i], ai, bi, m, n)["max_rel_of_peak"] <= 1e-2
+
+
+def test_a_made_extra_computes_the_product_of_it_bound(dev):
+    """M = 32 by N = 64 plus an extra made inside the kernel by one transpose
+    of a [64, 32] source (`prepared_mm`'s route): its bytes are the bytes of
+    the kernel bound the transposed values, and not of the source bound."""
+    mt = rs.machine_json(dev.machine)
+    m, n = 32, 64
+    mm = MM.plan(1, m, n, 64, True, 4, machine_json=mt)
+    _, _, data = operands(dev, mm, 3)
+    pair = X.op("add", X.Load(0), X.Load(1))
+    extras = [Operand("full", pitch=n)]
+    out = Operand("full", pitch=n, rows=mm.mp)
+    rng = np.random.default_rng(17)
+    src = rng.standard_normal((n, m)).astype(np.float16)
+    step = FM.Step(
+        dev.alloc(src.size * 2),
+        m * n,
+        ((m, 1), (n, m)),
+        0,
+        ((m, n), (n, 1)),
+        0,
+        m * n,
+    )
+    dev.write(step.src, src.tobytes())
+    plans = FM.plans_of(dev, (step,))
+    made = dict(made={"1": [step.made_by()]})
+    bound = {"p1_x": step.src, **FM.step_binds(dev, plans, "p1_")}
+    got = product(dev, call(mm, pair, extras, out, **made), data, m, n, bound)
+    want = {**data, "in1": src.T.tobytes()}
+    assert got == product(dev, call(mm, pair, extras, out), want, m, n)
+    wrong = {**data, "in1": src.tobytes()}
+    assert got != product(dev, call(mm, pair, extras, out), wrong, m, n)
+    dev.free(step.src)
 
 
 #: Each epilogue form: (expression, extras, quantum).
