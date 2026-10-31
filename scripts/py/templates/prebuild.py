@@ -130,12 +130,21 @@ def mnist_model(
 
 
 def vit_tiny(
-    batch, forward_only=True, steps=1, jit=False, churn=(), width=192, **recipe
+    batch,
+    forward_only=True,
+    steps=1,
+    jit=False,
+    churn=(),
+    width=192,
+    realize_ops=False,
+    **recipe,
 ):
     example = runpy.run_path(
         str(ROOT / "software/application/examples/tinygrad/vit_tiny.py")
     )
-    model = example["seeded_model"](blocks=12, seed=17, width=width, image_size=224)
+    model = example["seeded_model"](
+        blocks=12, seed=17, width=width, image_size=224, realize_ops=realize_ops
+    )
     place(model)
     inp = np.zeros((batch, 3, 224, 224), dtype=np.float16)
     if steps == 1:
@@ -172,6 +181,8 @@ MODELS = {name: partial(mnist_model, model_name=name) for name in MNIST_MODELS}
 MODELS["vit-tiny"] = vit_tiny
 MODELS["vit-small"] = partial(vit_tiny, width=384)
 MODELS["vit-base"] = partial(vit_tiny, width=768)
+MODELS["vit-tiny-eager"] = partial(vit_tiny, realize_ops=True)
+MODELS["vit-base-eager"] = partial(vit_tiny, width=768, realize_ops=True)
 lenet = MODELS["lenet"]
 #: Steps a training capture runs: the layout hints the first learns from its
 #: consumers (`forms.hints`) change the kernels of the next. The library
