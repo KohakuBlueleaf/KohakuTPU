@@ -44,6 +44,7 @@ pub fn l1_knobs() -> Vec<&'static str> {
 pub fn on(name: &str) -> bool {
     #[cfg(feature = "mutants")]
     {
+        ktpu_l1::mutant::note(name);
         STATE.with(|s| s.get().active == Some(name))
     }
     #[cfg(not(feature = "mutants"))]

@@ -111,6 +111,43 @@ pub fn with<T: Send>(name: &str, f: impl FnOnce() -> T + Send) -> Result<T, Stri
     }
 }
 
+/// `f()` on a pool of one thread and the mutants its stage points asked after.
+pub fn watched<T: Send>(f: impl FnOnce() -> T + Send) -> (T, Vec<String>) {
+    #[cfg(feature = "mutants")]
+    {
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(1).build();
+        let pool = pool.expect("a thread for the stage");
+        let (got, seen) = pool.install(|| ktpu_l1::mutant::watch(f));
+        (got, seen.into_iter().collect())
+    }
+    #[cfg(not(feature = "mutants"))]
+    {
+        (f(), Vec::new())
+    }
+}
+
+/// Whether mutant `name` acts only at the l2, l1 and l0 points [`watched`]
+/// sees: one that switches a point elsewhere is no such mutant.
+pub fn watchable(name: &str) -> bool {
+    #[cfg(feature = "mutants")]
+    {
+        let carried = ktpu_l2::mutant::NAMES
+            .iter()
+            .chain(ktpu_l1::mutant::NAMES)
+            .chain(ktpu_l0::mutant::NAMES);
+        carried.into_iter().any(|n| *n == name)
+            && !ktpu_l1::mutant::ALIASES.iter().any(|a| a.0 == name)
+            && !ktpu_l2::mutant::L1_TIMING.contains(&name)
+            && !ktpu_isa::mutant::NAMES.contains(&name)
+            && !ktpu_machine::mutant::NAMES.contains(&name)
+    }
+    #[cfg(not(feature = "mutants"))]
+    {
+        let _ = name;
+        false
+    }
+}
+
 #[cfg(feature = "mutants")]
 thread_local! {
     static ACTIVE: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };

@@ -16,6 +16,7 @@ thread_local! {
 pub fn on(name: &str) -> bool {
     #[cfg(feature = "mutants")]
     {
+        note(name);
         ACTIVE.with(|a| a.get() == Some(name))
     }
     #[cfg(not(feature = "mutants"))]
@@ -24,6 +25,15 @@ pub fn on(name: &str) -> bool {
         false
     }
 }
+
+/// A point asked after `name`, kept while [`watch`] holds on this thread.
+#[cfg(feature = "mutants")]
+pub fn note(name: &str) {
+    ktpu_l0::mutant::note(name);
+}
+
+#[cfg(feature = "mutants")]
+pub use ktpu_l0::mutant::watch;
 
 /// `f()` with mutant `name` active on this thread, and the point it breaks
 /// in ktpu-isa or ktpu-l0 when it names one ([`ALIASES`]).

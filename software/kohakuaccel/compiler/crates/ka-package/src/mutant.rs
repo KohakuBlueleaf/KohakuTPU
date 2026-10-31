@@ -4,11 +4,14 @@
 //! points compile out.
 
 #[cfg(feature = "mutants")]
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+#[cfg(feature = "mutants")]
+use std::collections::BTreeSet;
 
 #[cfg(feature = "mutants")]
 thread_local! {
     static ACTIVE: Cell<Option<&'static str>> = const { Cell::new(None) };
+    static SEEN: RefCell<Option<BTreeSet<String>>> = const { RefCell::new(None) };
 }
 
 /// Whether mutant `name` is active on this thread.
@@ -16,6 +19,7 @@ thread_local! {
 pub fn on(name: &str) -> bool {
     #[cfg(feature = "mutants")]
     {
+        note(name);
         ACTIVE.with(|a| a.get() == Some(name))
     }
     #[cfg(not(feature = "mutants"))]
@@ -23,6 +27,26 @@ pub fn on(name: &str) -> bool {
         let _ = name;
         false
     }
+}
+
+/// A point asked after `name`, kept while [`watch`] holds on this thread.
+#[cfg(feature = "mutants")]
+pub fn note(name: &str) {
+    SEEN.with(|s| {
+        if let Some(seen) = s.borrow_mut().as_mut() {
+            seen.insert(name.to_string());
+        }
+    });
+}
+
+/// `f()` and every mutant its points asked after on this thread: a mutant
+/// none of them asked after cannot change what `f` makes.
+#[cfg(feature = "mutants")]
+pub fn watch<T>(f: impl FnOnce() -> T) -> (T, BTreeSet<String>) {
+    SEEN.with(|s| *s.borrow_mut() = Some(BTreeSet::new()));
+    let got = f();
+    let seen = SEEN.with(|s| s.borrow_mut().take()).unwrap_or_default();
+    (got, seen)
 }
 
 /// `f()` with mutant `name` active on this thread.
