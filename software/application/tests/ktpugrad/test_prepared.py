@@ -24,6 +24,7 @@ from kohakutpu.application.kernels import relayout as RL
 from kohakutpu.application.ktpugrad import run as R
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
+from kohakutpu.application.runtime import rows as RW
 
 RNG = np.random.default_rng(1)
 A = RNG.standard_normal((40, 48)).astype(np.float16)
@@ -233,17 +234,31 @@ def test_mutant_steps_skipped_is_caught_on_the_card(dev, monkeypatch):
 
 
 def test_mutant_second_half_from_the_first_is_caught_on_the_card(dev, monkeypatch):
-    """Down the rows: the twice-read buffer's second reader at the first's
-    offset (the alias reading the top half twice)."""
+    """Down the rows level by level: the twice-read buffer's second reader at
+    the first's offset (the alias reading the top half twice). One package
+    reads no buffer twice, so this tree needs it off."""
     orig = P.rows_kernel
+    moved = []
 
     def unshifted(e, operands, R, W, out, cores, made, hw, alias=None):
         ops = list(operands)
         for i, j in (alias or {}).items():
             ops[i] = ops[j]
+            moved.append(i)
         return orig(e, tuple(ops), R, W, out, cores, made, hw, alias)
 
+    monkeypatch.setenv("KTPU_SINGLE_PACKAGE_AST", "0")
     monkeypatch.setattr(P, "rows_kernel", unshifted)
+    make, want, _ = CASES["rows_down_sum"]
+    got = run_card(make, True, monkeypatch)
+    assert moved
+    assert close(got, want()) > 2e-3
+
+
+def test_mutant_one_package_tree_reads_one_half_is_caught_on_the_card(dev, monkeypatch):
+    """Down the rows in one package: the first level's second half read from
+    the first's rows."""
+    monkeypatch.setattr(RW, "MUTANT", "wrong_order")
     make, want, _ = CASES["rows_down_sum"]
     got = run_card(make, True, monkeypatch)
     assert close(got, want()) > 2e-3
