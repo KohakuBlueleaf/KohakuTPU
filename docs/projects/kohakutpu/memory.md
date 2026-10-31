@@ -71,7 +71,8 @@ in stripes of `dram_interleave_kb` (`dram_homes` of them, `DramMap`), and the
 firmware reads a package through its L1, one line fill at a time, from the
 package's home. The home on each die is `dram_home_of_die`.
 `KOHAKUTPU_PACKAGE_HOME` picks where packages go: `near` (the default) the home
-of the node's die, `any` first fit, and a number or comma list a home per node.
+of the node's die, `any` first fit, and a comma list one home for each of the
+board's nodes. Any other value raises `ValueError` when the device opens.
 On the model, `near` takes a 31-run ViT replay from 196,200 cycles on first fit
 to 161,168; the card has not measured it. One rule
 (`arena.place`) serves the spill and the replay admission: the bytes that fit a

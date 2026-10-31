@@ -98,13 +98,22 @@ class CardMemory:
 
 def package_homes(value: str, board: dict) -> dict:
     """node -> the home its packages start on: `any` none, `near` the home of
-    each node's die, else one home a node (``3`` or ``0,2``)."""
+    each node's die, else one home a node (``3`` or ``0,2``). Anything else
+    raises `ValueError`: a list that names no home for a node, or a home the
+    board does not have."""
     if value == "any":
         return {}
     if value == "near":
         homes = board["dram_home_of_die"]
         return {node: homes[die] for node, die in enumerate(board["chain"])}
-    return dict(enumerate(int(home) for home in value.split(",")))
+    homes = [int(home) for home in value.split(",")]
+    nodes, count = len(board["chain"]), board["dram_homes"]
+    if len(homes) != nodes or not all(0 <= home < count for home in homes):
+        raise ValueError(
+            f"package home {value!r}: one home of 0..{count - 1} for each of "
+            f"{nodes} nodes, or any, or near"
+        )
+    return dict(enumerate(homes))
 
 
 def _arena_cls():

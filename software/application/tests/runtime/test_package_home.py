@@ -152,11 +152,17 @@ def test_each_node_takes_its_own_home():
     assert memory.near(2) is None
 
 
-@pytest.mark.parametrize(
-    "value, homes", [("any", {}), ("3", {0: 3}), ("0,2", {0: 0, 1: 2})]
-)
+@pytest.mark.parametrize("value, homes", [("any", {}), ("0,2", {0: 0, 1: 2})])
 def test_the_knob(value, homes):
-    assert package_homes(value, board("multimesh_v9t6")) == homes
+    assert package_homes(value, board("vlt_v9t6_2n")) == homes
+
+
+@pytest.mark.parametrize("value", ["4", "-1,0", "0", "0,1,2", "0,x", "", "far"])
+def test_a_bad_home_list_is_refused(value):
+    """Out of range, a node left without a home, a third for two nodes, not a
+    number: never a placement on some other address, never `any`."""
+    with pytest.raises(ValueError):
+        package_homes(value, board("vlt_v9t6_2n"))
 
 
 @pytest.mark.parametrize(
@@ -182,12 +188,17 @@ def board(name):
     return json.loads((ROOT / "boards" / f"{name}.json").read_text())
 
 
-def test_the_boards_hold_the_xaches_homes():
+def xache_facts(xache=None):
+    """`gen_board.xache_homes` of the RTL, or of the text at `xache`."""
+    point = f"gen_board.XACHE = pathlib.Path({str(xache)!r}); " if xache else ""
     got = subprocess.run(
         [
             sys.executable,
             "-c",
-            "import json, gen_board; print(json.dumps(gen_board.xache_homes()))",
+            (
+                "import json, pathlib, gen_board; "
+                f"{point}print(json.dumps(gen_board.xache_homes()))"
+            ),
         ],
         cwd=ROOT / "scripts" / "py",
         capture_output=True,
@@ -195,9 +206,38 @@ def test_the_boards_hold_the_xaches_homes():
         timeout=60,
         check=True,
     )
-    facts = json.loads(got.stdout)
+    return json.loads(got.stdout)
+
+
+def board_mismatches(facts):
+    """Boards with an interleave whose homes are not `facts`."""
+    return [
+        path.name
+        for path in (ROOT / "boards").glob("*.json")
+        if "dram_interleave_kb" in (spec := json.loads(path.read_text()))
+        and {k: spec[k] for k in facts} != facts
+    ]
+
+
+def test_the_boards_hold_the_xaches_homes():
+    facts = xache_facts()
     assert facts == {"dram_homes": 4, "dram_home_of_die": [0, 1, 2, 3]}
-    for path in (ROOT / "boards").glob("*.json"):
-        spec = json.loads(path.read_text())
-        if "dram_interleave_kb" in spec:
-            assert {k: spec[k] for k in facts} == facts, path.name
+    assert not board_mismatches(facts)
+
+
+@pytest.mark.parametrize(
+    "held, changed",
+    [
+        ("M = 4, N = 4,", "M = 4, N = 5,"),
+        ("HP = {2'd3, 2'd2, 2'd1, 2'd0}", "HP = {2'd2, 2'd3, 2'd1, 2'd0}"),
+        ("MP = {2'd3, 2'd2, 2'd1, 2'd0}", "MP = {2'd0, 2'd1, 2'd2, 2'd3}"),
+    ],
+)
+def test_a_changed_xache_fails_the_boards(tmp_path, held, changed):
+    """The check reads the RTL: a home count or a partition altered in a copy
+    of it moves the facts away from every board that holds them."""
+    text = (ROOT / "xilinx-fpga" / "xcvu13p" / "bd" / "kx_pbd_4x4.v").read_text()
+    assert held in text
+    xache = tmp_path / "kx_pbd_4x4.v"
+    xache.write_text(text.replace(held, changed))
+    assert board_mismatches(xache_facts(xache))
