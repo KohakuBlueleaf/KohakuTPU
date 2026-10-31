@@ -1,7 +1,7 @@
 //! The spec vectors' mutants ktpu-plan carries (`runners/api.py` `@mutant`):
-//! each vector's plan golden, replayed with each mutant it lists active,
-//! plans or runs differently from the Python planner (or panics); every
-//! listed `tg.lower/*` and `tg.run/*` mutant is one ktpu-plan carries.
+//! each vector's answer or plan golden, replayed with each mutant it lists
+//! active, plans or runs differently from the Python planner (or panics);
+//! every listed `tg.lower/*` and `tg.run/*` mutant is one ktpu-plan carries.
 #![cfg(feature = "mutants")]
 
 mod common;
@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use common::goldens;
 use ktpu_machine::Machine;
-use ktpu_plan::{class, lower, mutant, run, Case, Step};
+use ktpu_plan::{class, lower, mutant, run, spec, Case, Step};
 use serde_json::Value;
 
 fn root() -> PathBuf {
@@ -41,7 +41,7 @@ fn same(case: &Case, m: &Machine) -> bool {
         let Ok(l) = lower::plan(&case.plans[r.plan].uops) else {
             return false;
         };
-        let (x, err) = match run::execute(l, &r.state, m) {
+        let (x, err) = match run::execute_with(l, &r.state, m, common::knobs(&case.case)) {
             Ok(x) => (x, None),
             Err((e, x)) => (x, Some(e)),
         };
@@ -133,7 +133,9 @@ fn every_listed_mutant_changes_its_vectors_plans_or_runs() {
             } else {
                 !case.runs.is_empty()
             };
-            if kills(name, case, &m) {
+            let answer = |mutant| spec::run("tg.run", &v["input"], None, mutant);
+            let moved = v["runner"] == "tg.run" && answer(Some(name)) != answer(None);
+            if moved || kills(name, case, &m) {
                 killed.entry(name).or_default().push(case.case.clone());
             } else if replays {
                 bad.push(format!("{}: {name} survives", case.case));

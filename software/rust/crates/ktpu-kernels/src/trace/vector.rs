@@ -1,9 +1,34 @@
 //! Vector-core statements (DSL.VEC): load, unpack, math, reductions, pack,
 //! store.
 
-use super::{fail, here, Trace, View, R, V};
+use super::{fail, here, Buf, Idx, Trace, View, R, V};
 use g::ValueOp as Op;
 use ktpu_graph as g;
+
+/// A composed load (L2.READ.001): the `read_map` steps, the first logical
+/// value, a row's and a column's logical strides, the real rows if not all.
+pub struct MappedLoad {
+    pub steps: g::Attr,
+    pub at: Idx,
+    pub pitch: i64,
+    pub stride: i64,
+    pub rows: Option<i64>,
+}
+
+impl MappedLoad {
+    fn attrs(&self) -> Vec<(String, g::Attr)> {
+        let mut kw = vec![
+            ("read_map".to_string(), self.steps.clone()),
+            ("read_at".to_string(), g::Attr::Index(self.at.graph())),
+            ("read_pitch".to_string(), g::Attr::Int(self.pitch)),
+            ("read_stride".to_string(), g::Attr::Int(self.stride)),
+        ];
+        if let Some(r) = self.rows {
+            kw.push(("read_rows".to_string(), g::Attr::Int(r)));
+        }
+        kw
+    }
+}
 
 /// A math operand: a number or a traced value.
 #[derive(Clone, Copy, Debug)]
@@ -103,6 +128,17 @@ impl Trace {
         self.set_tiled(v, tiled);
         self.values[v.0].row_bcast = row_bcast;
         Ok(v)
+    }
+
+    /// `xlN = load BUF read_map=..`: GT4 bands of `shape` from `buf`'s source
+    /// values, nothing of them written to DRAM first.
+    #[track_caller]
+    pub fn load_mapped(&mut self, buf: &Buf, read: &MappedLoad, shape: Vec<i64>) -> R<V> {
+        let at = here();
+        self.need(Some(g::UnitKind::Vc), "load")?;
+        let args = vec![g::Operand::View(buf.whole().graph())];
+        let ty = (buf.spec.dtype, shape, g::ValSpace::L1, Some(g::Mode::Gt4));
+        Ok(self.new_value(Op::Load, args, read.attrs(), ty, "xl", None, at))
     }
 
     /// `vN = unpack X` (DSL.VEC.002, .003): to registers, once a value

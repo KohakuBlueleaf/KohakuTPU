@@ -29,6 +29,7 @@ mod lanes;
 pub mod matmul;
 mod narrow;
 pub mod pending;
+pub mod reads;
 pub mod rows;
 mod window;
 
@@ -47,12 +48,16 @@ pub struct Knobs {
 
 impl Knobs {
     /// The contraction knobs the environment resolves
-    /// (`matmul::Knobs::resolve`), the others' defaults.
+    /// (`matmul::Knobs::resolve`), the others' defaults; reads materialized,
+    /// as the plan goldens hold them.
     pub fn resolve() -> Self {
         Self {
             matmul: ktpu_kernels::gen::matmul::Knobs::resolve(),
             rows: reductions::defaults(),
-            forms: prepared::defaults(),
+            forms: prepared::Knobs {
+                composed: prepared::Composed::Off,
+                ..prepared::defaults()
+            },
         }
     }
 }

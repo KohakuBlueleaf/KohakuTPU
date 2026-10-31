@@ -9,7 +9,8 @@ use std::rc::Rc;
 use ktpu_graph as g;
 use ktpu_machine::Machine;
 
-use super::{prepared, relayout, vector as v, Hw};
+use super::prepared::{self, Read};
+use super::{relayout, vector as v, Hw};
 use crate::expr::{self, Expr, OpName, RedOp, E};
 use crate::kernel::{build, Kernel, Port};
 use crate::mutants;
@@ -156,7 +157,7 @@ fn emit(
         hw.band
     };
     let pl = v::plan(ops, dst.kind, r, w, None, None, quantum, hw)?;
-    let bufs = v::Bufs { ins, out };
+    let bufs = v::Bufs::plain(ins, out);
     for (sp, row, tail) in v::stages(&pl, r, quantum) {
         match tail {
             Some(rows) => v::tail_band(t, &bufs, e, ops, dst, &sp, row, rows, w, hw)?,
@@ -330,8 +331,11 @@ pub fn column_tree_kernel(
     };
     let plain = ports(ops, r, w, &out_shape, &hw)?;
     let names: Vec<String> = plain.0.iter().map(|p| p.name.clone()).collect();
-    let plans = made;
-    let made = prepared::made_inputs(plans);
+    let plans: BTreeMap<usize, Read> = made
+        .iter()
+        .map(|(i, p)| (*i, Read::Materialized(p.clone())))
+        .collect();
+    let made = prepared::made_inputs(&plans);
     let ((ports, given), shapes) = prepared::made_ports(plain, &made, m)?;
     let built: Vec<String> = ports.iter().map(|p| p.name.clone()).collect();
     let mut key = vec![
@@ -345,7 +349,7 @@ pub fn column_tree_kernel(
         mode_py(),
     ];
     if !made.is_empty() {
-        key.push(prepared::made_key(plans));
+        key.push(prepared::made_key(&plans));
     }
     let key = name("rows", key);
     let mode = mode();

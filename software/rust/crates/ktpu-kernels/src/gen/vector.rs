@@ -13,6 +13,7 @@ use crate::mutants;
 use crate::pyrepr::{name, Py};
 use crate::trace::buffer::{f16, sl, spec, ALL};
 use crate::trace::control::At;
+use crate::trace::vector::MappedLoad;
 use crate::trace::{fail, Arg, Buf, Idx, Trace, R};
 use ktpu_graph as g;
 use ktpu_machine::Machine;
@@ -125,6 +126,17 @@ impl Operand {
             self.offset.div_euclid(self.pitch),
             self.offset.rem_euclid(self.pitch),
         ))
+    }
+
+    /// The logical strides of a row and a column of its read: a statistic
+    /// a value a row, a column one row repeated, a scalar one value.
+    pub fn logical_strides(&self) -> (i64, i64) {
+        match self.kind {
+            Kind::Full | Kind::Tile => (self.pitch, 1),
+            Kind::Row => (1, 0),
+            Kind::Col => (0, 1),
+            Kind::Scalar => (0, 0),
+        }
     }
 }
 
@@ -432,10 +444,31 @@ pub fn port_shape(o: &Operand, rp: i64, w: i64, hw: &Hw) -> R<Vec<i64>> {
     Ok(shape)
 }
 
-/// The rows kernel's buffers: `in0..` and `out`.
+/// A composed operand's read: its `read_map` steps, the real rows of a band
+/// when only some are.
+#[derive(Clone, Debug)]
+pub struct Mapped {
+    pub steps: g::Attr,
+    pub rows: Option<i64>,
+}
+
+/// The rows kernel's buffers: `in0..` and `out`; an operand of `maps` reads
+/// its buffer's source values.
 pub struct Bufs {
     pub ins: Vec<Buf>,
     pub out: Buf,
+    pub maps: HashMap<usize, Mapped>,
+}
+
+impl Bufs {
+    /// Every operand read as it lies.
+    pub fn plain(ins: Vec<Buf>, out: Buf) -> Bufs {
+        Bufs {
+            ins,
+            out,
+            maps: HashMap::new(),
+        }
+    }
 }
 
 /// One rows stage (`rows_stage`): one phase a column block, its rows split
@@ -521,7 +554,7 @@ pub fn prologue(
 ) -> R<HashMap<usize, Arg>> {
     let mut pro = HashMap::new();
     for (i, o) in operands.iter().enumerate() {
-        if o.kind == Kind::Col {
+        if o.kind == Kind::Col && !bufs.maps.contains_key(&i) {
             let lo = col.add(o.offset + cb * pl.wc);
             let l = t.load(&bufs.ins[i].at(&[sl(&lo, lo.add(pl.wc))])?, true)?;
             pro.insert(i, Arg::Val(t.unpack(l, None)?));
@@ -567,6 +600,22 @@ pub fn rows_block(
     for (i, o) in operands.iter().enumerate() {
         let buf = &bufs.ins[i];
         let (r, c) = &at.ins[i];
+        if let Some(mapped) = bufs.maps.get(&i) {
+            let (pitch, stride) = o.logical_strides();
+            let read = MappedLoad {
+                steps: mapped.steps.clone(),
+                at: r
+                    .mul(pitch)
+                    .add(c.mul(stride))
+                    .add(o.offset + col0 * stride),
+                pitch,
+                stride,
+                rows: mapped.rows,
+            };
+            let shape = vec![pl.rows, pl.wc];
+            vals.insert(i, Arg::Val(t.load_mapped(buf, &read, shape)?));
+            continue;
+        }
         match o.kind {
             Kind::Full | Kind::Tile => {
                 let (rr, cc) = o.divmod()?;
@@ -732,10 +781,7 @@ pub fn rows_kernel(
         ],
     );
     let k = build(&key, m, ports, given, |t, b| {
-        let bufs = Bufs {
-            ins: b[..operands.len()].to_vec(),
-            out: b[operands.len()].clone(),
-        };
+        let bufs = Bufs::plain(b[..operands.len()].to_vec(), b[operands.len()].clone());
         for (sp, row0, rows) in &parts {
             match rows {
                 None => rows_stage(
@@ -777,7 +823,13 @@ pub(super) fn tail_band(
 ) -> R<()> {
     let mut ins = bufs.ins.clone();
     let mut ops = operands.to_vec();
+    let mut maps = bufs.maps.clone();
     for (i, o) in operands.iter().enumerate() {
+        if let Some(mapped) = maps.get_mut(&i) {
+            mapped.rows = Some(rows);
+            ops[i].offset += row0 * o.logical_strides().0;
+            continue;
+        }
         if o.kind == Kind::Row {
             let s = t.buffer(&[pl.rows], o.dtype, vec![])?;
             let at = o.offset + row0;
@@ -841,6 +893,7 @@ pub(super) fn tail_band(
     let inner = Bufs {
         ins,
         out: s.clone(),
+        maps,
     };
     rows_stage(t, &inner, e, &ops, &tail, pl, 1, &Idx::Int(0), None, hw)?;
     if out.kind == Kind::Row && pl.nblk > 1 {

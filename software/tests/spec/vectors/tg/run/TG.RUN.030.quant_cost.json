@@ -1,0 +1,58 @@
+{
+ "clause": "TG.RUN.030",
+ "tier": 0,
+ "runner": "tg.run",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "CX": [
+    2,
+    3,
+    6,
+    6
+   ],
+   "CW": [
+    4,
+    3,
+    3,
+    3
+   ]
+  },
+  "make": "T(CX).conv2d(T(CW))",
+  "knobs": {
+   "COMPOSED": "cost"
+  },
+  "facts": [
+   "runs",
+   "composed"
+  ]
+ },
+ "expect": {
+  "runs": [
+   "quant",
+   "quant",
+   "mm",
+   "walk",
+   "transpose",
+   "walk"
+  ],
+  "composed": [
+   [
+    "quant",
+    [
+     0
+    ]
+   ],
+   [
+    "quant",
+    [
+     0
+    ]
+   ]
+  ]
+ },
+ "mutants": [
+  "api.forms/composed_never"
+ ]
+}

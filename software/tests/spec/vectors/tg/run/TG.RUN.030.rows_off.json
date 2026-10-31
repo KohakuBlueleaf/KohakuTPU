@@ -1,0 +1,38 @@
+{
+ "clause": "TG.RUN.030",
+ "tier": 0,
+ "runner": "tg.run",
+ "machine": "multimesh_v9t6",
+ "status": "frozen",
+ "input": {
+  "arrays": {
+   "A40": [
+    8,
+    40
+   ],
+   "R40": [
+    40
+   ],
+   "S40": [
+    40
+   ]
+  },
+  "make": "T(A40) + T(R40) + T(S40)",
+  "knobs": {
+   "COMPOSED": "off"
+  },
+  "facts": [
+   "runs",
+   "composed"
+  ]
+ },
+ "expect": {
+  "runs": [
+   "rows"
+  ],
+  "composed": []
+ },
+ "mutants": [
+  "api.forms/composed_always"
+ ]
+}

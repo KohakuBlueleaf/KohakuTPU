@@ -88,9 +88,9 @@ def _launch(dev, e, operands, binds, R, W, out, info, cores):
 
 
 def _prepared(dev, e, operands, binds, R, W, out, out_at, info):
-    """One launch of `e` with each bound `forms.Pending` made inside it
-    (the generator `prepared.rows_kernel`); None when a pending one's steps
-    are not planned (nothing run)."""
+    """One launch of `e` with each bound `forms.Pending` read composed or made
+    inside it (the generator `prepared.rows_kernel`); None when neither runs
+    (nothing run)."""
     made, steps, alias, first = {}, {}, {}, {}
     for i in range(len(operands)):
         b = binds.get(f"in{i}")
@@ -101,31 +101,39 @@ def _prepared(dev, e, operands, binds, R, W, out, out_at, info):
             alias[i] = first[id(b)]
             continue
         plans = FM.plans_of(dev, b.steps)
-        if plans is None:
+        if plans is None and FM.COMPOSED == "off":
             return None
         made[i], steps[i], first[id(b)] = plans, b.steps, i
     plain = {k: v for k, v in binds.items() if not isinstance(v, FM.Pending)}
     ops, plain = _based(list(operands), plain, "in")
     ops = [operands[i] if i in made or i in alias else o for i, o in enumerate(ops)]
+    arguments = {
+        "e": FM.generated.expr(e),
+        "operands": [vars(o) for o in ops],
+        "R": R,
+        "W": W,
+        "out": vars(out),
+        "made": {str(i): [*map(FM.made_by, s)] for i, s in steps.items()},
+        "alias": {str(i): j for i, j in alias.items()},
+    }
+    read = dict(arguments, composed=sorted(made))
+    planned = all(p is not None for p in made.values())
+    launches = (
+        [{"gen": "prepared.rows_kernel", "args": arguments}]
+        if planned
+        else [FM.relayout_call(s) for ss in steps.values() for s in ss]
+    )
     plain["out"] = out_at
+    info = dict(info, prepared=sorted(made))
+    if FM.composed(dev, {"gen": "prepared.rows_kernel", "args": read}, launches):
+        plain |= {f"x{i}": ss[0].src for i, ss in steps.items()}
+        return FM.generated.launch(dev, "prepared.rows_kernel", read, plain, info=info)
+    if not planned:
+        return None
     for i, plans in made.items():
         plain[f"x{i}"] = steps[i][0].src
         plain |= FM.step_binds(dev, plans, f"p{i}_")
-    return FM.generated.launch(
-        dev,
-        "prepared.rows_kernel",
-        {
-            "e": FM.generated.expr(e),
-            "operands": [vars(o) for o in ops],
-            "R": R,
-            "W": W,
-            "out": vars(out),
-            "made": {str(i): [s.made_by() for s in steps[i]] for i in made},
-            "alias": {str(i): j for i, j in alias.items()},
-        },
-        plain,
-        info=dict(info, prepared=sorted(made)),
-    )
+    return FM.generated.launch(dev, "prepared.rows_kernel", arguments, plain, info=info)
 
 
 def _based(operands, binds: dict, port: str) -> tuple:

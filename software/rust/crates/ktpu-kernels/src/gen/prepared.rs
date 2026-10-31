@@ -21,6 +21,36 @@ pub const SEPARATE_MUTANT: &str = "prepared/separate";
 /// A made operand written to a line buffer and copied into its port.
 pub const COPIED_MUTANT: &str = "kernels.prepared/operand-copied";
 
+/// The reverse mutant of the [`Composed`] default.
+pub const MATERIALIZED_MUTANT: &str = "pipe/materialized";
+
+/// When a pending operand's kernel reads it composed (L2.READ.001).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Composed {
+    /// Never: its plans run first.
+    Off,
+    /// Wherever the composed kernel lowers.
+    On,
+    /// Where it lowers and costs no more than materialized.
+    Cost,
+}
+
+impl Composed {
+    pub fn name(self) -> &'static str {
+        match self {
+            Composed::Off => "off",
+            Composed::On => "on",
+            Composed::Cost => "cost",
+        }
+    }
+
+    pub fn named(name: &str) -> Option<Composed> {
+        [Composed::Off, Composed::On, Composed::Cost]
+            .into_iter()
+            .find(|c| c.name() == name)
+    }
+}
+
 /// The planner knobs of pending operands (Python's `runtime/forms.py`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Knobs {
@@ -30,16 +60,75 @@ pub struct Knobs {
     /// A packing's operand is deferred to the packing's kernel when a
     /// measured recipe wins (`forms.PREPARED_QUANT`).
     pub prepared_quant: bool,
+    /// `forms.COMPOSED`.
+    pub composed: Composed,
 }
 
 /// The knobs' defaults: the one source the planner and Python
 /// (`_rs.PREPARED_DEFAULTS`) read; separate relayouts under
-/// [`SEPARATE_MUTANT`].
+/// [`SEPARATE_MUTANT`], no composed read under [`MATERIALIZED_MUTANT`].
 pub fn defaults() -> Knobs {
     Knobs {
         prepared: !mutants::on(SEPARATE_MUTANT),
         prepared_quant: true,
+        composed: if mutants::on(MATERIALIZED_MUTANT) {
+            Composed::Off
+        } else {
+            Composed::On
+        },
     }
+}
+
+/// How a kernel reads a pending operand.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Read {
+    /// Its plans run in the kernel first, into a scratch of the operand.
+    Materialized(Vec<relayout::Plan>),
+    /// Its steps stated on the loads and packs that read it (L2.READ.001):
+    /// the source port alone, no table, no scratch.
+    Composed(Vec<relayout::Logical>),
+}
+
+impl Read {
+    /// The form in a kernel's name.
+    pub fn py(&self) -> Py {
+        match self {
+            Read::Materialized(plans) => Py::Tuple(plans.iter().map(shape_repr).collect()),
+            Read::Composed(steps) => Py::Tuple(vec![
+                Py::str("composed"),
+                Py::Tuple(steps.iter().map(relayout::Logical::py).collect()),
+            ]),
+        }
+    }
+
+    /// `read_map`'s value.
+    pub fn steps(steps: &[relayout::Logical]) -> g::Attr {
+        g::Attr::Tuple(steps.iter().map(relayout::Logical::attr).collect())
+    }
+
+    /// Words of its source port.
+    fn source_words(&self, lanes: i64) -> i64 {
+        match self {
+            Read::Materialized(plans) => plans[0].src_words,
+            Read::Composed(steps) => cdiv(steps[0].n, lanes),
+        }
+    }
+}
+
+/// The operands of `made` read composed, as a rows stage takes them.
+pub fn mapped(made: &BTreeMap<usize, Read>) -> HashMap<usize, v::Mapped> {
+    made.iter()
+        .filter_map(|(i, read)| match read {
+            Read::Composed(steps) => Some((
+                *i,
+                v::Mapped {
+                    steps: Read::steps(steps),
+                    rows: None,
+                },
+            )),
+            Read::Materialized(_) => None,
+        })
+        .collect()
 }
 
 /// Whether the final plan addresses its destination in words, not row
@@ -57,36 +146,39 @@ pub fn direct_destination(plans: &[relayout::Plan]) -> bool {
 /// Ports and the spec each is given.
 pub type Ports = (Vec<Port>, Vec<(String, g::Spec)>);
 
-/// An input a kernel makes from its plans' steps: the port it stands for,
-/// the steps' port prefix, the plans.
+/// An input a kernel reads through relayouts: the port it stands for, the
+/// steps' port prefix, its read.
 pub struct MadeInput<'a> {
     pub port: String,
     pub prefix: String,
-    pub plans: &'a [relayout::Plan],
+    pub read: &'a Read,
 }
 
-/// The inputs `made` (operand index -> plans) of a kernel whose operand i
+/// The inputs `made` (operand index -> read) of a kernel whose operand i
 /// is port `in{i}` (`p{i}_` its steps').
-pub fn made_inputs(made: &BTreeMap<usize, Vec<relayout::Plan>>) -> Vec<MadeInput<'_>> {
+pub fn made_inputs(made: &BTreeMap<usize, Read>) -> Vec<MadeInput<'_>> {
     made.iter()
-        .map(|(i, plans)| MadeInput {
+        .map(|(i, read)| MadeInput {
             port: format!("in{i}"),
             prefix: format!("p{i}_"),
-            plans,
+            read,
         })
         .collect()
 }
 
-/// `prepared.input_ports`: `plans`' source `{prefix}x` and their tables.
-pub fn input_ports(plans: &[relayout::Plan], prefix: &str, m: &Machine) -> R<Ports> {
-    let x = [plans[0].src_words, relayout::Hw::of(m).lanes];
+/// `prepared.input_ports`: `read`'s source `{prefix}x` and any tables.
+pub fn input_ports(read: &Read, prefix: &str, m: &Machine) -> R<Ports> {
+    let lanes = relayout::Hw::of(m).lanes;
+    let x = [read.source_words(lanes), lanes];
     let (mut ports, mut given) = (
         vec![Port::input(&format!("{prefix}x"), &x, g::Dtype::F16)],
         vec![(format!("{prefix}x"), f16(&x)?)],
     );
-    let (tp, tg) = relayout::step_ports(plans, prefix)?;
-    ports.extend(tp);
-    given.extend(tg);
+    if let Read::Materialized(plans) = read {
+        let (tp, tg) = relayout::step_ports(plans, prefix)?;
+        ports.extend(tp);
+        given.extend(tg);
+    }
     Ok((ports, given))
 }
 
@@ -107,7 +199,7 @@ pub fn made_ports(
         given.retain(|(n, _)| *n != mi.port);
     }
     for mi in made {
-        let (tp, tg) = input_ports(mi.plans, &mi.prefix, m)?;
+        let (tp, tg) = input_ports(mi.read, &mi.prefix, m)?;
         ports.extend(tp);
         given.extend(tg);
     }
@@ -147,7 +239,8 @@ pub fn input_buffer(
 }
 
 /// The buffers of a kernel built from [`made_ports`], in its ports' order
-/// before (`names`), each made input built first ([`input_buffer`]).
+/// before (`names`), each materialized input built first ([`input_buffer`]),
+/// a composed one its source.
 pub fn made_bufs(
     t: &mut Trace,
     names: &[String],
@@ -159,29 +252,27 @@ pub fn made_bufs(
 ) -> R<Vec<Buf>> {
     let mut p: HashMap<String, Buf> = built.iter().cloned().zip(b.iter().cloned()).collect();
     for (mi, shape) in made.iter().zip(shapes) {
-        let x = input_buffer(t, mi.plans, &p, &mi.prefix, shape, m)?;
+        let x = match mi.read {
+            Read::Materialized(plans) => input_buffer(t, plans, &p, &mi.prefix, shape, m)?,
+            Read::Composed(_) => p[&format!("{}x", mi.prefix)].clone(),
+        };
         p.insert(mi.port.clone(), x);
     }
     Ok(names.iter().map(|n| p[n].clone()).collect())
 }
 
-/// The kernel-name part of `made` (`prepkey`): `((i, (plan shapes..)),..)`.
-pub fn made_key(made: &BTreeMap<usize, Vec<relayout::Plan>>) -> Py {
+/// The kernel-name part of `made` (`prepkey`): `((i, read),..)`.
+pub fn made_key(made: &BTreeMap<usize, Read>) -> Py {
     Py::Tuple(
         made.iter()
-            .map(|(i, ps)| {
-                Py::Tuple(vec![
-                    Py::Int(*i as i64),
-                    Py::Tuple(ps.iter().map(shape_repr).collect()),
-                ])
-            })
+            .map(|(i, read)| Py::Tuple(vec![Py::Int(*i as i64), read.py()]))
             .collect(),
     )
 }
 
-/// [`v::rows_kernel`] of `e` with operand i of `made` made by its plans
-/// (the first from port `x{i}`, tables `p{i}_index{j}` / `p{i}_mask{j}`)
-/// into a scratch shaped as its port, operand i of `alias` reading operand
+/// [`v::rows_kernel`] of `e` with operand i of `made` read from port `x{i}`
+/// by its [`Read`] (materialized: tables `p{i}_index{j}` / `p{i}_mask{j}`,
+/// a scratch shaped as its port), operand i of `alias` reading operand
 /// `alias[i]`'s.
 #[allow(clippy::too_many_arguments)]
 pub fn rows_kernel(
@@ -190,7 +281,7 @@ pub fn rows_kernel(
     r: i64,
     w: i64,
     out: &Operand,
-    made: &BTreeMap<usize, Vec<relayout::Plan>>,
+    made: &BTreeMap<usize, Read>,
     alias: &BTreeMap<usize, usize>,
     m: &Machine,
 ) -> R<Kernel> {
@@ -212,13 +303,15 @@ pub fn rows_kernel(
     let mut shapes: BTreeMap<usize, Vec<i64>> = BTreeMap::new();
     for (i, o) in operands.iter().enumerate() {
         let shape = v::port_shape(o, r, w, &hw)?;
-        if let Some(plans) = made.get(&i) {
-            let x = [plans[0].src_words, rl.lanes];
+        if let Some(read) = made.get(&i) {
+            let x = [read.source_words(rl.lanes), rl.lanes];
             ports.push(Port::input(&format!("x{i}"), &x, g::Dtype::F16));
             given.push((format!("x{i}"), f16(&x)?));
-            let (tp, tg) = relayout::step_ports(plans, &format!("p{i}_"))?;
-            ports.extend(tp);
-            given.extend(tg);
+            if let Read::Materialized(plans) = read {
+                let (tp, tg) = relayout::step_ports(plans, &format!("p{i}_"))?;
+                ports.extend(tp);
+                given.extend(tg);
+            }
         }
         if made.contains_key(&i) || alias.contains_key(&i) {
             let j = alias.get(&i).copied().unwrap_or(i);
@@ -261,7 +354,12 @@ pub fn rows_kernel(
     build(&key, m, ports, given, |t, b| {
         let p: HashMap<String, Buf> = names.iter().cloned().zip(b.iter().cloned()).collect();
         let mut ins: BTreeMap<usize, Buf> = BTreeMap::new();
-        for (i, plans) in made {
+        let mut maps = mapped(made);
+        for (i, read) in made {
+            let Read::Materialized(plans) = read else {
+                ins.insert(*i, p[&format!("x{i}")].clone());
+                continue;
+            };
             let (x, prefix) = (&p[&format!("x{i}")], format!("p{i}_"));
             let shape = &shapes[i];
             let values: i64 = shape.iter().product();
@@ -289,12 +387,16 @@ pub fn rows_kernel(
         for (i, j) in alias {
             let b = ins[j].clone();
             ins.insert(*i, b);
+            if let Some(read) = maps.get(j).cloned() {
+                maps.insert(*i, read);
+            }
         }
         let bufs = Bufs {
             ins: (0..operands.len())
                 .map(|i| ins.get(&i).unwrap_or_else(|| &p[&format!("in{i}")]).clone())
                 .collect(),
             out: p["out"].clone(),
+            maps,
         };
         for (sp, row0, rows) in &parts {
             match rows {

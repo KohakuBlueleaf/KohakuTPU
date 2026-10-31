@@ -25,6 +25,13 @@ pub fn parse(json: &str) -> Result<Graph, Refusal> {
     serde_json::from_str(json).map_err(|e| Refusal::new("DSL.GRAPH.001", format!("{e}")))
 }
 
+/// The cycles `graph` compiles to on `machine` (`ktpu_l2::cost`), or the
+/// reason it does not lower.
+pub fn cycles(graph: &Graph, machine: &Machine) -> Result<i64, Refusal> {
+    ktpu_l2::cost::of_program(&program(graph, machine)?, machine)
+        .map_err(|e| Refusal::new("L2.COST.001", e.to_string()))
+}
+
 /// The stage: graph JSON to the L2 program, for `machine`.
 pub fn to_l2(graph_json: &str, machine: &Machine) -> Result<ktpu_l2::Program, Refusal> {
     program(&parse(graph_json)?, machine)

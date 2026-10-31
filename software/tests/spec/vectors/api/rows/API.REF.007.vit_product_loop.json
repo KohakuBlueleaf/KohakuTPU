@@ -6,6 +6,7 @@
  "status": "frozen",
  "input": {
   "arrays": {"x": [197, 197]},
+  "knobs": {"COMPOSED": "off"},
   "source": "def facts():\n    y = kp.tensor(x).prod(-1).realize()\n    return {'shape': list(y.shape), 'ran': bool(DEV.runs)}\n"
  },
  "expect": {"shape": [197], "ran": true},

@@ -3,6 +3,8 @@
 //! an innermost reduction first into a statistic.
 
 use super::*;
+use crate::run::reads;
+use ktpu_kernels::gen::prepared::Composed;
 
 #[cfg(test)]
 mod deletion;
@@ -411,7 +413,7 @@ impl Runner<'_> {
         out_at: &Addr,
         info: &Value,
     ) -> Result<bool, Refusal> {
-        let mut made: BTreeMap<usize, (usize, Vec<relayout::Plan>)> = BTreeMap::new();
+        let mut made: BTreeMap<usize, (usize, Option<Vec<relayout::Plan>>)> = BTreeMap::new();
         let mut alias: BTreeMap<usize, usize> = BTreeMap::new();
         for i in 0..ops.len() {
             let Some(Bound::Pend(id)) = binds.get(&format!("in{i}")) else {
@@ -422,10 +424,12 @@ impl Runner<'_> {
                 continue;
             }
             let steps = self.pending[*id].steps.clone();
-            let Some(plans) = self.plans_of(&steps)? else {
-                return Ok(false);
-            };
-            made.insert(i, (*id, plans));
+            made.insert(i, (*id, self.plans_of(&steps)?));
+        }
+        let planned = made.values().all(|(_, plans)| plans.is_some());
+        let mode = self.knobs.forms.composed;
+        if !planned && mode == Composed::Off {
+            return Ok(false);
         }
         let mut plain: BTreeMap<String, Addr> = binds
             .iter()
@@ -465,7 +469,7 @@ impl Runner<'_> {
             .iter()
             .map(|(i, j)| (i.to_string(), json!(j)))
             .collect();
-        let call = Call {
+        let mut call = Call {
             gen: "prepared.rows_kernel".into(),
             args: json!({
                 "e": expr_arg(e),
@@ -477,6 +481,21 @@ impl Runner<'_> {
                 "alias": alias_arg,
             }),
         };
+        let mut read = call.clone();
+        read.args["composed"] = json!(made.keys().collect::<Vec<_>>());
+        let launches: Vec<Call> = if planned {
+            vec![call.clone()]
+        } else {
+            let steps = made.values().flat_map(|(id, _)| &self.pending[*id].steps);
+            steps.map(reads::relayout_call).collect()
+        };
+        let cost = |c: &Call| reads::cycles(c, self.m);
+        let composed = reads::composed(mode, &read, &launches, self.m, &cost);
+        if composed {
+            call = read;
+        } else if !planned {
+            return Ok(false);
+        }
         plain.insert("out".into(), out_at.clone());
         for (i, (id, plans)) in &made {
             let src = self.pending[*id].steps[0]
@@ -484,7 +503,10 @@ impl Runner<'_> {
                 .clone()
                 .expect("a first step reads a source");
             plain.insert(format!("x{i}"), src);
-            self.step_binds(plans, &format!("p{i}_"), &mut plain);
+            if !composed {
+                let plans = plans.as_ref().expect("a planned read");
+                self.step_binds(plans, &format!("p{i}_"), &mut plain);
+            }
         }
         let mut info = info.clone();
         info["prepared"] = json!(made.keys().collect::<Vec<_>>());

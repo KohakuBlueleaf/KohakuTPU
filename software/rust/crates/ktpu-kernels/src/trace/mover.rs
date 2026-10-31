@@ -13,6 +13,7 @@ enum Kw<'a> {
     Int(Option<i64>),
     Walk(Option<&'a Walk>),
     Index(&'a View),
+    Attr(&'a g::Attr),
 }
 
 /// A quant's keywords after `head`, in the order the DSL writes them; a
@@ -57,6 +58,7 @@ impl Trace {
                     Kw::Int(Some(i)) => g::Attr::Int(*i),
                     Kw::Walk(Some(w)) => g::Attr::Walk(w.to_vec()),
                     Kw::Index(v) => g::Attr::View(v.graph()),
+                    Kw::Attr(a) => (*a).clone(),
                 };
                 Some((k.to_string(), a))
             })
@@ -128,6 +130,23 @@ impl Trace {
             false => schedule,
         };
         let kw = quant_kw(("finite", Kw::Int(finite.then_some(1))), schedule, pad);
+        self.mover(g::MoverOp::Quant, dst, Some(src), &kw, here())
+    }
+
+    /// [`Trace::quant_scheduled`] of `src`'s source values through a composed
+    /// read (L2.READ.001): `read` its `read_map`, `read_shape`, `read_batch`.
+    #[track_caller]
+    pub fn quant_mapped(
+        &mut self,
+        dst: &View,
+        src: &View,
+        finite: bool,
+        schedule: &[(&str, i64)],
+        read: &[(&str, g::Attr)],
+    ) -> R<()> {
+        let mut kw = vec![("finite", Kw::Int(finite.then_some(1)))];
+        kw.extend(schedule.iter().map(|&(k, v)| (k, Kw::Int(Some(v)))));
+        kw.extend(read.iter().map(|(k, a)| (*k, Kw::Attr(a))));
         self.mover(g::MoverOp::Quant, dst, Some(src), &kw, here())
     }
 

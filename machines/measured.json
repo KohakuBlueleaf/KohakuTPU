@@ -7,9 +7,25 @@
     "value": [330, 5],
     "source": "the same fills beside a four-cluster matmul, Verilated card_v9t3_1n; no v9t6 figure yet (RUL.064)"
   },
+  "vc.launch_gap": {
+    "value": 1649,
+    "source": "idle cycles a launch adds: TG.RUN.015's read as one launch (idle 2346) and as two (idle 3995), Verilated card_v9t6_1n"
+  },
+  "vc.launch_front": {
+    "value": 1900,
+    "source": "cycles a run spends outside its steps: head, copy, bind and barrier, 1707-2310 over nine kernels of 2 to 62 KB, Verilated card_v9t6_1n"
+  },
+  "vc.step_cycles": {
+    "value": 700,
+    "source": "cycles the node takes on a send or a load: best fit of ktpu_l2::cost over 113 kernels of LeNet, an MLP and a ViT block (600 to 800 equal), Verilated card_v9t6_1n"
+  },
   "mg.shared_b_max": {
     "value": 64,
     "source": "largest shared B fill the follower receives right, Verilated build/v9f card, 2026-10-12 (96 and 128 entries wrong)"
+  },
+  "mover.copy_cost": {
+    "value": [9, 1],
+    "source": "cycles a contiguous run, cycles a 32-byte word: four move-only kernels of 15000 to 39200 words at runs of 1 to 28 words, each within 2 %, Verilated card_v9t6_1n"
   },
   "mover.one_word_runs": {
     "value": false,

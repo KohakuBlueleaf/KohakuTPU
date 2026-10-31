@@ -124,7 +124,8 @@ def test_a_lenet_step_graph_over_dram_is_captured(monkeypatch, window):
         with D.attached(dev):
             try:
                 lenet_steps(6)
-            except OutOfMemory:
+            except (OutOfMemory, MemoryError):
+                # A capture's buffers: tinygrad's allocator rewords the refusal.
                 assert not window
                 return
         assert window

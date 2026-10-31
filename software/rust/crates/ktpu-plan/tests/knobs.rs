@@ -127,11 +127,15 @@ fn knob_recording_reverse_witness() {
             }
             runs += 1;
             let l = lower::plan(&case.plans[r.plan].uops).expect("a run's ast plans");
-            let x = ktpu_kernels::mutants::with(matmul::UNRECORDED_MUTANT, || {
-                match run::execute(l, &r.state, &m) {
+            let x =
+                ktpu_kernels::mutants::with(matmul::UNRECORDED_MUTANT, || match run::execute_with(
+                    l,
+                    &r.state,
+                    &m,
+                    common::knobs(&case.case),
+                ) {
                     Ok(x) | Err((_, x)) => x,
-                }
-            });
+                });
             let (have, want) = (common::normal(&x.steps, true), common::want(&r.steps, true));
             let at = have.iter().zip(&want).position(|(a, b)| a != b);
             let why = at.map(|i| common::first_diff(&have[i], &want[i]));

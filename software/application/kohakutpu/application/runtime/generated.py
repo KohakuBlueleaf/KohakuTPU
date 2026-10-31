@@ -53,6 +53,8 @@ def launch(dev, generator, arguments, bindings, kind="dsl", info=None):
         error.add_note(f"{generator}: {arguments}")
         raise
     run.info.setdefault("compiled", compiled)
+    if arguments.get("composed"):
+        run.info["composed"] = arguments["composed"]
     return run
 
 

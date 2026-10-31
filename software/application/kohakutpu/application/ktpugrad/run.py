@@ -1547,7 +1547,7 @@ def _lay(dev, plan: Plan, bufs, tmps, c, side, outer, lane, key, defer=None) -> 
             N = st.nbytes // 2
             at = FM.f16(dev, st, np.float16, N)
             steps = (FM.Step(at, N, walk, off + voff // 2, dwalk, 0, n),)
-        if not FM.costs.has_steps(steps, dev.machine.board):
+        if FM.COMPOSED == "off" and not FM.costs.has_steps(steps, dev.machine.board):
             return _lay(dev, plan, bufs, tmps, c, side, outer, lane, key, defer=False)
         pend = FM.Pending(dev, 2 * max(n, 16), steps)
         tmps.append(pend)
@@ -2478,7 +2478,8 @@ def _pending(dev, plan: Plan, acc: Access, order, bufs, side) -> FM.Pending | No
     group = mm.tm // 4 if side == "a" else mm.tn // 4
     batches = mm.bt if side == "a" or not mm.shared else 1
     if (
-        FM.costs.prepared_quant(
+        FM.COMPOSED == "off"
+        and FM.costs.prepared_quant(
             steps,
             Operand("full", pitch=mm.k),
             rows,
@@ -2906,11 +2907,28 @@ def _product_run(
         )
         # The prepared product is the DRAM product: a kernel of no ring.
         depth = MM.resolved(arguments, dev.machine.machine_json)["knobs"]["ring_depth"]
-        if (
-            pending
-            and depth == 0
-            and FM.costs.choose("prepared_mm", recipe, dev.machine.board)
+        plain = pending and depth == 0
+        made = {str(i): [s.made_by() for s in v.steps] for i, v in pending.items()}
+        read = dict(arguments, made=made, composed=sorted(pending))
+        call = {"gen": "matmul.mm_kernel", "args": arguments}
+        steps = [s for v in pending.values() for s in v.steps]
+        if plain and FM.composed(
+            dev,
+            {"gen": "matmul.mm_kernel", "args": read},
+            [*map(FM.relayout_call, steps), call],
         ):
+            for i, v in pending.items():
+                del binds[f"in{i}"]
+                binds[f"p{i}_x"] = v.steps[0].src
+            run = FM.generated.launch(
+                dev,
+                "matmul.mm_kernel",
+                read,
+                binds,
+                kind="matmul",
+                info={"plan": plan.name, "mm": mm},
+            )
+        elif plain and FM.costs.choose("prepared_mm", recipe, dev.machine.board):
             plans = {i: FM.plans_of(dev, v.steps) for i, v in pending.items()}
             arguments["made"] = {
                 str(i): [s.made_by() for s in v.steps] for i, v in pending.items()

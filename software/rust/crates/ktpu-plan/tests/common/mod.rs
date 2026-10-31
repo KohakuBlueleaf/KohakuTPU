@@ -75,14 +75,14 @@ pub fn vectors() -> &'static [Vector] {
     })
 }
 
-/// The knobs golden `case` is recorded at: its vector's (`spec::knobs`),
-/// else the resolved defaults.
+/// The knobs golden `case` is recorded at: its vector's
+/// (`spec::recorded_knobs`), else the resolved defaults.
 pub fn knobs(case: &str) -> run::Knobs {
     vectors()
         .iter()
         .find(|v| v.name == case)
         .map_or_else(run::Knobs::resolve, |v| {
-            spec::knobs(&v.input).expect("a golden's vector names knobs the planner takes")
+            spec::recorded_knobs(&v.input).expect("a golden's vector names knobs the planner takes")
         })
 }
 

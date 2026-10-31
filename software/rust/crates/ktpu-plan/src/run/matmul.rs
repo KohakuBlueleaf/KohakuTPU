@@ -7,11 +7,14 @@
 use std::collections::BTreeMap;
 
 use ktpu_kernels::gen::matmul::{self, Group, Knobs};
+use ktpu_kernels::gen::prepared::Composed;
 use ktpu_machine::{Machine, Refusal, PAIRING};
 use serde_json::{json, Value};
 
 use super::pending::form_error;
-use super::{bound, costs, expr_arg, is_float, item, np_name, Bound, Bufs, Operand, Runner, Step};
+use super::{
+    bound, costs, expr_arg, is_float, item, np_name, reads, Bound, Bufs, Operand, Runner, Step,
+};
 use crate::exec::{rows_key, View};
 use crate::hw::Hw;
 use crate::lower::{Access, Plan, Slot};
@@ -135,8 +138,8 @@ impl Mm {
     }
 }
 
-/// A kernel call's `made` argument and its binds.
-type MadeBinds = (Value, BTreeMap<String, Addr>);
+/// A kernel call's `made` and `composed` arguments and its binds.
+type MadeBinds = (Value, Value, BTreeMap<String, Addr>);
 
 /// `coef` without the ranges of extent one.
 fn live_coef(r: &Runner, coef: &[(Id, i64)]) -> Vec<(Id, i64)> {
@@ -213,6 +216,29 @@ impl Runner<'_> {
         let Some(&id) = self.pending_slots.get(&acc.slot) else {
             return self.packed(&bufs[&acc.slot], &acc.dtype, src, dims, side, groups);
         };
+        let steps = self.pending[id].steps.clone();
+        let holder = self.holder(id);
+        let (rows, cols, rp, cp) = dims;
+        let (g, nk, batches) = groups;
+        let key = json!([
+            "composed_mx7",
+            side,
+            src.json(),
+            rows,
+            cols,
+            rp,
+            cp,
+            g,
+            nk,
+            batches
+        ]);
+        if self.composed_packing(&steps, (&holder, &key), src, dims, side, groups)? {
+            return Ok(Addr {
+                buf: holder,
+                form: key,
+                offset: 0,
+            });
+        }
         if let Some(at) = self.prepared_packing(id, src, dims, side, groups)? {
             return Ok(at);
         }
@@ -223,6 +249,68 @@ impl Runner<'_> {
             offset: 0,
         };
         self.packed(&view, "half", src, dims, side, groups)
+    }
+
+    /// `forms._composed_quant`: whether the packing of `steps` is read
+    /// composed ([`reads::composed`]), into form `key` of `holder` once.
+    #[allow(clippy::too_many_arguments)]
+    fn composed_packing(
+        &mut self,
+        steps: &[Step],
+        (holder, key): (&str, &Value),
+        src: &Operand,
+        (rows, cols, rp, cp): (i64, i64, i64, i64),
+        side: &str,
+        (g, nk, batches): (i64, i64, i64),
+    ) -> Result<bool, Refusal> {
+        let mode = self.knobs.forms.composed;
+        if mode == Composed::Off || !self.knobs.forms.prepared_quant {
+            return Ok(false);
+        }
+        let h = self.hw.halves;
+        let (mut steps, mut qsrc, mut qcols) = (steps.to_vec(), src.clone(), cols);
+        if cols % h != 0 || src.pitch % h != 0 || src.offset % h != 0 {
+            let (r, dp) = (batches * rows, self.hw.whole_halves(cols));
+            steps.push(Step {
+                src: None,
+                n: steps[steps.len() - 1].m,
+                walk: vec![(r, src.pitch), (cols, 1)],
+                at: src.offset,
+                dwalk: vec![(r, dp), (cols, 1)],
+                dat: 0,
+                m: r * dp,
+            });
+            qsrc = Operand {
+                pitch: dp,
+                rows: r,
+                ..Operand::new("full")
+            };
+            qcols = dp;
+        }
+        let quant = Call {
+            gen: "matmul.quant_kernel".into(),
+            args: json!({
+                "src": qsrc.json(), "rows": rows, "cols": qcols, "rp": rp, "cp": cp,
+                "side": side, "g": g, "nk": nk, "batches": batches,
+            }),
+        };
+        let mut read = quant.clone();
+        read.args["prepared"] = steps.iter().map(Step::made_by).collect();
+        read.args["composed"] = json!([0]);
+        let mut made: Vec<Call> = steps.iter().map(reads::relayout_call).collect();
+        made.push(quant);
+        let cost = |c: &Call| reads::cycles(c, self.m);
+        if !reads::composed(mode, &read, &made, self.m, &cost) {
+            return Ok(false);
+        }
+        if !self.x.store(holder).has(key) {
+            let source = steps[0].src.clone().expect("a first step reads a source");
+            let f = self.x.form(holder, key, batches * rp * cp);
+            let binds = BTreeMap::from([("p_x".to_string(), source), ("q".to_string(), f)]);
+            self.x.launch(read, "quant", json!({}), binds);
+            self.x.made(holder, key);
+        }
+        Ok(true)
     }
 
     /// `forms._prepared_quant` kept on the pending buffer's holder: its
@@ -371,6 +459,24 @@ impl Runner<'_> {
         let h = self.hw.halves;
         if cols % h != 0 || src.pitch % h != 0 || src.offset % h != 0 {
             let (r, dp) = (batches * rows, self.hw.whole_halves(cols));
+            let step = Step {
+                src: Some(base.clone()),
+                n,
+                walk: vec![(r, src.pitch), (cols, 1)],
+                at: src.offset,
+                dwalk: vec![(r, dp), (cols, 1)],
+                dat: 0,
+                m: r * dp,
+            };
+            let packed = Operand {
+                pitch: dp,
+                ..Operand::new("full")
+            };
+            let dims = (rows, dp, rp, cp);
+            let groups = (g, nk, batches);
+            if self.composed_packing(&[step], (&st, &key), &packed, dims, side, groups)? {
+                return Ok(at);
+            }
             let t = self.x.storage(2 * r * dp);
             let tat = self.x.addr(&t, 0);
             tmp = Some(t);
@@ -635,7 +741,7 @@ impl Runner<'_> {
             (group, mm.nk, batches),
             &self.m.name,
         );
-        if recipe.is_none() {
+        if recipe.is_none() && self.knobs.forms.composed == Composed::Off {
             return Ok(None);
         }
         Ok(Some(self.pend(2 * n, steps)))
@@ -1060,8 +1166,11 @@ impl Runner<'_> {
             (self.clusters(), self.cores()),
         );
         let binds = match self.prepared_mm(mm, &call.args, &binds)? {
-            Some((made, mut plain)) => {
+            Some((made, composed, mut plain)) => {
                 call.args["made"] = made;
+                if composed != json!([]) {
+                    call.args["composed"] = composed;
+                }
                 plain.insert("out".into(), out_at);
                 plain
             }
@@ -1120,10 +1229,41 @@ impl Runner<'_> {
         // The kernel's depth as it resolves it: a ring past the staging room
         // is the DRAM product (`call::mm_resolved`).
         let resolved = ktpu_kernels::call::mm_resolved(args, self.m)?;
-        if pending.is_empty()
-            || resolved["knobs"]["ring_depth"] != 0
-            || !costs::choose("prepared_mm", &recipe, &self.m.name)
-        {
+        if pending.is_empty() || resolved["knobs"]["ring_depth"] != 0 {
+            return Ok(None);
+        }
+        let mut made = serde_json::Map::new();
+        for (i, id) in &pending {
+            let steps = &self.pending[*id].steps;
+            made.insert(i.to_string(), steps.iter().map(Step::made_by).collect());
+        }
+        let made = Value::Object(made);
+        let mut composed = args.clone();
+        composed["made"] = made.clone();
+        composed["composed"] = json!(pending.keys().collect::<Vec<_>>());
+        let composed = Call {
+            gen: "matmul.mm_kernel".into(),
+            args: composed,
+        };
+        let mut launches: Vec<Call> = pending
+            .values()
+            .flat_map(|id| self.pending[*id].steps.iter().map(reads::relayout_call))
+            .collect();
+        launches.push(Call {
+            gen: "matmul.mm_kernel".into(),
+            args: args.clone(),
+        });
+        let mode = self.knobs.forms.composed;
+        let cost = |c: &Call| reads::cycles(c, self.m);
+        if reads::composed(mode, &composed, &launches, self.m, &cost) {
+            let mut plain = self.plain_binds(binds);
+            for (i, id) in &pending {
+                let src = self.pending[*id].steps[0].src.clone();
+                plain.insert(format!("p{i}_x"), src.expect("a first step reads a source"));
+            }
+            return Ok(Some((made, composed.args["composed"].clone(), plain)));
+        }
+        if !costs::choose("prepared_mm", &recipe, &self.m.name) {
             return Ok(None);
         }
         let mut plans = BTreeMap::new();
@@ -1133,22 +1273,24 @@ impl Runner<'_> {
             };
             plans.insert(*i, p);
         }
-        let mut plain: BTreeMap<String, Addr> = binds
+        let mut plain = self.plain_binds(binds);
+        for (i, id) in &pending {
+            let src = self.pending[*id].steps[0].src.clone();
+            plain.insert(format!("p{i}_x"), src.expect("a first step reads a source"));
+            self.step_binds(&plans[i], &format!("p{i}_"), &mut plain);
+        }
+        Ok(Some((made, json!([]), plain)))
+    }
+
+    /// The binds already addresses.
+    fn plain_binds(&self, binds: &BTreeMap<String, Bound>) -> BTreeMap<String, Addr> {
+        binds
             .iter()
             .filter_map(|(k, b)| match b {
                 Bound::At(a) => Some((k.clone(), a.clone())),
                 Bound::Pend(_) => None,
             })
-            .collect();
-        let mut made = serde_json::Map::new();
-        for (i, id) in &pending {
-            let steps = &self.pending[*id].steps;
-            made.insert(i.to_string(), steps.iter().map(Step::made_by).collect());
-            let src = steps[0].src.clone().expect("a first step reads a source");
-            plain.insert(format!("p{i}_x"), src);
-            self.step_binds(&plans[i], &format!("p{i}_"), &mut plain);
-        }
-        Ok(Some((Value::Object(made), plain)))
+            .collect()
     }
 
     /// The [.., M, N] window of the [.., mp, Np] product in `tmp` into the

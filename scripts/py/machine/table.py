@@ -739,6 +739,9 @@ ROWS = [
     ),
     ("vc.fill_alone", lambda i: i.measured("vc.fill_alone")),
     ("vc.fill_shared", lambda i: i.measured("vc.fill_shared")),
+    ("vc.launch_gap", lambda i: i.measured("vc.launch_gap")),
+    ("vc.launch_front", lambda i: i.measured("vc.launch_front")),
+    ("vc.step_cycles", lambda i: i.measured("vc.step_cycles")),
     # Memory mover.
     (
         "mover.index_words",
@@ -763,6 +766,7 @@ ROWS = [
         "mover.fifo_depth",
         lambda i: i.rtl("src/kohakuaccel/sysnode/mover/mm_mover.v", "FIFO_D"),
     ),
+    ("mover.copy_cost", lambda i: i.measured("mover.copy_cost")),
     ("mover.one_word_runs", lambda i: i.measured("mover.one_word_runs")),
     ("mover.faults", mover_faults),
     ("mover.cfgq_depth", lambda i: i.rtl(MOVER, "CFGQ_D")),

@@ -7,8 +7,8 @@
 //! A golden is recorded when its text or its recording holds a `--select`
 //! text (default: `matmul.mm_kernel`, `matmul.plan`); a kp entry's steps are
 //! replaced when its recording holds one. A ported vector with no golden,
-//! whose knobs the planner takes, is always recorded, from the golden of the
-//! vector with its input less `knobs`, under its own name. With `--only
+//! whose knobs the planner takes, is always recorded, from the golden of a
+//! vector of the same program, under its own name. With `--only
 //! NAME`, exactly the goldens named are recorded, whatever they hold.
 //! `scripts/py/measure/rows/plan_regold.py` compares the recordings with the
 //! goldens and with an independently predicted change.
@@ -32,7 +32,7 @@ use serde_json::Value;
 /// holding a `select` text.
 fn record(mut case: Case, input: &Value, select: &[String]) -> Case {
     let m = case.machine();
-    let knobs = spec::knobs(input).unwrap();
+    let knobs = spec::recorded_knobs(input).unwrap();
     let mut prev_old_end: BTreeMap<String, Buffer> = BTreeMap::new();
     let mut prev_new_end: BTreeMap<String, Buffer> = BTreeMap::new();
     for r in &mut case.runs {
@@ -92,6 +92,15 @@ fn under<T>(mutants: &[&'static str], f: impl FnOnce() -> T) -> T {
     }
 }
 
+/// A vector's `input` less what it asks of the run: the program it records.
+fn program(input: &Value) -> Value {
+    let mut p = input.clone();
+    for k in ["knobs", "facts", "count"] {
+        p.as_object_mut().unwrap().remove(k);
+    }
+    p
+}
+
 fn holds(text: &str, select: &[String]) -> bool {
     select.iter().any(|s| text.contains(s.as_str()))
 }
@@ -131,11 +140,9 @@ fn main() {
         if golden(&v.name).exists() || spec::knobs(&v.input).is_err() {
             continue;
         }
-        let mut bare = v.input.clone();
-        bare.as_object_mut().unwrap().remove("knobs");
         let Some(twin) = vectors
             .iter()
-            .find(|t| t.input == bare && golden(&t.name).exists())
+            .find(|t| program(&t.input) == program(&v.input) && golden(&t.name).exists())
         else {
             continue;
         };

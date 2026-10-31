@@ -73,6 +73,8 @@ pub const NAMES: &[&str] = &[
     "tg.run/no_padded_out",
     "api.rows/max_block",
     "api.forms/made_drop",
+    "api.forms/composed_never",
+    "api.forms/composed_always",
     "num.reduce/max-identity-zero",
     "num.api/int-tensor-accepted",
 ];

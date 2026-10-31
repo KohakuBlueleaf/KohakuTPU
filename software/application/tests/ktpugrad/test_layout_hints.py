@@ -79,6 +79,7 @@ def relayouts(monkeypatch, make, runs=2, hinted=None, library=None) -> list:
     # The relayouts as their own kernels (not inside the packing's), so
     # each is counted.
     monkeypatch.setattr(FM, "PREPARED", False)
+    monkeypatch.setattr(FM, "COMPOSED", "off")
     dev = D.Device(kind="offline", board="multimesh_v9t6", library=library)
     with D.attached(dev):
         for _ in range(runs):

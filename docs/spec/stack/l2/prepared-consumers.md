@@ -32,6 +32,39 @@ This preparation remains staged through DRAM. It is not a peer-L1 stream or a
 claim to remove the lane-select arithmetic. Only measured package/shape-copy
 savings justify it. Kernel-level finite-status and dependency barriers remain.
 
+## Composed reads
+
+`forms.COMPOSED` (`prepared::Composed`; `KTPU_COMPOSED`: `off`, `on`, `cost`)
+reads a pending operand through its steps on the load or pack itself
+(`read_map`, L2.READ.001). The kernel takes the source port alone, no table and
+no scratch; nothing of the operand reaches DRAM. `prepared.rows_kernel`,
+`matmul.quant_kernel` and `matmul.mm_kernel` extras read so, each operand's form
+a `prepared::Read`. A column tree reads materialized.
+
+Both planners ask one decision, `run::reads::composed`, and the `TG.RUN.030`
+vectors hold their answers to one expectation. The default is `on`; the plan
+goldens hold `off`, `run::Knobs::resolve`, and a vector runs the default. A
+kernel that does not lower reads materialized, under every mode: that is a choice of
+form, not a refusal. Under `cost` a kernel that lowers is taken when its cycles
+are at most those of the materialized launches plus `vc.launch_gap` for each
+launch after the first.
+
+A kernel's cycles (`ktpu_l2::cost`) are read from its compiled L1:
+
+- `vc.launch_front` for the run, `vc.step_cycles` for each send and load;
+- each vector image by the core's timing, a fill or drain through the walk sent
+  with it, `mover.copy_cost` for each contiguous run of the walk;
+- each move by `mover.copy_cost`: its contiguous runs, capped at
+  `mover.burst_max` words, and its words; a posted move runs beside the node;
+- joined at the waits. Cluster programs take no time: both forms run the same
+  ones.
+
+The Python planner's decision builds every kernel it weighs as a card builds
+it, so a kernel that a later stage refuses reads materialized, and the stage
+caches answer a later run without compiling. A process decides a read once. On the composed A/B's 113 kernels
+the rule reads within a factor of 1.35 on average: it orders forms that differ
+by more than that and can miss closer ones.
+
 ## Measured alternatives
 
 `runtime.costs` reads an immutable JSON deployment profile named by

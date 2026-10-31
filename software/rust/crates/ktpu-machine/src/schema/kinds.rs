@@ -70,6 +70,12 @@ pub struct Vc {
     pub fill_alone: (u32, u32),
     /// The same beside a four-cluster matmul.
     pub fill_shared: (u32, u32),
+    /// Idle cycles a launch adds between two kernels.
+    pub launch_gap: u32,
+    /// Cycles a run spends outside its steps.
+    pub launch_front: u32,
+    /// Cycles the node takes on a step of a run's program.
+    pub step_cycles: u32,
     /// The fault codes the core build raises (RUL.053).
     pub faults: Runtime<Vec<u32>>,
     /// The raised fault codes by their `F_*` name in v2_core.v.

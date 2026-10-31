@@ -15,6 +15,7 @@ import pathlib
 import weakref
 from collections import OrderedDict
 from dataclasses import dataclass, replace
+from functools import lru_cache
 
 import numpy as np
 
@@ -456,6 +457,38 @@ PREPARED_QUANT = (
     )
     == "1"
 )
+#: When a pending read is composed (`prepared::Composed`): off, on or cost.
+COMPOSED = os.environ.get("KTPU_COMPOSED", _PREPARED_DEFAULTS["composed"])
+
+
+def made_by(s: Step) -> dict:
+    """The `relayout.plan` call of `s` a generator call names."""
+    args = dict(s.__dict__, src_n=s.n, keep=False, z0=0, tree=RL.PULL_TREE)
+    del args["src"], args["n"]
+    return {"made_by": {"gen": "relayout.plan", "args": args}}
+
+
+def relayout_call(s: Step) -> dict:
+    return {"gen": "relayout.relayout_kernel", "args": {"pl": made_by(s)}}
+
+
+@lru_cache(maxsize=4096)
+def _decided(mode: str, read: str, launches: str, machine: str, mutant) -> bool:
+    return _rs.read_composed(mode, read, launches, machine)
+
+
+def composed(dev, read: dict, launches: list) -> bool:
+    """Whether the kernel of call `read` reads composed where `launches`
+    would make its operands (`_rs.read_composed`), decided once a program."""
+    if COMPOSED == "off":
+        return False
+    return _decided(
+        COMPOSED,
+        json.dumps(read, sort_keys=True),
+        json.dumps(launches, sort_keys=True),
+        generated.rs.machine_json(dev.machine),
+        generated.rs._MUTANT.get(),
+    )
 
 
 def plans_of(dev, steps) -> tuple | None:
@@ -476,6 +509,45 @@ def step_binds(dev, plans, prefix: str) -> dict:
         out[f"{prefix}index{i}"] = table(dev, pl.index, np.float32)
         out[f"{prefix}mask{i}"] = table(dev, pl.masks)
     return out
+
+
+def _composed_quant(dev, steps, st, key, src, rows, cols, rp, cp, side, g, nk, batches):
+    """Whether the packing of `steps` is read composed, into form `key` of
+    `st` once. Rows not of whole words are one more step, as materialized."""
+    if COMPOSED == "off" or not PREPARED_QUANT:
+        return False
+    quant_src = src
+    if cols % 16 or src.pitch % 16 or src.offset % 16:
+        R, dp = batches * rows, -(-cols // 16) * 16
+        walk, dwalk = ((R, src.pitch), (cols, 1)), ((R, dp), (cols, 1))
+        last = Step(None, steps[-1].m, walk, src.offset, dwalk, 0, R * dp)
+        steps = (*steps, last)
+        quant_src, cols = Operand("full", pitch=dp, rows=R), dp
+    quant = {
+        "gen": "matmul.quant_kernel",
+        "args": {
+            "src": vars(quant_src),
+            "rows": rows,
+            "cols": cols,
+            "rp": rp,
+            "cp": cp,
+            "side": side,
+            "g": g,
+            "nk": nk,
+            "batches": batches,
+        },
+    }
+    prepared = [made_by(s) for s in steps]
+    args = dict(quant["args"], prepared=prepared, composed=[0])
+    read = {"gen": "matmul.quant_kernel", "args": args}
+    if not composed(dev, read, [*map(relayout_call, steps), quant]):
+        return False
+    if key not in st.valid:
+        f = st.form(key, batches * rp * cp)
+        binds = {"p_x": steps[0].src, "q": f.addr}
+        generated.launch(dev, read["gen"], args, binds, kind="quant")
+        st.made(key)
+    return True
 
 
 def _prepared_quant(dev, steps, src, rows, cols, rp, cp, side, g, nk, batches):
@@ -545,6 +617,10 @@ def packed(
     unwritten. Pending inputs and non-word column padding are materialized
     before packing."""
     if isinstance(s, Pending):
+        key = ("composed_mx7", side, src, rows, cols, rp, cp, g, nk, batches)
+        args = (src, rows, cols, rp, cp, side, g, nk, batches)
+        if _composed_quant(dev, s.steps, s.holder, key, *args):
+            return s.holder.forms[key].addr
         prepared = _prepared_quant(
             dev, s.steps, src, rows, cols, rp, cp, side, g, nk, batches
         )
@@ -625,6 +701,10 @@ def packed(
             R, dp = batches * rows, -(-cols // 16) * 16
             walk = ((R, src.pitch), (cols, 1))
             step = Step(base, n, walk, src.offset, ((R, dp), (cols, 1)), 0, R * dp)
+            laid = Operand("full", pitch=dp)
+            args = (laid, rows, dp, rp, cp, side, g, nk, batches)
+            if _composed_quant(dev, (step,), st, key, *args):
+                return f.addr
             prepared = _prepared_quant(
                 dev,
                 (step,),

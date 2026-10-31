@@ -285,7 +285,10 @@
    "fill_shared": [
     330,
     5
-   ]
+   ],
+   "launch_gap": 1649,
+   "launch_front": 1900,
+   "step_cycles": 700
   },
   "mover": {
    "index_words": 256,
@@ -293,6 +296,10 @@
    "levels": 6,
    "burst_max": 128,
    "fifo_depth": 512,
+   "copy_cost": [
+    9,
+    1
+   ],
    "one_word_runs": false,
    "faults": {
     "F_NONE": 0,
@@ -782,11 +789,15 @@
   "vc.pack_modes": "derived: v2_core.v MD_* with vc.has_mx",
   "vc.fill_alone": "machines/measured.json:vc.fill_alone (cycles before the first word, cycles a 32-byte word: a vector core's fills of 2 KB and 256 B alone, Verilated card_v9t3_1n; no v9t6 figure yet (RUL.064))",
   "vc.fill_shared": "machines/measured.json:vc.fill_shared (the same fills beside a four-cluster matmul, Verilated card_v9t3_1n; no v9t6 figure yet (RUL.064))",
+  "vc.launch_gap": "machines/measured.json:vc.launch_gap (idle cycles a launch adds: TG.RUN.015's read as one launch (idle 2346) and as two (idle 3995), Verilated card_v9t6_1n)",
+  "vc.launch_front": "machines/measured.json:vc.launch_front (cycles a run spends outside its steps: head, copy, bind and barrier, 1707-2310 over nine kernels of 2 to 62 KB, Verilated card_v9t6_1n)",
+  "vc.step_cycles": "machines/measured.json:vc.step_cycles (cycles the node takes on a send or a load: best fit of ktpu_l2::cost over 113 kernels of LeNet, an MLP and a ViT block (600 to 800 equal), Verilated card_v9t6_1n)",
   "mover.index_words": "src/kohakuaccel/sysnode/mover/mm_mover.v:46",
   "mover.max_index": "derived: mover.index_words x 8 indices a word",
   "mover.levels": "src/kohakuaccel/sysnode/mover/mx_tdesc.v:32",
   "mover.burst_max": "src/kohakuaccel/sysnode/mover/mm_mover.v:58",
   "mover.fifo_depth": "src/kohakuaccel/sysnode/mover/mm_mover.v:49",
+  "mover.copy_cost": "machines/measured.json:mover.copy_cost (cycles a contiguous run, cycles a 32-byte word: four move-only kernels of 15000 to 39200 words at runs of 1 to 28 words, each within 2 %, Verilated card_v9t6_1n)",
   "mover.one_word_runs": "machines/measured.json:mover.one_word_runs (a move whose read and write sides both step runs of one 32-byte word leaves the mover's data FIFO a word behind, every later move writing each word one position late until node reset: v9t6 card, 2026-10-22, 1024 back-to-back moves of 21 rows (gather into 1-word rows at a 256 B pitch poisons from ~384 moves, scatter from 1-word rows at a pitch poisons; contiguous 1-word rows, contiguous<->pitched copies and 2- and 4-word rows at a pitch clean))",
   "mover.faults": "src/kohakuaccel/sysnode/mover/mm_mover.v:134-137",
   "mover.cfgq_depth": "src/kohakuaccel/sysnode/mover/mm_mover.v:66",

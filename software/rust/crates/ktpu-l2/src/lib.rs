@@ -5,6 +5,7 @@
 //! Program (L2 text) -> select place space share split step pipeline retile stage -> lower -> L1
 //! ```
 
+pub mod cost;
 pub mod ir;
 pub mod lower;
 pub mod mutant;

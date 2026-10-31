@@ -211,6 +211,45 @@ fn made_plans(a: &Value, m: &Machine) -> R<BTreeMap<usize, Vec<relayout::Plan>>>
     Ok(made)
 }
 
+/// The walk pairs of a list of `relayout.plan` calls.
+fn logical_list(v: &Value) -> R<Vec<relayout::Logical>> {
+    let mut out = vec![];
+    for p in v.as_array().map(Vec::as_slice).unwrap_or_default() {
+        let a = made_by(p, "relayout.plan")?;
+        out.push(relayout::Logical {
+            n: int(a, "src_n")?,
+            at: int(a, "at")?,
+            dat: int(a, "dat")?,
+            m: int(a, "m")?,
+            walk: walk(arg(a, "walk")?)?,
+            dwalk: walk(arg(a, "dwalk")?)?,
+        });
+    }
+    Ok(out)
+}
+
+/// A pending read: composed when `composed` lists `i`, else planned.
+fn read_of(a: &Value, i: usize, steps: &Value, m: &Machine) -> R<prepared::Read> {
+    let listed = a
+        .get("composed")
+        .and_then(Value::as_array)
+        .is_some_and(|l| l.iter().any(|x| x.as_u64() == Some(i as u64)));
+    if listed {
+        Ok(prepared::Read::Composed(logical_list(steps)?))
+    } else {
+        Ok(prepared::Read::Materialized(plan_list(steps, m)?))
+    }
+}
+
+/// `made`: operand index -> its read, by [`read_of`].
+fn made_reads(a: &Value, m: &Machine) -> R<BTreeMap<usize, prepared::Read>> {
+    let mut made = BTreeMap::new();
+    for (i, steps) in indexed(a.get("made").unwrap_or(&Value::Null))? {
+        made.insert(i, read_of(a, i, steps, m)?);
+    }
+    Ok(made)
+}
+
 /// The kernel of one recorded generator call, built for `m`.
 pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
     let e = |k: &str| expr::from_table(arg(a, k)?);
@@ -293,7 +332,7 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
                 a.get("finite")
                     .map_or(Ok(false), |_| boolean(a, "finite"))?,
                 &schedule,
-                &plan_list(a.get("prepared").unwrap_or(&Value::Null), m)?,
+                &read_of(a, 0, a.get("prepared").unwrap_or(&Value::Null), m)?,
                 staged,
             )?
         }
@@ -308,7 +347,7 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
                 &operand(arg(a, "out")?)?,
                 &knobs,
                 m,
-                &made_plans(a, m)?,
+                &made_reads(a, m)?,
             )?
         }
         "convert.copy_kernel" => convert::copy_kernel(int(a, "nbytes")?, m)?,
@@ -362,7 +401,7 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
         }
         "prepared.rows_kernel" => {
             let (out, r, w) = (operand(arg(a, "out")?)?, int(a, "R")?, int(a, "W")?);
-            let made = made_plans(a, m)?;
+            let made = made_reads(a, m)?;
             let mut alias = BTreeMap::new();
             for (i, j) in indexed(a.get("alias").unwrap_or(&Value::Null))? {
                 match j.as_u64() {

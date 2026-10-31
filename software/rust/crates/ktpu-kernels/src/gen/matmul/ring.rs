@@ -197,10 +197,7 @@ pub(super) fn schedule(
     operands.extend_from_slice(extras);
     let mut ins = vec![slots.clone()];
     ins.extend_from_slice(&b[2..2 + extras.len()]);
-    let bufs = v::Bufs {
-        ins,
-        out: b[2 + extras.len()].clone(),
-    };
+    let bufs = v::Bufs::plain(ins, b[2 + extras.len()].clone());
     let part = ring.part_rows(mm);
     let (start, count, pl) = segs.last().expect("a segment");
     let last =

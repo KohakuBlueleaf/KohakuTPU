@@ -12,6 +12,9 @@
    ]
   },
   "make": "T(A40).sum(axis=1)",
+  "knobs": {
+   "COMPOSED": "off"
+  },
   "facts": [
    "params"
   ],

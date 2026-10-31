@@ -3,6 +3,7 @@
 //! clusters, the rest of the expression reading it.
 
 use super::*;
+use ktpu_kernels::gen::prepared::Composed;
 
 impl Runner<'_> {
     /// `run._window`: each side laid out dense as [batch.., outer.., K..,
@@ -210,7 +211,8 @@ impl Runner<'_> {
                 }
                 (None, None) => unreachable!("a deferred pad is a step"),
             };
-            if !costs::has_steps(&steps, &self.m.name) {
+            let composed = self.knobs.forms.composed != Composed::Off;
+            if !composed && !costs::has_steps(&steps, &self.m.name) {
                 return self.lay(c, bufs, tmps, side, is_a, outer, lane, key, false);
             }
             let id = self.pend(2 * n.max(16), steps);

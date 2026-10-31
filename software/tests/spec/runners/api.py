@@ -240,13 +240,35 @@ def made(ns: dict, expr: str) -> list:
 
 
 # ---------------------------------------------------------------- runners
+KNOB_MODULES = {"rows": RW}
+
+
+@contextmanager
+def knobbed(inp: dict):
+    """The vector's ``knobs`` held for the body: ``NAME`` in `forms`,
+    ``rows.NAME`` in `rows`."""
+    knobs = [
+        (KNOB_MODULES[k.split(".")[0]] if "." in k else FM, k.split(".")[-1], v)
+        for k, v in inp.get("knobs", {}).items()
+    ]
+    held = [(m, k, getattr(m, k)) for m, k, _ in knobs]
+    try:
+        for m, k, v in knobs:
+            setattr(m, k, v)
+        yield
+    finally:
+        for m, k, v in held:
+            setattr(m, k, v)
+
+
 @runner("api.exec")
 def run_api_exec(inp: dict, ctx: dict):
-    """The source's ``facts()`` on the vector's device."""
+    """The source's ``facts()`` on the vector's device, under its ``knobs``."""
     if ctx["vector"].id.endswith("API.MEM.002.allocation_tail"):
         # RUL.020 supersedes this frozen historical expectation; keep its bytes.
         ctx["expect"] = {"tail": 0, "covers": False}
-    return plain(namespace(inp, ctx)["facts"]())
+    with knobbed(inp):
+        return plain(namespace(inp, ctx)["facts"]())
 
 
 @runner("tg.exec")
@@ -274,33 +296,20 @@ def run_plan(inp: dict, ctx: dict):
     return sorted(out, key=lambda d: json.dumps(d, sort_keys=True))
 
 
-KNOB_MODULES = {"rows": RW}
-
-
 @runner("tg.run")
 def run_run(inp: dict, ctx: dict):
-    """``make`` realised on the offline device: the kernels it ran (name
-    prefix, a rows kernel's view), the output's forms, and what its compiled
-    L2 holds (``grep``: run prefix -> patterns). ``knobs`` sets module
-    values for the run: ``NAME`` in `forms`, ``rows.NAME`` in `rows`."""
+    """``make`` realised on the offline device under the vector's ``knobs``: the
+    kernels it ran (name prefix, a rows kernel's view, the reads each composed),
+    the output's forms, and what its compiled L2 holds (``grep``: run prefix ->
+    patterns)."""
     ns = namespace(inp, ctx)
     dev = ns["DEV"]
-    knobs = [
-        (KNOB_MODULES[k.split(".")[0]] if "." in k else FM, k.split(".")[-1], v)
-        for k, v in inp.get("knobs", {}).items()
-    ]
-    held = [(m, k, getattr(m, k)) for m, k, _ in knobs]
-    try:
-        for m, k, v in knobs:
-            setattr(m, k, v)
+    with knobbed(inp):
         for expr in inp.get("before", []):
             Tensor.realize(*made(ns, expr))
         n0 = len(dev.runs)
         ts = made(ns, inp["make"])
         Tensor.realize(*ts)
-    finally:
-        for m, k, v in held:
-            setattr(m, k, v)
     runs = dev.runs[n0:]
     want = inp.get("facts", ["runs"])
     got: dict = {}
@@ -308,6 +317,12 @@ def run_run(inp: dict, ctx: dict):
         got["runs"] = [r.name.rsplit("_", 1)[0] for r in runs]
     if "kinds" in want:
         got["kinds"] = sorted({r.name.rsplit("_", 1)[0] for r in runs})
+    if "composed" in want:
+        got["composed"] = [
+            [r.name.rsplit("_", 1)[0], r.info["composed"]]
+            for r in runs
+            if "composed" in r.info
+        ]
     if "views" in want:
         got["views"] = [r.info["view"] for r in runs if "view" in r.info]
     if "viewset" in want:
@@ -654,6 +669,18 @@ def m_wrote_keeps():
 @mutant("api.forms/made_drop")
 def m_made_drop():
     with patched(ST.Storage, "made", lambda self, key: None):
+        yield
+
+
+@mutant("api.forms/composed_never")
+def m_composed_never():
+    with patched(FM, "composed", lambda dev, read, launches: False):
+        yield
+
+
+@mutant("api.forms/composed_always")
+def m_composed_always():
+    with patched(FM, "composed", lambda dev, read, launches: True):
         yield
 
 

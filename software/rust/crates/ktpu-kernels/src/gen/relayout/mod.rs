@@ -41,6 +41,8 @@ pub use emit::{emit_steps, relayout_kernel, scratch_rows, step_ports};
 pub use forms::{canon, dst_words, plan, positions, word_levels};
 pub use repr::shape_repr;
 
+use crate::pyrepr::Py;
+use ktpu_graph::Attr;
 use ktpu_machine::Machine;
 
 /// Vector-core rows a trip takes.
@@ -285,6 +287,58 @@ pub enum Part {
     Pull(Pull),
     Exchange(Exchange),
     Shuffle(Shuffle),
+}
+
+/// One relayout's walk pair, unplanned: `n` source values from `at` by `walk`
+/// into `m` destination values from `dat` by `dwalk`, the rest 0.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Logical {
+    pub n: i64,
+    pub at: i64,
+    pub dat: i64,
+    pub m: i64,
+    pub walk: Vec<(i64, i64)>,
+    pub dwalk: Vec<(i64, i64)>,
+}
+
+impl Logical {
+    /// The step `(n, at, dat, m, walk, dwalk)` a `read_map` holds.
+    pub fn attr(&self) -> Attr {
+        let levels = |w: &[(i64, i64)]| {
+            Attr::Tuple(
+                w.iter()
+                    .map(|&(c, s)| Attr::Tuple(vec![Attr::Int(c), Attr::Int(s)]))
+                    .collect(),
+            )
+        };
+        Attr::Tuple(vec![
+            Attr::Int(self.n),
+            Attr::Int(self.at),
+            Attr::Int(self.dat),
+            Attr::Int(self.m),
+            levels(&self.walk),
+            levels(&self.dwalk),
+        ])
+    }
+
+    /// The step in a kernel's name.
+    pub fn py(&self) -> Py {
+        let levels = |w: &[(i64, i64)]| {
+            Py::Tuple(
+                w.iter()
+                    .map(|&(c, s)| Py::Tuple(vec![Py::Int(c), Py::Int(s)]))
+                    .collect(),
+            )
+        };
+        Py::Tuple(vec![
+            Py::Int(self.n),
+            Py::Int(self.at),
+            Py::Int(self.dat),
+            Py::Int(self.m),
+            levels(&self.walk),
+            levels(&self.dwalk),
+        ])
+    }
 }
 
 /// A relayout: its parts in order, its scratch buffers `(name, rows, values

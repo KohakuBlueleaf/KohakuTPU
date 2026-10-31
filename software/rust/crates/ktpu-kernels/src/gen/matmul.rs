@@ -8,7 +8,7 @@
 //! product) and store row-major f16 (API.FORM.011).
 
 use super::vector::{self as v, Kind, Operand, TRIP_BANDS};
-use super::{cdiv, prepared, relayout, Hw};
+use super::{cdiv, prepared, Hw};
 use crate::expr::{self, E};
 use crate::kernel::{build, layout, Kernel, Port};
 use crate::pyrepr::{name, Py};
@@ -528,12 +528,12 @@ pub fn quant_kernel_contract(
         mach,
         finite,
         QUANT_SCHEDULE,
-        &[],
+        &prepared::Read::Materialized(vec![]),
         false,
     )
 }
 
-/// [`quant_kernel_contract`] under `schedule`; `x` made from `prepared`'s
+/// [`quant_kernel_contract`] under `schedule`; `x` read by `prepared`'s
 /// steps (ports `p_*`), `staged` always copying into a zeroed scratch.
 #[allow(clippy::too_many_arguments)]
 pub fn quant_kernel_scheduled(
@@ -549,12 +549,50 @@ pub fn quant_kernel_scheduled(
     mach: &Machine,
     finite: bool,
     schedule: &[(&str, i64)],
-    prepared: &[relayout::Plan],
+    prepared: &prepared::Read,
     staged: bool,
 ) -> R<Kernel> {
     let hw = Hw::of(mach);
     let dtype = side.dtype();
     let lay = side.layout(groups, nk);
+    if let prepared::Read::Composed(steps) = prepared {
+        let (r0, c0) = (src.offset / src.pitch, src.offset % src.pitch);
+        let qs = [batches * rp, cp];
+        let (mut ports, mut given) = prepared::input_ports(prepared, "p_", mach)?;
+        ports.push(Port::output("q", &qs, dtype).with_layout(lay.clone()));
+        given.push(("q".to_string(), spec(&qs, dtype, lay, g::BufSpace::Dram)?));
+        let key = name(
+            "quant",
+            vec![
+                src.py(),
+                Py::Int(rows),
+                Py::Int(cols),
+                Py::Int(rp),
+                Py::Int(cp),
+                Py::str(side.name()),
+                Py::Int(groups),
+                Py::Int(nk),
+                Py::Int(batches),
+                Py::Bool(finite),
+                Py::Tuple(
+                    schedule
+                        .iter()
+                        .map(|(k, v)| Py::Tuple(vec![Py::str(k), Py::Int(*v)]))
+                        .collect(),
+                ),
+                prepared.py(),
+            ],
+        );
+        let ints = |v: &[i64]| g::Attr::Tuple(v.iter().map(|i| g::Attr::Int(*i)).collect());
+        let read = [
+            ("read_map", prepared::Read::steps(steps)),
+            ("read_shape", ints(&[src.pitch, r0, c0, rows, cols])),
+            ("read_batch", ints(&[batches, rp])),
+        ];
+        return build(&key, mach, ports, given, |t, b| {
+            t.quant_mapped(&b[1].whole(), &b[0].whole(), finite, schedule, &read)
+        });
+    }
     if src.pitch <= 0
         || cols % hw.lanes != 0
         || src.pitch % hw.lanes != 0
@@ -606,24 +644,23 @@ pub fn quant_kernel_scheduled(
                 .collect(),
         ),
     ];
-    if !prepared.is_empty() {
-        key.push(Py::Tuple(
-            prepared.iter().map(relayout::shape_repr).collect(),
-        ));
+    let any = !matches!(prepared, prepared::Read::Materialized(p) if p.is_empty());
+    if any {
+        key.push(prepared.py());
     }
     if staged {
         key.push(Py::str("staged"));
     }
     let key = name("quant", key);
     let names: Vec<String> = ports.iter().map(|p| p.name.clone()).collect();
-    let made_in: Vec<prepared::MadeInput> = if prepared.is_empty() {
-        vec![]
-    } else {
+    let made_in: Vec<prepared::MadeInput> = if any {
         vec![prepared::MadeInput {
             port: "x".into(),
             prefix: "p_".into(),
-            plans: prepared,
+            read: prepared,
         }]
+    } else {
+        vec![]
     };
     let ((ports, given), shapes) = prepared::made_ports((ports, given), &made_in, mach)?;
     let built: Vec<String> = ports.iter().map(|p| p.name.clone()).collect();
@@ -726,8 +763,8 @@ pub fn mm_kernel(
     mm_kernel_made(mm, e, extras, out, knobs, mach, &BTreeMap::new())
 }
 
-/// [`mm_kernel`] with epilogue operand i of `made` made inside the kernel
-/// by its plans (ports `p{i}_*` for `in{i}`).
+/// [`mm_kernel`] with epilogue operand i of `made` read inside the kernel
+/// by its [`prepared::Read`] (ports `p{i}_*` for `in{i}`).
 pub fn mm_kernel_made(
     mm: &Mm,
     e: &E,
@@ -735,7 +772,7 @@ pub fn mm_kernel_made(
     out: &Operand,
     knobs: &Knobs,
     mach: &Machine,
-    made: &BTreeMap<usize, Vec<relayout::Plan>>,
+    made: &BTreeMap<usize, prepared::Read>,
 ) -> R<Kernel> {
     let cse = takes_cse(e, knobs);
     let e = &computed(e, knobs);
@@ -865,6 +902,7 @@ pub fn mm_kernel_made(
         let bufs = v::Bufs {
             ins,
             out: b[2 + extras.len()].clone(),
+            maps: prepared::mapped(made),
         };
         v::rows_stage(
             t,

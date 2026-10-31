@@ -5,6 +5,7 @@
 use crate::stack::{CardStack, Stack};
 use crate::{default_cache, Backend, Cache, Compiled, Input, Refused as StageRefused, Stage};
 use ktpu_machine::Machine;
+use ktpu_plan::program::Call;
 use pyo3::create_exception;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -947,7 +948,55 @@ fn rows_defaults() -> String {
 /// JSON object: Python's `forms.PREPARED` / `forms.PREPARED_QUANT`.
 fn prepared_defaults() -> String {
     let d = ktpu_kernels::gen::prepared::defaults();
-    serde_json::json!({"prepared": d.prepared, "prepared_quant": d.prepared_quant}).to_string()
+    serde_json::json!({
+        "prepared": d.prepared,
+        "prepared_quant": d.prepared_quant,
+        "composed": d.composed.name(),
+    })
+    .to_string()
+}
+
+/// l1_cycles(l1_text, name, machine_json) -> int: `ktpu_l2::cost` of a compiled kernel.
+#[pyfunction]
+fn l1_cycles(l1_text: &str, name: &str, machine_json: &str) -> PyResult<i64> {
+    let m = machine(machine_json)?;
+    let module =
+        ktpu_l1::text::read(l1_text, "<l1>").map_err(|e| PyValueError::new_err(e.to_string()))?;
+    ktpu_l2::cost::cycles(&module, name, &ktpu_l2::target::Target::of(&m))
+        .map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
+/// read_composed(mode, read_json, launches_json, machine_json) -> bool:
+/// `ktpu_plan::run::reads::composed` of `{"gen", "args"}` calls.
+#[pyfunction]
+fn read_composed(
+    mode: &str,
+    read_json: &str,
+    launches_json: &str,
+    machine_json: &str,
+) -> PyResult<bool> {
+    let m = machine(machine_json)?;
+    let bad = |e: serde_json::Error| PyValueError::new_err(format!("a read's calls: {e}"));
+    let read = serde_json::from_str(read_json).map_err(bad)?;
+    let launches: Vec<Call> = serde_json::from_str(launches_json).map_err(bad)?;
+    let mode = ktpu_kernels::gen::prepared::Composed::named(mode)
+        .ok_or_else(|| PyValueError::new_err(format!("a composed mode {mode:?}")))?;
+    let root = cache(None);
+    let cost = |c: &Call| built_cycles(c, &m, &root);
+    Ok(ktpu_plan::run::reads::composed(
+        mode, &read, &launches, &m, &cost,
+    ))
+}
+
+/// The cycles of `call`'s kernel as a card builds it, through the stage
+/// caches; None where it does not build.
+fn built_cycles(call: &Call, m: &Machine, root: &Cache) -> Option<i64> {
+    let kernel = ktpu_kernels::call::call(&call.gen, &call.args, m).ok()?;
+    let source = Input::detect(&serde_json::to_string(&kernel.graph).ok()?);
+    let name = kernel.graph.name.as_str();
+    let built = crate::compile(&CardStack::default(), &source, Some(name), m, root).ok()?;
+    let module = ktpu_l1::text::read(&built.l1, "<l1>").ok()?;
+    ktpu_l2::cost::cycles(&module, name, &ktpu_l2::target::Target::of(m)).ok()
 }
 
 /// The relayout knobs' defaults (`ktpu_kernels::gen::relayout`), a JSON
@@ -972,6 +1021,8 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(debug_decode, m)?)?;
     m.add_function(wrap_pyfunction!(compile, m)?)?;
     m.add_function(wrap_pyfunction!(generate, m)?)?;
+    m.add_function(wrap_pyfunction!(read_composed, m)?)?;
+    m.add_function(wrap_pyfunction!(l1_cycles, m)?)?;
     m.add_function(wrap_pyfunction!(pairs_blocks, m)?)?;
     m.add_function(wrap_pyfunction!(relayout_plan, m)?)?;
     m.add("MX7_PAIRING", ktpu_machine::PAIRING.name())?;

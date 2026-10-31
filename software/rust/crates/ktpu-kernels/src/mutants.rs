@@ -47,6 +47,7 @@ pub const LOCAL: &[&str] = &[
     crate::gen::relayout::LINES_MUTANT,
     crate::gen::prepared::SEPARATE_MUTANT,
     crate::gen::prepared::COPIED_MUTANT,
+    crate::gen::prepared::MATERIALIZED_MUTANT,
 ];
 
 #[cfg(feature = "mutants")]

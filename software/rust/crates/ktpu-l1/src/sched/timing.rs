@@ -520,13 +520,13 @@ impl Core {
         start
     }
 
-    /// A fill (F) or drain (D) of `words` memory words.
-    fn dma(&mut self, eng: &'static str, words: i64) {
+    /// A fill (F) or drain (D) of `words` memory words, `extra` cycles of its runs.
+    fn dma(&mut self, eng: &'static str, words: i64, extra: i64) {
         if crate::mutant::on("l2.timing/fill-free") {
             self.lat = 0;
         }
         let start = self.enter(eng, 1).max(self.free[eng]).max(self.mem);
-        self.mem = start + words * self.cpw;
+        self.mem = start + words * self.cpw + extra;
         self.free.insert(eng, self.mem);
         self.starts.get_mut(eng).unwrap().push(start);
         let land = self.mem + if eng == "F" { self.lat } else { 0 };
@@ -582,6 +582,30 @@ pub fn walk_words(walk: &Term) -> i64 {
     }
 }
 
+/// The words of a walk's contiguous runs: its first level's at a word stride.
+fn walk_run(walk: &Term) -> i64 {
+    let text = fmt(walk);
+    let first = re(&PAIR, r"\(\s*-?\d+\s*,\s*(\d+)\s*\)").find(&text);
+    let pair = first.map_or(String::new(), |m| m.as_str().to_string());
+    let (stride, count) = pair
+        .trim_matches(['(', ')'])
+        .split_once(',')
+        .unwrap_or(("", "1"));
+    match (stride.trim().parse::<i64>(), count.trim().parse::<i64>()) {
+        (Ok(32), Ok(count)) => count,
+        _ => 1,
+    }
+}
+
+/// What a launch gives an image beyond its text: its integer arguments, the
+/// `desc` statements sent with it, the cycles of a memory walk's run.
+#[derive(Clone, Copy, Default)]
+pub struct Sent<'a> {
+    pub args: &'a [i128],
+    pub descs: &'a [Stmt],
+    pub run: i64,
+}
+
 /// Cycles image `name` of `text` takes on a core of `vregs` registers and
 /// `copies` read copies, its parameters at 0, a fill or drain taking `fill`
 /// = (latency, cycles a word).
@@ -610,13 +634,29 @@ pub fn cycles_of(
     fill: (i64, i64),
     machine: &Machine,
 ) -> Result<i64> {
+    cycles_with(module, name, &Sent::default(), vregs, copies, fill, machine)
+}
+
+/// [`cycles_of`] of a launch's `sent` image, its parameters past the
+/// arguments at 0.
+pub fn cycles_with(
+    module: &Module,
+    name: &str,
+    sent: &Sent,
+    vregs: u32,
+    copies: u32,
+    fill: (i64, i64),
+    machine: &Machine,
+) -> Result<i64> {
     let r = module.reader();
     let img = &module.images[name];
     let macros = module.macro_table();
+    let values = sent.args.iter().copied().chain(std::iter::repeat(0));
     let env: Env = img
         .params
         .iter()
-        .map(|p| (p.clone(), Val::Int(0)))
+        .zip(values)
+        .map(|(p, v)| (p.clone(), Val::Int(v)))
         .collect();
     let stmts = Expander::new(&macros, &r, true).stmts(&img.stmts, &env)?;
     let isa = image::isa_for(machine, vregs)?;
@@ -627,7 +667,10 @@ pub fn cycles_of(
         state: UNKNOWN,
         scalars: HashMap::new(),
         words_of: HashMap::new(),
+        runs_of: HashMap::new(),
+        run: sent.run,
     };
+    t.run(sent.descs)?;
     t.run(&stmts)?;
     Ok(t.core.end())
 }
@@ -638,6 +681,8 @@ struct Timing<'a> {
     state: image::State,
     scalars: HashMap<String, i128>,
     words_of: HashMap<String, i64>,
+    runs_of: HashMap<String, i64>,
+    run: i64,
 }
 
 impl Timing<'_> {
@@ -671,7 +716,10 @@ impl Timing<'_> {
                 let bind = st.args.iter().find(|x| matches!(x, Term::Assign(..)));
                 if let (Some(Term::Assign(lhs, _)), Some(walk)) = (bind, st.kw("walk")) {
                     if let Some(n) = lhs.as_name() {
-                        self.words_of.insert(n.to_string(), walk_words(walk));
+                        let words = walk_words(walk);
+                        self.words_of.insert(n.to_string(), words);
+                        self.runs_of
+                            .insert(n.to_string(), words / walk_run(walk).max(1));
                     }
                 }
                 continue;
@@ -703,7 +751,12 @@ impl Timing<'_> {
                     .and_then(|p| p.as_name())
                     .unwrap_or("");
                 let words = *self.words_of.get(ad).unwrap_or(&self.core.p.chunks);
-                self.core.dma(if op == "vfill" { "F" } else { "D" }, words);
+                let runs = self.runs_of.get(ad).copied().unwrap_or(1);
+                self.core.dma(
+                    if op == "vfill" { "F" } else { "D" },
+                    words,
+                    runs * self.run,
+                );
             } else if op == "vsync" && st.kw("on").is_some() {
                 let waiter = st
                     .positional()

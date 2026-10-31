@@ -8,12 +8,15 @@ from kohakutpu.application.api.tensor import Unsupported
 from kohakutpu.application.ktpugrad import run as R
 from kohakutpu.application.ktpugrad import uops as U
 from kohakutpu.application.runtime import device as D
+from kohakutpu.application.runtime import forms as FM
 from kohakutpu.stack import rs
 
 ROWS = (*range(1, 66), 197)
 
 
-def test_product_rows_kill_no_serial_loop():
+def test_product_rows_kill_no_serial_loop(monkeypatch):
+    # Read materialized: the composed body fits the field without the serial loop.
+    monkeypatch.setattr(FM, "COMPOSED", "off")
     test_logical_rows(197, 197, "prod")
     with (
         rs.mutant("l2.vector/no-serial-loop"),

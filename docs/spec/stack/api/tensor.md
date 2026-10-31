@@ -112,7 +112,9 @@ folds a pending packing only where the cost profile admits its recipe
 source, `ktpu_kernels::gen::prepared::defaults()` (`_rs.PREPARED_DEFAULTS`;
 `KTPU_PREPARED`, `KTPU_PREPARED_QUANT` override them per process), read by
 `forms` and by the Rust planner (`ktpu_plan::run::Knobs::forms`), which takes
-the same prepared, made and profile-gated paths. Unrepresentable steps fall
+the same prepared, made and profile-gated paths. `forms.COMPOSED`, of the same
+source, reads a pending operand on its consumer's loads and packs where that
+is taken (`docs/spec/stack/l2/prepared-consumers.md`). Unrepresentable steps fall
 back to explicit relayout launches. A repeated rows operand is prepared once; each reader retains
 its own offset. The optional single-package reduction path materializes pending
 operands before entering its emitter.

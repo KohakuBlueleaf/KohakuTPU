@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use ktpu_kernels::gen::prepared::{self, Composed};
 use ktpu_machine::Machine;
 use serde_json::{json, Map, Value};
 
@@ -271,16 +272,33 @@ fn expr_text(e: &program::Expr, at: usize) -> String {
 }
 
 // ------------------------------------------------------------------- tg.run
-/// The planner knobs a vector's `input` runs with: [`run::Knobs::resolve`],
-/// each knob the vector names explicitly (`input.knobs`, by its Python name)
-/// set; a knob the planner does not take refuses.
+/// The planner knobs a vector's `input` runs with: Python's defaults, each
+/// knob the vector names explicitly (`input.knobs`, by its Python name) set;
+/// a knob the planner does not take refuses.
 pub fn knobs(input: &Value) -> Result<run::Knobs, String> {
-    let mut k = run::Knobs::resolve();
+    named(
+        run::Knobs {
+            forms: prepared::defaults(),
+            ..run::Knobs::resolve()
+        },
+        input,
+    )
+}
+
+/// The knobs of `input`'s plan golden: [`run::Knobs::resolve`], each knob the
+/// vector names set.
+pub fn recorded_knobs(input: &Value) -> Result<run::Knobs, String> {
+    named(run::Knobs::resolve(), input)
+}
+
+fn named(mut k: run::Knobs, input: &Value) -> Result<run::Knobs, String> {
     for (name, v) in input["knobs"].as_object().into_iter().flatten() {
-        match (name.as_str(), v.as_bool()) {
-            ("rows.SINGLE_PACKAGE_AST", Some(on)) => k.rows.single_package_ast = on,
-            ("PREPARED", Some(on)) => k.forms.prepared = on,
-            ("PREPARED_QUANT", Some(on)) => k.forms.prepared_quant = on,
+        let composed = v.as_str().and_then(Composed::named);
+        match (name.as_str(), v.as_bool(), composed) {
+            ("rows.SINGLE_PACKAGE_AST", Some(on), _) => k.rows.single_package_ast = on,
+            ("PREPARED", Some(on), _) => k.forms.prepared = on,
+            ("PREPARED_QUANT", Some(on), _) => k.forms.prepared_quant = on,
+            ("COMPOSED", _, Some(mode)) => k.forms.composed = mode,
             _ => return Err(format!("knob {name} = {v} is not a planner knob")),
         }
     }
@@ -339,8 +357,8 @@ pub fn realized(input: &Value) -> Result<Realized, String> {
     Ok(got)
 }
 
-/// `tg.run`: `make`'s kernels (name prefixes, kinds, rows views, counts),
-/// its output's forms and host bytes. `grep` and `params` read the compiled
+/// `tg.run`: `make`'s kernels (name prefixes, kinds, rows views, counts, the
+/// reads each composed), its output's forms and host bytes. `grep` and `params` read the compiled
 /// L2, past the planner: they are left out, for a host with the pipeline to
 /// add from [`realized`]'s launches.
 fn tg_run(inp: &Value, _: Option<&Machine>) -> Result<Value, String> {
@@ -374,6 +392,18 @@ fn tg_run(inp: &Value, _: Option<&Machine>) -> Result<Value, String> {
                 ks.dedup();
                 json!(ks)
             }
+            "composed" => r
+                .launches
+                .iter()
+                .zip(&names)
+                .filter_map(|(l, n)| {
+                    let reads = l.call.as_ref()?.args.get("composed")?;
+                    reads
+                        .as_array()
+                        .is_some_and(|a| !a.is_empty())
+                        .then(|| json!([n, reads]))
+                })
+                .collect(),
             "views" => Value::Array(views.clone()),
             "viewset" => {
                 let mut vs = views.clone();
