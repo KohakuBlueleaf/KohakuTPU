@@ -569,7 +569,7 @@ impl Core {
 }
 
 /// The words a descriptor's walk moves: the product of its counts.
-fn walk_words(walk: &Term) -> i64 {
+pub fn walk_words(walk: &Term) -> i64 {
     let text = fmt(walk);
     let counts: Vec<i64> = re(&PAIR, r"\(\s*-?\d+\s*,\s*(\d+)\s*\)")
         .captures_iter(&text)

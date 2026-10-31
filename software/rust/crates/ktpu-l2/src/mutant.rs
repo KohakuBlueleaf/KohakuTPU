@@ -89,6 +89,7 @@ pub fn scoped<T>(state: State, f: impl FnOnce() -> T) -> T {
 
 /// Every mutant ktpu-l2 carries, by its Python name.
 pub const NAMES: &[&str] = &[
+    "l2.fill/no-throttle",
     "l2.predicate-select/off",
     "l2.predicate-select/wrong-arm",
     "l2.zero_sign/native-copy",

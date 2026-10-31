@@ -1088,7 +1088,7 @@ impl Sim<'_> {
         let slot = (v.fills % depth) as usize;
         let shadowed = std::mem::replace(&mut v.track[slot], words);
         v.fills += 1;
-        let lost = held > depth && (shadowed != words || held >= 2 * depth);
+        let lost = ktpu_machine::fill_lost(depth, held, shadowed, words);
         if lost && !on("verify.vector/no-fill-track") && !self.vc(u).overfilled {
             self.vc_mut(u).overfilled = true;
             self.vc_model(

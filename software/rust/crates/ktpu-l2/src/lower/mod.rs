@@ -7,6 +7,7 @@
 //! gives each node its own `node N` block.
 
 pub mod cluster;
+pub mod fills;
 pub mod links;
 pub mod memory;
 pub mod mover;
@@ -287,7 +288,9 @@ pub fn lower(p: &Program, t: &Target, search: &Search) -> Result<String> {
         text.push(p.module.target_line());
     }
     text.push(String::new());
-    text.extend(images);
+    for image in images {
+        text.push(fills::throttle(image, t)?);
+    }
     text.push(format!("fn {}.l1({})", p.name, params.join(", ")));
     text.extend(out.iter().map(|l| format!("{IND}{l}")));
     Ok(text.join("\n") + "\n")

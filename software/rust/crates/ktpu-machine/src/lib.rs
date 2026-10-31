@@ -8,6 +8,7 @@
 
 pub mod canon;
 pub mod card;
+pub mod fill;
 pub mod mutant;
 pub mod packing;
 pub mod pairing;
@@ -20,6 +21,7 @@ use std::collections::BTreeMap;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
+pub use fill::fill_lost;
 pub use pairing::{Pairing, PAIRING};
 pub use refusal::{refuse, Refusal};
 pub use schema::*;

@@ -38,6 +38,11 @@ fn over.l1(x: f16[4096] @dram, y: f16[512] @dram, out: f16[128] @dram)
     barrier
 """
 
+SYNCED = HEADED.replace(
+    "    vsync drain on=fill\n",
+    "    vsync fe on=fill slack={slack}\n    vfill a1 -> l1[300] rel\n    vsync drain on=fill\n",
+)
+
 EQUAL = """target ktpu.v9
 
 image same(x, out)
@@ -89,6 +94,14 @@ def test_a_shadowed_word_count_retires_its_fill_early(card, tmp_path):
         stale_lanes(card, tmp_path, 16)
     with rs.mutant(NO_CHECK):
         assert stale_lanes(card, tmp_path, 16) == 128
+
+
+def test_a_sync_at_the_depth_keeps_the_shadowed_count(card, tmp_path):
+    x, y = f16(16, 4096), f16(17, 512)
+    path = tmp_path / "synced.ktpu"
+    path.write_text(SYNCED.format(behind=15, slack=15))
+    out = run(card, str(path), {"x": x, "y": y}, reps=1)["out"]["out"]
+    assert np.array_equal(out, x[3968:])
 
 
 def test_an_equal_word_count_shadows_nothing(card, tmp_path):

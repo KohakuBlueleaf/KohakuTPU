@@ -8,6 +8,8 @@
 #![cfg(feature = "stack")]
 
 use ktpu::{compile, Cache, Input, Stack};
+use ktpu_l2::lower::fills::throttle;
+use ktpu_l2::Target;
 use ktpu_machine::Machine;
 use std::path::{Path, PathBuf};
 
@@ -254,6 +256,110 @@ fn isa_vc_193_fills_past_the_completion_queue() {
     assert_eq!(fill_track_facts(), [true; 5]);
 }
 
+/// Seven views a trip: the search's prefetch holds 32 fills.
+fn wide() -> String {
+    let params: Vec<String> = (0..7).map(|i| format!("x{i}: f16[32,128] @dram")).collect();
+    let mut text = format!(
+        "target ktpu.v9
+fn wide.l2({}, y: f16[32,128] @dram)
+    par c in 0..1 on vc[c]
+        for t in 0..32
+",
+        params.join(", ")
+    );
+    for i in 0..7 {
+        text += &format!(
+            "            a{i} = load x{i}[t:+1, :] : f16[1,128] @l1
+"
+        );
+        text += &format!(
+            "            v{i} = unpack a{i} : f32[1,128] @reg
+"
+        );
+    }
+    let mut last = "v0".to_string();
+    for i in 1..7 {
+        text += &format!(
+            "            w{i} = add {last}, v{i} : f32[1,128] @reg
+"
+        );
+        last = format!("w{i}");
+    }
+    text + &format!(
+        "            q = pack {last} : f16[1,128] @l1
+            store y[t:+1, :] <- q
+"
+    )
+}
+
+fn wide_findings() -> Vec<(String, String)> {
+    let text = wide();
+    let got = compile(
+        &Stack,
+        &Input::detect(&text),
+        Some("wide"),
+        &machine(1),
+        &Cache::off(),
+    );
+    match got {
+        Ok(c) => c
+            .verdict
+            .findings
+            .into_iter()
+            .map(|f| (f.kind, f.text))
+            .collect(),
+        Err(e) => vec![("refused".into(), e.to_string())],
+    }
+}
+
+/// One fill of 256 words and 16 of one: a different count at the depth.
+fn mixed(thrown: bool) -> Vec<(String, String)> {
+    let fills: String = (0..16)
+        .map(|i| {
+            format!(
+                "    vfill a1 -> l1[{}] rel
+",
+                256 + i
+            )
+        })
+        .collect();
+    let image = format!(
+        "image over(x, y, out)
+    desc a0 = x walk=(32, 256)
+    desc a1 = y walk=(32, 1)
+    desc a2 = out walk=(32, 8)
+    ainc a1 += 32
+    vfill a0 -> l1[0]
+{fills}    vsync drain on=fill
+    vdrain a2 <- l1[248]
+    halt"
+    );
+    let image = match thrown {
+        true => throttle(image, &Target::of(&machine(1))).unwrap(),
+        false => image,
+    };
+    kinds(&format!(
+        "target ktpu.v9
+
+{image}
+
+fn over.l1(x: f16[4096] @dram, y: f16[512] @dram, out: f16[128] @dram)
+    send vc[0]
+        run over(x, y, out)
+    barrier
+"
+    ))
+}
+
+#[test]
+fn l2_vc_027_a_throttled_window_checks_clean() {
+    assert_eq!(wide_findings(), vec![]);
+    assert_eq!(mixed(true), vec![]);
+    assert!(mixed(false)
+        .iter()
+        .any(|f| f.1.contains("completion queue")));
+}
+
 /// Both cores peer-drain into mg[0]'s L1 A with nothing ordering the two.
 const TWO: &str = "target ktpu.v9
 
@@ -340,6 +446,15 @@ mod mutants {
     #[test]
     fn fill_track_breaks_without_its_check() {
         breaks("verify.vector/no-fill-track", fill_track_facts);
+    }
+
+    #[test]
+    fn a_wide_stream_without_its_throttle_overfills_the_completion_queue() {
+        let got = ktpu::mutant::with("l2.fill/no-throttle", wide_findings).unwrap();
+        assert!(
+            got.iter().any(|f| f.1.contains("completion queue")),
+            "{got:?}"
+        );
     }
 
     #[test]

@@ -50,6 +50,7 @@ pub struct Target {
     pub ainc_bits: u32,
     pub queue_depth: usize,
     pub dma_queue_depth: usize,
+    pub fill_track_depth: u32,
     /// (cycles before the first word, cycles a word) of a fill alone, and
     /// beside streaming clusters.
     pub fill_alone: (i64, i64),
@@ -103,6 +104,7 @@ impl Target {
             ainc_bits: m.vc.ainc_bits,
             queue_depth: m.vc.queue_depth as usize,
             dma_queue_depth: m.vc.dma_queue_depth as usize,
+            fill_track_depth: m.vc.fill_track_depth,
             fill_alone: (m.vc.fill_alone.0 as i64, m.vc.fill_alone.1 as i64),
             fill_shared: (m.vc.fill_shared.0 as i64, m.vc.fill_shared.1 as i64),
             bank: m.mg.l1_bank_entries as i64,
