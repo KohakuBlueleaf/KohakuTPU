@@ -176,17 +176,7 @@ impl Ctx<'_> {
             }
             for &d in &self.loads {
                 let d = &self.descs[d];
-                g.fixed(
-                    ir::memory(
-                        ir::Memory::Fill,
-                        Term::name(format!("a{}", d.ad)),
-                        d.buf[1 - parity],
-                        None,
-                        true,
-                        vec![],
-                    )
-                    .unwrap(),
-                );
+                self.fill_phase(g, d, d.buf[1 - parity], true, self.phase + 1);
             }
         }
         let streams: Vec<&Op> = ops

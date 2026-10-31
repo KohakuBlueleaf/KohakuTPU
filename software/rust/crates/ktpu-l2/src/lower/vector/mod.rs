@@ -279,6 +279,11 @@ impl Val {
 #[derive(Clone, Debug, Default)]
 pub struct Desc {
     pub ad: usize,
+    /// Original source-word staging for a logical load, assembled in registers.
+    pub mapped: Option<crate::lower::readmap::Shape>,
+    pub phases: Vec<crate::lower::readmap::Shape>,
+    pub advances: Vec<i64>,
+    pub mapped_span: Option<(i64, i64)>,
     /// None: a peer drain into a cluster
     pub buffer: Option<String>,
     /// bytes into the buffer; a peer drain's first granule
@@ -312,10 +317,16 @@ pub struct Desc {
 impl Desc {
     /// Bytes one walk spans.
     pub fn extent(&self) -> i64 {
-        32 + self.walk.0.iter().map(|(s, n)| (n - 1) * s).sum::<i64>()
+        self.mapped.as_ref().map_or_else(
+            || 32 + self.walk.0.iter().map(|(s, n)| (n - 1) * s).sum::<i64>(),
+            crate::lower::readmap::Shape::extent,
+        )
     }
 
     pub fn span(&self, trips: i64) -> (i64, i64) {
+        if let Some(span) = self.mapped_span {
+            return span;
+        }
         let (lo, hi) = (self.off, self.off + self.extent());
         let step = self.inc * (trips - 1);
         (lo + step.min(0), hi + step.max(0))
@@ -568,6 +579,7 @@ pub fn unit_of(body: &Body, par: &RPar, env: &Env) -> Result<String> {
 /// `(image text, its parameters, accesses)` for one vector instance of `par`:
 /// the candidate the core's timing gives the fewest cycles (L2.SEARCH.001).
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
 pub fn lower(
     body: &Body,
     par: &Par,
@@ -577,7 +589,7 @@ pub fn lower(
     land: Option<i64>,
     t: &Target,
     search: &Search,
-) -> Result<(String, Vec<String>, Vec<super::sync::Access>)> {
+) -> Result<(Vec<(String, String)>, Vec<String>, Vec<super::sync::Access>)> {
     let misfit = t.shape_misfit();
     if !misfit.is_empty() {
         return Err(body.reader.fail(
@@ -604,7 +616,12 @@ pub fn lower(
         }
         text
     };
-    Ok((text, best.params, best.accesses))
+    let parts = if best.parts.is_empty() {
+        vec![(name.to_string(), text)]
+    } else {
+        best.parts
+    };
+    Ok((parts, best.params, best.accesses))
 }
 
 /// `vsel D, A, B, ...` with A and B traded.
@@ -652,6 +669,55 @@ pub fn total(body: &Body, par: &Par, env: &Env, t: &Target, search: &Search) -> 
     Ok(search.best(body, &rp, env, "k", &plan, land, t)?.cycles)
 }
 
+/// Whether a logical source stream changes its normalized lane program or
+/// descriptor step. Such streams are lifted to bounded node-dispatched tiles.
+pub fn phased(body: &Body, par: &Par, env: &Env, t: &Target) -> VResult<bool> {
+    let rp = resolve(body, par, env)?;
+    let (_, lp) = split(body, &rp)?;
+    let Some(lp) = lp else { return Ok(false) };
+    let c = ctx::Ctx::new(body, t, env, Some(lp.clone()))?;
+    for n in ops_of(&lp.body) {
+        let Node::Op(op) = n.as_ref() else { continue };
+        if op.st.kw("read_map").is_none() {
+            continue;
+        }
+        let mut first = None;
+        let mut previous = None;
+        let mut step = None;
+        for &trip in &c.trips {
+            let tile = c.mapped_tile(op, Some(trip))?.unwrap();
+            if tile.shape.words.windows(2).any(|w| w[1] - w[0] >= t.step()) {
+                return Ok(true);
+            }
+            if previous.is_some_and(|p: i64| (tile.anchor - p).abs() >= t.step()) {
+                return Ok(true);
+            }
+            if first.as_ref().is_some_and(|s| s != &tile.shape) {
+                return Ok(true);
+            }
+            if let Some(previous) = previous {
+                let delta = tile.anchor - previous;
+                if first
+                    .as_ref()
+                    .is_some_and(|s: &crate::lower::readmap::Shape| {
+                        let rewind = delta - (s.extent() - 32);
+                        !(-t.step() <= rewind && rewind < t.step())
+                    })
+                {
+                    return Ok(true);
+                }
+                if step.is_some_and(|s| s != delta) {
+                    return Ok(true);
+                }
+                step = Some(delta);
+            }
+            previous = Some(tile.anchor);
+            first = Some(tile.shape);
+        }
+    }
+    Ok(false)
+}
+
 /// The largest byte step from one trip to the next of a memory view in the
 /// instance's stream loop (0: no loop, or one trip).
 pub fn max_step(body: &Body, par: &Par, env: &Env, t: &Target) -> VResult<i64> {
@@ -681,6 +747,7 @@ pub fn max_step(body: &Body, par: &Par, env: &Env, t: &Target) -> VResult<i64> {
 }
 
 mod assign_typed;
+mod decompose;
 
 /// Physical registers v0.. over the emitted order: a symbol holds its
 /// register from its first to its last appearance; a result takes the

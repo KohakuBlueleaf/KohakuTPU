@@ -70,6 +70,19 @@ pub fn choose(code: &[Event], copies: u32, core: &Core) -> HashMap<String, u64> 
         .filter(|(st, _)| fixed(st))
         .flat_map(|(_, syms)| syms.iter().map(ir::Symbol::name))
         .collect();
+    let mut vsel_counts: HashMap<String, usize> = HashMap::new();
+    for (st, syms) in &tuples {
+        if st.op == "vsel" {
+            for sym in *syms {
+                *vsel_counts.entry(sym.name()).or_insert(0) += 1;
+            }
+        }
+    }
+    fixed_syms.extend(
+        vsel_counts
+            .into_iter()
+            .filter_map(|(s, n)| (n > super::ASSEMBLED_VSELS).then_some(s)),
+    );
     if !crate::mutant::on("l2.banks/rotates-predicated") {
         fixed_syms.extend(
             tuples

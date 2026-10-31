@@ -231,6 +231,9 @@ fn modulo_module(
         }
         c.prepare(n, true)?;
     }
+    if c.descs.iter().any(|d| d.mapped.is_some()) {
+        return no("logical loads use descriptor-step band scheduling");
+    }
     if c.rel.is_some() || c.descs.iter().any(|d| d.kind == "send") {
         return no("a banded unpack or a send");
     }

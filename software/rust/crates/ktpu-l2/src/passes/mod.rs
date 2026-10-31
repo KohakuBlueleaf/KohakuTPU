@@ -33,6 +33,13 @@ use crate::ir::{Program, Result};
 use crate::lower::vector::Search;
 use crate::target::Target;
 
+/// Complete candidate cost, including every lifted node-dispatched trip.
+pub fn retile_cost(p: &Program, t: &Target, search: &Search) -> Result<i64> {
+    let (params, stmts) = body_of(p)?;
+    let (cost, why) = retile::lowered_cost(p, &params, &stmts, t, search);
+    cost.ok_or_else(|| ktpu_l1::Error::new("L2.PASS.010", why))
+}
+
 /// The passes `compile_l1` runs, in order (L2.PASS.001).
 pub const PASSES: [&str; 9] = [
     "select", "place", "space", "share", "split", "step", "pipeline", "retile", "stage",

@@ -9,6 +9,7 @@
 
 pub(super) mod band;
 mod emit;
+mod mapped;
 mod math;
 mod pack;
 mod prepare;
@@ -67,7 +68,9 @@ pub struct Ctx<'a> {
     pub env: Env,
     pub lp: Option<For>,
     pub trips: Vec<i64>,
+    pub phase: usize,
     pub classed: bool,
+    pub serial: bool,
     pub carries: IndexMap<String, (String, bool)>,
     pub descs: Vec<Desc>,
     pub loads: Vec<usize>,
@@ -129,7 +132,9 @@ impl<'a> Ctx<'a> {
             env: env.clone(),
             lp,
             trips,
+            phase: 0,
             classed: false,
+            serial: false,
             carries: IndexMap::new(),
             descs: Vec::new(),
             loads: Vec::new(),
@@ -286,6 +291,36 @@ impl<'a> Ctx<'a> {
         let Some(buf) = self.body.buffers.get(&name) else {
             return Err(self.fail(&o.st, "L2.VC.003", format!("no buffer {name}")));
         };
+        if let Some(tile) = self.mapped_tile(o, at)? {
+            if buf.dtype != "f16" || buf.has("tile") {
+                return Err(self.fail(&o.st, "L2.READ.001", "logical load source is plain f16"));
+            }
+            let map = crate::lower::readmap::ReadMap::read(self.body, o, &env)?;
+            if map
+                .elements
+                .iter()
+                .any(|&p| p >= buf.shape.iter().product::<i64>())
+            {
+                return Err(self.fail(&o.st, "L2.READ.001", "mapped source is inside its port"));
+            }
+            return Ok((
+                name,
+                tile.anchor,
+                Walk(
+                    tile.shape
+                        .descriptor_transfers(self.t, self.t.read.load_gather_words)
+                        .0,
+                ),
+                tile.shape.words.len().max(1) as i64,
+                if o.ty.as_ref().unwrap().mode.as_deref() == Some("gt4") {
+                    Kind::Rows
+                } else {
+                    Kind::Plain
+                },
+                0,
+                o.ty.as_ref().unwrap().shape[0],
+            ));
+        }
         let vf = |e: String| self.fail(&o.st, "L2.VC.003", e);
         let ax = M::axes_of(&v, &buf.shape).map_err(vf)?;
         if buf.has("tile") {

@@ -156,17 +156,7 @@ impl Ctx<'_> {
             }
             "load" => {
                 let d = &self.descs[self.of[&o.uid]];
-                g.fixed(
-                    ir::memory(
-                        ir::Memory::Fill,
-                        Term::name(format!("a{}", d.ad)),
-                        d.buf[0],
-                        None,
-                        false,
-                        vec![],
-                    )
-                    .unwrap(),
-                );
+                self.fill_typed(g, d, d.buf[0], false);
                 g.fixed(ir::instruction("vbar", vec![], vec![]));
                 let v = l1val(Some(d), ty(o), d.buf[0], self.t);
                 self.vals.insert(o.target.clone().unwrap(), v);

@@ -67,6 +67,7 @@ fn band_text(
     let (pre, lp) = super::super::split(body, par)?;
     let mut c = Ctx::new(body, t, env, lp.clone())?;
     c.classed = par.st.kw("classed").is_some();
+    c.serial = serial;
     c.ahead = ahead;
     c.band = band;
     c.remat = remat;

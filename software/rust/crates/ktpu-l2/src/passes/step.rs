@@ -10,6 +10,9 @@ use crate::ir::{Program, Result, StageX};
 use crate::lower::vector::{self, Search};
 use crate::target::Target;
 
+/// The keyword on the node-scope loop `step` lifts out of a stream loop.
+pub const LIFTED: &str = "lifted";
+
 /// A statement a vector `par` may sit in for a pass to cost it: a node-scope
 /// `for` or `par` over nodes with a constant lower bound, or a `when`.
 pub fn scope_ok(s: &Stmt) -> bool {
@@ -178,7 +181,29 @@ pub fn step(p: &Program, t: &Target, _search: &Search) -> Result<Program> {
         let mut probe = top.clone();
         probe.push(first_of(scopes, s.clone()));
         let far = far(p, &params, &probe, t);
-        if far == 0 || crate::mutant::on("l2.passes/step-near") {
+        let mut phased = false;
+        if lp.body.iter().any(|s| s.kw("read_map").is_some()) {
+            let phase_body = write(p, &params, &probe)?.body()?;
+            let phase_instances = instances(&phase_body)?;
+            for stage in &phase_instances {
+                if let StageX::Par(parts) = &stage.x {
+                    for part in parts {
+                        if vector::phased(&phase_body, part.par(), &part.env, t).map_err(|e| {
+                            match e {
+                                vector::VErr::Fail(e) => e,
+                                vector::VErr::Value(msg) => r.fail(&s, "L2.READ.001", msg),
+                                vector::VErr::Pressure => {
+                                    r.fail(&s, "L2.READ.001", "logical source phase pressure")
+                                }
+                            }
+                        })? {
+                            phased = true;
+                        }
+                    }
+                }
+            }
+        }
+        if (far == 0 && !phased) || crate::mutant::on("l2.passes/step-near") {
             return Ok(vec![s]);
         }
         let carries = carried(&lp) && !crate::mutant::on("l2.passes/step-carried-ignored");
@@ -240,6 +265,10 @@ pub fn step(p: &Program, t: &Target, _search: &Search) -> Result<Program> {
         let mut outer = lp.clone();
         outer.args = std::iter::once(Term::Member(Box::new(trip), Box::new(span)))
             .chain(kw)
+            .chain(std::iter::once(Term::Assign(
+                Box::new(Term::name(LIFTED)),
+                Box::new(Term::int(1)),
+            )))
             .collect();
         outer.body = vec![inner];
         Ok(vec![outer])

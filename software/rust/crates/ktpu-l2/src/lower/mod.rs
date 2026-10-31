@@ -11,6 +11,7 @@ pub mod fills;
 pub mod links;
 pub mod memory;
 pub mod mover;
+pub mod readmap;
 pub mod sync;
 pub mod vector;
 
@@ -411,14 +412,8 @@ fn par_stage(
             }
             let idx = i.index.unwrap();
             let img = format!("{}_n{}_vc{idx}_{}", body.name, i.node, images.len());
-            let (text, params, got) =
+            let (parts, params, got) =
                 vector::lower(body, i.par(), &i.env, &img, links, land, t, search)?;
-            let img = if classed && !on("l2.class/share-images") {
-                images.push(text);
-                img
-            } else {
-                shared_image(images, &text, &img)
-            };
             acc.extend(got);
             units.push(format!("vc[{idx}]"));
             let repeat = if let Some(count) = i.par().st.kw("repeats") {
@@ -448,7 +443,15 @@ fn par_stage(
                 String::new()
             };
             lines.push(format!("send vc[{idx}]{repeat}"));
-            lines.push(format!("{IND}run {img}({})", params.join(", ")));
+            for (img, text) in parts {
+                let img = if classed && !on("l2.class/share-images") {
+                    images.push(text);
+                    img
+                } else {
+                    shared_image(images, &text, &img)
+                };
+                lines.push(format!("{IND}run {img}({})", params.join(", ")));
+            }
         }
         let segs = vec![lines.clone()];
         return Ok((lines, units, acc, segs));

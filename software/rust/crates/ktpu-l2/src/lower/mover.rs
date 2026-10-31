@@ -10,7 +10,7 @@ mod views;
 mod walk;
 mod xform;
 
-pub use packing::{quant_backend, vector_quant, Finite};
+pub use packing::{composed_fits, quant_backend, vector_quant, Finite};
 
 use ktpu_l1::text::{Env, Stmt, Term};
 

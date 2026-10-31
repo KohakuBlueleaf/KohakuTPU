@@ -87,6 +87,7 @@ fn flat_band<'a>(
     let (pre, lp) = crate::lower::vector::split(body, par)?;
     let mut c = Ctx::new(body, t, env, lp.clone())?;
     c.classed = par.st.kw("classed").is_some();
+    c.serial = serial;
     c.ahead = ahead;
     c.band = band;
     c.remat = remat;
@@ -180,17 +181,7 @@ fn flat_band<'a>(
             g.fixed(ir::sync("fill", "unpack", None));
             for &d in &c.loads {
                 let d = &c.descs[d];
-                g.fixed(
-                    ir::memory(
-                        ir::Memory::Fill,
-                        Term::name(format!("a{}", d.ad)),
-                        d.buf[0],
-                        None,
-                        true,
-                        vec![],
-                    )
-                    .unwrap(),
-                );
+                c.fill_typed(&mut g, d, d.buf[0], true);
             }
             c.iteration_typed(&mut g, &lp.body, 0, false)?;
             g.fixed(ir::instruction("vbar", vec![], vec![]));
@@ -217,64 +208,102 @@ fn flat_band<'a>(
                 g.code.splice(init_at..init_at, init.code);
             }
         } else if serial {
-            let reg = format!("s{}", t.loop_s());
-            g.fixed(ir::seti(&reg, Term::int(c.trips.len() as i128)));
-            g.fixed(ir::instruction("loop", vec![Term::name(&reg)], vec![]));
-            g.code.push(ir::Event::Open);
-            g.fixed(ir::instruction("vbar", vec![], vec![]));
-            g.fixed(ir::sync("fill", "unpack", None));
-            g.fixed(ir::sync("fill", "drain", None));
-            g.fixed(ir::sync("pack", "drain", None));
-            for &d in &c.loads {
-                let d = &c.descs[d];
-                g.fixed(
-                    ir::memory(
-                        ir::Memory::Fill,
-                        Term::name(format!("a{}", d.ad)),
-                        d.buf[0],
-                        None,
-                        true,
-                        vec![],
-                    )
-                    .unwrap(),
-                );
-            }
-            g.fixed(ir::sync("unpack", "fill", None));
-            c.iteration_typed(&mut g, &lp.body, 0, false)?;
-            g.fixed(ir::instruction("vbar", vec![], vec![]));
-            g.code.push(ir::Event::Close);
-        } else {
-            for &d in &c.loads {
-                let d = &c.descs[d];
-                g.fixed(
-                    ir::memory(
-                        ir::Memory::Fill,
-                        Term::name(format!("a{}", d.ad)),
-                        d.buf[0],
-                        None,
-                        true,
-                        vec![],
-                    )
-                    .unwrap(),
-                );
-            }
-            let (passes, rest) = (c.trips.len() / 2, c.trips.len() % 2);
+            let period = phase_period(&c);
+            let passes = c.trips.len() / period;
+            let rest = c.trips.len() % period;
             if passes > 0 {
                 let reg = format!("s{}", t.loop_s());
                 g.fixed(ir::seti(&reg, Term::int(passes as i128)));
                 g.fixed(ir::instruction("loop", vec![Term::name(&reg)], vec![]));
                 g.code.push(ir::Event::Open);
-                c.iteration_typed(&mut g, &lp.body, 0, true)?;
-                c.iteration_typed(&mut g, &lp.body, 1, rest != 0 || passes > 1)?;
+            }
+            for phase in 0..if passes > 0 { period } else { rest } {
+                c.phase = phase;
+                g.fixed(ir::instruction("vbar", vec![], vec![]));
+                g.fixed(ir::sync("fill", "unpack", None));
+                g.fixed(ir::sync("fill", "drain", None));
+                g.fixed(ir::sync("pack", "drain", None));
+                for &d in &c.loads {
+                    let d = &c.descs[d];
+                    c.fill_typed(&mut g, d, d.buf[0], true);
+                }
+                g.fixed(ir::sync("unpack", "fill", None));
+                c.iteration_typed(&mut g, &lp.body, 0, false)?;
+                g.fixed(ir::instruction("vbar", vec![], vec![]));
+            }
+            if passes > 0 {
                 g.code.push(ir::Event::Close);
             }
-            if rest != 0 {
-                c.iteration_typed(&mut g, &lp.body, 0, false)?;
+            if passes > 0 {
+                for phase in 0..rest {
+                    c.phase = phase;
+                    g.fixed(ir::instruction("vbar", vec![], vec![]));
+                    g.fixed(ir::sync("fill", "unpack", None));
+                    g.fixed(ir::sync("fill", "drain", None));
+                    g.fixed(ir::sync("pack", "drain", None));
+                    for &d in &c.loads {
+                        let d = &c.descs[d];
+                        c.fill_typed(&mut g, d, d.buf[0], true);
+                    }
+                    g.fixed(ir::sync("unpack", "fill", None));
+                    c.iteration_typed(&mut g, &lp.body, 0, false)?;
+                    g.fixed(ir::instruction("vbar", vec![], vec![]));
+                }
+            }
+        } else {
+            for &d in &c.loads {
+                let d = &c.descs[d];
+                c.fill_typed(&mut g, d, d.buf[0], true);
+            }
+            let p = phase_period(&c);
+            let period = if p.is_multiple_of(2) { p } else { p * 2 };
+            let (passes, rest) = (c.trips.len() / period, c.trips.len() % period);
+            if passes > 0 {
+                let reg = format!("s{}", t.loop_s());
+                g.fixed(ir::seti(&reg, Term::int(passes as i128)));
+                g.fixed(ir::instruction("loop", vec![Term::name(&reg)], vec![]));
+                g.code.push(ir::Event::Open);
+                for phase in 0..period {
+                    c.phase = phase;
+                    c.iteration_typed(
+                        &mut g,
+                        &lp.body,
+                        phase % 2,
+                        phase + 1 < period || rest != 0 || passes > 1,
+                    )?;
+                }
+                g.code.push(ir::Event::Close);
+            }
+            for tail in 0..rest {
+                c.phase = tail;
+                c.iteration_typed(&mut g, &lp.body, tail % 2, tail + 1 < rest)?;
             }
         }
     }
     g.fixed(ir::instruction("halt", vec![], vec![]));
     Ok((c, g))
+}
+
+fn phase_period(c: &Ctx) -> usize {
+    (1..=c.trips.len())
+        .find(|&p| {
+            let loads = if on("l2.readmap/invariant-phase") {
+                (0..c.descs.len()).collect::<Vec<_>>()
+            } else {
+                c.loads.clone()
+            };
+            loads
+                .iter()
+                .map(|&i| &c.descs[i])
+                .filter(|d| d.mapped.is_some())
+                .all(|d| {
+                    (0..c.trips.len()).all(|i| {
+                        d.phases[i] == d.phases[i % p]
+                            && (i + 1 == c.trips.len() || d.advances[i] == d.advances[i % p])
+                    })
+                })
+        })
+        .unwrap()
 }
 
 // Resolved events are supplied by the caller; allocation and banks are separate passes.

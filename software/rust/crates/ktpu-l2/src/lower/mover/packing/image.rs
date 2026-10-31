@@ -8,9 +8,9 @@ use crate::mutant::on;
 /// The S register a lifting batch image holds `tensor::ZERO_LIFT` in: every
 /// entry's zeros are selected to it before VPACK, so an all-zero block packs
 /// E=0.
-const LIFT: &str = "s4";
+pub(super) const LIFT: &str = "s4";
 
-fn lift_seti() -> String {
+pub(super) fn lift_seti() -> String {
     format!("    seti {LIFT} = {}", e8m15(zero_lift_value()))
 }
 
@@ -154,74 +154,18 @@ impl Batch<'_> {
         if !self.pipeline {
             lines.push(format!("{ind}vsync fe on=unpack"));
         }
-        for j in 0..n {
-            self.lift(base + step * j, ind, lines);
-        }
-        if self.checked && !on("l2.packing/drop-finite-check") {
-            self.classify(n, base, step, ind, lines);
-        }
-        for j in 0..n {
-            lines.push(format!(
-                "{ind}vpack v{} -> l1[{}] {}",
-                base + step * j,
-                output + (first + j) * 4,
-                self.dtype
-            ));
-        }
-        if !self.pipeline && !on("l2.packing/batch-no-pack-wait") {
-            lines.push(format!("{ind}vsync fe on=pack"));
-        }
+        self.finish()
+            .batch(base, step, n, output + first * 4, "", ind, lines);
     }
 
-    fn classify(&self, n: i64, base: i64, step: i64, ind: &str, lines: &mut Vec<String>) {
-        if self.zero_classifier {
-            // IEEE special handling precedes the zero-factor shortcut: finite*0
-            // is zero; Inf*0 and NaN*0 are NaN. EXP2D maps zero to 1 (<2^tau)
-            // and any NaN to sticky. vector_quant admits checked tau=8 only.
-            for j in 0..n {
-                lines.push(format!(
-                    "{ind}vmul v{}, v{}, k0",
-                    base + step * j + 1,
-                    base + step * j
-                ));
-            }
-            for j in 0..n {
-                lines.push(format!(
-                    "{ind}vexp2d v{}, v{}, k0",
-                    base + step * j + step - 1,
-                    base + step * j + 1
-                ));
-            }
-            if !self.pipeline {
-                lines.push(format!("{ind}vsync fe on=math"));
-            }
-            return;
-        }
-        let overlap =
-            self.pipeline || (self.classifier_overlap && !on("l2.packing/serial-classifier"));
-        for j in 0..n {
-            lines.push(format!("{ind}vabs v{}, v{}", 4 * j + 1, 4 * j));
-            lines.push(format!("{ind}vmov v{}, s3", 4 * j + 2));
-        }
-        // Register RAWs are scoreboarded; predicates still need a completed compare.
-        if !overlap {
-            lines.push(format!("{ind}vsync fe on=math"));
-        }
-        for j in 0..n {
-            lines.push(format!("{ind}vcmplt p{j}, v{}, s2", 4 * j + 1));
-        }
-        lines.push(format!("{ind}vsync fe on=math"));
-        for j in 0..n {
-            lines.push(format!("{ind}vmov v{}, k0 if=p{j}", 4 * j + 2));
-        }
-        if !overlap {
-            lines.push(format!("{ind}vsync fe on=math"));
-        }
-        for j in 0..n {
-            lines.push(format!("{ind}vexp2d v{}, v{}, k0", 4 * j + 3, 4 * j + 2));
-        }
-        if !self.pipeline {
-            lines.push(format!("{ind}vsync fe on=math"));
+    fn finish(&self) -> super::finish::Finish<'_> {
+        super::finish::Finish {
+            checked: self.checked,
+            dtype: self.dtype,
+            pipeline: self.pipeline,
+            classifier_overlap: self.classifier_overlap,
+            zero_classifier: self.zero_classifier,
+            lift: self.lift,
         }
     }
 

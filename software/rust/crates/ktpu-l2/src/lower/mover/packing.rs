@@ -6,8 +6,12 @@ use crate::lower::sync::Stage;
 use ktpu_machine::packing::STATUS_RECORD;
 use ktpu_machine::PackingBackend;
 
+mod finish;
 mod image;
+mod mapped;
 mod padding;
+
+pub use mapped::fits as composed_fits;
 
 /// Select a permitted backend. An op override never widens board admission.
 /// A destination of K pairs (`nk` >= 2) takes vector_mx7 (L2.MOV.018, RUL.099).
@@ -35,6 +39,14 @@ pub fn quant_backend(body: &Body, op: &Op, tg: &Target) -> Result<bool> {
             ))
         }
     };
+    if op.st.kw("read_map").is_some() && backend != PackingBackend::VectorMx7 {
+        return Err(fail(
+            body,
+            &op.st,
+            "L2.READ.001",
+            "logical read-map packing requires backend=vector_mx7",
+        ));
+    }
     if (op.st.kw("pad_cols").is_some() || op.st.kw("pad").is_some())
         && backend != PackingBackend::VectorMx7
     {
@@ -73,6 +85,50 @@ pub enum Finite {
     Deferred(Status),
 }
 
+/// Every unit's status image `name` run into `status`, and its check here or
+/// its record pending a `quant_check`.
+fn finite_status(
+    status: &Finite,
+    name: &str,
+    units: &[String],
+    lines: &mut Vec<String>,
+    accesses: &mut Vec<Access>,
+) {
+    let at = match status {
+        Finite::Inline(s) => s.clone(),
+        Finite::Deferred(s) => s.address(),
+    };
+    for (v, unit) in units.iter().enumerate() {
+        lines.extend([
+            format!("send {unit}"),
+            format!("    run {name}({at} + {})", v as i64 * STATUS_RECORD),
+        ]);
+    }
+    match status {
+        Finite::Inline(_) => {
+            lines.push("barrier".into());
+            for v in 0..units.len() as i64 {
+                lines.extend([
+                    format!("r14 = load {at} + {}", v * STATUS_RECORD),
+                    "assert_zero r14 code=1".into(),
+                ]);
+            }
+        }
+        Finite::Deferred(s) => {
+            for (v, unit) in units.iter().enumerate() {
+                let lo = s.offset + v as i64 * STATUS_RECORD;
+                accesses.push(Access::new(
+                    unit,
+                    true,
+                    ("mem", &s.name),
+                    lo,
+                    lo + STATUS_RECORD,
+                ));
+            }
+        }
+    }
+}
+
 /// A serialized 16-entry L1 slot: gather, exact unpack, MX7 pack, drain.
 pub fn vector_quant(
     body: &Body,
@@ -82,6 +138,9 @@ pub fn vector_quant(
     images: &mut Vec<String>,
     status: Option<Finite>,
 ) -> Result<Stage> {
+    if op.st.kw("read_map").is_some() {
+        return mapped::quant(body, op, env, tg, images, status);
+    }
     let st = &op.st;
     let err = |msg| fail(body, st, "L2.MOV.010", msg);
     let checked = status.is_some();
@@ -645,39 +704,7 @@ impl Schedule<'_> {
         if let Some(status) = status {
             let name = format!("{}.mx7_status_{tag}", body.name);
             images.push(image::status(&name));
-            let at = match status {
-                Finite::Inline(s) => s.clone(),
-                Finite::Deferred(s) => s.address(),
-            };
-            for (v, unit) in units.iter().enumerate() {
-                lines.extend([
-                    format!("send {unit}"),
-                    format!("    run {name}({at} + {})", v as i64 * STATUS_RECORD),
-                ]);
-            }
-            match status {
-                Finite::Inline(_) => {
-                    lines.push("barrier".into());
-                    for v in 0..cores {
-                        lines.extend([
-                            format!("r14 = load {at} + {}", v * STATUS_RECORD),
-                            "assert_zero r14 code=1".into(),
-                        ]);
-                    }
-                }
-                Finite::Deferred(s) => {
-                    for (v, unit) in units.iter().enumerate() {
-                        let lo = s.offset + v as i64 * STATUS_RECORD;
-                        accesses.push(Access::new(
-                            unit,
-                            true,
-                            ("mem", &s.name),
-                            lo,
-                            lo + STATUS_RECORD,
-                        ));
-                    }
-                }
-            }
+            finite_status(status, &name, &units, &mut lines, &mut accesses);
         }
         for unit in &units {
             for mut a in [

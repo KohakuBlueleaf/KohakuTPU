@@ -69,6 +69,8 @@ pub struct Target {
     pub one_word_runs: bool,
     // interlink
     pub il_slots: i64,
+    /// The stack's choices in composed reads.
+    pub read: crate::lower::readmap::Knobs,
 }
 
 fn coords(m: &Machine, k: UnitKind) -> Vec<(i64, i64)> {
@@ -118,6 +120,7 @@ impl Target {
             row_words: m.mover.row_words as i64,
             one_word_runs: m.mover.one_word_runs,
             il_slots: m.il.slots as i64,
+            read: crate::lower::readmap::Knobs::DEFAULT,
         }
         .mutated()
     }

@@ -177,6 +177,33 @@ pub fn scaled(lp: &Stmt, var: &str, rows: i64, new: i64) -> Stmt {
             other => other.clone(),
         }
     }
+    fn address(t: &Term, var: &str, rows: i64, new: i64) -> Term {
+        match t {
+            Term::BinOp('*', a, b) if a.as_name() == Some(var) || b.as_name() == Some(var) => {
+                let factor = if a.as_name() == Some(var) { b } else { a };
+                if let Term::Int(k, _) = factor.as_ref() {
+                    if (*k as i64) % rows == 0 {
+                        return Term::BinOp(
+                            '*',
+                            Box::new(Term::name(var)),
+                            Box::new(int_t(*k as i64 / rows * new)),
+                        );
+                    }
+                }
+                term(t, var, rows, new)
+            }
+            Term::BinOp(op, a, b) => Term::BinOp(
+                *op,
+                Box::new(address(a, var, rows, new)),
+                Box::new(address(b, var, rows, new)),
+            ),
+            Term::Offset(a, b) => Term::Offset(
+                Box::new(address(a, var, rows, new)),
+                Box::new(address(b, var, rows, new)),
+            ),
+            _ => t.clone(),
+        }
+    }
     let fixed = invariant(lp);
     let mut body = Vec::new();
     for st in &lp.body {
@@ -189,8 +216,8 @@ pub fn scaled(lp: &Stmt, var: &str, rows: i64, new: i64) -> Stmt {
             .args
             .iter()
             .map(|a| {
-                if matches!(a, Term::Assign(..)) {
-                    a.clone()
+                if let Term::Assign(key, value) = a {
+                    Term::Assign(key.clone(), Box::new(address(value, var, rows, new)))
                 } else {
                     term(a, var, rows, new)
                 }
@@ -238,9 +265,9 @@ fn tiled(par: &Stmt, path: &[usize], rows: i64, new: i64) -> Stmt {
     put_path(par, path, scaled(lp, &var, rows, new))
 }
 
-/// `(cycles, None)` of the first instance of the one vector `par` in `stmts`,
+/// `(cycles, None)` across the one vector `par` in `stmts`, including lifted trips,
 /// or `(None, why)` where it does not lower.
-fn lowered_cost(
+pub(super) fn lowered_cost(
     p: &Program,
     params: &[(String, Term)],
     stmts: &[Stmt],
@@ -248,19 +275,40 @@ fn lowered_cost(
     search: &Search,
 ) -> (Option<i64>, String) {
     let got = (|| -> std::result::Result<i64, String> {
-        let body = write(p, params, stmts)
-            .map_err(|e| first_line(&e))?
-            .body()
-            .map_err(|e| first_line(&e))?;
+        let program = write(p, params, stmts).map_err(|e| first_line(&e))?;
+        let program = if stmts
+            .iter()
+            .any(|s| ops_of(s).iter().any(|s| s.kw("read_map").is_some()))
+        {
+            super::step::step(&program, t, search).map_err(|e| first_line(&e))?
+        } else {
+            program
+        };
+        let body = program.body().map_err(|e| first_line(&e))?;
         let stages = instances(&body).map_err(|e| first_line(&e))?;
-        let x = stages
-            .into_iter()
-            .find_map(|s| match s.x {
-                StageX::Par(x) => Some(x),
-                _ => None,
-            })
-            .ok_or_else(|| "StopIteration".to_string())?;
-        vector::total(&body, x[0].par(), &x[0].env, t, search).map_err(|e| first_line(&e))
+        if !stages.iter().any(|s| matches!(s.x, StageX::Par(_))) {
+            return Err("StopIteration".to_string());
+        }
+        let every_stage =
+            t.read.retile_every_stage && !crate::mutant::on("l2.retile/first-instance");
+        let mut total = 0;
+        for stage in stages {
+            if let StageX::Par(parts) = stage.x {
+                let take = if every_stage { parts.len() } else { 1 };
+                let mut longest = 0;
+                for part in parts.iter().take(take) {
+                    longest = longest.max(
+                        vector::total(&body, part.par(), &part.env, t, search)
+                            .map_err(|e| first_line(&e))?,
+                    );
+                }
+                total += longest;
+                if !every_stage {
+                    break;
+                }
+            }
+        }
+        Ok(total)
     })();
     match got {
         Ok(c) => (Some(c), String::new()),
@@ -515,8 +563,74 @@ fn piece(par: &Stmt, wide_w: i64, w: i64, j: i64, shapes: &HashMap<String, Vec<T
     out
 }
 
+fn unlift_step(stmts: Vec<Stmt>) -> Vec<Stmt> {
+    stmts
+        .into_iter()
+        .map(|s| {
+            if s.op != "for"
+                || s.kw(super::step::LIFTED).is_none()
+                || s.body.len() != 1
+                || s.body[0].op != "par"
+            {
+                return s;
+            }
+            if unit_of(&s.body[0]).as_deref() != Some("vc") {
+                return s;
+            }
+            let Some((trip_var, span_lo, span_hi)) = head(&s) else {
+                return s;
+            };
+            let par = &s.body[0];
+            let Some(mut cur) = par.body.last().cloned() else {
+                return s;
+            };
+            let mut dlo = span_lo;
+            let mut dhi = span_hi;
+            while cur.op == "when" && cur.body.len() == 1 {
+                if let Some(Term::Compare(op, lhs, rhs)) = cur.positional().first() {
+                    if lhs.as_name() == Some(trip_var.as_str()) {
+                        if op == ">=" {
+                            dlo = (**rhs).clone();
+                        } else if op == "<" {
+                            dhi = (**rhs).clone();
+                        }
+                    }
+                }
+                cur = cur.body[0].clone();
+            }
+            let Some((inner_var, ilo, ihi)) = head(&cur) else {
+                return s;
+            };
+            let expected_hi = Term::BinOp(
+                '+',
+                Box::new(Term::name(trip_var.clone())),
+                Box::new(Term::int(1)),
+            );
+            if cur.op != "for"
+                || ilo != Term::name(trip_var)
+                || ihi != expected_hi
+                || !ops_of(&cur).iter().any(|op| op.kw("read_map").is_some())
+            {
+                return s;
+            }
+            let restored_head = Term::Member(
+                Box::new(Term::name(inner_var)),
+                Box::new(Term::Span(Box::new(dlo), Box::new(dhi))),
+            );
+            cur.args = std::iter::once(restored_head)
+                .chain(cur.args.into_iter().skip(1))
+                .collect();
+            let mut new_par = par.clone();
+            let last_idx = new_par.body.len() - 1;
+            new_par.body[last_idx] = cur;
+            new_par
+        })
+        .collect()
+}
+
 pub fn retile(p: &Program, t: &Target, search: &Search) -> Result<Program> {
     let (params, stmts) = body_of(p)?;
+    let stmts = unlift_step(stmts);
     let r = p.module.reader();
     let top: Vec<Stmt> = stmts.iter().filter(|s| s.op == "buffer").cloned().collect();
     let mut shapes: HashMap<String, Vec<Term>> = HashMap::new();
@@ -686,5 +800,13 @@ pub fn retile(p: &Program, t: &Target, search: &Search) -> Result<Program> {
             "retile loop count differs from representative",
         ));
     }
-    write(p, &params, &out)
+    let result = write(p, &params, &out)?;
+    if out
+        .iter()
+        .any(|s| ops_of(s).iter().any(|s| s.kw("read_map").is_some()))
+    {
+        super::step::step(&result, t, search)
+    } else {
+        Ok(result)
+    }
 }

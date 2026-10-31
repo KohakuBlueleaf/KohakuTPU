@@ -76,6 +76,20 @@ impl Strategy {
 
 /// The most choices kept (by one candidate's image, name blanked).
 const CHOSEN_KEPT: usize = 4096;
+/// A search's result under the name `\0`: text, continuations, cycles.
+type Chosen = (String, Vec<(String, String)>, i64);
+
+/// Continuations named after `from` under the name `to`.
+fn parts_named(parts: &[(String, String)], from: &str, to: &str) -> Vec<(String, String)> {
+    parts
+        .iter()
+        .map(|(name, text)| {
+            let name = format!("{to}{}", &name[from.len()..]);
+            let text = renamed(text, &name);
+            (name, text)
+        })
+        .collect()
+}
 
 type Key = (
     String,
@@ -144,7 +158,7 @@ pub struct Search {
     pub ranges: Ranges,
     /// How the lowering moves a value it does not change (ISA.VC.058).
     pub zero_sign: ZeroSign,
-    chosen: Mutex<IndexMap<Key, (String, i64)>>,
+    chosen: Mutex<IndexMap<Key, Chosen>>,
     recording: bool,
     frozen: AtomicBool,
     retile_choices: Mutex<Vec<(i64, i64)>>,
@@ -168,6 +182,8 @@ impl Default for Search {
 #[derive(Clone, Debug)]
 pub struct Best {
     pub text: String,
+    /// `(name, text)` of each continuation of a split image (else empty).
+    pub parts: Vec<(String, String)>,
     pub params: Vec<String>,
     pub cycles: i64,
     pub accesses: Vec<Access>,
@@ -315,7 +331,8 @@ impl Search {
 
     /// Every choice remembered, oldest first: `(image, name blanked; cycles)`.
     pub fn chosen(&self) -> Vec<(String, i64)> {
-        self.chosen.lock().unwrap().values().cloned().collect()
+        let chosen = self.chosen.lock().unwrap();
+        chosen.values().map(|c| (c.0.clone(), c.2)).collect()
     }
 
     /// The search's choice, remembered by the image one candidate makes: a
@@ -361,6 +378,7 @@ impl Search {
             })?;
             return Ok(Best {
                 text: module.source.clone(),
+                parts: Vec::new(),
                 params,
                 accesses,
                 cycles: 0,
@@ -422,7 +440,7 @@ impl Search {
             true => None,
             false => self.chosen.lock().unwrap().get(&key).cloned(),
         };
-        if let Some((text, cycles)) = got {
+        if let Some((text, parts, cycles)) = got {
             let mut ch = self.chosen.lock().unwrap();
             if let Some(i) = ch.get_index_of(&key) {
                 let last = ch.len() - 1;
@@ -430,6 +448,7 @@ impl Search {
             }
             return Ok(Best {
                 text: renamed(&text, name),
+                parts: parts_named(&parts, "\0", name),
                 params: probe.1,
                 cycles,
                 accesses: probe.2,
@@ -443,7 +462,8 @@ impl Search {
         }
         let best = self.search(body, par, env, name, plan, land, t)?;
         let mut ch = self.chosen.lock().unwrap();
-        ch.insert(key, (renamed(&best.text, "\0"), best.cycles));
+        let parts = parts_named(&best.parts, name, "\0");
+        ch.insert(key, (renamed(&best.text, "\0"), parts, best.cycles));
         if !self.recording && ch.len() > CHOSEN_KEPT {
             ch.shift_remove_index(0);
         }
@@ -659,8 +679,10 @@ impl Search {
         cands.sort_by_key(|c| c.1);
         let mut whys: Vec<String> = Vec::new();
         let mut tried: Vec<(String, usize)> = Vec::new();
-        // The first image that fits, past candidates its schedule outgrows.
-        let mut fit: Option<Best> = None;
+        // The first image that fits, past candidates its schedule outgrows,
+        // and the cheapest candidate that fits only cut into continuations.
+        let (mut fit, mut cut): (Option<Best>, Option<Best>) = (None, None);
+        let splits = t.read.split_every_image || crate::lower::readmap::reads_mapped(&par.st);
         for ((candidate, params, accesses), cycles) in cands {
             let text = &candidate.source;
             // A text tried before encodes as it did: its words are in `whys`.
@@ -673,35 +695,48 @@ impl Search {
                 Some(m) if !each => m,
                 _ => &candidate,
             };
-            match encode::words_of(&*throttled(module, t)?, name, params.len(), &t.machine) {
+            let n = params.len();
+            let (fill, copies) = (body.fill, body.vcopies);
+            let image = throttled(module, t)?;
+            match super::decompose::split(&image, name, n, t, cycles, splits, fill, copies) {
                 Err(e) => {
                     let w = e.message.lines().next().unwrap_or("").to_string();
                     if !whys.contains(&w) {
                         whys.push(w);
                     }
                 }
-                Ok(words) if words as i64 <= IMEM_ROOM || on("l2.vector/imem-unbounded") => {
+                Ok(split) if split.parts.is_empty() => {
                     let best = Best {
                         text: text.clone(),
+                        parts: split.parts,
                         params,
-                        cycles,
+                        cycles: split.cycles,
                         accesses,
                     };
-                    if on("l2.vector/first-fit") || self.fits.whole(module, best.params.len(), t) {
-                        return Ok(best);
+                    if on("l2.vector/first-fit") || self.fits.whole(module, n, t) {
+                        fit = Some(best);
+                        break;
                     }
                     fit.get_or_insert(best);
                 }
-                Ok(words) => {
-                    let w = format!("{words} IMEM words (an image takes {IMEM_ROOM})");
-                    if !whys.contains(&w) {
-                        whys.push(w);
+                Ok(split) => {
+                    if cut.as_ref().is_none_or(|b| split.cycles < b.cycles) {
+                        let parts = split.parts.iter().map(|p| p.1.as_str());
+                        cut = Some(Best {
+                            text: parts.collect::<Vec<_>>().join("\n"),
+                            parts: split.parts,
+                            params,
+                            cycles: split.cycles,
+                            accesses,
+                        });
                     }
                 }
             }
         }
-        if let Some(best) = fit {
-            return Ok(best);
+        match (fit, cut) {
+            (Some(f), Some(c)) => return Ok(if c.cycles < f.cycles { c } else { f }),
+            (Some(best), None) | (None, Some(best)) => return Ok(best),
+            (None, None) => {}
         }
         Err(body.reader.fail(
             &par.st,

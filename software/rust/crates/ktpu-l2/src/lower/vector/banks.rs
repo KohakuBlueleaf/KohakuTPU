@@ -20,6 +20,8 @@ pub mod typed;
 const HOLD: i64 = 2;
 const STARVE: i64 = 1;
 const PASSES: usize = 16;
+/// Past this many `vsel`s a value is assembled lane by lane: it stays unrotated.
+const ASSEMBLED_VSELS: usize = 16;
 
 #[cfg(feature = "witness")]
 fn walk_op(tmpl: &str) -> bool {
@@ -108,6 +110,19 @@ pub fn choose(code: &[Code], copies: u32, core: &Core) -> HashMap<String, u64> {
         .filter(|(t, _)| fixed(t))
         .flat_map(|(_, s)| s.iter().map(|x| x.as_str()))
         .collect();
+    let mut vsel_counts: HashMap<&str, usize> = HashMap::new();
+    for (t, syms) in &tuples {
+        if t.starts_with("vsel ") {
+            for sym in *syms {
+                *vsel_counts.entry(sym.as_str()).or_insert(0) += 1;
+            }
+        }
+    }
+    fixed_syms.extend(
+        vsel_counts
+            .into_iter()
+            .filter_map(|(s, n)| (n > ASSEMBLED_VSELS).then_some(s)),
+    );
     // A predicated write takes its lane mask by destination chunk
     // (v2_lanes.v:332), so its destination keeps rotation 0.
     if !crate::mutant::on("l2.banks/rotates-predicated") {

@@ -65,6 +65,16 @@ impl Ctx<'_> {
                 local.insert(target.clone(), v);
             }
             let once = self.once(&local[&target], rows)?;
+            let needed = once.iter().map(|x| x.1).collect::<Vec<_>>();
+            if let Some(load) = ops
+                .iter()
+                .map(|n| op(n))
+                .find(|p| p.op == "load" && p.target.as_deref() == value_name(o.st.positional()[0]))
+            {
+                if self.mapped_unpack(g, load, src.buf, &needed, &target, local)? {
+                    continue;
+                }
+            }
             let fixed = crate::mutant::on("l2.vector/pinned-row-fixed")
                 && self.pre.iter().any(|u| u.target() == Some(target.as_str()));
             let first = once.first().map(|x| x.1);

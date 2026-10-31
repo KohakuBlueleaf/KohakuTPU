@@ -93,7 +93,7 @@ impl<'a> Ctx<'a> {
             )?),
             (true, None) => return Err(VErr::Value("list index out of range".into())),
         };
-        let (name, off, walk, words, kind, rows_w, vrows) = self.walk(o, &view, first, rows)?;
+        let (name, off, walk, mut words, kind, rows_w, vrows) = self.walk(o, &view, first, rows)?;
         let t = if o.op == "load" { o.ty.clone() } else { None };
         let bcast = t
             .as_ref()
@@ -102,7 +102,8 @@ impl<'a> Ctx<'a> {
         if bcast {
             want = Some(rows_w);
         }
-        if let Some(w) = want {
+        let mapped = self.mapped_tile(o, first)?;
+        if let Some(w) = want.filter(|_| mapped.is_none()) {
             if words != w && !crate::mutant::on("l2.vector/view-size-unchecked") {
                 return Err(self.fail(
                     &o.st,
@@ -147,8 +148,42 @@ impl<'a> Ctx<'a> {
                 format!("a view {off} bytes in: a descriptor starts on a 32-byte word"),
             ));
         }
+        let mut phases = Vec::new();
+        let mut advances = Vec::new();
+        let mut mapped_span = None;
+        if let Some(tile) = &mapped {
+            let tiles = if looped {
+                self.trips
+                    .iter()
+                    .map(|&trip| self.mapped_tile(o, Some(trip)).map(|t| t.unwrap()))
+                    .collect::<VResult<Vec<_>>>()?
+            } else {
+                vec![crate::lower::readmap::Tile {
+                    anchor: tile.anchor,
+                    shape: tile.shape.clone(),
+                }]
+            };
+            words = tiles
+                .iter()
+                .map(|t| t.shape.words.len().max(1) as i64)
+                .max()
+                .unwrap();
+            mapped_span = Some((
+                tiles.iter().map(|t| t.anchor).min().unwrap(),
+                tiles
+                    .iter()
+                    .map(|t| t.anchor + t.shape.extent())
+                    .max()
+                    .unwrap(),
+            ));
+            for (i, tile) in tiles.iter().enumerate() {
+                let delta = tiles.get(i + 1).map_or(0, |next| next.anchor - tile.anchor);
+                advances.push(delta);
+                phases.push(tile.shape.clone());
+            }
+        }
         let mut inc = 0;
-        if looped && (self.trips.len() > 1 || self.classed) {
+        if mapped.is_none() && looped && (self.trips.len() > 1 || self.classed) {
             let first = first.unwrap();
             inc = if self.classed {
                 self.class_origin(o, &view, first + 1)? - off
@@ -213,13 +248,28 @@ impl<'a> Ctx<'a> {
                     && !self.descs.iter().any(|s| s.shared == Some(x))
             });
         }
+        if mapped.is_some()
+            && looped
+            && twin.is_none()
+            && shared.is_none()
+            && self.top
+                + words
+                    * if self.classed || self.serial || self.trips.len() == 1 {
+                        1
+                    } else {
+                        2
+                    }
+                > self.land
+        {
+            return Err(VErr::Pressure);
+        }
         let buf = if let Some(tw) = twin {
             self.descs[tw].buf.clone()
         } else if let Some(sh) = shared {
             self.descs[sh].buf.clone()
         } else if looped {
             let a = self.alloc(words, o)?;
-            let b = if self.classed {
+            let b = if self.classed || self.serial || (mapped.is_some() && self.trips.len() == 1) {
                 a
             } else {
                 self.alloc(words, o)?
@@ -248,6 +298,10 @@ impl<'a> Ctx<'a> {
         };
         let mut d = Desc {
             ad: self.descs.len(),
+            mapped: mapped.map(|t| t.shape),
+            phases,
+            advances,
+            mapped_span,
             buffer: Some(name),
             off,
             words,

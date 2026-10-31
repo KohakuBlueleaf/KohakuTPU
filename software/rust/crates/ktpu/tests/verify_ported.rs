@@ -9,7 +9,7 @@
 
 use ktpu::{compile, Cache, Input, Stack};
 use ktpu_l2::lower::fills::throttle;
-use ktpu_l2::Target;
+use ktpu_l2::{compile_with, Program, Search, Target, PASSES};
 use ktpu_machine::Machine;
 use std::path::{Path, PathBuf};
 
@@ -360,6 +360,33 @@ fn l2_vc_027_a_throttled_window_checks_clean() {
         .any(|f| f.1.contains("completion queue")));
 }
 
+/// Entries 25 values apart in a row: word runs no walk reaches, one fill a run.
+const SPACED_PACK: &str = "target ktpu.v9
+fn spaced.l2(x: f16[64,800] @dram, q: mx7a[64,32] @dram(gm=1,nk=1))
+    quant q <- x read_map=((51200,0,0,2048,((64,800),(32,25)),((64,32),(32,1))),) read_shape=(32,0,0,64,32)
+";
+
+/// The checker's findings of a composed read at exact words: no lattice, so
+/// each word run is a fill of its own.
+pub fn composed_read_facts() -> Vec<(String, String)> {
+    let m = machine(1)
+        .with_fact(
+            "conversion.fp16_mx7.preferred_backend",
+            serde_json::json!("vector_mx7"),
+        )
+        .unwrap();
+    let mut t = Target::of(&m).with_nodes(1);
+    t.read.lattice_words = 0;
+    let p = Program::parse(SPACED_PACK, "<read>", Some("spaced")).unwrap();
+    let c = compile_with(&p, &t, &PASSES, false, &Search::default()).unwrap();
+    kinds(&c.l1_text)
+}
+
+#[test]
+fn l2_vc_027_a_composed_read_checks_clean() {
+    assert_eq!(composed_read_facts(), vec![]);
+}
+
 /// Both cores peer-drain into mg[0]'s L1 A with nothing ordering the two.
 const TWO: &str = "target ktpu.v9
 
@@ -446,6 +473,15 @@ mod mutants {
     #[test]
     fn fill_track_breaks_without_its_check() {
         breaks("verify.vector/no-fill-track", fill_track_facts);
+    }
+
+    #[test]
+    fn a_composed_read_without_the_throttle_overfills_the_completion_queue() {
+        let got = ktpu::mutant::with("l2.fill/no-throttle", composed_read_facts).unwrap();
+        assert!(
+            got.iter().any(|f| f.1.contains("completion queue")),
+            "{got:?}"
+        );
     }
 
     #[test]

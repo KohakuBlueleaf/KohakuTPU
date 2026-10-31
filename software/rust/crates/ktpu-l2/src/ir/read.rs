@@ -169,7 +169,11 @@ fn node(r: &Reader, st: &Stmt) -> Result<Arc<Node>> {
         }
         if st.op == "for" {
             let kw = st.kwargs();
-            if pos.len() != 1 || kw.iter().any(|(k, _)| *k != "pipe") {
+            if pos.len() != 1
+                || kw
+                    .iter()
+                    .any(|(k, _)| *k != "pipe" && *k != crate::passes::step::LIFTED)
+            {
                 return Err(r.fail(st, "L2.BODY.014", "for VAR in LO..HI [pipe=K]"));
             }
             let pipe = match st.kw("pipe") {

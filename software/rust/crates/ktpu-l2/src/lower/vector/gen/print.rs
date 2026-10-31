@@ -53,6 +53,7 @@ fn term(t: &Term, rule: Rule) -> Result<String> {
         Term::Call(n, args) => format!("{}({})", name(n)?, join(args, rule)?),
         Term::Kw(n, value) => format!("{}={}", name(n)?, term(value, rule)?),
         Term::Assign(a, b) => format!("{}={}", term(a, rule)?, term(b, rule)?),
+        Term::Offset(a, b) => format!("({}+{})", term(a, rule)?, term(b, rule)?),
         Term::AddAssign(a, b) => format!("{} += {}", term(a, rule)?, term(b, rule)?),
         Term::Tuple(ts) if ts.len() == 1 => format!("({},)", term(&ts[0], rule)?),
         Term::Tuple(ts) => format!("({})", join(ts, rule)?),
