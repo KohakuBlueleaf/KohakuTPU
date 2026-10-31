@@ -26,7 +26,6 @@ share DRAM (the Xache); each node's queue sits in its own staging store.
 """
 
 import json
-import os
 import pathlib
 import re
 import sys

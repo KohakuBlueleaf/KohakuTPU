@@ -9,7 +9,6 @@ these arenas. Recording pins existing spans instead of reserving a child heap.
     mem.free(a)
 """
 
-import os
 
 from kohakutpu.application.runtime.memory.arena import Arena
 from kohakutpu.language.config import ENV

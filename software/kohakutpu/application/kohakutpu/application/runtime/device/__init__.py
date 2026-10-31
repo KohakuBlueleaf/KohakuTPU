@@ -15,7 +15,6 @@ Every run is checked by the static verifier before the card sees it (the
 card's `run` schedules each package through `verify.schedule`).
 """
 
-import os
 import pathlib
 import tempfile
 from collections import OrderedDict

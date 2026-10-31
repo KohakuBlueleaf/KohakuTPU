@@ -16,7 +16,7 @@ from kohakutpu.application.ktpugrad.plan.lower import Access, Plan
 from kohakutpu.language.config import ENV
 
 KEPT = 512
-ENV = "KTPU_PLAN_CACHE"
+VARIABLE = "KTPU_PLAN_CACHE"
 
 
 class Identity:
@@ -89,7 +89,7 @@ def memo(fn):
 
     @wraps(fn)
     def call(*args, **kwargs):
-        if ENV.get(ENV, "1") == "0":
+        if ENV.get(VARIABLE, "1") == "0":
             return fn(*args, **kwargs)
         key = (freeze(args), freeze(kwargs))
         if key in cache:

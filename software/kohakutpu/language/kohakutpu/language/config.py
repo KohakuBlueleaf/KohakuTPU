@@ -24,6 +24,13 @@ class Environment:
 ENV = Environment()
 
 VARIABLES = {
+    "KOHAKUTPU_REPLAY_PACKAGE_FRACTION": ("application/runtime/device/__init__.py",),
+    "KOHAKUTPU_REPLAY_OVERCOMMIT": ("application/runtime/device/__init__.py",),
+    "KTPU_MX7_SLOTS": ("application/runtime/machine.py",),
+    "KTPU_MX7_CORES": ("application/runtime/machine.py",),
+    "KTPU_MX7_LOOPED": ("application/runtime/machine.py",),
+    "KTPU_FUSE_*": ("application/ktpugrad/plan/fusion.py",),
+    "KTPU_GRAPH_*": ("application/runtime/graph/recorded.py",),
     "KOHAKUTPU_ADMISSION_CONTEXT": ("application/runtime/packages.py",),
     "KOHAKUTPU_ARENA_LOOKUP": ("application/runtime/memory/arena.py",),
     "KOHAKUTPU_BOARD": (

@@ -8,13 +8,13 @@ from kohakutpu.language.config import ENV
 from kohakutpu.language.dsl.kernel import _MUTANT
 
 KEPT = 128
-ENV = "KTPU_EAGER_SCHEDULE"
+VARIABLE = "KTPU_EAGER_SCHEDULE"
 ENABLED = False
 
 
 def refresh():
     global ENABLED
-    ENABLED = ENV.get(ENV, "0") == "1"
+    ENABLED = ENV.get(VARIABLE, "0") == "1"
     return ENABLED
 
 
