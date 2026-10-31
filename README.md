@@ -243,7 +243,7 @@ workspace keeps no lock file).
 
 ```bash
 python -m venv .venv && source .venv/bin/activate        # .venv\Scripts\activate on Windows
-cd software && uv sync
+uv pip install -e software/kohakutpu -e software/template  # -e software/kohakuaccel for the framework alone
 python -m toyaccel.application.run                        # the template project, end to end
 ```
 

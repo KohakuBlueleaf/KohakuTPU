@@ -17,12 +17,13 @@ software/
 ├── kohakuaccel/      compiler, driver, simulation, firmware, os
 ├── kohakutpu/        language, compiler, driver, simulation, firmware, os, application
 ├── template/         toyaccel
-└── tests/            import rules
+└── tests/            one suite a stage (tests/README.md)
 ```
 
 ```text
-uv sync
-uv run python ../scripts/py/build_rs.py prod
+uv pip install -e kohakutpu   # every member under it and the framework, into the repo .venv (no lock file)
+uv pip install -e kohakuaccel # the framework alone
+python ../scripts/py/build_rs.py prod
 ```
 
 A card or Verilator model is not needed for offline compilation.
@@ -33,6 +34,7 @@ A card or Verilator model is not needed for offline compilation.
 |---|---|---|
 | `kohakuaccel/compiler/` | `kohakuaccel.compiler` | Generic instruction-layout toolkit |
 | | crates `ka-machine`, `ka-isa`, `ka-package`, `ka-debug`, `ka-cache` | Machine facts, instruction fields, packages, debug records and caches every project shares |
+| | crate `ka-emu` | RV64 emulator with the node's control region: firmware and the OS without a model |
 | `kohakuaccel/driver/` | `kohakuaccel.driver` | Transports, node queues, discovery, staging, the daemon |
 | `kohakuaccel/simulation/` | `kohakuaccel.simulation` | Callback-driven package interpreter and transport doubles; computes no tensor values |
 | `kohakuaccel/firmware/` | C | Node firmware: queue service, package interpreter, unit enumeration |
@@ -41,6 +43,7 @@ A card or Verilator model is not needed for offline compilation.
 | `kohakutpu/compiler/` | `kohakutpu.compiler._rs` | Native extension from crate `ktpu-py`, the one PyO3 crate |
 | | `kohakutpu.stack` | The only importers of `_rs`: compile, buffer and specialisation adapters |
 | | crates `ktpu-machine`, `ktpu-isa`, `ktpu-l0`, `ktpu-l1`, `ktpu-l2`, `ktpu-graph`, `ktpu-kernels`, `ktpu-verify`, `ktpu` | TPU machine facts, encodings, lowering, scheduling, kernel generators, static verification |
+| | crate `ktpu-sim` | Value simulators of L2, L1 and L0, sharing no lowering with the compiler |
 | `kohakutpu/driver/` | `kohakutpu.driver` | Clocks, unit facts, host entry points |
 | `kohakutpu/simulation/` | `kohakutpu.simulation` | Machine-bound Rust package reader and Verilator interfaces |
 | `kohakutpu/firmware/` | C and Python tools | Unit firmware, build configuration, offline package producers |
@@ -51,12 +54,18 @@ A card or Verilator model is not needed for offline compilation.
 Python is the only planner; Rust generates kernels and compiles. The runtime's
 machine view comes from `_rs.machine_view`; addresses, staging capacity,
 buffers, IMEM accounting and packages use the same machine schema as the Rust
-compiler. Compiled tensor values are checked on a card or Verilated card, never
-a tensor behaviour model.
+compiler. A stage's output is checked on the simulator of the level below it:
+`Device(kind="double")` runs a kernel's L2 with no hardware, and only the L0
+simulator's anchors and machine behaviour reach Verilator or a card.
+
+## Testing
+
+`python tests/run.py` runs the stages this tree changes, each within a budget;
+[tests/README.md](tests/README.md) gives the tiers.
 
 ## Import rules
 
-`tests/test_imports.py` checks imports at module level. Framework modules import
+`tests/static/test_imports.py` checks imports at module level. Framework modules import
 no project, and a project imports no other project. The callback interpreter
 receives its package reader from its caller; the framework does not import the
 TPU extension. Framework crates never depend on project crates.
