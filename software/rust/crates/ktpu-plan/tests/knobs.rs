@@ -23,6 +23,7 @@ fn every_knob() -> Knobs {
         split_vc: true,
         tail_bands: true,
         activation_fp16: true,
+        activation_any: false,
         quant_ring: 2,
         expr_cse: true,
     }

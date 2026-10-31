@@ -234,7 +234,7 @@ impl Knobs {
     }
 
     /// The `group` knobs as the call records them (none under
-    /// [`UNRECORDED_MUTANT`]).
+    /// [`UNRECORDED_MUTANT`]); `activation_any` only when set.
     pub fn args(&self, group: Group) -> Vec<(&'static str, serde_json::Value)> {
         if crate::mutants::on(UNRECORDED_MUTANT) {
             return vec![];
@@ -242,6 +242,7 @@ impl Knobs {
         KNOBS
             .iter()
             .filter(|k| k.group == group)
+            .filter(|k| k.name != "activation_any" || self.activation_any)
             .map(|k| (k.name, self.get(k.name)))
             .collect()
     }

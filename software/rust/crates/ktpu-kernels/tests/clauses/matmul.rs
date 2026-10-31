@@ -188,6 +188,7 @@ fn a_call_records_and_replays_its_knobs() {
         split_vc: true,
         tail_bands: true,
         activation_fp16: true,
+        activation_any: true,
         quant_ring: 2,
         expr_cse: true,
     };
@@ -208,6 +209,7 @@ fn a_call_records_and_replays_its_knobs() {
             ("split_vc", serde_json::json!(true)),
             ("tail_bands", serde_json::json!(true)),
             ("activation_fp16", serde_json::json!(true)),
+            ("activation_any", serde_json::json!(true)),
             ("quant_ring", serde_json::json!(2)),
             ("expr_cse", serde_json::json!(true)),
         ]
