@@ -2,11 +2,8 @@
 //! the builder's [`Addresses`], by the unit type the builder names a payload
 //! for (`"MG"`, `"VC"`, `"SR"`, `"mover"`).
 
+use ka_package::{AddrField, Addresses, Refusal, Result, Word};
 use ktpu_isa::{Isa, Machine, Target, UnitKind};
-
-use super::{AddrField, Addresses};
-use crate::error::{Refusal, Result};
-use crate::word::Word;
 
 pub struct IsaAddresses {
     pub isa: Isa,

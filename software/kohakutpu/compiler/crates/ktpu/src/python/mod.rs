@@ -500,7 +500,7 @@ fn bind<'py>(
         let (pkg_arc, table_arc, f) = match cached_template {
             Some(got) => got,
             None => {
-                let f = ktpu_l0::Facts::of_mesh(&m, mesh)?;
+                let f = ktpu_l0::Facts::of_mesh(&*m, mesh)?;
                 let pkg = ktpu_l0::Package::from_bytes(package, &f)?;
                 if let Some(images) = images_pre.as_ref().filter(|v| !v.is_null()) {
                     let isa = ktpu_isa::unit::vector::VecIsa::new(&m)

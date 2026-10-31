@@ -1,18 +1,15 @@
 [package]
 name = "ktpu-l0"
-description = "L0 packages: wire format, steps, relocations, binding."
+description = "KohakuTPU's packages: ka-package with the TPU's unit address fields."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [features]
-# Spec-vector mutants, switched per thread (src/mutant.rs).
-mutants = []
+# ka-package's spec-vector mutants.
+mutants = ["ka-package/mutants"]
 
 [dependencies]
-ktpu-machine.workspace = true
+ka-package.workspace = true
 ktpu-isa.workspace = true
-thiserror.workspace = true
-serde_json.workspace = true
-serde.workspace = true

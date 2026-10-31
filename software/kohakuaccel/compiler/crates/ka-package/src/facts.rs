@@ -1,9 +1,9 @@
-//! The machine facts L0 reads, taken from `ktpu_machine::Machine`; every
-//! field is the machine's.
+//! The machine facts L0 reads, taken from a project's machine; every field
+//! is the machine's.
 
 use std::collections::BTreeMap;
 
-use ktpu_machine::{Machine, UnitKind};
+use ka_machine::MachineFacts;
 
 use crate::error::Result;
 use crate::refuse;
@@ -60,32 +60,31 @@ pub struct Facts {
 
 impl Facts {
     /// The facts of machine `m`, its kernels written against mesh 0.
-    pub fn of(m: &Machine) -> Facts {
+    pub fn of<M: MachineFacts + ?Sized>(m: &M) -> Facts {
         Facts::seen_from(m, 0)
     }
 
     /// The facts of machine `m` seen from mesh `mesh` (every mesh of a card
     /// is the same die); refuses a mesh the card does not have.
-    pub fn of_mesh(m: &Machine, mesh: u32) -> Result<Facts> {
-        if mesh >= m.nodes() {
+    pub fn of_mesh<M: MachineFacts + ?Sized>(m: &M, mesh: u32) -> Result<Facts> {
+        if mesh >= m.node_count() {
             return refuse!(
                 "MACHINE",
                 "machine {} has no mesh {mesh}; it has {}",
-                m.name,
-                m.nodes()
+                m.machine_name(),
+                m.node_count()
             );
         }
         Ok(Facts::seen_from(m, mesh))
     }
 
-    fn seen_from(m: &Machine, mesh: u32) -> Facts {
-        let mut units = BTreeMap::new();
-        for kind in [UnitKind::Mg, UnitKind::Vc, UnitKind::Sr] {
-            let coords: Vec<Coord> = m.units(kind).iter().map(|c| (c.0, c.1)).collect();
-            if !coords.is_empty() {
-                units.insert(kind.tag().to_string(), coords);
-            }
-        }
+    fn seen_from<M: MachineFacts + ?Sized>(m: &M, mesh: u32) -> Facts {
+        let units = m
+            .package_units()
+            .into_iter()
+            .map(|(kind, coords)| (kind, coords.iter().map(|c| (c.0, c.1)).collect()))
+            .collect();
+        let fetch = m.fetch_port();
         let pick = |name: &str, mutated: u64, real: u64| {
             if crate::mutant::on(name) {
                 mutated
@@ -94,28 +93,28 @@ impl Facts {
             }
         };
         Facts {
-            regs: pick("l0.pkg/regs", 8, m.fw.package.regs as u64),
-            inst_depth: pick("l0.program/inst_depth", 256, m.unit.inst_depth as u64),
-            boot_max_units: pick("l0.boot/max_units", 15, m.fw.max_units as u64) as usize,
-            package_magic: m.fw.package.magic as u64,
-            package_version: m.fw.package.version as u64,
-            header_bytes: m.fw.package.header_bytes as u64,
-            unbounded: m.fw.package.unbounded,
-            engine_units: m.fw.engine_units as usize,
-            counter_bits: m.node.engine.counter_bits,
-            max_pkg_units: m.fw.max_pkg_units as usize,
-            max_buffers: m.fw.max_buffers as usize,
-            ring_depth: m.node.ring_depth as usize,
-            mover_span: m.node.mover_span as u64,
-            il_slots: m.il.slots as u64,
-            boot_version: m.fw.boot.version as u64,
-            boot_regions: m.fw.boot.regions as usize,
-            addr_bits: m.die.noc.addr_bits,
-            word_bytes: m.die.word_bytes as u64,
-            mover_levels: m.mover.levels as usize,
-            mover_max_index: m.mover.max_index as u64,
+            regs: pick("l0.pkg/regs", 8, m.fw().package.regs as u64),
+            inst_depth: pick("l0.program/inst_depth", 256, m.unit_depths().inst_depth as u64),
+            boot_max_units: pick("l0.boot/max_units", 15, m.fw().max_units as u64) as usize,
+            package_magic: m.fw().package.magic as u64,
+            package_version: m.fw().package.version as u64,
+            header_bytes: m.fw().package.header_bytes as u64,
+            unbounded: m.fw().package.unbounded,
+            engine_units: m.fw().engine_units as usize,
+            counter_bits: m.node().engine.counter_bits,
+            max_pkg_units: m.fw().max_pkg_units as usize,
+            max_buffers: m.fw().max_buffers as usize,
+            ring_depth: m.node().ring_depth as usize,
+            mover_span: m.node().mover_span as u64,
+            il_slots: m.il().slots as u64,
+            boot_version: m.fw().boot.version as u64,
+            boot_regions: m.fw().boot.regions as usize,
+            addr_bits: m.noc().addr_bits,
+            word_bytes: m.word_bytes() as u64,
+            mover_levels: m.mover().levels as usize,
+            mover_max_index: m.mover().max_index as u64,
             units,
-            fetch_port: Some((m.die.fetch_port.0, m.die.fetch_port.1)),
+            fetch_port: Some((fetch.0, fetch.1)),
             mesh,
         }
     }

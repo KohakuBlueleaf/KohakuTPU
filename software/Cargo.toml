@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "kohakuaccel/compiler/crates/ka-machine",
     "kohakuaccel/compiler/crates/ka-isa",
+    "kohakuaccel/compiler/crates/ka-package",
     "kohakutpu/compiler/crates/ktpu-machine",
     "kohakutpu/compiler/crates/ktpu-isa",
     "kohakutpu/compiler/crates/ktpu-l0",
@@ -25,6 +26,7 @@ publish = false
 [workspace.dependencies]
 ka-machine = { path = "kohakuaccel/compiler/crates/ka-machine" }
 ka-isa = { path = "kohakuaccel/compiler/crates/ka-isa" }
+ka-package = { path = "kohakuaccel/compiler/crates/ka-package" }
 ktpu-machine = { path = "kohakutpu/compiler/crates/ktpu-machine" }
 ktpu-isa = { path = "kohakutpu/compiler/crates/ktpu-isa" }
 ktpu-l0 = { path = "kohakutpu/compiler/crates/ktpu-l0" }

@@ -1,8 +1,8 @@
-//! The 256-bit payload is `ktpu_isa::W256` (four little-endian limbs); the
+//! The 256-bit payload is `ka_isa::W256` (four little-endian limbs); the
 //! field operations L0 needs on it besides W256's own.
 
-pub use ktpu_isa::layout::bits::mask as mask64;
-pub use ktpu_isa::W256 as Word;
+pub use ka_isa::layout::bits::mask as mask64;
+pub use ka_isa::W256 as Word;
 
 pub trait WordOps: Sized {
     /// `v << bit`, bits past 255 dropped.

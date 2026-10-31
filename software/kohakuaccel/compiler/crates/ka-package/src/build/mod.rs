@@ -2,7 +2,6 @@
 //! payload tables and the step list; an address field inside a live span
 //! becomes a relocation (L0.PKG.018, L0.BIND.002-L0.BIND.008).
 
-pub mod fields;
 pub mod periodic;
 
 use std::collections::{BTreeMap, HashMap};

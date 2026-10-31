@@ -43,8 +43,8 @@ pub const BURST_LSB: u32 = 5;
 pub const GO: u64 = 1 << 16;
 /// CTRL[17]: the index list holds fp32 values.
 pub const INDEX_FP: u64 = 1 << 17;
-/// Words one move carries at most ([`ktpu_isa::unit::mover::MOVE_WORDS`]).
-pub const MOVE_WORDS: u64 = ktpu_isa::unit::mover::MOVE_WORDS;
+/// Words one move carries at most ([`ka_isa::mover::MOVE_WORDS`]).
+pub const MOVE_WORDS: u64 = ka_isa::mover::MOVE_WORDS;
 /// Header bits: base at [43:4], dimensions at [46:44], transform id [50:47],
 /// transform mode [58:55].
 pub const BASE_LSB: u32 = 4;

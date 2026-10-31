@@ -31,7 +31,7 @@ pub(super) fn admission_context(
         }
     }
     let m = machine(machine_json)?;
-    let f = Facts::of_mesh(&m, mesh).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let f = Facts::of_mesh(&*m, mesh).map_err(|e| PyValueError::new_err(e.to_string()))?;
     let target = ktpu_verify::Target::from_machine(&m, None).map_err(PyValueError::new_err)?;
     let context = (f, Arc::new(target));
     if cached {
@@ -66,7 +66,7 @@ fn wide(py: Python<'_>, w: W256) -> PyResult<Bound<'_, PyAny>> {
 
 fn facts(machine_json: &str, mesh: u32) -> PyResult<Facts> {
     let m = machine(machine_json)?;
-    Facts::of_mesh(&m, mesh).map_err(|e| PyValueError::new_err(e.to_string()))
+    Facts::of_mesh(&*m, mesh).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
 /// What `package_build` makes before it is written: a built package, or a
