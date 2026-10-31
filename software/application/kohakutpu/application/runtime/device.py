@@ -44,6 +44,8 @@ from kohakutpu.application.runtime.card import (
     parse_resident_mode,
 )
 from kohakutpu.application.runtime.class_library import ClassLibrary
+from kohakutpu.application.runtime.graph import recorded as native_recorded
+from kohakutpu.application.runtime.graph.storage import stage_graph
 from kohakutpu.application.runtime.memory import package_homes
 from kohakutpu.application.runtime.offline import OfflineCard
 from kohakutpu.application.runtime.oscard import OSCard
@@ -102,17 +104,22 @@ PACKAGE_HOME_ENV = "KOHAKUTPU_PACKAGE_HOME"
 class Recorded(list):
     """A replay log owning references to every allocation its events use."""
 
-    def __init__(self, events, references, owner, runs=()):
+    def __init__(self, events, references, owner, runs=(), templates=()):
         super().__init__(events)
         self.references = references
         self.runs = list(runs)
+        self.templates = tuple(templates)
         self.owner = owner
         self.closed = False
         self.prepared = None
         self.list_events = self.list_runs = None
+        self.native = None
 
     def close(self):
         if not self.closed:
+            if self.native is not None:
+                self.native.close()
+                self.native = None
             if self.prepared is not None:
                 self.prepared.close()
                 self.prepared = None
@@ -328,6 +335,7 @@ class Device:
         self.recording = False
         self._record_pins: list = []
         self._record_runs: list = []
+        self._record_templates: list = []
         self.runs: list = []
         #: Runs submitted and not yet collected, oldest first (`submit`).
         self.inflight: list = []
@@ -402,6 +410,21 @@ class Device:
         before reuses it (its bound programs included), so a repeated eager
         step reads no library entry and builds nothing. A library entry's
         reuse still counts as a library hit (class or exact)."""
+        if os.environ.get("KTPU_LOCAL_SCRATCH", "0") == "1":
+            if self.nodes != 1:
+                raise ValueError(
+                    "local scratch placement requires a single-node device"
+                )
+            original = json.loads(source) if graph is None else graph
+            # Queue/package storage shares staging; reserve a configurable fraction.
+            capacity = min(a.hi - a.lo for a in self.memory.staging.values())
+            budget = int(os.environ.get("KTPU_LOCAL_SCRATCH_BYTES", capacity // 2))
+            graph = stage_graph(
+                original, rs.machine_json(self.machine), min(budget, capacity)
+            )
+            if graph is not original:
+                source = json.dumps(graph)
+                traced = None
         mutant = rs._MUTANT.get()
         key = self._kernel_key(source, mutant, self.classes)
         got = self.kernels.get(key)
@@ -832,7 +855,8 @@ class Device:
         if self.max_inflight is not None and self.max_inflight < 1:
             raise ValueError("max_inflight must be positive or None")
         params = compiled.l1.params(compiled.name, "l1")
-        full = dict(binds)
+        full, scratch = dict(binds), []
+        submitted_compiled = compiled
         references = self._retain(binds.values())
         record_mark = len(self._record_pins)
         submitting = False
@@ -906,6 +930,7 @@ class Device:
                     candidate = generated.from_output(self, json.loads(source), output)
                     programs = candidate.programs(full)
                     if all(p.matches_environment(self.mmu) for p in programs.values()):
+                        submitted_compiled = candidate
                         progs = {
                             n: replace(
                                 p, translations=self.mmu.translations_for(p.bindings)
@@ -943,6 +968,7 @@ class Device:
                     self.kernels[exact_key] = (exact, "exact")
                     while len(self.kernels) > KERNELS_KEPT:
                         self.kernels.popitem(last=False)
+                submitted_compiled = exact
                 progs = {
                     n: replace(p, translations=self.mmu.translations_for(p.bindings))
                     for n, p in exact.programs(full).items()
@@ -997,6 +1023,8 @@ class Device:
             for arena, at in self._record_pins[record_mark:]:
                 arena.unretain(at)
             del self._record_pins[record_mark:]
+            for at in scratch:
+                self.free(at)
             for arena, at in references:
                 arena.unretain(at)
             if not self.inflight:
@@ -1004,6 +1032,7 @@ class Device:
             raise
         self.inflight.append(s)
         if self.recording:
+            self._record_templates.append((submitted_compiled, tuple(full.items())))
             self._record_runs.append(
                 (
                     s.name,
@@ -1072,15 +1101,29 @@ class Device:
         self.recording = True
         self._record_pins = []
         self._record_runs = []
+        self._record_templates = []
 
     def recorded(self) -> Recorded:
         """Finish recording; the returned log owns its pins until closed."""
         if not self.recording:
             raise RuntimeError("no recording is active")
-        log = Recorded(self.card.recorded(), self._record_pins, self, self._record_runs)
+        log = Recorded(
+            self.card.recorded(),
+            self._record_pins,
+            self,
+            self._record_runs,
+            self._record_templates,
+        )
         self._record_pins = []
         self._record_runs = []
+        self._record_templates = []
         self.recording = False
+        if os.environ.get("KTPU_GRAPH_FUSE", "0") == "1":
+            try:
+                log.native = native_recorded.from_environment(log)
+            except BaseException:
+                log.close()
+                raise
         return log
 
     def private_state(self) -> tuple:
@@ -1098,6 +1141,27 @@ class Device:
         self._healthy()
         if self.closed:
             raise RuntimeError("device is closed")
+        if log.native is not None:
+            # Native LIST is synchronous even when asynchronous completion is optional.
+            self.drain()
+            try:
+                cycles = log.native.run()
+            except BaseException as error:
+                if log.native.busy:
+                    self._failure = error
+                    self._uncertain.append(log)
+                raise
+            run = Run(
+                "native_graph",
+                cycles,
+                0.0,
+                "graph",
+                {"launches": log.native.after, "rules": log.native.rules},
+            )
+            self.runs.append(run)
+            self.counters["runs"] += 1
+            self.counters["cycles"] += cycles
+            return [run]
         if hasattr(self.card, "submit_recorded"):
             pending = self._replay_queued(log)
             return [self.collect_through(s) for s in pending] if wait else pending
@@ -1138,6 +1202,8 @@ class Device:
         """Keep a recording's dispatch wrappers and uploads, when selected."""
         if not isinstance(log, Recorded) or log.closed or log.owner is not self:
             raise ValueError("preparation requires an open, pinned recording")
+        if log.native is not None:
+            return
         if (
             self.prepared_replay
             and hasattr(self.card, "prepare_recorded")

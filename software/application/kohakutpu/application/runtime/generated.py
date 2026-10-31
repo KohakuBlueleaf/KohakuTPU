@@ -18,7 +18,20 @@ from kohakutpu.stack.kernel import Compiled, dsl_machine
 
 @lru_cache(maxsize=4096)
 def graph(generator, arguments, machine, mutant):
-    return rs._rs.generate(generator, arguments, machine, mutant)
+    ring = (
+        json.loads(arguments).get("ring_depth", 0)
+        if generator == "matmul.mm_kernel"
+        else 0
+    )
+    if ring not in (0, 1, 2):
+        raise ValueError("matmul ring depth must be 0, 1 or 2")
+    source = rs._rs.generate(generator, arguments, machine, mutant)
+    if ring:
+        # Qualify the generator at its cached production boundary, not on hits.
+        scratch = json.loads(source)["scratch"]
+        if not scratch or any(p["spec"]["space"] != "stage" for p in scratch):
+            raise ValueError("ring lowering requires the MMEFF ring-capable compiler")
+    return source
 
 
 def source(dev, generator, arguments):
