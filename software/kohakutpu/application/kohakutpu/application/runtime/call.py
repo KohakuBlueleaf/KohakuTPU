@@ -8,7 +8,7 @@ the card), one run, every output read back.
 import numpy as np
 
 from kohakutpu.application.runtime import forms as FM
-from kohakutpu.application.runtime.storage import Storage
+from kohakutpu.application.runtime.memory.storage import Storage
 from kohakutpu.language import dsl as kt
 
 CODES = {np.dtype(np.float16): "f16", np.dtype(np.float32): "f32"}

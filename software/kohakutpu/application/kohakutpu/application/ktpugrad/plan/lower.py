@@ -18,9 +18,9 @@ from tinygrad.uop import Ops
 from tinygrad.uop.ops import UOp
 
 from kohakutpu.application.kernels import expr as X
-from kohakutpu.application.ktpugrad import domain as D
-from kohakutpu.application.ktpugrad import fold as F
 from kohakutpu.application.ktpugrad import uops as U
+from kohakutpu.application.ktpugrad.plan import domain as D
+from kohakutpu.application.ktpugrad.plan import fold as F
 from kohakutpu.language.numerics import fp16
 
 

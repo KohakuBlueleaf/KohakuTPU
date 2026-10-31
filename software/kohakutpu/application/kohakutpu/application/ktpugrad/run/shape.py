@@ -8,11 +8,11 @@ from tinygrad.dtype import dtypes
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.vector import Operand
-from kohakutpu.application.ktpugrad import fold as F
 from kohakutpu.application.ktpugrad import uops as U
-from kohakutpu.application.ktpugrad.launch_config import _active_scope, elide_rule
-from kohakutpu.application.ktpugrad.lower import Access, Plan, Refused
+from kohakutpu.application.ktpugrad.launch.config import _active_scope, elide_rule
 from kohakutpu.application.ktpugrad.memo import memo
+from kohakutpu.application.ktpugrad.plan import fold as F
+from kohakutpu.application.ktpugrad.plan.lower import Access, Plan, Refused
 from kohakutpu.application.ktpugrad.run.common import (
     _addr,
     _dense,
@@ -28,7 +28,7 @@ from kohakutpu.application.ktpugrad.run.common import (
 from kohakutpu.application.ktpugrad.run.moves import _bare, _moved
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import rows as RW
-from kohakutpu.application.runtime.storage import FLAT, Storage
+from kohakutpu.application.runtime.memory.storage import FLAT, Storage
 from kohakutpu.language.numerics import fp16
 
 

@@ -15,10 +15,11 @@ from tinygrad.uop import Ops
 from kohakuaccel.driver.node.queue.client import FirmwareFatal, NodeError, OverBudget
 from kohakutpu.application.checks.kernels import op_summary
 from kohakutpu.application.ktpugrad import device as KD
-from kohakutpu.application.ktpugrad import fold, lower, run
+from kohakutpu.application.ktpugrad import run
+from kohakutpu.application.ktpugrad.plan import fold, lower
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
-from kohakutpu.application.runtime.storage import FLAT
+from kohakutpu.application.runtime.memory.storage import FLAT
 from kohakutpu.stack.buffer import Buffer
 from kohakutpu.stack.kernel import arena_name
 

@@ -8,7 +8,7 @@ from kohakutpu.application.api.tensor import Buf, Tensor, Unsupported
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime.call import NUMPY
-from kohakutpu.application.runtime.storage import FLAT, Storage
+from kohakutpu.application.runtime.memory.storage import FLAT, Storage
 from kohakutpu.language import dsl as kt
 
 

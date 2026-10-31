@@ -22,7 +22,7 @@ from kohakutpu.application.kernels import matmul as MM
 from kohakutpu.application.kernels import relayout as RL
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import costs, generated
-from kohakutpu.application.runtime.storage import FLAT, Storage, StorageView
+from kohakutpu.application.runtime.memory.storage import FLAT, Storage, StorageView
 from kohakutpu.language import machine as MF
 from kohakutpu.language.numerics import fp16
 from kohakutpu.stack.rs import _rs

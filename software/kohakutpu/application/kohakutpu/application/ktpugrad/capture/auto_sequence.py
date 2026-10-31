@@ -7,7 +7,7 @@ from contextlib import nullcontext
 from tinygrad.engine import realize
 from tinygrad.uop import Ops
 
-from kohakutpu.application.ktpugrad.plans import PLANS
+from kohakutpu.application.ktpugrad.plan.plans import PLANS
 from kohakutpu.application.runtime.eager_batch import batching
 from kohakutpu.language.dsl.kernel import _MUTANT
 

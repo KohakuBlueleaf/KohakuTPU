@@ -6,7 +6,7 @@ from kohakutpu.application.api.tensor import Buf, Tensor
 from kohakutpu.application.kernels import attention as A
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import forms as F
-from kohakutpu.application.runtime.storage import Storage
+from kohakutpu.application.runtime.memory.storage import Storage
 from kohakutpu.language import dsl as kt
 
 

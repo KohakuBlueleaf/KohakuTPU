@@ -1,4 +1,4 @@
-//! One package of several vector stages (`ktpugrad/launch_emit.py` groups
+//! One package of several vector stages (`ktpugrad/launch/emit.py` groups
 //! them): flat and rows stages, each of one or several independent members
 //! over one domain, and whole-buffer copies, on named buffers. A flat stage
 //! off whole rows goes through a padded scratch `staged`: filled from its

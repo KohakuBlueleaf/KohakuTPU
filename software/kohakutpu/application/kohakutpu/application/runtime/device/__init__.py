@@ -24,10 +24,7 @@ from contextlib import contextmanager
 from functools import partial
 
 from kohakuaccel.driver.runtime.mmu import SoftwareMMU
-from kohakutpu.application.runtime import (
-    native_direct,
-    replay_budget,
-)
+from kohakutpu.application.runtime import replay_budget
 from kohakutpu.application.runtime.card import (
     RESIDENT_ENV,
     TRANSPORTS,
@@ -62,8 +59,9 @@ from kohakutpu.application.runtime.device.kernels import Kernels
 from kohakutpu.application.runtime.device.replay import Replay
 from kohakutpu.application.runtime.device.submission import Submission
 from kohakutpu.application.runtime.memory import package_homes
+from kohakutpu.application.runtime.native import direct as native_direct
 from kohakutpu.application.runtime.offline import OfflineCard
-from kohakutpu.application.runtime.oscard import OSCard
+from kohakutpu.application.runtime.os.card import OSCard
 from kohakutpu.application.runtime.paths import ROOT
 from kohakutpu.driver.clock.card import load_board
 from kohakutpu.language import machine as MF

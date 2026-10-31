@@ -21,7 +21,7 @@ from tinygrad.uop.ops import UOp
 
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.ktpugrad import uops as U
-from kohakutpu.application.ktpugrad.lower import Access, Plan
+from kohakutpu.application.ktpugrad.plan.lower import Access, Plan
 
 #: Lanes of a 32-byte word of f16.
 WORD = 16

@@ -10,7 +10,7 @@ from tinygrad.tensor import Tensor
 
 from kohakutpu.application.ktpugrad.nn import place
 from kohakutpu.application.runtime import device as D
-from kohakutpu.application.runtime.arena import Arena
+from kohakutpu.application.runtime.memory.arena import Arena
 
 
 def main():

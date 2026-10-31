@@ -28,8 +28,9 @@ from tinygrad.uop import Ops
 
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels.vector import expr_key
-from kohakutpu.application.ktpugrad import fusion, lower, reference, run, seam
+from kohakutpu.application.ktpugrad import run, seam
 from kohakutpu.application.ktpugrad.nn import Adam16
+from kohakutpu.application.ktpugrad.plan import fusion, lower, reference
 from kohakutpu.application.runtime import device as D
 from kohakutpu.stack import rs
 

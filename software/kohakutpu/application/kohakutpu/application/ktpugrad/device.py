@@ -17,16 +17,16 @@ from tinygrad.device import Allocator, Buffer, Compiled, Device
 from tinygrad.engine.jit import GraphRunner
 from tinygrad.renderer import Renderer
 
-from kohakutpu.application.ktpugrad import fold as F
-from kohakutpu.application.ktpugrad import recipe
 from kohakutpu.application.ktpugrad import run as R
-from kohakutpu.application.ktpugrad.lower import Refused
-from kohakutpu.application.ktpugrad.plans import PLANS, KTPUUnsupported
+from kohakutpu.application.ktpugrad.capture import recipe
+from kohakutpu.application.ktpugrad.plan import fold as F
+from kohakutpu.application.ktpugrad.plan.lower import Refused
+from kohakutpu.application.ktpugrad.plan.plans import PLANS, KTPUUnsupported
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
-from kohakutpu.application.runtime.placement import Placement
+from kohakutpu.application.runtime.memory.placement import Placement
+from kohakutpu.application.runtime.memory.storage import FLAT, Storage, StorageView
 from kohakutpu.application.runtime.rows import RowsError
-from kohakutpu.application.runtime.storage import FLAT, Storage, StorageView
 
 NAME = "KTPU"
 MODULE = f"tinygrad.runtime.ops_{NAME.lower()}"

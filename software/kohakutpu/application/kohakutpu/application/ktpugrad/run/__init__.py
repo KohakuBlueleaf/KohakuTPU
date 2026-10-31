@@ -14,10 +14,9 @@ import numpy as np
 from tinygrad.dtype import dtypes
 
 from kohakutpu.application.kernels import expr as X
-from kohakutpu.application.ktpugrad import fold as F
-from kohakutpu.application.ktpugrad import launch_schedule
 from kohakutpu.application.ktpugrad import uops as U
-from kohakutpu.application.ktpugrad.launch_config import (
+from kohakutpu.application.ktpugrad.launch import schedule as launch_schedule
+from kohakutpu.application.ktpugrad.launch.config import (
     _active_scope,
     elide_contiguous_enabled,
     elide_rule,
@@ -27,8 +26,9 @@ from kohakutpu.application.ktpugrad.launch_config import (
     single_package_enabled,
     view_forms_enabled,
 )
-from kohakutpu.application.ktpugrad.launch_emit import flush_multi_stage
-from kohakutpu.application.ktpugrad.lower import Plan, Refused
+from kohakutpu.application.ktpugrad.launch.emit import flush_multi_stage
+from kohakutpu.application.ktpugrad.plan import fold as F
+from kohakutpu.application.ktpugrad.plan.lower import Plan, Refused
 from kohakutpu.application.ktpugrad.run.common import _dense, _reform
 from kohakutpu.application.ktpugrad.run.kernels import (
     _flat,
@@ -50,7 +50,7 @@ from kohakutpu.application.ktpugrad.run.reduce import (
 from kohakutpu.application.ktpugrad.run.shape import _bind, classify
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import rows as RW
-from kohakutpu.application.runtime.storage import FLAT
+from kohakutpu.application.runtime.memory.storage import FLAT
 
 
 def execute(dev, plan: Plan, bufs: dict):

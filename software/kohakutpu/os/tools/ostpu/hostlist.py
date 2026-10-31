@@ -18,7 +18,7 @@ sys.path.insert(0, str(TOOLS / "ostpu"))
 from relocate import relocate
 
 from kohakutpu.application.runtime import card as runtime
-from kohakutpu.application.runtime import osabi as A
+from kohakutpu.application.runtime.os import abi as A
 
 
 def run_firmware_capture(

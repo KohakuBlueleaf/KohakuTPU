@@ -20,9 +20,9 @@ from package import expected_output, mg_package, operand
 from run_card import Card, arrays, load_node
 
 from kohakuaccel.driver.device import rv64load
-from kohakutpu.application.runtime import osabi as A
 from kohakutpu.application.runtime.device import Device, Recorded
-from kohakutpu.application.runtime.osgraph import (
+from kohakutpu.application.runtime.os import abi as A
+from kohakutpu.application.runtime.os.graph import (
     KDS_CPU,
     KDS_DE_STREAM,
     KDS_LZ_USER,

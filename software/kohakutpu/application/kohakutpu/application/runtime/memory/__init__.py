@@ -11,7 +11,7 @@ these arenas. Recording pins existing spans instead of reserving a child heap.
 
 import os
 
-from kohakutpu.application.runtime.arena import Arena
+from kohakutpu.application.runtime.memory.arena import Arena
 from kohakutpu.language.dsl.kernel import _MUTANT
 from kohakutpu.stack.rs import _rs
 

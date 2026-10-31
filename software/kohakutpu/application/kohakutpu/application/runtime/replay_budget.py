@@ -2,7 +2,7 @@
 
 from collections import Counter
 
-from kohakutpu.application.runtime.arena import OutOfMemory, place
+from kohakutpu.application.runtime.memory.arena import OutOfMemory, place
 from kohakutpu.language.dsl.kernel import _MUTANT
 
 FRACTION_ENV = "KOHAKUTPU_REPLAY_PACKAGE_FRACTION"

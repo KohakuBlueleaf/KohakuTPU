@@ -5,8 +5,9 @@ from collections import Counter
 
 from kohakutpu.application.ktpugrad import run
 from kohakutpu.application.runtime import forms as FM
-from kohakutpu.application.runtime import launch_boundary, native_launch
-from kohakutpu.application.runtime.storage import Form, StorageView
+from kohakutpu.application.runtime import launch_boundary
+from kohakutpu.application.runtime.memory.storage import Form, StorageView
+from kohakutpu.application.runtime.native import launch as native_launch
 from kohakutpu.language.dsl.kernel import _MUTANT
 from kohakutpu.stack.rs import _rs
 

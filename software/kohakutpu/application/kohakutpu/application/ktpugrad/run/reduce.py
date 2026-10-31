@@ -9,14 +9,14 @@ from tinygrad.uop.ops import UOp
 
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
-from kohakutpu.application.ktpugrad import lower as L
 from kohakutpu.application.ktpugrad import uops as U
-from kohakutpu.application.ktpugrad import window as W
-from kohakutpu.application.ktpugrad.lower import Access, Plan
 from kohakutpu.application.ktpugrad.memo import memo
+from kohakutpu.application.ktpugrad.plan import lower as L
+from kohakutpu.application.ktpugrad.plan import window as W
+from kohakutpu.application.ktpugrad.plan.lower import Access, Plan
+from kohakutpu.application.ktpugrad.plan.window import tabled
 from kohakutpu.application.ktpugrad.run.common import _live
 from kohakutpu.application.ktpugrad.run.moves import _coalesce
-from kohakutpu.application.ktpugrad.window import tabled
 
 
 # --------------------------------------------------------------- vector

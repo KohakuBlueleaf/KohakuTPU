@@ -7,9 +7,9 @@ from dataclasses import replace
 
 from kohakuaccel.driver.node.queue import NodeError
 from kohakutpu.application.runtime import generated, launch_boundary
-from kohakutpu.application.runtime.arena import OutOfMemory
 from kohakutpu.application.runtime.class_library import ClassLibrary
 from kohakutpu.application.runtime.device.common import KERNELS_KEPT, Run, Submitted
+from kohakutpu.application.runtime.memory.arena import OutOfMemory
 from kohakutpu.application.runtime.packages import Prebuilt, placed
 from kohakutpu.stack import rs
 from kohakutpu.stack.buffer import Buffer

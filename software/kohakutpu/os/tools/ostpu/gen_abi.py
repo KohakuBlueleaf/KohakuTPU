@@ -1,4 +1,4 @@
-"""Generate software/kohakutpu/application/kohakutpu/application/runtime/osabi.py from C headers.
+"""Generate software/kohakutpu/application/kohakutpu/application/runtime/os/abi.py from C headers.
 
 python software/kohakutpu/os/tools/ostpu/gen_abi.py [--check]
 """
@@ -13,7 +13,7 @@ ABI_H = ROOT / "software/kohakuaccel/os/include/kos/abi.h"
 KDS_H = ROOT / "software/kohakuaccel/os/include/kos/kds.h"
 FMT_H = ROOT / "software/kohakuaccel/firmware/include/ka/package/format.h"
 INTERP_C = ROOT / "software/kohakuaccel/firmware/package/interp.c"
-OUT = ROOT / "software/kohakutpu/application/kohakutpu/application/runtime/osabi.py"
+OUT = ROOT / "software/kohakutpu/application/kohakutpu/application/runtime/os/abi.py"
 
 
 def parse_defines(text: str, prefix_re: str, env: dict) -> dict:

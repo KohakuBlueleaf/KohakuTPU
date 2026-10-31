@@ -4,7 +4,7 @@ epilogue). With fusion on (`set_fusion`), an elementwise chain, the row
 statistics it reads within one column block, and the epilogue of a product
 are folded into that kernel; a part no kernel covers is realised first.
 
-Physical forms follow the runtime (`runtime.storage`): row-major f16 bytes,
+Physical forms follow the runtime (`runtime.memory.storage`): row-major f16 bytes,
 or a row statistic held as [R], 16 f16 values a word (shown with the
 reduced axis dropped or kept as 1). Anything no generated kernel covers is
 refused by clause (`Unsupported`); nothing runs on the host.
@@ -21,12 +21,12 @@ from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.ktpugrad import run as R
-from kohakutpu.application.ktpugrad.lower import Access, Plan, Refused
+from kohakutpu.application.ktpugrad.plan.lower import Access, Plan, Refused
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import rows as RW
 from kohakutpu.application.runtime.call import upload
-from kohakutpu.application.runtime.storage import FLAT, Storage
+from kohakutpu.application.runtime.memory.storage import FLAT, Storage
 from kohakutpu.language.numerics import fp16
 
 _fuse = True

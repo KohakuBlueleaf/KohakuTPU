@@ -17,7 +17,7 @@ from tinygrad.nn.state import get_parameters
 from kohakutpu.application.ktpugrad.device import KTPUGraph
 from kohakutpu.application.ktpugrad.nn import place
 from kohakutpu.application.runtime import device as D
-from kohakutpu.application.runtime.osgraph import Graph
+from kohakutpu.application.runtime.os.graph import Graph
 
 
 class ReducedLeNet:

@@ -55,7 +55,6 @@ from kohakutpu.application.runtime.card.collection import Collection
 from kohakutpu.application.runtime.card.common import (
     _UNSET,
     ARENA,
-    DBG_H_WR,
     DBG_LASTS,
     DEBUG_FIRMWARE,
     DEBUG_RECORDS,
@@ -78,8 +77,8 @@ from kohakutpu.application.runtime.card.recording import Recording
 from kohakutpu.application.runtime.card.submission import Submission
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.application.runtime.memory import CardMemory
-from kohakutpu.application.runtime.native_exchange import NativeExchange
-from kohakutpu.application.runtime.native_poll import NativePoll
+from kohakutpu.application.runtime.native.exchange import NativeExchange
+from kohakutpu.application.runtime.native.poll import NativePoll
 from kohakutpu.driver import units as _units  # noqa: F401  (names MG and VC)
 from kohakutpu.driver.clock.card import BOARDS, CardClocks, load_board
 from kohakutpu.driver.host import SCRATCH_RESERVE, Card, board_map

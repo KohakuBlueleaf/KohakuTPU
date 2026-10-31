@@ -60,7 +60,7 @@ class ArithmeticPath:
                             "f16 drain",
                         ],
                         order="K blocks accumulated serially within one tile; clusters partition M/N tiles, not K",
-                        source="ktpugrad/run.py:_product; NUM.MX7.002-003; NUM.ACC.002-006",
+                        source="ktpugrad/run/:_product; NUM.MX7.002-003; NUM.ACC.002-006",
                     )
                 )
             result = product(dev, plan, bufs)
@@ -136,7 +136,7 @@ class ArithmeticPath:
                         stage="materialize_reduction",
                         expression=repr(R._leaf_reduce(plan)),
                         formats=["computed reduction", "f16 temporary", "consumer"],
-                        source="ktpugrad/run.py:_materialise,_split_reduction",
+                        source="ktpugrad/run/:_materialise,_split_reduction",
                     )
                 )
             result = materialise(dev, plan, bufs)
@@ -153,7 +153,7 @@ class ArithmeticPath:
                     dict(
                         stage="narrow",
                         formats=["E8M15", "f16 temporary", "consumer"],
-                        source="ktpugrad/run.py:_narrow",
+                        source="ktpugrad/run/:_narrow",
                     )
                 )
             return narrow(dev, plan, bufs)
@@ -168,7 +168,7 @@ class ArithmeticPath:
                         expression=repr(plan.expr),
                         formats=["f16", "E8M15", "f16"],
                         name=result[0].name if result else plan.name,
-                        source="ktpugrad/run.py:_flat; runtime/generated.py:flat",
+                        source="ktpugrad/run/:_flat; runtime/generated.py:flat",
                     )
                 )
             return result

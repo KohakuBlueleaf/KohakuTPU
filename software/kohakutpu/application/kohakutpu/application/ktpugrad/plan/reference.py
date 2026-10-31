@@ -5,11 +5,11 @@ plan rewrites (`window.tabled`, ...) are checked against it."""
 import numpy as np
 
 from kohakutpu.application.kernels import expr as X
-from kohakutpu.application.ktpugrad import fold as F
 from kohakutpu.application.ktpugrad import uops as U
-from kohakutpu.application.ktpugrad.lower import Access, Plan
+from kohakutpu.application.ktpugrad.plan import fold as F
+from kohakutpu.application.ktpugrad.plan.lower import Access, Plan
 from kohakutpu.application.runtime import forms as FM
-from kohakutpu.application.runtime.storage import FLAT
+from kohakutpu.application.runtime.memory.storage import FLAT
 from kohakutpu.language.numerics import fp16
 
 

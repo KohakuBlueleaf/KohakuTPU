@@ -11,7 +11,7 @@ from math import prod
 
 from tinygrad.uop import Ops
 
-from kohakutpu.application.ktpugrad.lower import ALU
+from kohakutpu.application.ktpugrad.plan.lower import ALU
 
 
 @dataclass(frozen=True)

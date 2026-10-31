@@ -6,15 +6,15 @@ import numpy as np
 from tinygrad.dtype import dtypes
 
 from kohakutpu.application.kernels import expr as X
-from kohakutpu.application.ktpugrad import fold as F
 from kohakutpu.application.ktpugrad import uops as U
-from kohakutpu.application.ktpugrad import window as W
-from kohakutpu.application.ktpugrad.lower import Access, Plan, Refused
+from kohakutpu.application.ktpugrad.plan import fold as F
+from kohakutpu.application.ktpugrad.plan import window as W
+from kohakutpu.application.ktpugrad.plan.lower import Access, Plan, Refused
 from kohakutpu.application.ktpugrad.run.common import _dense, _n, _size
 from kohakutpu.application.ktpugrad.run.moves import _gather_to, _move
 from kohakutpu.application.ktpugrad.run.shape import _f16_walk
 from kohakutpu.application.runtime import forms as FM
-from kohakutpu.application.runtime.storage import FLAT, Storage
+from kohakutpu.application.runtime.memory.storage import FLAT, Storage
 
 #: Whether a window product may run with its sides swapped (B's outer ranges
 #: its rows) when that is the output's order.

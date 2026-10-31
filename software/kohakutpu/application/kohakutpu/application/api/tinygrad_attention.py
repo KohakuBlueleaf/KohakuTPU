@@ -8,7 +8,7 @@ from kohakutpu.application.api.tensor import Buf
 from kohakutpu.application.api.tensor import Tensor as DeviceTensor
 from kohakutpu.application.ktpugrad.bridge import _realized, _storage
 from kohakutpu.application.runtime import forms as F
-from kohakutpu.application.runtime.storage import FLAT, Storage
+from kohakutpu.application.runtime.memory.storage import FLAT, Storage
 
 
 def attention(q: Tensor, k: Tensor, v: Tensor) -> Tensor:

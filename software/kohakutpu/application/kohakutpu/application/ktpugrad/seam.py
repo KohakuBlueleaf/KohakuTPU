@@ -42,19 +42,19 @@ from tinygrad.schedule import rangeify
 from tinygrad.uop import Ops
 from tinygrad.uop.ops import AxisType, PatternMatcher, ProgramInfo, UOp, UPat
 
-from kohakutpu.application.ktpugrad import (
+from kohakutpu.application.ktpugrad import run as R
+from kohakutpu.application.ktpugrad.capture import (
     auto_sequence,
     call_capture,
     eager_schedule,
-    fusion,
     graph_walk,
-    launch_eager,
 )
-from kohakutpu.application.ktpugrad import fold as F
-from kohakutpu.application.ktpugrad import lower as L
-from kohakutpu.application.ktpugrad import run as R
 from kohakutpu.application.ktpugrad.device import NAME, register
-from kohakutpu.application.ktpugrad.plans import PLAN_ASTS, PLANS, KTPUUnsupported
+from kohakutpu.application.ktpugrad.launch import eager as launch_eager
+from kohakutpu.application.ktpugrad.plan import fold as F
+from kohakutpu.application.ktpugrad.plan import fusion
+from kohakutpu.application.ktpugrad.plan import lower as L
+from kohakutpu.application.ktpugrad.plan.plans import PLAN_ASTS, PLANS, KTPUUnsupported
 from kohakutpu.application.runtime import device as D
 
 #: The realize module's global the engine calls by name: patched as an attribute.

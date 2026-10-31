@@ -19,7 +19,8 @@ from kohakutpu.application.checks.kernels import (
 )
 from kohakutpu.application.checks.path import ArithmeticPath
 from kohakutpu.application.ktpugrad import device as KD
-from kohakutpu.application.ktpugrad import fold, lower, run
+from kohakutpu.application.ktpugrad import run
+from kohakutpu.application.ktpugrad.plan import fold, lower
 from kohakutpu.application.runtime import forms as FM
 
 

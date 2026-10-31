@@ -18,7 +18,7 @@ from tinygrad.tensor import Tensor
 from kohakutpu.application.ktpugrad.device import NAME
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
-from kohakutpu.application.runtime.storage import FLAT
+from kohakutpu.application.runtime.memory.storage import FLAT
 from kohakutpu.language import dsl as kt
 
 _TINY = {"f16": dtypes.half, "f32": dtypes.float}

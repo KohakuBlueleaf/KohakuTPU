@@ -9,7 +9,7 @@ import struct
 import time
 from dataclasses import dataclass, replace
 
-from kohakutpu.application.runtime import osabi as A
+from kohakutpu.application.runtime.os import abi as A
 
 C_ABI = A.C_ABI
 MAGIC = A.OSTPU_MAGIC

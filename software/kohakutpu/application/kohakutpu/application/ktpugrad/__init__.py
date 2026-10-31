@@ -16,8 +16,8 @@ docs/projects/kohakutpu/tinygrad.md is the reference.
 from kohakutpu.application.ktpugrad.bridge import bridge
 from kohakutpu.application.ktpugrad.device import NAME, KTPUDevice, register
 from kohakutpu.application.ktpugrad.inference import Inference
-from kohakutpu.application.ktpugrad.lower import Plan, Refused, plan
-from kohakutpu.application.ktpugrad.plans import PLANS
+from kohakutpu.application.ktpugrad.plan.lower import Plan, Refused, plan
+from kohakutpu.application.ktpugrad.plan.plans import PLANS
 from kohakutpu.application.ktpugrad.seam import (
     KTPUUnsupported,
     capture,

@@ -10,11 +10,11 @@ from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import matmul as MM
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.vector import Operand
-from kohakutpu.application.ktpugrad import fold as F
 from kohakutpu.application.ktpugrad import uops as U
-from kohakutpu.application.ktpugrad import window as W
-from kohakutpu.application.ktpugrad.launch_config import elide_rule
-from kohakutpu.application.ktpugrad.lower import Access, Plan, Refused
+from kohakutpu.application.ktpugrad.launch.config import elide_rule
+from kohakutpu.application.ktpugrad.plan import fold as F
+from kohakutpu.application.ktpugrad.plan import window as W
+from kohakutpu.application.ktpugrad.plan.lower import Access, Plan, Refused
 from kohakutpu.application.ktpugrad.run.common import (
     _dense,
     _half_target,
@@ -29,7 +29,7 @@ from kohakutpu.application.ktpugrad.run.reduce import _prune, _rebuild, _table_a
 from kohakutpu.application.ktpugrad.run.shape import _f16_walk, _laid_plan, classify
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import rows as RW
-from kohakutpu.application.runtime.storage import FLAT, Storage, StorageView
+from kohakutpu.application.runtime.memory.storage import FLAT, Storage, StorageView
 from kohakutpu.language import machine as MF
 
 

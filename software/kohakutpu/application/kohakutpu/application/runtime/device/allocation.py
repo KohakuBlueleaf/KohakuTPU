@@ -2,7 +2,7 @@
 
 from contextlib import contextmanager
 
-from kohakutpu.application.runtime.arena import OutOfMemory
+from kohakutpu.application.runtime.memory.arena import OutOfMemory
 
 
 class Allocation:

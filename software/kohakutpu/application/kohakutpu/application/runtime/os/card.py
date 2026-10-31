@@ -12,10 +12,10 @@ import os
 
 from kohakutpu.application.runtime import packages as B
 from kohakutpu.application.runtime import replay_budget
-from kohakutpu.application.runtime.arena import OutOfMemory
 from kohakutpu.application.runtime.memory import CardMemory
+from kohakutpu.application.runtime.memory.arena import OutOfMemory
 from kohakutpu.application.runtime.offline import OfflineCard
-from kohakutpu.application.runtime.osgraph import (
+from kohakutpu.application.runtime.os.graph import (
     KDS_MOVE,
     KOS_MOVE_MAX_WORDS,
     TASK_BYTES,

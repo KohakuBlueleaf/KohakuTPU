@@ -1,7 +1,7 @@
 """Index mapping through an owned snapshot view descriptor."""
 
 from kohakutpu.application.ktpugrad import uops as U
-from kohakutpu.application.ktpugrad.lower import Access
+from kohakutpu.application.ktpugrad.plan.lower import Access
 
 
 def _remap_view_access(a: Access, vkey: tuple) -> tuple | None:

@@ -19,7 +19,7 @@ from kohakutpu.application.runtime.card.common import (
     Pending,
 )
 from kohakutpu.application.runtime.eager_batch import Deferred
-from kohakutpu.application.runtime.packing import contract_error
+from kohakutpu.application.runtime.memory.packing import contract_error
 from kohakutpu.stack.rs import _rs
 
 
