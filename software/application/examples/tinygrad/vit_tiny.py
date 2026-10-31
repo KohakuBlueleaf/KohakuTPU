@@ -4,6 +4,8 @@
 --device card --transport xdma --board multimesh_v9t6 runs on the card; with
 --library DIR --library-only every kernel comes from the prebuilt library.
 --blocks 1 selects one full encoder block; the default is twelve blocks.
+--realize-ops retains operation/movement boundaries; the default lets the scheduler fuse.
+--batch selects images per forward (1 by default).
 """
 
 import argparse
@@ -11,6 +13,7 @@ import json
 import time
 
 import numpy as np
+from examples.tinygrad.boundaries import boundary
 from tinygrad import Tensor, nn
 from tinygrad.helpers import Context
 from tinygrad.nn.state import get_state_dict
@@ -28,7 +31,8 @@ from kohakutpu.application.runtime import device as D
 
 
 class Block:
-    def __init__(self, width=192):
+    def __init__(self, width=192, realize_ops=False):
+        self.realize_ops = realize_ops
         self.width, self.heads = width, width // 64
         self.norm1 = nn.LayerNorm(width, eps=1e-6)
         self.qkv = nn.Linear(width, 3 * width)
@@ -39,59 +43,68 @@ class Block:
 
     def __call__(self, x):
         batch, tokens, _ = x.shape
-        qkv = (
-            self.qkv(self.norm1(x).realize())
-            .realize()
-            .reshape(batch, tokens, 3, self.heads, 64)
+        norm = boundary(self.norm1(x), self.realize_ops)
+        qkv = boundary(self.qkv(norm), self.realize_ops).reshape(
+            batch, tokens, 3, self.heads, 64
         )
         q, k, v = (
-            qkv[:, :, i].transpose(1, 2).contiguous().realize() for i in range(3)
+            boundary(qkv[:, :, i].transpose(1, 2), self.realize_ops, contiguous=True)
+            for i in range(3)
         )
-        scores = ((q @ k.transpose(-1, -2)) * 0.125).realize()
-        a = (scores.softmax(-1).realize() @ v).realize()
-        a = a.transpose(1, 2).contiguous().realize().reshape(batch, tokens, self.width)
-        x = (x + self.proj(a)).realize()
-        hidden = self.fc1(self.norm2(x).realize()).gelu().realize()
-        return (x + self.fc2(hidden)).realize()
+        scores = boundary((q @ k.transpose(-1, -2)) * 0.125, self.realize_ops)
+        a = boundary(
+            boundary(scores.softmax(-1), self.realize_ops) @ v, self.realize_ops
+        )
+        a = boundary(a.transpose(1, 2), self.realize_ops, contiguous=True).reshape(
+            batch, tokens, self.width
+        )
+        x = boundary(x + self.proj(a), self.realize_ops)
+        hidden = boundary(
+            self.fc1(boundary(self.norm2(x), self.realize_ops)).gelu(), self.realize_ops
+        )
+        return boundary(x + self.fc2(hidden), self.realize_ops)
 
 
 class ViTTiny:
-    def __init__(self, blocks=12, width=192, image_size=224):
+    def __init__(self, blocks=12, width=192, image_size=224, realize_ops=False):
+        self.realize_ops = realize_ops
         self.width, self.grid = width, image_size // 16
         self.patch = nn.Linear(3 * 16 * 16, width)
         self.cls = Tensor.zeros(1, 1, width, device="CPU")
         self.pos = Tensor.zeros(1, self.grid**2 + 1, width, device="CPU")
-        self.blocks = [Block(width) for _ in range(blocks)]
+        self.blocks = [Block(width, realize_ops) for _ in range(blocks)]
         self.norm = nn.LayerNorm(width, eps=1e-6)
         self.head = nn.Linear(width, 1000)
 
     def __call__(self, x, observe=None):
         batch = x.shape[0]
-        p = (
-            x.reshape(batch, 3, self.grid, 16, self.grid, 16)
-            .permute(0, 2, 4, 1, 3, 5)
-            .contiguous()
-            .realize()
+        p = boundary(
+            x.reshape(batch, 3, self.grid, 16, self.grid, 16).permute(0, 2, 4, 1, 3, 5),
+            self.realize_ops,
+            contiguous=True,
         )
-        p = self.patch(p.reshape(batch, self.grid**2, 768)).realize()
-        x = (self.cls.expand(batch, 1, self.width).cat(p, dim=1) + self.pos).realize()
+        p = boundary(self.patch(p.reshape(batch, self.grid**2, 768)), self.realize_ops)
+        x = boundary(
+            self.cls.expand(batch, 1, self.width).cat(p, dim=1) + self.pos,
+            self.realize_ops,
+        )
         if observe is not None:
             observe("embedding", x)
         for index, block in enumerate(self.blocks):
             x = block(x)
             if observe is not None:
                 observe(f"block_{index + 1}", x)
-        normalized = self.norm(x).realize()
+        normalized = boundary(self.norm(x), self.realize_ops)
         if observe is not None:
             observe("final_norm", normalized)
-        return self.head(normalized[:, 0].contiguous().realize())
+        return self.head(boundary(normalized[:, 0], self.realize_ops, contiguous=True))
 
 
-def seeded_model(blocks, seed, width=192, image_size=224):
+def seeded_model(blocks, seed, width=192, image_size=224, realize_ops=False):
     """Numpy draws identical f32 weights independent of tinygrad RNG state."""
     rng = np.random.default_rng(seed)
     with Context(DEV="CPU"):
-        model = ViTTiny(blocks, width, image_size)
+        model = ViTTiny(blocks, width, image_size, realize_ops)
         for name, t in get_state_dict(model).items():
             if "norm" in name:
                 a = np.ones(t.shape) if name.endswith("weight") else np.zeros(t.shape)
@@ -106,10 +119,14 @@ def main():
     ap.add_argument("--offline", action="store_true")
     ap.add_argument("--blocks", type=int, default=12)
     ap.add_argument(
+        "--realize-ops", action="store_true", help="retain operation boundaries"
+    )
+    ap.add_argument("--batch", type=int, default=1)
+    ap.add_argument(
         "--inputs",
         type=int,
         default=DEFAULT_INPUTS,
-        help="images (default 48, about 60 s at the measured 1.24 s/image)",
+        help="input batches (default 48; measured 1.24 s/image applies only to batch 1)",
     )
     ap.add_argument("--width", type=int, default=192)
     ap.add_argument("--image-size", type=int, default=224)
@@ -139,8 +156,8 @@ def main():
         help="refuse to compile: every kernel must be a library hit",
     )
     args = ap.parse_args()
-    if not 1 <= args.blocks <= 12 or args.inputs < 1:
-        ap.error("blocks must be 1..12 and inputs positive")
+    if not 1 <= args.blocks <= 12 or args.inputs < 1 or args.batch < 1:
+        ap.error("blocks must be 1..12 and inputs/batch positive")
     if (
         args.width < 64
         or args.width % 64
@@ -173,11 +190,15 @@ def main():
     )
     rng = np.random.default_rng(args.seed + 1)
     inputs = [
-        rng.standard_normal((1, 3, args.image_size, args.image_size)).astype(np.float32)
+        rng.standard_normal((args.batch, 3, args.image_size, args.image_size)).astype(
+            np.float32
+        )
         for _ in range(args.inputs)
     ]
     ktpugrad.uninstall()
-    host = seeded_model(args.blocks, args.seed, args.width, args.image_size)
+    host = seeded_model(
+        args.blocks, args.seed, args.width, args.image_size, args.realize_ops
+    )
     want, host_states = [], {}
     if not args.offline:
         for index, x in enumerate(inputs):
@@ -193,7 +214,9 @@ def main():
             )
             if index in traced:
                 host_states[index] = states
-    model = seeded_model(args.blocks, args.seed, args.width, args.image_size)
+    model = seeded_model(
+        args.blocks, args.seed, args.width, args.image_size, args.realize_ops
+    )
     ktpugrad.install()
     try:
         with D.attached(dev):
@@ -249,12 +272,15 @@ def main():
                 "counters": dev.counters,
                 "mode": dev.kind,
                 "blocks": args.blocks,
+                "batch": args.batch,
+                "realize_ops": args.realize_ops,
                 "width": args.width,
                 "tokens": (args.image_size // 16) ** 2 + 1,
                 "inputs": args.inputs,
                 "kernels": len(dev.runs),
                 "input_budget_seconds_per_image": PER_IMAGE_SECONDS,
-                "input_budget_seconds": args.inputs * PER_IMAGE_SECONDS,
+                "images": args.inputs * args.batch,
+                "input_budget_seconds": args.inputs * args.batch * PER_IMAGE_SECONDS,
                 "numerics_budget": depth_budget(args.blocks),
                 "block_errors": block_errors,
                 "block_error_status": (

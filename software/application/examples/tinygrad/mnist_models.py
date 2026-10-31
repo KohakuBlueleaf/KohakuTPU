@@ -3,6 +3,7 @@
 from functools import partial
 from math import gcd, isqrt
 
+from examples.tinygrad.boundaries import boundary
 from tinygrad import nn
 from tinygrad.tensor import Tensor
 
@@ -41,6 +42,7 @@ class ConvNet:
         head=(120, 84),
         head_norm=None,
         features=784,
+        realize_ops=False,
     ):
         n = len(channels)
         if head_norm is None:
@@ -62,6 +64,7 @@ class ConvNet:
             raise ValueError(f"unknown activation: {activation}")
         if len(head_norm) != len(head):
             raise ValueError("one head normalization per hidden width")
+        self.realize_ops = realize_ops
         self.activation, self.residual = activation, residual
         self.pool, self.blocks, self.hidden = tuple(pool), n, len(head)
         # A flat input of `features` values is one square channel for the conv stack.
@@ -100,31 +103,34 @@ class ConvNet:
             x = x.reshape(-1, 1, self.side, self.side)
         for i in range(1, self.blocks + 1):
             skip = x
-            x = getattr(self, f"c{i}")(x)
+            x = boundary(getattr(self, f"c{i}")(x), self.realize_ops)
             norm = getattr(self, f"g{i}")
             if norm is not None:
-                x = norm(x)
+                x = boundary(norm(x), self.realize_ops)
             if self.residual:
                 projection = getattr(self, f"r{i}")
-                x = x + (projection(skip) if projection is not None else skip)
-            x = getattr(x, self.activation)()
+                x = boundary(
+                    x + (projection(skip) if projection is not None else skip),
+                    self.realize_ops,
+                )
+            x = boundary(getattr(x, self.activation)(), self.realize_ops)
             if self.pool[i - 1]:
-                x = x.avg_pool2d((self.pool[i - 1],) * 2)
+                x = boundary(x.avg_pool2d((self.pool[i - 1],) * 2), self.realize_ops)
         x = x.flatten(1)
         for i in range(1, self.hidden + 1):
-            x = getattr(self, f"l{i}")(x)
+            x = boundary(getattr(self, f"l{i}")(x), self.realize_ops)
             norm = getattr(self, f"n{i}")
             if norm is not None:
-                x = norm(x)
-            x = getattr(x, self.activation)()
-        return getattr(self, f"l{self.hidden + 1}")(x)
+                x = boundary(norm(x), self.realize_ops)
+            x = boundary(getattr(x, self.activation)(), self.realize_ops)
+        return boundary(getattr(self, f"l{self.hidden + 1}")(x), self.realize_ops)
 
 
 class LeNet(ConvNet):
     """Compatibility constructor with the original parameter names and draw order."""
 
-    def __init__(self):
-        super().__init__(padding=(2, 0), groups=(2, 4))
+    def __init__(self, realize_ops=False):
+        super().__init__(padding=(2, 0), groups=(2, 4), realize_ops=realize_ops)
 
 
 class MLP(ConvNet):

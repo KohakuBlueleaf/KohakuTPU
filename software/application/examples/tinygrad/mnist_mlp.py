@@ -205,6 +205,7 @@ def main():
     ap.add_argument("--board", default=None)
     ap.add_argument("--nodes", type=int, default=None)
     ap.add_argument("--no-jit", action="store_true")
+    ap.add_argument("--realize-ops", action="store_true")
     ap.add_argument("--library")
     ap.add_argument("--library-only", action="store_true")
     args = ap.parse_args()
@@ -249,6 +250,7 @@ def main():
     Tensor.manual_seed(0)
     with Context(DEV="CPU"):
         model = MODELS[args.model]()
+        model.realize_ops = args.realize_ops
     if not args.reference:
         place(model)
     opt = (
@@ -280,6 +282,7 @@ def main():
         "device": device,
         "steps": steps,
         "batch": args.batch,
+        "realize_ops": args.realize_ops,
         "eval_batch": args.eval_batch or args.batch,
         "schedule": args.schedule,
         "warmup": args.warmup,

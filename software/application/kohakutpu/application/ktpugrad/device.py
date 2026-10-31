@@ -58,8 +58,11 @@ class KTPUAllocator(Allocator):
         st, off = FM.base_of(dest)
         for form in st.forms.values():
             self.rt.wait_address(form.addr, write=True)
-        if off or len(raw) % 32:
-            # A partial last word: keep the bytes past the buffer.
+        if not off and len(raw) == st.nbytes and st.owned:
+            # Full owner writes define the rounded allocation's padding as zero.
+            self.rt.write(st.addr, raw + bytes(-len(raw) % 32))
+        elif off or len(raw) % 32:
+            # A partial view write preserves the other bytes of the owner.
             lo, hi = off & ~31, -(-(off + len(raw)) // 32) * 32
             old = bytearray(self.rt.read(st.addr + lo, hi - lo))
             old[off - lo : off - lo + len(raw)] = raw

@@ -46,6 +46,7 @@ from kohakutpu.application.ktpugrad import (
     auto_sequence,
     call_capture,
     eager_schedule,
+    fusion,
     graph_walk,
     launch_eager,
 )
@@ -73,10 +74,12 @@ _PINS = (
 #: Memory views a vector core walks: the scheduler's per-device buffer cap.
 MAX_BUFS = 8
 #: Producer inlining into KTPU kernels: ``elementwise`` (into elementwise
-#: consumers only), ``0`` (never a computed producer), ``1`` (tinygrad's own).
+#: consumers only), ``bounded`` (producer-local cost cuts), ``0`` (never a
+#: computed producer), ``1`` (tinygrad's own).
 FUSE_ENV = "KTPU_TINYGRAD_FUSE"
-FUSE_MODES = ("elementwise", "0", "1")
+FUSE_MODES = ("elementwise", "bounded", "0", "1")
 FUSE_MODE = "elementwise"
+FUSE_BUDGET = fusion.FusionBudget()
 #: tinygrad's buffer-removal rules (the module global its scheduler reads).
 _PM_REMOVE = rangeify.pm_remove_bufferize
 
@@ -106,14 +109,18 @@ def _remove_bufferize(src, buf, idx):
     """tinygrad's rule for a KTPU buffer read as a reload (padded or not:
     a convolution's input) or by an elementwise consumer; a computed
     producer read inside a reduction stays its own kernel (``elementwise``),
-    or every computed one does (``0``)."""
-    computed = not _reload(src)
-    if (
-        _on_ktpu(getattr(buf.arg, "device", None))
-        and computed
-        and (FUSE_MODE == "0" or _reduced(idx))
-    ):
-        return None
+    or every computed one does (``0``). ``bounded`` adds producer-local budget cuts."""
+    if _on_ktpu(getattr(buf.arg, "device", None)) and not _reload(src):
+        if FUSE_MODE == "0" or _reduced(idx):
+            fusion.DECISIONS[
+                "disabled" if FUSE_MODE == "0" else "consumer_reduction"
+            ] += 1
+            return None
+        if FUSE_MODE == "bounded":
+            reason = FUSE_BUDGET.cut(fusion.ProducerCost.of(src, buf.shape))
+            if reason is not None:
+                fusion.DECISIONS[reason] += 1
+                return None
     return rangeify.remove_bufferize(src, buf, idx)
 
 
@@ -326,10 +333,12 @@ def install() -> None:
     for v, want in _PINS:
         v.value = want  # pyright: ignore[reportAttributeAccessIssue]  (process-wide)
     rangeify.DEVICE_MAX_BUFS[NAME] = MAX_BUFS
-    global FUSE_MODE
+    global FUSE_MODE, FUSE_BUDGET
     FUSE_MODE = os.environ.get(FUSE_ENV, "elementwise")
     if FUSE_MODE not in FUSE_MODES:
         raise ValueError(f"{FUSE_ENV}={FUSE_MODE!r}: one of {FUSE_MODES}")
+    FUSE_BUDGET = fusion.FusionBudget.environment()
+    fusion.DECISIONS.clear()
     rangeify.pm_remove_bufferize = _PM_REMOVE if FUSE_MODE == "1" else _PM_KEEP
     rangeify.earliest_rewrites = _PM_EARLIEST
     setattr(realize, SEAM, to_program)

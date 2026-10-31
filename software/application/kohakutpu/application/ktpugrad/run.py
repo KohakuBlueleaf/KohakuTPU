@@ -2900,6 +2900,10 @@ def _product_run(
             # A is f16 only where its producer laid it out for the kernel.
             "activation_fp16": f16,
         }
+        ring_depth = int(os.environ.get("KTPU_MATMUL_RING_DEPTH", "0"))
+        if ring_depth:
+            arguments["ring_depth"] = ring_depth
+            arguments["tail_bands"] = True
         pending = {int(k[2:]): v for k, v in binds.items() if isinstance(v, FM.Pending)}
         recipe = dict(
             mm=vars(mm),
