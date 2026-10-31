@@ -4,7 +4,7 @@ import math
 import os
 
 from kohakutpu.application.kernels import expr as X
-from kohakutpu.application.kernels import vector as V
+from kohakutpu.application.kernels.classes import base as V
 from kohakutpu.application.kernels.classes import fold
 from kohakutpu.language import dsl as kt
 

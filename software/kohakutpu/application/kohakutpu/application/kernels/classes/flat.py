@@ -1,6 +1,6 @@
 """Flat elementwise classes use fixed 128-element rows and padded row trips."""
 
-from kohakutpu.application.kernels import vector as V
+from kohakutpu.application.kernels.classes import base as V
 from kohakutpu.application.kernels.classes import rows
 
 

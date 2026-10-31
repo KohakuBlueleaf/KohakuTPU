@@ -3,7 +3,7 @@
 import numpy as np
 
 from kohakutpu.application.kernels import lanes as L
-from kohakutpu.application.kernels import vector as V
+from kohakutpu.application.kernels.classes import base as V
 from kohakutpu.language import dsl as kt
 
 

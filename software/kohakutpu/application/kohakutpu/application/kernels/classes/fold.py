@@ -1,7 +1,7 @@
 """Wide row folds: one column VLOOP per repeated node-level row band."""
 
 from kohakutpu.application.kernels import expr as X
-from kohakutpu.application.kernels import vector as V
+from kohakutpu.application.kernels.classes import base as V
 from kohakutpu.language import dsl as kt
 
 
