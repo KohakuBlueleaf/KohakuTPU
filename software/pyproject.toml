@@ -1,24 +1,14 @@
-# The software workspace: one member per component. Each member is one
-# distribution; its imports name the component (`kohakutpu.language`,
-# `kohakuaccel.compiler`), and `kohakuaccel` / `kohakutpu` are namespace
-# packages shared across members.
+# The software tree: one member per component, joined by editable path sources
+# (a uv workspace does not reach members under the `kohakuaccel` / `kohakutpu`
+# umbrella projects). Each member is one distribution; its imports name the
+# component, and `kohakuaccel` / `kohakutpu` are shared namespace packages.
 
 [project]
 name = "kohaku-software"
 version = "0.1.0"
 description = "KohakuTPU software: the KohakuAccel framework, KohakuTPU and the template project"
 requires-python = ">=3.13"
-dependencies = [
-    "kohakuaccel-compiler",
-    "kohakuaccel-driver",
-    "kohakuaccel-simulation",
-    "kohakutpu-language",
-    "kohakutpu-compiler",
-    "kohakutpu-driver",
-    "kohakutpu-simulation",
-    "kohakutpu-application",
-    "toyaccel",
-]
+dependencies = ["kohakuaccel", "kohakutpu", "toyaccel"]
 
 [dependency-groups]
 dev = ["pytest>=8.0", "pytest-xdist>=3.6", "ruff>=0.6", "black>=24.0"]
@@ -26,29 +16,10 @@ dev = ["pytest>=8.0", "pytest-xdist>=3.6", "ruff>=0.6", "black>=24.0"]
 [tool.uv]
 package = false
 
-[tool.uv.workspace]
-members = [
-    "kohakuaccel/compiler",
-    "kohakuaccel/driver",
-    "kohakuaccel/simulation",
-    "kohakutpu/language",
-    "kohakutpu/compiler",
-    "kohakutpu/driver",
-    "kohakutpu/simulation",
-    "kohakutpu/application",
-    "template",
-]
-
 [tool.uv.sources]
-kohakuaccel-compiler = { workspace = true }
-kohakuaccel-driver = { workspace = true }
-kohakuaccel-simulation = { workspace = true }
-kohakutpu-language = { workspace = true }
-kohakutpu-compiler = { workspace = true }
-kohakutpu-driver = { workspace = true }
-kohakutpu-simulation = { workspace = true }
-kohakutpu-application = { workspace = true }
-toyaccel = { workspace = true }
+kohakuaccel = { path = "kohakuaccel", editable = true }
+kohakutpu = { path = "kohakutpu", editable = true }
+toyaccel = { path = "template", editable = true }
 
 # black formats, ruff lints. Same line length or they fight over every wrap.
 [tool.black]
@@ -92,8 +63,8 @@ extraPaths = [
 ]
 
 [tool.pytest.ini_options]
-# Every component has a `tests` directory; importlib names a test module by
-# its path, so same-named test files in two components do not collide. Tests
-# run on every CPU (xdist); `-p no:xdist` runs one in a debugger.
+# importlib names a test module by its path, so same-named files in two stages
+# do not collide. `tests/run.py` picks stages and jobs; `-p no:xdist` runs one
+# in a debugger.
 addopts = "--import-mode=importlib -n 8"
-testpaths = ["tests"]
+testpaths = ["tests/static"]

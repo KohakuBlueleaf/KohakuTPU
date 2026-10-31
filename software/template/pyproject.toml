@@ -10,9 +10,9 @@ requires-python = ">=3.13"
 dependencies = ["kohakuaccel-compiler", "kohakuaccel-driver", "kohakuaccel-simulation"]
 
 [tool.uv.sources]
-kohakuaccel-compiler = { workspace = true }
-kohakuaccel-driver = { workspace = true }
-kohakuaccel-simulation = { workspace = true }
+kohakuaccel-compiler = { path = "../kohakuaccel/compiler", editable = true }
+kohakuaccel-driver = { path = "../kohakuaccel/driver", editable = true }
+kohakuaccel-simulation = { path = "../kohakuaccel/simulation", editable = true }
 
 [tool.setuptools.packages.find]
 where = ["."]

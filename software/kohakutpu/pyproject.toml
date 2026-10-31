@@ -1,0 +1,31 @@
+# `uv pip install -e software/kohakutpu`: every component of KohakuTPU, each
+# editable, and the framework under it. This distribution holds no code.
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kohakutpu"
+version = "0.1.0"
+description = "KohakuTPU: language, compiler, driver, simulation and application"
+requires-python = ">=3.13"
+dependencies = [
+    "kohakuaccel",
+    "kohakutpu-language",
+    "kohakutpu-compiler",
+    "kohakutpu-driver",
+    "kohakutpu-simulation",
+    "kohakutpu-application",
+]
+
+[tool.uv.sources]
+kohakuaccel = { path = "../kohakuaccel", editable = true }
+kohakutpu-language = { path = "language", editable = true }
+kohakutpu-compiler = { path = "compiler", editable = true }
+kohakutpu-driver = { path = "driver", editable = true }
+kohakutpu-simulation = { path = "simulation", editable = true }
+kohakutpu-application = { path = "application", editable = true }
+
+[tool.setuptools]
+packages = []

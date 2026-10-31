@@ -10,7 +10,7 @@ requires-python = ">=3.13"
 dependencies = ["numpy>=1.26", "kohakutpu-language"]
 
 [tool.uv.sources]
-kohakutpu-language = { workspace = true }
+kohakutpu-language = { path = "../language", editable = true }
 
 # The Python packages here plus the Rust stack (crates/, crate ktpu-py) as the
 # extension module kohakutpu.compiler._rs:

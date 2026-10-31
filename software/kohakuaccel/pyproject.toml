@@ -1,0 +1,25 @@
+# `uv pip install -e software/kohakuaccel`: every component of the framework,
+# each editable. This distribution holds no code.
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kohakuaccel"
+version = "0.1.0"
+description = "The KohakuAccel framework: compiler, driver and simulation"
+requires-python = ">=3.13"
+dependencies = [
+    "kohakuaccel-compiler",
+    "kohakuaccel-driver",
+    "kohakuaccel-simulation",
+]
+
+[tool.uv.sources]
+kohakuaccel-compiler = { path = "compiler", editable = true }
+kohakuaccel-driver = { path = "driver", editable = true }
+kohakuaccel-simulation = { path = "simulation", editable = true }
+
+[tool.setuptools]
+packages = []

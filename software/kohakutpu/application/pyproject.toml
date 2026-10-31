@@ -16,10 +16,10 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-kohakutpu-language = { workspace = true }
-kohakutpu-compiler = { workspace = true }
-kohakutpu-driver = { workspace = true }
-kohakutpu-simulation = { workspace = true }
+kohakutpu-language = { path = "../language", editable = true }
+kohakutpu-compiler = { path = "../compiler", editable = true }
+kohakutpu-driver = { path = "../driver", editable = true }
+kohakutpu-simulation = { path = "../simulation", editable = true }
 
 [tool.setuptools.packages.find]
 where = ["."]
