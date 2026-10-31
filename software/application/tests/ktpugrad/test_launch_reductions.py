@@ -3,6 +3,7 @@
 import json
 import math
 import os
+from contextlib import nullcontext
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +15,7 @@ from kohakutpu.application.ktpugrad import run as R
 from kohakutpu.application.runtime import rows as RW
 from kohakutpu.application.runtime import tree as TR
 from kohakutpu.application.runtime.storage import FLAT, Storage
+from kohakutpu.stack import rs
 
 
 @pytest.mark.parametrize("kind,shape", [("wide", (16, 2368)), ("column", (400, 32))])
@@ -50,7 +52,8 @@ def test_single_package_precision_and_mutants(dev, kind, shape, tmp_path):
         ]:
             dev.write(dst.addr, bytes(dst.nbytes))
             mark = len(dev.runs)
-            with R.knobs(single_package_ast=enabled, mutant=mutant):
+            emitted = rs.mutant(f"reductions/{mutant}") if mutant else nullcontext()
+            with R.knobs(single_package_ast=enabled), emitted:
                 run(
                     dev,
                     X.Reduce("sum", X.Load(0)),

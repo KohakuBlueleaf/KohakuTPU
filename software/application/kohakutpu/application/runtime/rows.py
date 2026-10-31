@@ -10,7 +10,6 @@ from dataclasses import replace
 
 import numpy as np
 
-from kohakutpu.application.kernels import convert as C
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes.policy import ShapeClass
@@ -229,7 +228,7 @@ def run(
                 raise RowsError(
                     "a row-wide operand outside a reduction whose result is a statistic"
                 )
-        one, _, _ = _launch_wide(
+        one = _launch_wide(
             dev,
             e,
             operands,
@@ -238,7 +237,6 @@ def run(
             W,
             out,
             dict(info, blocks=blocks),
-            cores,
         )
         return [one]
     _, given, nblk = V.rows_kernel(red, tuple(operands), R, W, part, cores)
@@ -274,9 +272,8 @@ def run(
                 dev, both, ops, {"in0": src, "in1": src}, n, 32, part, dst, info
             )
             if width - half > half:
-                k, given = C.copy_kernel(2 * rq)
                 at = {"src": src + 2 * half * rq, "dst": dst + 2 * half * rq}
-                runs.append(FM.launch(dev, k, given, at, kind="copy"))
+                runs.append(FM.generated.copy(dev, 2 * rq, at))
             parts.reverse()
             width -= half
         post, keep = substitute(e, red, X.Load(0))
@@ -404,13 +401,23 @@ def rows_of(shape) -> int:
     return int(np.prod(shape[:-1])) if len(shape) > 1 else 1
 
 
-def _launch_wide(dev, e, operands, binds, R, W, out, info, cores):
+def _launch_wide(dev, e, operands, binds, R, W, out, info):
     operands, binds = _based(operands, binds, "in")
     if "out" in binds:
         (out,), binds = _based([out], binds, "out")
-    k, given, nblk = LR.wide_fold_kernel(e, tuple(operands), R, W, out, cores)
-    run_obj = FM.launch(dev, k, given, binds, info=info)
-    return run_obj, given, nblk
+    return FM.generated.launch(
+        dev,
+        "reductions.wide_fold_kernel",
+        {
+            "e": FM.generated.expr(e),
+            "operands": [vars(o) for o in operands],
+            "R": R,
+            "W": W,
+            "out": vars(out),
+        },
+        binds,
+        info=info,
+    )
 
 
 __all__ = [

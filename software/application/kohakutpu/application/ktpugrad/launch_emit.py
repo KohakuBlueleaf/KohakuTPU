@@ -1,6 +1,5 @@
 """Multi-output elementwise package emission for explicitly independent members."""
 
-from kohakutpu.application.kernels import convert as C
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.vector import Operand
@@ -113,11 +112,8 @@ def flush_multi_stage(scope) -> list:
             return [one]
         if st0[0] == "copy":
             _, nbytes, src_a, dst_a, info = st0
-            k, given = C.copy_kernel(nbytes)
             return [
-                FM.launch(
-                    dev, k, given, {"src": src_a, "dst": dst_a}, kind="copy", info=info
-                )
+                FM.generated.copy(dev, nbytes, {"src": src_a, "dst": dst_a}, info=info)
             ]
 
     if RW.MUTANT == "drop_member" and len(stages) > 1:

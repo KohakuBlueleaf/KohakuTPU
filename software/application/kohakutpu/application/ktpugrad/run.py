@@ -16,7 +16,6 @@ import numpy as np
 from tinygrad.dtype import dtypes
 from tinygrad.uop.ops import UOp
 
-from kohakutpu.application.kernels import convert as C
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import matmul as MM
 from kohakutpu.application.kernels import transpose as TP
@@ -318,10 +317,7 @@ def _copy(dev, plan: Plan, bufs) -> list:
         if key == FLAT and sst.host is not None and not soff and not doff:
             dst_.host = sst.host
         return []
-    k, given = C.copy_kernel(n)
-    run = FM.launch(
-        dev, k, given, {"src": a, "dst": b}, kind="copy", info={"plan": plan.name}
-    )
+    run = FM.generated.copy(dev, n, {"src": a, "dst": b}, info={"plan": plan.name})
     dst_.wrote(key)
     dst_.dtype = F.np_dtype(plan.out_dtype)
     if key == FLAT and sst.host is not None and not soff and not doff:
@@ -699,15 +695,16 @@ def _move(dev, plan: Plan, bufs) -> list | None:
         target.wrote(vkey)
         target.dtype = F.np_dtype(plan.out_dtype)
         return []
-    k, given = C.walk_kernel(
-        nbytes, tuple(levels), at, dst.nbytes, tuple(dlevels), doff
-    )
-    run = FM.launch(
+    run = FM.generated.walk(
         dev,
-        k,
-        given,
+        nbytes,
+        levels,
+        at,
+        dst.nbytes,
+        dlevels,
+        doff,
         {"src": base, "dst": dst.addr},
-        kind="move",
+        "move",
         info={"plan": plan.name},
     )
     _wrote_flat(dst, plan)
@@ -845,12 +842,11 @@ def _transpose(dev, plan: Plan, bufs) -> list | None:
             t2 = Storage(dev, 2 * n)
             tmps.append(t2)
             out = t2.addr
-        k, given = TP.transpose_kernel(nb, A, Bp, dev.machine.count("VC"))
         runs.append(
-            FM.launch(
+            FM.generated.launch(
                 dev,
-                k,
-                given,
+                "transpose.transpose_kernel",
+                {"nb": int(nb), "A": int(A), "B": int(Bp)},
                 {"x": src, "mask": FM.table(dev, TP.masks()), "y": out},
                 kind="transpose",
                 info={"plan": plan.name},
@@ -1114,9 +1110,15 @@ def _fill(dev, plan: Plan, bufs, value: float) -> list:
     encoded = fp16.write(value) if dtype == np.float16 else np.asarray(value, dtype)
     bits = encoded.reshape(1).view({1: np.uint8, 2: np.uint16, 4: np.uint32}[item])
     _window_ok(dev, dst, plan)
-    k, given = C.fill_kernel(dst.nbytes, tuple(dlevels), doff, int(bits[0]), 8 * item)
-    run = FM.launch(
-        dev, k, given, {"dst": dst.addr}, kind="move", info={"plan": plan.name}
+    run = FM.generated.fill(
+        dev,
+        dst.nbytes,
+        dlevels,
+        doff,
+        bits[0],
+        8 * item,
+        {"dst": dst.addr},
+        info={"plan": plan.name},
     )
     _wrote_flat(dst, plan)
     return [run]

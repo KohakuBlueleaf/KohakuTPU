@@ -25,6 +25,7 @@ from kohakutpu.application.ktpugrad import run as R
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import rows as RW
+from kohakutpu.stack import rs
 
 RNG = np.random.default_rng(1)
 A = RNG.standard_normal((40, 48)).astype(np.float16)
@@ -272,7 +273,7 @@ def test_mutant_second_half_from_the_first_is_caught_on_the_card(dev, monkeypatc
 def test_mutant_one_package_tree_reads_one_half_is_caught_on_the_card(dev, monkeypatch):
     """Down the rows in one package: the first level's second half read from
     the first's rows."""
-    monkeypatch.setattr(RW, "MUTANT", "wrong_order")
     make, want, _ = CASES["rows_down_sum"]
-    got = run_card(make, True, monkeypatch)
+    with rs.mutant("reductions/wrong_order"):
+        got = run_card(make, True, monkeypatch)
     assert close(got, want()) > 2e-3

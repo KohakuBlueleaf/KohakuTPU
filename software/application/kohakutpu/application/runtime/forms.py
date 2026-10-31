@@ -18,7 +18,6 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-from kohakutpu.application.kernels import convert as C
 from kohakutpu.application.kernels import lanes as LN
 from kohakutpu.application.kernels import matmul as MM
 from kohakutpu.application.kernels import prepared as P
@@ -165,8 +164,8 @@ def materialize_view(dev, st: Storage, key: tuple, item: int = 2) -> int:
     else:
         dst_at, made = st.form(F16, nbytes).addr, F16
     dlevels = ((-(-nbytes // 32), 32),)
-    k, given = C.walk_kernel(src_bytes, levels, at, nbytes, dlevels, 0)
-    launch(dev, k, given, {"src": st.forms[key].addr, "dst": dst_at}, kind="move")
+    binds = {"src": st.forms[key].addr, "dst": dst_at}
+    generated.walk(dev, src_bytes, levels, at, nbytes, dlevels, 0, binds, "move")
     st.made(made)
     return dst_at
 
@@ -270,14 +269,18 @@ def relayout(
     except RL.Unplanned:
         rp = None
     if rp is not None:
-        k, given = RL.relayout_kernel(rp, hw)
         binds = {
             "src": src,
             "dst": dst - 2 * pad,
             "index": table(dev, rp.index, np.float32),
             "mask": table(dev, rp.masks),
         }
-        launch(dev, k, given, binds, kind="convert")
+        pl = generated.relayout_plan(
+            "relayout.plan", n, walk, at, dwalk, dat + pad, m + pad, keep, pad
+        )
+        generated.launch(
+            dev, "relayout.relayout_kernel", {"pl": pl}, binds, kind="convert"
+        )
         return
     key = (n, tuple(walk), at, tuple(dwalk), dat, m, keep)
     pl = _plans.get(key)
@@ -286,14 +289,14 @@ def relayout(
         if len(_plans) > PLANS_KEPT:
             _plans.popitem(last=False)
     _plans.move_to_end(key)
-    k, given = LN.relayout_kernel(pl, dev.machine.count("VC"))
     binds = {
         "src": src,
         "dst": dst,
         "index": table(dev, pl.index, np.float32),
         "mask": table(dev, pl.masks),
     }
-    launch(dev, k, given, binds, kind="convert")
+    made = generated.relayout_plan("lanes.plan", n, walk, at, dwalk, dat, m, keep)
+    generated.launch(dev, "lanes.relayout_kernel", {"pl": made}, binds, kind="convert")
 
 
 def repitch(
@@ -305,15 +308,17 @@ def repitch(
     rows 0)."""
     if not ((2 * w) % 32 or (2 * src_pitch) % 32 or (2 * dst_pitch) % 32):
         words = 2 * w // 32
-        k, given = C.walk_kernel(
+        generated.walk(
+            dev,
             ((rows - 1) * src_pitch + w) * 2,
             ((rows, 2 * src_pitch), (words, 32)),
             0,
             ((rows - 1) * dst_pitch + w) * 2,
             ((rows, 2 * dst_pitch), (words, 32)),
             0,
+            {"src": src, "dst": dst},
+            "convert",
         )
-        launch(dev, k, given, {"src": src, "dst": dst}, kind="convert")
         return
     walk, dwalk = ((rows, src_pitch), (w, 1)), ((rows, dst_pitch), (w, 1))
     n, m = (rows - 1) * src_pitch + w, (rows - 1) * dst_pitch + w

@@ -12,7 +12,7 @@ back.
 from dataclasses import dataclass
 from typing import Any
 
-from kohakutpu.application.kernels import convert as C
+from kohakutpu.application.runtime import generated
 
 FLAT = ("flat",)
 
@@ -83,9 +83,7 @@ class Storage:
         """Snapshot a view descriptor's backing bytes; mutable storage is never shared."""
         # A contiguous result owns a snapshot: a later in-place source write cannot change it.
         f = self.form(key, nbytes)
-        kernel, given = C.copy_kernel(nbytes)
-        compiled = self.dev.specialise(kernel, given)
-        self.dev.run(compiled, {"src": addr, "dst": f.addr}, kind="copy")
+        generated.copy(self.dev, nbytes, {"src": addr, "dst": f.addr})
         return f
 
     def ensure_flat_bytes(self, min_bytes: int) -> None:

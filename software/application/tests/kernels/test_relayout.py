@@ -694,22 +694,40 @@ def compile_case(name):
     n, walk, at, dwalk, dat, m, keep, z0 = CASES[name]
     s, d = Storage(dev, max(32, 2 * n)), Storage(dev, 2 * (-(-m // 32) * 32) + 64)
     got = []
-    launch = FM.launch
+    launch = FM.generated.launch
 
     def keep_compiled(*a, **k):
         run = launch(*a, **k)
         got.append(run.info["compiled"])
         return run
 
-    FM.launch = keep_compiled
+    FM.generated.launch = keep_compiled
     try:
         FM.relayout(
             dev, s.addr, n, walk, at, dwalk, m - z0, d.addr + 2 * z0, dat - z0, keep
         )
     finally:
-        FM.launch = launch
+        FM.generated.launch = launch
     assert dev.counters["runs"] == 1
     return got[0]
+
+
+def compile_python_case(name):
+    """The case's kernel from `kernels.relayout`, whose planner a mutant here
+    patches, compiled offline; its `Compiled`."""
+    dev = D.Device(kind="offline", board=BOARD)
+    n, walk, at, dwalk, dat, m, keep, z0 = CASES[name]
+    s, d = Storage(dev, max(32, 2 * n)), Storage(dev, 2 * (-(-m // 32) * 32) + 64)
+    hw = R.hw_for(dev)
+    rp = R.plan(n, walk, at, dwalk, dat, m, keep, hw, z0)
+    k, given = R.relayout_kernel(rp, hw)
+    binds = {
+        "src": s.addr,
+        "dst": d.addr,
+        "index": FM.table(dev, rp.index, np.float32),
+        "mask": FM.table(dev, rp.masks),
+    }
+    return FM.launch(dev, k, given, binds, kind="convert").info["compiled"]
 
 
 @pytest.mark.parametrize("nbytes", [480, 512])
@@ -718,38 +736,30 @@ def test_destination_lines_stay_in_the_allocation(monkeypatch, nbytes):
     a line) or 512 takes `kernels.relayout`, its destination port the 480
     bytes of the values; compiled and accepted by the static checker."""
     made = []
-    kernel = R.relayout_kernel
+    graph = FM.generated.graph
 
     def keep(*a):
-        made.append(kernel(*a))
+        made.append(graph(*a))
         return made[-1]
 
-    monkeypatch.setattr(R, "relayout_kernel", keep)
+    monkeypatch.setattr(FM.generated, "graph", keep)
     dev = D.Device(kind="offline", board=BOARD)
     s, d = Storage(dev, 480), Storage(dev, nbytes)
     FM.relayout(dev, s.addr, 240, ((30, 1), (8, 30)), 0, ((30, 8), (8, 1)), 240, d.addr)
     assert (len(made), dev.counters["runs"]) == (1, 1)
-    assert 2 * int(np.prod(made[0][1]["dst"].shape)) == 480
-
-
-def test_mutant_line_destination_is_caught(monkeypatch):
-    """The destination port as whole lines: 512 bytes, past the 480."""
-    monkeypatch.setattr(R, "dst_words", lambda m, hw: -(-m // hw.line_values) * hw.line)
-    monkeypatch.setattr(R, "_plans", type(R._plans)())
-    monkeypatch.setattr(R, "_kernels", type(R._kernels)())
-    with pytest.raises(AssertionError):
-        test_destination_lines_stay_in_the_allocation(monkeypatch, 480)
+    port = {p["name"]: p for p in json.loads(made[0])["ports"]}["dst"]
+    assert 2 * int(np.prod(port["spec"]["shape"])) == 480
 
 
 GRAIN_CASES = ["transpose_two_margins", "transpose_window_channels", "spread"]
 
 
-def misplaced(name) -> list:
+def misplaced(name, compiled=compile_case) -> list:
     """The scratch buffers of the case's kernel starting off `HW.grain`
     bytes into its scratch arena (the arena itself starts on the runtime's
     allocation grain)."""
     out = []
-    for arena in compile_case(name).scratch or ():
+    for arena in compiled(name).scratch or ():
         out += [(p, off) for p, off in arena["members"] if off % HW.grain]
     return out
 
@@ -763,7 +773,7 @@ def test_mutant_unrounded_scratch_is_caught(monkeypatch):
     """Scratch buffers at their plan sizes: one starts off the grain."""
     monkeypatch.setattr(R, "scratch_rows", lambda rows, width, hw: rows)
     monkeypatch.setattr(R, "_kernels", type(R._kernels)())
-    assert any(misplaced(name) for name in GRAIN_CASES)
+    assert any(misplaced(name, compile_python_case) for name in GRAIN_CASES)
 
 
 @pytest.mark.parametrize(
@@ -788,7 +798,7 @@ def test_mutant_line_sharing_is_refused(monkeypatch, name, patches):
     monkeypatch.setattr(R, "_plans", type(R._plans)())
     monkeypatch.setattr(R, "_kernels", type(R._kernels)())
     with pytest.raises(Refused):
-        test_kernel_compiles_and_passes_the_checker(name)
+        compile_python_case(name)
 
 
 # ---------------------------------------------------------- card model

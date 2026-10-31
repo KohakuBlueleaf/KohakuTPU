@@ -49,6 +49,60 @@ def launch(dev, generator, arguments, bindings, kind="dsl", info=None):
     return run
 
 
+def walks(levels) -> list:
+    return [[int(count), int(stride)] for count, stride in levels]
+
+
+def copy(dev, nbytes, bindings, info=None):
+    return launch(
+        dev,
+        "convert.copy_kernel",
+        {"nbytes": int(nbytes)},
+        bindings,
+        kind="copy",
+        info=info,
+    )
+
+
+def walk(dev, src_bytes, levels, at, dst_bytes, dlevels, dat, bindings, kind, info=None):
+    arguments = {
+        "src_bytes": int(src_bytes),
+        "levels": walks(levels),
+        "at": int(at),
+        "dst_bytes": int(dst_bytes),
+        "dlevels": walks(dlevels),
+        "dat": int(dat),
+    }
+    return launch(dev, "convert.walk_kernel", arguments, bindings, kind=kind, info=info)
+
+
+def fill(dev, dst_bytes, dlevels, dat, value, ew, bindings, info=None):
+    arguments = {
+        "dst_bytes": int(dst_bytes),
+        "dlevels": walks(dlevels),
+        "dat": int(dat),
+        "value": int(value),
+        "ew": int(ew),
+    }
+    return launch(dev, "convert.fill_kernel", arguments, bindings, kind="move", info=info)
+
+
+def relayout_plan(gen, n, walk_, at, dwalk, dat, m, keep, z0=0) -> dict:
+    """The generator's plan of one `relayout.plan` or `lanes.plan` call."""
+    plan = {
+        "src_n": int(n),
+        "walk": walks(walk_),
+        "at": int(at),
+        "dwalk": walks(dwalk),
+        "dat": int(dat),
+        "m": int(m),
+        "keep": bool(keep),
+    }
+    if z0:
+        plan["z0"] = int(z0)
+    return {"made_by": {"gen": gen, "args": plan}}
+
+
 def from_output(dev, graph_data, output, traced=None):
     name = output["name"]
     return Compiled(

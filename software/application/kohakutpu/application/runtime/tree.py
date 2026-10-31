@@ -12,7 +12,6 @@ intermediate an f16 [rows, W] scratch freed after the last level.
 
 from dataclasses import replace
 
-from kohakutpu.application.kernels import convert as C
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import prepared as P
 from kohakutpu.application.kernels import relayout as RL
@@ -57,6 +56,21 @@ def _renumber(e, by: int):
     return e
 
 
+def _launch(dev, e, operands, R, W, out, binds, info, made=None):
+    arguments = {
+        "e": FM.generated.expr(e),
+        "operands": [vars(o) for o in operands],
+        "R": R,
+        "W": W,
+        "out": vars(out),
+    }
+    if made:
+        arguments["made"] = made
+    return FM.generated.launch(
+        dev, "reductions.column_tree_kernel", arguments, binds, info=info
+    )
+
+
 def column(
     dev, e, operands, binds: dict, R: int, W: int, out: Operand, out_at: int, info=None
 ) -> list:
@@ -87,29 +101,19 @@ def column(
                 for i, v in pending.items():
                     plain[f"p{i}_x"] = v.steps[0].src
                     plain.update(FM.step_binds(dev, plans[i], f"p{i}_"))
-                k, given = column_tree_kernel(
-                    e,
-                    operands,
-                    R,
-                    W,
-                    out,
-                    dev.machine.count("VC"),
-                    made=plans,
-                    hw=RL.hw_for(dev),
-                )
-                return [FM.launch(dev, k, given, plain, info=info)]
+                made = {
+                    str(i): [RW._made_by(s) for s in v.steps]
+                    for i, v in pending.items()
+                }
+                return [_launch(dev, e, operands, R, W, out, plain, info, made=made)]
         binds = {
             k: v.made().addr if isinstance(v, FM.Pending) else v
             for k, v in binds.items()
         }
         info = dict(info or {})
-        cores = dev.machine.count("VC")
         operands_b, binds_b = RW._based(operands, dict(binds, out=out_at), "in")
         (out_b,), binds_b = RW._based([out], binds_b, "out")
-        k, given = column_tree_kernel(
-            e, operands_b, R, W, out_b, cores, hw=RL.hw_for(dev)
-        )
-        return [FM.launch(dev, k, given, binds_b, info=info)]
+        return [_launch(dev, e, operands_b, R, W, out_b, binds_b, info)]
     red = reds[0]
     op = OP[red.op]
     post, keep = RW.substitute(e, red, X.Load(0))
@@ -164,9 +168,8 @@ def column(
                 ]
                 lvl_b = {"in0": cur, "in1": cur}
                 if n % 2:
-                    k, given = C.copy_kernel(row)
                     at = {"src": cur + (n - 1) * row, "dst": nxt + h * row}
-                    runs.append(FM.launch(dev, k, given, at, kind="copy"))
+                    runs.append(FM.generated.copy(dev, row, at))
             runs += RW.run(dev, expr, lvl_ops, lvl_b, h, W, full, nxt, info)
             cur, n = nxt, h + n % 2
         # The one row left (e's own, for one row), under post.
