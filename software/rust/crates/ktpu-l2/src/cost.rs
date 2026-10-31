@@ -164,7 +164,7 @@ impl Clock<'_> {
                 (words, run.unwrap_or(words))
             }
         };
-        let run = run.min(*mover.burst_max.runtime() as i64).max(1);
+        let run = run.min(mover.burst_max as i64).max(1);
         a_run as i64 * ((words + run - 1) / run) + a_word as i64 * words
     }
 }

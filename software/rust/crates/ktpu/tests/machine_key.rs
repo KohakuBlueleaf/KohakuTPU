@@ -68,7 +68,7 @@ fn disagreements(m: &Machine) -> Vec<&'static str> {
     if ktpu_l2::target::IMEM_ROOM > i64::from(m.vc.imem_words) {
         out.push("IMEM_ROOM past vc.imem_words");
     }
-    if MOVER_CAP > *m.mover.burst_max.runtime() {
+    if MOVER_CAP > m.mover.burst_max {
         out.push("the mover's burst cap past mover.burst_max");
     }
     if ktpu_isa::unit::vector::VecCfg::of(m).is_err() {

@@ -10,7 +10,7 @@ pub struct Mover {
     pub index_words: Runtime<u32>,
     pub max_index: u32,
     pub levels: u32,
-    pub burst_max: Runtime<u32>,
+    pub burst_max: u32,
     pub fifo_depth: u32,
     /// (cycles a contiguous run, cycles a word) of a copy.
     pub copy_cost: (u32, u32),
