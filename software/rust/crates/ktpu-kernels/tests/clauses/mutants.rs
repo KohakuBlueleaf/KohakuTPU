@@ -104,6 +104,33 @@ fn odd_trips_break_under_other_split() {
     assert_eq!(with(OTHER_SPLIT_MUTANT, kernel(even)), kernel(even)());
 }
 
+/// A made operand is written where it is read; copied, it holds one buffer
+/// more, of the port's size.
+#[test]
+fn a_made_operand_copied_holds_a_second_buffer() {
+    use ktpu_kernels::gen::prepared::COPIED_MUTANT;
+    let full = serde_json::json!({
+        "kind": "full", "dtype": "f16", "pitch": 64, "offset": 0, "rows": 0,
+    });
+    let args = serde_json::json!({
+        "e": {"nodes": [{"load": 0}, {"const": 2.0}, {"op": "mul", "args": [0, 1]}], "root": 2},
+        "operands": [full], "R": 88, "W": 64, "out": full, "alias": {},
+        "made": {"0": [{"made_by": {"gen": "relayout.plan", "args": {
+            "src_n": 3520, "walk": [[88, 40], [40, 1]], "at": 0,
+            "dwalk": [[88, 64], [40, 1]], "dat": 0, "m": 5632, "keep": false,
+        }}}]},
+    });
+    let m = super::card();
+    let scratch = || {
+        let k = ktpu_kernels::call::call("prepared.rows_kernel", &args, &m).unwrap();
+        serde_json::to_value(&k.graph).unwrap()["scratch"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    assert_eq!(with(COPIED_MUTANT, scratch), scratch() + 1);
+}
+
 /// API.ROW.003's vector runs the planner (`tg.run`); at the generator its
 /// mutant lets a row of 288 columns (no block of 64..256 divides it) be
 /// one block, not nine of 32.

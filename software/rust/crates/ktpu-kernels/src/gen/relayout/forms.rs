@@ -831,7 +831,8 @@ fn pull(
 /// Axis `j` contiguous in the source, the innermost destination axis (A
 /// elements) strided there: `tx[nb, A', B']` from the source (padding 0),
 /// the exchange into `ty[nb, B', A']`, the destination from it; a side of
-/// whole words one walk, else runs.
+/// whole words one walk, else runs. A batch axis of source stride 0 repeats a
+/// block: only the held blocks are exchanged, the out side writes the repeats.
 #[allow(clippy::too_many_arguments)]
 fn transpose(
     axes: &[Axis],
@@ -852,7 +853,8 @@ fn transpose(
         .filter(|(k, _)| *k != j)
         .map(|(_, x)| *x)
         .collect();
-    let nb: i64 = batch.iter().map(|x| x.0).product();
+    let held: Vec<Axis> = batch.iter().filter(|x| x.1 != 0).copied().collect();
+    let nb: i64 = held.iter().map(|x| x.0).product();
     let ao = extend(&batch, b, db, a, dat, room, hw);
     let ap = ao.max(cdiv(a, lanes) * lanes);
     let bp = cdiv(b, lanes) * lanes;
@@ -866,17 +868,17 @@ fn transpose(
     ];
     if ao > a {
         let (z0, m) = room.unwrap();
-        if nb * b * ao == m - z0 {
+        if batch.iter().map(|x| x.0).product::<i64>() * b * ao == m - z0 {
             // The out side writes every element of the zero range.
             parts.retain(|p| !matches!(p, Part::Fill(f) if f.dst == "dst"));
             whole = true;
         }
         parts.extend(fills("tx", 0, xw, hw));
     }
-    let mut in_axes: Vec<Axis> = batch.iter().map(|x| (x.0, x.1, 0)).collect();
+    let mut in_axes: Vec<Axis> = held.iter().map(|x| (x.0, x.1, 0)).collect();
     in_axes.extend([(a, sa, 0), (b, 1, 0)]);
     let sl = byte_levels(&in_axes, at, 1, hw);
-    let dl = byte_levels(&dense_axes(&batch, a, b, ap, bp), 0, 2, hw);
+    let dl = byte_levels(&dense_axes(&held, a, b, ap, bp), 0, 2, hw);
     match (sl, dl) {
         (Some(sl), Some(dl)) if one_writer(&dl, 0, hw) => parts.push(Part::Words(Words {
             src: "src".into(),
@@ -887,7 +889,7 @@ fn transpose(
             dat: 0,
         })),
         _ => {
-            let src_at: Vec<i64> = positions(&batch, at, 1)
+            let src_at: Vec<i64> = positions(&held, at, 1)
                 .iter()
                 .flat_map(|&p| (0..a).map(move |i| p + i * sa))
                 .collect();
@@ -917,7 +919,8 @@ fn transpose(
     let mut out_axes: Vec<Axis> = batch.iter().map(|x| (x.0, 0, x.2)).collect();
     out_axes.extend([(b, 0, db), (ao, 0, 1)]);
     let dl = byte_levels(&out_axes, dat, 2, hw);
-    let sl = byte_levels(&dense_axes(&batch, b, ao, bp, ap), 0, 2, hw);
+    let out_dense = dense_axes(&batch, b, ao, bp, ap);
+    let sl = byte_levels(&out_dense, 0, 2, hw);
     match (dl, sl) {
         (Some(dl), Some(sl)) if whole && one_writer(&dl, dat * 2, hw) => {
             parts.push(Part::Words(Words {
@@ -930,7 +933,7 @@ fn transpose(
             }))
         }
         _ => {
-            let src_at: Vec<i64> = (0..nb * b).map(|i| (i / b * bp + i % b) * ap).collect();
+            let src_at = positions(&out_dense[..out_dense.len() - 1], 0, 2);
             let dst_at: Vec<i64> = dbs
                 .iter()
                 .flat_map(|&p| (0..b).map(move |i| p + i * db))
@@ -1183,8 +1186,9 @@ fn dense_axes(batch: &[Axis], x: i64, y: i64, xp: i64, yp: i64) -> Vec<Axis> {
     let mut out = vec![];
     let mut stride = xp * yp;
     for a in batch.iter().rev() {
-        out.insert(0, (a.0, 0, stride));
-        stride *= a.0;
+        let held = a.1 != 0;
+        out.insert(0, (a.0, 0, if held { stride } else { 0 }));
+        stride *= if held { a.0 } else { 1 };
     }
     out.extend([(x, 0, yp), (y, 0, 1)]);
     out

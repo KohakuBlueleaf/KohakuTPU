@@ -17,7 +17,8 @@ store and a packing retains finite classification and MX7 entry order.
 A relayout plan normally writes memory lines. Its final destination can instead
 be the consumer's own row-shaped scratch when every final writer uses byte or
 word addressing (`Fill`, `Words`, `Runs`, `Pull`). There is no extra copy solely
-to change that scratch's declared dimensions.
+to change that scratch's declared dimensions. A rows kernel does this whenever
+its operand's port takes every word of the final plan.
 
 Gather and scatter indices address rows of a table. The L2/DSL
 `table_stride=BYTES` attribute specifies that row stride independently of the

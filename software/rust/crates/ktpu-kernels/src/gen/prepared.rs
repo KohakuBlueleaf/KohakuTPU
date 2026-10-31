@@ -18,6 +18,9 @@ use std::collections::{BTreeMap, HashMap};
 /// by its own relayouts first.
 pub const SEPARATE_MUTANT: &str = "prepared/separate";
 
+/// A made operand written to a line buffer and copied into its port.
+pub const COPIED_MUTANT: &str = "kernels.prepared/operand-copied";
+
 /// The planner knobs of pending operands (Python's `runtime/forms.py`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Knobs {
@@ -259,21 +262,21 @@ pub fn rows_kernel(
         let p: HashMap<String, Buf> = names.iter().cloned().zip(b.iter().cloned()).collect();
         let mut ins: BTreeMap<usize, Buf> = BTreeMap::new();
         for (i, plans) in made {
-            let lines = relayout::emit_steps(
-                t,
-                plans,
-                &p[&format!("x{i}")],
-                &p,
-                &format!("p{i}_"),
-                m,
-                None,
-            )?;
+            let (x, prefix) = (&p[&format!("x{i}")], format!("p{i}_"));
             let shape = &shapes[i];
             let values: i64 = shape.iter().product();
-            let words = cdiv(values, rl.lanes).min(plans[plans.len() - 1].dst_words);
-            let mut laid = vec![scratch_rows(shape[0], values / shape[0], &rl)];
-            laid.extend_from_slice(&shape[1..]);
-            let laid = t.buffer(&laid, g::Dtype::F16, vec![])?;
+            let dst_words = plans[plans.len() - 1].dst_words;
+            let words = cdiv(values, rl.lanes).min(dst_words);
+            let mut dims = vec![scratch_rows(shape[0], values / shape[0], &rl)];
+            dims.extend_from_slice(&shape[1..]);
+            if words == dst_words && direct_destination(plans) && !mutants::on(COPIED_MUTANT) {
+                let laid = t.buffer(&dims, g::Dtype::F16, vec![])?;
+                relayout::emit_steps(t, plans, x, &p, &prefix, m, Some(&laid))?;
+                ins.insert(*i, laid);
+                continue;
+            }
+            let lines = relayout::emit_steps(t, plans, x, &p, &prefix, m, None)?;
+            let laid = t.buffer(&dims, g::Dtype::F16, vec![])?;
             let walk = [(words, rl.word)];
             t.copy(
                 &laid.whole(),

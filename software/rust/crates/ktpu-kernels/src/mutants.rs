@@ -34,7 +34,7 @@ pub const NAMES: &[&str] = &[
 /// the contraction knobs unrecorded; the reductions as separate launches;
 /// every relayout `gen::lanes`'; a relayout's destination lines past its
 /// allocation (ktpu-plan's tests/bounds.rs); the forms made before their
-/// kernels.
+/// kernels; a made operand copied into its port.
 pub const LOCAL: &[&str] = &[
     crate::gen::matmul::UNRECORDED_MUTANT,
     "kernels.quant/no-schedule",
@@ -46,6 +46,7 @@ pub const LOCAL: &[&str] = &[
     crate::gen::relayout::LANES_MUTANT,
     crate::gen::relayout::LINES_MUTANT,
     crate::gen::prepared::SEPARATE_MUTANT,
+    crate::gen::prepared::COPIED_MUTANT,
 ];
 
 #[cfg(feature = "mutants")]

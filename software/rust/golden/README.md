@@ -41,7 +41,8 @@ and held byte-equal by the machine-generator tests.
 `cargo run -p ktpu-kernels --example plan_regold [--write]` lists (and with
 `--write` rewrites) planner-golden launch graphs the current generators trace
 differently, leaving RUL.060 and RUL.020 launches to their rulings. A launch
-is rewritten only when the Python trace is shown wrong. Rewritten:
+is rewritten only when the Python trace is shown wrong, or when a generator
+with no Python twin changes. Rewritten:
 
 - `plan/synthetic.enumerated.json`, `rows_e66f2e5737` (4 launches): a
   one-hot over a per-row statistic and a broadcast column row. The Python
@@ -49,6 +50,12 @@ is rewritten only when the Python trace is shown wrong. Rewritten:
   16 (`Trace::math`); the training step's labels came out wrong on the card
   model (`rows_7b307e07d5`, CPU f32 relative error 2.31). Witness:
   `ktpu-kernels` `clauses::rows::api_row_math_takes_a_statistics_rows`.
+- 16 `prepared.rows_kernel` launches in 12 planner goldens: the operand's
+  final plan writes the port it is read from, with no copy, whenever that port
+  takes every word of the plan (`prepared-consumers.md`). The launch names, the
+  plans and every step outside the launch graphs are unchanged. Witnesses:
+  `test_prepared_port.py`'s graph pins and `ktpu-kernels`
+  `a_made_operand_copied_holds_a_second_buffer`.
 
 ## Quant schedule recording export
 

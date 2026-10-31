@@ -902,13 +902,15 @@ def _transpose(
     """Axis `j` contiguous in the source, the innermost destination axis
     (A elements) strided there: ``tx[nb, A', B']`` from the source (padding
     0), the exchange into ``ty[nb, B', A']``, the destination from it; a
-    side of whole words one walk, else runs. `room`: the zero range
-    ``(z0, m)`` (None when kept)."""
+    side of whole words one walk, else runs. A batch axis of source stride 0
+    repeats a block: only `_held` blocks are exchanged, the out side writes
+    the repeats. `room`: the zero range ``(z0, m)`` (None when kept)."""
     lanes = hw.lanes
     A, sA, _ = axes[-1]
     B, _, dB = axes[j]
     batch = [x for k, x in enumerate(axes[:-1]) if k != j]
-    nb = int(np.prod([x[0] for x in batch])) if batch else 1
+    held = _held(batch)
+    nb = int(np.prod([x[0] for x in held])) if held else 1
     Ao = _extend(batch, B, dB, A, dat, room, hw)
     Ap, Bp = max(Ao, -(-A // lanes) * lanes), -(-B // lanes) * lanes
     xw = -(-nb * Ap * Bp // lanes // hw.line) * hw.line
@@ -918,19 +920,19 @@ def _transpose(
     # zeros (tx filled first).
     scratch = [("tx", xw // hw.line, hw.line_values), ("ty", xw, lanes)]
     if Ao > A:
-        if nb * B * Ao == room[1] - room[0]:
+        if len(positions(batch, 0, 2)) * B * Ao == room[1] - room[0]:
             # The out side writes every element of the zero range.
             parts = [p for p in parts if not (isinstance(p, Fill) and p.dst == "dst")]
             whole = True
         parts += _fills("tx", 0, xw, hw)
     sl = _byte_levels(
-        (*((x[0], x[1], 0) for x in batch), (A, sA, 0), (B, 1, 0)), at, 1, hw
+        (*((x[0], x[1], 0) for x in held), (A, sA, 0), (B, 1, 0)), at, 1, hw
     )
-    dl = _byte_levels(_dense_axes(batch, A, B, Ap, Bp), 0, 2, hw)
+    dl = _byte_levels(_dense_axes(held, A, B, Ap, Bp), 0, 2, hw)
     if sl is not None and dl is not None and _one_writer(dl, 0, hw):
         parts.append(Words("src", "tx", sl, at * 2, dl, 0))
     else:
-        a = (positions(batch, at, 1)[:, None] + np.arange(A)[None, :] * sA).reshape(-1)
+        a = (positions(held, at, 1)[:, None] + np.arange(A)[None, :] * sA).reshape(-1)
         b = (np.arange(nb * A) // A * Ap + np.arange(nb * A) % A) * Bp
         r = _run_parts(
             a, b, B, src="src", src_words=sw, dst="tx", zero=True, tables=t, hw=hw
@@ -946,7 +948,7 @@ def _transpose(
     if dl is not None and sl is not None and whole and _one_writer(dl, dat * 2, hw):
         parts.append(Words("ty", "dst", sl, 0, dl, dat * 2))
     else:
-        a = (np.arange(nb * B) // B * Bp + np.arange(nb * B) % B) * Ap
+        a = positions(_dense_axes(batch, B, Ao, Bp, Ap)[:-1], 0, 2)
         b = (db[:, None] + np.arange(B)[None, :] * dB).reshape(-1)
         r = _run_parts(
             a, b, A, src="ty", src_words=xw, dst="dst", zero=zero, tables=t, hw=hw
@@ -954,6 +956,12 @@ def _transpose(
         parts.append(r)
         scratch += _staging(r, hw)
     return _done(tuple(parts), scratch, t, sw, dw)
+
+
+def _held(batch) -> list:
+    """The batch axes of `batch` that hold different blocks: source stride
+    not 0."""
+    return [x for x in batch if x[1]]
 
 
 def _extend(batch, B: int, dB: int, A: int, dat: int, room, hw: Hw) -> int:
@@ -1061,11 +1069,11 @@ def _shuffle(rows, j, n, s, at, dat, sw, dw, zero, whole, parts, t: _Tables, hw:
 
 def _dense_axes(batch, X, Y, Xp, Yp) -> tuple:
     """Axes (destination strides) of ``[batch.., X, Y]`` held in a dense
-    ``[nb, Xp, Yp]`` block."""
+    ``[nb, Xp, Yp]`` block, a batch axis of source stride 0 repeating it."""
     out, stride = [], Xp * Yp
     for x in reversed(batch):
-        out.insert(0, (x[0], 0, stride))
-        stride *= x[0]
+        out.insert(0, (x[0], 0, stride if x[1] else 0))
+        stride *= x[0] if x[1] else 1
     return (*out, (X, 0, Yp), (Y, 0, 1))
 
 

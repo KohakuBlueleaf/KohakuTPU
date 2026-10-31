@@ -36,6 +36,26 @@ NEG_ZERO = 0x8000
 
 #: (source elements, walk, at, dwalk, dat, m, keep, z0): one a class.
 CASES = {
+    "transpose_repeated": (
+        3 * 32 * 64,
+        ((3, 32 * 64), (8, 0), (64, 1), (32, 64)),
+        0,
+        ((3, 8 * 32 * 64), (8, 32 * 64), (64, 32), (32, 1)),
+        0,
+        3 * 8 * 32 * 64,
+        False,
+        0,
+    ),
+    "transpose_repeated_runs": (
+        3 * 30 * 34,
+        ((3, 30 * 34), (8, 0), (34, 1), (30, 34)),
+        0,
+        ((3, 8 * 30 * 34), (8, 30 * 34), (34, 30), (30, 1)),
+        0,
+        3 * 8 * 30 * 34 + 8,
+        False,
+        0,
+    ),
     "runs_repitch_misaligned": (
         1344,
         ((48, 28), (28, 1)),
@@ -425,6 +445,57 @@ def test_random_transposes_are_exact():
         )
         got, exp, _ = run(case, seed=int(rng.integers(1 << 30)))
         assert np.array_equal(got, exp), case
+
+
+def repeated_transpose(nb, r, A, B) -> tuple:
+    """`nb` blocks [A, B], each repeated `r` times, transposed."""
+    n, m = nb * A * B, nb * r * A * B
+    return (
+        n,
+        ((nb, A * B), (r, 0), (B, 1), (A, B)),
+        0,
+        ((nb, r * A * B), (r, A * B), (B, A), (A, 1)),
+        0,
+        -(-m // 16) * 16,
+        False,
+        0,
+    )
+
+
+def test_random_repeated_transposes_are_exact():
+    rng = np.random.default_rng(13)
+    for _ in range(30):
+        nb, r = int(rng.integers(1, 4)), int(rng.integers(2, 6))
+        A, B = int(rng.integers(2, 70)), int(rng.integers(2, 70))
+        case = repeated_transpose(nb, r, A, B)
+        got, exp, _ = run(case, seed=int(rng.integers(1 << 30)))
+        assert np.array_equal(got, exp), case
+
+
+@pytest.mark.parametrize("sizes", [(3, 8, 32, 64), (3, 8, 30, 34)])
+def test_a_repeat_is_not_exchanged(sizes):
+    """The exchange and its scratch take the blocks that differ, not their
+    repeats."""
+    nb, r, A, B = sizes
+    _, _, pl = run(repeated_transpose(nb, r, A, B))
+    x = next(p for p in pl.parts if isinstance(p, R.Exchange))
+    assert x.nb == nb
+    ty = next(rows * width for name, rows, width in pl.scratch if name == "ty")
+    assert ty == -(-nb * x.A * x.B // 16 // HW.line) * HW.line * 16
+
+
+def test_mutant_repeats_exchanged_are_caught(monkeypatch):
+    monkeypatch.setattr(R, "_held", lambda batch: batch)
+    monkeypatch.setattr(R, "_plans", type(R._plans)())
+    with pytest.raises(AssertionError):
+        test_a_repeat_is_not_exchanged((3, 8, 32, 64))
+
+
+def test_mutant_repeats_read_as_blocks_are_caught(monkeypatch):
+    """The out side walking the exchange as if every repeat were there."""
+    orig = R._dense_axes
+    wrong = lambda batch, *a: orig([(x[0], 1, x[2]) for x in batch], *a)
+    assert _caught(monkeypatch, "_dense_axes", wrong)
 
 
 def test_scatters_write_whole_lines_one_layer_a_line():
@@ -823,6 +894,8 @@ MODEL = [
     "transpose_two_margins",
     "transpose_window_channels",
     "transpose_padded_rows",
+    "transpose_repeated",
+    "transpose_repeated_runs",
 ]
 
 

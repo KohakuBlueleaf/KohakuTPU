@@ -15,6 +15,7 @@ Against Python's:
 
 import hashlib
 import json
+import math
 
 import pytest
 
@@ -44,6 +45,19 @@ def transpose(rows, cols):
     """The [rows, cols] read of a [cols, rows] source."""
     n = rows * cols
     return (n, ((rows, 1), (cols, rows)), 0, ((rows, cols), (cols, 1)), 0, n)
+
+
+def repeated(nb, r, cols, rows):
+    """`nb` blocks of [cols, rows], each repeated `r` times and transposed."""
+    m = nb * r * cols * rows
+    return (
+        nb * cols * rows,
+        ((nb, cols * rows), (r, 0), (rows, 1), (cols, rows)),
+        0,
+        ((nb, r * cols * rows), (r, cols * rows), (rows, cols), (cols, 1)),
+        0,
+        m,
+    )
 
 
 def repitch(rows, width, pitch, at=0):
@@ -81,6 +95,15 @@ CASES = {
         64,
         Operand("row"),
         {0: [transpose(21, 64)]},
+        {},
+    ),
+    "repeated_transposed_sum": (
+        SUM,
+        (full(64),),
+        256,
+        64,
+        Operand("row"),
+        {0: [repeated(2, 4, 64, 32)]},
         {},
     ),
     "repitched_scaled": (
@@ -161,8 +184,8 @@ def bare(node):
     return node
 
 
-def graph_hash(case, mutant=None) -> str:
-    """The sha256 head of the generator's graph, `where` aside."""
+def graph_of(case, mutant=None) -> dict:
+    """The generator's graph, `where` aside."""
     e, ops, R, W, out, steps, alias = case
     call = {
         "e": emit.expr(e),
@@ -181,20 +204,26 @@ def graph_hash(case, mutant=None) -> str:
     got = rs._rs.generate(
         "prepared.rows_kernel", json.dumps(call), rs.machine_json(MACHINE), mutant
     )
-    text = json.dumps(bare(json.loads(got)), sort_keys=True, separators=(",", ":"))
+    return bare(json.loads(got))
+
+
+def graph_hash(case, mutant=None) -> str:
+    """The sha256 head of the generator's graph."""
+    text = json.dumps(graph_of(case, mutant), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
-#: name -> `graph_hash` on `BOARD`, each the graph Python's tracer made.
+#: name -> `graph_hash` on `BOARD`.
 GRAPHS = {
-    "halves_of_one_buffer": "6202bd0affe814f6",
-    "made_beside_plain": "0e77cfc9590f340b",
-    "plain_beside_made": "2fa354535caa80ce",
-    "repitched_misaligned_odd_rows": "973642479d8136ab",
-    "repitched_scaled": "905f21ada43c6d42",
-    "transposed_sum": "6974f1850f64169d",
-    "transposed_sum_tail": "70f3bda8a9074ff0",
-    "two_steps": "36bed14ca1aef15d",
+    "halves_of_one_buffer": "883225528a792083",
+    "made_beside_plain": "59058f7bf26a3818",
+    "plain_beside_made": "16a741ec2aff3e12",
+    "repeated_transposed_sum": "9f87b6051dcff26f",
+    "repitched_misaligned_odd_rows": "4e59328e00212b9d",
+    "repitched_scaled": "7f587e84a15faf6c",
+    "transposed_sum": "2837d17a0d60795c",
+    "transposed_sum_tail": "a45d5d39c91906ea",
+    "two_steps": "ce65fbe31b360d18",
 }
 
 
@@ -206,6 +235,18 @@ def test_rows_kernel_graph_is_pinned(name):
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_mutant_port_pad_moves_the_pin(name):
     assert graph_hash(CASES[name], "api.vector/port_pad") != GRAPHS[name]
+
+
+def scratch_values(graph) -> int:
+    return sum(math.prod(b["spec"]["shape"]) for b in graph["scratch"])
+
+
+def test_a_made_operand_is_written_where_it_is_read():
+    """One buffer holds the operand: no second of its size, and the five of
+    the exchange hold the blocks that differ."""
+    case = CASES["repeated_transposed_sum"]
+    n, *_, m = case[5][0][0]
+    assert scratch_values(graph_of(case)) == m + 5 * n
 
 
 #: name -> (e, operands, R, W, out, {operand: [step]}): `prepared_tree`'s
