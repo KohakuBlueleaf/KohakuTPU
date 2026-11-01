@@ -1,0 +1,59 @@
+"""A traced run's step records, on the host: cycles between steps by opcode, per
+launch. Records come back with whichever collect reads them, so a package's steps are
+joined by tag and tags follow the run order.
+
+    python measurements/tools/steps.py TRACE_DIR OUT.json
+"""
+
+import collections
+import json
+import pathlib
+import sys
+
+
+def main():
+    trace, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+    rows = [
+        json.loads(x) for x in (trace / "card.jsonl").read_text("utf-8").splitlines()
+    ]
+    by_tag: dict = collections.defaultdict(list)
+    for r in rows:
+        for p in (r.pop("trace", None) or {}).get("packages") or []:
+            by_tag[p["tag"]].extend(p.get("steps") or [])
+    tags = sorted(by_tag)
+    result = []
+    for r, tag in zip(rows, tags, strict=False):
+        ops: dict = collections.Counter()
+        count: dict = collections.Counter()
+        prev = 0
+        for s in by_tag[tag]:
+            ops[s["op"]] += s["cycle"] - prev
+            count[s["op"]] += 1
+            prev = s["cycle"]
+        result.append(
+            {
+                "name": r["name"],
+                "kind": r["kind"],
+                "cycles": r["cycles"],
+                "steps": r["steps"],
+                "tail": r["steps"] - prev,
+                "ops": ops,
+                "counts": count,
+            }
+        )
+    out.write_text(json.dumps(result), "utf-8")
+    print(len(rows), "rows", len(tags), "tags")
+    for r in sorted(result, key=lambda x: -x["cycles"])[:8]:
+        print(
+            r["name"][:12],
+            r["kind"],
+            r["cycles"],
+            "tail",
+            r["tail"],
+            dict(r["ops"]),
+            dict(r["counts"]),
+        )
+
+
+if __name__ == "__main__":
+    main()

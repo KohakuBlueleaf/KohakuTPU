@@ -1,0 +1,79 @@
+{
+ "counters": {
+  "runs": 5782,
+  "cycles": 142791051,
+  "bytes_in": 458612,
+  "bytes_out": 1540,
+  "library_hits": 5782,
+  "class_hits": 0,
+  "exact_hits": 5782,
+  "library_misses": 0,
+  "compile_calls": 0,
+  "compile_seconds": 0.0,
+  "kernel_reuses": 5689
+ },
+ "runs": 5782,
+ "transport": {},
+ "workload": "gru",
+ "board": "multimesh_v9t8",
+ "nodes": 1,
+ "args": [
+  "--model",
+  "gru",
+  "--batch",
+  "8",
+  "--steps",
+  "3",
+  "--board",
+  "multimesh_v9t8",
+  "--nodes",
+  "1",
+  "--library",
+  "build/perf/libz/gru",
+  "--library-only",
+  "--no-jit",
+  "--test",
+  "8",
+  "--steps",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma"
+ ],
+ "seconds": 10.25,
+ "done": "exited",
+ "spans": {
+  "compile_graph": {
+   "calls": 93,
+   "seconds": 0.14029696401121328
+  },
+  "bind_admit": {
+   "calls": 5782,
+   "seconds": 0.19279945600646897
+  },
+  "submit": {
+   "calls": 5782,
+   "seconds": 3.786678104312159
+  },
+  "generate_launch": {
+   "calls": 5782,
+   "seconds": 4.099284440897463
+  },
+  "rows": {
+   "calls": 362,
+   "seconds": 1.3355753870273475
+  },
+  "collect": {
+   "calls": 5794,
+   "seconds": 0.41169817505578976
+  }
+ },
+ "profile": "ship",
+ "commit": "ebd705cc+",
+ "firmware": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+ "when": 1793515381.041277,
+ "launches": 5782,
+ "kernels": 92,
+ "compiles": []
+}

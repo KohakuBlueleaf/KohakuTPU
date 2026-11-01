@@ -1,0 +1,42 @@
+{
+ "ok": true,
+ "load_seconds": 0.024970721002318896,
+ "run_seconds": 0.05077849199733464,
+ "nodes": [
+  {
+   "status": 12,
+   "exit": 0,
+   "halt_pc": 3332,
+   "console": "KohakuAccel OS: node 0 of 1 (mesh 0), private 20000000+100000, shared 0+0, 4 units, flags 10, tick 0\ninit: 1 nodes, commands: kdsbench 16; kdsmg \n@ kdsbench.one 24640\n@ kdsbench.one_client 45401\n  kdsbench one: 1 tasks, home 24640 cycles (24640 each), client 45401\n  kdsbench.one_client: server passes 1 retire-wakes 0 tasks 1 unit calls 0 msgs 1/1; cycles msgs 19875 run 15606 issue 139 send 752 event 11958 retire 590\n@ kdsbench.chain 7205\n@ kdsbench.chain_client 8471\n  kdsbench chain: 16 tasks, home 115294 cycles (7205 each), client 135538\n  kdsbench.chain_client: server passes 1 retire-wakes 0 tasks 16 unit calls 0 msgs 1/1; cycles msgs 74744 run 51121 issue 139 send 706 event 196406 retire 545\n@ kdsbench.wide 5767\n@ kdsbench.wide_client 7033\n  kdsbench wide: 16 tasks, home 92281 cycles (5767 each), client 112530\n  kdsbench.wide_client: server passes 1 retire-wakes 0 tasks 16 unit calls 0 msgs 1/1; cycles msgs 65716 run 37154 issue 139 send 709 event 196817 retire 544\n@ kdsbench.cpu 7835\n@ kdsbench.cpu_client 9090\n  kdsbench cpu: 16 tasks, home 125372 cycles (7835 each), client 145448\n  kdsbench.cpu_client: server passes 1 retire-wakes 0 tasks 16 unit calls 0 msgs 1/1; cycles msgs 73967 run 61812 issue 137 send 707 event 199064 retire 546\n@ kdsbench.alloc_here 27346\n@ kdsbench.alloc_far 27278\nkdsbench: 16 tasks, ok\ninit: kdsbench exit 0 in 2768477 cycles\n  kdsmg unit 0 (GM, node 0): status 0 task 0 detail 0, 148771 cycles\n@ kdsmg.bind_cycles 148771\n  kdsmg rounds: server passes 2 retire-wakes 1 tasks 24 unit calls 24 msgs 1/1; cycles msgs 101400 run 58205 issue 84483 send 1653 event 101943 retire 56139\n  kdsmg rounds: unit 0 (node 0) 8 rounds in 300248 cycles, 37531 per round\n@ kdsmg.round_cycles 37531\n  kdsmg unit 1 (GM, node 0): status 0 task 0 detail 0, 145812 cycles\n@ kdsmg.bind_cycles 145812\n@ kdsmg.units 2\nkdsmg: 2 MG units, ok\ninit: kdsmg exit 0 in 1824462 cycles\ninit: 2 commands, 0 failed\n",
+   "log": "",
+   "log_bytes": 0,
+   "where": "0",
+   "where_a": 0,
+   "where_b": 0,
+   "switches": 0
+  }
+ ],
+ "measures": {
+  "0": {
+   "kdsbench.one": 24640,
+   "kdsbench.one_client": 45401,
+   "kdsbench.chain": 7205,
+   "kdsbench.chain_client": 8471,
+   "kdsbench.wide": 5767,
+   "kdsbench.wide_client": 7033,
+   "kdsbench.cpu": 7835,
+   "kdsbench.cpu_client": 9090,
+   "kdsbench.alloc_here": 27346,
+   "kdsbench.alloc_far": 27278,
+   "kdsmg.bind_cycles": 145812,
+   "kdsmg.round_cycles": 37531,
+   "kdsmg.units": 2
+  }
+ },
+ "model_status": {},
+ "board": "card_v9t6_4n_solo",
+ "image": "build/os/kos.elf",
+ "cmd": "kdsbench 16; kdsmg",
+ "flags": "engine",
+ "tick": 0
+}

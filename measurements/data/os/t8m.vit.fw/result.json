@@ -1,0 +1,2782 @@
+{
+  "workload": "vit",
+  "backend": "FW-RUN",
+  "runtime": "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/card/__init__.py",
+  "knobs": {
+    "KOHAKUTPU_PROFILE": "mid",
+    "KOHAKUTPU_OS_DE_STREAM": "1",
+    "KOHAKUTPU_OS_STAMPS": "0",
+    "KOHAKUTPU_OS_DE_FUSE": "0"
+  },
+  "results": [
+    {
+      "cycles": 1100893,
+      "packages": [
+        {
+          "cycles": 9729,
+          "phases": {
+            "head": 966,
+            "copy": 4,
+            "bind": 447,
+            "steps": 8148,
+            "barrier": 164,
+            "local": 0,
+            "total": 5056,
+            "first": 18446744073701664610,
+            "last": 18446744073701664610,
+            "sent": 136,
+            "idle": 0,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 54502,
+          "phases": {
+            "head": 979,
+            "copy": 4,
+            "bind": 797,
+            "steps": 52549,
+            "barrier": 173,
+            "local": 0,
+            "total": 16960,
+            "first": 18446744073701600670,
+            "last": 18446744073701600670,
+            "sent": 500,
+            "idle": 53848,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 23314,
+          "phases": {
+            "head": 1138,
+            "copy": 4,
+            "bind": 861,
+            "steps": 21140,
+            "barrier": 171,
+            "local": 0,
+            "total": 16960,
+            "first": 18446744073701503505,
+            "last": 18446744073701503505,
+            "sent": 500,
+            "idle": 42440,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 70316,
+          "phases": {
+            "head": 703,
+            "copy": 4,
+            "bind": 691,
+            "steps": 68749,
+            "barrier": 169,
+            "local": 0,
+            "total": 16960,
+            "first": 18446744073701437555,
+            "last": 18446744073701437555,
+            "sent": 500,
+            "idle": 43241,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 65394,
+          "phases": {
+            "head": 856,
+            "copy": 4,
+            "bind": 747,
+            "steps": 63618,
+            "barrier": 169,
+            "local": 0,
+            "total": 16960,
+            "first": 18446744073701326636,
+            "last": 18446744073701326636,
+            "sent": 500,
+            "idle": 40394,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 13320,
+          "phases": {
+            "head": 1132,
+            "copy": 4,
+            "bind": 479,
+            "steps": 11549,
+            "barrier": 156,
+            "local": 0,
+            "total": 3328,
+            "first": 18446744073701220749,
+            "last": 18446744073701220749,
+            "sent": 76,
+            "idle": 40485,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7369,
+          "phases": {
+            "head": 684,
+            "copy": 4,
+            "bind": 384,
+            "steps": 6145,
+            "barrier": 152,
+            "local": 0,
+            "total": 6048,
+            "first": 18446744073701164826,
+            "last": 18446744073701164826,
+            "sent": 167,
+            "idle": 43146,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 12116,
+          "phases": {
+            "head": 829,
+            "copy": 4,
+            "bind": 414,
+            "steps": 10717,
+            "barrier": 152,
+            "local": 0,
+            "total": 5856,
+            "first": 18446744073701118407,
+            "last": 18446744073701118407,
+            "sent": 150,
+            "idle": 38875,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 5962,
+          "phases": {
+            "head": 682,
+            "copy": 4,
+            "bind": 89,
+            "steps": 5039,
+            "barrier": 148,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 38958,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 60308,
+          "phases": {
+            "head": 946,
+            "copy": 4,
+            "bind": 794,
+            "steps": 58395,
+            "barrier": 169,
+            "local": 0,
+            "total": 17312,
+            "first": 18446744073701006797,
+            "last": 18446744073701006797,
+            "sent": 500,
+            "idle": 54077,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 14487,
+          "phases": {
+            "head": 862,
+            "copy": 4,
+            "bind": 99,
+            "steps": 13370,
+            "barrier": 152,
+            "local": 0,
+            "total": 416,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 44574,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7826,
+          "phases": {
+            "head": 657,
+            "copy": 4,
+            "bind": 1292,
+            "steps": 5676,
+            "barrier": 197,
+            "local": 0,
+            "total": 2048,
+            "first": 18446744073700845776,
+            "last": 18446744073700845776,
+            "sent": 52,
+            "idle": 41443,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7227,
+          "phases": {
+            "head": 745,
+            "copy": 4,
+            "bind": 416,
+            "steps": 5908,
+            "barrier": 154,
+            "local": 0,
+            "total": 2496,
+            "first": 18446744073700798980,
+            "last": 18446744073700798980,
+            "sent": 56,
+            "idle": 39758,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 4018,
+          "phases": {
+            "head": 831,
+            "copy": 4,
+            "bind": 89,
+            "steps": 2946,
+            "barrier": 148,
+            "local": 0,
+            "total": 352,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 39052,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 133085,
+          "phases": {
+            "head": 650,
+            "copy": 4,
+            "bind": 674,
+            "steps": 131588,
+            "barrier": 169,
+            "local": 0,
+            "total": 94496,
+            "first": 18446744073700696581,
+            "last": 18446744073700696581,
+            "sent": 2624,
+            "idle": 51939,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 4064,
+          "phases": {
+            "head": 857,
+            "copy": 4,
+            "bind": 99,
+            "steps": 2952,
+            "barrier": 152,
+            "local": 0,
+            "total": 352,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 41787,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6704,
+          "phases": {
+            "head": 650,
+            "copy": 4,
+            "bind": 84,
+            "steps": 5818,
+            "barrier": 148,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 42900,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 9479,
+          "phases": {
+            "head": 1079,
+            "copy": 4,
+            "bind": 465,
+            "steps": 7779,
+            "barrier": 152,
+            "local": 0,
+            "total": 8224,
+            "first": 18446744073700423269,
+            "last": 18446744073700423269,
+            "sent": 232,
+            "idle": 44552,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 8417,
+          "phases": {
+            "head": 840,
+            "copy": 4,
+            "bind": 89,
+            "steps": 7334,
+            "barrier": 150,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 42296,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 3826,
+          "phases": {
+            "head": 684,
+            "copy": 4,
+            "bind": 670,
+            "steps": 2301,
+            "barrier": 167,
+            "local": 0,
+            "total": 1312,
+            "first": 18446744073700321243,
+            "last": 18446744073700321243,
+            "sent": 34,
+            "idle": 42024,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 10019,
+          "phases": {
+            "head": 1002,
+            "copy": 4,
+            "bind": 446,
+            "steps": 8413,
+            "barrier": 154,
+            "local": 0,
+            "total": 4512,
+            "first": 18446744073700270930,
+            "last": 18446744073700270930,
+            "sent": 119,
+            "idle": 46393,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 13195,
+          "phases": {
+            "head": 1112,
+            "copy": 4,
+            "bind": 467,
+            "steps": 11460,
+            "barrier": 152,
+            "local": 0,
+            "total": 4064,
+            "first": 18446744073700220306,
+            "last": 18446744073700220306,
+            "sent": 99,
+            "idle": 40474,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 10785,
+          "phases": {
+            "head": 1108,
+            "copy": 4,
+            "bind": 467,
+            "steps": 9054,
+            "barrier": 152,
+            "local": 0,
+            "total": 4448,
+            "first": 18446744073700168733,
+            "last": 18446744073700168733,
+            "sent": 117,
+            "idle": 38382,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 12972,
+          "phases": {
+            "head": 832,
+            "copy": 4,
+            "bind": 408,
+            "steps": 11576,
+            "barrier": 152,
+            "local": 0,
+            "total": 5824,
+            "first": 18446744073700118596,
+            "last": 18446744073700118596,
+            "sent": 149,
+            "idle": 39687,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 22921,
+          "phases": {
+            "head": 1107,
+            "copy": 4,
+            "bind": 853,
+            "steps": 20790,
+            "barrier": 167,
+            "local": 0,
+            "total": 8672,
+            "first": 18446744073700053467,
+            "last": 18446744073700053467,
+            "sent": 226,
+            "idle": 51437,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6523,
+          "phases": {
+            "head": 851,
+            "copy": 4,
+            "bind": 99,
+            "steps": 5419,
+            "barrier": 150,
+            "local": 0,
+            "total": 608,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 42392,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 145458,
+          "phases": {
+            "head": 805,
+            "copy": 4,
+            "bind": 728,
+            "steps": 143752,
+            "barrier": 169,
+            "local": 0,
+            "total": 94464,
+            "first": 18446744073699942118,
+            "last": 18446744073699942118,
+            "sent": 2624,
+            "idle": 39940,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 31556,
+          "phases": {
+            "head": 1139,
+            "copy": 4,
+            "bind": 855,
+            "steps": 29389,
+            "barrier": 169,
+            "local": 0,
+            "total": 44672,
+            "first": 18446744073699745973,
+            "last": 18446744073699745973,
+            "sent": 1336,
+            "idle": 50226,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6990,
+          "phases": {
+            "head": 860,
+            "copy": 4,
+            "bind": 99,
+            "steps": 5875,
+            "barrier": 152,
+            "local": 0,
+            "total": 608,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 41794,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 3821,
+          "phases": {
+            "head": 655,
+            "copy": 4,
+            "bind": 666,
+            "steps": 2327,
+            "barrier": 169,
+            "local": 0,
+            "total": 1152,
+            "first": 18446744073699627143,
+            "last": 18446744073699627143,
+            "sent": 29,
+            "idle": 39163,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 3776,
+          "phases": {
+            "head": 858,
+            "copy": 4,
+            "bind": 99,
+            "steps": 2665,
+            "barrier": 150,
+            "local": 0,
+            "total": 320,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 43434,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7218,
+          "phases": {
+            "head": 799,
+            "copy": 4,
+            "bind": 82,
+            "steps": 6185,
+            "barrier": 148,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 42033,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 28434,
+          "phases": {
+            "head": 1082,
+            "copy": 4,
+            "bind": 843,
+            "steps": 26336,
+            "barrier": 169,
+            "local": 0,
+            "total": 17312,
+            "first": 18446744073699487280,
+            "last": 18446744073699487280,
+            "sent": 500,
+            "idle": 38977,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7709,
+          "phases": {
+            "head": 866,
+            "copy": 4,
+            "bind": 99,
+            "steps": 6588,
+            "barrier": 152,
+            "local": 0,
+            "total": 384,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 39958,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 3687,
+          "phases": {
+            "head": 802,
+            "copy": 4,
+            "bind": 80,
+            "steps": 2655,
+            "barrier": 146,
+            "local": 0,
+            "total": 320,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 39506,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 4103,
+          "phases": {
+            "head": 653,
+            "copy": 4,
+            "bind": 668,
+            "steps": 2609,
+            "barrier": 169,
+            "local": 0,
+            "total": 2144,
+            "first": 18446744073699322131,
+            "last": 18446744073699322131,
+            "sent": 60,
+            "idle": 46459,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 9732,
+          "phases": {
+            "head": 1001,
+            "copy": 4,
+            "bind": 454,
+            "steps": 8119,
+            "barrier": 154,
+            "local": 0,
+            "total": 5056,
+            "first": 18446744073699275247,
+            "last": 18446744073699275247,
+            "sent": 136,
+            "idle": 42647,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 11247,
+          "phases": {
+            "head": 1117,
+            "copy": 4,
+            "bind": 468,
+            "steps": 9506,
+            "barrier": 152,
+            "local": 0,
+            "total": 3328,
+            "first": 18446744073699223606,
+            "last": 18446744073699223606,
+            "sent": 76,
+            "idle": 41779,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7697,
+          "phases": {
+            "head": 682,
+            "copy": 4,
+            "bind": 382,
+            "steps": 6477,
+            "barrier": 152,
+            "local": 0,
+            "total": 6048,
+            "first": 18446744073699173106,
+            "last": 18446744073699173106,
+            "sent": 167,
+            "idle": 39774,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 12045,
+          "phases": {
+            "head": 829,
+            "copy": 4,
+            "bind": 412,
+            "steps": 10648,
+            "barrier": 152,
+            "local": 0,
+            "total": 5856,
+            "first": 18446744073699126589,
+            "last": 18446744073699126589,
+            "sent": 150,
+            "idle": 38643,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7179,
+          "phases": {
+            "head": 829,
+            "copy": 4,
+            "bind": 89,
+            "steps": 6111,
+            "barrier": 146,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 38643,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 76486,
+          "phases": {
+            "head": 655,
+            "copy": 4,
+            "bind": 674,
+            "steps": 74984,
+            "barrier": 169,
+            "local": 0,
+            "total": 17312,
+            "first": 18446744073699029918,
+            "last": 18446744073699029918,
+            "sent": 500,
+            "idle": 38716,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 16885,
+          "phases": {
+            "head": 897,
+            "copy": 4,
+            "bind": 99,
+            "steps": 15735,
+            "barrier": 150,
+            "local": 0,
+            "total": 384,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 42046,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7958,
+          "phases": {
+            "head": 942,
+            "copy": 4,
+            "bind": 778,
+            "steps": 6065,
+            "barrier": 169,
+            "local": 0,
+            "total": 9376,
+            "first": 18446744073698856084,
+            "last": 18446744073698856084,
+            "sent": 286,
+            "idle": 38026,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7738,
+          "phases": {
+            "head": 860,
+            "copy": 4,
+            "bind": 99,
+            "steps": 6625,
+            "barrier": 150,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 37951,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 79229,
+          "phases": {
+            "head": 802,
+            "copy": 4,
+            "bind": 732,
+            "steps": 77522,
+            "barrier": 169,
+            "local": 0,
+            "total": 17312,
+            "first": 18446744073698763640,
+            "last": 18446744073698763640,
+            "sent": 500,
+            "idle": 38983,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 17274,
+          "phases": {
+            "head": 935,
+            "copy": 4,
+            "bind": 99,
+            "steps": 16086,
+            "barrier": 150,
+            "local": 0,
+            "total": 384,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 38392,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6793,
+          "phases": {
+            "head": 655,
+            "copy": 4,
+            "bind": 662,
+            "steps": 5303,
+            "barrier": 169,
+            "local": 0,
+            "total": 2720,
+            "first": 18446744073698589370,
+            "last": 18446744073698589370,
+            "sent": 78,
+            "idle": 39592,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        }
+      ],
+      "outputs": [
+        "0cb661b846b953b625bc3028f6b04dbcabba2eb865b46c1f3abb36b3c9b532b6b9b63aba33b9d1b65eb674bc48b83cbb14b818afb2acd0b800b6fdb5b9b318b2c02c12acae2d75b566a856b6ec2de6b741b87cb8b4b71fb59fb6f0b89ab6e93417b25d30aab15a37b4307c308ab2e0b93c29442b5e3a4235b1b6d833382f012be12f6ca9e4b0022f3fb850388d358eb85ab5f0a445331c3868b678347a309c2f682d61b4afb0e42c852ee9b8d4a774b6b09d5336e63652ae133040302f340835a9381337c2382b318b37012fc338a021c4a5c8aa7826f431c02d6cafe82d7e3a06351c393435b83b39392a39b5344eb356388238323da53a542d043aeb387738"
+      ],
+      "launch_ring": []
+    },
+    {
+      "cycles": 1041727,
+      "packages": [
+        {
+          "cycles": 9317,
+          "phases": {
+            "head": 962,
+            "copy": 4,
+            "bind": 450,
+            "steps": 7747,
+            "barrier": 154,
+            "local": 0,
+            "total": 5056,
+            "first": 18446744073698536529,
+            "last": 18446744073698536529,
+            "sent": 136,
+            "idle": 45953,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 47436,
+          "phases": {
+            "head": 936,
+            "copy": 4,
+            "bind": 799,
+            "steps": 45528,
+            "barrier": 169,
+            "local": 0,
+            "total": 16960,
+            "first": 18446744073698480932,
+            "last": 18446744073698480932,
+            "sent": 500,
+            "idle": 45957,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 20369,
+          "phases": {
+            "head": 1097,
+            "copy": 4,
+            "bind": 857,
+            "steps": 18242,
+            "barrier": 169,
+            "local": 0,
+            "total": 16960,
+            "first": 18446744073698389404,
+            "last": 18446744073698389404,
+            "sent": 500,
+            "idle": 43873,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 61176,
+          "phases": {
+            "head": 668,
+            "copy": 4,
+            "bind": 685,
+            "steps": 59650,
+            "barrier": 169,
+            "local": 0,
+            "total": 16960,
+            "first": 18446744073698330113,
+            "last": 18446744073698330113,
+            "sent": 500,
+            "idle": 39523,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 56184,
+          "phases": {
+            "head": 818,
+            "copy": 4,
+            "bind": 745,
+            "steps": 54448,
+            "barrier": 169,
+            "local": 0,
+            "total": 16960,
+            "first": 18446744073698229812,
+            "last": 18446744073698229812,
+            "sent": 500,
+            "idle": 38915,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 12944,
+          "phases": {
+            "head": 1096,
+            "copy": 4,
+            "bind": 478,
+            "steps": 11212,
+            "barrier": 154,
+            "local": 0,
+            "total": 3328,
+            "first": 18446744073698132962,
+            "last": 18446744073698132962,
+            "sent": 76,
+            "idle": 40655,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6874,
+          "phases": {
+            "head": 646,
+            "copy": 4,
+            "bind": 382,
+            "steps": 5690,
+            "barrier": 152,
+            "local": 0,
+            "total": 6048,
+            "first": 18446744073698082434,
+            "last": 18446744073698082434,
+            "sent": 167,
+            "idle": 38130,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 11398,
+          "phases": {
+            "head": 794,
+            "copy": 4,
+            "bind": 412,
+            "steps": 10036,
+            "barrier": 152,
+            "local": 0,
+            "total": 5856,
+            "first": 18446744073698036043,
+            "last": 18446744073698036043,
+            "sent": 150,
+            "idle": 39339,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 5743,
+          "phases": {
+            "head": 644,
+            "copy": 4,
+            "bind": 89,
+            "steps": 4858,
+            "barrier": 148,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 40122,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 59050,
+          "phases": {
+            "head": 909,
+            "copy": 4,
+            "bind": 790,
+            "steps": 57178,
+            "barrier": 169,
+            "local": 0,
+            "total": 17312,
+            "first": 18446744073697923387,
+            "last": 18446744073697923387,
+            "sent": 500,
+            "idle": 54900,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 14374,
+          "phases": {
+            "head": 824,
+            "copy": 4,
+            "bind": 99,
+            "steps": 13295,
+            "barrier": 152,
+            "local": 0,
+            "total": 416,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 41525,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7656,
+          "phases": {
+            "head": 619,
+            "copy": 4,
+            "bind": 1240,
+            "steps": 5598,
+            "barrier": 195,
+            "local": 0,
+            "total": 2048,
+            "first": 18446744073697766683,
+            "last": 18446744073697766683,
+            "sent": 52,
+            "idle": 41595,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6991,
+          "phases": {
+            "head": 710,
+            "copy": 4,
+            "bind": 416,
+            "steps": 5707,
+            "barrier": 154,
+            "local": 0,
+            "total": 2496,
+            "first": 18446744073697721378,
+            "last": 18446744073697721378,
+            "sent": 56,
+            "idle": 38382,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 3923,
+          "phases": {
+            "head": 796,
+            "copy": 4,
+            "bind": 89,
+            "steps": 2886,
+            "barrier": 148,
+            "local": 0,
+            "total": 352,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 39171,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 126056,
+          "phases": {
+            "head": 615,
+            "copy": 4,
+            "bind": 674,
+            "steps": 124594,
+            "barrier": 169,
+            "local": 0,
+            "total": 94496,
+            "first": 18446744073697618927,
+            "last": 18446744073697618927,
+            "sent": 2624,
+            "idle": 52203,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 3959,
+          "phases": {
+            "head": 822,
+            "copy": 4,
+            "bind": 99,
+            "steps": 2882,
+            "barrier": 152,
+            "local": 0,
+            "total": 352,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 40656,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6482,
+          "phases": {
+            "head": 615,
+            "copy": 4,
+            "bind": 82,
+            "steps": 5633,
+            "barrier": 148,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 42291,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 8972,
+          "phases": {
+            "head": 1045,
+            "copy": 4,
+            "bind": 465,
+            "steps": 7306,
+            "barrier": 152,
+            "local": 0,
+            "total": 8224,
+            "first": 18446744073697353499,
+            "last": 18446744073697353499,
+            "sent": 232,
+            "idle": 45763,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 8210,
+          "phases": {
+            "head": 802,
+            "copy": 4,
+            "bind": 89,
+            "steps": 7165,
+            "barrier": 150,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 41686,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 3673,
+          "phases": {
+            "head": 617,
+            "copy": 4,
+            "bind": 670,
+            "steps": 2215,
+            "barrier": 167,
+            "local": 0,
+            "total": 1312,
+            "first": 18446744073697256309,
+            "last": 18446744073697256309,
+            "sent": 34,
+            "idle": 38545,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 9553,
+          "phases": {
+            "head": 964,
+            "copy": 4,
+            "bind": 446,
+            "steps": 7985,
+            "barrier": 154,
+            "local": 0,
+            "total": 4512,
+            "first": 18446744073697206040,
+            "last": 18446744073697206040,
+            "sent": 119,
+            "idle": 46473,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 12814,
+          "phases": {
+            "head": 1073,
+            "copy": 4,
+            "bind": 468,
+            "steps": 11117,
+            "barrier": 152,
+            "local": 0,
+            "total": 4064,
+            "first": 18446744073697154142,
+            "last": 18446744073697154142,
+            "sent": 99,
+            "idle": 42214,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 10314,
+          "phases": {
+            "head": 1073,
+            "copy": 4,
+            "bind": 467,
+            "steps": 8618,
+            "barrier": 152,
+            "local": 0,
+            "total": 4448,
+            "first": 18446744073697099467,
+            "last": 18446744073697099467,
+            "sent": 117,
+            "idle": 41862,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 12315,
+          "phases": {
+            "head": 794,
+            "copy": 4,
+            "bind": 408,
+            "steps": 10957,
+            "barrier": 152,
+            "local": 0,
+            "total": 5824,
+            "first": 18446744073697048760,
+            "last": 18446744073697048760,
+            "sent": 149,
+            "idle": 40731,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 22044,
+          "phases": {
+            "head": 1072,
+            "copy": 4,
+            "bind": 850,
+            "steps": 19951,
+            "barrier": 167,
+            "local": 0,
+            "total": 8672,
+            "first": 18446744073696987425,
+            "last": 18446744073696987425,
+            "sent": 226,
+            "idle": 48300,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6345,
+          "phases": {
+            "head": 816,
+            "copy": 4,
+            "bind": 99,
+            "steps": 5276,
+            "barrier": 150,
+            "local": 0,
+            "total": 608,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 37694,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 138616,
+          "phases": {
+            "head": 767,
+            "copy": 4,
+            "bind": 728,
+            "steps": 136948,
+            "barrier": 169,
+            "local": 0,
+            "total": 94464,
+            "first": 18446744073696882177,
+            "last": 18446744073696882177,
+            "sent": 2624,
+            "idle": 39592,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 29796,
+          "phases": {
+            "head": 1100,
+            "copy": 4,
+            "bind": 855,
+            "steps": 27668,
+            "barrier": 169,
+            "local": 0,
+            "total": 44672,
+            "first": 18446744073696694789,
+            "last": 18446744073696694789,
+            "sent": 1336,
+            "idle": 48312,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6759,
+          "phases": {
+            "head": 822,
+            "copy": 4,
+            "bind": 99,
+            "steps": 5682,
+            "barrier": 152,
+            "local": 0,
+            "total": 608,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 39701,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 3699,
+          "phases": {
+            "head": 617,
+            "copy": 4,
+            "bind": 666,
+            "steps": 2243,
+            "barrier": 169,
+            "local": 0,
+            "total": 1152,
+            "first": 18446744073696578913,
+            "last": 18446744073696578913,
+            "sent": 29,
+            "idle": 40292,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 3668,
+          "phases": {
+            "head": 820,
+            "copy": 4,
+            "bind": 99,
+            "steps": 2595,
+            "barrier": 150,
+            "local": 0,
+            "total": 320,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 42210,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6919,
+          "phases": {
+            "head": 765,
+            "copy": 4,
+            "bind": 82,
+            "steps": 5920,
+            "barrier": 148,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 42211,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 27923,
+          "phases": {
+            "head": 1044,
+            "copy": 4,
+            "bind": 844,
+            "steps": 25862,
+            "barrier": 169,
+            "local": 0,
+            "total": 17312,
+            "first": 18446744073696440711,
+            "last": 18446744073696440711,
+            "sent": 500,
+            "idle": 38890,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7603,
+          "phases": {
+            "head": 828,
+            "copy": 4,
+            "bind": 99,
+            "steps": 6520,
+            "barrier": 152,
+            "local": 0,
+            "total": 384,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 42133,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 3582,
+          "phases": {
+            "head": 767,
+            "copy": 4,
+            "bind": 80,
+            "steps": 2585,
+            "barrier": 146,
+            "local": 0,
+            "total": 320,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 38374,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 3964,
+          "phases": {
+            "head": 615,
+            "copy": 4,
+            "bind": 668,
+            "steps": 2508,
+            "barrier": 169,
+            "local": 0,
+            "total": 2144,
+            "first": 18446744073696279156,
+            "last": 18446744073696279156,
+            "sent": 60,
+            "idle": 42545,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 9340,
+          "phases": {
+            "head": 966,
+            "copy": 4,
+            "bind": 454,
+            "steps": 7762,
+            "barrier": 154,
+            "local": 0,
+            "total": 5056,
+            "first": 18446744073696233017,
+            "last": 18446744073696233017,
+            "sent": 136,
+            "idle": 42038,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 10810,
+          "phases": {
+            "head": 1079,
+            "copy": 4,
+            "bind": 467,
+            "steps": 9108,
+            "barrier": 152,
+            "local": 0,
+            "total": 3328,
+            "first": 18446744073696177074,
+            "last": 18446744073696177074,
+            "sent": 76,
+            "idle": 46477,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7258,
+          "phases": {
+            "head": 644,
+            "copy": 4,
+            "bind": 382,
+            "steps": 6076,
+            "barrier": 152,
+            "local": 0,
+            "total": 6048,
+            "first": 18446744073696127010,
+            "last": 18446744073696127010,
+            "sent": 167,
+            "idle": 39774,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 11468,
+          "phases": {
+            "head": 794,
+            "copy": 4,
+            "bind": 412,
+            "steps": 10106,
+            "barrier": 152,
+            "local": 0,
+            "total": 5856,
+            "first": 18446744073696081014,
+            "last": 18446744073696081014,
+            "sent": 150,
+            "idle": 38558,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7004,
+          "phases": {
+            "head": 794,
+            "copy": 4,
+            "bind": 89,
+            "steps": 5971,
+            "barrier": 146,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 39600,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 75431,
+          "phases": {
+            "head": 617,
+            "copy": 4,
+            "bind": 674,
+            "steps": 73967,
+            "barrier": 169,
+            "local": 0,
+            "total": 17312,
+            "first": 18446744073695981355,
+            "last": 18446744073695981355,
+            "sent": 500,
+            "idle": 41502,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 16866,
+          "phases": {
+            "head": 824,
+            "copy": 4,
+            "bind": 99,
+            "steps": 15789,
+            "barrier": 150,
+            "local": 0,
+            "total": 384,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 37698,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7686,
+          "phases": {
+            "head": 907,
+            "copy": 4,
+            "bind": 778,
+            "steps": 5828,
+            "barrier": 169,
+            "local": 0,
+            "total": 9376,
+            "first": 18446744073695812592,
+            "last": 18446744073695812592,
+            "sent": 286,
+            "idle": 38374,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7428,
+          "phases": {
+            "head": 822,
+            "copy": 4,
+            "bind": 99,
+            "steps": 6353,
+            "barrier": 150,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 39428,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 78048,
+          "phases": {
+            "head": 767,
+            "copy": 4,
+            "bind": 732,
+            "steps": 76376,
+            "barrier": 169,
+            "local": 0,
+            "total": 17312,
+            "first": 18446744073695719862,
+            "last": 18446744073695719862,
+            "sent": 500,
+            "idle": 38374,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 17075,
+          "phases": {
+            "head": 824,
+            "copy": 4,
+            "bind": 99,
+            "steps": 15998,
+            "barrier": 150,
+            "local": 0,
+            "total": 384,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 40567,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6612,
+          "phases": {
+            "head": 617,
+            "copy": 4,
+            "bind": 662,
+            "steps": 5160,
+            "barrier": 169,
+            "local": 0,
+            "total": 2720,
+            "first": 18446744073695545929,
+            "last": 18446744073695545929,
+            "sent": 78,
+            "idle": 38463,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        }
+      ],
+      "outputs": [
+        "0cb661b846b953b625bc3028f6b04dbcabba2eb865b46c1f3abb36b3c9b532b6b9b63aba33b9d1b65eb674bc48b83cbb14b818afb2acd0b800b6fdb5b9b318b2c02c12acae2d75b566a856b6ec2de6b741b87cb8b4b71fb59fb6f0b89ab6e93417b25d30aab15a37b4307c308ab2e0b93c29442b5e3a4235b1b6d833382f012be12f6ca9e4b0022f3fb850388d358eb85ab5f0a445331c3868b678347a309c2f682d61b4afb0e42c852ee9b8d4a774b6b09d5336e63652ae133040302f340835a9381337c2382b318b37012fc338a021c4a5c8aa7826f431c02d6cafe82d7e3a06351c393435b83b39392a39b5344eb356388238323da53a542d043aeb387738"
+      ],
+      "launch_ring": []
+    },
+    {
+      "cycles": 1040793,
+      "packages": [
+        {
+          "cycles": 9314,
+          "phases": {
+            "head": 962,
+            "copy": 4,
+            "bind": 450,
+            "steps": 7744,
+            "barrier": 154,
+            "local": 0,
+            "total": 5056,
+            "first": 18446744073695492532,
+            "last": 18446744073695492532,
+            "sent": 136,
+            "idle": 46652,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 47017,
+          "phases": {
+            "head": 936,
+            "copy": 4,
+            "bind": 799,
+            "steps": 45109,
+            "barrier": 169,
+            "local": 0,
+            "total": 16960,
+            "first": 18446744073695436678,
+            "last": 18446744073695436678,
+            "sent": 500,
+            "idle": 46217,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 20236,
+          "phases": {
+            "head": 1096,
+            "copy": 4,
+            "bind": 857,
+            "steps": 18110,
+            "barrier": 169,
+            "local": 0,
+            "total": 16960,
+            "first": 18446744073695348528,
+            "last": 18446744073695348528,
+            "sent": 500,
+            "idle": 40915,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 61414,
+          "phases": {
+            "head": 668,
+            "copy": 4,
+            "bind": 685,
+            "steps": 59888,
+            "barrier": 169,
+            "local": 0,
+            "total": 16960,
+            "first": 18446744073695289456,
+            "last": 18446744073695289456,
+            "sent": 500,
+            "idle": 39436,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 56340,
+          "phases": {
+            "head": 818,
+            "copy": 4,
+            "bind": 745,
+            "steps": 54604,
+            "barrier": 169,
+            "local": 0,
+            "total": 16960,
+            "first": 18446744073695188918,
+            "last": 18446744073695188918,
+            "sent": 500,
+            "idle": 38914,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 12946,
+          "phases": {
+            "head": 1095,
+            "copy": 4,
+            "bind": 478,
+            "steps": 11215,
+            "barrier": 154,
+            "local": 0,
+            "total": 3328,
+            "first": 18446744073695093219,
+            "last": 18446744073695093219,
+            "sent": 76,
+            "idle": 39349,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6966,
+          "phases": {
+            "head": 646,
+            "copy": 4,
+            "bind": 382,
+            "steps": 5782,
+            "barrier": 152,
+            "local": 0,
+            "total": 6048,
+            "first": 18446744073695043213,
+            "last": 18446744073695043213,
+            "sent": 167,
+            "idle": 37605,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 11403,
+          "phases": {
+            "head": 794,
+            "copy": 4,
+            "bind": 412,
+            "steps": 10041,
+            "barrier": 152,
+            "local": 0,
+            "total": 5856,
+            "first": 18446744073694996121,
+            "last": 18446744073694996121,
+            "sent": 150,
+            "idle": 39948,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 5743,
+          "phases": {
+            "head": 644,
+            "copy": 4,
+            "bind": 89,
+            "steps": 4858,
+            "barrier": 148,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 39600,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 59038,
+          "phases": {
+            "head": 909,
+            "copy": 4,
+            "bind": 790,
+            "steps": 57166,
+            "barrier": 169,
+            "local": 0,
+            "total": 17312,
+            "first": 18446744073694881372,
+            "last": 18446744073694881372,
+            "sent": 500,
+            "idle": 57510,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 14315,
+          "phases": {
+            "head": 824,
+            "copy": 4,
+            "bind": 99,
+            "steps": 13236,
+            "barrier": 152,
+            "local": 0,
+            "total": 416,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 41959,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7759,
+          "phases": {
+            "head": 619,
+            "copy": 4,
+            "bind": 1236,
+            "steps": 5705,
+            "barrier": 195,
+            "local": 0,
+            "total": 2048,
+            "first": 18446744073694724829,
+            "last": 18446744073694724829,
+            "sent": 52,
+            "idle": 41075,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6958,
+          "phases": {
+            "head": 710,
+            "copy": 4,
+            "bind": 412,
+            "steps": 5678,
+            "barrier": 154,
+            "local": 0,
+            "total": 2496,
+            "first": 18446744073694679682,
+            "last": 18446744073694679682,
+            "sent": 56,
+            "idle": 38121,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 3923,
+          "phases": {
+            "head": 796,
+            "copy": 4,
+            "bind": 89,
+            "steps": 2886,
+            "barrier": 148,
+            "local": 0,
+            "total": 352,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 38910,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 125957,
+          "phases": {
+            "head": 615,
+            "copy": 4,
+            "bind": 674,
+            "steps": 124495,
+            "barrier": 169,
+            "local": 0,
+            "total": 94496,
+            "first": 18446744073694576825,
+            "last": 18446744073694576825,
+            "sent": 2624,
+            "idle": 52899,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 3959,
+          "phases": {
+            "head": 822,
+            "copy": 4,
+            "bind": 99,
+            "steps": 2882,
+            "barrier": 152,
+            "local": 0,
+            "total": 352,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 40397,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6481,
+          "phases": {
+            "head": 615,
+            "copy": 4,
+            "bind": 82,
+            "steps": 5632,
+            "barrier": 148,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 43074,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 8955,
+          "phases": {
+            "head": 1044,
+            "copy": 4,
+            "bind": 464,
+            "steps": 7291,
+            "barrier": 152,
+            "local": 0,
+            "total": 8224,
+            "first": 18446744073694312367,
+            "last": 18446744073694312367,
+            "sent": 232,
+            "idle": 44371,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 8248,
+          "phases": {
+            "head": 802,
+            "copy": 4,
+            "bind": 89,
+            "steps": 7203,
+            "barrier": 150,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 41947,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 3674,
+          "phases": {
+            "head": 617,
+            "copy": 4,
+            "bind": 670,
+            "steps": 2216,
+            "barrier": 167,
+            "local": 0,
+            "total": 1312,
+            "first": 18446744073694215851,
+            "last": 18446744073694215851,
+            "sent": 34,
+            "idle": 37587,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 9538,
+          "phases": {
+            "head": 964,
+            "copy": 4,
+            "bind": 446,
+            "steps": 7970,
+            "barrier": 154,
+            "local": 0,
+            "total": 4512,
+            "first": 18446744073694165057,
+            "last": 18446744073694165057,
+            "sent": 119,
+            "idle": 46997,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 12814,
+          "phases": {
+            "head": 1071,
+            "copy": 4,
+            "bind": 468,
+            "steps": 11119,
+            "barrier": 152,
+            "local": 0,
+            "total": 4064,
+            "first": 18446744073694114133,
+            "last": 18446744073694114133,
+            "sent": 99,
+            "idle": 41257,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 10317,
+          "phases": {
+            "head": 1071,
+            "copy": 4,
+            "bind": 468,
+            "steps": 8622,
+            "barrier": 152,
+            "local": 0,
+            "total": 4448,
+            "first": 18446744073694063632,
+            "last": 18446744073694063632,
+            "sent": 117,
+            "idle": 37687,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 12362,
+          "phases": {
+            "head": 794,
+            "copy": 4,
+            "bind": 408,
+            "steps": 11004,
+            "barrier": 152,
+            "local": 0,
+            "total": 5824,
+            "first": 18446744073694013617,
+            "last": 18446744073694013617,
+            "sent": 149,
+            "idle": 40035,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 22015,
+          "phases": {
+            "head": 1073,
+            "copy": 4,
+            "bind": 851,
+            "steps": 19920,
+            "barrier": 167,
+            "local": 0,
+            "total": 8672,
+            "first": 18446744073693953973,
+            "last": 18446744073693953973,
+            "sent": 226,
+            "idle": 46560,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6346,
+          "phases": {
+            "head": 816,
+            "copy": 4,
+            "bind": 99,
+            "steps": 5277,
+            "barrier": 150,
+            "local": 0,
+            "total": 608,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 38216,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 138211,
+          "phases": {
+            "head": 767,
+            "copy": 4,
+            "bind": 728,
+            "steps": 136543,
+            "barrier": 169,
+            "local": 0,
+            "total": 94464,
+            "first": 18446744073693848233,
+            "last": 18446744073693848233,
+            "sent": 2624,
+            "idle": 39592,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 29948,
+          "phases": {
+            "head": 1100,
+            "copy": 4,
+            "bind": 855,
+            "steps": 27820,
+            "barrier": 169,
+            "local": 0,
+            "total": 44672,
+            "first": 18446744073693661855,
+            "last": 18446744073693661855,
+            "sent": 1336,
+            "idle": 47707,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6724,
+          "phases": {
+            "head": 822,
+            "copy": 4,
+            "bind": 99,
+            "steps": 5647,
+            "barrier": 152,
+            "local": 0,
+            "total": 608,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 39266,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 3697,
+          "phases": {
+            "head": 617,
+            "copy": 4,
+            "bind": 666,
+            "steps": 2241,
+            "barrier": 169,
+            "local": 0,
+            "total": 1152,
+            "first": 18446744073693547512,
+            "last": 18446744073693547512,
+            "sent": 29,
+            "idle": 39077,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 3668,
+          "phases": {
+            "head": 820,
+            "copy": 4,
+            "bind": 99,
+            "steps": 2595,
+            "barrier": 150,
+            "local": 0,
+            "total": 320,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 42305,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6976,
+          "phases": {
+            "head": 765,
+            "copy": 4,
+            "bind": 82,
+            "steps": 5977,
+            "barrier": 148,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 42117,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 27630,
+          "phases": {
+            "head": 1044,
+            "copy": 4,
+            "bind": 843,
+            "steps": 25570,
+            "barrier": 169,
+            "local": 0,
+            "total": 17312,
+            "first": 18446744073693409081,
+            "last": 18446744073693409081,
+            "sent": 500,
+            "idle": 39064,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7606,
+          "phases": {
+            "head": 828,
+            "copy": 4,
+            "bind": 99,
+            "steps": 6523,
+            "barrier": 152,
+            "local": 0,
+            "total": 384,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 41531,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 3582,
+          "phases": {
+            "head": 767,
+            "copy": 4,
+            "bind": 80,
+            "steps": 2585,
+            "barrier": 146,
+            "local": 0,
+            "total": 320,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 38200,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 4046,
+          "phases": {
+            "head": 615,
+            "copy": 4,
+            "bind": 668,
+            "steps": 2590,
+            "barrier": 169,
+            "local": 0,
+            "total": 2144,
+            "first": 18446744073693253464,
+            "last": 18446744073693253464,
+            "sent": 60,
+            "idle": 37672,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 9388,
+          "phases": {
+            "head": 966,
+            "copy": 4,
+            "bind": 454,
+            "steps": 7810,
+            "barrier": 154,
+            "local": 0,
+            "total": 5056,
+            "first": 18446744073693207591,
+            "last": 18446744073693207591,
+            "sent": 136,
+            "idle": 41690,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 10809,
+          "phases": {
+            "head": 1080,
+            "copy": 4,
+            "bind": 467,
+            "steps": 9106,
+            "barrier": 152,
+            "local": 0,
+            "total": 3328,
+            "first": 18446744073693155949,
+            "last": 18446744073693155949,
+            "sent": 76,
+            "idle": 42127,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7262,
+          "phases": {
+            "head": 644,
+            "copy": 4,
+            "bind": 382,
+            "steps": 6080,
+            "barrier": 152,
+            "local": 0,
+            "total": 6048,
+            "first": 18446744073693105971,
+            "last": 18446744073693105971,
+            "sent": 167,
+            "idle": 39690,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 11417,
+          "phases": {
+            "head": 794,
+            "copy": 4,
+            "bind": 412,
+            "steps": 10055,
+            "barrier": 152,
+            "local": 0,
+            "total": 5856,
+            "first": 18446744073693059712,
+            "last": 18446744073693059712,
+            "sent": 150,
+            "idle": 38817,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6954,
+          "phases": {
+            "head": 794,
+            "copy": 4,
+            "bind": 89,
+            "steps": 5921,
+            "barrier": 146,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 39078,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 75314,
+          "phases": {
+            "head": 617,
+            "copy": 4,
+            "bind": 674,
+            "steps": 73850,
+            "barrier": 169,
+            "local": 0,
+            "total": 17312,
+            "first": 18446744073692962505,
+            "last": 18446744073692962505,
+            "sent": 500,
+            "idle": 39673,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 16795,
+          "phases": {
+            "head": 824,
+            "copy": 4,
+            "bind": 99,
+            "steps": 15718,
+            "barrier": 150,
+            "local": 0,
+            "total": 384,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 38566,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7804,
+          "phases": {
+            "head": 907,
+            "copy": 4,
+            "bind": 778,
+            "steps": 5946,
+            "barrier": 169,
+            "local": 0,
+            "total": 9376,
+            "first": 18446744073692791931,
+            "last": 18446744073692791931,
+            "sent": 286,
+            "idle": 39505,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7501,
+          "phases": {
+            "head": 822,
+            "copy": 4,
+            "bind": 99,
+            "steps": 6426,
+            "barrier": 150,
+            "local": 0,
+            "total": 672,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 38210,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 77906,
+          "phases": {
+            "head": 767,
+            "copy": 4,
+            "bind": 732,
+            "steps": 76234,
+            "barrier": 169,
+            "local": 0,
+            "total": 17312,
+            "first": 18446744073692696226,
+            "last": 18446744073692696226,
+            "sent": 500,
+            "idle": 42376,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 16961,
+          "phases": {
+            "head": 824,
+            "copy": 4,
+            "bind": 99,
+            "steps": 15884,
+            "barrier": 150,
+            "local": 0,
+            "total": 384,
+            "first": 0,
+            "last": 0,
+            "sent": 0,
+            "idle": 40654,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 6556,
+          "phases": {
+            "head": 617,
+            "copy": 4,
+            "bind": 662,
+            "steps": 5104,
+            "barrier": 169,
+            "local": 0,
+            "total": 2720,
+            "first": 18446744073692522899,
+            "last": 18446744073692522899,
+            "sent": 78,
+            "idle": 38026,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        }
+      ],
+      "outputs": [
+        "0cb661b846b953b625bc3028f6b04dbcabba2eb865b46c1f3abb36b3c9b532b6b9b63aba33b9d1b65eb674bc48b83cbb14b818afb2acd0b800b6fdb5b9b318b2c02c12acae2d75b566a856b6ec2de6b741b87cb8b4b71fb59fb6f0b89ab6e93417b25d30aab15a37b4307c308ab2e0b93c29442b5e3a4235b1b6d833382f012be12f6ca9e4b0022f3fb850388d358eb85ab5f0a445331c3868b678347a309c2f682d61b4afb0e42c852ee9b8d4a774b6b09d5336e63652ae133040302f340835a9381337c2382b318b37012fc338a021c4a5c8aa7826f431c02d6cafe82d7e3a06351c393435b83b39392a39b5344eb356388238323da53a542d043aeb387738"
+      ],
+      "launch_ring": []
+    }
+  ],
+  "launches": 48,
+  "submissions_per_step": 48,
+  "groups": [],
+  "run_seconds": 0.11872128599861753,
+  "retain": 0,
+  "batch_repeats": 1
+}

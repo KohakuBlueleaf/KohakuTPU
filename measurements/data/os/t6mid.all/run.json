@@ -1,0 +1,54 @@
+{
+ "ok": true,
+ "load_seconds": 0.024236364999524085,
+ "run_seconds": 0.1483745200021076,
+ "nodes": [
+  {
+   "status": 12,
+   "exit": 0,
+   "halt_pc": 3332,
+   "console": "KohakuAccel OS: node 0 of 1 (mesh 0), private 20000000+100000, shared 0+0, 4 units, flags 0, tick 0\ninit: 1 nodes, commands: hello; units; mg; mover 64; bench 256; kdsbench 16; kdschain \nhello from node 0 of 1 (mesh 0), worker 0\nhello: 1 nodes, ok\ninit: hello exit 0 in 235828 cycles\n  unit 0 'MG' mesh 0 (1,1): caps 4d47062020000000 status 0000020000000000 counters 00003d770097383f dbg 003f309c00823068, 7437 cycles for 4 reads\n@ units.ctrl_read_cycles 1859\n  unit 1 'MG' mesh 0 (1,2): caps 4d47062020000000 status 0000020000000000 counters 000019e4005514b5 dbg 001c060800401bda, 7401 cycles for 4 reads\n  unit 2 'VC' mescycles for 4 reads\n@ units.count 4\nunits: 4 units, ok\ninit: units exit 0 in 485816 cycles\n  mg unit 0 mailbox: ticket 3 wait 0 faults 0, retired 15735 -> 15738, 4 of 128 drained words written, 6690 cycles\n@ mg.mailbox_round_cycles 6690\n  mg unit 1 mailbox: ticket 3 wait 0 faults 0, retired 6628 -> 6631, 4 of 128 drained words written, 6680 cycles\n@ mg.mailbox_round_cycles 6680\n@ mg.units 2\nmg: 2 MG units, 2 rounds, ok\ninit: mg exit 0 in 352834 cycles\n@ mover.local_cycles 5126\n@ mover.local_bytes_per_kcycle 399\nmover: 64 words, 1 nodes, ok\ninit: mover exit 0 in 317432 cycles\n@ bench.syscall 212\n@ bench.l0 73\n@ bench.yield 2395\n@ bench.spawn_local 86704\n@ bench.barrier 2212\n@ bench.mmap 84720\nbench: ok\ninit: bench exit 0 in 23796023 cycles\n@ kdsbench.one 26714\n@ kdsbench.one_client 47820\n  kdsbench one: 1 tasks, home 26714 cycles (26714 each), client 47820\n  kdsbench.one_client: server passes 1 retire-wakes 0 tasks 1 unit calls 0 msgs 1/1; cycles msgs 21254 run 16802 issue 94 send 752 event 11729 retire 639\n@ kdsbench.chain 6739\n@ kdsbench.chain_client 8006\n  kdsbench chain: 16 tasks, home 107828 cycles (6739 each), client 128107\n  kdsbench.chain_client: server passes 1 retire-wakes 0 tasks 16 unit calls 0 msgs 1/1; cycles msgs 70048 run 48537 issue 94 send 709 event 192207 retire 571\n@ kdsbench.wide 5241\n@ kdsbench.wide_client 6515\n  kdsbench wide: 16 tasks, home 83869 cycles (5241 each), client 104245\n  kdsbench.wide_client: server passes 1 retire-wakes 0 tasks 16 unit calls 0 msgs 1/1; cycles msgs 60501 run 34272 issue 94 send 709 event 191285 retire 572\n@ kdsbench.cpu 7419\n@ kdsbench.cpu_client 8674\n  kdsbench cpu: 16 tasks, home 118707 cycles (7419 each), client 138795\n  kdsbench.cpu_client: server passes 1 retire-wakes 0 tasks 16 unit calls 0 msgs 1/1; cycles msgs 68668 run 60600 issue 92 send 709 event 194030 retire 573\n@ kdsbench.alloc_here 26949\n@ kdsbench.alloc_far 26895\nkdsbench: 16 tasks, ok\ninit: kdsbench exit 0 in 2710846 cycles\n@ kdschain.steps 8\n@ kdschain.cycles 238276\n@ kdschain.cycles_per_step 29784\nkdschain: 8 steps over 1 nodes, 238276 cycles, ok\ninit: kdschain exit 0 in 1100857 cycles\ninit: 7 commands, 0 failed\n",
+   "log": "",
+   "log_bytes": 0,
+   "where": "0",
+   "where_a": 0,
+   "where_b": 0,
+   "switches": 0
+  }
+ ],
+ "measures": {
+  "0": {
+   "units.ctrl_read_cycles": 1859,
+   "units.count": 4,
+   "mg.mailbox_round_cycles": 6680,
+   "mg.units": 2,
+   "mover.local_cycles": 5126,
+   "mover.local_bytes_per_kcycle": 399,
+   "bench.syscall": 212,
+   "bench.l0": 73,
+   "bench.yield": 2395,
+   "bench.spawn_local": 86704,
+   "bench.barrier": 2212,
+   "bench.mmap": 84720,
+   "kdsbench.one": 26714,
+   "kdsbench.one_client": 47820,
+   "kdsbench.chain": 6739,
+   "kdsbench.chain_client": 8006,
+   "kdsbench.wide": 5241,
+   "kdsbench.wide_client": 6515,
+   "kdsbench.cpu": 7419,
+   "kdsbench.cpu_client": 8674,
+   "kdsbench.alloc_here": 26949,
+   "kdsbench.alloc_far": 26895,
+   "kdschain.steps": 8,
+   "kdschain.cycles": 238276,
+   "kdschain.cycles_per_step": 29784
+  }
+ },
+ "model_status": {},
+ "board": "card_v9t6_4n_solo",
+ "image": "build/os/kos.elf",
+ "cmd": "hello; units; mg; mover 64; bench 256; kdsbench 16; kdschain",
+ "flags": "",
+ "tick": 0
+}

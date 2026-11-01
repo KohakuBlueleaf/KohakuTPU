@@ -1,0 +1,1 @@
+{"name": "t_4220e3819c198b2495528c2d440f3cadb72a84946cfca07abd0ef1b640750197", "cycles": 31785, "cold": 44775, "phases": {"head": 715, "copy": 4, "bind": 693, "steps": 30200, "barrier": 173, "local": 0, "total": 85696, "first": 0, "last": 0, "sent": 0, "idle": 91490, "list_index": 0, "item_tag": 0, "epoch": 0}}

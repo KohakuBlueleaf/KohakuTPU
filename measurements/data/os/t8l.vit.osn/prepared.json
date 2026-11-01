@@ -1,0 +1,15 @@
+{
+  "workload": "vit",
+  "backend": "os",
+  "board": "card_v9t8_4n_solo",
+  "shared_bytes": 0,
+  "results": [],
+  "paint_seconds": 0.0631512969994219,
+  "load_seconds": 0.022240627997234697,
+  "tasks": 59,
+  "wire_bytes": 481952,
+  "launches": 48,
+  "submissions_per_step": 1,
+  "segment": 8,
+  "prune": false
+}

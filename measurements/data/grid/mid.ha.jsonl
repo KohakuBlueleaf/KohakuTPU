@@ -1,0 +1,1 @@
+{"name": "h_a", "cycles": 11777, "cold": 18625, "phases": {"head": 693, "copy": 4, "bind": 378, "steps": 10544, "barrier": 158, "local": 0, "total": 672, "first": 0, "last": 0, "sent": 0, "idle": 62382, "list_index": 0, "item_tag": 0, "epoch": 0}}

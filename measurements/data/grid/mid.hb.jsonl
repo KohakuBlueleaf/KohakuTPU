@@ -1,0 +1,1 @@
+{"name": "h_b", "cycles": 20996, "cold": 34222, "phases": {"head": 693, "copy": 4, "bind": 378, "steps": 19763, "barrier": 158, "local": 0, "total": 672, "first": 0, "last": 0, "sent": 0, "idle": 63450, "list_index": 0, "item_tag": 0, "epoch": 0}}

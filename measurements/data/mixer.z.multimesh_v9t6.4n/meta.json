@@ -1,0 +1,79 @@
+{
+ "counters": {
+  "runs": 5623,
+  "cycles": 165478792,
+  "bytes_in": 841332,
+  "bytes_out": 1540,
+  "library_hits": 5623,
+  "class_hits": 0,
+  "exact_hits": 5623,
+  "library_misses": 0,
+  "compile_calls": 0,
+  "compile_seconds": 0.0,
+  "kernel_reuses": 5455
+ },
+ "runs": 5623,
+ "transport": {},
+ "workload": "mixer",
+ "board": "multimesh_v9t6",
+ "nodes": 4,
+ "args": [
+  "--model",
+  "mixer",
+  "--batch",
+  "8",
+  "--steps",
+  "3",
+  "--board",
+  "multimesh_v9t6",
+  "--nodes",
+  "4",
+  "--library",
+  "build/perf/libz/mixer",
+  "--library-only",
+  "--no-jit",
+  "--test",
+  "8",
+  "--steps",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma"
+ ],
+ "seconds": 17.66,
+ "done": "exited",
+ "spans": {
+  "compile_graph": {
+   "calls": 168,
+   "seconds": 0.7490352709828585
+  },
+  "bind_admit": {
+   "calls": 5623,
+   "seconds": 0.21896117605137988
+  },
+  "submit": {
+   "calls": 5623,
+   "seconds": 4.140798588094185
+  },
+  "generate_launch": {
+   "calls": 5623,
+   "seconds": 5.2208226369693875
+  },
+  "rows": {
+   "calls": 1263,
+   "seconds": 4.551524013961171
+  },
+  "collect": {
+   "calls": 5635,
+   "seconds": 0.4215365608470165
+  }
+ },
+ "profile": "mid",
+ "commit": "ebd705cc+",
+ "firmware": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+ "when": 1793519589.2937143,
+ "launches": 5623,
+ "kernels": 165,
+ "compiles": []
+}

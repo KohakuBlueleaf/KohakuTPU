@@ -1,0 +1,54 @@
+{
+ "ok": true,
+ "load_seconds": 0.02490647700324189,
+ "run_seconds": 0.29317572000218206,
+ "nodes": [
+  {
+   "status": 12,
+   "exit": 0,
+   "halt_pc": 3332,
+   "console": "KohakuAccel OS: node 0 of 1 (mesh 0), private 20000000+100000, shared 0+0, 6 units, flags 0, tick 0\ninit: 1 nodes, commands: hello; units; mg; mover 64; bench 256; kdsbench 16; kdschain \nhello from node 0 of 1 (mesh 0), worker 0\nhello: 1 nodes, ok\ninit: hello exit 0 in 228492 cycles\n  unit 0 'MG' mesh 0 (1,0): caps 4d47062020000000 status 0000020000000000 counters 00032a6e031a7f27 dbg 0142918a02606363, 7250 cycles for 4 reads\n@ units.ctrl_read_cycles 1812\n  unit 1 'MG' mesh 0 (1,1): caps 4d47062020000000 status 0000020000000000 counters 0000592600d26a48 dbg 0069379a00929e69, 7237 cycles for 4 reads\n  unit 2 'MG' mesh 0 (1,2): caps 4d47062020000000 status 0000020000000000 counters 0000565600c51f7c dbg 00676c9f008508b1, 7301 cycles for 4 reads\n  unit 3 'MG' mesh 0 (1,3): caps 4d47062020000000 status 0000020000000000 counters 000019b80043d1ad dbg 001559db002f62bb, 7387 cycles for 4 reads\n  unit 4 'VC' mesh 0 (2,1): caps 5643062020000000 status 0000020000000000 counters 049e3c2c8fd26913 dbg 00000000000001e3, 7389 cycles for 4 reads\n  unit 5 'VC' mesh 0 (2,2): caps 5643062020000000 status 0000020000000000 counters 0233e8cc4ef0d2e6 dbg 0000000000000227, 7477 cycles for 4 reads\n@ units.count 6\nunits: 6 units, ok\ninit: units exit 0 in 680953 cycles\n  mg unit 0 mailbox: ticket 3 wait 0 faults 0, retired 207470 -> 207473, 4 of 128 drained words written, 6674 cycles\n@ mg.mailbox_round_cycles 6674\n  mg unit 1 mailbox: ticket 3 wait 0 faults 0, retired 22822 -> 22825, 4 of 128 drained words written, 6688 cycles\n@ mg.mailbox_round_cycles 6688\n  mg unit 2 mailbox: ticket 3 wait 0 faults 0, retired 22102 -> 22105, 4 of 128 drained words written, 6738 cycles\n@ mg.mailbox_round_cycles 6738\n  mg unit 3 mailbox: ticket 3 wait 0 faults 0, retired 6584 -> 6587, 4 of 128 drained words written, 6792 cycles\n@ mg.mailbox_round_cycles 6792\n@ mg.units 4\nmg: 4 MG units, 4 rounds, ok\ninit: mg exit 0 in 605651 cycles\n@ mover.local_cycles 4839\n@ mover.local_bytes_per_kcycle 423\nmover: 64 words, 1 nodes, ok\ninit: mover exit 0 in 314414 cycles\n@ bench.syscall 211\n@ bench.l0 73\n@ bench.yield 2393\n@ bench.spawn_local 83817\n@ bench.barrier 2282\n@ bench.mmap 82119\nbench: ok\ninit: bench exit 0 in 23073829 cycles\n@ kdsbench.one 25346\n@ kdsbench.one_client 45784\n  kdsbench one: 1 tasks, home 25346 cycles (25346 each), client 45784\n  kdsbench.one_client: server passes 1 retire-wakes 0 tasks 1 unit calls 0 msgs 1/1; cycles msgs 20240 run 16065 issue 95 send 720 event 11466 retire 563\n@ kdsbench.chain 6615\n@ kdsbench.chain_client 7860\n  kdsbench chain: 16 tasks, home 105841 cycles (6615 each), client 125762\n  kdsbench.chain_client: server passes 1 retire-wakes 0 tasks 16 unit calls 0 msgs 1/1; cycles msgs 68153 run 48238 issue 95 send 720 event 195000 retire 565\n@ kdsbench.wide 5166\n@ kdsbench.wide_client 6406\n  kdsbench wide: 16 tasks, home 82663 cycles (5166 each), client 102499\n  kdsbench.wide_client: server passes 1 retire-wakes 0 tasks 16 unit calls 0 msgs 1/1; cycles msgs 59144 run 34042 issue 95 send 719 event 195791 retire 563\n@ kdsbench.cpu 7347\n@ kdsbench.cpu_client 8571\n  kdsbench cpu: 16 tasks, home 117562 cycles (7347 each), client 137143\n  kdsbench.cpu_client: server passes 1 retire-wakes 0 tasks 16 unit calls 0 msgs 1/1; cycles msgs 67325 run 60473 issue 93 send 718 event 197690 retire 563\n@ kdsbench.alloc_here 26772\n@ kdsbench.alloc_far 26718\nkdsbench: 16 tasks, ok\ninit: kdsbench exit 0 in 2697347 cycles\n@ kdschain.steps 8\n@ kdschain.cycles 236252\n@ kdschain.cycles_per_step 29531\nkdschain: 8 steps over 1 nodes, 236252 cycles, ok\ninit: kdschain exit 0 in 1083051 cycles\ninit: 7 commands, 0 failed\n",
+   "log": "",
+   "log_bytes": 0,
+   "where": "0",
+   "where_a": 0,
+   "where_b": 0,
+   "switches": 0
+  }
+ ],
+ "measures": {
+  "0": {
+   "units.ctrl_read_cycles": 1812,
+   "units.count": 6,
+   "mg.mailbox_round_cycles": 6792,
+   "mg.units": 4,
+   "mover.local_cycles": 4839,
+   "mover.local_bytes_per_kcycle": 423,
+   "bench.syscall": 211,
+   "bench.l0": 73,
+   "bench.yield": 2393,
+   "bench.spawn_local": 83817,
+   "bench.barrier": 2282,
+   "bench.mmap": 82119,
+   "kdsbench.one": 25346,
+   "kdsbench.one_client": 45784,
+   "kdsbench.chain": 6615,
+   "kdsbench.chain_client": 7860,
+   "kdsbench.wide": 5166,
+   "kdsbench.wide_client": 6406,
+   "kdsbench.cpu": 7347,
+   "kdsbench.cpu_client": 8571,
+   "kdsbench.alloc_here": 26772,
+   "kdsbench.alloc_far": 26718,
+   "kdschain.steps": 8,
+   "kdschain.cycles": 236252,
+   "kdschain.cycles_per_step": 29531
+  }
+ },
+ "model_status": {},
+ "board": "card_v9t8_4n_solo",
+ "image": "build/os/kos.elf",
+ "cmd": "hello; units; mg; mover 64; bench 256; kdsbench 16; kdschain",
+ "flags": "",
+ "tick": 0
+}

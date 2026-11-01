@@ -1,0 +1,89 @@
+{
+  "workload": "vit",
+  "backend": "os",
+  "board": "card_v9t8_4n_solo",
+  "shared_bytes": 0,
+  "results": [
+    {
+      "cycles": 1342482,
+      "completed": 1,
+      "submissions": 1,
+      "passes": 1,
+      "waits": 0,
+      "tasks": 1,
+      "unit_batches": 0,
+      "msgs_in": 1,
+      "msgs_out": 1,
+      "cyc_msgs": 25084,
+      "cyc_run": 1326496,
+      "cyc_issue": 140,
+      "cyc_retire": 579,
+      "cyc_send": 764,
+      "cyc_event": 8033,
+      "outputs": [
+        "0cb661b846b953b625bc3028f6b04dbcabba2eb865b46c1f3abb36b3c9b532b6b9b63aba33b9d1b65eb674bc48b83cbb14b818afb2acd0b800b6fdb5b9b318b2c02c12acae2d75b566a856b6ec2de6b741b87cb8b4b71fb59fb6f0b89ab6e93417b25d30aab15a37b4307c308ab2e0b93c29442b5e3a4235b1b6d833382f012be12f6ca9e4b0022f3fb850388d358eb85ab5f0a445331c3868b678347a309c2f682d61b4afb0e42c852ee9b8d4a774b6b09d5336e63652ae133040302f340835a9381337c2382b318b37012fc338a021c4a5c8aa7826f431c02d6cafe82d7e3a06351c393435b83b39392a39b5344eb356388238323da53a542d043aeb387738"
+      ],
+      "stamps": [],
+      "syscall_profile": null,
+      "launch_ring": [],
+      "step_ring": null
+    },
+    {
+      "cycles": 1250799,
+      "completed": 1,
+      "submissions": 1,
+      "passes": 1,
+      "waits": 0,
+      "tasks": 1,
+      "unit_batches": 0,
+      "msgs_in": 1,
+      "msgs_out": 1,
+      "cyc_msgs": 5810,
+      "cyc_run": 1253745,
+      "cyc_issue": 140,
+      "cyc_retire": 579,
+      "cyc_send": 764,
+      "cyc_event": 13782651,
+      "outputs": [
+        "0cb661b846b953b625bc3028f6b04dbcabba2eb865b46c1f3abb36b3c9b532b6b9b63aba33b9d1b65eb674bc48b83cbb14b818afb2acd0b800b6fdb5b9b318b2c02c12acae2d75b566a856b6ec2de6b741b87cb8b4b71fb59fb6f0b89ab6e93417b25d30aab15a37b4307c308ab2e0b93c29442b5e3a4235b1b6d833382f012be12f6ca9e4b0022f3fb850388d358eb85ab5f0a445331c3868b678347a309c2f682d61b4afb0e42c852ee9b8d4a774b6b09d5336e63652ae133040302f340835a9381337c2382b318b37012fc338a021c4a5c8aa7826f431c02d6cafe82d7e3a06351c393435b83b39392a39b5344eb356388238323da53a542d043aeb387738"
+      ],
+      "stamps": [],
+      "syscall_profile": null,
+      "launch_ring": [],
+      "step_ring": null
+    },
+    {
+      "cycles": 1248188,
+      "completed": 1,
+      "submissions": 1,
+      "passes": 1,
+      "waits": 0,
+      "tasks": 1,
+      "unit_batches": 0,
+      "msgs_in": 1,
+      "msgs_out": 1,
+      "cyc_msgs": 5530,
+      "cyc_run": 1251228,
+      "cyc_issue": 140,
+      "cyc_retire": 578,
+      "cyc_send": 764,
+      "cyc_event": 13980925,
+      "outputs": [
+        "0cb661b846b953b625bc3028f6b04dbcabba2eb865b46c1f3abb36b3c9b532b6b9b63aba33b9d1b65eb674bc48b83cbb14b818afb2acd0b800b6fdb5b9b318b2c02c12acae2d75b566a856b6ec2de6b741b87cb8b4b71fb59fb6f0b89ab6e93417b25d30aab15a37b4307c308ab2e0b93c29442b5e3a4235b1b6d833382f012be12f6ca9e4b0022f3fb850388d358eb85ab5f0a445331c3868b678347a309c2f682d61b4afb0e42c852ee9b8d4a774b6b09d5336e63652ae133040302f340835a9381337c2382b318b37012fc338a021c4a5c8aa7826f431c02d6cafe82d7e3a06351c393435b83b39392a39b5344eb356388238323da53a542d043aeb387738"
+      ],
+      "stamps": [],
+      "syscall_profile": null,
+      "launch_ring": [],
+      "step_ring": null
+    }
+  ],
+  "paint_seconds": 0.035175923996575875,
+  "load_seconds": 0.021906424000917468,
+  "tasks": 1,
+  "wire_bytes": 471936,
+  "launches": 48,
+  "submissions_per_step": 1,
+  "retain": 1,
+  "batch_repeats": 1,
+  "run_seconds": 0.3949500070011709
+}

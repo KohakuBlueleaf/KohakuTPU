@@ -1,0 +1,502 @@
+{
+  "workload": "vit-qkv",
+  "backend": "FW-RUN",
+  "runtime": "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/card/__init__.py",
+  "knobs": {
+    "KOHAKUTPU_PROFILE": "low",
+    "KOHAKUTPU_OS_DE_STREAM": "1",
+    "KOHAKUTPU_OS_STAMPS": "0",
+    "KOHAKUTPU_OS_DE_FUSE": "0"
+  },
+  "results": [
+    {
+      "cycles": 163447,
+      "packages": [
+        {
+          "cycles": 9571,
+          "phases": {
+            "head": 944,
+            "copy": 4,
+            "bind": 445,
+            "steps": 8014,
+            "barrier": 164,
+            "local": 0,
+            "total": 5056,
+            "first": 18446744073706945087,
+            "last": 18446744073706945087,
+            "sent": 136,
+            "idle": 0,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 11507,
+          "phases": {
+            "head": 962,
+            "copy": 4,
+            "bind": 436,
+            "steps": 9949,
+            "barrier": 156,
+            "local": 0,
+            "total": 3328,
+            "first": 18446744073706912364,
+            "last": 18446744073706912364,
+            "sent": 76,
+            "idle": 23143,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 8393,
+          "phases": {
+            "head": 837,
+            "copy": 4,
+            "bind": 409,
+            "steps": 6989,
+            "barrier": 154,
+            "local": 0,
+            "total": 6048,
+            "first": 18446744073706879490,
+            "last": 18446744073706879490,
+            "sent": 167,
+            "idle": 21519,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 11947,
+          "phases": {
+            "head": 833,
+            "copy": 4,
+            "bind": 409,
+            "steps": 10547,
+            "barrier": 154,
+            "local": 0,
+            "total": 5856,
+            "first": 18446744073706849852,
+            "last": 18446744073706849852,
+            "sent": 150,
+            "idle": 21249,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 44576,
+          "phases": {
+            "head": 671,
+            "copy": 4,
+            "bind": 683,
+            "steps": 43043,
+            "barrier": 175,
+            "local": 0,
+            "total": 16960,
+            "first": 18446744073706815833,
+            "last": 18446744073706815833,
+            "sent": 500,
+            "idle": 21960,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 10440,
+          "phases": {
+            "head": 978,
+            "copy": 4,
+            "bind": 808,
+            "steps": 8481,
+            "barrier": 169,
+            "local": 0,
+            "total": 4512,
+            "first": 18446744073706750280,
+            "last": 18446744073706750280,
+            "sent": 126,
+            "idle": 20545,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 59398,
+          "phases": {
+            "head": 833,
+            "copy": 4,
+            "bind": 748,
+            "steps": 57646,
+            "barrier": 167,
+            "local": 0,
+            "total": 44640,
+            "first": 18446744073706719586,
+            "last": 18446744073706719586,
+            "sent": 1376,
+            "idle": 20459,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7615,
+          "phases": {
+            "head": 974,
+            "copy": 4,
+            "bind": 1174,
+            "steps": 5275,
+            "barrier": 188,
+            "local": 0,
+            "total": 2272,
+            "first": 18446744073706639255,
+            "last": 18446744073706639255,
+            "sent": 60,
+            "idle": 20366,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        }
+      ],
+      "outputs": [
+        "7d347c31373968b8a12c383ec0ba60b97db13aba2ab46c32933581afc6af0831e13661b0743411bc89b617b5db2b44a4703c82343ab458b8e6b8d03a353e3338c0adcf3bc83cee2cc33638a22aba0f35a2b272b9b1381b3c97bc49325430003dd4b04e38fd344eb286adb6adfa3bb3ac74ba21bb2234be359abe1cb93b3178baa139b02fccb6c8ac18b7da3958ab4d3d61b5a632cbb634bcc2af2eb1702b3bb5782d6ab7b2b38031a329602aa1b9a0b866b6cc3a96370731143ace3802b85738bc2ab0b424ba483beb3786b3e8b6e4aa78b4b2b5b4ae0336842fd8b74dbc8b357ab049bd083087b8d832f536d8ac30b086b70cb0dc3c363976b950b0903983b434b09c3011b574b499b345b9b7b3d1b70e36aeb516b9dab8c4399939189e1aba45358aa554b75fb576b5d230b634f1375434cc2b3435e734d434ffb63ab7c9b5f0b5c3b69730d6b4cb32323938adaa30b7b4012fc338d6b8d7b82e3caabaf6bee23553b64eb741350031be35b62fbd3b24a9d43bf1b69cb2c4b6c7b40f35553093348231363972b8ad2c373ebaba60b98cb141ba35b486329a3524afffaf2031d33650b0683411bc95b631b5182cc8a36a3c843454b45fb8efb8d63a333e3738b3adc83bcc3c1b2dc13698a029bafd34a2b278b9b838203c95bc24327f30013dbdb04838043559b28eadf5adfc3bf2ac70ba18bb1d34c0359abe1ab9483172ba9f39cc2fe0b6fcac14b7de3900ac4d3d64b5a832b8b636bcabaf2eb1242b3cb5de2d69b784b35131a9294e2aa0b9a0b85eb6cc3a953733311e3ad03804b85c38e02aa9b420ba4a3bf73760b3d6b63cab81b4b2b574ae08369c2fd5b74bbc923576b047bdc02f91b8f632fe36ceac40b09bb7e2afdf3c3a397eb938b096397eb454b0993004b57bb4b0b34db9aeb3d7b70436c5b517b9d2b8c639983970a023ba4c35dea564b767b577b5d630bc34dd375734282c4635db34c534f9b635b7bfb5f6b5c6b6b430c8b4c432273922adaa30abb4482fc638dab8deb8313ca8baf4bee93567b643b75335ea30aa350530b33be5a8d63bedb68db2d2b6c6b40c355730"
+      ],
+      "launch_ring": []
+    },
+    {
+      "cycles": 156442,
+      "packages": [
+        {
+          "cycles": 9275,
+          "phases": {
+            "head": 969,
+            "copy": 4,
+            "bind": 458,
+            "steps": 7690,
+            "barrier": 154,
+            "local": 0,
+            "total": 5056,
+            "first": 18446744073706609867,
+            "last": 18446744073706609867,
+            "sent": 136,
+            "idle": 22494,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 11316,
+          "phases": {
+            "head": 927,
+            "copy": 4,
+            "bind": 442,
+            "steps": 9791,
+            "barrier": 152,
+            "local": 0,
+            "total": 3328,
+            "first": 18446744073706580997,
+            "last": 18446744073706580997,
+            "sent": 76,
+            "idle": 19653,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 8063,
+          "phases": {
+            "head": 785,
+            "copy": 4,
+            "bind": 411,
+            "steps": 6711,
+            "barrier": 152,
+            "local": 0,
+            "total": 6048,
+            "first": 18446744073706550383,
+            "last": 18446744073706550383,
+            "sent": 167,
+            "idle": 19471,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 11632,
+          "phases": {
+            "head": 785,
+            "copy": 4,
+            "bind": 411,
+            "steps": 10280,
+            "barrier": 152,
+            "local": 0,
+            "total": 5856,
+            "first": 18446744073706521697,
+            "last": 18446744073706521697,
+            "sent": 150,
+            "idle": 20623,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 39876,
+          "phases": {
+            "head": 644,
+            "copy": 4,
+            "bind": 683,
+            "steps": 38376,
+            "barrier": 169,
+            "local": 0,
+            "total": 16960,
+            "first": 18446744073706487530,
+            "last": 18446744073706487530,
+            "sent": 500,
+            "idle": 22404,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 10262,
+          "phases": {
+            "head": 949,
+            "copy": 4,
+            "bind": 798,
+            "steps": 8344,
+            "barrier": 167,
+            "local": 0,
+            "total": 4512,
+            "first": 18446744073706426690,
+            "last": 18446744073706426690,
+            "sent": 126,
+            "idle": 20544,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 58577,
+          "phases": {
+            "head": 809,
+            "copy": 4,
+            "bind": 744,
+            "steps": 56853,
+            "barrier": 167,
+            "local": 0,
+            "total": 44640,
+            "first": 18446744073706395902,
+            "last": 18446744073706395902,
+            "sent": 1376,
+            "idle": 20720,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7441,
+          "phases": {
+            "head": 951,
+            "copy": 4,
+            "bind": 1143,
+            "steps": 5155,
+            "barrier": 188,
+            "local": 0,
+            "total": 2272,
+            "first": 18446744073706315795,
+            "last": 18446744073706315795,
+            "sent": 60,
+            "idle": 20989,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        }
+      ],
+      "outputs": [
+        "7d347c31373968b8a12c383ec0ba60b97db13aba2ab46c32933581afc6af0831e13661b0743411bc89b617b5db2b44a4703c82343ab458b8e6b8d03a353e3338c0adcf3bc83cee2cc33638a22aba0f35a2b272b9b1381b3c97bc49325430003dd4b04e38fd344eb286adb6adfa3bb3ac74ba21bb2234be359abe1cb93b3178baa139b02fccb6c8ac18b7da3958ab4d3d61b5a632cbb634bcc2af2eb1702b3bb5782d6ab7b2b38031a329602aa1b9a0b866b6cc3a96370731143ace3802b85738bc2ab0b424ba483beb3786b3e8b6e4aa78b4b2b5b4ae0336842fd8b74dbc8b357ab049bd083087b8d832f536d8ac30b086b70cb0dc3c363976b950b0903983b434b09c3011b574b499b345b9b7b3d1b70e36aeb516b9dab8c4399939189e1aba45358aa554b75fb576b5d230b634f1375434cc2b3435e734d434ffb63ab7c9b5f0b5c3b69730d6b4cb32323938adaa30b7b4012fc338d6b8d7b82e3caabaf6bee23553b64eb741350031be35b62fbd3b24a9d43bf1b69cb2c4b6c7b40f35553093348231363972b8ad2c373ebaba60b98cb141ba35b486329a3524afffaf2031d33650b0683411bc95b631b5182cc8a36a3c843454b45fb8efb8d63a333e3738b3adc83bcc3c1b2dc13698a029bafd34a2b278b9b838203c95bc24327f30013dbdb04838043559b28eadf5adfc3bf2ac70ba18bb1d34c0359abe1ab9483172ba9f39cc2fe0b6fcac14b7de3900ac4d3d64b5a832b8b636bcabaf2eb1242b3cb5de2d69b784b35131a9294e2aa0b9a0b85eb6cc3a953733311e3ad03804b85c38e02aa9b420ba4a3bf73760b3d6b63cab81b4b2b574ae08369c2fd5b74bbc923576b047bdc02f91b8f632fe36ceac40b09bb7e2afdf3c3a397eb938b096397eb454b0993004b57bb4b0b34db9aeb3d7b70436c5b517b9d2b8c639983970a023ba4c35dea564b767b577b5d630bc34dd375734282c4635db34c534f9b635b7bfb5f6b5c6b6b430c8b4c432273922adaa30abb4482fc638dab8deb8313ca8baf4bee93567b643b75335ea30aa350530b33be5a8d63bedb68db2d2b6c6b40c355730"
+      ],
+      "launch_ring": []
+    },
+    {
+      "cycles": 155975,
+      "packages": [
+        {
+          "cycles": 9254,
+          "phases": {
+            "head": 967,
+            "copy": 4,
+            "bind": 456,
+            "steps": 7673,
+            "barrier": 154,
+            "local": 0,
+            "total": 5056,
+            "first": 18446744073706286798,
+            "last": 18446744073706286798,
+            "sent": 136,
+            "idle": 22227,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 11349,
+          "phases": {
+            "head": 927,
+            "copy": 4,
+            "bind": 442,
+            "steps": 9824,
+            "barrier": 152,
+            "local": 0,
+            "total": 3328,
+            "first": 18446744073706258126,
+            "last": 18446744073706258126,
+            "sent": 76,
+            "idle": 19472,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 8063,
+          "phases": {
+            "head": 785,
+            "copy": 4,
+            "bind": 411,
+            "steps": 6711,
+            "barrier": 152,
+            "local": 0,
+            "total": 6048,
+            "first": 18446744073706227484,
+            "last": 18446744073706227484,
+            "sent": 167,
+            "idle": 19466,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 11704,
+          "phases": {
+            "head": 785,
+            "copy": 4,
+            "bind": 411,
+            "steps": 10352,
+            "barrier": 152,
+            "local": 0,
+            "total": 5856,
+            "first": 18446744073706198530,
+            "last": 18446744073706198530,
+            "sent": 150,
+            "idle": 20891,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 39364,
+          "phases": {
+            "head": 644,
+            "copy": 4,
+            "bind": 683,
+            "steps": 37862,
+            "barrier": 171,
+            "local": 0,
+            "total": 16960,
+            "first": 18446744073706165353,
+            "last": 18446744073706165353,
+            "sent": 500,
+            "idle": 21342,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 10235,
+          "phases": {
+            "head": 949,
+            "copy": 4,
+            "bind": 798,
+            "steps": 8317,
+            "barrier": 167,
+            "local": 0,
+            "total": 4512,
+            "first": 18446744073706103865,
+            "last": 18446744073706103865,
+            "sent": 126,
+            "idle": 21704,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 58618,
+          "phases": {
+            "head": 809,
+            "copy": 4,
+            "bind": 744,
+            "steps": 56894,
+            "barrier": 167,
+            "local": 0,
+            "total": 44640,
+            "first": 18446744073706073187,
+            "last": 18446744073706073187,
+            "sent": 1376,
+            "idle": 20637,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        },
+        {
+          "cycles": 7388,
+          "phases": {
+            "head": 951,
+            "copy": 4,
+            "bind": 1143,
+            "steps": 5102,
+            "barrier": 188,
+            "local": 0,
+            "total": 2272,
+            "first": 18446744073705993038,
+            "last": 18446744073705993038,
+            "sent": 60,
+            "idle": 20990,
+            "list_index": 0,
+            "item_tag": 0,
+            "epoch": 0
+          }
+        }
+      ],
+      "outputs": [
+        "7d347c31373968b8a12c383ec0ba60b97db13aba2ab46c32933581afc6af0831e13661b0743411bc89b617b5db2b44a4703c82343ab458b8e6b8d03a353e3338c0adcf3bc83cee2cc33638a22aba0f35a2b272b9b1381b3c97bc49325430003dd4b04e38fd344eb286adb6adfa3bb3ac74ba21bb2234be359abe1cb93b3178baa139b02fccb6c8ac18b7da3958ab4d3d61b5a632cbb634bcc2af2eb1702b3bb5782d6ab7b2b38031a329602aa1b9a0b866b6cc3a96370731143ace3802b85738bc2ab0b424ba483beb3786b3e8b6e4aa78b4b2b5b4ae0336842fd8b74dbc8b357ab049bd083087b8d832f536d8ac30b086b70cb0dc3c363976b950b0903983b434b09c3011b574b499b345b9b7b3d1b70e36aeb516b9dab8c4399939189e1aba45358aa554b75fb576b5d230b634f1375434cc2b3435e734d434ffb63ab7c9b5f0b5c3b69730d6b4cb32323938adaa30b7b4012fc338d6b8d7b82e3caabaf6bee23553b64eb741350031be35b62fbd3b24a9d43bf1b69cb2c4b6c7b40f35553093348231363972b8ad2c373ebaba60b98cb141ba35b486329a3524afffaf2031d33650b0683411bc95b631b5182cc8a36a3c843454b45fb8efb8d63a333e3738b3adc83bcc3c1b2dc13698a029bafd34a2b278b9b838203c95bc24327f30013dbdb04838043559b28eadf5adfc3bf2ac70ba18bb1d34c0359abe1ab9483172ba9f39cc2fe0b6fcac14b7de3900ac4d3d64b5a832b8b636bcabaf2eb1242b3cb5de2d69b784b35131a9294e2aa0b9a0b85eb6cc3a953733311e3ad03804b85c38e02aa9b420ba4a3bf73760b3d6b63cab81b4b2b574ae08369c2fd5b74bbc923576b047bdc02f91b8f632fe36ceac40b09bb7e2afdf3c3a397eb938b096397eb454b0993004b57bb4b0b34db9aeb3d7b70436c5b517b9d2b8c639983970a023ba4c35dea564b767b577b5d630bc34dd375734282c4635db34c534f9b635b7bfb5f6b5c6b6b430c8b4c432273922adaa30abb4482fc638dab8deb8313ca8baf4bee93567b643b75335ea30aa350530b33be5a8d63bedb68db2d2b6c6b40c355730"
+      ],
+      "launch_ring": []
+    }
+  ],
+  "launches": 8,
+  "submissions_per_step": 8,
+  "groups": [],
+  "run_seconds": 0.07276284800173016,
+  "retain": 0,
+  "batch_repeats": 1
+}

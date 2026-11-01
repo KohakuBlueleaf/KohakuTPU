@@ -1,0 +1,82 @@
+{
+ "ok": false,
+ "load_seconds": 0.08809491199644981,
+ "run_seconds": 0.11357238900018274,
+ "nodes": [
+  {
+   "status": 12,
+   "exit": 3,
+   "halt_pc": 3332,
+   "console": "KohakuAccel OS: node 0 of 4 (mesh 0), private 20000000+80000, shared 20200000+40000, 24 units, flags 0, tick 0\ninit: 4 nodes, commands: kdsreduce; preduce; msgsum; pmatmul; pipeline; psort; workq; stress \n@ kdsreduce.cycles 296781\nkdsreduce: 256 values on each of 4 nodes, 296781 cycles, ok\ninit: kdsreduce exit 0 in 2158237 cycles\n@ preduce.n 16384\n@ preduce.workers 4\n@ preduce.cycles_1 464996\n@ preduce.cycles_w 144337\n@ preduce.speedup_x100 322\npreduce: 16384 values, 4 workers, ok\ninit: preduce exit 0 in 9749535 cycles\n@ msgsum.n 4096\n@ msgsum.cycles 871761\nmsgsum: 4096 values over 4 nodes, ok\ninit: msgsum exit 0 in 1850849 cycles\n@ pmatmul.m 32\n@ pmatmul.workers 4\n@ pmatmul.cycles_1 3465402\n@ pmatmul.cycles_w 1351338\n@ pmatmul.speedup_x100 256\n@ pmatmul.macs_per_kcycle_w 24\npmatmul: M=32, 4 workers, ok\ninit: pmatmul exit 0 in 6765242 cycles\n@ pipeline.messages 192\n@ pipeline.cycles 531907\n@ pipeline.cycles_per_item 8311\npipeline: 64 items through 4 stages, ok\ninit: pipeline exit 0 in 1045669 cycles\nFAIL psort: shared memory for 8192 values\ninit: psort exit 1 in 124745 cycles\nnode 0 thread 1 (workq): fault cause f pc 1000c394 tval 0\ninit: workq exit -271 in 122135 cycles\nnode 0 thread 1 (stress): fault cause f pc 1000bf04 tval 488\ninit: stress exit -271 in 106979 cycles\ninit: 8 commands, 3 failed\n",
+   "log": "",
+   "log_bytes": 0,
+   "where": "0",
+   "where_a": 0,
+   "where_b": 0,
+   "switches": 0
+  },
+  {
+   "status": 12,
+   "exit": 3,
+   "halt_pc": 3332,
+   "console": "KohakuAccel OS: node 1 of 4 (mesh 1), private 1020080000+80000, shared 1020200000+40000, 24 units, flags 0, tick 0\n",
+   "log": "",
+   "log_bytes": 0,
+   "where": "0",
+   "where_a": 0,
+   "where_b": 0,
+   "switches": 0
+  },
+  {
+   "status": 12,
+   "exit": 3,
+   "halt_pc": 3332,
+   "console": "KohakuAccel OS: node 2 of 4 (mesh 2), private 2020100000+80000, shared 2020200000+40000, 24 units, flags 0, tick 0\n",
+   "log": "",
+   "log_bytes": 0,
+   "where": "0",
+   "where_a": 0,
+   "where_b": 0,
+   "switches": 0
+  },
+  {
+   "status": 12,
+   "exit": 3,
+   "halt_pc": 3332,
+   "console": "KohakuAccel OS: node 3 of 4 (mesh 3), private 3020180000+80000, shared 3020200000+40000, 24 units, flags 0, tick 0\n",
+   "log": "",
+   "log_bytes": 0,
+   "where": "0",
+   "where_a": 0,
+   "where_b": 0,
+   "switches": 0
+  }
+ ],
+ "measures": {
+  "0": {
+   "kdsreduce.cycles": 296781,
+   "preduce.n": 16384,
+   "preduce.workers": 4,
+   "preduce.cycles_1": 464996,
+   "preduce.cycles_w": 144337,
+   "preduce.speedup_x100": 322,
+   "msgsum.n": 4096,
+   "msgsum.cycles": 871761,
+   "pmatmul.m": 32,
+   "pmatmul.workers": 4,
+   "pmatmul.cycles_1": 3465402,
+   "pmatmul.cycles_w": 1351338,
+   "pmatmul.speedup_x100": 256,
+   "pmatmul.macs_per_kcycle_w": 24,
+   "pipeline.messages": 192,
+   "pipeline.cycles": 531907,
+   "pipeline.cycles_per_item": 8311
+  }
+ },
+ "model_status": {},
+ "board": "card_v9t8_4n",
+ "image": "build/os/kos.elf",
+ "cmd": "kdsreduce; preduce; msgsum; pmatmul; pipeline; psort; workq; stress",
+ "flags": "",
+ "tick": 0
+}

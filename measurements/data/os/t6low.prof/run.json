@@ -1,0 +1,60 @@
+{
+ "ok": true,
+ "load_seconds": 0.024533162999432534,
+ "run_seconds": 0.020235990999935893,
+ "nodes": [
+  {
+   "status": 12,
+   "exit": 0,
+   "halt_pc": 2784,
+   "console": "KohakuAccel OS: node 0 of 1 (mesh 0), private 20000000+100000, shared 0+0, 4 units, flags 0, tick 0\ninit: 1 nodes, commands: kprof 256 \n@ kprof.self.enter 30\n@ kprof.self.save 45\n@ kprof.self.to_c 30\n@ kprof.self.call 209\n@ kprof.self.poll 20\n@ kprof.self.schedule 18\n@ kprof.self.to_resume 30\n@ kprof.self.calls 256\n@ kprof.self.out 87\n@ kprof.self.total 469\n@ kprof.yield.save 45\n@ kprof.yield.to_c 30\n@ kprof.yield.call 250\n@ kprof.yield.poll 252\n@ kprof.yield.schedule 187\n@ kprof.yield.to_resume 57\n@ kprof.yield.calls 512\n@ kprof.send_here.save 45\n@ kprof.send_here.to_c 30\n@ kprof.send_here.call 791\n@ kprof.send_here.poll 16\n@ kprof.send_here.schedule 18\n@ kprof.send_here.to_resume 32\n@ kprof.send_here.calls 32\n@ kprof.recv_ready.save 45\n@ kprof.recv_ready.to_c 30\n@ kprof.recv_ready.call 582\n@ kprof.recv_ready.poll 16\n@ kprof.recv_ready.schedule 18\n@ kprof.recv_ready.to_resume 30\n@ kprof.recv_ready.calls 32\nkprof: ok\ninit: kprof exit 0 in 1566793 cycles\ninit: 1 commands, 0 failed\n",
+   "log": "",
+   "log_bytes": 0,
+   "where": "0",
+   "where_a": 0,
+   "where_b": 0,
+   "switches": 0
+  }
+ ],
+ "measures": {
+  "0": {
+   "kprof.self.enter": 30,
+   "kprof.self.save": 45,
+   "kprof.self.to_c": 30,
+   "kprof.self.call": 209,
+   "kprof.self.poll": 20,
+   "kprof.self.schedule": 18,
+   "kprof.self.to_resume": 30,
+   "kprof.self.calls": 256,
+   "kprof.self.out": 87,
+   "kprof.self.total": 469,
+   "kprof.yield.save": 45,
+   "kprof.yield.to_c": 30,
+   "kprof.yield.call": 250,
+   "kprof.yield.poll": 252,
+   "kprof.yield.schedule": 187,
+   "kprof.yield.to_resume": 57,
+   "kprof.yield.calls": 512,
+   "kprof.send_here.save": 45,
+   "kprof.send_here.to_c": 30,
+   "kprof.send_here.call": 791,
+   "kprof.send_here.poll": 16,
+   "kprof.send_here.schedule": 18,
+   "kprof.send_here.to_resume": 32,
+   "kprof.send_here.calls": 32,
+   "kprof.recv_ready.save": 45,
+   "kprof.recv_ready.to_c": 30,
+   "kprof.recv_ready.call": 582,
+   "kprof.recv_ready.poll": 16,
+   "kprof.recv_ready.schedule": 18,
+   "kprof.recv_ready.to_resume": 30,
+   "kprof.recv_ready.calls": 32
+  }
+ },
+ "model_status": {},
+ "board": "card_v9t6_4n_solo",
+ "image": "build/os/prof/kos.elf",
+ "cmd": "kprof 256",
+ "flags": "",
+ "tick": 0
+}

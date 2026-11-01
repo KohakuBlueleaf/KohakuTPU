@@ -1,0 +1,32 @@
+{
+ "ok": true,
+ "load_seconds": 0.02431758899911074,
+ "run_seconds": 0.0058363249991089106,
+ "nodes": [
+  {
+   "status": 12,
+   "exit": 0,
+   "halt_pc": 3332,
+   "console": "KohakuAccel OS: node 0 of 1 (mesh 0), private 20000000+100000, shared 0+0, 4 units, flags 10, tick 0\ninit: 1 nodes, commands: mg \n  mg unit 0 mailbox: ticket 3 wait 0 faults 0, retired 15738 -> 15741, 4 of 128 drained words written, 5820 cycles\n@ mg.mailbox_round_cycles 5820\n  mg unit 0 engine: ticket 6 wait 0 faults 0, retired 15741 -> 15744, 4 of 128 drained words written, 3828 cycles\n@ mg.engine_round_cycles 3828\n  mg unit 1 mailbox: ticket 3 wait 0 faults 0, retired 6631 -> 6634, 4 of 128 drained words written, 5758 cycles\n@ mg.mailbox_round_cycles 5758\n  mg unit 1 engine: ticket 6 wait 0 faults 0, retired 6634 -> 6637, 4 of 128 drained words written, 3837 cycles\n@ mg.engine_round_cycles 3837\n@ mg.units 2\nmg: 2 MG units, 4 rounds, ok\ninit: mg exit 0 in 606113 cycles\ninit: 1 commands, 0 failed\n",
+   "log": "",
+   "log_bytes": 0,
+   "where": "0",
+   "where_a": 0,
+   "where_b": 0,
+   "switches": 0
+  }
+ ],
+ "measures": {
+  "0": {
+   "mg.mailbox_round_cycles": 5758,
+   "mg.engine_round_cycles": 3837,
+   "mg.units": 2
+  }
+ },
+ "model_status": {},
+ "board": "card_v9t6_4n_solo",
+ "image": "build/os/kos.elf",
+ "cmd": "mg",
+ "flags": "engine",
+ "tick": 0
+}

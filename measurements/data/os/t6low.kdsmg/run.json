@@ -1,0 +1,32 @@
+{
+ "ok": true,
+ "load_seconds": 0.024840907997713657,
+ "run_seconds": 0.02290724300110014,
+ "nodes": [
+  {
+   "status": 12,
+   "exit": 0,
+   "halt_pc": 3332,
+   "console": "KohakuAccel OS: node 0 of 1 (mesh 0), private 20000000+100000, shared 0+0, 4 units, flags 0, tick 0\ninit: 1 nodes, commands: kdsmg \n  kdsmg unit 0 (GM, node 0): status 0 task 0 detail 0, 144454 cycles\n@ kdsmg.bind_cycles 144454\n  kdsmg rounds: server passes 2 retire-wakes 1 tasks 24 unit calls 24 msgs 1/1; cycles msgs 94669 run 55375 issue 102808 send 1598 event 78000 retire 56749\n  kdsmg rounds: unit 0 (node 0) 8 rounds in 307346 cycles, 38418 per round\n@ kdsmg.round_cycles 38418\n  kdsmg unit 1 (GM, node 0): status 0 task 0 detail 0, 140529 cycles\n@ kdsmg.bind_cycles 140529\n@ kdsmg.units 2\nkdsmg: 2 MG units, ok\ninit: kdsmg exit 0 in 1838840 cycles\ninit: 1 commands, 0 failed\n",
+   "log": "",
+   "log_bytes": 0,
+   "where": "0",
+   "where_a": 0,
+   "where_b": 0,
+   "switches": 0
+  }
+ ],
+ "measures": {
+  "0": {
+   "kdsmg.bind_cycles": 140529,
+   "kdsmg.round_cycles": 38418,
+   "kdsmg.units": 2
+  }
+ },
+ "model_status": {},
+ "board": "card_v9t6_4n_solo",
+ "image": "build/os/kos.elf",
+ "cmd": "kdsmg",
+ "flags": "",
+ "tick": 0
+}
