@@ -122,7 +122,7 @@ def run_os_capture(capture, a, board, out):
 
     image = pathlib.Path(a.image)
     parts = segments(image)
-    card = Card(board, a.model, out / "model.log")
+    card = Card(board, a.model, out / "model.log", a.xdma)
     try:
         priv, size = regions(board, 0)[0][:2]
         if a.jtag:
@@ -165,7 +165,8 @@ def run_os_capture(capture, a, board, out):
             estimate_bytes(capture["step"]),
             estimate_bytes(init_run_evs) if init_run_evs else 0,
         )
-        capacity = (step_bytes + 8192 + TASK_BYTES - 1) // TASK_BYTES
+        # Doubled: stamps add tasks the estimate leaves out.
+        capacity = 2 * (step_bytes + 8192 + TASK_BYTES - 1) // TASK_BYTES
         command = f"ostpu {capacity} {capture['extent']} {a.retain} -e"
         t_load0 = time.monotonic()
         imem, spad, dram = arrays(image, tables(board, 0, 0, command)[0])
@@ -183,6 +184,7 @@ def run_os_capture(capture, a, board, out):
         progress("arena ready")
         dev = Device("os", board=card_board, os_session=session, os_units=units)
         dev.card.segment, dev.card.compact, dev.card.movers = a.segment, True, True
+        dev.replay_overcommit = True
         base = session.data_pa
         init = relocate(capture["init"], capture["base"], base, capture["extent"])
         events = relocate(capture["step"], capture["base"], base, capture["extent"])
@@ -344,6 +346,7 @@ def run_fw_leg(capture, a, board, out):
         capture,
         model=a.model,
         jtag=a.jtag,
+        transport="xdma" if a.xdma else None,
         board=fw_board,
         profile=a.profile,
         lists=int(a.lists),
@@ -360,6 +363,7 @@ def main():
     src = parser.add_mutually_exclusive_group(required=True)
     src.add_argument("--model")
     src.add_argument("--jtag", action="store_true")
+    src.add_argument("--xdma", action="store_true")
     parser.add_argument(
         "--backend", choices=("os", "firmware", "compare"), default="os"
     )
@@ -379,6 +383,7 @@ def main():
     parser.add_argument("--batch-repeats", type=int, default=1)
     parser.add_argument("--private-bytes", type=lambda s: int(s, 0), default=1 << 20)
     a = parser.parse_args()
+    a.jtag = a.jtag or a.xdma
     with gzip.open(a.capture, "rb") as f:
         capture = pickle.load(f)
     out = pathlib.Path(a.out)

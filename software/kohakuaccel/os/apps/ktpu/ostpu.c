@@ -49,7 +49,7 @@ static int ostpu(int argc, char **argv)
     }
     volatile struct ostpu_mailbox *m = (volatile void *)((uintptr_t)kos_land() + MAILBOX);
     memset((void *)m, 0, sizeof *m);
-    int st = kds_start(flags, KDS_ARENA, KDS_ALL_NODES);
+    int st = kds_start(flags, KDS_ARENA + num[0] * sizeof(struct kds_task) + num[1], KDS_ALL_NODES);
     if (st) {
         return st;
     }

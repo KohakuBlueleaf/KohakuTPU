@@ -114,6 +114,8 @@ IMAGES = {
 
 # A reversal witness image; never selected by a runtime or machine default.
 IMAGES["kohakutpu_memory_mutant"] = list(IMAGES["kohakutpu_node"])
+# The production dispatcher, unit counters written after each run (tests/perf).
+IMAGES["kohakutpu_measure"] = list(IMAGES["kohakutpu_node"])
 IMAGES["kohakutpu_snapshot_mutant"] = list(IMAGES["kohakutpu_node"])
 IMAGES["kohakutpu_snapshot_debug_mutant"] = list(IMAGES["kohakutpu_debug"])
 
@@ -125,6 +127,7 @@ DEFINES = {
     "kohakutpu_node": ["-DKA_PKG_COPY_BYTES=0"],
     "kohakutpu_debug": ["-DKA_DEBUG=1", "-DKA_DEBUG_LAST=4", "-DKA_PKG_COPY_BYTES=0"],
     "kohakuaccel_node": ["-DKA_PKG_COPY_BYTES=0"],
+    "kohakutpu_measure": ["-DKA_PKG_COPY_BYTES=0", "-DKA_MEASURE=1"],
     "kohakutpu_memory_mutant": ["-DKA_PKG_COPY_BYTES=0", "-DKA_SPEC_MEMORY_MUTANT=1"],
     "kohakutpu_snapshot_mutant": [
         "-DKA_PKG_COPY_BYTES=0",

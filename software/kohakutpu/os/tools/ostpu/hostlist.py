@@ -26,6 +26,7 @@ def run_firmware_capture(
     *,
     model=None,
     jtag=False,
+    transport=None,
     board="vlt_v9t6s_1n",
     profile="mid",
     lists=0,
@@ -40,7 +41,9 @@ def run_firmware_capture(
     use_lists = bool(int(lists))
     started = time.monotonic()
     card = (
-        runtime.SiliconCard(board, nodes=(0,), profile=profile, fw=fw, timeout=440)
+        runtime.SiliconCard(
+            board, transport, nodes=(0,), profile=profile, fw=fw, timeout=440
+        )
         if jtag
         else runtime.VerilatorCard(
             model,

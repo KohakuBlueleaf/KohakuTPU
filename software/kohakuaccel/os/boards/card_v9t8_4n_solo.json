@@ -1,0 +1,20 @@
+{
+  "name": "card_v9t8_4n_solo",
+  "description": "KohakuTPU v9t8 silicon (multimesh_v9t8), die 0's node alone (4 MG + 2 VC): the other dies' processors are not loaded or started",
+  "nodes": 1,
+  "mesh_of": [0],
+  "clock_hz": 100000000,
+  "engine": true,
+  "dram": {"base": "0x20000000", "layout": "carved", "private": "0x100000", "shared": "0x0"},
+  "spelling": "own",
+  "staging": "0x80000",
+  "units": [
+    {"type": "MG", "mesh": 0, "x": 1, "y": 0, "depth": 512},
+    {"type": "MG", "mesh": 0, "x": 1, "y": 1, "depth": 512},
+    {"type": "MG", "mesh": 0, "x": 1, "y": 2, "depth": 512},
+    {"type": "MG", "mesh": 0, "x": 1, "y": 3, "depth": 512},
+    {"type": "VC", "mesh": 0, "x": 2, "y": 1, "depth": 512},
+    {"type": "VC", "mesh": 0, "x": 2, "y": 2, "depth": 512}
+  ],
+  "card": {"board": "multimesh_v9t8", "meshes": 4}
+}

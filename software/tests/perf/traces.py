@@ -4,6 +4,8 @@ import json
 import pathlib
 import re
 
+import numpy as np
+
 SIGNATURE = re.compile(r"^fn \S+?\.l2\((.*)\)\s*$", re.MULTILINE)
 PARAM = re.compile(r"(\w+): (\w+)\[([^\]]*)\] @(\w+)")
 #: Bytes a value: an MXFP7 entry holds 128 values in 128 bytes.
@@ -73,17 +75,27 @@ def load(trace: pathlib.Path, machine: str) -> list[Launch]:
 
 
 def period(names: list[str]) -> tuple[int, int]:
-    """`(start, length)` of the longest window repeated at once: the last warm step
-    of a trace, whatever follows it, or (0, 0)."""
+    """`(start, length)` of the last whole step: the smallest period whose repeat
+    covers the trace about as far as any period's does, so a run of many steps reads
+    one step and not the longest multiple, or (0, 0)."""
     n = len(names)
-    for p in range(n // 2, 0, -1):
-        for s in range(n - 2 * p, -1, -1):
-            if (
-                names[s] == names[s + p]
-                and names[s : s + p] == names[s + p : s + 2 * p]
-            ):
-                return s + p, p
-    return 0, 0
+    ids = {name: i for i, name in enumerate(dict.fromkeys(names))}
+    code = np.array([ids[name] for name in names])
+    found = []
+    for p in range(1, n // 2 + 1):
+        same = np.concatenate(([0], (code[:-p] == code[p:]).astype(int), [0]))
+        edges = np.flatnonzero(np.diff(same))
+        if not len(edges):
+            continue
+        spans = edges[1::2] - edges[::2]
+        at = int(np.argmax(spans))
+        if spans[at] >= p:
+            found.append((int(spans[at]), p, int(edges[2 * at + 1])))
+    if not found:
+        return 0, 0
+    longest = max(f[0] for f in found)
+    _, p, end = next(f for f in found if f[0] >= 0.9 * longest)
+    return end, p
 
 
 def step(launches: list[Launch]) -> list[Launch]:

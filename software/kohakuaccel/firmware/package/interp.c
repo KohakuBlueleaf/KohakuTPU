@@ -13,6 +13,9 @@
 #include <ka/package/debug.h>
 #include <ka/package/interp.h>
 #include <ka/package/status.h>
+#ifdef KA_MEASURE
+#include <ka/unit/enumerate.h>
+#endif
 
 static struct ka_engine eng;
 
@@ -55,6 +58,14 @@ static uint64_t entry_at = ~0UL, t_end;
 #define KA_LRING_REC_BYTES 96u
 static uint32_t lring_idx;
 static uint64_t lring_sub, lring_wait;
+#endif
+#ifdef KA_MEASURE
+/* The host's ring of unit counters: base, slots and written count sit at this
+ * queue offset (software/tests/perf/record.py reads it). */
+#define KA_MRING_QUEUE_OFF 0xFC000UL
+#define KA_MRING_REC_BYTES 256u
+#define KA_MRING_UNITS     8u
+static uint64_t mring_n;
 #endif
 
 void ka_package_ahead_reset(void) { entry_at = ~0UL; }
@@ -1442,6 +1453,61 @@ static KA_HOT int de_step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, i
     }
 }
 
+#ifdef KA_MEASURE
+/* One CU_CTRL word of the unit at (x, y), the reply taken whole from the RX queue. */
+static uint64_t unit_ctrl(unsigned x, unsigned y, unsigned index)
+{
+    while (ka_nm_rd(KA_NM_STAT) & KA_NM_STAT_OFFERED) {
+    }
+    ka_nm_wr(KA_NM_DST, KA_NM_TYPED(KA_T_CU_CTRL) | ((uint64_t)y << 8) | x);
+    ka_nm_wr(KA_NM_ARG0, 0);
+    ka_nm_wr(KA_NM_ARG1, 0);
+    ka_nm_wr(KA_NM_ARG2, 0);
+    ka_nm_wr(KA_NM_ARG3, (uint64_t)index << 48);
+    ka_nm_wr(KA_NM_GO, 1);
+    uint64_t t0 = ka_cycles();
+    while (ka_cycles() - t0 < KA_ENUM_WAIT) {
+        uint64_t h = ka_rx_rd(KA_RX_HDR);
+        if (!(h >> 63)) {
+            continue;
+        }
+        uint64_t p2 = ka_rx_rd(KA_RX_P2), p3 = ka_rx_rd(KA_RX_P3);
+        ka_rx_pop();
+        if (((h >> 12) & 0xf) == KA_T_CU_CTRL && (p3 >> 56) == 2 &&
+            ((p3 >> 48) & 0xff) == index && ((h >> 20) & 0xf) == x && ((h >> 16) & 0xf) == y) {
+            return ((p3 & 0xffffffffffffUL) << 16) | (p2 >> 48);
+        }
+    }
+    return ~0UL;
+}
+
+/* The run's span and each package unit's counters, after the run's own time ended. */
+static void measure(uint64_t t0, uint64_t cycles)
+{
+    uint64_t head = ka_boot.queue + KA_MRING_QUEUE_OFF;
+    uint64_t base = ka_ld64(head), slots = ka_ld64(head + 8);
+    if (!base) {
+        return;
+    }
+    uint64_t a = base + (mring_n % slots) * KA_MRING_REC_BYTES;
+    unsigned n = eng.n < KA_MRING_UNITS ? eng.n : KA_MRING_UNITS;
+    ka_st64(a, mring_n);
+    ka_st64(a + 8, t0);
+    ka_st64(a + 16, cycles);
+    ka_st64(a + 24, ka_ctrl_rd(KA_R_MVSTAT));
+    ka_st64(a + 32, n);
+    for (unsigned i = 0; i < n; ++i) {
+        const struct ka_unit_state *u = &eng.u[i];
+        uint64_t at = a + 40 + 24 * (uint64_t)i;
+        ka_st64(at, (uint64_t)u->type << 32 | (uint64_t)u->y << 8 | u->x);
+        ka_st64(at + 8, unit_ctrl(u->x, u->y, 2));
+        ka_st64(at + 16, unit_ctrl(u->x, u->y, 3));
+    }
+    ka_nm_wr(KA_NM_DST, 0);
+    ka_st64(head + 16, ++mring_n);
+}
+#endif
+
 int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
 {
     uint64_t t0 = ka_cycles();
@@ -1613,6 +1679,9 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
                   "first %lu last %lu sent %lu idle %lu\n",
                   t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10]);
     }
+#ifdef KA_MEASURE
+    measure(t0, out->cycles);
+#endif
     t_end = t0 + out->cycles;
     return eng.status;
 }

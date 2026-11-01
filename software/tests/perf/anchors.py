@@ -22,15 +22,15 @@ from kohakutpu.stack import kernel
 HERE = pathlib.Path(__file__).parent
 
 
-def authored(only: str, card: bool):
+def authored(only: str, card: bool, module: pathlib.Path | None):
     paths = sorted((HERE / "anchors").glob("*.ktpu"))
     if card:
         paths += sorted((HERE / "anchors" / "memory").glob("*.ktpu"))
-    for path in paths:
-        module = examples.load(path)
-        for fn in module.names():
+    for path in [module] if module else paths:
+        loaded = examples.load(path)
+        for fn in loaded.names():
             if re.search(only, fn):
-                yield fn, module
+                yield fn, loaded
 
 
 def recorded(trace: pathlib.Path, most: int, each: int):
@@ -57,14 +57,17 @@ def main():
     ap.add_argument("--board", required=True)
     ap.add_argument("--out", type=pathlib.Path, required=True)
     ap.add_argument("--only", default="")
+    ap.add_argument("--nodes", default="0", help="card nodes, comma separated")
+    ap.add_argument("--module", type=pathlib.Path, help="one L1 file, not the anchors")
     ap.add_argument("--trace", type=pathlib.Path)
     ap.add_argument("--most", type=int, default=40000)
     ap.add_argument("--each", type=int, default=6)
     a = ap.parse_args()
     a.out.parent.mkdir(parents=True, exist_ok=True)
     if a.profile:
+        nodes = tuple(int(n) for n in a.nodes.split(","))
         card = SiliconCard(
-            a.board, transport="xdma", nodes=(0,), profile=a.profile, check="warn"
+            a.board, transport="xdma", nodes=nodes, profile=a.profile, check="warn"
         )
     else:
         log = a.out.with_suffix(".model.log")
@@ -72,7 +75,7 @@ def main():
     kernels = (
         recorded(a.trace, a.most, a.each)
         if a.trace
-        else authored(a.only, bool(a.profile))
+        else authored(a.only, bool(a.profile), a.module)
     )
     with a.out.open("w", encoding="utf-8") as out:
         for fn, source in kernels:

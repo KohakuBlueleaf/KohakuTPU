@@ -135,10 +135,9 @@ def _epilogue_contraction(plan: Plan) -> bool:
     output permuted, a bias beside it): the clusters take its leaf."""
     if not plan.reduce_ranges or isinstance(plan.expr, X.Reduce):
         return False
-    leaf = _leaf_reduce(plan)
     if len(_all_reduces(plan.expr)) != 1:
         return False
-    return _leaf(plan, leaf)[2]
+    return _leaf(plan, _leaf_reduce(plan))[2]
 
 
 def _split_reduction(plan: Plan):

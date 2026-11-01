@@ -4,6 +4,7 @@
         --model ~/ktpu/build/t2s/vlt_card_v9t6_2n --image ~/kos/out/kos.elf \\
         --cmd "hello; units; mg" [--flags engine] [--json out.json]
     python software/kohakutpu/os/tools/run_card.py --board card_v9t6_2n --jtag ...   # silicon
+    python software/kohakutpu/os/tools/run_card.py --board card_v9t6_2n --xdma ...   # silicon, Linux
 
 Per node: the core is held, its private span (and the shared region, once)
 is painted with zeros — a never-written DRAM line is an ECC error on the
@@ -22,6 +23,7 @@ smaller than the 40-bit space and aliases).
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import sys
@@ -49,6 +51,7 @@ from kohakuaccel.driver.node.boot.loader import cpu_scope
 from kohakuaccel.driver.transport.jtag import JtagTransport
 from kohakuaccel.driver.transport.rebase import UnitGlobal
 from kohakuaccel.driver.transport.verilator import VerilatorTransport
+from kohakuaccel.driver.transport.xdma_linux import XdmaLinux
 from kohakutpu.driver.clock.card import load_board
 from kohakutpu.driver.host import board_map
 
@@ -60,12 +63,18 @@ PROGRESS_SECONDS = 30.0
 
 
 class Card:
-    def __init__(self, board: dict, model: str | None, log: pathlib.Path) -> None:
+    def __init__(
+        self, board: dict, model: str | None, log: pathlib.Path, xdma: bool = False
+    ) -> None:
         cb = dict(load_board(board["card"]["board"]))
         cb["meshes"] = board["card"]["meshes"]
         self.m = board_map(cb)
         self.sim = model is not None
-        self.t = VerilatorTransport(model, log=log) if model else JtagTransport()
+        self.chunk = int(os.environ.get("RUN_CARD_READ_CHUNK", "1048576"))
+        if model:
+            self.t = VerilatorTransport(model, log=log)
+        else:
+            self.t = XdmaLinux() if xdma else JtagTransport()
         self.mem = UnitGlobal(
             self.t, self.m["dram"], self.m["mem"], self.m["size"], staging=True
         )
@@ -75,11 +84,15 @@ class Card:
         return self.m["dram"][mesh] + ((pa & ((1 << MESH_SHIFT) - 1)) % self.m["size"])
 
     def write(self, pa: int, data: bytes) -> None:
-        for k in range(0, len(data), 1 << 16):
-            self.mem.write_block(self.host(pa + k), data[k : k + (1 << 16)])
+        step = min(self.chunk, 1 << 16)
+        for k in range(0, len(data), step):
+            self.mem.write_block(self.host(pa + k), data[k : k + step])
 
     def read(self, pa: int, n: int) -> bytes:
-        return self.mem.read_block(self.host(pa), n)
+        return b"".join(
+            self.mem.read_block(self.host(pa + k), min(self.chunk, n - k))
+            for k in range(0, n, self.chunk)
+        )
 
     def idle(self) -> None:
         if self.sim:
@@ -115,11 +128,7 @@ def load_node(card: Card, node: int, mesh: int, imem: bytes, spad: bytes, mode: 
         card.t.poke(f"{scope}.u_imem.u_ram", "mem", 0, imem)
         card.t.poke(scope, "spad", 0, spad)
     else:
-        card.t.write64(win.base + rv64load.R_LOADC, rv64load.REGION_IMEM)
-        card.t.write_seq(
-            win.base + rv64load.R_LOADD,
-            [int.from_bytes(imem[a : a + 4], "little") for a in range(0, len(imem), 4)],
-        )
+        win.write_imem(imem)
         win.write_spad(0, spad)
     win.entry = 0
     return win
@@ -128,7 +137,7 @@ def load_node(card: Card, node: int, mesh: int, imem: bytes, spad: bytes, mode: 
 def run(a, board: dict) -> dict:
     out = pathlib.Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    card = Card(board, a.model, out / "model.log")
+    card = Card(board, a.model, out / "model.log", a.xdma)
     image = pathlib.Path(a.image)
     flags = parse_flags(a.flags)
     n = board["nodes"]
@@ -139,19 +148,30 @@ def run(a, board: dict) -> dict:
     for i, tb in enumerate(tables(board, flags, a.tick, a.cmd)):
         imem, spad, dram = arrays(image, tb)
         base, size = priv[i][0], priv[i][1]
-        if a.paint:
-            card.write(base, bytes(size))
-            for rg in regions(board, i):
-                if rg[2] == RG_DRAM_SHARED and rg[0] not in painted:
-                    card.write(rg[0], bytes(rg[1]))
-                    painted.add(rg[0])
-        for pa, data in segments(image):
-            if pa >= UIMG:
-                card.write(base + pa - UIMG, data)
-        for pa, data in dram:
-            card.write(pa | board["mesh_of"][i] << MESH_SHIFT, data)
-        wins.append(load_node(card, i, board["mesh_of"][i], imem, spad, a.load))
+        if a.dram_of in (None, i) and i not in a.dram_elsewhere:
+            if a.paint:
+                card.write(base, bytes(size))
+                for rg in regions(board, i):
+                    if rg[2] == RG_DRAM_SHARED and rg[0] not in painted:
+                        card.write(rg[0], bytes(rg[1]))
+                        painted.add(rg[0])
+            for pa, data in segments(image):
+                if pa >= UIMG:
+                    card.write(base + pa - UIMG, data)
+            for pa, data in dram:
+                card.write(pa | board["mesh_of"][i] << MESH_SHIFT, data)
+        if a.dram_of is None:
+            wins.append(load_node(card, i, board["mesh_of"][i], imem, spad, a.load))
     t_load = time.monotonic() - t0
+    if a.dram_of is not None:
+        return {
+            "ok": True,
+            "load_seconds": t_load,
+            "run_seconds": 0.0,
+            "nodes": [],
+            "measures": {},
+            "model_status": {},
+        }
     for w in reversed(wins):
         w.boot()
     t1 = time.monotonic()
@@ -165,12 +185,13 @@ def run(a, board: dict) -> dict:
             status[i] = w.status()
         if all(s & 0xC for s in status):
             break
-        if time.monotonic() - shown >= PROGRESS_SECONDS:
+        if a.log == "ring" and time.monotonic() - shown >= PROGRESS_SECONDS:
             shown = time.monotonic()
             for i in range(n):
                 nd = klog.parse(card.read(log_at[i], 64) + bytes(LOG - 64))
                 print(f"[{i}] at {shown - t1:.0f}s: {klog.describe(nd)}", flush=True)
-        card.idle()
+        if card.sim or a.log == "ring":
+            card.idle()
     wall = time.monotonic() - t1
     nodes = []
     for i, w in enumerate(wins):
@@ -181,7 +202,9 @@ def run(a, board: dict) -> dict:
                 "exit": card.t.read64(w.base + rv64load.R_EXIT),
                 "halt_pc": card.t.read64(w.base + rv64load.R_HALTPC),
                 "console": console[i],
-                **klog.parse(card.read(log_at[i], LOG)),
+                **klog.parse(
+                    card.read(log_at[i], LOG) if a.log == "ring" else bytes(LOG)
+                ),
             }
         )
     meas: dict[str, dict[str, int]] = {}
@@ -211,11 +234,27 @@ def main() -> int:
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--model", help="a Verilated card build directory")
     src.add_argument("--jtag", action="store_true", help="the card, through Vivado")
+    src.add_argument("--xdma", action="store_true", help="the card, over PCIe on Linux")
     ap.add_argument("--image", required=True)
     ap.add_argument("--cmd", default="")
     ap.add_argument("--flags", default="")
     ap.add_argument("--tick", type=int, default=0)
     ap.add_argument("--load", choices=("burn", "axi"), default=None)
+    ap.add_argument(
+        "--log",
+        choices=("ring", "console"),
+        default="ring",
+        help="after the run read the kernel log ring from DRAM, or keep the console",
+    )
+    ap.add_argument(
+        "--dram-of", type=int, help="write one node's DRAM and stop, nothing starts"
+    )
+    ap.add_argument(
+        "--dram-elsewhere",
+        type=lambda s: {int(n) for n in s.split(",")},
+        default=set(),
+        help="nodes whose DRAM an earlier --dram-of run wrote",
+    )
     ap.add_argument("--timeout", type=float, default=1800.0)
     ap.add_argument("--out", default="kos_card_run")
     ap.add_argument("--json")
@@ -225,7 +264,7 @@ def main() -> int:
         default=None,
         help="zero the spans before loading: needed on the card (ECC, and an "
         "earlier run's bytes); a fresh model's DRAM starts zero (default: yes "
-        "with --jtag, no with --model)",
+        "on the card, no with --model)",
     )
     a = ap.parse_args()
     a.load = a.load or ("burn" if a.model else "axi")

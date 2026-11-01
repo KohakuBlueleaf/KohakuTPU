@@ -165,6 +165,11 @@ class LoadWindow:
         for ch in text.encode():
             self._w(R_STDIN, ch)
 
+    def write_imem(self, data: bytes) -> None:
+        """Stream `data` into the instruction memory from byte 0 (4-byte words)."""
+        self.image = dict(enumerate(data))
+        self._stream(REGION_IMEM, 0, len(data), 4)
+
     def write_spad(self, offset: int, data: bytes) -> None:
         """Stream `data` into the scratchpad from byte `offset` (8-byte words).
         Only while the core is stopped: both share the scratchpad's write port."""
