@@ -70,6 +70,9 @@ pub(crate) fn word(t: &Target, source: (u32, u8, u8), raw: W256) -> Result<(), S
             if g("npeer") > isa.cfg.max_peers as i64 {
                 return Err("FILL peer count exceeds max_peers".into());
             }
+            if g("sel") != 0 && g("npeer") != 0 && g("n") > t.facts.mg_shared_b {
+                return Err("shared B FILL exceeds mg.shared_b_max".into());
+            }
             let width = isa.cfg.coord_bits();
             let peers = g("peers") as u64;
             if peers >> (g("npeer") as u32 * width) != 0 {

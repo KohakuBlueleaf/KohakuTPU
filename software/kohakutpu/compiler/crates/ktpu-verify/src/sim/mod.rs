@@ -158,6 +158,8 @@ pub(crate) struct Sim<'t> {
     pub windows: Vec<Window>,
     /// DATA_RECEIVED counted by a node: (node, receiver, send clock, landing clock)
     pub acks: Vec<(usize, usize, Clock, Clock)>,
+    /// Adds across nodes in send order: (sending mesh, sender, send clock)
+    pub far_adds: Vec<(u32, usize, Clock)>,
     /// Vector core words decoded, by word (the cores' `xr` is the target's).
     pub core_words: HashMap<u64, Option<units::vector::CoreDecoded>>,
 }
@@ -186,6 +188,7 @@ impl<'t> Sim<'t> {
             arrived: HashMap::default(),
             windows: Vec::new(),
             acks: Vec::new(),
+            far_adds: Vec::new(),
             core_words: HashMap::default(),
         }
     }

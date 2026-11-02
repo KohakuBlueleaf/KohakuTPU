@@ -86,6 +86,8 @@ pub struct Facts {
     /// `mg.acc_bits`), each rounded up.
     pub mg_entry_granules: i64,
     pub mg_subtile_granules: i64,
+    /// `mg.shared_b_max`: entries of the longest shared B fill.
+    pub mg_shared_b: i64,
     /// `mg.dq_limit` (sub-tiles the drain queue holds before a sweep is
     /// held), `mg.wburst`.
     pub mg_dq_room: i64,
@@ -219,6 +221,7 @@ impl Target {
             mg_entry_granules: (int(m, "mg.entry_bits")? + word_bits - 1) / word_bits,
             mg_subtile_granules: (lanes * lanes * int(m, "mg.acc_bits")? + word_bits - 1)
                 / word_bits,
+            mg_shared_b: int(m, "mg.shared_b_max")?,
             mg_dq_room: int(m, "mg.dq_limit")?,
             mg_burst: int(m, "mg.wburst")?,
             sr_fifo: at(m, "sr.fifo_depth")?.as_i64().unwrap_or(0),

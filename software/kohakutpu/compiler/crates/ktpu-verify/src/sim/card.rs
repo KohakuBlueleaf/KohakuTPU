@@ -84,6 +84,10 @@ impl Sim<'_> {
             );
             return;
         };
+        if sink.far.is_some() && sink.count {
+            let from = self.sender_key(u).0;
+            self.far_adds.push((from, owner, clock.clone()));
+        }
         let mut rel = vec![clock.clone()];
         rel.extend(self.joins(dst, sink.buf));
         let port = self.units[dst].port;

@@ -153,6 +153,9 @@ pub fn emit(
         let (cols, rows) = (b / lanes, a / lanes);
         let walk: &Walk = &[(nb * a, 2 * b), (cols, wb)];
         let dwalk: &Walk = &[(nb, ra * xp), (a, xp), (cols, wb)];
+        // Tiles read the whole rectangle; whole lines first, so the copy is
+        // the one move writing part of a line (L1.VER.017).
+        t.fill_value(&sx.whole(), 0, None, None)?;
         t.copy(
             &sx.whole(),
             &x.whole(),
@@ -193,6 +196,9 @@ pub fn emit(
             (&[(padded, row * wb), (row, wb)], None),
             Some(1),
         )?;
+    }
+    if class.is_none() && padded * (vl / lanes) > words {
+        t.fill_value(&st.whole(), 0, None, None)?;
     }
     let looped = class.is_some();
     let walk: &Walk = &[(nb, a * p), (rg, band * p), (cw, wb), (band, p)];
@@ -283,6 +289,9 @@ pub fn reverse_kernel(src_bytes: i64, levels: &Walk, at: i64, n: i64, m: &Machin
             y.clone()
         };
         let dwalk: &Walk = &[(words, wb)];
+        if trips * ROWS * (vl / lanes) > words {
+            t.fill_value(&s.whole(), 0, None, None)?;
+        }
         t.copy(
             &s.whole(),
             &x.whole(),

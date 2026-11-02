@@ -322,7 +322,8 @@ int ka_engine_fetch(struct ka_engine *e, unsigned u, unsigned port, uint64_t add
     ka_nm_wr(KA_NM_ARG1, 0);
     ka_nm_wr(KA_NM_ARG2, ((uint64_t)((s->y << 4) | s->x) << 40) | (1UL << 30));
     ka_nm_wr(KA_NM_ARG3, (addr << 24) | (0x60UL << 8) | n);
-    while (ka_nm_rd(KA_NM_STAT) & KA_NM_STAT_OFFERED) {
+    if ((ka_nm_rd(KA_NM_STAT) & KA_NM_STAT_OFFERED) && wait_until(e, not_offered, u, KA_WAIT_OFFER)) {
+        return e->status;
     }
     ka_nm_wr(KA_NM_GO, 1);
     e->t_last = ka_cycles();

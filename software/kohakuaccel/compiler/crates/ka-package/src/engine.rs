@@ -136,9 +136,13 @@ impl<'a> Stream<'a> {
     }
 
     /// A WAIT on `src` for `want`, left out when `want` is not positive
-    /// (L0.DE.006, L0.DE.030).
+    /// (L0.DE.006, L0.DE.030). The engine reads a count within half its range,
+    /// so a target further behind what was sent would hold forever: the wait
+    /// is for the oldest count it can still read.
     fn wait(&mut self, src: u64, want: i128) {
         let code = wait_code();
+        let sent = self.sent.get(src as usize).copied().unwrap_or(self.gos);
+        let want = want.max(sent - (self.f.ctr_mask() >> 1) as i128);
         if want > 0 || mutant::on("l0.lower/wait_always") {
             self.put(code, src << 56 | (want as u64 & self.f.ctr_mask()));
         }
@@ -523,4 +527,77 @@ pub fn entries(pkg: &Package, step: &Step) -> Vec<(u64, u64)> {
             (w.get(8 * j, 8), w.limb(64 * (j + 1)))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::format::Unit;
+
+    fn facts() -> Facts {
+        Facts {
+            package_magic: 0,
+            package_version: 0,
+            header_bytes: 0,
+            regs: 0,
+            unbounded: 1 << 32,
+            engine_units: 16,
+            counter_bits: 12,
+            max_pkg_units: 16,
+            max_buffers: 16,
+            ring_depth: 16,
+            mover_span: 0,
+            inst_depth: 512,
+            il_slots: 0,
+            boot_version: 0,
+            boot_max_units: 16,
+            boot_regions: 0,
+            addr_bits: 40,
+            word_bytes: 32,
+            mover_levels: 0,
+            mover_max_index: 0,
+            units: Default::default(),
+            fetch_port: None,
+            mesh: 0,
+        }
+    }
+
+    /// The engine's own test: `(count - want) mod 4096` below 2048 releases.
+    fn released(count: u64, want: u64) -> bool {
+        count.wrapping_sub(want) & 0xFFF < 2048
+    }
+
+    #[test]
+    fn a_wait_far_behind_what_was_sent_still_releases() {
+        let unit = Unit {
+            type_code: 0,
+            x: 1,
+            y: 1,
+            mesh: 0,
+            credit: 16,
+            fetch: 0,
+        };
+        let pkg = Package {
+            units: vec![unit],
+            steps: vec![
+                Step::new(Op::Dispatch, 0, 3000, 0, 0),
+                Step::new(Op::Await, 0, 1, 0, 0),
+                Step::new(Op::End, 0, 0, 0, 0),
+            ],
+            payloads: vec![Word::ZERO; 3000],
+            ..Package::default()
+        };
+        let low = lower(&pkg, &facts()).unwrap();
+        let waits: Vec<u64> = low
+            .steps
+            .iter()
+            .filter(|s| s.op == Op::Engine)
+            .flat_map(|s| entries(&low, s))
+            .filter(|&(code, _)| code == WAIT)
+            .map(|(_, value)| value & 0xFFF)
+            .collect();
+        // Every word sent has retired: the unit's count is 3000 at each late wait.
+        let late = &waits[waits.len() - 2..];
+        assert!(late.iter().all(|&want| released(3000, want)), "{late:?}");
+    }
 }

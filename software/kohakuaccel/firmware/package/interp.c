@@ -668,8 +668,14 @@ static inline __attribute__((always_inline)) int de_mb(unsigned r, uint64_t v)
     return de_push(KA_DE_MB(r), v);
 }
 
+/* The engine compares a count within half its range, so a target further behind
+ * than that would read as ahead and hold forever: wait for the oldest it can
+ * still read. In-flight words stay under KA_FETCH_DEPTH, so that target is near. */
 static int de_wait(unsigned src, uint32_t want)
 {
+    if (src < eng.n && eng.u[src].sent > want + KA_DE_CTR_MASK / 2) {
+        want = eng.u[src].sent - KA_DE_CTR_MASK / 2;
+    }
     return want ? de_push(KA_DE_WAIT, (uint64_t)src << 56 | (want & KA_DE_CTR_MASK)) : 0;
 }
 

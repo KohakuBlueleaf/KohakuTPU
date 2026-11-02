@@ -362,6 +362,9 @@ fn emit_shuffle(t: &mut Trace, sh: &Shuffle, bufs: &Bufs, mask: &Buf, hw: &Hw) -
     let (lanes, bb, word) = (hw.lanes, sh.b, hw.word);
     let (g_, rv) = (lanes / bb, sh.nb * sh.ap / hw.row);
     let (s, y) = (&bufs["sh"], &bufs[&sh.dst]);
+    if sh.ap > sh.a {
+        t.fill_value(&s.whole(), 0, None, None)?;
+    }
     for tt in 0..bb {
         let walk = [(sh.nb, sh.sb * 2), (sh.a / lanes, bb * word)];
         let dwalk = [(sh.nb, sh.ap * 2), (sh.a / lanes, word)];

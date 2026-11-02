@@ -1,6 +1,8 @@
 //! What a finished run leaves (L1.VER.007) and how bursts met at the ports
 //! (L1.VER.008).
 
+use std::collections::HashMap;
+
 use crate::model::finding::{Finding, Kind};
 
 use super::{Kinded, Sim};
@@ -112,6 +114,7 @@ impl Sim<'_> {
             }
         }
         out.extend(self.collisions());
+        out.extend(self.far_add_findings());
         for w in &self.windows {
             let Some(lead_at) = self.lead_arrival(&w.group, w.lead, w.k) else {
                 continue;
@@ -128,6 +131,28 @@ impl Sim<'_> {
                         format!(
                             "a burst from {} may queue behind the responses of shared fill {} before this unit reaches it",
                             self.procs[*owner].name, w.k
+                        ),
+                    ));
+                }
+            }
+        }
+        out
+    }
+
+    /// P4: a node's adds across nodes go one at a time, whatever their
+    /// destinations: each send follows the previous sender's send.
+    fn far_add_findings(&self) -> Vec<Finding> {
+        let mut out = Vec::new();
+        let mut last: HashMap<u32, (usize, &crate::model::clock::Clock)> = HashMap::new();
+        for (mesh, owner, sent) in &self.far_adds {
+            if let Some((prev, at)) = last.insert(*mesh, (*owner, sent)) {
+                if prev != *owner && at.at(prev) > sent.at(prev) {
+                    out.push(Finding::new(
+                        Kind::Port,
+                        self.procs[*owner].name.clone(),
+                        format!(
+                            "an add across nodes is not ordered after the one from {}",
+                            self.procs[prev].name
                         ),
                     ));
                 }

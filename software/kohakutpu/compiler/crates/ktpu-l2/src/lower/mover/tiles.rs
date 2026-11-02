@@ -177,6 +177,10 @@ pub fn tile_transpose(
         }
     }
     let bytes = nb * a * b * 2;
+    // A tile overwrites what a later tile reads.
+    if sn == dn && soff < doff + bytes && doff < soff + bytes {
+        return Err(err("tile_transpose: source and destination overlap"));
+    }
     let mut accesses = Vec::new();
     for unit in &units {
         accesses.extend([

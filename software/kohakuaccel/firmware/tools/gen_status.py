@@ -10,6 +10,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from typing import cast
 
 ROOT = Path(__file__).resolve().parents[4]
 HEADER = ROOT / "software/kohakuaccel/firmware/include/ka/package/status.h"
@@ -18,7 +19,8 @@ OUT = ROOT / "software/kohakuaccel/driver/kohakuaccel/driver/node/queue/status.p
 
 def enum(text: str, name: str) -> dict:
     """{item: value} of `enum name { ... }`."""
-    body = re.search(rf"enum\s+{name}\s*\{{(.*?)\}}", text, re.DOTALL).group(1)
+    found = re.search(rf"enum\s+{name}\s*\{{(.*?)\}}", text, re.DOTALL)
+    body = cast(re.Match, found).group(1)
     return {
         k: int(v, 0)
         for k, v in re.findall(
