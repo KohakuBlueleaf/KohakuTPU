@@ -5,6 +5,7 @@ import json
 from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 from kohakutpu.application.runtime import packages as build
 from kohakutpu.application.runtime.machine import machine_of
@@ -30,11 +31,11 @@ BOUND_BUILDS = {}
 class Compiled:
     name: str
     l2_text: str
-    l1: M.Module
+    l1: M.Module | M.Text
     machine: object
-    verdict: dict | None = None
-    packages: dict | None = None
-    traced: Traced | None = None
+    verdict: Any = None
+    packages: Any = None
+    traced: Any = None
     stack: str = "rust"
     level: str = "l2"
     bound: str | None = None
@@ -54,11 +55,13 @@ class Compiled:
     def l1_text(self):
         return self.l1.source
 
-    def programs(self, binds):
-        key = tuple(sorted(binds.items()))
+    def programs(self, binds, node=None):
+        """Each mesh's program at `binds`; given `node`, a one-mesh kernel on
+        that node, keyed by it."""
+        key = (node, *sorted(binds.items()))
         got = self._progs.get(key)
         if got is None:
-            got = self._prebuilt(binds)
+            got = self._prebuilt(binds, node)
             self._progs[key] = got
         _PROGS[(id(self), key)] = self
         _PROGS.move_to_end((id(self), key))
@@ -67,7 +70,7 @@ class Compiled:
             owner._progs.pop(old, None)
         return got
 
-    def _prebuilt(self, binds):
+    def _prebuilt(self, binds, node: Any = None):
         packages, verdict = self.packages, self.verdict
         apart = any(arena_name(a) not in binds for a in self.scratch or ())
         if self.bound is not None or apart:
@@ -94,8 +97,13 @@ class Compiled:
                 )
             found, text, fetch = self._meta
         out = {}
+        moved = node is not None and list(packages) == [0]
+        mesh: Any
         for mesh, p in packages.items():
             at = [binds[q] if q in binds else int(q[1:], 16) for q in p["params"]]
+            raw = p["bytes"]
+            if moved:
+                mesh, raw = node, _rehomed(raw, text, node)
             recipe = None
             if (
                 self.native_recipe
@@ -106,7 +114,7 @@ class Compiled:
                 recipe = self._recipes.get(mesh)
                 if recipe is None:
                     recipe = self._recipes[mesh] = rs._rs.LaunchRecipe(
-                        p["bytes"],
+                        raw,
                         text,
                         mesh,
                         p.get("template_json"),
@@ -116,7 +124,7 @@ class Compiled:
                         wire=self.wire_recipe,
                     )
             out[mesh] = build.Prebuilt(
-                p["bytes"],
+                raw,
                 tuple(at),
                 text,
                 mesh,
@@ -128,7 +136,12 @@ class Compiled:
                 template_params=p.get("template_params"),
                 recipe=recipe,
             )
-        return {None: out[0]} if list(out) == [0] else out
+        return {None: out[0]} if not moved and list(out) == [0] else out
+
+
+@functools.lru_cache(maxsize=COMPILED_KEPT)
+def _rehomed(raw, machine_json, node):
+    return rs._rs.package_rehome(raw, machine_json, node)
 
 
 def arena_name(arena):
@@ -169,7 +182,7 @@ def compile(source, name=None, machine=None, level="l2"):
     machine = machine or machine_of(rs.BASE)
     traced = source if isinstance(source, Traced) else None
     module = source if isinstance(source, M.Module) else None
-    text = traced.text if traced else module.source if module else source
+    text: Any = traced.text if traced else module.source if module else source
     if name is None:
         name = traced.name if traced else (module or M.read(text)).names()[0]
     owner = rs._COMPILER_OWNER.get()

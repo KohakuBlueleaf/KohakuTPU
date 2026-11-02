@@ -63,6 +63,9 @@ pub struct ValueData {
     /// A one-row view read `gt4` (or math over such rows alone): its rows
     /// are the band's broadcast, not the data's rows.
     pub row_bcast: bool,
+    /// Loaded through a `read_map`: L1 holds its source words in address
+    /// order, so only its unpack puts them in the value's order.
+    pub composed: bool,
 }
 
 impl ValueData {
@@ -285,6 +288,7 @@ impl Trace {
             tiled: false,
             lane: false,
             row_bcast: false,
+            composed: false,
         };
         let node = g::Node::Value {
             op,

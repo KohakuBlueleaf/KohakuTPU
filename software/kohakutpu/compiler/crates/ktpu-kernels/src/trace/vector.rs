@@ -146,7 +146,9 @@ impl Trace {
         self.need(Some(g::UnitKind::Vc), "load")?;
         let args = vec![g::Operand::View(buf.whole().graph())];
         let ty = (buf.spec.dtype, shape, g::ValSpace::L1, Some(g::Mode::Gt4));
-        Ok(self.new_value(Op::Load, args, read.attrs(), ty, "xl", None, at))
+        let v = self.new_value(Op::Load, args, read.attrs(), ty, "xl", None, at);
+        self.values[v.0].composed = true;
+        Ok(v)
     }
 
     /// `vN = unpack X` (DSL.VEC.002, .003): to registers, once a value
@@ -432,6 +434,7 @@ impl Trace {
         let p = match x {
             Arg::Val(v)
                 if self.value(v).space == g::ValSpace::L1
+                    && !self.value(v).composed
                     && self.value(v).tiled == view.buf.tiled()
                     && self.value(v).dtype == spec.dtype =>
             {

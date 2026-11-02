@@ -122,6 +122,28 @@ impl Trace {
         self.mover(g::MoverOp::Copy, dst, Some(src), &kw, here())
     }
 
+    /// `tile_transpose DST <- SRC mask=M nb=.. a=.. b=..`: f16 `[nb, a, b]` to
+    /// `[nb, b, a]` in 32 x 32 tiles on the vector cores, `mask` the lane masks.
+    #[track_caller]
+    pub fn tile_transpose(
+        &mut self,
+        dst: &View,
+        src: &View,
+        mask: &View,
+        nb: i64,
+        a: i64,
+        b: i64,
+    ) -> R<()> {
+        let at = here();
+        let kw = [
+            ("mask", Kw::Index(mask)),
+            ("nb", Kw::Int(Some(nb))),
+            ("a", Kw::Int(Some(a))),
+            ("b", Kw::Int(Some(b))),
+        ];
+        self.mover(g::MoverOp::TileTranspose, dst, Some(src), &kw, at)
+    }
+
     /// `quant DST <- SRC` (DSL.MOV.003).
     #[track_caller]
     pub fn quant(&mut self, dst: &View, src: &View) -> R<()> {

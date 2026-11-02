@@ -719,6 +719,9 @@ def package_build(
     `[name, *args, {kw}]`; with `lower`, lowered for the dispatch engine.
     Raises `Refused`, or ValueError on a call that does not parse."""
 
+def package_rehome(package: bytes, machine_json: str, mesh: int) -> bytes:
+    """A one-mesh package's wire bytes for mesh `mesh`. Raises `Refused`."""
+
 def package_read(
     package: bytes,
     machine_json: str,

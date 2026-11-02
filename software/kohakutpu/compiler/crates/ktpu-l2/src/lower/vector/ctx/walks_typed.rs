@@ -18,8 +18,8 @@ pub(super) fn unpack_line_typed(src: &Val, i: i64, dest: &Symbol) -> Stmt {
     } else {
         let nb = src.rows_w / 2;
         let (b, j) = (i / nb, i % nb);
-        let base = src.buf + if src.bcast { 0 } else { 4 * b * src.rows_w } + 2 * j;
-        let stride = if src.bcast { 0 } else { src.rows_w };
+        let stride = if src.bcast { 0 } else { src.row_pitch };
+        let base = src.buf + 4 * b * stride + 2 * j;
         (base, "f16", vec![walk_option(Walk::flat(stride, 1))])
     };
     ir::memory(

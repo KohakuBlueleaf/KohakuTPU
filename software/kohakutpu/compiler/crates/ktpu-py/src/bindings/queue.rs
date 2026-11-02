@@ -88,11 +88,10 @@ fn run_with_layout(
     }
     let base: u64 = queue.getattr("base")?.extract()?;
     let sq_n: u64 = queue.getattr("sq_n")?.extract()?;
-    let cached: bool = queue.getattr("head_cache")?.extract()?;
     let tail: u64 = queue.getattr("sq_tail")?.extract()?;
     let mem = queue.getattr("mem")?;
     let mut head: u64 = queue.getattr("_sq_head_seen")?.extract()?;
-    if !cached || tail - head >= sq_n {
+    if tail - head >= sq_n {
         head = mem
             .call_method1("read64", (base + layout.sq_head,))?
             .extract()?;

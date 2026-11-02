@@ -14,7 +14,8 @@ mod padding;
 pub use mapped::fits as composed_fits;
 
 /// Select a permitted backend. An op override never widens board admission.
-/// A destination of K pairs (`nk` >= 2) takes vector_mx7 (L2.MOV.018, RUL.099).
+/// A destination of K pairs (`nk` >= 2) takes vector_mx7 (L2.MOV.018, RUL.099),
+/// and so does a read map or in-place padding where the board allows it.
 pub fn quant_backend(body: &Body, op: &Op, tg: &Target) -> Result<bool> {
     let policy = &tg.machine.conversion.fp16_mx7;
     let paired = op
@@ -25,8 +26,14 @@ pub fn quant_backend(body: &Body, op: &Op, tg: &Target) -> Result<bool> {
         .is_some_and(|b| b.get("nk") >= 2)
         && !on("l2.packing/mover-paired")
         && !crate::mutant::before_rul099();
+    let vector_only = ["read_map", "pad_cols", "pad"]
+        .iter()
+        .any(|k| op.st.kw(k).is_some());
     let backend = match op.st.kw("backend") {
         None if paired => PackingBackend::VectorMx7,
+        None if vector_only && policy.allowed_backends.contains(&PackingBackend::VectorMx7) => {
+            PackingBackend::VectorMx7
+        }
         None => policy.preferred_backend,
         Some(Term::Name(name)) if name == "mover_quant" => PackingBackend::MoverQuant,
         Some(Term::Name(name)) if name == "vector_mx7" => PackingBackend::VectorMx7,

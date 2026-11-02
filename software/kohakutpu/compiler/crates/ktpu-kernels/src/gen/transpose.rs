@@ -3,7 +3,10 @@
 //! (`kernels/transpose.py`, TG.RUN.006, .007). Elements move inside a word
 //! only in a vector core's lanes; the mover moves everything else.
 //!
-//! With b = `mg.lanes` (a GT4 band, b x b lanes a word):
+//! Whole 32 x 32 tiles run on the cores alone (`tile_transpose`, L2); shapes
+//! between whole tiles are copied into a scratch of them and the corner copied
+//! back out. Rows past a stride, and classes, with b = `mg.lanes` (a GT4 band,
+//! b x b lanes a word):
 //! 1. mover GT4: b rows of a word's columns to b b x b sub-tiles;
 //! 2. vector core: each sub-tile transposed in its chunk -- lane b*i + j
 //!    takes lane b*j + i: log2(b) bit swaps, each a crossbar xor (5, then
@@ -25,6 +28,9 @@ use ktpu_machine::Machine;
 
 /// Rows of `vc.vlmax` values a vector-core trip transforms.
 pub const ROWS: i64 = 8;
+
+/// The widest row in bytes a core's descriptor strides over.
+const TILE_PITCH: i64 = (1 << 17) - 1;
 
 const F16_ONE: u16 = 0x3c00;
 
@@ -131,6 +137,38 @@ pub fn emit(
 ) -> R<()> {
     let (lanes, vl, wb, band) = (hw.lanes, hw.vlmax, hw.word_bytes, hw.band);
     let s = swaps(hw)?;
+    let (ra, rb) = (
+        cdiv(a, hw.kblock) * hw.kblock,
+        cdiv(b, hw.kblock) * hw.kblock,
+    );
+    if class.is_none() && ra.max(rb) * 2 <= TILE_PITCH {
+        let masks = mask.at(&[sl(m0, m0 + s), ALL])?;
+        if (ra, rb) == (a, b) {
+            return t.tile_transpose(&y.whole(), &x.whole(), &masks, nb, a, b);
+        }
+        let shape = [nb * ra * rb / lanes, lanes];
+        let sx = t.buffer(&shape, g::Dtype::F16, vec![])?;
+        let sy = t.buffer(&shape, g::Dtype::F16, vec![])?;
+        let (xp, yp) = (2 * rb, 2 * ra);
+        let (cols, rows) = (b / lanes, a / lanes);
+        let walk: &Walk = &[(nb * a, 2 * b), (cols, wb)];
+        let dwalk: &Walk = &[(nb, ra * xp), (a, xp), (cols, wb)];
+        t.copy(
+            &sx.whole(),
+            &x.whole(),
+            Some((walk, None)),
+            Some((dwalk, None)),
+        )?;
+        t.tile_transpose(&sy.whole(), &sx.whole(), &masks, nb, ra, rb)?;
+        let walk: &Walk = &[(nb, rb * yp), (b, yp), (rows, wb)];
+        let dwalk: &Walk = &[(nb * b, 2 * a), (rows, wb)];
+        return t.copy(
+            &y.whole(),
+            &sy.whole(),
+            Some((walk, None)),
+            Some((dwalk, None)),
+        );
+    }
     let words = nb * a * b / lanes;
     let lines = words / (vl / lanes);
     let (p, rg, cw) = (2 * b, a / band, b / lanes);

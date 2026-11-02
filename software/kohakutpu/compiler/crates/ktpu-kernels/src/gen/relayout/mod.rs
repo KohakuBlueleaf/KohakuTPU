@@ -88,6 +88,8 @@ pub struct Hw {
     /// Bytes every scratch buffer starts on: lines and GT4 entries.
     pub grain: i64,
     pub descriptors: i64,
+    /// Rows and columns the exchange pads a side to (`mg.kblock`).
+    pub tile: i64,
 }
 
 impl Hw {
@@ -105,6 +107,7 @@ impl Hw {
             levels: m.mover.levels as i64,
             grain: lcm(line * word, gt4),
             descriptors: m.vc.descriptors as i64,
+            tile: m.mg.kblock as i64,
         }
     }
 

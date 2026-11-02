@@ -828,11 +828,28 @@ fn pull(
     Ok(done(parts, scratch, t, sw, dw))
 }
 
-/// Axis `j` contiguous in the source, the innermost destination axis (A
-/// elements) strided there: `tx[nb, A', B']` from the source (padding 0),
-/// the exchange into `ty[nb, B', A']`, the destination from it; a side of
-/// whole words one walk, else runs. A batch axis of source stride 0 repeats a
-/// block: only the held blocks are exchanged, the out side writes the repeats.
+/// Axis `first` and those the source walks right past it, inner first, while
+/// the side is under a tile: padding a side to a tile costs more than walking
+/// its axes out again. `(axes, elements)`.
+fn side(axes: &[Axis], first: usize, taken: &[usize], tile: i64) -> (Vec<usize>, i64) {
+    let (mut n, s) = (axes[first].0, axes[first].1);
+    let mut out = vec![first];
+    while s != 0 && n < tile {
+        let next =
+            (0..axes.len()).find(|k| !out.contains(k) && !taken.contains(k) && axes[*k].1 == n * s);
+        let Some(k) = next else { break };
+        out.push(k);
+        n *= axes[k].0;
+    }
+    (out, n)
+}
+
+/// Axis `j` contiguous in the source, the innermost destination axis strided
+/// there, each with the axes [`side`] adds (A and B elements): `tx[nb, A',
+/// B']` from the source (padding 0), the exchange into `ty[nb, B', A']`, the
+/// destination from it; a side of whole words one walk, else runs. A batch
+/// axis of source stride 0 repeats a block: only the held blocks are
+/// exchanged, the out side writes the repeats.
 #[allow(clippy::too_many_arguments)]
 fn transpose(
     axes: &[Axis],
@@ -845,17 +862,23 @@ fn transpose(
     hw: &Hw,
 ) -> R<Result<Plan, Unplanned>> {
     let lanes = hw.lanes;
-    let (a, sa, _) = axes[axes.len() - 1];
-    let (b, _, db) = axes[j];
-    let batch: Vec<Axis> = axes[..axes.len() - 1]
+    let last = axes.len() - 1;
+    let (run, sa, _) = axes[last];
+    let (b_side, b) = side(axes, j, &[last], hw.tile);
+    let (a_side, a) = side(axes, last, &b_side, hw.tile);
+    let in_batch = |k: &usize| !a_side.contains(k) && !b_side.contains(k);
+    let batch: Vec<usize> = (0..last).filter(in_batch).collect();
+    let held: Vec<Axis> = batch
         .iter()
-        .enumerate()
-        .filter(|(k, _)| *k != j)
-        .map(|(_, x)| *x)
+        .map(|&k| axes[k])
+        .filter(|x| x.1 != 0)
         .collect();
-    let held: Vec<Axis> = batch.iter().filter(|x| x.1 != 0).copied().collect();
     let nb: i64 = held.iter().map(|x| x.0).product();
-    let ao = extend(&batch, b, db, a, dat, room, hw);
+    let ao = if a_side.len() > 1 {
+        run
+    } else {
+        extend(&axes[..last], run, dat, room, hw)
+    };
     let ap = ao.max(cdiv(a, lanes) * lanes);
     let bp = cdiv(b, lanes) * lanes;
     let xw = cdiv(cdiv(nb * ap * bp, lanes), hw.line) * hw.line;
@@ -866,9 +889,9 @@ fn transpose(
         ("tx".to_string(), xw / hw.line, hw.line_values()),
         ("ty".to_string(), xw, lanes),
     ];
-    if ao > a {
+    if ao > run {
         let (z0, m) = room.unwrap();
-        if batch.iter().map(|x| x.0).product::<i64>() * b * ao == m - z0 {
+        if axes[..last].iter().map(|x| x.0).product::<i64>() * ao == m - z0 {
             // The out side writes every element of the zero range.
             parts.retain(|p| !matches!(p, Part::Fill(f) if f.dst == "dst"));
             whole = true;
@@ -915,12 +938,29 @@ fn transpose(
         b: bp,
         masks,
     }));
-    let dbs = positions(&batch, dat, 2);
-    let mut out_axes: Vec<Axis> = batch.iter().map(|x| (x.0, 0, x.2)).collect();
-    out_axes.extend([(b, 0, db), (ao, 0, 1)]);
+    // Every axis as `ty` holds it, in destination order.
+    let mut in_ty = vec![0; axes.len()];
+    let mut stride = 1;
+    for &k in &a_side {
+        in_ty[k] = stride;
+        stride *= axes[k].0;
+    }
+    stride = ap;
+    for &k in &b_side {
+        in_ty[k] = stride;
+        stride *= axes[k].0;
+    }
+    stride = ap * bp;
+    for &k in batch.iter().rev().filter(|k| axes[**k].1 != 0) {
+        in_ty[k] = stride;
+        stride *= axes[k].0;
+    }
+    let mut out_axes: Vec<Axis> = (0..axes.len())
+        .map(|k| (axes[k].0, in_ty[k], axes[k].2))
+        .collect();
+    out_axes[last].0 = ao;
     let dl = byte_levels(&out_axes, dat, 2, hw);
-    let out_dense = dense_axes(&batch, b, ao, bp, ap);
-    let sl = byte_levels(&out_dense, 0, 2, hw);
+    let sl = byte_levels(&out_axes, 0, 1, hw);
     match (dl, sl) {
         (Some(dl), Some(sl)) if whole && one_writer(&dl, dat * 2, hw) => {
             parts.push(Part::Words(Words {
@@ -933,11 +973,8 @@ fn transpose(
             }))
         }
         _ => {
-            let src_at = positions(&out_dense[..out_dense.len() - 1], 0, 2);
-            let dst_at: Vec<i64> = dbs
-                .iter()
-                .flat_map(|&p| (0..b).map(move |i| p + i * db))
-                .collect();
+            let src_at = positions(&out_axes[..last], 0, 1);
+            let dst_at = positions(&out_axes[..last], dat, 2);
             let e = Ends {
                 src: "ty",
                 src_words: xw,
@@ -945,7 +982,7 @@ fn transpose(
                 dst: "dst",
                 zero,
             };
-            let r = run_parts(&src_at, &dst_at, a, &e, &mut t, hw);
+            let r = run_parts(&src_at, &dst_at, run, &e, &mut t, hw);
             scratch.extend(staging(&r, hw));
             parts.push(Part::Runs(r));
         }
@@ -969,28 +1006,17 @@ fn transpose_masks() -> Vec<Vec<f32>> {
 }
 
 /// The row length a transpose's out side writes: `a`, or `a` rounded up to
-/// whole lines when each destination row starts on a line and the elements
-/// it adds are in the zero range `room` and no row's elements.
-fn extend(
-    batch: &[Axis],
-    b: i64,
-    db: i64,
-    a: i64,
-    dat: i64,
-    room: Option<(i64, i64)>,
-    hw: &Hw,
-) -> i64 {
+/// whole lines when each destination row (the walk of `lead`) starts on a
+/// line and the elements it adds are in the zero range `room` and no row's
+/// elements.
+fn extend(lead: &[Axis], a: i64, dat: i64, room: Option<(i64, i64)>, hw: &Hw) -> i64 {
     let lv = hw.line_values();
     let ae = cdiv(a, lv) * lv;
     let Some((z0, m)) = room else { return a };
     if ae == a {
         return a;
     }
-    let lead: Vec<Axis> = batch.iter().map(|x| (x.0, 0, x.2)).collect();
-    let rows: Vec<i64> = positions(&lead, dat, 2)
-        .iter()
-        .flat_map(|&p| (0..b).map(move |i| p + i * db))
-        .collect();
+    let rows = positions(lead, dat, 2);
     if rows.iter().any(|r| r.rem_euclid(lv) != 0) {
         return a;
     }

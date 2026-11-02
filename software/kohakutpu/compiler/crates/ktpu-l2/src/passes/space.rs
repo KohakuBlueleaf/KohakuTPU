@@ -59,21 +59,30 @@ pub fn space(p: &Program, t: &Target) -> Result<Program> {
         }
     }
     let r = p.module.reader();
+    let nbytes = |s: &Stmt| -> Result<i64> {
+        let Some(Term::Placed(x, _)) = &s.annot else {
+            unreachable!()
+        };
+        let b = Buffer::of(&Term::Placed(x.clone(), Box::new(Term::name("dram"))))
+            .map_err(|e| r.fail(s, "L2.PASS.004", e))?;
+        Ok(b.nbytes(t))
+    };
+    // Every scratch of a kernel shares one staging window: the room is theirs together.
+    let mut used = 0;
+    for s in stmts
+        .iter()
+        .filter(|s| space_of(s).as_deref() == Some("stage"))
+    {
+        used += nbytes(s)?;
+    }
     let mut out = Vec::new();
     for s in stmts {
         let sp = space_of(&s);
         if sp.as_deref() == Some("mem") || sp.as_deref() == Some("any") {
-            let Some(Term::Placed(x, _)) = &s.annot else {
-                unreachable!()
-            };
-            let b = Buffer::of(&Term::Placed(x.clone(), Box::new(Term::name("dram"))))
-                .map_err(|e| r.fail(&s, "L2.PASS.004", e))?;
-            let to = if b.nbytes(t) <= t.stage_room() {
-                "stage"
-            } else {
-                "dram"
-            };
-            out.push(respaced(&s, to));
+            let size = nbytes(&s)?;
+            let fits = used + size <= t.stage_room();
+            used += if fits { size } else { 0 };
+            out.push(respaced(&s, if fits { "stage" } else { "dram" }));
         } else {
             out.push(s);
         }

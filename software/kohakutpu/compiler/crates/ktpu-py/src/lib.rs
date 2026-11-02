@@ -10,8 +10,9 @@ use pyo3::create_exception;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, VecDeque};
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, OnceLock};
 
 mod bindings;
@@ -28,20 +29,35 @@ const MACHINES_KEPT_DEFAULT: usize = 64;
 const TEMPLATES_KEPT_DEFAULT: usize = 1024;
 const BOUND_KEPT_DEFAULT: usize = 4096;
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+/// A package, its machine and its metadata, by content: a hit copies none of them.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct TemplateCacheKey {
-    package: Arc<[u8]>,
-    machine: Arc<str>,
+    digest: (u64, u64),
     mesh: u32,
-    template: Option<Arc<str>>,
-    images: Option<Arc<str>>,
 }
 
-type CachedTemplate = (
-    Arc<ktpu_l0::Package>,
-    Arc<ktpu_l0::format::template::ParameterTable>,
-    ktpu_l0::Facts,
-);
+impl TemplateCacheKey {
+    fn of(parts: [&[u8]; 4], mesh: u32) -> Self {
+        let (mut a, mut b) = (DefaultHasher::new(), DefaultHasher::new());
+        b.write_u8(1);
+        for part in parts {
+            a.write_usize(part.len());
+            a.write(part);
+            b.write(part);
+            b.write_usize(part.len());
+        }
+        Self {
+            digest: (a.finish(), b.finish()),
+            mesh,
+        }
+    }
+}
+
+struct CachedTemplate {
+    template: ktpu_l0::format::template::Template,
+    facts: ktpu_l0::Facts,
+    buffers: Vec<ktpu_l0::format::Buffer>,
+}
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct BoundCacheKey {
@@ -54,10 +70,13 @@ struct BoundCacheKey {
     count_path: u8,
 }
 
+/// Least-recently-used entries. A use stamps its entry and queues the stamp;
+/// a queued stamp its entry has moved past is skipped, so a use is O(1).
 struct LruMap<K, V> {
     limit: usize,
-    map: HashMap<K, V>,
-    order: VecDeque<K>,
+    map: HashMap<K, (V, u64)>,
+    order: VecDeque<(K, u64)>,
+    stamp: u64,
 }
 
 impl<K: Clone + Eq + Hash, V: Clone> LruMap<K, V> {
@@ -66,6 +85,7 @@ impl<K: Clone + Eq + Hash, V: Clone> LruMap<K, V> {
             limit,
             map: HashMap::new(),
             order: VecDeque::new(),
+            stamp: 0,
         }
     }
 
@@ -80,26 +100,40 @@ impl<K: Clone + Eq + Hash, V: Clone> LruMap<K, V> {
 
     fn set_limit(&mut self, limit: usize) {
         self.limit = limit;
+        self.evict();
+    }
+
+    fn evict(&mut self) {
         while self.map.len() > self.limit {
-            if let Some(old) = self.order.pop_front() {
-                self.map.remove(&old);
-            } else {
+            let Some((old, stamp)) = self.order.pop_front() else {
                 break;
+            };
+            if self.map.get(&old).is_some_and(|got| got.1 == stamp) {
+                self.map.remove(&old);
             }
         }
+        if self.order.len() > 2 * self.map.len() + 64 {
+            let map = &self.map;
+            self.order
+                .retain(|(key, stamp)| map.get(key).is_some_and(|got| got.1 == *stamp));
+        }
+    }
+
+    fn touch(&mut self, key: &K) -> Option<V> {
+        self.stamp += 1;
+        let got = self.map.get_mut(key)?;
+        got.1 = self.stamp;
+        let val = got.0.clone();
+        self.order.push_back((key.clone(), self.stamp));
+        Some(val)
     }
 
     fn get(&mut self, key: &K) -> Option<V> {
         if self.limit == 0 {
             return None;
         }
-        let val = self.map.get(key)?.clone();
-        if self.order.back() != Some(key) {
-            if let Some(pos) = self.order.iter().position(|k| k == key) {
-                self.order.remove(pos);
-            }
-            self.order.push_back(key.clone());
-        }
+        let val = self.touch(key)?;
+        self.evict();
         Some(val)
     }
 
@@ -107,25 +141,16 @@ impl<K: Clone + Eq + Hash, V: Clone> LruMap<K, V> {
         if self.limit == 0 {
             return;
         }
-        if self.map.insert(key.clone(), val).is_some() {
-            if let Some(pos) = self.order.iter().position(|k| k == &key) {
-                self.order.remove(pos);
-            }
-        }
-        self.order.push_back(key);
-        while self.map.len() > self.limit {
-            if let Some(old) = self.order.pop_front() {
-                self.map.remove(&old);
-            } else {
-                break;
-            }
-        }
+        self.stamp += 1;
+        self.map.insert(key.clone(), (val, self.stamp));
+        self.order.push_back((key, self.stamp));
+        self.evict();
     }
 }
 
 struct BindCaches {
     machines: LruMap<String, Arc<Machine>>,
-    templates: LruMap<TemplateCacheKey, CachedTemplate>,
+    templates: LruMap<TemplateCacheKey, Arc<CachedTemplate>>,
     bound: LruMap<BoundCacheKey, Arc<Vec<u8>>>,
     machine_parses: usize,
     machine_hits: usize,
@@ -472,12 +497,16 @@ fn bind<'py>(
             ));
         }
     }
-    let tkey = (!no_cache).then(|| TemplateCacheKey {
-        package: Arc::from(package),
-        machine: Arc::from(machine_json),
-        mesh,
-        template: template_json.map(Arc::from),
-        images: images_json.map(Arc::from),
+    let tkey = (!no_cache).then(|| {
+        TemplateCacheKey::of(
+            [
+                package,
+                machine_json.as_bytes(),
+                template_json.unwrap_or("").as_bytes(),
+                images_json.unwrap_or("").as_bytes(),
+            ],
+            mesh,
+        )
     });
     let cached_template = tkey.as_ref().and_then(|key| {
         let mut guard = bind_caches().lock().unwrap_or_else(|e| e.into_inner());
@@ -501,41 +530,46 @@ fn bind<'py>(
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
                 .and_then(|v| v.get("images").cloned())
         });
-        (Some(Arc::new(table)), images)
+        (Some(table), images)
     } else {
         (None, None)
     };
     let state = cores.as_ref().map(|c| c.inner.clone());
     let run = || {
         let mut state = state;
-        let (pkg_arc, table_arc, f) = match cached_template {
+        let got = match cached_template {
             Some(got) => got,
             None => {
-                let f = ktpu_l0::Facts::of_mesh(&*m, mesh)?;
-                let pkg = ktpu_l0::Package::from_bytes(package, &f)?;
+                let facts = ktpu_l0::Facts::of_mesh(&*m, mesh)?;
+                let pkg = ktpu_l0::Package::from_bytes(package, &facts)?;
                 if let Some(images) = images_pre.as_ref().filter(|v| !v.is_null()) {
                     let isa = ktpu_isa::unit::vector::VecIsa::new(&m)
                         .map_err(|e| ktpu_l0::Refusal::new("IMR.MANIFEST", e.to_string()))?;
                     ktpu_l1::lower::manifest::validate(&pkg, &isa, images)
                         .map_err(|e| ktpu_l0::Refusal::new("IMR.MANIFEST", e.to_string()))?;
                 }
-                let got = (Arc::new(pkg), table_pre.expect("parsed above"), f);
+                let template = ktpu_l0::format::template::Template {
+                    package: pkg,
+                    table: table_pre.expect("parsed above"),
+                };
+                let buffers = template.effective_buffers()?;
+                let got = Arc::new(CachedTemplate {
+                    template,
+                    facts,
+                    buffers,
+                });
                 let mut guard = bind_caches().lock().unwrap_or_else(|e| e.into_inner());
                 guard.template_parses += 1;
-                if let Some(key) = tkey.clone() {
+                if let Some(key) = tkey {
                     guard.templates.insert(key, got.clone());
                 }
                 got
             }
         };
+        let f = &got.facts;
         let bkey = if !no_cache && state.is_none() {
-            let eff_template = ktpu_l0::format::template::Template {
-                package: (*pkg_arc).clone(),
-                table: (*table_arc).clone(),
-            };
-            let buffers = eff_template.effective_buffers()?;
             let addresses = match &translations {
-                Some(tr) => ktpu_l0::format::bind::translate(&buffers, &bindings, tr)?,
+                Some(tr) => ktpu_l0::format::bind::translate(&got.buffers, &bindings, tr)?,
                 None => bindings.clone(),
             };
             let key = BoundCacheKey {
@@ -550,7 +584,7 @@ fn bind<'py>(
             let mut guard = bind_caches().lock().unwrap_or_else(|e| e.into_inner());
             if let Some(bytes) = guard.bound.get(&key) {
                 guard.bound_hits += 1;
-                return Ok((bytes.as_ref().clone(), None));
+                return Ok((bytes, None));
             }
             Some(key)
         } else {
@@ -560,24 +594,20 @@ fn bind<'py>(
             Some(tr) => t.bind_handles_with_path(&bindings, tr, &params, path),
             None => t.bind_with_path(&bindings, &params, path),
         };
-        let mut template = ktpu_l0::format::template::Template {
-            package: (*pkg_arc).clone(),
-            table: (*table_arc).clone(),
-        };
-        if let Some(k) = after {
+        let pkg = if let Some(k) = after {
             // Validate the complete metadata before selecting original step indices.
-            bind_fn(&template)?;
-            template.package = template.package.cut(k)?;
+            bind_fn(&got.template)?;
+            let mut cut = got.template.clone();
+            cut.package = cut.package.cut(k)?;
             if !ktpu_l0::mutant::on("l0.template/cut_sites") {
-                template
-                    .table
-                    .sites
-                    .retain(|s| s.step.is_none_or(|i| i <= k));
+                cut.table.sites.retain(|s| s.step.is_none_or(|i| i <= k));
             }
-        }
-        let pkg = bind_fn(&template)?;
+            bind_fn(&cut)?
+        } else {
+            bind_fn(&got.template)?
+        };
         let pkg = if state.is_some() && pkg.steps.iter().any(|s| s.op == ktpu_l0::Op::Engine) {
-            ktpu_l1::lower::engine::lift(&pkg, &f)
+            ktpu_l1::lower::engine::lift(&pkg, f)
                 .map_err(|e| ktpu_l0::Refusal::new("IMR.ENGINE", e.to_string()))?
         } else {
             pkg
@@ -589,8 +619,8 @@ fn bind<'py>(
         };
         let pkg = match lower {
             true => {
-                let low = ktpu_l0::engine::lower(&pkg, &f)?;
-                ktpu_l0::replay::check(&pkg, &low, &f)?;
+                let low = ktpu_l0::engine::lower(&pkg, f)?;
+                ktpu_l0::replay::check(&pkg, &low, f)?;
                 if state.is_some() {
                     ktpu_l1::lower::engine::compact(&low)
                         .map_err(|e| ktpu_l0::Refusal::new("IMR.ENGINE", e.to_string()))?
@@ -600,11 +630,11 @@ fn bind<'py>(
             }
             false => pkg,
         };
-        let bytes = pkg.to_bytes(&f)?;
+        let bytes = Arc::new(pkg.to_bytes(f)?);
         let mut guard = bind_caches().lock().unwrap_or_else(|e| e.into_inner());
         guard.bound_misses += 1;
         if let Some(key) = bkey {
-            guard.bound.insert(key, Arc::new(bytes.clone()));
+            guard.bound.insert(key, bytes.clone());
         }
         Ok::<_, ktpu_l0::Refusal>((bytes, state))
     };
@@ -617,7 +647,7 @@ fn bind<'py>(
             if let (Some(mut c), Some(state)) = (cores, state) {
                 c.inner = state;
             }
-            Ok(PyBytes::new(py, &bytes))
+            Ok(PyBytes::new(py, bytes.as_slice()))
         }
         Err(e) => {
             let err = Refused::new_err(e.to_string());

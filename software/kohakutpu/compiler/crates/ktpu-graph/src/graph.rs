@@ -440,6 +440,8 @@ pub enum MoverOp {
     Scatter,
     #[serde(rename = "gemm_tiles")]
     GemmTiles,
+    #[serde(rename = "tile_transpose")]
+    TileTranspose,
 }
 
 impl MoverOp {
@@ -454,6 +456,7 @@ impl MoverOp {
             MoverOp::Gather => "gather",
             MoverOp::Scatter => "scatter",
             MoverOp::GemmTiles => "gemm_tiles",
+            MoverOp::TileTranspose => "tile_transpose",
         }
     }
 }

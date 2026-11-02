@@ -182,6 +182,14 @@ pub fn lower(p: &Program, t: &Target, search: &Search) -> Result<String> {
                             "a deferred quant status is a vector_mx7 quant's",
                         ));
                     }
+                    if op.op == "tile_transpose" {
+                        let mut stage = mover::tile_transpose(&body, op, env, t, &mut images)?;
+                        pending.protect(&body, &op.st, &stage.accesses)?;
+                        stage.group = s.tag;
+                        stage.phase = s.phase;
+                        built.push(stage);
+                        continue;
+                    }
                     if op.op == "gemm_tiles" {
                         let mut stage = cluster::tiles::lower(&body, op, env, t, built.len())?;
                         pending.protect(&body, &op.st, &stage.accesses)?;

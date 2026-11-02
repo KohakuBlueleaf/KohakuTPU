@@ -2,14 +2,15 @@
 //! payload tables, each 32-byte aligned (L0.PKG.001-L0.PKG.027).
 
 use super::{
-    fnv1a, Buffer, Kind, Op, Package, Reloc, Step, Unit, ALIGN, BUFFER_BYTES, CHECK_WORD,
-    FLAG_CHECKSUM, FLAG_RX, FNV_BASIS, F_IMM, HEADER_WORDS, PAYLOAD_BYTES, RELOC_BYTES, STEP_BYTES,
-    UNIT_BYTES,
+    fnv1a, signature, unit_word, Buffer, Kind, Op, Package, Reloc, Step, Unit, ALIGN, BUFFER_BYTES,
+    CHECK_WORD, FLAG_CHECKSUM, FLAG_RX, FNV_BASIS, F_IMM, HEADER_WORDS, PAYLOAD_BYTES, RELOC_BYTES,
+    STEP_BYTES, UNIT_BYTES,
 };
 use crate::error::Result;
 use crate::facts::Facts;
 use crate::mutant;
 use crate::refuse;
+use crate::units::machine_units;
 use crate::word::Word;
 
 const MASK32: u64 = 0xFFFF_FFFF;
@@ -375,6 +376,54 @@ impl Package {
             out[at..at + 8].copy_from_slice(&sum.to_le_bytes());
         }
         mutate_bytes(&mut out);
+        Ok(out)
+    }
+
+    /// The wire bytes of a one-mesh package for mesh `f.mesh`: its units and
+    /// buffers moved there, nothing else written, every unit named on `f`.
+    pub fn rehomed(data: &[u8], f: &Facts) -> Result<Vec<u8>> {
+        let pkg = Package::from_bytes(data, f)?;
+        let meshes = pkg.units.iter().map(|u| u.mesh);
+        if meshes
+            .chain(pkg.buffers.iter().map(|b| b.mesh))
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            > 1
+        {
+            return refuse!("L0.PKG.016", "a package over several meshes stays there");
+        }
+        let words = machine_units(f)?;
+        let mut out = data.to_vec();
+        let put_mesh = |out: &mut [u8], at: usize, lsb: u32| {
+            let word = u64_at(out, at) & !(0xFF << lsb) | (f.mesh as u64 & 0xFF) << lsb;
+            out[at..at + 8].copy_from_slice(&word.to_le_bytes());
+        };
+        let (units, buffers) = (u64_at(data, 8 * 5) as usize, u64_at(data, 8 * 6) as usize);
+        for (i, u) in pkg.units.iter().enumerate() {
+            if !words.contains(&unit_word(u.type_code, u.x, u.y, f.mesh as u64)) {
+                return refuse!(
+                    "L0.PKG.016",
+                    "mesh {} has no unit {:#x} at ({}, {})",
+                    f.mesh,
+                    u.type_code,
+                    u.x,
+                    u.y
+                );
+            }
+            put_mesh(&mut out, units + i * UNIT_BYTES, 16);
+        }
+        for i in 0..pkg.buffers.len() {
+            put_mesh(&mut out, buffers + i * BUFFER_BYTES + 24, 8);
+        }
+        if pkg.signature != 0 {
+            out[8..16].copy_from_slice(&signature(&words).to_le_bytes());
+        }
+        if pkg.checksum {
+            let at = check_word() * 8;
+            let total = (u64_at(&out, 16) & MASK32) as usize;
+            let sum = checksum(&out[..total]);
+            out[at..at + 8].copy_from_slice(&sum.to_le_bytes());
+        }
         Ok(out)
     }
 

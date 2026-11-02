@@ -477,9 +477,8 @@ impl Bufs {
     }
 }
 
-/// One rows stage (`rows_stage`): one phase a column block, its rows split
-/// over the cores for row-major buffers, a tile row an instance for a
-/// tiled one (`tile_rows`) of several column blocks.
+/// One rows stage: the rectangle of row trips by column blocks over the cores
+/// ([`rectangle`]). A tiled operand's trips and blocks each lie in one tile.
 #[allow(clippy::too_many_arguments)]
 pub fn rows_stage(
     t: &mut Trace,
@@ -490,20 +489,86 @@ pub fn rows_stage(
     pl: &Plan,
     cores: i64,
     row0: &Idx,
-    tile_rows: Option<i64>,
     hw: &Hw,
 ) -> R<()> {
-    let plain = |r: &Idx| Origin::rows(&r.add(row0), operands.len());
-    if tile_rows.is_none() && (out.wide() || operands.iter().any(Operand::wide)) {
+    if out.wide() || operands.iter().any(Operand::wide) {
         return narrow_stage(t, bufs, e, operands, out, pl, cores, row0, hw);
     }
+    let plain = in_place(row0, operands.len());
+    rectangle(t, bufs, e, operands, out, pl, cores, 0, pl.nblk, &plain, hw)
+}
+
+/// Each of `n` operands and the output at the same row (from `row0`) and column.
+fn in_place(row0: &Idx, n: usize) -> impl Fn(&Idx, &Idx) -> Origin + '_ {
+    move |r, col| {
+        let row = r.add(row0);
+        Origin {
+            ins: vec![(row.clone(), col.clone()); n],
+            out: (row, col.clone()),
+        }
+    }
+}
+
+/// [`rows_stage`] over a buffer tiled every `tile_rows` rows: a trip's rows
+/// step affinely only inside a tile, so past one tile row of several column
+/// blocks each instance takes a tile row.
+#[allow(clippy::too_many_arguments)]
+pub fn tile_stage(
+    t: &mut Trace,
+    bufs: &Bufs,
+    e: &E,
+    operands: &[Operand],
+    out: &Operand,
+    pl: &Plan,
+    cores: i64,
+    row0: &Idx,
+    tile_rows: i64,
+    hw: &Hw,
+) -> R<()> {
+    if pl.nblk == 1 || pl.rp <= tile_rows {
+        return rows_stage(t, bufs, e, operands, out, pl, cores, row0, hw);
+    }
+    let plain = in_place(row0, operands.len());
+    let per = tile_rows / pl.rows;
+    let n = cdiv(pl.nb, per);
+    let at = if n > cores { At::Any } else { At::Var };
     for cb in 0..pl.nblk {
-        if let (true, Some(tr)) = (pl.nblk > 1, tile_rows) {
-            let per = tr / pl.rows;
-            let n = cdiv(pl.nb, per);
-            let at = if n > cores { At::Any } else { At::Var };
-            t.par(n, g::UnitKind::Vc, at, |t, u| {
-                let first = u.mul(per);
+        t.par(n, g::UnitKind::Vc, at, |t, u| {
+            let (first, trips, cb) = (u.mul(per), Idx::Int(per), Idx::Int(cb));
+            rows_trips(
+                t, bufs, e, operands, out, pl, &first, trips, &cb, &plain, hw,
+            )
+        })?;
+    }
+    Ok(())
+}
+
+/// Row trips by column blocks `b0..b0 + blocks`, one stream loop an instance:
+/// a phase a block with its rows split over the cores, or where blocks reach
+/// more cores than rows do, a phase a core's worth of blocks, whole rows each.
+#[allow(clippy::too_many_arguments)]
+fn rectangle(
+    t: &mut Trace,
+    bufs: &Bufs,
+    e: &E,
+    operands: &[Operand],
+    out: &Operand,
+    pl: &Plan,
+    cores: i64,
+    b0: i64,
+    blocks: i64,
+    origin: &dyn Fn(&Idx, &Idx) -> Origin,
+    hw: &Hw,
+) -> R<()> {
+    let end = b0 + blocks;
+    let (by_rows, by_blocks) = (split(pl.nb, cores), split(blocks, cores));
+    if by_blocks.cores > by_rows.cores {
+        let mut next = b0;
+        while next < end {
+            let n = by_blocks.cores.min(end - next);
+            t.par(n, g::UnitKind::Vc, At::Var, |t, c| {
+                let cb = c.add(next);
+                let all = Idx::Int(pl.nb);
                 rows_trips(
                     t,
                     bufs,
@@ -511,19 +576,33 @@ pub fn rows_stage(
                     operands,
                     out,
                     pl,
-                    &first,
-                    Idx::Int(per),
-                    cb,
-                    &plain,
+                    &Idx::Int(0),
+                    all,
+                    &cb,
+                    origin,
                     hw,
                 )
             })?;
-            continue;
+            next += n;
         }
-        let sp = split(pl.nb, cores);
-        t.par(sp.cores, g::UnitKind::Vc, At::Var, |t, c| {
-            let (first, trips) = (sp.start(&c), sp.trips(&c));
-            rows_trips(t, bufs, e, operands, out, pl, &first, trips, cb, &plain, hw)
+        return Ok(());
+    }
+    for cb in b0..end {
+        t.par(by_rows.cores, g::UnitKind::Vc, At::Var, |t, c| {
+            let (first, trips) = (by_rows.start(&c), by_rows.trips(&c));
+            rows_trips(
+                t,
+                bufs,
+                e,
+                operands,
+                out,
+                pl,
+                &first,
+                trips,
+                &Idx::Int(cb),
+                origin,
+                hw,
+            )
         })?;
     }
     Ok(())
@@ -589,27 +668,22 @@ fn narrow_stage(
             let s = inner.ins[i].at(&[sl(0, pl.rp), sl(0, cols)])?;
             t.copy(&s, &src, None, None)?;
         }
-        let origin = |r: &Idx| Origin {
+        let origin = |r: &Idx, c: &Idx| Origin {
             ins: (0..operands.len())
                 .map(|i| match moved.contains(&i) {
-                    true => (r.clone(), Idx::Int(-col)),
-                    false => (r.add(row0), Idx::Int(0)),
+                    true => (r.clone(), c.add(-col)),
+                    false => (r.add(row0), c.clone()),
                 })
                 .collect(),
             out: match out.wide() {
-                true => (r.clone(), Idx::Int(-col)),
-                false => (r.add(row0), Idx::Int(0)),
+                true => (r.clone(), c.add(-col)),
+                false => (r.add(row0), c.clone()),
             },
         };
-        for cb in start..end {
-            let sp = split(pl.nb, cores);
-            t.par(sp.cores, g::UnitKind::Vc, At::Var, |t, c| {
-                let (first, trips) = (sp.start(&c), sp.trips(&c));
-                rows_trips(
-                    t, &inner, e, &ops, &tail, pl, &first, trips, cb, &origin, hw,
-                )
-            })?;
-        }
+        let blocks = end - start;
+        rectangle(
+            t, &inner, e, &ops, &tail, pl, cores, start, blocks, &origin, hw,
+        )?;
         if out.wide() {
             let (rr, cc) = out.divmod()?;
             let lo = row0.add(rr);
@@ -634,14 +708,15 @@ fn rows_trips(
     pl: &Plan,
     first: &Idx,
     trips: Idx,
-    cb: i64,
-    origin: &dyn Fn(&Idx) -> Origin,
+    cb: &Idx,
+    origin: &dyn Fn(&Idx, &Idx) -> Origin,
     hw: &Hw,
 ) -> R<()> {
-    let pro = prologue(t, bufs, operands, pl, cb, &Idx::Int(0))?;
+    let col = cb.mul(pl.wc);
+    let pro = prologue(t, bufs, operands, pl, 0, &col)?;
     t.range(trips, |t, k| {
-        let at = origin(&first.mul(pl.rows).add(k.mul(pl.rows)));
-        rows_block(t, bufs, e, operands, out, pl, &at, cb, &pro, hw)
+        let at = origin(&first.mul(pl.rows).add(k.mul(pl.rows)), &col);
+        rows_block(t, bufs, e, operands, out, pl, &at, 0, &pro, hw)
     })
 }
 
@@ -774,7 +849,8 @@ pub(super) fn band_store(
     let (r, c) = &at.out;
     if out.kind == Kind::Row {
         let keys = if pl.nblk > 1 {
-            vec![crate::trace::buffer::at(cb), sl(r, r.add(pl.rows))]
+            let block = c.div(pl.wc).add(cb);
+            vec![crate::trace::buffer::at(block), sl(r, r.add(pl.rows))]
         } else {
             vec![sl(r, r.add(pl.rows))]
         };
@@ -950,18 +1026,7 @@ pub fn rows_kernel(
         let bufs = Bufs::plain(b[..operands.len()].to_vec(), b[operands.len()].clone());
         for (sp, row0, rows) in &parts {
             match rows {
-                None => rows_stage(
-                    t,
-                    &bufs,
-                    e,
-                    operands,
-                    out,
-                    sp,
-                    hw.vc,
-                    &Idx::Int(*row0),
-                    None,
-                    &hw,
-                )?,
+                None => rows_stage(t, &bufs, e, operands, out, sp, hw.vc, &Idx::Int(*row0), &hw)?,
                 Some(rows) => tail_band(t, &bufs, e, operands, out, sp, *row0, *rows, w, &hw)?,
             }
         }
@@ -1061,7 +1126,7 @@ pub(super) fn tail_band(
         out: s.clone(),
         maps,
     };
-    rows_stage(t, &inner, e, &ops, &tail, pl, 1, &Idx::Int(0), None, hw)?;
+    rows_stage(t, &inner, e, &ops, &tail, pl, hw.vc, &Idx::Int(0), hw)?;
     if out.kind == Kind::Row && pl.nblk > 1 {
         let dst = bufs.out.at(&[ALL, sl(row0, row0 + pl.rows)])?;
         t.copy(&dst, &s.at(&[ALL, sl(0, pl.rows)])?, None, None)

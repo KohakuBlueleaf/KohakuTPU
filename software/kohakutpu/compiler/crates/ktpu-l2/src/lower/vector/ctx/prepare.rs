@@ -93,7 +93,8 @@ impl<'a> Ctx<'a> {
             )?),
             (true, None) => return Err(VErr::Value("list index out of range".into())),
         };
-        let (name, off, walk, mut words, kind, rows_w, vrows) = self.walk(o, &view, first, rows)?;
+        let (name, off, mut walk, mut words, kind, rows_w, vrows) =
+            self.walk(o, &view, first, rows)?;
         let t = if o.op == "load" { o.ty.clone() } else { None };
         let bcast = t
             .as_ref()
@@ -148,6 +149,10 @@ impl<'a> Ctx<'a> {
                 format!("a view {off} bytes in: a descriptor starts on a 32-byte word"),
             ));
         }
+        let mut row_pitch = rows_w;
+        if kind == Kind::Rows && mapped.is_none() {
+            (walk, words, row_pitch) = self.span_read(o, walk, words, rows_w);
+        }
         let mut phases = Vec::new();
         let mut advances = Vec::new();
         let mut mapped_span = None;
@@ -163,6 +168,20 @@ impl<'a> Ctx<'a> {
                     shape: tile.shape.clone(),
                 }]
             };
+            // One descriptor walks every trip: a tile whose trips differ is refused
+            // here, and `retile` takes one that holds a trip's words whole.
+            if tiles.iter().any(|t| {
+                t.shape
+                    .descriptor_transfers(self.t, self.t.read.load_gather_words)
+                    .0
+                    != walk.0
+            }) {
+                return Err(self.fail(
+                    &o.st,
+                    "L2.READ.001",
+                    "the trips of a composed load walk different words",
+                ));
+            }
             words = tiles
                 .iter()
                 .map(|t| t.shape.words.len().max(1) as i64)
@@ -245,6 +264,7 @@ impl<'a> Ctx<'a> {
             shared = self.loads.iter().copied().find(|&x| {
                 self.descs[x].words == words
                     && self.descs[x].rows_w == lay
+                    && self.descs[x].row_pitch == lay
                     && !self.descs.iter().any(|s| s.shared == Some(x))
             });
         }
@@ -313,6 +333,7 @@ impl<'a> Ctx<'a> {
         };
         if kind == Kind::Rows {
             d.rows_w = rows_w;
+            d.row_pitch = row_pitch;
             d.bcast = bcast;
         }
         d.shared = shared;

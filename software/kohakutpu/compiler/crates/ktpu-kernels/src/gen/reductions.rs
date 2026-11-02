@@ -161,7 +161,7 @@ pub(super) fn emit(
     for (sp, row, tail) in v::stages(&pl, r, quantum) {
         match tail {
             Some(rows) => v::tail_band(t, &bufs, e, ops, dst, &sp, row, rows, w, hw)?,
-            None => v::rows_stage(t, &bufs, e, ops, dst, &sp, hw.vc, &Idx::Int(row), None, hw)?,
+            None => v::rows_stage(t, &bufs, e, ops, dst, &sp, hw.vc, &Idx::Int(row), hw)?,
         }
     }
     Ok(())
@@ -305,8 +305,10 @@ pub fn wide_fold_kernel(
 /// next level's scratch); the first level computes the reduced expression
 /// on both halves on the fly unless its reads, twice over, pass a core's
 /// memory views or a statistic operand's rows do not split in whole words,
-/// when it is computed into a scratch first. The expression around the
-/// reduction applies to the last row. Operand i of `made` is made inside
+/// when it is computed into a scratch first. A level's rows split into
+/// column blocks once they run out ([`v::rows_stage`]), and its partials
+/// stay on the chip when they fit the staging room. The expression around
+/// the reduction applies to the last row. Operand i of `made` is made inside
 /// the kernel by its plans (`prepared.input_buffer`).
 pub fn column_tree_kernel(
     e: &E,
@@ -364,7 +366,7 @@ pub fn column_tree_kernel(
         let row_split = (n / 2) % hw.stat_rows() != 0 || n % 2 != 0;
         if n > 1 && (2 * k + 1 > views || (ops.iter().any(|o| o.kind == v::Kind::Row) && row_split))
         {
-            let b = t.buffer(&[n, w], g::Dtype::F16, vec![])?;
+            let b = t.buffer_in(&[n, w], g::Dtype::F16, vec![], g::BufSpace::Mem)?;
             emit(t, inputs.clone(), b.clone(), arg, ops, n, w, &full, &hw)?;
             cur = Some(b);
         }
@@ -378,7 +380,7 @@ pub fn column_tree_kernel(
             } else if let (Some("alias_members"), Some(c)) = (mode, &cur) {
                 (c.clone(), v::Operand::full(w, next))
             } else {
-                let b = t.buffer(&[next, w], g::Dtype::F16, vec![])?;
+                let b = t.buffer_in(&[next, w], g::Dtype::F16, vec![], g::BufSpace::Mem)?;
                 (b, v::Operand::full(w, next))
             };
             match &cur {

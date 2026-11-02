@@ -72,6 +72,7 @@ impl Trace {
             tiled: false,
             lane: false,
             row_bcast: false,
+            composed: false,
         };
         let node = g::Node::Value {
             op: g::ValueOp::Gemm,

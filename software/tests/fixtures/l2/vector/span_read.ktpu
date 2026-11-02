@@ -1,0 +1,11 @@
+# Rows that share DRAM lines: one span read, the gaps skipped in L1.
+target ktpu.v9
+
+fn span_read.l2(x: f16[8, 64] @dram, y: f16[8, 32] @dram)
+    par c in 0..1 on vc[c]
+        for t in 0..2
+            xl = load x[t*4 : +4, 0 : +32]      : f16[4, 32] @l1(gt4)
+            v = unpack xl                       : f32[4, 32] @reg(gt4)
+            s = add v, 1.0                      : f32[4, 32] @reg(gt4)
+            sl = pack s                         : f16[4, 32] @l1(gt4)
+            store y[t*4 : +4, 0 : +32] <- sl

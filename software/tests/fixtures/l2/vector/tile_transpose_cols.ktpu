@@ -1,0 +1,4 @@
+target ktpu.v9
+
+fn tile_transpose_cols.l2(x: f16[256, 16] @dram, mask: f16[2, 128] @dram, y: f16[256, 16] @dram)
+    tile_transpose y <- x mask=mask nb=2 a=32 b=64

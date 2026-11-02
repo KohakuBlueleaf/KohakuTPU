@@ -6,11 +6,13 @@
 
 mod packing;
 pub mod quant_status;
+mod tiles;
 mod views;
 mod walk;
 mod xform;
 
 pub use packing::{composed_fits, quant_backend, vector_quant, Finite};
+pub use tiles::tile_transpose;
 
 use ktpu_l1::text::{Env, Stmt, Term};
 

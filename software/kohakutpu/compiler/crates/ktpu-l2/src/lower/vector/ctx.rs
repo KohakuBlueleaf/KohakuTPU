@@ -401,6 +401,27 @@ impl<'a> Ctx<'a> {
         ))
     }
 
+    /// `(walk, words, L1 row pitch)` of a band load: rows that share DRAM
+    /// lines read as one span, their gaps skipped in L1. No more lines are
+    /// fetched, and one burst replaces a burst a row (MEM-01: 4.7 times the
+    /// cycles of the whole span at a stride of two words).
+    fn span_read(&self, o: &Op, walk: Walk, words: i64, rows_w: i64) -> (Walk, i64, i64) {
+        let &[(32, w), (pitch, rows)] = walk.0.as_slice() else {
+            return (walk, words, rows_w);
+        };
+        let row_pitch = pitch / 32;
+        let span = (rows - 1) * row_pitch + w;
+        if o.op != "load"
+            || pitch > i64::from(self.t.machine.card.dram.line_bytes)
+            || span > i64::from(self.t.machine.vc.walk_max)
+            || row_pitch >= self.t.read.direct_stride
+            || 2 * span > self.land - self.top
+        {
+            return (walk, words, rows_w);
+        }
+        (Walk::flat(32, span), span, row_pitch)
+    }
+
     /// The `pack` op that made `name`, in the loop or before it.
     fn packed(&self, name: &str) -> Option<Arc<Node>> {
         let lp: Vec<Arc<Node>> = self
@@ -453,6 +474,7 @@ pub fn l1val(d: Option<&Desc>, t: &Type, buf: i64, tg: &Target) -> Val {
     if let Some(d) = d {
         if d.rows_w != 0 {
             v.rows_w = d.rows_w;
+            v.row_pitch = d.row_pitch;
             v.bcast = d.bcast;
             v.unpk = "f16".into();
         }

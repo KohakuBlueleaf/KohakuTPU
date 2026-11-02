@@ -105,7 +105,7 @@ impl Ctx<'_> {
                         }
                         regs.push(pair);
                     } else {
-                        regs.push(vec![symbol(&vals[0].regs[&r])]);
+                        regs.push(vec![symbol(&vals[0].regs[&self.index(&vals[0], r)?])]);
                     }
                 }
                 if let Some(width) =

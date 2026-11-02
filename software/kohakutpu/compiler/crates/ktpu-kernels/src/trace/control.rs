@@ -138,7 +138,9 @@ impl Trace {
         let nodes = self.facts.nodes;
         let (share, used, ok) = match at {
             At::Var => (per, count / per, count % per == 0 && count / per <= nodes),
-            At::Any => (count / nodes, nodes, count % nodes == 0),
+            At::Any if count % nodes == 0 => (count / nodes, nodes, true),
+            // The place pass queues what no even split takes on one node.
+            At::Any => (count, 1, true),
         };
         if !ok {
             return fail(

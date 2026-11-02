@@ -244,6 +244,8 @@ pub struct Val {
     pub unpk: String,
     /// l1, rows mode: words an L1 row holds; every row reading the one row
     pub rows_w: i64,
+    /// l1, rows mode: words between two rows' first words
+    pub row_pitch: i64,
     pub bcast: bool,
     /// row: the value's columns
     pub cols: i64,
@@ -260,6 +262,7 @@ impl Val {
             per: 8,
             unpk: String::new(),
             rows_w: 0,
+            row_pitch: 0,
             bcast: false,
             cols: 0,
         }
@@ -301,6 +304,7 @@ pub struct Desc {
     /// a streamed send: the odd trips' descriptor (an index into descs)
     pub alt: Option<usize>,
     pub rows_w: i64,
+    pub row_pitch: i64,
     pub bcast: bool,
     /// a store packed over this load's buffers (an index into descs)
     pub shared: Option<usize>,

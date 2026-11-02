@@ -400,18 +400,9 @@ pub fn rows_kernel(
         };
         for (sp, row0, rows) in &parts {
             match rows {
-                None => v::rows_stage(
-                    t,
-                    &bufs,
-                    e,
-                    operands,
-                    out,
-                    sp,
-                    hw.vc,
-                    &Idx::Int(*row0),
-                    None,
-                    &hw,
-                )?,
+                None => {
+                    v::rows_stage(t, &bufs, e, operands, out, sp, hw.vc, &Idx::Int(*row0), &hw)?
+                }
                 Some(rows) => v::tail_band(t, &bufs, e, operands, out, sp, *row0, *rows, w, &hw)?,
             }
         }

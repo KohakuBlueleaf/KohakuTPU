@@ -119,6 +119,7 @@ impl Sim<'_> {
             "gather" | "scatter" => self.indexed(st),
             "gt4" => self.gt4(st),
             "quant" => self.quant(st),
+            "tile_transpose" => self.tile_transpose(st),
             op => Err(format!("no node op {op} in this simulator")),
         }
     }
@@ -219,6 +220,51 @@ impl Sim<'_> {
             let (sr, sc) = (i / scols, i % scols);
             let bytes = self.mem.read(b.element(s0 + sr, t0 + sc)?, 2)?.to_vec();
             self.mem.write(a.element(r0 + r, c0 + c)?, &bytes)?;
+        }
+        Ok(())
+    }
+
+    /// `tile_transpose Y <- X mask=M nb= a= b=`: f16 `[nb, a, b]` to
+    /// `[nb, b, a]`. A set lane of M row k takes lane `l ^ (5 << k)` of each
+    /// 4 x 4 block before the blocks exchange; the real table transposes them.
+    fn tile_transpose(&mut self, st: &Stmt) -> R<()> {
+        let pos = st.positional();
+        let (to, from) = (self.view(pos[0])?, self.view(pos[2])?);
+        let mask = self.view(st.kw("mask").ok_or("tile_transpose mask=")?)?;
+        let (y0, x0) = (self.buf(&to.name)?.at, self.buf(&from.name)?.at);
+        let m0 = self.from_view(&mask)?.base;
+        let arg = |k: &str| int(st.kw(k).ok_or("tile_transpose nb= a= b=")?, &self.env);
+        let (nb, a, b) = (arg("nb")?, arg("a")?, arg("b")?);
+        let mut set = [[false; 128]; 2];
+        for (k, row) in set.iter_mut().enumerate() {
+            for (i, lane) in row.iter_mut().enumerate() {
+                let bits = self.mem.read(m0 + 2 * (128 * k as i64 + i as i64), 2)?;
+                *lane = u16::from_le_bytes([bits[0], bits[1]]) & 0x7fff != 0;
+            }
+        }
+        for n in 0..nb {
+            for ri in (0..a).step_by(32) {
+                for ci in (0..b).step_by(32) {
+                    for i in 0..8 {
+                        for j in 0..8 {
+                            for l in 0..16i64 {
+                                let at = (16 * j + l) as usize;
+                                let l1 = if set[1][at] { l ^ 10 } else { l };
+                                let l0 = if set[0][(16 * j + l1) as usize] {
+                                    l1 ^ 5
+                                } else {
+                                    l1
+                                };
+                                let (r, c) = (ri + 4 * i + (l0 >> 2), ci + 4 * j + (l0 & 3));
+                                let bytes =
+                                    self.mem.read(x0 + 2 * ((n * a + r) * b + c), 2)?.to_vec();
+                                let (ro, co) = (ci + 4 * j + (l >> 2), ri + 4 * i + (l & 3));
+                                self.mem.write(y0 + 2 * ((n * b + ro) * a + co), &bytes)?;
+                            }
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }

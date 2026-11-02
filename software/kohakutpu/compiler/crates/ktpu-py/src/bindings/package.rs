@@ -129,6 +129,19 @@ fn package_build<'py>(
     Ok(PyBytes::new(py, &raw))
 }
 
+/// package_rehome(package, machine_json, mesh) -> bytes: a one-mesh package's
+/// wire bytes for mesh `mesh`, whichever mesh it was built for.
+#[pyfunction]
+fn package_rehome<'py>(
+    py: Python<'py>,
+    package: &[u8],
+    machine_json: &str,
+    mesh: u32,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let raw = Package::rehomed(package, &facts(machine_json, mesh)?).map_err(|r| refused(py, r))?;
+    Ok(PyBytes::new(py, &raw))
+}
+
 /// package_read(package, machine_json, mesh=0, bindings=None, mutant=None)
 /// -> dict: the package's tables as ints (`units`, `buffers`, `steps`,
 /// `relocs`, `payloads`, `signature`, `ack_reserve`, `checksum`), each
@@ -701,6 +714,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(template_prove, m)?)?;
     m.add_function(wrap_pyfunction!(package_build, m)?)?;
     m.add_function(wrap_pyfunction!(package_read, m)?)?;
+    m.add_function(wrap_pyfunction!(package_rehome, m)?)?;
     m.add_function(wrap_pyfunction!(package_stream, m)?)?;
     m.add_function(wrap_pyfunction!(package_format, m)?)?;
     Ok(())

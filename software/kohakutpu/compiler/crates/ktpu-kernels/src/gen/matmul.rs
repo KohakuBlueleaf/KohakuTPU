@@ -659,7 +659,7 @@ pub fn quant_kernel_looped(
     ];
     // The vector packing pads in the quant (`quant pad=1`, L2.MOV.010) and
     // takes the schedule; the mover packs only whole views.
-    let vector = vector_packs(nk, mach);
+    let vector = vector_packs(nk, rows != rp || cols != cp, mach);
     let schedule_on: &[(&str, i64)] = if vector { schedule } else { &[] };
     let scratch = staged || (!vector && (rows != rp || cols != cp));
     let mut key = vec![
@@ -799,7 +799,7 @@ pub fn quant_walk_kernel(
             ),
         ],
     );
-    let vector = vector_packs(nk, mach);
+    let vector = vector_packs(nk, rows != rp || cols != cp, mach);
     let schedule_on: &[(&str, i64)] = if vector { schedule } else { &[] };
     build(&key, mach, ports, given, |t, b| {
         let (x, q) = (&b[0], &b[1]);
@@ -831,16 +831,21 @@ pub fn quant_walk_kernel(
 }
 
 /// Whether a quant into `nk` K blocks a chunk packs on the vector cores
-/// (L2.MOV.018): pairs always, else as the machine prefers.
-pub fn vector_packs(nk: i64, mach: &Machine) -> bool {
-    nk >= 2 || mach.conversion.fp16_mx7.preferred_backend == ktpu_machine::PackingBackend::VectorMx7
+/// (L2.MOV.018): pairs always; a `padded` view where the machine allows it,
+/// the mover's way a zeroed scratch and a copy; else as the machine prefers.
+pub fn vector_packs(nk: i64, padded: bool, mach: &Machine) -> bool {
+    use ktpu_machine::PackingBackend::VectorMx7;
+    let policy = &mach.conversion.fp16_mx7;
+    nk >= 2
+        || policy.preferred_backend == VectorMx7
+        || padded && policy.allowed_backends.contains(&VectorMx7)
 }
 
 /// Whether a contraction over `k` (`nk` K blocks a chunk) takes A as f16
 /// under `knobs` (`activation_fp16`): its quant packs on the vector cores,
 /// which pad rows and columns in place, and A's rows are whole words.
 pub fn takes_f16(k: i64, nk: i64, knobs: &Knobs, mach: &Machine) -> bool {
-    (knobs.activation_any || knobs.activation_fp16 && vector_packs(nk, mach))
+    (knobs.activation_any || knobs.activation_fp16 && vector_packs(nk, false, mach))
         && k % Hw::of(mach).lanes == 0
 }
 
@@ -1046,7 +1051,7 @@ pub fn mm_kernel_made(
             out: b[2 + extras.len()].clone(),
             maps: prepared::mapped(made),
         };
-        v::rows_stage(
+        v::tile_stage(
             t,
             &bufs,
             e,
@@ -1055,7 +1060,7 @@ pub fn mm_kernel_made(
             &pl,
             cores,
             &bt.mul(mm.mp),
-            Some(mm.tm),
+            mm.tm,
             &hw,
         )
     };
