@@ -2,7 +2,7 @@
 with independent requests, one batch split across the nodes.
 
 Prints one JSON object: wall seconds per request of each mode, their ratio to
-one node, each mode's logit error against a CPU run, and the device counters.
+one node, each round's logit error against a CPU run, and the device counters.
 """
 
 import argparse
@@ -25,14 +25,12 @@ def tensor(x):
 
 
 def rounds(run, count):
-    """Wall seconds of the last `count` calls of `run`, past its warm rounds;
-    the outputs of the last."""
-    for _ in range(WARM_ROUNDS):
-        out = run()
+    """Wall seconds of the last `count` calls of `run`, past its warm rounds; the
+    outputs of every round."""
+    outs = [run() for _ in range(WARM_ROUNDS)]
     t0 = time.monotonic()
-    for _ in range(count):
-        out = run()
-    return (time.monotonic() - t0) / count, out
+    timed = [run() for _ in range(count)]
+    return (time.monotonic() - t0) / count, outs + timed
 
 
 def error(got, want):
@@ -94,11 +92,9 @@ def main():
             modes = {"one": serial, "resident": resident, "sharded": sharded}
             result = {"nodes": dev.nodes, "blocks": args.blocks, "batch": args.batch}
             for name, run in modes.items():
-                seconds, out = rounds(run, args.inputs)
-                result[name] = {
-                    "seconds": seconds / len(xs),
-                    "error": error(out.astype(np.float32), want),
-                }
+                seconds, outs = rounds(run, args.inputs)
+                errors = [error(out.astype(np.float32), want) for out in outs]
+                result[name] = {"seconds": seconds / len(xs), "errors": errors}
             for name in ("resident", "sharded"):
                 result[name]["speedup"] = (
                     result["one"]["seconds"] / result[name]["seconds"]

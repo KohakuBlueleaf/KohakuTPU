@@ -44,6 +44,7 @@ MNIST = (
     "convnet-w",
     "mixer",
     "gpt",
+    "gpt4",
     "unet",
     "gru",
     "wide",
@@ -54,6 +55,7 @@ WORKLOADS = {
         for m in MNIST
     },
     "vit": ("vit_tiny.py", ["--batch", "1", "--inputs", "10"]),
+    "vitb": ("vit_tiny.py", ["--batch", "1", "--inputs", "10", "--width", "768"]),
     "nodes": ("nodes_measure.py", ["--batch", "1", "--inputs", "8"]),
 }
 #: Where the measure image finds its ring, and a ring slot: run, start, cycles, MVSTAT,
@@ -94,6 +96,12 @@ class Trace:
         (self.out / "kernels" / f"{compiled.name}.l1").write_text(
             compiled.l1_text, encoding="utf-8"
         )
+
+    def compiled(self, name: str, seconds: float) -> None:
+        """A library fill spans bounded rounds, so its compile times append."""
+        self.compiles.append((name, seconds))
+        with (self.out / "compiles.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(dict(name=name, seconds=seconds)) + "\n")
 
     def submitted(self, seconds: float) -> None:
         """A launch's host cost goes out with it: the gap before, the submit."""
@@ -212,7 +220,7 @@ def recording(trace: Trace, library: pathlib.Path | None, card: bool, prof: Prof
             t0 = time.monotonic()
             rs.library_prebuild(library, source, rs.machine_json(self.machine))
             name = json.loads(source)["name"]
-            trace.compiles.append((name, round(time.monotonic() - t0, 3)))
+            trace.compiled(name, round(time.monotonic() - t0, 3))
             print("compiled", len(trace.compiles), trace.compiles[-1], flush=True)
             return compile_graph(self, source)
 
@@ -354,6 +362,20 @@ def on_card(out: pathlib.Path, measure: bool, traced: bool):
     return write
 
 
+def output_check(report: pathlib.Path) -> dict | None:
+    """The run's outputs against the CPU in f32, None when it wrote no report."""
+    if not report.exists():
+        return None
+    result = json.loads(report.read_text("utf-8"))
+    logits = result.get("check", result)
+    spread = logits["error_distributions"]
+    return dict(
+        relative=spread["max_relative_error"]["max"],
+        cosine=spread["cosine_similarity"]["min"],
+        passed=logits["diagnostic_budget"]["all_passed"],
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("workload", choices=WORKLOADS)
@@ -369,6 +391,7 @@ def main() -> int:
     ap.add_argument("--batch", type=int)
     ap.add_argument("--profile", help="cProfile launches FIRST:LAST")
     ap.add_argument("--tag", default="")
+    ap.add_argument("--extra", nargs="*", default=[], help="the workload's own flags")
     args = ap.parse_args()
 
     script, extra = WORKLOADS[args.workload]
@@ -388,12 +411,17 @@ def main() -> int:
         extra += ["--blocks", str(args.blocks)]
     if args.card:
         extra += ["--device", "card", "--transport", "xdma"]
+    extra += args.extra
 
     name = f"{args.workload}{args.tag}.{args.board}.{args.nodes}n"
     if args.card and (TRACES / name / "meta.json").exists():
         print(name, "exists: one run a configuration", flush=True)
         return 1
     trace = Trace(TRACES / name)
+    report = trace.out / "report.json"
+    if args.card and script != "nodes_measure.py":
+        extra += ["--report", str(report)]
+        extra += ["--check", "8"] if script == "mnist_mlp.py" else []
     write = on_card(trace.out, args.measure, args.traced) if args.card else None
     if args.measure:
         C.FIRMWARE = MEASURE_FIRMWARE
@@ -409,8 +437,9 @@ def main() -> int:
         runpy.run_path(sys.argv[0], run_name="__main__")
     except Ended:
         done = "stopped at its bound"
-    except SystemExit:
-        pass
+    except SystemExit as end:
+        if end.code:
+            done = f"exit {end.code}"
     except BaseException:  # noqa: BLE001
         done = traceback.format_exc()[-1800:]
     seconds = round(time.monotonic() - t0, 2)
@@ -437,6 +466,7 @@ def main() -> int:
                 if k.startswith(("KTPU_", "KOHAKUTPU_"))
             },
             clocks=json.loads(os.environ.get("PERF_CLOCKS", "null")),
+            check=output_check(report),
             profiled=[prof.first, prof.last] if prof.reached else None,
             jit=args.jit,
             commit=os.environ.get("PERF_COMMIT"),

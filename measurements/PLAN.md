@@ -53,7 +53,7 @@ Every experiment ends in a picture under `figures/` and its raw table under
 | U1 | Every unit, every launch | |
 | U2 | Vector stalls and cluster sequencer states on the traced model, over whole runs of small kernels | Stalls per kernel; any kernel past 30 k cycles |
 | M1 | Stride, footprint, direction, agents, four start offsets, three clocks | Mover against vector at once |
-| Z1 | MLP, LeNet, LeNet-BN, LeNet no norm, ViT, Mixer, GPT, GRU, wide at mid; MLP, LeNet, ViT at three clocks; five models under TinyJit | ResNet-S, ConvNet-W, UNet: libraries never finished |
+| Z1 | MLP, LeNet, LeNet-BN, LeNet no norm, ViT, ViT-B (`vitb`, width 768), Mixer, GPT, GRU, wide at mid; MLP, LeNet, ViT at three clocks; five models under TinyJit | ResNet-S, ConvNet-W, UNet: libraries never finished |
 | Z2 | MLP at batch 8, 32, 128; LeNet with prepared packages off, composed path off | |
 | Z3 | MLP, LeNet, ViT, Mixer, GRU, GPT, wide on 2+2 and 4+2, at low, mid and ship, eager and TinyJit, 84 runs; vector memory grid; tinygrad models on four nodes; six L1 multi-node examples; the OS on four dies | 6+2, which has no bitstream; distributed tinygrad, which the stack does not do, `ISSUES.md` 13 |
 | W1 | Serial floors and detectors for every run | Hand L1 floors |
@@ -67,7 +67,21 @@ the detectors and packs each finished trace into `data/`; `MEASURE_ROUND=c1
 tools/build_round.py` then writes the round's tables, figures, comparison against commit
 56021fd4 and index under `rounds/c1/`. `bringup read-clocks` saves all four dies'
 readbacks to `build/bringup/<board>/read-clocks.json`; a run carries them in
-`PERF_CLOCKS`, and one whose dies differ reads as clock `mixed`.
+`PERF_CLOCKS`, and one whose dies differ reads as clock `mixed`. Each round first fills
+its library from empty with fill tags such as `c1f`; `host_round.py` turns their compile
+records into `rounds/<round>/data/compile.csv`. A run's `commit` names the tree it ran.
+
+## Measures of a warm step
+
+- Cadence: node cycles from a warm step's first launch to the next's, the median over
+  warm steps. It holds everything the node waits for, the host included, and reads the
+  same on capture and replay steps.
+- MFU, `software/tests/perf/mfu.py`, over the cadence, all units of a class, with form
+  changes counted as no useful work. Matrix and vector: math-only floor cycles. Memory:
+  each operand read once and each result written once a launch, against the card's
+  read and write paths together. `bus` is the bytes actually moved over the same peak.
+  A launch with no timed record raises. `rounds/<round>/data/mfu/` holds each run's
+  table by kernel, each kernel's MFU over its own run cycles.
 
 ## Rules of the round
 

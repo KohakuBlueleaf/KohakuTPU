@@ -40,14 +40,14 @@ class Mixer:
 
 
 class CausalBlock:
-    def __init__(self, width, tokens):
+    def __init__(self, width, tokens, dense):
         self.width, self.heads = width, width // 64
         self.norm1 = nn.LayerNorm(width)
         self.qkv = nn.Linear(width, 3 * width)
         self.proj = nn.Linear(width, width)
         self.norm2 = nn.LayerNorm(width)
-        self.fc1 = nn.Linear(width, 2 * width)
-        self.fc2 = nn.Linear(2 * width, width)
+        self.fc1 = nn.Linear(width, dense * width)
+        self.fc2 = nn.Linear(dense * width, width)
         above = np.triu(np.full((tokens, tokens), -32.0, np.float16), 1)
         self.mask = Tensor(above, device="CPU")
         self.mask.requires_grad = False  # type: ignore[assignment]
@@ -65,10 +65,10 @@ class CausalBlock:
 class Gpt:
     """A decoder over the image rows as tokens, each row seeing only earlier rows."""
 
-    def __init__(self, width=128, blocks=2):
+    def __init__(self, width=128, blocks=2, dense=2):
         self.embed = nn.Linear(28, width)
         self.pos = Tensor.zeros(1, 28, width, device="CPU")
-        self.blocks = [CausalBlock(width, 28) for _ in range(blocks)]
+        self.blocks = [CausalBlock(width, 28, dense) for _ in range(blocks)]
         self.norm = nn.LayerNorm(width)
         self.head = nn.Linear(width, 10)
 
@@ -123,6 +123,7 @@ class Gru:
 MODELS = {
     "mixer": Mixer,
     "gpt": Gpt,
+    "gpt4": partial(Gpt, dense=4),
     "unet": UNet,
     "gru": Gru,
     "wide": partial(

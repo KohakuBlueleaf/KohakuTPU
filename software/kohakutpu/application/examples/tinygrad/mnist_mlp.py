@@ -10,6 +10,7 @@ import json
 import math
 import pathlib
 import time
+from typing import cast
 
 import numpy as np
 from examples.tinygrad.mnist_models import MLP, MODELS, LeNet  # noqa: F401
@@ -18,10 +19,11 @@ from tinygrad.engine.jit import TinyJit
 from tinygrad.helpers import Context
 from tinygrad.nn.datasets import mnist
 from tinygrad.nn.optim import AdamW
-from tinygrad.nn.state import get_parameters
+from tinygrad.nn.state import get_parameters, get_state_dict, load_state_dict
 from tinygrad.tensor import Tensor
 
 from kohakutpu.application import ktpugrad
+from kohakutpu.application.checks.accuracy import logit_report
 from kohakutpu.application.ktpugrad.nn import Adam16, place
 from kohakutpu.application.runtime import device as card
 
@@ -127,7 +129,7 @@ def train(
     warmup=0,
     lr_min=0.0,
     lr=2e-3,
-    test_data=None,
+    test_data: tuple | None = None,
     eval_batch=None,
 ):
     """One recipe for any tensor-LR optimizer, eager or TinyJit replay."""
@@ -168,14 +170,33 @@ def train(
         if test_data is not None and (
             (step + 1) % math.ceil(len(x) / batch) == 0 or step == steps - 1
         ):
-            metrics = evaluate(model, *test_data, device, eval_batch or batch)
+            x_test, y_test = test_data
+            metrics = evaluate(model, x_test, y_test, device, eval_batch or batch)
             curves["test"].append(dict(step=step + 1, **metrics))
             print(f"test {step + 1}: {metrics}", flush=True)
     return curves
 
 
+def final_check(name, model, x):
+    """Logits of `x` on the card against the CPU in f32 with the card's final weights.
+    It checks the forward path, not the updates that made the weights."""
+    with Context(TRAINING=0):
+        got = model(Tensor(x, device="KTPU")).numpy()
+    weights = {
+        k: v.numpy().astype(np.float32) for k, v in get_state_dict(model).items()
+    }
+    ktpugrad.uninstall()
+    with Context(DEV="CPU"):
+        cpu = MODELS[name]()
+    load_state_dict(
+        cpu, {k: Tensor(v, device="CPU") for k, v in weights.items()}, verbose=False
+    )
+    want = cpu(Tensor(x.astype(np.float32), device="CPU")).numpy()
+    return logit_report(got.astype(np.float32), want)
+
+
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=cast(str, __doc__).splitlines()[0])
     ap.add_argument("--model", choices=sorted(MODELS), default="mlp")
     duration = ap.add_mutually_exclusive_group()
     duration.add_argument("--steps", type=int, default=None)
@@ -200,6 +221,12 @@ def main():
         "--reference", action="store_true", help="CPU-only f32 reference, same recipe"
     )
     ap.add_argument("--report", type=pathlib.Path)
+    ap.add_argument(
+        "--check",
+        type=int,
+        default=0,
+        help="images to compare against the CPU at the end",
+    )
     ap.add_argument("--device", choices=("sim", "card"), default=None)
     ap.add_argument("--transport", choices=card.TRANSPORTS, default=None)
     ap.add_argument("--board", default=None)
@@ -294,6 +321,8 @@ def main():
     if rt is not None:
         result["counters"] = rt.counters
         print(f"host traffic {rt.counters}")
+    if args.check:
+        result["check"] = final_check(args.model, model, xte[: args.check])
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps(result, indent=2), encoding="utf-8")

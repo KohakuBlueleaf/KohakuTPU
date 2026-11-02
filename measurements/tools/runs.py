@@ -3,6 +3,7 @@
 import collections
 import dataclasses
 import gzip
+import itertools
 import json
 import pathlib
 import sys
@@ -10,6 +11,7 @@ import sys
 from style import DATA, REPO, ROUND
 
 sys.path.insert(0, str(REPO / "software" / "tests" / "perf"))
+import mfu as MFU  # noqa: F401 -- the figures' import, past the path above
 from traces import planned, repeats
 
 UNIT_KIND = {0x4D47: "MG", 0x5643: "VC"}
@@ -104,6 +106,19 @@ class Run:
 
         return sorted(self.steps, key=span)[len(self.steps) // 2]
 
+    @property
+    def cadence(self) -> int:
+        """Median node cycles from a warm step's first launch to the next's: everything
+        the node waits for, host included, on capture and replay steps alike. A replayed
+        step is its lists, a step's first list holding one tag."""
+        lists = [r for r in self.rows if r["kind"] == "replay" and "start" in r]
+        if lists:
+            first = [r for r in lists if r["item_tag"] == lists[0]["item_tag"]]
+        else:
+            first = [s[0] for s in self.steps]
+        gaps = [b["start"] - a["start"] for a, b in itertools.pairwise(first)]
+        return sorted(gaps)[len(gaps) // 2]
+
 
 def load(name: str) -> Run:
     base = DATA / name
@@ -112,12 +127,16 @@ def load(name: str) -> Run:
     launches = lines(base / "launches.jsonl.gz")
     meta = json.loads((base / "meta.json").read_text("utf-8"))
     rows = []
+    at = 0
     for i, c in enumerate(card):
         row = dict(c, index=i)
-        if i < len(units):
-            row["units"] = units[i]["units"]
-            row["start"] = units[i]["start"]
-            row["moves"] = units[i]["moves"]
+        # A replay list is one card row and one ring slot per launch in it.
+        taken = units[at : at + (c["list_index"] if c["kind"] == "replay" else 1)]
+        at += len(taken)
+        if taken:
+            row["units"] = [u for t in taken for u in t["units"]]
+            row["start"] = taken[0]["start"]
+            row["moves"] = sum(t["moves"] for t in taken)
         if i < len(launches):
             row["gap_ms"] = launches[i].get("gap_ms", 0.0)
             row["submit_ms"] = launches[i].get("submit_ms", 0.0)

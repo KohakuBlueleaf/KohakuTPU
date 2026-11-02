@@ -3,10 +3,11 @@
 import csv
 import gzip
 import json
+import pathlib
 
 import matplotlib.pyplot as plt
 from fig_run import split
-from runs import CLOCK, by_kind, clock, jit, load, mode, names
+from runs import CLOCK, MFU, by_kind, clock, jit, load, mode, names
 from style import (
     DATA,
     FIGURES,
@@ -20,28 +21,29 @@ from style import (
     stacked_bars,
 )
 
-FORM_KINDS = ("quant", "convert", "transpose", "copy", "move")
+
+def gunzipped(path: pathlib.Path) -> str:
+    return gzip.decompress(path.read_bytes()).decode()
 
 
-def floors(name: str, step: list[dict], span: int) -> tuple[float, float]:
-    """Math-only floors over the span: a floor is already per unit of its class, all
-    units running. Form changes count as no useful work."""
-    machine = name.split(".")[-2]
-    path = DATA / name / f"timed.{machine}.jsonl.gz"
+def mfu_of(name: str, step: list[dict], cadence: int) -> dict:
+    """The step's MFU over its cadence, and its per-kernel table under `mfu/`. A run
+    recorded with no timed records has no floors."""
+    path = DATA / name / f"timed.{name.split('.')[-2]}.jsonl.gz"
     if not path.exists():
-        return 0.0, 0.0
-    rows = [
-        json.loads(x) for x in gzip.decompress(path.read_bytes()).decode().splitlines()
-    ]
-    table = {r["name"]: r["floor"] for r in rows}
-    mg = vc = 0.0
-    for r in step:
-        if r["kind"] in FORM_KINDS:
-            continue
-        f = table.get(r["name"], {})
-        mg += f.get("mg", 0.0)
-        vc += f.get("vc", 0.0)
-    return mg / span, vc / span
+        return {"mfu_mg": 0.0, "mfu_vc": 0.0, "mfu_mem": 0.0, "bus": 0.0}
+    timed = [json.loads(x) for x in gunzipped(path).splitlines()]
+    programs = json.loads(gunzipped(DATA / name / "kernels.l2.json.gz"))
+    peak = sum(MFU.card_buses())
+    kernels = MFU.kernels(step, {t["name"]: t for t in timed}, programs)
+    rows = sorted((k.row(peak) for k in kernels.values()), key=lambda r: -r["cycles"])
+    out = TABLES / "mfu" / f"{name}.csv"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+    return MFU.whole(kernels, cadence, peak)
 
 
 def row(name: str) -> dict | None:
@@ -61,17 +63,21 @@ def row(name: str) -> dict | None:
         for u in r["units"]:
             key = f"{u['kind']}{u['x']}{u['y']}"
             units[key] = units.get(key, 0) + u["busy_d"]
-    mfu = floors(name, step, span)
+    cadence = run.cadence
+    check = run.meta.get("check") or {}
     return {
         "run": name,
         "model": model,
-        "mfu_mg": mfu[0],
-        "mfu_vc": mfu[1],
+        **mfu_of(name, step, cadence),
+        "cadence": cadence,
         "mode": label,
         "board": name.split(".")[-2].removeprefix("multimesh_"),
         "clock": clock(run.meta),
         "jit": jit(run.meta),
         "commit": run.meta.get("commit"),
+        "check_relative": check.get("relative"),
+        "check_cosine": check.get("cosine"),
+        "check_passed": check.get("passed"),
         "image": run.meta["firmware"].rpartition("/")[2],
         "knobs": " ".join(f"{k}={v}" for k, v in run.meta.get("knobs", {}).items()),
         "launches": len(step),
@@ -181,26 +187,23 @@ def mfu_chart(rows: list[dict]) -> None:
     if not rows:
         return
     labels = [f"{r['model']} {r['mode']}" for r in rows]
-    parts = {
-        "cluster MFU": [r["mfu_mg"] for r in rows],
-        "vector MFU": [r["mfu_vc"] for r in rows],
-    }
-    colors = {"cluster MFU": SERIES[3], "vector MFU": SERIES[0]}
-    fig, ax = plt.subplots(figsize=(11, 0.4 * len(rows) + 1.4))
-    stacked_bars(ax, labels, parts, colors)
-    for i, r in enumerate(rows):
-        ax.text(
-            r["mfu_mg"] + r["mfu_vc"],
-            i,
-            f" {r['mfu_mg']:.2%} + {r['mfu_vc']:.2%}",
-            va="center",
-            color=SECOND,
-            fontsize=8,
-        )
-    ax.xaxis.set_major_formatter(lambda v, _: f"{v:.1%}")
-    ax.grid(axis="y", visible=False)
-    ax.legend(loc="lower right")
-    ax.set_title("MFU: math-only floor cycles over the span, all clusters and cores")
+    panels = (
+        ("mfu_mg", "matrix MFU", SERIES[3]),
+        ("mfu_vc", "vector MFU", SERIES[0]),
+        ("mfu_mem", "memory MFU", SERIES[1]),
+    )
+    fig, axes = plt.subplots(
+        1, 3, figsize=(14, 0.3 * len(rows) + 1.4), sharey=True, layout="constrained"
+    )
+    for ax, (key, title, color) in zip(axes, panels, strict=True):
+        values = [r[key] for r in rows]
+        ax.barh(labels, values, color=color)
+        for i, v in enumerate(values):
+            ax.text(v, i, f" {v:.2%}", va="center", color=SECOND, fontsize=8)
+        ax.xaxis.set_major_formatter(lambda v, _: f"{v:.1%}")
+        ax.grid(axis="y", visible=False)
+        ax.set_title(title)
+    fig.suptitle("MFU of a warm step over its cadence, all clusters and cores")
     save(fig, "zoo", "mfu")
 
 

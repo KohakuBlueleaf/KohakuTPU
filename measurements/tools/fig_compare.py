@@ -8,7 +8,7 @@ import json
 import subprocess
 
 import matplotlib.pyplot as plt
-from runs import CLOCK, WRAP, by_kind, jit, lines, load
+from runs import CLOCK, by_kind, jit, load
 from style import DATA, KINDS, MUTED, REPO, SECOND, SERIES, TABLES, save, stacked_bars
 
 BASE = "56021fd4"
@@ -56,29 +56,13 @@ def joined() -> list[tuple[dict, dict | None]]:
     return [(r, base.get(key(r))) for r in rows]
 
 
-def replay_ms(row: dict) -> float | None:
-    """A replayed step's first launch to the next's on the node clock, in ms: `span`
-    covers only a TinyJit run's capture steps, and list walls overlap, so their sum is
-    no step. A step's first list tags each step; unit rows stay one a launch."""
-    base = DATA / row["run"]
-    rows = lines(base / "card.jsonl.gz")
-    lists = [r for r in rows if r.get("kind") == "replay"]
-    if not lists:
-        return None
-    steps = sum(r["item_tag"] == lists[0]["item_tag"] for r in lists)
-    first = next(i for i, r in enumerate(rows) if r.get("kind") == "replay")
-    starts = [u["start"] for u in lines(base / "units.jsonl.gz")]
-    span = starts[first + (steps - 1) * int(row["launches"])] - starts[first]
-    return (span % WRAP) / (steps - 1) / CLOCK[row["clock"]] / 1e3
-
-
 def step_ms(row: dict) -> float:
-    """A warm step's span in ms at the row's node clock."""
-    return int(row["span"]) / CLOCK[row["clock"]] / 1e3
+    """A warm step's cadence in ms at the row's node clock, capture and replay alike."""
+    return load(row["run"]).cadence / CLOCK[row["clock"]] / 1e3
 
 
 def table(pairs: list[tuple[dict, dict | None]]) -> None:
-    head = ["configuration", "run", "base_run", "ratio", "replay_ms", "base_step_ms"]
+    head = ["configuration", "run", "base_run", "ratio", "step_ms", "base_step_ms"]
     for k in SHOWN:
         head += [k, f"base_{k}"]
     with (TABLES / "compare.csv").open("w", newline="", encoding="utf-8") as f:
@@ -87,7 +71,7 @@ def table(pairs: list[tuple[dict, dict | None]]) -> None:
         for r, b in pairs:
             ratio = int(r["cycles"]) / int(b["cycles"]) if b else ""
             row = [label(r), r["run"], b["run"] if b else "", ratio]
-            row += [replay_ms(r), step_ms(b) if b else ""]
+            row += [step_ms(r), step_ms(b) if b else ""]
             for k in SHOWN:
                 row += [r[k], b[k] if b else ""]
             w.writerow(row)
@@ -137,15 +121,15 @@ def launches_chart(pairs: list[tuple[dict, dict]]) -> None:
 
 def replay_chart(pairs: list[tuple[dict, dict]]) -> None:
     """TinyJit's replayed step against the baseline's warm step, at each clock."""
-    rows = [(r, b, replay_ms(r)) for r, b in pairs]
-    rows = sorted((x for x in rows if x[2]), key=lambda x: label(x[0]))
+    rows = [(r, step_ms(r), step_ms(b)) for r, b in pairs if str(r["jit"]) == "True"]
+    rows = sorted(rows, key=lambda x: label(x[0]))
     labels = [label(r) for r, _, _ in rows]
     fig, ax = plt.subplots(figsize=(11, 0.3 * len(labels) + 1.4))
-    ratios = [ms / step_ms(b) for _, b, ms in rows]
+    ratios = [now / then for _, now, then in rows]
     ax.barh(labels, ratios, color=SERIES[0])
     ax.axvline(1, color=MUTED, linewidth=1)
-    for i, ((_, b, ms), v) in enumerate(zip(rows, ratios, strict=True)):
-        text = f" {ms:.0f} ms against {step_ms(b):.0f} ms"
+    for i, ((_, now, then), v) in enumerate(zip(rows, ratios, strict=True)):
+        text = f" {now:.0f} ms against {then:.0f} ms"
         ax.text(v, i, text, va="center", color=SECOND, fontsize=8)
     ax.invert_yaxis()
     ax.grid(axis="y", visible=False)

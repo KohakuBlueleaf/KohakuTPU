@@ -7,6 +7,7 @@ A trace reads as it stands; only `timed.*` and `waste.json` land beside its reco
 
 import argparse
 import concurrent.futures
+import csv
 import json
 import pathlib
 import subprocess
@@ -57,6 +58,27 @@ def post(trace: pathlib.Path, out: pathlib.Path, tables: pathlib.Path) -> str:
     return trace.name
 
 
+def compile_table(traces: pathlib.Path, round_tag: str, tables: pathlib.Path) -> None:
+    """Each model's library fill from empty: a fill round's traces append their compiles."""
+    rows = []
+    for path in sorted(traces.glob(f"*.{round_tag}f*.multimesh_*/compiles.jsonl")):
+        name = path.parent.name
+        with path.open(encoding="utf-8") as f:
+            times = [json.loads(line)["seconds"] for line in f]
+        rows.append(
+            {
+                "run": name,
+                "kernels": len(times),
+                "seconds": sum(times),
+                "slowest": max(times),
+            }
+        )
+    with (tables / "compile.csv").open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["run", "kernels", "seconds", "slowest"])
+        w.writeheader()
+        w.writerows(rows)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("round")
@@ -74,6 +96,7 @@ def main():
         jobs = [pool.submit(post, t, a.root / "data", tables) for t in sorted(traces)]
         for job in concurrent.futures.as_completed(jobs):
             print(job.result(), flush=True)
+    compile_table(a.traces, a.round, tables)
     print(len(traces), "traces")
 
 

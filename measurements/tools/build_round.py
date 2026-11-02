@@ -6,6 +6,7 @@ pass reports everything.
 """
 
 import concurrent.futures
+import csv
 import pathlib
 import subprocess
 import sys
@@ -61,6 +62,17 @@ def per_run() -> list[tuple[str, ...]]:
     return out
 
 
+def wrong_outputs() -> list[str]:
+    """Runs whose outputs failed the reference check or carry no check."""
+    with (TABLES / "zoo.csv").open(encoding="utf-8", newline="") as f:
+        return [
+            f"{row['run']}: check {row['check_passed'] or 'absent'}, relative "
+            f"{row['check_relative']}, cosine {row['check_cosine']}"
+            for row in csv.DictReader(f)
+            if row["check_passed"] != "True"
+        ]
+
+
 def main():
     failed = [step("fig_zoo.py")]
     wide = [
@@ -80,7 +92,11 @@ def main():
     for f in failed:
         print("---", f)
     print(len(steps) + 2 - len(failed), "steps ok,", len(failed), "failed")
-    return 1 if failed else 0
+    wrong = wrong_outputs()
+    for w in wrong:
+        print("---", w)
+    print(len(wrong), "runs with an output not checked right")
+    return 1 if failed or wrong else 0
 
 
 if __name__ == "__main__":

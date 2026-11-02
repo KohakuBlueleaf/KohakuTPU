@@ -11,6 +11,7 @@
 
 import argparse
 import json
+import pathlib
 import time
 
 import numpy as np
@@ -148,6 +149,7 @@ def main():
         help="diagnostic relative threshold, NOT a certified network bound",
     )
     ap.add_argument("--cosine-min", type=float, default=0.999)
+    ap.add_argument("--report", type=pathlib.Path)
     ap.add_argument("--board", default=None)
     ap.add_argument("--device", choices=("sim", "card"), default="sim")
     ap.add_argument("--transport", choices=D.TRANSPORTS, default=None)
@@ -320,6 +322,8 @@ def main():
                     args.blocks, result["max_relative_error"]
                 )
             print(json.dumps(result, sort_keys=True))
+            if args.report:
+                args.report.write_text(json.dumps(result), encoding="utf-8")
     finally:
         dev.close()
 
