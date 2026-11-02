@@ -50,7 +50,8 @@ static void round(unsigned u, int engine, int retired_reply, uint64_t round_no, 
 {
     volatile uint64_t *land = kos_land();
     uint64_t pa = kos_info(KOS_I_LANDPA);
-    uint64_t src_off = 0x8000, dst_off = 0x9000 + round_no * 0x400;
+    /* Destinations cycle: a board's rounds outnumber the 12 inside KOS_USER_LAND_SIZE. */
+    uint64_t src_off = 0x8000, dst_off = 0x9000 + (round_no % 12) * 0x400;
     for (unsigned i = 0; i < 16; ++i) {
         land[src_off / 8 + i] = (i + round_no + 1) * 0x9E3779B97F4A7C15UL;
     }

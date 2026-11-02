@@ -1,0 +1,109 @@
+/* The kernel's unit code natively over the hardware double, one command a line on
+ * stdin; unit 0 sits at (1, 2) with a credit of 4:
+ *   s N P   a descriptor stream of N words to unit 0 and a WAIT for N + P, the
+ *           double's peer retiring P more -> "st sent retired"
+ *   d       one dispatch to unit 0 -> "ticket"
+ *   w       wait for every completion in flight -> "sent retired"
+ *   m       one k_move -> "st" and the window writes by side and axis */
+#include <inttypes.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "../../../../kohakuaccel/os/kernel/kernel.h"
+#include "hw_double.h"
+
+#define X 1u
+#define Y 2u
+#define MAX_ENTRIES 3000u
+
+struct knode kn;
+struct kos_boot k_boot;
+struct kos_kernel_stat kstat;
+
+void *k_alloc(uint64_t bytes) { return calloc(1, bytes); }
+int k_pa_ok(uint64_t pa, uint64_t bytes)
+{
+    (void)pa;
+    (void)bytes;
+    return 1;
+}
+int k_copy_out(uint64_t uva, const void *src, uint64_t n)
+{
+    (void)uva;
+    (void)src;
+    (void)n;
+    abort();
+}
+void k_reply(unsigned node, uint64_t req, int64_t status, uint64_t value)
+{
+    (void)node;
+    (void)req;
+    (void)status;
+    (void)value;
+    abort();
+}
+
+static uint64_t stream[4 * MAX_ENTRIES / 3 + 4];
+static unsigned entries;
+
+static void put(unsigned code, uint64_t v)
+{
+    uint64_t *group = &stream[4 * (entries / 3)];
+    unsigned j = entries % 3;
+    group[0] = (j ? group[0] : 0) | (uint64_t)code << (8 * j);
+    group[j + 1] = v;
+    ++entries;
+}
+
+static void words(unsigned n, unsigned peers)
+{
+    entries = 0;
+    for (unsigned k = 0; k < n; ++k) {
+        put(KOS_DE_MB_DST, (uint64_t)Y << 8 | X);
+        for (unsigned a = 0; a < 4; ++a) {
+            put(KOS_DE_MB_ARG0 + a, k + a);
+        }
+        put(KOS_DE_MB_GO, 1);
+    }
+    put(KOS_DE_WAIT_CODE, n + peers);
+    for (unsigned p = 0; p < peers; ++p) {
+        dbl_peer_retires(X, Y);
+    }
+}
+
+int main(void)
+{
+    dbl_engine = 1;
+    kn.engine = 1;
+    k_boot.nunits = 1;
+    k_boot.unit[0] = (struct kos_unit){.type = 0x4D47, .x = X, .y = Y, .depth = 4};
+    k_units_init();
+    uint64_t w[4] = {1, 2, 3, 4};
+    char op;
+    while (scanf(" %c", &op) == 1) {
+        if (op == 's') {
+            unsigned n, p;
+            if (scanf("%u %u", &n, &p) != 2) {
+                return 2;
+            }
+            words(n, p);
+            int64_t st = k_de_stream(stream, entries);
+            printf("%" PRId64 " %" PRIu64 " %" PRIu64 "\n", st, kunits[0].sent, k_unit_retired(0));
+        }
+        else if (op == 'd') {
+            printf("%" PRId64 "\n", k_dispatch_local(0, w));
+        }
+        else if (op == 'w') {
+            for (unsigned k = 0; k < 256; ++k) {
+                k_units_poll();
+            }
+            printf("%" PRIu64 " %" PRIu64 "\n", kunits[0].sent, k_unit_retired(0));
+        }
+        else if (op == 'm') {
+            int64_t st = k_move(0x1000, 0x2000, 4);
+            printf("%" PRId64 " %u %u %u %u\n", st, dbl_windows[0], dbl_windows[1], dbl_windows[2],
+                   dbl_windows[3]);
+        }
+    }
+    return 0;
+}

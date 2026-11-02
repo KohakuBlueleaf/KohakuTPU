@@ -45,9 +45,11 @@ access contract conservatively treat all bindings as writable.
 `write` waits through the last pending use. tinygrad applies these hazards to
 all forms of its logical storage. Waits collect the submission prefix so an
 earlier fault cannot be attributed to the kernel whose read exposed it.
-Same-node kernels rely on FIFO ordering. A run over several nodes, or a run on
-a node other than the runs in flight, first collects every run in flight: the
-runs in flight are on one node, and a run over several nodes runs alone.
+Same-node kernels rely on FIFO ordering. Nothing orders two nodes' queues, so a
+run first collects through the last run in flight on other nodes that shares a
+written allocation with it, scratch windows included. A run over several nodes
+runs alone. `Device.on_node(k)` places one-mesh kernels and their scratch on node
+`k`, each home with its own DRAM window, so runs in two scopes overlap.
 
 ## Working-set limits
 

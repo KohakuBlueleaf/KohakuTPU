@@ -8,6 +8,7 @@ import pickle
 import struct
 import sys
 import time
+from typing import Any
 
 TOOLS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
@@ -38,6 +39,7 @@ from kohakutpu.application.runtime.os.graph import (
     TASK_BYTES,
     Graph,
     ResidentGraph,
+    task_capacity,
 )
 from kohakutpu.language.config import ENV
 
@@ -68,7 +70,7 @@ def decode_launch_ring(raw_ring, count):
     return out
 
 
-def run_os_capture(capture, a, board, out):
+def run_os_capture(capture, a, board, out) -> dict[str, Any]:
     started = time.monotonic()
     board = dict(board)
     board["dram"] = dict(board["dram"], private=a.private_bytes)
@@ -84,13 +86,13 @@ def run_os_capture(capture, a, board, out):
         (u["mesh"], u["x"], u["y"]): int.from_bytes(u["type"].encode(), "big")
         for u in board["units"]
     }
-    de_stream_on = ENV.get("KOHAKUTPU_OS_DE_STREAM", "0") == "1"
+    de_stream_on = ENV.get("KOHAKUTPU_OS_DE_STREAM", "1") == "1"
     de_fetch_on = ENV.get("KOHAKUTPU_OS_DE_FETCH", "1") == "1"
     lring_on = ENV.get("KOHAKUTPU_OS_LAUNCH_RING", "0") == "1"
     stamps_on = ENV.get("KOHAKUTPU_OS_STAMPS", "0") == "1"
     de_fuse_on = (
         de_stream_on
-        and ENV.get("KOHAKUTPU_OS_DE_FUSE", "0") == "1"
+        and ENV.get("KOHAKUTPU_OS_DE_FUSE", "1") == "1"
         and not lring_on
         and not stamps_on
     )
@@ -105,7 +107,7 @@ def run_os_capture(capture, a, board, out):
                     de_stream=de_stream_on,
                     de_fetch=de_fetch_on,
                 ).package(raw, [], units, unit_types=types)
-    result = dict(
+    result: dict[str, Any] = dict(
         workload=capture["workload"],
         backend="os",
         board=a.board,
@@ -166,7 +168,7 @@ def run_os_capture(capture, a, board, out):
             estimate_bytes(init_run_evs) if init_run_evs else 0,
         )
         # Doubled: stamps add tasks the estimate leaves out.
-        capacity = 2 * (step_bytes + 8192 + TASK_BYTES - 1) // TASK_BYTES
+        capacity = task_capacity(2 * (step_bytes + 8192 + TASK_BYTES - 1) // TASK_BYTES)
         command = f"ostpu {capacity} {capture['extent']} {a.retain} -e"
         t_load0 = time.monotonic()
         imem, spad, dram = arrays(image, tables(board, 0, 0, command)[0])
@@ -334,7 +336,7 @@ def run_os_capture(capture, a, board, out):
     return result
 
 
-def run_fw_leg(capture, a, board, out):
+def run_fw_leg(capture, a, board, out) -> dict[str, Any]:
     if not a.fw:
         raise ValueError("--fw is required for firmware and compare runs")
     fw_board = a.fw_board or board["card"]["board"]
@@ -377,7 +379,7 @@ def main():
     parser.add_argument("--steps", type=int, default=1)
     parser.add_argument("--poison-reads", type=int, nargs="*", default=[])
     parser.add_argument("--segment", type=int, default=8)
-    parser.add_argument("--retain", type=int, choices=(0, 1), default=0)
+    parser.add_argument("--retain", type=int, choices=(0, 1), default=1)
     parser.add_argument("--profile-sys", action="store_true")
     parser.add_argument("--step-ring", action="store_true")
     parser.add_argument("--batch-repeats", type=int, default=1)

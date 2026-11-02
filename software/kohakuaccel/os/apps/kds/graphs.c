@@ -51,15 +51,16 @@ static int64_t clear(const uint64_t *a)
     return 0;
 }
 
-static uint64_t slot_off(unsigned home, uint64_t s) { return KDS_LZ_USER + home * 0x2000UL + s * 64; }
+/* Four homes share KDS_LZ_USER..KOS_USER_LAND_SIZE: 64 slots each. */
+static uint64_t slot_off(unsigned home, uint64_t s) { return KDS_LZ_USER + home * 0x1000UL + s * 64; }
 
 /* Build and run a K-step chain homed here; 0 when the last word is right. */
 static int chain(uint64_t k, uint64_t *cycles)
 {
     unsigned n = kos_nodes(), me = kos_node();
     int fails = 0;
-    if (k > 127) {
-        k = 127;
+    if (k > 63) {
+        k = 63;
     }
     struct kds_task *t = tasks((unsigned)(2 * k + n + 1));
     kds_ref buf[KOS_MAX_NODES];

@@ -440,7 +440,8 @@ static UNIT_SMALL int64_t de_wait_q(uint64_t faults0, uint64_t *prog, unsigned m
         if (mode == 2) {
             busy |= (hw_rd(NM(HW_NM_STAT)) & HW_NM_OFFERED) != 0;
             for (unsigned u = 0; u < knunits; ++u) {
-                busy |= kunits[u].local && kunits[u].sent != retired[u];
+                /* signed: a peer's instructions retire here too, past what was sent */
+                busy |= kunits[u].local && (int64_t)(kunits[u].sent - retired[u]) > 0;
             }
         }
         if (!busy) {
@@ -618,6 +619,12 @@ out:
     int64_t qst = 0;
 #else
     int64_t qst = de_wait_q(faults0, &prog, 0xffff, 2);
+    /* Peer retirements counted as sent, so the next ticket waits for its own. */
+    for (unsigned u = 0; !qst && u < knunits; ++u) {
+        if (kunits[u].local && (int64_t)(retired[u] - kunits[u].sent) > 0) {
+            kunits[u].sent = retired[u];
+        }
+    }
 #endif
     return qst ? qst : st ? st : (kstat.faults != faults0 ? KOS_EFAULT : KOS_OK);
 }
@@ -638,7 +645,9 @@ int64_t k_move(uint64_t src, uint64_t dst, uint64_t words)
         hw_wr(MV(0x10), KOS_MV_HDR_VALID | (base << KOS_DE_MOVE_SHIFT) | sel);
         hw_wr(MV(0x18), KOS_MV_DIM_STRIDE | (words << KOS_MV_DIM_WORDS_SHIFT) | sel);
         hw_wr(MV(0x20), 0);
+        /* both axes: a window a kernel left suppresses this copy's writes */
         hw_wr(MV(0x28), sel);
+        hw_wr(MV(0x28), sel | 2);
     }
     hw_wr(MV(0x00), KOS_MV_CTRL_1D);
     return mover_finish(done0);

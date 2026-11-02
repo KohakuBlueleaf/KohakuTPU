@@ -400,6 +400,12 @@ static int is_send(uint64_t w0)
     return (w0 & 0xff) == KA_OP_DISPATCH || (w0 & 0xff) == KA_OP_REPEAT;
 }
 
+/* A step whose words the dispatch engine sends. */
+static int de_sends(uint64_t w0)
+{
+    return is_send(w0) || (w0 & 0xff) == KA_OP_FETCH || (w0 & 0xff) == KA_OP_ENGINE;
+}
+
 /* The run of consecutive DISPATCH/REPEAT steps from `s0`, sent one word per unit
  * in turn, each unit walking its own steps in order, so every unit starts within
  * one pass rather than after the whole programs ahead of it. Returns the steps
@@ -895,6 +901,8 @@ static void de_end(void)
         for (unsigned u = 0; u < eng.n; ++u) {
             uint32_t got = (uint32_t)ka_ctrl_rd(KA_R_DE_CTR + 8 * u) & KA_DE_CTR_MASK;
             uint32_t left = (eng.u[u].sent - got) & KA_DE_CTR_MASK;
+            /* Host-lowered ENGINE words are not in `sent`: the count runs past it. */
+            left = left > KA_DE_CTR_MASK / 2 ? 0 : left;
             eng.u[u].inflight = left;
             eng.outstanding += left;
         }
@@ -1585,7 +1593,13 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
                 pc_next = s + took;
             }
             else if (de.on) {
+                /* The engine issues what this step queues: its stamps are the step's. */
+                uint64_t t = ka_cycles();
                 de_step(r, s, w0, &end);
+                if (de_sends(w0)) {
+                    eng.t_first = eng.t_first ? eng.t_first : t;
+                    eng.t_last = ka_cycles();
+                }
             }
             else {
                 step(r, s, w0, &end);
@@ -1652,8 +1666,8 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
     t[KA_PT_BARRIER] = t0 + out->cycles - t_steps;
     t[KA_PT_LOCAL] = (uint64_t)pk.local;
     t[KA_PT_TOTAL] = pk.total;
-    t[KA_PT_FIRST] = eng.sent ? eng.t_first - t_bind : 0;
-    t[KA_PT_LAST] = eng.sent ? eng.t_last - t_bind : 0;
+    t[KA_PT_FIRST] = eng.t_first ? eng.t_first - t_bind : 0;
+    t[KA_PT_LAST] = eng.t_first ? eng.t_last - t_bind : 0;
     t[KA_PT_SENT] = eng.sent;
     t[KA_PT_IDLE] = idle;
 #ifdef KA_LAUNCH_RING

@@ -13,6 +13,9 @@ constant.
 from kohakuaccel.driver.device.registers import MAG_BASE, ORC_BASE
 from kohakuaccel.driver.transport.base import WORD_BYTES, Transport
 
+#: The most one host read of a staging store takes (v9t6, measured over XDMA).
+STAGE_READ = 1024
+
 
 class Rebased(Transport):
     """Put the agent's logical window at `mag_base` on the card.
@@ -102,6 +105,15 @@ class UnitGlobal(Transport):
         self.inner.write_block(self._map(addr, len(data)), data)
 
     def read_block(self, addr: int, nbytes: int) -> bytes:
+        if self.staging and addr >> 39 & 1:
+            # One C2H read of staging of 4 KB hangs the engine, 1 KB never has.
+            return b"".join(
+                self.inner.read_block(
+                    self._map(addr + off, min(STAGE_READ, nbytes - off)),
+                    min(STAGE_READ, nbytes - off),
+                )
+                for off in range(0, nbytes, STAGE_READ)
+            )
         return self.inner.read_block(self._map(addr, nbytes), nbytes)
 
     def __repr__(self) -> str:

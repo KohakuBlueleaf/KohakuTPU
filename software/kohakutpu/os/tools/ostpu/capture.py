@@ -35,6 +35,12 @@ class ReducedLeNet:
         return self.fc(x.flatten(1))
 
 
+def frozen(program):
+    """A program as a capture keeps it: its native recipe does not pickle, and binding
+    new addresses (relocate.py) reads only the package."""
+    return replace(program, recipe=None)
+
+
 def _unit_map(dev):
     return {
         (mesh.index, *coord): i
@@ -59,7 +65,7 @@ def capture_workload(
 
     def run(program, faults=False):
         programs = program if isinstance(program, dict) else {0: program}
-        events.append(("program", {n: replace(p) for n, p in programs.items()}))
+        events.append(("program", {n: frozen(p) for n, p in programs.items()}))
         return original_run(program, faults)
 
     def write(addr, raw):
@@ -173,12 +179,12 @@ def capture_warmjit(board):
 
     def run(program, faults=False):
         programs = program if isinstance(program, dict) else {0: program}
-        frozen = {n: replace(p) for n, p in programs.items()}
-        events.append(("program", frozen))
+        held = {n: frozen(p) for n, p in programs.items()}
+        events.append(("program", held))
         result = original_run(program, faults)
         if dev.card.log is not None:
             for n, pair in dev.card.log[-1][1].items():
-                source[(n, pair[0], tuple(pair[1]))] = frozen[n]
+                source[(n, pair[0], tuple(pair[1]))] = held[n]
         return result
 
     def replay(log):

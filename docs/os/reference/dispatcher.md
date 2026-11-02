@@ -220,8 +220,8 @@ are not implemented by this adapter.
 
 ### Pre-compiled dispatch-engine command streams
 
-`KOHAKUTPU_OS_DE_STREAM=1` lowers each host-bound package into a single
-`KDS_DE_STREAM` task (`kind` 6, default `0`). `a[0]` names a 32-byte-aligned
+`KOHAKUTPU_OS_DE_STREAM=1` (default) lowers each host-bound package into a single
+`KDS_DE_STREAM` task (`kind` 6). `a[0]` names a 32-byte-aligned
 local arena payload, `a[1]` holds the command count (`1..16384`), and `a[2]`
 holds any trailing 32-byte-aligned instruction/mover blob bytes. The command
 prefix is packed in 32-byte groups of four 64-bit words `(codes, v0, v1, v2)`:
@@ -240,10 +240,13 @@ barriers are encoded directly as hardware `WAIT` commands inside the stream.
 `DISPATCH` and `REPEAT` steps on units with a fetch port into `MEM_RD_REQ`
 instruction-fetch descriptors (`0x40` stream-relative relocation) with the
 instruction words appended in the stream's blob tail. `KOHAKUTPU_OS_DE_FUSE=1`
-(default `0`) fuses consecutive single-node package launches and resident
-constant writes (`move_de`) into a single continuous `KDS_DE_STREAM` task up to
-the 16,384-entry `SYS_DE_RUN` bound; single unfused packages exceeding 16,384
-entries are likewise split across chained `KDS_DE_STREAM` tasks.
+(default, `0` or stamps per launch keep one task a package) fuses consecutive
+single-node package launches and resident constant writes into a single
+continuous `KDS_DE_STREAM` task up to the 16,384-entry `SYS_DE_RUN` bound. Constant
+writes travel as stream mover commands (`move_de`) on either setting; single
+unfused packages exceeding 16,384 entries are likewise split across chained
+`KDS_DE_STREAM` tasks. An `AWAIT` above the words a package sent to a unit waits
+for a peer's acknowledgements; `SYS_DE_RUN` counts those retirements as sent.
 
 `SYS_DE_RUN` (30), exposed by `kos_de_run`, translates the contiguous arena
 buffer once via `move_pa`, quiesces any in-flight unit, mover or engine work,

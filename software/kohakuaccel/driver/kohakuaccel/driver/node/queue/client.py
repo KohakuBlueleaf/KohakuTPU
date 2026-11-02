@@ -19,6 +19,7 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from typing import Any
 
 from kohakuaccel.driver.device import mover as MV
 from kohakuaccel.driver.node.boot.args import EXIT_BOOTARGS, EXIT_MASK, REFUSALS
@@ -31,6 +32,10 @@ REGION_BYTES = 1 << 20
 MAX_BINDINGS = 64
 #: A package's own granule (package-format.md): whole 32-byte lines.
 PACKAGE_LINE = 32
+#: Entries staged before their writes and the one tail publication.
+SUBMIT_BATCH = 4
+#: The longest sleep, seconds, between polls of a wait that finds nothing.
+POLL_BACKOFF = 0.00005
 
 
 def engine_stat(stat: int) -> dict:
@@ -266,7 +271,7 @@ class RecordSkew(RuntimeError):
 class PreparedPackage:
     """One graph-owned upload, valid until close or the queue is initialized."""
 
-    queue: object
+    queue: Any
     key: bytes
     address: int
     nbytes: int
@@ -305,25 +310,19 @@ class NodeQueue:
         clock=time.monotonic,
         alarm: float = 0.0,
         record: L.Record | None = None,
-        head_cache: bool | None = None,
         *,
         layout: L.Layout,
     ) -> None:
         if base % 4096:
             raise ValueError(f"a queue region is page aligned; {base:#x} is not")
-        mode = os.environ.get("KOHAKUTPU_SQ_HEAD_CACHE", "0")
-        if head_cache is None and mode not in ("0", "1"):
-            raise ValueError("KOHAKUTPU_SQ_HEAD_CACHE must be 0 or 1")
-        self.head_cache = mode == "1" if head_cache is None else head_cache
-        self.batch_size = int(os.environ.get("KOHAKUTPU_SUBMIT_BATCH", "1"))
+        batch = os.environ.get("KOHAKUTPU_SUBMIT_BATCH")
+        self.batch_size = min(SUBMIT_BATCH, sq_n, cq_n) if batch is None else int(batch)
         if not 1 <= self.batch_size <= min(sq_n, cq_n):
             raise ValueError("submit batch must fit both SQ and CQ rings")
-        self.cq_bulk = os.environ.get("KOHAKUTPU_CQ_BULK", "0")
-        if self.cq_bulk not in ("0", "1"):
-            raise ValueError("KOHAKUTPU_CQ_BULK must be 0 or 1")
-        self.cq_bulk = self.cq_bulk == "1"
         self.resident_bytes = int(os.environ.get("KOHAKUTPU_PACKAGE_CACHE_BYTES", "0"))
-        self.backoff = float(os.environ.get("KOHAKUTPU_POLL_BACKOFF", "0"))
+        self.backoff = float(
+            os.environ.get("KOHAKUTPU_POLL_BACKOFF", str(POLL_BACKOFF))
+        )
         if self.resident_bytes < 0 or not 0 <= self.backoff <= 0.1:
             raise ValueError("nonnegative cache bytes and backoff in [0, 0.1] required")
         self._native_lock = threading.RLock()
@@ -332,11 +331,11 @@ class NodeQueue:
         self._idle_bytes = 0
         self._staged = []
         self._broken = False
-        self._poll_state = None
+        self._poll_state: Any = None
         self._sq_head_seen = 0
-        self.native_poll = None
-        self.native_exchange = None
-        self.native_run = None
+        self.native_poll: Any = None
+        self.native_exchange: Any = None
+        self.native_run: Any = None
         self.binding_limit = MAX_BINDINGS
         self.mem = mem
         self.base = base
@@ -854,7 +853,7 @@ class NodeQueue:
 
     def _sq_room(self) -> bool:
         """A stale observed head underestimates space; refresh only at pressure."""
-        if not self.head_cache or self.sq_tail - self._sq_head_seen >= self.sq_n:
+        if self.sq_tail - self._sq_head_seen >= self.sq_n:
             self._sq_head_seen = self._sq_head()
         return self.sq_tail - self._sq_head_seen < self.sq_n
 
@@ -867,31 +866,22 @@ class NodeQueue:
         with self._native_lock:
             self.flush()
             self.counters["polls"] += 1
-            snapshot = None
             layout = self.layout
-            tail_bytes = layout.tail_poll_bytes
             if self.native_poll is not None:
                 header, polls = self.native_poll(wait_seconds)
                 self.counters["polls"] += polls - 1
-                raw = header[
-                    layout.cq_tail - layout.fw : layout.cq_tail - layout.fw + tail_bytes
-                ]
-                self._poll_state = layout.decode_fw(header)
-                head = struct.unpack_from("<Q", header, layout.sq_head - layout.fw)[0]
-                self._sq_head_seen = max(self._sq_head_seen, head)
-            elif self.cq_bulk:
-                # Tail precedes records in address order; slots cannot be reused before ACK.
-                snapshot = self.mem.read_block(
-                    self.base + layout.fw, self.geo["end"] - layout.fw
-                )
-                raw = snapshot[
-                    layout.cq_tail - layout.fw : layout.cq_tail - layout.fw + tail_bytes
-                ]
-                self._poll_state = layout.decode_fw(snapshot)
-                head = struct.unpack_from("<Q", snapshot, layout.sq_head - layout.fw)[0]
-                self._sq_head_seen = max(self._sq_head_seen, head)
             else:
-                raw = self.mem.read_block(self.base + layout.cq_tail, tail_bytes)
+                # One read of the line block: state, SQ head, CQ tail, stdout count.
+                header = self.mem.read_block(self.base + layout.fw, layout.poll_bytes)
+            raw = header[
+                layout.cq_tail
+                - layout.fw : layout.cq_tail
+                - layout.fw
+                + layout.tail_poll_bytes
+            ]
+            self._poll_state = layout.decode_fw(header)
+            head = struct.unpack_from("<Q", header, layout.sq_head - layout.fw)[0]
+            self._sq_head_seen = max(self._sq_head_seen, head)
             tail = struct.unpack_from("<Q", raw, 0)[0]
             so_wr = struct.unpack_from("<Q", raw, layout.so_wr_from_cq_tail)[0]
             if so_wr != self.so_rd:
@@ -902,26 +892,19 @@ class NodeQueue:
             if tail != self.cq_head:
                 n = tail - self.cq_head
                 finalized = set(self._done)
+                entries = self._ring_read(self.geo["cq"], layout.cq_bytes, n)
+                records = (
+                    self._ring_read(self.geo["rec"], layout.rec_bytes, n)
+                    if self.record is not None
+                    else None
+                )
                 for k in range(n):
-                    at = (self.cq_head + k) % self.cq_n
-                    off = self.geo["cq"] + at * layout.cq_bytes
-                    e = (
-                        self.mem.read_block(self.base + off, layout.cq_bytes)
-                        if snapshot is None
-                        else snapshot[
-                            off - layout.fw : off - layout.fw + layout.cq_bytes
-                        ]
+                    e = entries[k * layout.cq_bytes : (k + 1) * layout.cq_bytes]
+                    rec_raw = (
+                        None
+                        if records is None
+                        else records[k * layout.rec_bytes : (k + 1) * layout.rec_bytes]
                     )
-                    rec_raw = None
-                    if self.record is not None:
-                        off = self.geo["rec"] + at * layout.rec_bytes
-                        rec_raw = (
-                            self.mem.read_block(self.base + off, layout.rec_bytes)
-                            if snapshot is None
-                            else snapshot[
-                                off - layout.fw : off - layout.fw + layout.rec_bytes
-                            ]
-                        )
                     c = Completion.from_bytes(
                         e, layout, rec_raw, self.record or layout.record
                     )
@@ -961,6 +944,16 @@ class NodeQueue:
                             prepared.acknowledge()
             return got
 
+    def _ring_read(self, off: int, width: int, n: int) -> bytes:
+        """`n` ring entries of `width` bytes from the CQ head, in contiguous reads."""
+        first = self.cq_head % self.cq_n
+        ring = self.base + off
+        run = min(n, self.cq_n - first)
+        raw = self.mem.read_block(ring + first * width, run * width)
+        if run < n:
+            raw += self.mem.read_block(ring, (n - run) * width)
+        return raw
+
     def wait(
         self, tag: int, timeout: float | None = None, check: bool = True, service=None
     ) -> Completion:
@@ -996,11 +989,7 @@ class NodeQueue:
                         time.sleep(delay)
                         delay = min(self.backoff, delay * 2)
                     if waited >= self.spin:
-                        st = (
-                            self._poll_state
-                            if self.cq_bulk or self.native_poll is not None
-                            else self.state()
-                        )
+                        st = self._poll_state
                         if st["state"] == "fatal":
                             if (st["fatal"] & EXIT_MASK) == EXIT_BOOTARGS:
                                 raise BootRefused(st, self.read_stdout())

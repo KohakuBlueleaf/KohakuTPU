@@ -55,28 +55,28 @@ class Layout:
     """Queue region, LIST and run-record layout built from `fw.queue`."""
 
     schema: dict
-    magic: int = 0
-    min_version: int = 0
-    version: int = 0
-    list_version: int = 0
-    line: int = 0
-    sq_bytes: int = 0
-    cq_bytes: int = 0
-    sq_words: int = 0
-    nbind_shift: int = 0
-    stdio_mask: int = 0
-    op_mask: int = 0
-    cq_status_mask: int = 0
-    offsets: dict | None = None
-    cq_offsets: dict | None = None
-    info_words: dict | None = None
-    fw_words: dict | None = None
-    states: dict | None = None
-    opcodes: dict | None = None
-    run_words: dict | None = None
-    list_words: dict | None = None
-    status: dict | None = None
-    record: Record | None = None
+    magic: int
+    min_version: int
+    version: int
+    list_version: int
+    line: int
+    sq_bytes: int
+    cq_bytes: int
+    sq_words: int
+    nbind_shift: int
+    stdio_mask: int
+    op_mask: int
+    cq_status_mask: int
+    offsets: dict
+    cq_offsets: dict
+    info_words: dict
+    fw_words: dict
+    states: dict
+    opcodes: dict
+    run_words: dict
+    list_words: dict
+    status: dict
+    record: Record
 
     @classmethod
     def from_schema(cls, q: dict) -> "Layout":
@@ -221,6 +221,11 @@ class Layout:
     @property
     def tail_poll_bytes(self) -> int:
         return self.so_wr + self.line - self.cq_tail
+
+    @property
+    def poll_bytes(self) -> int:
+        """From the firmware's line through the last field a poll reads."""
+        return max(self.sq_head, self.cq_tail, self.so_wr) + self.line - self.fw
 
     @property
     def so_wr_from_cq_tail(self) -> int:

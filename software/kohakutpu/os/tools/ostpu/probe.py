@@ -36,6 +36,7 @@ from kohakutpu.application.runtime.os.graph import (
     Graph,
     ResidentGraph,
     Task,
+    task_capacity,
 )
 
 
@@ -618,7 +619,7 @@ def measure(a):
                 if kind in (RG_DRAM_PRIV, RG_DRAM_SHARED):
                     card.write(pa, bytes(count))
         flags = (" -e" if a.engine else "") + (" -u" if a.uncached else "")
-        capacity = (
+        capacity = task_capacity(
             32 if a.witness else (3 * a.rounds if not a.adapter else 16 * a.rounds)
         )
         retain_arg = " 1" if a.witness else ""

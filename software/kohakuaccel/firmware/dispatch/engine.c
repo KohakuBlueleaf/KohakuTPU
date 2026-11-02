@@ -35,6 +35,7 @@ void ka_engine_snapshot(struct ka_engine *e)
 void ka_engine_report(struct ka_engine *e)
 {
     ka_engine_snapshot(e);
+    ka_printf("PKGF status %d detail %u value %lx\n", e->status, e->detail, e->value);
     ka_printf("PKGF de stat %lx moves %lx mvstat %lx xfdata %lx\n",
               e->de_stat, e->de_moves, e->mvstat, e->xfdata);
     ka_printf("PKGF de ctr");
@@ -73,6 +74,7 @@ void ka_engine_reset(struct ka_engine *e, uint32_t cap, uint64_t timeout)
     e->timeout = timeout;
     e->stray = 0;
     e->sent = 0;
+    e->t_first = e->t_last = 0;
     e->dst = ~0UL;
     e->keep_rx = 0;
     e->status = 0;
