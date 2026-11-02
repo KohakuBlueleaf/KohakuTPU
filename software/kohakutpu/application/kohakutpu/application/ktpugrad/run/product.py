@@ -17,9 +17,12 @@ from kohakutpu.application.ktpugrad.planning.lower import Access, Plan, Refused
 from kohakutpu.application.ktpugrad.run.common import (
     _dense,
     _half_target,
+    _held,
+    _hold,
     _mult,
     _out,
     _out_coef,
+    _read_id,
     _size,
     _wrote,
 )
@@ -125,6 +128,10 @@ def _pending(dev, plan: Plan, acc: Access, order, bufs, side) -> FM.Pending | No
         or not dtypes.is_float(acc.dtype)
     ):
         return None
+    read = ("pending", side, *_read_id(acc, order))
+    held = _held(dev, bufs[acc.slot], read)
+    if held is not None:
+        return held
     # Not coalesced: each destination level a row's, a row's or a block's
     # (the packing remaps them, `forms._into_packing`).
     one = _laid_plan(plan, ("pend", id(acc)), acc, order)
@@ -167,7 +174,7 @@ def _pending(dev, plan: Plan, acc: Access, order, bufs, side) -> FM.Pending | No
         is None
     ):
         return None
-    return FM.Pending(dev, 2 * n, steps)
+    return _hold(dev, bufs[acc.slot], read, FM.Pending(dev, 2 * n, steps))
 
 
 def _packing_plan(dev, plan: Plan):

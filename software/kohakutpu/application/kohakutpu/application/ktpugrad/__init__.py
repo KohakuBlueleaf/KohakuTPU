@@ -15,7 +15,12 @@ docs/projects/kohakutpu/tinygrad.md is the reference.
 
 from kohakutpu.application.ktpugrad.bridge import bridge
 from kohakutpu.application.ktpugrad.device import NAME, KTPUDevice, register
-from kohakutpu.application.ktpugrad.inference import Inference
+from kohakutpu.application.ktpugrad.inference import (
+    Inference,
+    Resident,
+    Sharded,
+    shards,
+)
 from kohakutpu.application.ktpugrad.planning.lower import Plan, Refused, plan
 from kohakutpu.application.ktpugrad.planning.plans import PLANS
 from kohakutpu.application.ktpugrad.seam import (
@@ -37,12 +42,15 @@ __all__ = [
     "KTPUUnsupported",
     "Plan",
     "Refused",
+    "Resident",
+    "Sharded",
     "bridge",
     "capture",
     "install",
     "installed",
     "plan",
     "register",
+    "shards",
     "to_program",
     "uninstall",
 ]

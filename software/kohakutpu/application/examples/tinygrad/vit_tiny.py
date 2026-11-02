@@ -6,6 +6,7 @@
 --blocks 1 selects one full encoder block; the default is twelve blocks.
 --realize-ops retains operation/movement boundaries; the default lets the scheduler fuse.
 --batch selects images per forward (1 by default).
+--no-jit realizes each forward eagerly; the default replays it through TinyJit.
 """
 
 import argparse
@@ -14,9 +15,10 @@ import time
 
 import numpy as np
 from examples.tinygrad.boundaries import boundary
-from tinygrad import Tensor, nn
+from tinygrad import nn
 from tinygrad.helpers import Context
 from tinygrad.nn.state import get_state_dict
+from tinygrad.tensor import Tensor
 
 from kohakutpu.application import ktpugrad
 from kohakutpu.application.checks.accuracy import (
@@ -128,6 +130,9 @@ def main():
         default=DEFAULT_INPUTS,
         help="input batches (default 48; measured 1.24 s/image applies only to batch 1)",
     )
+    ap.add_argument(
+        "--no-jit", action="store_true", help="realize each forward eagerly"
+    )
     ap.add_argument("--width", type=int, default=192)
     ap.add_argument("--image-size", type=int, default=224)
     ap.add_argument("--seed", type=int, default=17)
@@ -221,7 +226,7 @@ def main():
     try:
         with D.attached(dev):
             place(model)
-            predict = ktpugrad.Inference(model)
+            predict = ktpugrad.Inference(model, replay=not args.no_jit)
             got, seconds, block_errors = [], [], []
             for index, x in enumerate(inputs):
                 t0 = time.monotonic()

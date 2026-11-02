@@ -5,10 +5,20 @@ variable with the modules that read it.
 """
 
 import os
+from typing import overload
 
 
 class Environment:
-    def get(self, name: str, default=None):
+    @overload
+    def get(self, name: str) -> str | None: ...
+
+    @overload
+    def get(self, name: str, default: str) -> str: ...
+
+    @overload
+    def get(self, name: str, default: None) -> str | None: ...
+
+    def get(self, name: str, default: str | None = None) -> str | None:
         return os.environ.get(name, default)
 
     def __contains__(self, name: str) -> bool:
@@ -33,7 +43,6 @@ VARIABLES = {
     "KOHAKUTPU_BOOT_FLAGS": ("application/runtime/card/__init__.py",),
     "KOHAKUTPU_DEVICE": ("application/runtime/device/__init__.py",),
     "KOHAKUTPU_EAGER_FLUSH": ("application/runtime/device/__init__.py",),
-    "KOHAKUTPU_EXECUTION_LIST": ("application/runtime/device/__init__.py",),
     "KOHAKUTPU_HOST_SUBMIT_CACHE": ("application/runtime/card/__init__.py",),
     "KOHAKUTPU_KEEP_FAILED": ("application/runtime/card/collection.py",),
     "KOHAKUTPU_LIBRARY_CLASSES": ("application/runtime/device/__init__.py",),

@@ -275,6 +275,9 @@ def _vector_choice(plan: Plan):
         return "matmul", mm
     if _epilogue_contraction(plan):
         return "materialise", None
+    wide = W.find(plan, plain=True) if plan.reduce_ranges else None
+    if wide is not None:
+        return "window", wide
     return "general", None
 
 

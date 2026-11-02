@@ -2,6 +2,7 @@
 
 import pathlib
 from dataclasses import dataclass, field
+from typing import Any
 
 from kohakutpu.application.runtime.paths import ROOT
 
@@ -61,6 +62,60 @@ REPLAY_PACKAGE_BYTES_ENV = "KOHAKUTPU_REPLAY_PACKAGE_BYTES"
 PACKAGE_HOME_ENV = "KOHAKUTPU_PACKAGE_HOME"
 
 
+class Parts:
+    """What `Device`'s parts read of one another, declared only: `Device.__init__` or a
+    sibling part defines each."""
+
+    card: Any
+    memory: Any
+    mmu: Any
+    dram: Any
+    machine: Any
+    library: Any
+    resident_mode: Any
+    home: int | None
+    line_bytes: int
+    closed: bool
+    queued: bool
+    recording: bool
+    eager_flush: bool
+    prepared_replay: bool
+    replay_overcommit: bool
+    replay_package_bytes: int | None
+    replay_package_fraction: float
+    queue_bytes: int
+    max_inflight: int | None
+    counters: dict
+    kernels: Any
+    runs: list
+    inflight: list
+    private: dict
+    windows: dict
+    _uncertain: list
+    _failure: Any
+    _placement: Any
+    _scope: Any
+    _record_pins: list
+    _record_runs: list
+    _record_templates: list
+    _recipe_capture: Any
+    _recipe_recording: Any
+    _admit: Any
+    _extents: Any
+    _fence: Any
+    _healthy: Any
+    _kernel_key: Any
+    _pin_record: Any
+    _release_windows: Any
+    _retain: Any
+    _windowed: Any
+    collect: Any
+    collect_through: Any
+    drain: Any
+    free: Any
+    wait_address: Any
+
+
 class Recorded(list):
     """A replay log owning references to every allocation its events use."""
 
@@ -71,9 +126,10 @@ class Recorded(list):
         self.templates = tuple(templates)
         self.owner = owner
         self.closed = False
-        self.prepared = None
-        self.list_events = self.list_runs = None
-        self.native = None
+        self.prepared: Any = None
+        self.list_events: list | None = None
+        self.list_runs: Any = None
+        self.native: Any = None
 
     def close(self):
         if not self.closed:

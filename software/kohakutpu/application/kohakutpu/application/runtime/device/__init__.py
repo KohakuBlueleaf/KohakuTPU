@@ -22,6 +22,7 @@ from collections import OrderedDict
 from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import partial
+from typing import Any
 
 from kohakuaccel.driver.runtime.mmu import SoftwareMMU
 from kohakutpu.application.runtime import replay_budget
@@ -96,7 +97,7 @@ class Device(Kernels, Allocation, Submission, Replay):
         self._library = self._machine = None
         self.kernels: OrderedDict = OrderedDict()
         self.specialisations: OrderedDict = OrderedDict()
-        self.eager_schedules = None
+        self.eager_schedules: Any = None
         self.eager_calls = None
         self.eager_sequences = None
         self.eager_recipes = None
@@ -106,8 +107,8 @@ class Device(Kernels, Allocation, Submission, Replay):
         self.eager_exec = ENV.get("KTPU_EAGER_EXEC", "0") == "1"
         self.auto_sequence = ENV.get("KTPU_AUTO_SEQUENCE", "0") == "1"
         self.eager_recipe_enabled = ENV.get("KTPU_EAGER_RECIPE", "0") == "1"
-        self.native_recipe = ENV.get("KTPU_NATIVE_RECIPE", "0") == "1"
-        self.wire_recipe = ENV.get("KTPU_WIRE_RECIPE", "0") == "1"
+        self.native_recipe = ENV.get("KTPU_NATIVE_RECIPE", "1") == "1"
+        self.wire_recipe = ENV.get("KTPU_WIRE_RECIPE", "1") == "1"
         self.eager_flush = ENV.get("KOHAKUTPU_EAGER_FLUSH", "1") == "1"
         self.specialise_cache = ENV.get("KTPU_SPECIALISE_CACHE", "1") == "1"
         self._resident_mode = parse_resident_mode(ENV.get(RESIDENT_ENV))
@@ -131,9 +132,6 @@ class Device(Kernels, Allocation, Submission, Replay):
         if prepared not in ("0", "1"):
             raise ValueError(f"{PREPARED_REPLAY_ENV} must be 0 or 1")
         self.prepared_replay = prepared == "1"
-        self.execution_list = ENV.get("KOHAKUTPU_EXECUTION_LIST", "0") == "1"
-        if self.execution_list and not self.prepared_replay:
-            raise ValueError("execution lists require prepared replay")
         replay_bytes = ENV.get(REPLAY_PACKAGE_BYTES_ENV)
         self.replay_package_bytes = None if replay_bytes is None else int(replay_bytes)
         if self.replay_package_bytes is not None and self.replay_package_bytes < 0:
@@ -243,6 +241,8 @@ class Device(Kernels, Allocation, Submission, Replay):
         self.queue_bytes = capacity if budget is None else budget
         self._scope = None
         self._placement = None
+        #: The node of an `on_node` scope, None outside one.
+        self.home: int | None = None
         #: (space, node) -> (address, bytes) of a scratch window (`_window`)
         self.windows: dict = {}
         self._failure = None
@@ -267,6 +267,11 @@ class Device(Kernels, Allocation, Submission, Replay):
         }
         #: folded constants uploaded once, by content (`forms.table`)
         self.tables: dict = {}
+        #: Their spans, which no run writes.
+        self.constants: set = set()
+        #: Runs on two nodes overlap when they share no written span. Off: on
+        #: v9t6 overlapping nodes can hang or corrupt a run (ISSUES 31).
+        self.node_overlap = ENV.get("KTPU_NODE_OVERLAP", "0") == "1"
         for node, queue in getattr(self.card, "queues", {}).items():
             queue.spill = partial(self._spill, node)
 
@@ -283,7 +288,7 @@ class Device(Kernels, Allocation, Submission, Replay):
         self.card.resident_mode = mode
 
     @property
-    def library(self):
+    def library(self) -> Any:
         return self._library
 
     @library.setter
@@ -293,7 +298,7 @@ class Device(Kernels, Allocation, Submission, Replay):
         self._library = value
 
     @property
-    def machine(self):
+    def machine(self) -> Any:
         return self._machine
 
     @machine.setter

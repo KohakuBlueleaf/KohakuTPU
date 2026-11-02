@@ -33,7 +33,7 @@ class Memory(HostMemory):
 
 def transcript(native):
     mem = Memory()
-    q = NodeQueue(mem, 0, sq_n=2, cq_n=4, head_cache=True, layout=LAYOUT)
+    q = NodeQueue(mem, 0, sq_n=2, cq_n=4, layout=LAYOUT)
     q.native_run = _rs.QueueRun(LAYOUT) if native else None
     q.init()
     fw = SpecFirmware(mem, 0, layout=LAYOUT)
@@ -58,6 +58,7 @@ def test_a_failed_publication_keeps_its_pins():
     mem.fail_at = q.geo["sq"]
     with pytest.raises(OSError, match="publication"):
         q.submit(b"package".ljust(32, b"\0"))
+        q.flush()
     assert q._broken and q._outstanding == {1}
     assert 1 in q._package_tags
 

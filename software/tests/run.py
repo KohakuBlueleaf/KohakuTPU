@@ -134,7 +134,7 @@ SUITES = (
     ),
     Suite(
         "firmware/host",
-        ("kohakuaccel/firmware", "kohakutpu/firmware"),
+        ("kohakuaccel/firmware", "kohakuaccel/os", "kohakutpu/firmware"),
     ),
     Suite(
         "firmware/emu",

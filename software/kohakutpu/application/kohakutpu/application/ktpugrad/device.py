@@ -9,16 +9,20 @@ program runs it.
 """
 
 import sys
+from contextvars import ContextVar
 from types import ModuleType
 from typing import Any, cast
 
 import numpy as np
 from tinygrad.device import Allocator, Buffer, Compiled, Device
-from tinygrad.engine.jit import GraphRunner
+from tinygrad.engine.jit import CapturedJit, GraphRunner
+from tinygrad.helpers import JIT_BATCH_SIZE
+from tinygrad.nn.state import get_parameters
 from tinygrad.renderer import Renderer
+from tinygrad.uop import Ops
 
 from kohakutpu.application.ktpugrad import run as R
-from kohakutpu.application.ktpugrad.captured import recipe
+from kohakutpu.application.ktpugrad.captured import graph_walk, recipe
 from kohakutpu.application.ktpugrad.planning import fold as F
 from kohakutpu.application.ktpugrad.planning.lower import Refused
 from kohakutpu.application.ktpugrad.planning.plans import PLANS, KTPUUnsupported
@@ -31,6 +35,20 @@ from kohakutpu.application.runtime.rows import RowsError
 NAME = "KTPU"
 MODULE = f"tinygrad.runtime.ops_{NAME.lower()}"
 SUBMITTED = (D.Submitted, D.rs._rs.Submitted)
+#: The captured graph being called, for what it returns (`KTPUGraph._outputs`).
+_CAPTURED: ContextVar = ContextVar("captured_jit", default=None)
+_CAPTURED_CALL = CapturedJit.__call__
+#: No size limit: a captured step's kernels are fused and replayed as one batch.
+JIT_BATCH_SIZE.value = 0
+
+
+def captured_call(self, input_uops, var_vals):
+    """`CapturedJit.__call__`, visible to the graph it runs."""
+    token = _CAPTURED.set(self)
+    try:
+        return _CAPTURED_CALL(self, input_uops, var_vals)
+    finally:
+        _CAPTURED.reset(token)
 
 
 def seconds(rt: D.Device, runs) -> float:
@@ -56,6 +74,7 @@ class KTPUAllocator(Allocator):
     def _copyin(self, dest, src: memoryview) -> None:
         raw = bytes(src)
         st, off = FM.base_of(dest)
+        st.unshare()
         for form in st.forms.values():
             self.rt.wait_address(form.addr, write=True)
         if not off and len(raw) == st.nbytes and st.owned:
@@ -69,8 +88,7 @@ class KTPUAllocator(Allocator):
             self.rt.write(st.addr + lo, bytes(old))
         else:
             self.rt.write(st.addr, raw)
-        if FLAT not in st.valid:
-            st.wrote(FLAT)
+        st.wrote(FLAT)
         st.valid = {FLAT}
         st.host = raw if not off and len(raw) == st.nbytes else None
         st.dtype = None
@@ -138,22 +156,7 @@ class KTPUProgram:
         by_slot = dict(zip(sorted(self.slots), bufs))
         try:
             rt = self.dev.rt
-            out, _ = FM.base_of(by_slot[self.plan.out_slot])
-
-            def readonly():
-                return [
-                    form.addr
-                    for buf in by_slot.values()
-                    for st, _ in [FM.base_of(buf)]
-                    if st is not out
-                    for key, form in st.forms.items()
-                    if key in st.valid
-                ]
-
-            with rt.submission_scope(
-                self.plan.name, readonly, lambda: [f.addr for f in out.forms.values()]
-            ):
-                runs = recipe.execute(rt, self.plan, by_slot)
+            runs = recipe.submit(rt, self.plan, by_slot)
         except (Refused, RowsError, FM.FormError) as e:
             # Refused once the buffers are known (their forms, a sub-buffer, ...).
             raise KTPUUnsupported(
@@ -191,13 +194,13 @@ class KTPUGraph(GraphRunner):
         #: per slot, the element type of the f16 form the batch read from host
         self.host_forms: dict = {}
         #: the last recorded call: (entry state, log, exit state, exit records)
-        self.prev: tuple | None = None
+        self.prev: Any = None
         #: the verified call, replayed from an equal entry state
-        self.log: tuple | None = None
+        self.log: Any = None
         self.counts = dict.fromkeys(("planned", "recorded", "replayed"), 0)
         #: why each pair of consecutive records differed
         self.misses: list = []
-        self.placement: Placement | None = None
+        self.placement: Any = None
 
     def _fill(self, input_uops) -> bool:
         """Every input's host bytes into its slot; False where one has none."""
@@ -241,14 +244,27 @@ class KTPUGraph(GraphRunner):
                 with rt.placement_scope(self.placement if slots else None, j):
                     runtime(*all_args[j])
             return
-        groups = R.plan_schedule(sched_items)
-        for grp, dead_addrs in groups:
-            if len(grp) == 1:
-                j = grp[0]
-                with rt.placement_scope(self.placement if slots else None, j):
-                    self.runtimes[j](*all_args[j])
+        held = self._outputs()
+        units: list = (
+            [([j], *item) for j, item in enumerate(sched_items)]
+            if held is None
+            else R.units(sched_items, held)
+        )
+
+        def run_unit(unit):
+            members, plan, by_slot = units[unit]
+            if len(members) > 1 or plan is not sched_items[members[0]][0]:
+                recipe.submit(rt, plan, by_slot)
             else:
-                last_j = grp[-1]
+                self.runtimes[members[0]](*all_args[members[0]])
+
+        groups = R.plan_schedule([(p, by_slot) for _, p, by_slot in units])
+        for grp, dead_addrs in groups:
+            last_j = units[grp[-1]][0][-1]
+            if len(grp) == 1:
+                with rt.placement_scope(self.placement if slots else None, last_j):
+                    run_unit(grp[0])
+            else:
                 with (
                     rt.placement_scope(self.placement if slots else None, last_j),
                     R.multi_stage_scope(
@@ -258,8 +274,31 @@ class KTPUGraph(GraphRunner):
                         info={"plan": self.runtimes[last_j].plan.name},
                     ),
                 ):
-                    for j in grp:
-                        self.runtimes[j](*all_args[j])
+                    for unit in grp:
+                        run_unit(unit)
+
+    def _outputs(self) -> set | None:
+        """Storages of what the captured graph returns, every tensor's (the
+        updates it does not return) and those a call outside this batch names:
+        a region may hide any other buffer. None with no captured call, where
+        something else may read one."""
+        captured = _CAPTURED.get()
+        if captured is None:
+            return None
+        others = [
+            c
+            for c in captured.linear.src
+            if c.src[0].op is not Ops.CUSTOM_FUNCTION
+            or c.src[0].src[0] is not self.linear
+        ]
+        out = set()
+        for b in (*graph_walk.buffers(), *graph_walk.named(others)):
+            if str(b.device).startswith(NAME) and b.is_allocated():
+                out.add(id(FM.base_of(b.base._buf)[0]))
+        for t in get_parameters(captured.ret):
+            if t.device == NAME and t.uop.is_realized:
+                out.add(id(FM.base_of(t.uop.buffer.ensure_allocated()._buf)[0]))
+        return out
 
     def _storages(self) -> list:
         """Every storage the batch's kernels name (its slots included)."""
@@ -274,8 +313,14 @@ class KTPUGraph(GraphRunner):
 
     @staticmethod
     def _cores(cores: dict) -> tuple:
-        """What every node's vector cores hold (a package is built for it)."""
+        """What the nodes' vector cores hold (a package is built for it)."""
         return tuple((n, c.digest()) for n, c in sorted(cores.items()))
+
+    def _residents(self) -> dict:
+        """The cores this call's packages see: its `on_node` node's, or all."""
+        rt = self.dev.rt
+        cores = rt.card.residents
+        return cores if rt.home is None else {rt.home: cores[rt.home]}
 
     @staticmethod
     def _state(storages: list) -> tuple:
@@ -319,7 +364,7 @@ class KTPUGraph(GraphRunner):
                 rt.drain()
             return None
         storages = self._storages()
-        cores = rt.card.residents
+        cores = self._residents()
         entry = (self._state(storages), self._cores(cores), rt.private_state())
         if self.log is not None and entry == self.log[0]:
             self.counts["replayed"] += 1

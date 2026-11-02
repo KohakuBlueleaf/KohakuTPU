@@ -78,9 +78,9 @@ class OSCard(OfflineCard):
         self.movers = movers_enabled(self.machine_json)
         self.prune = ENV.get("KOHAKUTPU_OS_PRUNE", "0") == "1"
         self.stamps = ENV.get("KOHAKUTPU_OS_STAMPS", "0") == "1"
-        self.de_stream = ENV.get("KOHAKUTPU_OS_DE_STREAM", "0") == "1"
+        self.de_stream = ENV.get("KOHAKUTPU_OS_DE_STREAM", "1") == "1"
         self.de_fetch = ENV.get("KOHAKUTPU_OS_DE_FETCH", "1") == "1"
-        self.de_fuse = ENV.get("KOHAKUTPU_OS_DE_FUSE", "0") == "1"
+        self.de_fuse = ENV.get("KOHAKUTPU_OS_DE_FUSE", "1") == "1"
         self.launch_ring = ENV.get("KOHAKUTPU_OS_LAUNCH_RING", "0") == "1"
 
     def _execute(self, graph, repeats=1):
@@ -165,7 +165,7 @@ class OSCard(OfflineCard):
                     or (address | len(data)) & 31
                 ):
                     raise ValueError("captured write must name whole OS arena words")
-                if use_fuse:
+                if use_de:
                     frontier = graph.move_de(data, address, after=frontier)
                     continue
                 for at in range(0, len(data), KOS_MOVE_MAX_WORDS * 32):
@@ -224,11 +224,6 @@ class OSCard(OfflineCard):
         self.session.prepare(graph)
         self.resident_program = graph
         return Prepared(graph, launches)
-
-    def prepare_execution(self, _prepared):
-        raise ValueError(
-            "OSCard resident graphs already submit once per step; execution lists are a firmware queue mode"
-        )
 
     def replay(self, log, repeats=1):
         prepared = log.prepared

@@ -8,7 +8,13 @@ from kohakutpu.application.ktpugrad import uops as U
 from kohakutpu.application.ktpugrad.planning import fold as F
 from kohakutpu.application.ktpugrad.planning import window as W
 from kohakutpu.application.ktpugrad.planning.lower import Access, Plan, Refused
-from kohakutpu.application.ktpugrad.run.common import _dense, _n, _size
+from kohakutpu.application.ktpugrad.run.common import (
+    _dense,
+    _held,
+    _hold,
+    _n,
+    _size,
+)
 from kohakutpu.application.ktpugrad.run.moves import _gather_to, _move
 from kohakutpu.application.ktpugrad.run.shape import _f16_walk
 from kohakutpu.application.runtime import forms as FM
@@ -63,6 +69,14 @@ def _lay(dev, plan: Plan, bufs, tmps, c, side, outer, lane, key, defer=None) -> 
     if step is None and coef == {r: s for r, s in _dense(order).items()} and off == 0:
         bufs[key] = bufs[src]
         return []
+    # With a step its source is already read through; the step is not kept.
+    s = None if step is not None else bufs[src]
+    read = ("lay", defer, off, tuple((U.extent(r), coef[r]) for r in order[:-1]))
+    held = _held(dev, s, read)
+    if held is not None:
+        tmps.append(held)
+        bufs[key] = held
+        return []
     if defer:
         live = [r for r in order if U.extent(r) > 1]
         dense = _dense(live)
@@ -82,7 +96,7 @@ def _lay(dev, plan: Plan, bufs, tmps, c, side, outer, lane, key, defer=None) -> 
             steps = (FM.Step(at, N, walk, off + voff // 2, dwalk, 0, n),)
         if FM.COMPOSED == "off" and not FM.costs.has_steps(steps, dev.machine.board):
             return _lay(dev, plan, bufs, tmps, c, side, outer, lane, key, defer=False)
-        pend = FM.Pending(dev, 2 * max(n, 16), steps)
+        pend = _hold(dev, s, read, FM.Pending(dev, 2 * max(n, 16), steps))
         tmps.append(pend)
         bufs[key] = pend
         return []
@@ -104,6 +118,7 @@ def _lay(dev, plan: Plan, bufs, tmps, c, side, outer, lane, key, defer=None) -> 
     runs = _move(dev, sub, bufs)
     if runs is None:
         raise Refused("a window operand not walked in whole words")
+    _hold(dev, s, read, t)
     return runs
 
 

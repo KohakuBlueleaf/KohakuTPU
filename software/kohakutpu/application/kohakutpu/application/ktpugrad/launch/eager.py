@@ -6,6 +6,7 @@ from tinygrad.helpers import perf_counter_us
 from tinygrad.uop import Ops
 
 from kohakutpu.application.ktpugrad import run as R
+from kohakutpu.application.ktpugrad.captured import recipe
 from kohakutpu.application.ktpugrad.planning.plans import PLANS
 
 
@@ -42,6 +43,7 @@ def try_group(linear, ctx, used, inputs, held, rt, _on_ktpu):
                 ets = realize.pm_exec.rewrite(call, ctx) or []
                 realize.track_stats(ctx, call, perf_counter_us(), ets)
             sched_items = []
+            named = set()
             for idx in call_indices:
                 c = linear.src[idx]
                 p = PLANS[c.src[0].src[3].arg]
@@ -52,17 +54,21 @@ def try_group(linear, ctx, used, inputs, held, rt, _on_ktpu):
                     if isinstance(b, Buffer) and _on_ktpu(b.device):
                         b.ensure_allocated()
                         by_slot[slot_num] = b._buf
+                        if id(b.base) in held:
+                            named.add(id(R.FM.base_of(b._buf)[0]))
                 sched_items.append((p, by_slot))
-            groups = R.plan_schedule(sched_items)
+            units = R.units(sched_items, named)
+            groups = R.plan_schedule([(p, by_slot) for _, p, by_slot in units])
             last_grp = {}
             for orig_i in other_indices:
                 for b in used[orig_i]:
                     last_grp[id(b)] = (-1, b)
             for g_idx, (grp, _) in enumerate(groups):
-                for local_i in grp:
-                    orig_i = call_indices[local_i]
-                    for b in used[orig_i]:
-                        last_grp[id(b)] = (g_idx, b)
+                for unit in grp:
+                    for local_i in units[unit][0]:
+                        orig_i = call_indices[local_i]
+                        for b in used[orig_i]:
+                            last_grp[id(b)] = (g_idx, b)
             dead_by_grp: dict = {}
             for k, (g_idx, b) in last_grp.items():
                 if k not in held:
@@ -70,23 +76,29 @@ def try_group(linear, ctx, used, inputs, held, rt, _on_ktpu):
             for b in dead_by_grp.get(-1, ()):
                 if b.is_allocated() and not b.allocated_views:
                     b.deallocate()
+
+            def run_unit(unit):
+                members, plan, by_slot = units[unit]
+                if len(members) > 1 or plan is not sched_items[members[0]][0]:
+                    recipe.submit(rt, plan, by_slot)
+                    return
+                call = linear.src[call_indices[members[0]]]
+                ets = realize.pm_exec.rewrite(call, ctx) or []
+                realize.track_stats(ctx, call, perf_counter_us(), ets)
+
             for g_idx, (grp, dead_addrs) in enumerate(groups):
                 if len(grp) == 1:
-                    call = linear.src[call_indices[grp[0]]]
-                    ets = realize.pm_exec.rewrite(call, ctx) or []
-                    realize.track_stats(ctx, call, perf_counter_us(), ets)
+                    run_unit(grp[0])
                 else:
-                    last_plan = sched_items[grp[-1]][0]
+                    last_plan = units[grp[-1]][1]
                     with R.multi_stage_scope(
                         rt,
                         dead_addrs=dead_addrs,
                         count=len(grp),
                         info={"plan": last_plan.name},
                     ):
-                        for local_i in grp:
-                            call = linear.src[call_indices[local_i]]
-                            ets = realize.pm_exec.rewrite(call, ctx) or []
-                            realize.track_stats(ctx, call, perf_counter_us(), ets)
+                        for unit in grp:
+                            run_unit(unit)
                 for b in dead_by_grp.get(g_idx, ()):
                     if b.is_allocated() and not b.allocated_views:
                         b.deallocate()

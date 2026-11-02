@@ -50,10 +50,21 @@ def apply_map(applied_map, name):
             t.uop = after
 
 
-def held():
-    roots = [t.uop for ref in list(tensor.all_tensors) if (t := ref()) is not None]
-    return {
-        id(b.base)
+def named(roots):
+    """Every buffer the graphs of `roots` name."""
+    return [
+        b
         for u in _rs.graph_nodes(roots, Ops.BUFFER)
         if isinstance(b := u.buffer, Buffer)
-    }
+    ]
+
+
+def buffers():
+    """Every buffer some live tensor's graph names."""
+    return named(
+        [t.uop for ref in list(tensor.all_tensors) if (t := ref()) is not None]
+    )
+
+
+def held():
+    return {id(b.base) for b in buffers()}

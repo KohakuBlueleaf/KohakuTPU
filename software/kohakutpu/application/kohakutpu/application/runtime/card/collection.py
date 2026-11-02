@@ -212,8 +212,8 @@ class Collection:
                     raise
                 out[n] = {"fault": str(e), "debug": None}
                 continue
-            except NodeError as e:
-                e = contract_error(e)
+            except NodeError as caught:
+                e = contract_error(caught)
                 self._forget_residents((n,))
                 try:
                     self._segment(n, tag, e.console)

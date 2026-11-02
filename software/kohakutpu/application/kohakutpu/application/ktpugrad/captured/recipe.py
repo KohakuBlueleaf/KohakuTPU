@@ -1,6 +1,7 @@
 """Cold eager planning records an address-parametric launch program."""
 
 from collections import Counter
+from typing import Any
 
 from kohakutpu.application.ktpugrad import run
 from kohakutpu.application.runtime import forms as FM
@@ -108,7 +109,7 @@ class Recording:
         self.pins = []
         self.external = {}
         self.native = native
-        self.program = None
+        self.program: Any = None
         if self.native and not isinstance(dev.mmu, _rs.NativeMMU):
             raise ValueError("KTPU_NATIVE_PROGRAM requires KTPU_NATIVE_MEMORY=1")
 
@@ -333,7 +334,9 @@ class Recipes:
         context = (
             revision,
             dev.resident_mode,
+            dev.home,
             host_key(buffers) if host_enabled(buffers, self.host_recipe) else None,
+            tuple(st.kept_state for st in buffers.values()),
         )
         if self.native is not None:
             launch_boundary.before_submit(dev)
@@ -381,7 +384,30 @@ class Recipes:
         return runs
 
 
+def submit(dev, plan, buffers):
+    """`execute` under the device's submission scope, as a program call does."""
+    out, _ = FM.base_of(buffers[plan.out_slot])
+
+    def readonly():
+        return [
+            form.addr
+            for buf in buffers.values()
+            for st, _ in [FM.base_of(buf)]
+            if st is not out
+            for key, form in st.forms.items()
+            if key in st.valid
+        ]
+
+    with dev.submission_scope(
+        plan.name, readonly, lambda: [f.addr for f in out.forms.values()]
+    ):
+        return execute(dev, plan, buffers)
+
+
 def execute(dev, plan, buffers):
+    if run.read_kept(dev, plan, buffers):
+        return []
+    FM.base_of(buffers[plan.out_slot])[0].unshare()
     if (
         not dev.eager_recipe_enabled
         or run._active_scope(dev) is not None

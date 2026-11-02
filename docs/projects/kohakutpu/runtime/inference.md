@@ -28,6 +28,26 @@ argument, `KTPU_INFERENCE_REPLAY=0` selects eager and `1` selects replay. The Vi
 example and MNIST classifier's KTPU accuracy path use this wrapper. ViT's explicit
 state observers run eagerly because observation reads intermediate results.
 
+## Several nodes
+
+`Resident(model, nodes)` keeps one `Inference` per node, sharing the weights in
+DRAM. Each copy has its own captured graph, input slots and scratch, so requests
+on different nodes overlap on the card until a result is read.
+`Sharded(model, nodes)` runs one batch across the nodes: `shards` gives each node
+a contiguous range of the first axis, each range is a `Resident` request, and the
+outputs join on that axis.
+
+```python
+from kohakutpu.application.ktpugrad import Resident, Sharded
+
+model_on = Resident(model)
+results = [out.numpy() for out in model_on([(image,) for image in images])]
+logits = Sharded(model)(batch).numpy()
+```
+
+Packages are built for mesh 0 and rewritten for their node at submission, a change
+of the unit and buffer tables only (`Package::rehomed`).
+
 ## Dispatch controls
 
 - `KTPU_PLAN_CACHE=0|1` controls bounded exact topology memoization. Dynamic

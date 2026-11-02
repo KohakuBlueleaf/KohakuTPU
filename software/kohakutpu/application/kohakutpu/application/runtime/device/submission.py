@@ -8,7 +8,12 @@ from dataclasses import replace
 from kohakuaccel.driver.node.queue import NodeError
 from kohakutpu.application.runtime import generated, launch_boundary
 from kohakutpu.application.runtime.class_library import ClassLibrary
-from kohakutpu.application.runtime.device.common import KERNELS_KEPT, Run, Submitted
+from kohakutpu.application.runtime.device.common import (
+    KERNELS_KEPT,
+    Parts,
+    Run,
+    Submitted,
+)
 from kohakutpu.application.runtime.memory.arena import OutOfMemory
 from kohakutpu.application.runtime.packages import Prebuilt, placed
 from kohakutpu.stack import rs
@@ -16,7 +21,7 @@ from kohakutpu.stack.buffer import Buffer
 from kohakutpu.stack.kernel import arena_name
 
 
-class Submission:
+class Submission(Parts):
     def _healthy(self):
         if self._uncertain:
             raise RuntimeError(
@@ -63,7 +68,7 @@ class Submission:
 
     def _write_refs(self, references):
         if self._scope is None:
-            return list(references)
+            return [r for r in references if r not in self.constants]
         _, readonly, writable = self._scope
         refs = set()
         for addr in readonly() if callable(readonly) else readonly:
@@ -72,17 +77,31 @@ class Submission:
         for addr in writable() if callable(writable) else writable:
             entry, _ = self.mmu.resolve(addr)
             refs.discard((entry.arena, entry.physical))
-        return [r for r in references if r not in refs]
+        return [r for r in references if r not in refs and r not in self.constants]
 
-    def _fence(self, nodes) -> None:
-        """Every run in flight collected before a run on `nodes` is queued,
-        where it is a run over more than one node or the runs in flight are
-        on other nodes: one node's queue orders its runs, and nothing orders
-        two nodes' queues. So the runs in flight are always on one node, in
-        that node's order, and a run over several nodes runs alone; the
-        scratch windows rest on this (`_window`)."""
-        if len(nodes) > 1 or any(s.nodes != nodes for s in self.inflight):
+    def _fence(self, nodes, references, writes) -> None:
+        """Before a run on `nodes` that reads `references` and writes `writes`
+        is queued, every run in flight it depends on is collected. One node's
+        queue orders its runs and nothing orders two nodes' queues, so a run
+        on other nodes that shares a written span with this one comes first
+        (scratch windows rest on this, `_window`); a run over several nodes
+        runs alone."""
+        if len(nodes) > 1 or any(len(s.nodes) > 1 for s in self.inflight):
             self.drain()
+            return
+        reads, wrote = set(references), set(writes)
+        conflicts = [
+            s
+            for s in self.inflight
+            if s.nodes != nodes
+            and (
+                not self.node_overlap
+                or not wrote.isdisjoint(s.references)
+                or not reads.isdisjoint(s.writes)
+            )
+        ]
+        if conflicts:
+            self.collect_through(conflicts[-1])
 
     def _admit(self, nodes, references):
         """Bound each node's uncollected runs and the union of pinned spans."""
@@ -188,10 +207,10 @@ class Submission:
             if getattr(compiled, "bound", None) is not None or apart:
                 phys = {k: self.mmu.resolve(v)[1] for k, v in full.items()}
                 with rs.compiler_owner(self):
-                    progs = compiled.programs(phys)
+                    progs = compiled.programs(phys, self.home)
             else:
                 with rs.compiler_owner(self):
-                    progs = compiled.programs(full)
+                    progs = compiled.programs(full, self.home)
                 progs = {
                     n: (
                         replace(p, translations=self.mmu.translations_for(p.bindings))
@@ -214,7 +233,7 @@ class Submission:
                     ):
                         continue
                     candidate = generated.from_output(self, json.loads(source), output)
-                    programs = candidate.programs(full)
+                    programs = candidate.programs(full, self.home)
                     if all(p.matches_environment(self.mmu) for p in programs.values()):
                         submitted_compiled = candidate
                         progs = {
@@ -257,7 +276,7 @@ class Submission:
                 submitted_compiled = exact
                 progs = {
                     n: replace(p, translations=self.mmu.translations_for(p.bindings))
-                    for n, p in exact.programs(full).items()
+                    for n, p in exact.programs(full, self.home).items()
                 }
                 self.counters["class_hits"] -= 1
                 self.counters["exact_hits"] += 1
@@ -276,7 +295,8 @@ class Submission:
                 if hasattr(self.card, "nodes")
                 else tuple(progs)
             )
-            self._fence(nodes)
+            writes = self._write_refs(references)
+            self._fence(nodes, references, writes)
             self._admit(nodes, references)
             card = progs[None] if single else progs
             s = Submitted(
@@ -285,7 +305,7 @@ class Submission:
                 dict(info or {}),
                 t0,
                 references=references,
-                writes=self._write_refs(references),
+                writes=writes,
                 nodes=nodes,
             )
             if self._scope is not None:

@@ -2,10 +2,11 @@
 
 from contextlib import contextmanager
 
+from kohakutpu.application.runtime.device.common import Parts
 from kohakutpu.application.runtime.memory.arena import OutOfMemory
 
 
-class Allocation:
+class Allocation(Parts):
     # ------------------------------------------------------------ memory
     def alloc(
         self,
@@ -27,7 +28,7 @@ class Allocation:
         line = self.line_bytes
         extent = max(line, (int(nbytes) + line - 1) // line * line)
         if space == "stage":
-            n = self.card.nodes[0] if node is None else node
+            n = self._node_of(node)
             arena = self.memory.staging[n]
             physical = self._take(lambda: self.memory.stage(extent, n, owner=owner))
         else:
@@ -40,20 +41,43 @@ class Allocation:
             arena.release(physical)
             raise
 
+    def _node_of(self, node: int | None) -> int:
+        """Where a span of `node` lives: the `on_node` node, else `node`,
+        else the first node."""
+        if self.home is not None:
+            return self.home
+        return self.card.nodes[0] if node is None else node
+
+    @contextmanager
+    def on_node(self, node: int):
+        """One-mesh kernels and their scratch run on `node` inside this
+        scope; two nodes' runs without a shared written span overlap."""
+        old = self.home
+        self.home = node
+        try:
+            yield
+        finally:
+            self.home = old
+
     def _window(self, key: tuple, nbytes: int) -> int:
         """The scratch window of `key`, `(space, node)`, at least `nbytes`:
         where every kernel run lays out its scratch in that space, a node's
-        staging store each, DRAM one (`node` None). A node runs its queue in
-        order and `_fence` keeps the runs in flight on one node, a run over
-        several alone, so no two runs' scratch is live at once, eager or
-        replayed, and a graph pins one window a space, not a span a site. A window too small is freed to
-        whatever still pins it (runs in flight, recordings)."""
+        staging store each, DRAM one a home (`node` None outside `on_node`).
+        A node runs its queue in order and `_fence` orders every run sharing
+        a written span, a window included, so no two runs' scratch is live at
+        once, eager or replayed, and a graph pins one window a space, not a
+        span a site. A window too small is freed to whatever still pins it
+        (runs in flight, recordings)."""
         held = self.windows.get(key)
         if held is not None and held[1] >= nbytes:
             return held[0]
         if held is not None:
             self.free(held[0])
+            del self.windows[key]
         space, node = key
+        if self.recording and space == "stage":
+            # What a recording pins stays held: this window never regrows.
+            nbytes = max(nbytes, self.memory.staging[node].largest)
         at = self._alloc(nbytes, space, node, f"scratch:window:{space}:{node}")
         self.windows[key] = (at, nbytes)
         return at
@@ -83,10 +107,7 @@ class Allocation:
         line = max(self.line_bytes, 256)
         offsets, ends = {}, {}
         for name, nbytes, space, node, _ in spans:
-            if space == "stage":
-                key = (space, self.card.nodes[0] if node is None else node)
-            else:
-                key = (space, None)
+            key = (space, self._node_of(node) if space == "stage" else self.home)
             offsets[name] = (key, ends.get(key, 0))
             ends[key] = offsets[name][1] + -(-int(nbytes) // line) * line
         bases = {key: self._window(key, end) for key, end in ends.items()}

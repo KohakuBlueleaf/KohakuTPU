@@ -276,9 +276,12 @@ def step_clocks(a) -> int:
 def step_read_clocks(a) -> int:
     t = transport(a)
     clocks = CardClocks(t, load_board(a.board))
+    got = {}
     for n in nodes_of(a):
         m = clocks.mesh(n)
+        got[n] = dict(m.read_all(), locked=m.locked())
         print(f"node {n}: {m.read_all()} locked={m.locked()}")
+    save(a, "read-clocks", got)
     return 0
 
 

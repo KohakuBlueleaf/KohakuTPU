@@ -17,8 +17,12 @@ from kohakutpu.language.text.syntax import fmt
 from kohakutpu.stack import rs
 
 DISPATCH_KEPT = 512
+#: A dispatch directory's file of every admitted launch.
+MEMBERS = "members.json"
 _DISPATCH_CACHE: OrderedDict = OrderedDict()
 _EXACT_BYTES_CACHE: OrderedDict = OrderedDict()
+#: Admitted launches by dispatch directory, as of its modification time.
+_MEMBERS_CACHE: dict = {}
 
 
 def structure(value):
@@ -69,6 +73,28 @@ class ClassLibrary:
         self.root = Path(root)
         self.machine = machine
         self.store = TemplateStore(root, machine)
+
+    def _members(self, machine_digest) -> set:
+        """Every launch this library's classes admit: a launch outside it
+        takes no structural key. Read from `MEMBERS`, else from the entries."""
+        folder = self.root / machine_digest / "dispatch"
+        if not folder.exists():
+            return set()
+        stamp = folder.stat().st_mtime_ns
+        held = _MEMBERS_CACHE.get(folder)
+        if held is not None and held[0] == stamp:
+            return held[1]
+        path = folder / MEMBERS
+        if path.exists():
+            members = set(json.loads(path.read_text(encoding="utf-8")))
+        else:
+            members = {
+                m
+                for entry in folder.glob("*.json")
+                for m in json.loads(entry.read_bytes())["members"]
+            }
+        _MEMBERS_CACHE[folder] = (stamp, members)
+        return members
 
     def _key_path(self, source):
         key = json.loads(rs.library_key(source, self.machine))
@@ -176,6 +202,9 @@ class ClassLibrary:
         temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps(entry, separators=(",", ":")), encoding="utf-8")
         temporary.replace(path)
+        members = sorted(self._members(key["machine"]) | {member})
+        temporary.write_text(json.dumps(members), encoding="utf-8")
+        temporary.replace(path.parent / MEMBERS)
 
     @staticmethod
     def _load(path):
@@ -216,6 +245,9 @@ class ClassLibrary:
         return result
 
     def lookup(self, source, variant=0):
+        exact = json.loads(rs.library_key(source, self.machine))
+        if exact["class"] not in self._members(exact["machine"]):
+            return None
         key, member, path = self._key_path(source)
         if not path.exists():
             return None

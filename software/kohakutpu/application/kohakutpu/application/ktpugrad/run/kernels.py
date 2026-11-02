@@ -2,6 +2,7 @@
 
 import itertools
 from dataclasses import replace
+from typing import Any
 
 import numpy as np
 from tinygrad.dtype import dtypes
@@ -18,10 +19,13 @@ from kohakutpu.application.ktpugrad.run.common import (
     _addr,
     _dense,
     _half_target,
+    _held,
+    _hold,
     _mult,
     _n,
     _out,
     _out_coef,
+    _read_id,
     _reform,
     _size,
     _walk,
@@ -400,6 +404,7 @@ def _window(dev, plan: Plan, bufs, contraction=None) -> list | None:
 
 
 def _vector(dev, plan: Plan, bufs) -> list:
+    payload: Any
     choice, payload = _vector_choice(plan)
     if choice == "window":
         return _window(dev, plan, bufs, payload)
@@ -425,12 +430,13 @@ def _vector(dev, plan: Plan, bufs) -> list:
             return moved
     if len(set(plan.reductions.values())) > 1:
         return _materialise(dev, plan, bufs)
-    if not plan.reduce_ranges and plan.out_strides is None:
+    region = bool(_all_reduces(plan.expr)) and not plan.reduce_ranges
+    if not region and not plan.reduce_ranges and plan.out_strides is None:
         cores = dev.machine.count("VC")
         flat = _flat(dev, plan, bufs, cores)
         if flat is not None:
             return flat
-    if not plan.reduce_ranges:
+    if not region and not plan.reduce_ranges:
         plan = _refold(plan) or plan
     return _rows(dev, plan, bufs)
 
@@ -459,7 +465,7 @@ def _rows(dev, plan: Plan, bufs) -> list:
             binds[f"in{i}"] = at
             operands.append(o)
             runs += got
-        if kind == "along" and Wp != W:
+        if kind != "down" and RW._reductions(plan.expr) and Wp != W:
             k = len(operands)
             binds[f"in{k}"] = FM.table(dev, (np.arange(Wp) < W).astype(np.float16))
             operands.append(Operand("col"))
@@ -700,12 +706,17 @@ def _matmul(dev, plan: Plan, bufs) -> list:
                 tmps.append(pend)
                 bufs[key] = pend
             else:
-                t = Storage(dev, max(32, 2 * n_el))
+                s = None if acc.gate else bufs.get(acc.slot)
+                read = ("product", side, *_read_id(acc, order))
+                held = _held(dev, s, read)
+                t = held or Storage(dev, max(32, 2 * n_el))
                 tmps.append(t)
                 bufs[key] = t
-                # The product quantises f16: the layout is f16 whatever acc's type.
-                sub = _laid_plan(plan, key, acc, order)
-                runs += _vector(dev, replace(sub, name=f"{plan.name}_{side}"), bufs)
+                if held is None:
+                    # The product quantises f16: the layout is f16 whatever acc's type.
+                    sub = _laid_plan(plan, key, acc, order)
+                    runs += _vector(dev, replace(sub, name=f"{plan.name}_{side}"), bufs)
+                    _hold(dev, s, read, t)
             new = Access(key, dtypes.half, tuple(_dense(order).items()), 0)
             if side == "a":
                 a = new
@@ -958,6 +969,11 @@ def _pad_rows(dev, plan: Plan, bufs, acc, batch, m, cols, mp: int, width: int):
     for r in reversed(batch):
         strides.insert(0, step)
         step *= U.extent(r)
+    s = None if acc.gate else bufs.get(acc.slot)
+    read = ("pad rows", *_read_id(acc, order), tuple(strides), mp)
+    held = _held(dev, s, read)
+    if held is not None:
+        return held, []
     t = Storage(dev, max(32, 2 * step))
     t.wrote(FLAT)
     t.dtype = np.float16
@@ -973,9 +989,10 @@ def _pad_rows(dev, plan: Plan, bufs, acc, batch, m, cols, mp: int, width: int):
         return t, []
     key = ("pad_rows", id(acc), id(plan))
     try:
-        return t, _vector(
+        runs = _vector(
             dev, _laid_plan(plan, key, acc, order, strides), {**bufs, key: t}
         )
+        return _hold(dev, s, read, t), runs
     except BaseException:
         t.free()
         raise

@@ -8,13 +8,38 @@ from tinygrad.dtype import dtypes
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.ktpugrad import uops as U
-from kohakutpu.application.ktpugrad.launch.config import view_forms_enabled
+from kohakutpu.application.ktpugrad.launch.config import (
+    _active_scope,
+    view_forms_enabled,
+)
 from kohakutpu.application.ktpugrad.launch.views import _remap_view_access
 from kohakutpu.application.ktpugrad.planning import fold as F
 from kohakutpu.application.ktpugrad.planning.lower import Access, Plan, Refused
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import rows as RW
 from kohakutpu.application.runtime.memory.storage import FLAT, Storage, StorageView
+
+
+def _read_id(a: Access, order) -> tuple:
+    """What identifies read `a` over the ranges `order`, in any plan."""
+    return a.off, a.dtype, tuple((U.extent(r), a.c(r)) for r in order)
+
+
+def _held(dev, s, read):
+    """What an earlier `read` of `s` made and `s` still keeps, else None."""
+    if s is None or _active_scope(dev) is not None:
+        return None
+    st, off = FM.base_of(s)
+    return st.kept.get((read, off))
+
+
+def _hold(dev, s, read, made):
+    """`made`, kept on `s` when `s`'s bytes cannot change between uses."""
+    if s is not None and _active_scope(dev) is None:
+        st, off = FM.base_of(s)
+        if st.unchanged:
+            st.keep((read, off), made)
+    return made
 
 
 def _reform_one(dev, plan: Plan, a: Access | None, bufs: dict) -> Access | None:

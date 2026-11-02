@@ -281,8 +281,10 @@ def boxed(side: Side, rs: list, g, exact: bool = True) -> Side | None:
     return replace(side, dims=tuple(out))
 
 
-def find(plan: Plan) -> Contraction | None:
-    """`plan` as a window contraction (see the module), or None."""
+def find(plan: Plan, plain: bool = False) -> Contraction | None:
+    """`plan` as a window contraction (see the module), or None. `plain` also
+    takes a product with neither a window nor a gate, its outer ranges any
+    number on each side in any order; each side keeps at least one."""
     reds = _reduces(plan.expr, [])
     if len(reds) != 1 or reds[0].op != "sum":
         return None
@@ -292,7 +294,7 @@ def find(plan: Plan) -> Contraction | None:
         return None
     loads, gates, scale = got
     a0, b0 = (plan.accesses[i] for i in loads)
-    if not (gates or windowed(a0) or windowed(b0)):
+    if not (plain or gates or windowed(a0) or windowed(b0)):
         return None
     reduced = list(plan.reductions[id(red)])
     plan = _trim(plan, gates, reduced)
@@ -320,15 +322,17 @@ def find(plan: Plan) -> Contraction | None:
     bt = tuple(r for r in out if r in reads[0] and r in reads[1])
     ma = tuple(r for r in out if r in reads[0] and r not in reads[1])
     nb = tuple(r for r in out if r in reads[1] and r not in reads[0])
+    if plain and not (ma and nb):
+        return None
     size = lambda rs: int(np.prod([U.extent(r) for r in rs])) if rs else 1
     if size(nb) > size(ma):
         sa, sb, ma, nb = sb, sa, nb, ma
 
-    def plain(s: Side, r) -> bool:
+    def whole(s: Side, r) -> bool:
         d = s.dim(r)
         return d.terms == ((r, 1),) and d.box == (0, d.span)
 
-    lanes = [r for r in red_ranges if plain(sa, r) and plain(sb, r)]
+    lanes = [r for r in red_ranges if whole(sa, r) and whole(sb, r)]
     lane = max(
         lanes, key=lambda r: (U.extent(r) % WORD == 0, U.extent(r)), default=None
     )

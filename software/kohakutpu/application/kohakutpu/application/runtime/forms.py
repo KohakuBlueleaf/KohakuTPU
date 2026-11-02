@@ -14,6 +14,7 @@ import pathlib
 import weakref
 from dataclasses import dataclass, replace
 from functools import lru_cache
+from typing import Any
 
 import numpy as np
 
@@ -94,14 +95,14 @@ class Hints(dict):
     def get(self, site, default=None):
         return super().get(repr(site), default)
 
-    def setdefault(self, site, value):
+    def setdefault(self, site, value=None):
         key = repr(site)
         if not super().__contains__(key):
             self.revision += 1
         return super().setdefault(key, value)
 
 
-def hints(dev) -> dict:
+def hints(dev) -> Any:
     """`dev`'s layout hints (`_hints`), first those of its library's hints
     file (`seed_hints`); a scratch dict when they are off."""
     if not LAYOUT_HINTS:
@@ -396,11 +397,14 @@ class Pending:
         #: holds the packings made of it, freed with it
         self.holder = Storage(dev, 32)
         self.storage: Storage | None = None
+        #: held by the storage that keeps it (`Storage.keep`): a free waits
+        self.view_refs, self._freed, self.derived = 0, False, False
 
     def made(self) -> Storage:
         """The buffer itself, its steps run as relayouts."""
         if self.storage is None:
-            prev, temps = None, []
+            prev: Any = None
+            temps = []
             for i, s in enumerate(self.steps):
                 last = i == len(self.steps) - 1
                 out = Storage(self.dev, self.nbytes if last else max(32, 2 * s.m))
@@ -419,6 +423,10 @@ class Pending:
         return self.storage
 
     def free(self) -> None:
+        if self.view_refs > 0:
+            self._freed = True
+            return
+        self._freed = False
         self.holder.free()
         if self.storage is not None:
             self.storage.free()
@@ -799,6 +807,8 @@ def table(dev, arr, dtype: type = np.float16) -> int:
         got = Storage(dev, max(a.nbytes, 32))
         dev.write(got.addr, a.tobytes())
         dev.tables[key] = got
+        entry, _ = dev.mmu.resolve(got.addr)
+        dev.constants.add((entry.arena, entry.physical))
     return got.addr
 
 

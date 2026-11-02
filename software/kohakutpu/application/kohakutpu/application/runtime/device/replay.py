@@ -2,12 +2,12 @@
 
 import time
 
-from kohakutpu.application.runtime.device.common import Recorded, Run, Submitted
+from kohakutpu.application.runtime.device.common import Parts, Recorded, Run, Submitted
 from kohakutpu.application.runtime.graph import recorded as native_recorded
 from kohakutpu.language.config import ENV
 
 
-class Replay:
+class Replay(Parts):
     # ----------------------------------------------------- record / replay
     def record(self) -> None:
         """Record on the main heap, pinning the spans each event uses."""
@@ -132,29 +132,30 @@ class Replay:
                 fraction=self.replay_package_fraction,
                 overcommit=self.replay_overcommit,
             )
-            if self.execution_list:
-                try:
-                    events, groups = self.card.prepare_execution(log.prepared)
-                    log.list_events, log.list_runs = events, []
-                    for group in groups:
-                        runs = [log.runs[i] for i in group]
-                        refs = list(dict.fromkeys(r for run in runs for r in run[3]))
-                        writes = list(dict.fromkeys(r for run in runs for r in run[4]))
-                        nodes = tuple(dict.fromkeys(n for run in runs for n in run[5]))
-                        log.list_runs.append(
-                            (
-                                "replay-list",
-                                "replay",
-                                {"launches": len(group)},
-                                refs,
-                                writes,
-                                nodes,
-                            )
+            if not hasattr(self.card, "prepare_execution"):
+                return
+            try:
+                events, groups = self.card.prepare_execution(log.prepared)
+                log.list_events, log.list_runs = events, []
+                for group in groups:
+                    runs = [log.runs[i] for i in group]
+                    refs = list(dict.fromkeys(r for run in runs for r in run[3]))
+                    writes = list(dict.fromkeys(r for run in runs for r in run[4]))
+                    nodes = tuple(dict.fromkeys(n for run in runs for n in run[5]))
+                    log.list_runs.append(
+                        (
+                            "replay-list",
+                            "replay",
+                            {"launches": len(group)},
+                            refs,
+                            writes,
+                            nodes,
                         )
-                except BaseException:
-                    log.prepared.close()
-                    log.prepared = None
-                    raise
+                    )
+            except BaseException:
+                log.prepared.close()
+                log.prepared = None
+                raise
 
     def _replay_queued(self, log):
         if any(ev[0] == "read" for ev in log):
@@ -168,7 +169,7 @@ class Replay:
         )
         metadata = iter(log.runs)
         events = log if prepared is None else prepared
-        if self.execution_list and prepared is not None:
+        if prepared is not None and hasattr(self.card, "prepare_execution"):
             events, metadata, submit = (
                 log.list_events,
                 iter(log.list_runs),
@@ -189,7 +190,7 @@ class Replay:
                 self.card.write(ev[1], ev[2])
                 continue
             name, kind, info, refs, writes, nodes = next(metadata)
-            self._fence(nodes)
+            self._fence(nodes, refs, writes)
             while (
                 self.max_inflight is not None
                 and len(self.inflight) >= self.max_inflight
@@ -211,7 +212,7 @@ class Replay:
             try:
                 selected_submit = (
                     self.card.submit_prepared
-                    if self.execution_list and prepared is not None and ev[0] == "run"
+                    if prepared is not None and ev[0] == "run"
                     else submit
                 )
                 s.pending = selected_submit(ev[1])

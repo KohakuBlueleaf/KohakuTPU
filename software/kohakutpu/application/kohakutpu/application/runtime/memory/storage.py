@@ -10,11 +10,14 @@ back.
 """
 
 from dataclasses import dataclass
+from itertools import count
 from typing import Any
 
 from kohakutpu.application.runtime import generated
 
 FLAT = ("flat",)
+#: A storage's `kept` state: a value never comes back.
+_KEPT_STATES = count(1)
 
 
 @dataclass
@@ -59,6 +62,71 @@ class Storage:
         self.site: Any = None
         self.view_refs: int = 0
         self._freed: bool = False
+        #: what reads of these unchanged bytes made, by read: kept until a write
+        self.kept: dict = {}
+        #: names this `kept`: a recipe's addresses in it hold for no other
+        self.kept_state: int = 0
+        #: these bytes are such a read's, so what reads them is kept too
+        self.derived: bool = False
+        #: the kept storage whose bytes and forms this one holds
+        self.shared: Storage | None = None
+
+    # ------------------------------------------------------------- derived
+    @property
+    def unchanged(self) -> bool:
+        """No kernel wrote these bytes from a value that can change."""
+        return self.host is not None or self.derived
+
+    def keep(self, read: Any, out: Any) -> None:
+        """`out` (a storage, a `forms.Pending`) is what `read` makes of these
+        bytes: held past its own free."""
+        if out is self:
+            return
+        out.derived = True
+        out.view_refs += 1
+        self.kept[read] = out
+        self.kept_state = next(_KEPT_STATES)
+
+    def adopt(self, st: "Storage") -> None:
+        """Hold kept `st`'s bytes and forms instead of this storage's own."""
+        if st is self or st is self.shared:
+            return
+        self.dev.free(self.addr)
+        self.addr, self.owned, self.shared = st.addr, False, st
+        self.forms, self.valid, self.zeroed = st.forms, st.valid, st.zeroed
+        self.dtype, self.site, self.derived = st.dtype, st.site, True
+        self.host, self.host_f16_dtype = st.host, st.host_f16_dtype
+        self.kept, self.kept_state = st.kept, st.kept_state
+        st.view_refs += 1
+
+    def unshare(self) -> None:
+        """Own bytes again before a write: the kept storage stays as it is,
+        this one holds a copy of its current form."""
+        st, self.shared = self.shared, None
+        if st is None:
+            return
+        key = FLAT if FLAT in st.valid else next(iter(st.valid))
+        held = st.forms[key]
+        self.owned, self.derived, self.kept = True, False, {}
+        self.host = None
+        self.addr = self.dev.alloc(st.forms[FLAT].nbytes)
+        self.forms = {FLAT: Form(FLAT, self.addr, st.forms[FLAT].nbytes, False)}
+        at = self.form(key, held.nbytes).addr
+        generated.copy(self.dev, held.nbytes, {"src": held.addr, "dst": at})
+        self.valid, self.zeroed = {key}, {key} & st.zeroed
+        st.view_refs -= 1
+        if st.view_refs <= 0 and st._freed:
+            st.free()
+
+    def _release_kept(self) -> None:
+        if not self.kept:
+            return
+        for st in self.kept.values():
+            st.view_refs -= 1
+            if st.view_refs <= 0 and st._freed:
+                st.free()
+        self.kept = {}
+        self.kept_state = next(_KEPT_STATES)
 
     # ------------------------------------------------------------- forms
     def has(self, key: tuple) -> bool:
@@ -69,6 +137,7 @@ class Storage:
         valid)."""
         f = self.forms.get(key)
         if f is not None and (f.nbytes < nbytes or (key != FLAT and not f.owned)):
+            self._release_kept()
             f.release()
             if f.owned:
                 self.dev.free(f.addr)
@@ -93,6 +162,7 @@ class Storage:
         f = self.forms.get(FLAT)
         if not self.owned or f is None or f.nbytes >= min_bytes:
             return
+        self._release_kept()
         new_addr = self.dev.alloc(min_bytes)
         self.dev.free(self.addr)
         self.addr = new_addr
@@ -101,6 +171,8 @@ class Storage:
     def wrote(self, key: tuple, keep_host: bool = False) -> None:
         """A kernel wrote form `key`: every other form is stale (and no
         padding is known zero until its writer says so)."""
+        self._release_kept()
+        self.derived = False
         for k, f in list(self.forms.items()):
             if k != key and not f.owned and k != FLAT:
                 f.release()
@@ -120,6 +192,14 @@ class Storage:
             self._freed = True
             return
         self._freed = False
+        if self.shared is not None:
+            st, self.shared = self.shared, None
+            self.forms, self.valid, self.zeroed, self.kept = {}, set(), set(), {}
+            st.view_refs -= 1
+            if st.view_refs <= 0 and st._freed:
+                st.free()
+            return
+        self._release_kept()
         for f in list(self.forms.values()):
             f.release()
             if f.owned:

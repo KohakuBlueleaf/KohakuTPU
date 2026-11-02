@@ -17,10 +17,13 @@ from kohakutpu.application.ktpugrad.run.common import (
     _addr,
     _dense,
     _half_target,
+    _held,
+    _hold,
     _live,
     _mult,
     _n,
     _out_coef,
+    _read_id,
     _size,
     _window_ok,
     _wrote_flat,
@@ -166,6 +169,10 @@ def _laid_pending(dev, a: Access, order, coef: dict, n: int, bufs) -> FM.Pending
     read that is not a buffer's float values."""
     if not FM.PREPARED or a.slot is None or a.gate or not dtypes.is_float(a.dtype):
         return None
+    read = ("laid pending", *_read_id(a, order), tuple(coef.values()), n)
+    held = _held(dev, bufs[a.slot], read)
+    if held is not None:
+        return held
     st, off = FM.base_of(bufs[a.slot])
     dt = F.np_dtype(a.dtype)
     first = a.off + off // np.dtype(dt).itemsize
@@ -179,10 +186,23 @@ def _laid_pending(dev, a: Access, order, coef: dict, n: int, bufs) -> FM.Pending
     except FM.FormError:
         return None
     m = -(-n // 16) * 16
-    return FM.Pending(dev, max(32, 2 * m), (FM.Step(src, N, walk, first, dwalk, 0, m),))
+    pend = FM.Pending(dev, max(32, 2 * m), (FM.Step(src, N, walk, first, dwalk, 0, m),))
+    return _hold(dev, bufs[a.slot], read, pend)
 
 
 def _laid_read(dev, plan: Plan, a: Access, over_r, over_c, pitch, bufs, key) -> tuple:
+    """``(storage, runs)``: `_laying`, or what that read of bytes that have
+    not changed made before."""
+    s = None if a.gate else bufs.get(a.slot)
+    read = ("laid", *_read_id(a, [*over_r, *over_c]), pitch)
+    held = _held(dev, s, read)
+    if held is not None:
+        return held, []
+    t, runs = _laying(dev, plan, a, over_r, over_c, pitch, bufs, key)
+    return _hold(dev, s, read, t), runs
+
+
+def _laying(dev, plan: Plan, a: Access, over_r, over_c, pitch, bufs, key) -> tuple:
     """``(storage, runs)``: read `a` as f16 over ``[over_r.., over_c..]``,
     rows `pitch` apart (the columns past W unspecified) -- a table on the
     host, a buffer's by the bare-read kernels (`_bare`), spread to the pitch

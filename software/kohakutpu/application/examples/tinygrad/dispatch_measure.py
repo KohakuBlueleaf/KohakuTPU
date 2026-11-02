@@ -19,8 +19,8 @@ from unittest.mock import patch
 import numpy as np
 from examples.tinygrad.mnist_mlp import MLP, LeNet
 from examples.tinygrad.vit_tiny import seeded_model
-from tinygrad import Tensor
 from tinygrad.helpers import Context
+from tinygrad.tensor import Tensor
 
 from kohakutpu.application.ktpugrad import Inference
 from kohakutpu.application.ktpugrad.device import KTPUGraph
@@ -313,7 +313,6 @@ def main():
                 "KTPU_PLAN_CACHE",
                 "KTPU_SPECIALISE_CACHE",
                 "KOHAKUTPU_EAGER_FLUSH",
-                "KOHAKUTPU_SQ_HEAD_CACHE",
                 "KOHAKUTPU_PREPARED_REPLAY",
             ):
                 if enabled is not None:
@@ -330,7 +329,6 @@ def main():
                 "plan": {"KTPU_PLAN_CACHE": "1"},
                 "specialise": {"KTPU_SPECIALISE_CACHE": "1"},
                 "resident": {"KOHAKUTPU_PACKAGE_CACHE_BYTES": str(16 << 20)},
-                "head": {"KOHAKUTPU_SQ_HEAD_CACHE": "1"},
                 "batch": {"KOHAKUTPU_SUBMIT_BATCH": str(min(depth, 4))},
                 "flush": {
                     "KOHAKUTPU_SUBMIT_BATCH": str(min(depth, 4)),

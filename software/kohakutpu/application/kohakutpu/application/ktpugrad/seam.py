@@ -23,6 +23,7 @@ from dataclasses import replace
 from tinygrad import tensor
 from tinygrad.device import Buffer
 from tinygrad.engine import realize
+from tinygrad.engine.jit import CapturedJit
 from tinygrad.helpers import (
     BEAM,
     DEBUG,
@@ -48,7 +49,12 @@ from kohakutpu.application.ktpugrad.captured import (
     eager_schedule,
     graph_walk,
 )
-from kohakutpu.application.ktpugrad.device import NAME, register
+from kohakutpu.application.ktpugrad.device import (
+    _CAPTURED_CALL,
+    NAME,
+    captured_call,
+    register,
+)
 from kohakutpu.application.ktpugrad.launch import eager as launch_eager
 from kohakutpu.application.ktpugrad.planning import fold as F
 from kohakutpu.application.ktpugrad.planning import fusion
@@ -361,6 +367,7 @@ def install() -> None:
     rangeify.earliest_rewrites = _PM_EARLIEST
     setattr(realize, SEAM, to_program)
     setattr(tensor, RUN, run_linear)
+    CapturedJit.__call__ = captured_call
     refresh_knobs()
 
 
@@ -377,6 +384,7 @@ def uninstall() -> None:
     rangeify.earliest_rewrites = _PM_EARLIEST_ORIG
     setattr(realize, SEAM, _TO_PROGRAM)
     setattr(tensor, RUN, _RUN_LINEAR)
+    CapturedJit.__call__ = _CAPTURED_CALL
     tensor.create_linear_with_vars = _CREATE_LINEAR
     tensor._apply_map_to_tensors = graph_walk._ORIGINAL
     tensor.transform_to_call = call_capture.ORIGINAL

@@ -8,6 +8,7 @@ import hashlib
 import struct
 import time
 from dataclasses import dataclass, replace
+from typing import Any
 
 from kohakutpu.application.runtime.os import abi as A
 
@@ -62,6 +63,14 @@ STAT_NAMES = A.STAT_NAMES
 STAT_FMT = A.STAT_FMT
 LAUNCH_REC_FIELDS = A.LAUNCH_REC_FIELDS
 LAUNCH_REC_FMT = A.LAUNCH_REC_FMT
+#: Xache picks a write burst's home from its first address: a 256-byte MAG burst off
+#: this line can cross a 16 KB interleave boundary, its tail landing 48 KB higher.
+DATA_ALIGN = 256
+
+
+def task_capacity(tasks):
+    """`ostpu`'s first argument for `tasks` records: its data arena follows them."""
+    return -(-tasks * TASK_BYTES // DATA_ALIGN) * DATA_ALIGN // TASK_BYTES
 
 
 def mover_code(mreg):
@@ -135,7 +144,7 @@ class Graph:
         self.de_stream = de_stream
         self.de_fetch = de_fetch
         self.de_fuse = de_fuse
-        self._de = None
+        self._de: dict[str, Any] | None = None
         self.streams = {}
         self.prune = prune
         self.ancestors = []
@@ -145,7 +154,7 @@ class Graph:
         if self.de_fuse and self._de is not None and after == (self._de["task"],):
             return self._de, True
         t = self.add(Task(A.KDS_DE_STREAM, words=(0, 0, 0, 0), pred=after))
-        state = dict(
+        state: dict[str, Any] = dict(
             task=t,
             entries=[],
             blobs=bytearray(),
@@ -299,6 +308,7 @@ class Graph:
                 mv_base = state["mv_gos"]
                 pkg_pay_off = None
                 split_sent = {}
+                split_seen = {}
                 split_mv = 0
                 cum_exp = {}
                 reserve = len(set(unit_ids)) + 1
@@ -326,6 +336,7 @@ class Graph:
                         want = max(sent_cnt.get(uid, 0), exp_cnt.get(uid, 0))
                         push_wait(uid, want)
                         split_sent[uid] = split_sent.get(uid, 0) + sent_cnt.get(uid, 0)
+                        split_seen[uid] = split_seen.get(uid, 0) + want
                     push_wait(A.KOS_DE_MOVER_SRC, state["mv_gos"])
                     split_mv += state["mv_gos"] - mv_base
                     frontier = self._sync_de(state)
@@ -455,12 +466,10 @@ class Graph:
                             e_total = s_total
                         else:
                             e_total += count
-                        if e_total > s_total:
-                            raise ValueError(
-                                "KDS package lowering does not support peer acknowledgement AWAIT"
-                            )
+                        # Above s_total: a peer's retirements, counted as this
+                        # unit's. Only an AWAIT raises `exp`, never a BARRIER.
                         cum_exp[uid] = e_total
-                        local_e = e_total - split_sent.get(uid, 0)
+                        local_e = e_total - split_seen.get(uid, 0)
                         if local_e > 0:
                             ensure_room(1)
                             exp_cnt[uid] = max(exp_cnt.get(uid, 0), local_e)
@@ -541,7 +550,6 @@ class Graph:
                         ensure_room(reserve)
                         for uid in set(unit_ids):
                             want = max(sent_cnt.get(uid, 0), exp_cnt.get(uid, 0))
-                            exp_cnt[uid] = want
                             push_wait(uid, want)
                         push_wait(A.KOS_DE_MOVER_SRC, state["mv_gos"])
                     else:
@@ -874,6 +882,12 @@ class ResidentGraph:
         _, self.tasks_pa, self.data_pa, self.data_ref = struct.unpack(
             "<4Q", io.read(mailbox + A.OSTPU_OFF_READY, 32)
         )
+        if self.data_pa % DATA_ALIGN:
+            self.poisoned = True
+            raise ValueError(
+                f"data arena {self.data_pa:#x} is off a {DATA_ALIGN}-byte line:"
+                " size `ostpu` with task_capacity"
+            )
         self.sequence, self.cpu_fn, _, _ = struct.unpack(
             "<4Q", io.read(mailbox + A.OSTPU_OFF_DONE, 32)
         )

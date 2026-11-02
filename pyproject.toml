@@ -25,6 +25,7 @@ extraPaths = [
     "software/kohakutpu/simulation",
     "software/kohakutpu/application",
     "software/template",
+    "software/tests/perf",
 ]
 
 [tool.ruff.lint.per-file-ignores]

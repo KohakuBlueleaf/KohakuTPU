@@ -42,19 +42,63 @@ from kohakutpu.application.ktpugrad.run.kernels import (
 from kohakutpu.application.ktpugrad.run.product import _ks
 from kohakutpu.application.ktpugrad.run.reduce import (
     MAX_READS,
+    _all_reduces,
     _contraction,
     _epilogue_contraction,
     _leaf_reduce,
     _selectors,
 )
+from kohakutpu.application.ktpugrad.run.regions import regions
 from kohakutpu.application.ktpugrad.run.shape import _bind, classify
+from kohakutpu.application.ktpugrad.run.through import through
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import rows as RW
 from kohakutpu.application.runtime.memory.storage import FLAT
 
 
+def _fixed_read(dev, plan: Plan, bufs: dict) -> tuple | None:
+    """``(source, its key for this read, output)`` of a whole-output read of
+    unchanged bytes: `plan` makes the same bytes every time."""
+    if (
+        plan.kind not in ("vector", "copy")
+        or plan.reduce_ranges
+        or not isinstance(plan.expr, X.Load)
+        or len(plan.accesses) != 1
+        or _active_scope(dev) is not None
+    ):
+        return None
+    acc = plan.accesses[0]
+    if acc.slot not in bufs or acc.slot == plan.out_slot:
+        return None
+    st, off = FM.base_of(bufs[acc.slot])
+    dst, doff = FM.base_of(bufs[plan.out_slot])
+    item = np.dtype(F.np_dtype(plan.out_dtype)).itemsize
+    if not st.unchanged or doff or dst is st or plan.out_n * item != dst.nbytes:
+        return None
+    return st, (plan.ast, off), dst
+
+
+def read_kept(dev, plan: Plan, bufs: dict) -> bool:
+    """Whether `plan`'s output is what an earlier run of it kept: no launch."""
+    fixed = _fixed_read(dev, plan, bufs)
+    if fixed is None or fixed[1] not in fixed[0].kept:
+        return False
+    st, read, dst = fixed
+    dst.adopt(st.kept[read])
+    return True
+
+
 def execute(dev, plan: Plan, bufs: dict):
     """Run `plan` with `bufs` (param slot -> storage); returns the runs."""
+    fixed = _fixed_read(dev, plan, bufs)
+    runs = _run(dev, plan, bufs)
+    if fixed is not None:
+        st, read, dst = fixed
+        st.keep(read, dst)
+    return runs
+
+
+def _run(dev, plan: Plan, bufs: dict):
     if (
         view_forms_enabled()
         and plan.kind == "vector"
@@ -193,9 +237,20 @@ def _is_fusable_elem(plan: Plan | None) -> bool:
         return False
     if isinstance(plan.expr, X.Load) or plan.out_strides is not None:
         return False
-    if _selectors(plan) or len(plan.accesses) > MAX_READS:
+    if _selectors(plan) or len(plan.accesses) > MAX_READS or _all_reduces(plan.expr):
         return False
     return not (_epilogue_contraction(plan) or _contraction(plan) is not None)
+
+
+def units(items: list, held: set) -> list:
+    """`items` (`(plan, buffers)`) as `(schedule indices, plan, buffers)`: reads
+    composed through bare reads (`through`), then row regions (`regions`). A
+    unit whose plan is not its one item's holds no program of its own."""
+    left, owners = through(items, held)
+    return [
+        (sorted(i for j in members for i in owners[j]), plan, buffers)
+        for members, plan, buffers in regions(left, held)
+    ]
 
 
 def plan_schedule(items: list, held_ids: set | None = None) -> list:
@@ -228,6 +283,9 @@ __all__ = [
     "knobs",
     "multi_stage_scope",
     "plan_schedule",
+    "regions",
     "single_package_enabled",
+    "through",
+    "units",
     "view_forms_enabled",
 ]
