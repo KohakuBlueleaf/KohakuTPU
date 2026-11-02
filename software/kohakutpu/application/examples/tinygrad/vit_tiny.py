@@ -25,9 +25,9 @@ from kohakutpu.application import ktpugrad
 from kohakutpu.application.checks.accuracy import (
     DEFAULT_INPUTS,
     PER_IMAGE_SECONDS,
-    depth_budget,
-    logit_report,
-    state_error,
+    error_stats,
+    mxfp7_operands,
+    output_report,
 )
 from kohakutpu.application.ktpugrad.nn import place
 from kohakutpu.application.runtime import device as D
@@ -117,6 +117,29 @@ def seeded_model(blocks, seed, width=192, image_size=224, realize_ops=False):
     return model
 
 
+def references(host, inputs, args) -> tuple[np.ndarray, np.ndarray]:
+    """CPU f32 and simulated-MXFP7 logits of `inputs`, read from `args.references`
+    when it holds this configuration's file, else computed (and written there)."""
+    path = None
+    if args.references is not None:
+        name = (
+            f"vit.w{args.width}.b{args.blocks}.i{args.image_size}.s{args.seed}"
+            f".n{args.batch}x{args.inputs}.npz"
+        )
+        path = args.references / name
+        if path.exists():
+            saved = np.load(path)
+            return saved["f32"], saved["mxfp7"]
+
+    want = np.stack([host(Tensor(x, device="CPU")).numpy() for x in inputs])
+    with mxfp7_operands():
+        mx = np.stack([host(Tensor(x, device="CPU")).numpy() for x in inputs])
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(path, f32=want, mxfp7=mx)
+    return want, mx
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--offline", action="store_true")
@@ -142,14 +165,17 @@ def main():
         default="",
         help="comma-separated zero-based image indices for per-block CPU/card states; extra readbacks, no one-minute guarantee",
     )
-    ap.add_argument(
-        "--logit-relative-budget",
-        type=float,
-        default=0.03,
-        help="diagnostic relative threshold, NOT a certified network bound",
-    )
-    ap.add_argument("--cosine-min", type=float, default=0.999)
     ap.add_argument("--report", type=pathlib.Path)
+    ap.add_argument(
+        "--references",
+        type=pathlib.Path,
+        help="directory of reference logits, one file a configuration",
+    )
+    ap.add_argument(
+        "--references-only",
+        action="store_true",
+        help="write the reference file and stop before the device",
+    )
     ap.add_argument("--board", default=None)
     ap.add_argument("--device", choices=("sim", "card"), default="sim")
     ap.add_argument("--transport", choices=D.TRANSPORTS, default=None)
@@ -180,12 +206,6 @@ def main():
         ap.error("trace-inputs must contain integer indices")
     if any(i < 0 or i >= args.inputs for i in traced):
         ap.error("trace-inputs must be within 0..inputs-1")
-    if (
-        not np.isfinite(args.logit_relative_budget)
-        or args.logit_relative_budget <= 0
-        or not -1 <= args.cosine_min <= 1
-    ):
-        ap.error("positive finite logit budget and cosine threshold in [-1,1] required")
     board = args.board or ("multimesh_v9t6" if args.offline else "vlt_v9t6s_1n")
     dev = D.Device(
         "offline" if args.offline else args.device,
@@ -206,21 +226,19 @@ def main():
     host = seeded_model(
         args.blocks, args.seed, args.width, args.image_size, args.realize_ops
     )
-    want, host_states = [], {}
-    if not args.offline:
-        for index, x in enumerate(inputs):
-            states = {}
+    host_states = {}
+    for index in sorted(traced):
+        states = host_states[index] = {}
 
-            def capture(stage, value, states=states):
-                states[stage] = value.numpy().copy()
+        def capture(stage, value, states=states):
+            states[stage] = value.numpy().copy()
 
-            want.append(
-                host(
-                    Tensor(x, device="CPU"), capture if index in traced else None
-                ).numpy()
-            )
-            if index in traced:
-                host_states[index] = states
+        host(Tensor(inputs[index], device="CPU"), capture)
+    want = mx = np.zeros(0)
+    if args.references_only or not args.offline:
+        want, mx = references(host, inputs, args)
+    if args.references_only:
+        return
     model = seeded_model(
         args.blocks, args.seed, args.width, args.image_size, args.realize_ops
     )
@@ -235,13 +253,12 @@ def main():
                 stages = []
 
                 def compare_state(stage, value, index=index, stages=stages):
-                    metrics = state_error(value.numpy(), host_states[index][stage])
-                    previous = stages[-1]["max_absolute_error"] if stages else 0
+                    metrics = error_stats(value.numpy(), host_states[index][stage])
+                    previous = stages[-1]["absolute"]["max"] if stages else 0
                     stages.append(
                         dict(
                             stage=stage,
-                            absolute_error_growth=metrics["max_absolute_error"]
-                            - previous,
+                            absolute_error_growth=metrics["absolute"]["max"] - previous,
                             **metrics,
                         )
                     )
@@ -272,7 +289,7 @@ def main():
                 if not args.offline:
                     got.append(y.numpy().astype(np.float32))
                     if stages:
-                        block_errors[-1]["logits"] = state_error(got[-1], want[index])
+                        block_errors[-1]["logits"] = error_stats(got[-1], want[index])
                 seconds.append(time.monotonic() - t0)
             result = {
                 "seconds": seconds,
@@ -288,7 +305,6 @@ def main():
                 "input_budget_seconds_per_image": PER_IMAGE_SECONDS,
                 "images": args.inputs * args.batch,
                 "input_budget_seconds": args.inputs * args.batch * PER_IMAGE_SECONDS,
-                "numerics_budget": depth_budget(args.blocks),
                 "block_errors": block_errors,
                 "block_error_status": (
                     "measured"
@@ -297,30 +313,14 @@ def main():
                 ),
                 "block_error_semantics": "cumulative states after the same seeded image; CPU f32 weights/input vs card f16 input and placed weights; not isolated-block error",
                 "trace_inputs": sorted(traced),
+                "check": (
+                    None
+                    if args.offline
+                    else output_report(
+                        np.concatenate(got), np.concatenate(want), np.concatenate(mx)
+                    )
+                ),
             }
-            if args.offline:
-                result.update(
-                    max_relative_error=None,
-                    top1_agreement=None,
-                    per_input=None,
-                    decided_inputs=None,
-                    undecided_inputs=None,
-                    decided_top1_agreement=None,
-                    top5_set_agreement=None,
-                    top5_mean_overlap=None,
-                )
-            else:
-                g, w = np.concatenate(got), np.concatenate(want)
-                result["max_relative_error"] = float(
-                    np.abs(g - w).max() / max(float(np.abs(w).max()), 1e-9)
-                )
-                result["top1_agreement"] = float((g.argmax(-1) == w.argmax(-1)).mean())
-                result.update(
-                    logit_report(g, w, args.logit_relative_budget, args.cosine_min)
-                )
-                result["numerics_budget"] = depth_budget(
-                    args.blocks, result["max_relative_error"]
-                )
             print(json.dumps(result, sort_keys=True))
             if args.report:
                 args.report.write_text(json.dumps(result), encoding="utf-8")

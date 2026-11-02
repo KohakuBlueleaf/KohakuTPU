@@ -226,30 +226,8 @@ def _mlp_stage(
         )
         wc = store_stmt["dst"]["axes"][1]["run"][1]
     if activation == "gelu":
-        x = X.Load(0)
-        z = X.op(
-            "mul",
-            X.op("add", x, X.op("mul", X.op("mul", X.op("mul", x, x), x), 0.044715)),
-            0.7978845608028654,
-        )
-        tanh = X.op(
-            "sub",
-            X.op(
-                "mul",
-                X.op(
-                    "recip",
-                    X.op(
-                        "add",
-                        X.op("exp2", X.op("mul", X.op("mul", z, 2), -kt.LOG2E)),
-                        1,
-                    ),
-                ),
-                2,
-            ),
-            1,
-        )
         act_args = {
-            "e": expr(X.op("mul", X.op("mul", x, 0.5), X.op("add", tanh, 1))),
+            "e": expr(X.gelu(X.Load(0))),
             "expr_cse": True,
             "operands": [asdict(Operand("full", pitch=hidden, rows=rows))],
             "R": rows,

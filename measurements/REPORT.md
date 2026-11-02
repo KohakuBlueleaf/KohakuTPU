@@ -5,9 +5,45 @@ Every number comes from `data/`; each section's figures carry the same numbers. 
 run has all four dies at one clock, because idle dies change node 0's cycles. Runs that
 did not are kept in `data/old/` and used nowhere.
 
-The first three sections are rounds `d2`, at commit a5e68412 with the performance batch
-on top, `d1`, at commit 1abcfb30, and `c1`, at commit 56021fd4. The sections after them
-hold 56021fd4's zoo, kept as the baseline, except the rows that name `c1`.
+The first section is the output statistics of every model. The next three are rounds
+`d2`, at commit a5e68412 with the performance batch on top, `d1`, at commit 1abcfb30, and
+`c1`, at commit 56021fd4. The sections after them hold 56021fd4's zoo, kept as the
+baseline, except the rows that name `c1`.
+
+## Output statistics
+
+One TinyJit run a model on v9t8 4+2 at mid, d2's library, commit 60defd91 with the
+statistics check (`data/<model>.ckj.multimesh_v9t8.1n/meta.json`, `check`). Each run's
+outputs are compared with the same model on the CPU in f32, and with the same CPU model
+whose every matrix product reads both operands as the clusters do, FP16 then MXFP7 in
+blocks of 32 (`checks/accuracy.py`). The MXFP7 run against f32 is the format's footprint.
+Errors are absolute, and relative per element (so near-zero logits make the relative max
+large), over every logit of 8 test images (6 for ViT-B, 9 for ViT).
+
+| Model | Card − f32 abs max, mean, median | Card − MXFP7 abs max, mean, median | MXFP7 − f32 abs max, mean, median | Card − f32 rel mean, median | MXFP7 − f32 rel mean, median | Outside |
+|---|---|---|---|---|---|---|
+| ViT-B | 0.1008, 0.0211, 0.0180 | 0.1061, 0.0217, 0.0181 | 0.1040, 0.0223, 0.0191 | 0.409, 0.047 | 0.490, 0.051 | 0 of 6000 |
+| ViT | 0.0340, 0.0073, 0.0060 | 0.0412, 0.0080, 0.0068 | 0.0437, 0.0084, 0.0071 | 0.161, 0.032 | 0.199, 0.037 | 0 of 9000 |
+| GPT | 0.0221, 0.0063, 0.0052 | 0.0107, 0.0019, 0.0012 | 0.0247, 0.0069, 0.0049 | 0.021, 0.010 | 0.023, 0.011 | 0 of 80 |
+| LeNet | 0.0123, 0.0039, 0.0037 | 0.0124, 0.0040, 0.0033 | 0.0147, 0.0040, 0.0034 | 0.079, 0.010 | 0.054, 0.012 | 0 of 80 |
+| Mixer | 0.0072, 0.0023, 0.0019 | 0.0078, 0.0020, 0.0015 | 0.0076, 0.0024, 0.0020 | 0.038, 0.012 | 0.049, 0.016 | 0 of 80 |
+| MLP | 0.0060, 0.0021, 0.0019 | 0.0020, 0.0002, 0.0001 | 0.0060, 0.0021, 0.0019 | 0.023, 0.007 | 0.024, 0.007 | 0 of 80 |
+| wide | 0.0051, 0.0008, 0.0006 | 0.0013, 0.0003, 0.0002 | 0.0050, 0.0009, 0.0006 | 0.016, 0.006 | 0.017, 0.006 | 0 of 80 |
+| GRU | 0.0040, 0.0008, 0.0007 | 0.0015, 0.0003, 0.0002 | 0.0037, 0.0007, 0.0005 | 0.033, 0.012 | 0.031, 0.009 | 0 of 80 |
+
+Every model's card error against f32 is the size of the format's own: its largest is
+under the MXFP7 run's largest or at most 8% over it (GRU, 0.0040 against 0.0037), and the
+absolute means and medians are within 15% of the MXFP7 run's. MLP, wide, GRU and GPT sit on the
+MXFP7 run, 2.6× to 14× closer to it than to f32 in mean absolute error; ViT, ViT-B, LeNet
+and Mixer sit as far from it as from f32, an error of the same size from the sources the
+MXFP7 run leaves out (FP16 storage, E8M15 vector math, FP22 accumulation). "Outside"
+counts values further than the footprint's largest error from both f32 and the MXFP7
+run: none. These runs were recorded with a one-sided count, so their `outside_footprint`
+reads 1 for MLP, GRU and wide (against f32) and ViT-B (against MXFP7); the listed value
+(`worst`) is inside the footprint of the other reference each time, and every other
+value is inside both, since the card's largest error against the other is under the
+footprint's largest. Top-1 agrees with f32 on every image except ViT's 6 of 9; the MXFP7 run also
+agrees on 6 of 9: the nine images' f32 top-1 to top-2 gaps are 0.0001 to 0.079.
 
 ## Round d2
 
@@ -42,7 +78,7 @@ runs measure resident lists, not the resident chain.
 | 4+2 against 2+2 | ViT-B TinyJit 241.8 ms against 271.5, 45.0 M cycles against 51.2: 5.82 M of the 6.20 M difference is `quant` (4+2 packs unpaired, nk 1), matrix launches 0.38 M; QK spreads heads over the clusters, PV runs every head on MG 0. ViT 13.4 M against 14.8 M; LeNet 20.4 M against 19.1 M, slower: one composed pack costs 2.25 M on 4+2 against 1.13 M for 2+2's relayout and pack; the rest within 1% | `zoo.csv`, `data/vitb.d2j.*`, `data/lenet.d2j.*` |
 | Clock | TinyJit ms at low, mid, ship on 2+2: ViT-B 466, 272, 211; ViT 153, 90, 69; GPT 137, 80, 62; LeNet 189, 111, 86; Mixer 114, 70, 55; wide 37, 24, 18; GRU 57, 36, 27; MLP 16, 10, 8 | `zoo.csv` |
 | Compile | The library was filled over three fill rounds, so this is not a fill from empty: the last fill compiled 167 kernels in 201.4 s over 14 runs, slowest 19.6 s (a LeNet kernel), and the Mixer fix 1 kernel a board | `rounds/d2/data/compile.csv` |
-| Outputs | 71 of 96 pass max relative 0.03 and cosine 0.999 against CPU f32. 25 miss: every ViT run (0.042), every ViT-B (0.061 on 2+2, 0.057 on 4+2, d1 0.073 and 0.063), and LeNet eager at mid on 2+2 (0.037; its 11 other runs 0.018 to 0.022). Mixer passes at 0.028 on 2+2 and 0.022 on 4+2, against d1's 0.036 and 0.027, after `ISSUES.md` 45 | `build_round.py` output |
+| Outputs | Largest error against CPU f32 over the largest f32 logit: every ViT run 0.042, ViT-B 0.061 on 2+2 and 0.057 on 4+2 (d1 0.073 and 0.063), LeNet 0.018 to 0.022 with eager at mid on 2+2 0.037, Mixer 0.028 on 2+2 and 0.022 on 4+2 (d1 0.036 and 0.027, before `ISSUES.md` 45). "Output statistics" above sets each model against simulated MXFP7 | `rounds/d2/data/zoo.csv` |
 
 ## Round d1
 
@@ -75,7 +111,7 @@ changed correctness, not speed.
 | Host in an eager step | The host holds 25% (ViT-B) to 94% (GRU) of a step: GRU 346 ms against 33.6 TinyJit, Mixer 582 against 86.1, GPT 533 against 126.5 | `zoo.csv` `idle`, `gap_ms` |
 | 4+2 eager cadence | Not comparable: these 24 runs shared the host with compiler builds, and their cadence rose (Mixer 1404 ms against 582 on 2+2) while device cycles stayed at c1's. A clean figure needs a host with nothing else on it | `zoo.csv` `cycles`, `cadence` |
 | Compile | 16 library fills, 3,223.7 s; 2+2 LeNet 475.5 s for 428 kernels, GPT 369.8, Mixer 303.6, wide 226.2, ViT-B 165.2, ViT 150.2, MLP 147.0, GRU 104.4; slowest kernel 72.1 s | `rounds/d1/data/compile.csv` |
-| Outputs | 66 of 96 pass max relative 0.03 and cosine 0.999 against CPU f32. 30 miss: every ViT run (0.042), every ViT-B (0.073 on 2+2, 0.063 on 4+2), Mixer on 2+2 (0.036; 0.027 on 4+2). Eager and TinyJit give the same error. ViT and ViT-B traced stage by stage stay at the format's error, `ISSUES.md` 36 | `build_round.py` output |
+| Outputs | Largest error against CPU f32 over the largest f32 logit: every ViT run 0.042, ViT-B 0.073 on 2+2 and 0.063 on 4+2, Mixer 0.036 on 2+2 and 0.027 on 4+2. Eager and TinyJit give the same error. ViT and ViT-B traced stage by stage stay at the format's error, `ISSUES.md` 36 | `rounds/d1/data/zoo.csv` |
 
 ## Round c1
 

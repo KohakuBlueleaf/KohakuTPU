@@ -23,7 +23,7 @@ from tinygrad.nn.state import get_parameters, get_state_dict, load_state_dict
 from tinygrad.tensor import Tensor
 
 from kohakutpu.application import ktpugrad
-from kohakutpu.application.checks.accuracy import logit_report
+from kohakutpu.application.checks.accuracy import mxfp7_operands, output_report
 from kohakutpu.application.ktpugrad.nn import Adam16, place
 from kohakutpu.application.runtime import device as card
 
@@ -178,8 +178,9 @@ def train(
 
 
 def final_check(name, model, x):
-    """Logits of `x` on the card against the CPU in f32 with the card's final weights.
-    It checks the forward path, not the updates that made the weights."""
+    """Logits of `x` on the card against the CPU in f32 and in simulated MXFP7, both
+    with the card's final weights. It checks the forward path, not the updates that
+    made the weights."""
     with Context(TRAINING=0):
         got = model(Tensor(x, device="KTPU")).numpy()
     weights = {
@@ -191,8 +192,11 @@ def final_check(name, model, x):
     load_state_dict(
         cpu, {k: Tensor(v, device="CPU") for k, v in weights.items()}, verbose=False
     )
-    want = cpu(Tensor(x.astype(np.float32), device="CPU")).numpy()
-    return logit_report(got.astype(np.float32), want)
+    inputs = Tensor(x.astype(np.float32), device="CPU")
+    want = cpu(inputs).numpy()
+    with mxfp7_operands():
+        mx = cpu(inputs).numpy()
+    return output_report(got.astype(np.float32), want, mx)
 
 
 def main():

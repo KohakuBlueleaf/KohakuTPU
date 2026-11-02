@@ -46,6 +46,22 @@ def mfu_of(name: str, step: list[dict], cadence: int) -> dict:
     return MFU.whole(kernels, cadence, peak)
 
 
+def check_columns(check: dict | None) -> dict:
+    """Error max/mean/median of the card against f32 and against simulated MXFP7, the
+    format's own against f32, and the values beyond it. Runs recorded before the
+    statistics carry a pass/fail check instead: their columns are empty."""
+    stats = check if check and "card_f32" in check else None
+    out = {}
+    for pair in ("card_f32", "card_mxfp7", "mxfp7_f32"):
+        for kind in ("absolute", "relative"):
+            for stat in ("max", "mean", "median"):
+                out[f"{pair}_{kind[:3]}_{stat}"] = (
+                    stats[pair][kind][stat] if stats else None
+                )
+    out["outside_footprint"] = stats["outside_footprint"] if stats else None
+    return out
+
+
 def row(name: str) -> dict | None:
     run = load(name)
     step = run.step
@@ -64,7 +80,6 @@ def row(name: str) -> dict | None:
             key = f"{u['kind']}{u['x']}{u['y']}"
             units[key] = units.get(key, 0) + u["busy_d"]
     cadence = run.cadence
-    check = run.meta.get("check") or {}
     mfu = mfu_of(name, step, cadence)
     return {
         "run": name,
@@ -77,9 +92,7 @@ def row(name: str) -> dict | None:
         "clock": clock(run.meta),
         "jit": jit(run.meta),
         "commit": run.meta.get("commit"),
-        "check_relative": check.get("relative"),
-        "check_cosine": check.get("cosine"),
-        "check_passed": check.get("passed"),
+        **check_columns(run.meta.get("check")),
         "image": run.meta["firmware"].rpartition("/")[2],
         "knobs": " ".join(f"{k}={v}" for k, v in run.meta.get("knobs", {}).items()),
         "launches": len(step),

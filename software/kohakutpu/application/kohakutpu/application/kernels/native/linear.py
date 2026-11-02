@@ -15,20 +15,7 @@ def epilogue(activation, residual):
     if activation == "relu":
         value = X.op("max", value, 0)
     elif activation == "gelu":
-        cube = X.op("mul", X.op("mul", value, value), value)
-        z = X.op("mul", X.op("add", value, X.op("mul", 0.044715, cube)), 0.7978845608)
-        tanh = X.op(
-            "sub",
-            X.op(
-                "mul",
-                2,
-                X.op(
-                    "recip", X.op("add", 1, X.op("exp2", X.op("mul", -2 * kt.LOG2E, z)))
-                ),
-            ),
-            1,
-        )
-        value = X.op("mul", X.op("mul", 0.5, value), X.op("add", 1, tanh))
+        value = X.gelu(value)
     elif activation != "none":
         raise ValueError("activation must be none, relu, or gelu")
     return X.op("add", value, X.Load(2)) if residual else value

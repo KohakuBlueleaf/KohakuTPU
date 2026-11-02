@@ -331,9 +331,10 @@ class Tensor:
         return self * self.sigmoid()
 
     def gelu(self):
-        """The tanh form, as torch's ``approximate="tanh"``."""
+        """The tanh form, as torch's ``approximate="tanh"``, written ``x * sigmoid(2z)``:
+        ``0.5x(1 + tanh z)`` cancels in the negative tail."""
         inner = (self + self * self * self * 0.044715) * float(np.sqrt(2 / np.pi))
-        return self * 0.5 * (inner.tanh() + 1.0)
+        return self * (inner * 2.0).sigmoid()
 
     def clip(self, lo, hi):
         return self.maximum(lo).minimum(hi)

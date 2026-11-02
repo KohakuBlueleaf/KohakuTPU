@@ -34,6 +34,8 @@ from kohakutpu.stack import rs
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 TRACES = ROOT / "build" / "perf" / "traces"
+#: ViT's CPU reference logits, one file a configuration (`vit_tiny.py --references`).
+REFERENCES = ROOT / "build" / "perf" / "references"
 EXAMPLES = ROOT / "software" / "kohakutpu" / "application" / "examples" / "tinygrad"
 MEASURE_FIRMWARE = ROOT / "build" / "fw" / "kohakutpu_measure.elf"
 MNIST = (
@@ -401,17 +403,11 @@ def on_card(out: pathlib.Path, measure: bool, traced: bool):
 
 
 def output_check(report: pathlib.Path) -> dict | None:
-    """The run's outputs against the CPU in f32, None when it wrote no report."""
+    """The run's output statistics against CPU f32 and simulated MXFP7, None when it
+    wrote no report or checked nothing."""
     if not report.exists():
         return None
-    result = json.loads(report.read_text("utf-8"))
-    logits = result.get("check", result)
-    spread = logits["error_distributions"]
-    return dict(
-        relative=spread["max_relative_error"]["max"],
-        cosine=spread["cosine_similarity"]["min"],
-        passed=logits["diagnostic_budget"]["all_passed"],
-    )
+    return json.loads(report.read_text("utf-8")).get("check")
 
 
 def main() -> int:
@@ -460,6 +456,7 @@ def main() -> int:
     if args.card and script != "nodes_measure.py":
         extra += ["--report", str(report)]
         extra += ["--check", "8"] if script == "mnist_mlp.py" else []
+        extra += ["--references", str(REFERENCES)] if script == "vit_tiny.py" else []
     write = on_card(trace.out, args.measure, args.traced) if args.card else None
     if args.measure:
         C.FIRMWARE = MEASURE_FIRMWARE

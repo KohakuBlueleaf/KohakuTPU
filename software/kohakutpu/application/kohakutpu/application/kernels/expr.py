@@ -103,6 +103,16 @@ def op(name: str, *args) -> Op:
     )
 
 
+def gelu(x) -> Op:
+    """Tanh-form GELU as ``x * sigmoid(2z)``, the same function as
+    ``0.5x(1 + tanh z)`` without the ``1 + tanh`` cancellation in its negative tail."""
+    cube = op("mul", op("mul", x, x), x)
+    z = op("mul", op("add", x, op("mul", cube, 0.044715)), 0.7978845608028654)
+    return op(
+        "mul", x, op("recip", op("add", op("exp2", op("mul", z, -2 * kt.LOG2E)), 1))
+    )
+
+
 def reduces(e) -> list:
     """The outermost reductions in `e`, a node the expression reads twice
     (a mean a layer norm's gradient takes in two places) once."""
