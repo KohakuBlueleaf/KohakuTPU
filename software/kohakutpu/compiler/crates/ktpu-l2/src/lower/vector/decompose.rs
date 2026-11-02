@@ -64,14 +64,15 @@ pub struct Split {
 
 /// One-part candidates retain their schedule. Oversized programs are split only
 /// after physical register allocation, so no intermediate DRAM value is created.
-/// `timed`: the whole candidate's cycles; `splits`: whether it may split.
+/// `timed`: the whole candidate's cycles and the cycles a cut must beat;
+/// `splits`: whether it may split.
 #[allow(clippy::too_many_arguments)]
 pub fn split(
     module: &Module,
     name: &str,
     nparams: usize,
     t: &Target,
-    timed: i64,
+    (timed, beat): (i64, Option<i64>),
     splits: bool,
     fill: (i64, i64),
     copies: u32,
@@ -105,6 +106,13 @@ pub fn split(
     let def = &module.images[name];
     let mut flat = Vec::new();
     linear(&def.stmts, &mut BTreeMap::new(), &mut flat);
+    let least = timed + (flat.len() / limit) as i64 * t.read.continuation_cycles;
+    if beat.is_some_and(|b| least >= b) {
+        return Err(ktpu_l1::Error::new(
+            "L2.VC.017",
+            format!("{} statements a cut past {least} cycles", flat.len()),
+        ));
+    }
     let mut descs = BTreeMap::<String, Stmt>::new();
     let mut offsets = BTreeMap::<String, i64>::new();
     let mut incs = BTreeMap::<String, i64>::new();
@@ -151,6 +159,7 @@ pub fn split(
     let mut parts = Vec::new();
     let mut cursor = 0;
     let mut cycles = 0;
+    let mut reach = 256;
     while cursor < flat.len() {
         while cursor < flat.len() && flat[cursor].op == "desc" {
             let st = &flat[cursor];
@@ -188,8 +197,9 @@ pub fn split(
         let mut end = cursor;
         let mut last = None;
         let mut why = String::new();
+        // Trials stay near a part's size: the search costs a part, not the rest.
         while low < high {
-            let ix = (low + high) / 2;
+            let ix = (low + high.min(low + reach)) / 2;
             let mid = candidates[ix];
             let mut trial = body.clone();
             trial.extend_from_slice(&flat[cursor..mid]);
@@ -212,6 +222,7 @@ pub fn split(
                     last = Some(m);
                     end = mid;
                     low = ix + 1;
+                    reach = 2 * low;
                 }
                 Ok(words) => {
                     why = format!("{words} words exceed {limit}");
@@ -278,11 +289,12 @@ mod tests {
                 d.stmts.iter().any(|s| s.op == "vexp2d") && d.stmts.iter().any(|s| s.op == "getstk")
             })
         };
-        let cut = |m: &Module| split(m, "sticky", 0, &t, 0, true, (0, 0), 2);
+        let cut = |m: &Module| split(m, "sticky", 0, &t, (0, None), true, (0, 0), 2);
         let good = cut(&m).unwrap();
         assert!(one_region(&good.parts));
         assert!(good.parts.len() > 1);
         assert_eq!(good.parts[0].0, "sticky");
+        assert!(split(&m, "sticky", 0, &t, (0, Some(0)), true, (0, 0), 2).is_err());
         crate::mutant::scoped(
             crate::mutant::State {
                 active: Some("l2.readmap/no-decompose"),

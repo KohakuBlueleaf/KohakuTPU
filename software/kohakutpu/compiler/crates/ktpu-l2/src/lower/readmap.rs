@@ -29,8 +29,12 @@ const SOURCE_REG: usize = 32;
 /// Registers a composed read takes, and descriptors of its smallest image.
 const VREGS: u32 = 48;
 const DESCRIPTORS: usize = 4;
-/// L1 words a composed pack takes: two source slots, the pack output, the status.
-pub const L1_WORDS: i64 = 388;
+/// L1 words a composed pack takes: two source slots, the pack output, the
+/// status, the words an exchange passes through (from [`SPARE`]).
+pub const L1_WORDS: i64 = 420;
+pub const SPARE: usize = 388;
+/// The first of the two mask registers of an image's exchanges.
+const EXCHANGE_MASK: usize = 46;
 
 /// The stack's choices in composed reads (`docs/spec/stack/l2/program.md`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -209,6 +213,48 @@ impl ReadMap {
             k,
         )
     }
+
+    /// The [`Exchange`] that makes a GT4 tile of `rows` rows of 32 columns at
+    /// `positions` (band, half, row, lane), if its columns are source words.
+    pub fn exchange(&self, positions: &[i64], rows: usize, tile: &Tile) -> Option<Exchange> {
+        let lanes = WORD_LANES as usize;
+        let element = |r: usize, c: usize| -> Option<i64> {
+            let at = (r / 4) * 128 + (c / lanes) * 64 + (r % 4) * lanes + c % lanes;
+            let p = positions[at];
+            (p >= 0 && self.elements[p as usize] >= 0).then(|| self.elements[p as usize])
+        };
+        let cols = (0..2 * lanes)
+            .take_while(|&c| element(0, c).is_some())
+            .count();
+        let valid = (0..rows).take_while(|&r| element(r, 0).is_some()).count();
+        let lane = (element(0, 0)? % WORD_LANES) as usize;
+        if cols == 0 || !cols.is_multiple_of(lanes) || !lane.is_multiple_of(4) {
+            return None;
+        }
+        if lane + rows > lanes || tile.shape.words.len() != cols {
+            return None;
+        }
+        for c in 0..2 * lanes {
+            let base = element(0, c);
+            if base.is_some_and(|b| {
+                b % WORD_LANES != lane as i64
+                    || (b / WORD_LANES) * 32 != tile.anchor + tile.shape.words[c]
+            }) {
+                return None;
+            }
+            for r in 0..rows {
+                let wanted = base.filter(|_| r < valid).map(|b| b + r as i64);
+                if element(r, c) != wanted {
+                    return None;
+                }
+            }
+        }
+        Some(Exchange {
+            band: lane / 4,
+            cols,
+            rows: valid,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -218,10 +264,42 @@ pub struct Segment {
     pub source: Option<(usize, usize, bool)>,
 }
 
+/// A GT4 tile whose columns are source words in fetch order and whose rows are
+/// consecutive lanes: registers exchange 16 x 16 blocks of words and lanes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Exchange {
+    /// The 4-lane band of a source word its first row starts.
+    pub band: usize,
+    /// Real columns (16 or 32) and rows of the tile; the rest read zero.
+    pub cols: usize,
+    pub rows: usize,
+}
+
+impl Exchange {
+    /// For the lanes the swaps by xor 5 and 10 keep, `(vl, set)` writes of a
+    /// chunk, longest first: a vsel keeps its a operand where c is set.
+    pub fn mask_writes() -> [Vec<(usize, bool)>; 2] {
+        [
+            |l: usize| (l >> 2) & 1 == l & 1,
+            |l: usize| (l >> 3) & 1 == (l >> 1) & 1,
+        ]
+        .map(|keeps| {
+            let mut writes = vec![(16, keeps(15))];
+            for end in (1..16).rev() {
+                if keeps(end - 1) != keeps(end) {
+                    writes.push((end, keeps(end - 1)));
+                }
+            }
+            writes
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Shape {
     pub words: Vec<i64>,
     pub segments: Vec<Segment>,
+    pub exchange: Option<Exchange>,
 }
 
 pub struct Tile {
@@ -440,6 +518,7 @@ impl Tile {
             shape: Shape {
                 words: word_bytes,
                 segments,
+                exchange: None,
             },
         }
     }
@@ -535,6 +614,63 @@ impl Shape {
             ));
         }
         lines.push("    vsync fe on=unpack".into());
+    }
+
+    /// The prologue of images exchanging tiles: the lanes each swap keeps.
+    pub fn exchange_masks(lines: &mut Vec<String>) {
+        for (reg, writes) in [EXCHANGE_MASK, EXCHANGE_MASK + 1]
+            .into_iter()
+            .zip(Exchange::mask_writes())
+        {
+            for (vl, set) in writes {
+                let k = if set { "k1" } else { "k0" };
+                lines.push(format!("    vmov v{reg}[0], {k} vl={vl}"));
+            }
+            lines.push(format!("    vsel v{reg}[1:], k1, v{reg}[0], k0 vl=112"));
+        }
+    }
+
+    /// The source registers of a tile's exchange, packed to `spare` for
+    /// [`Shape::exchanged`] to read each entry's band of.
+    pub fn exchange_source(slot: usize, spare: usize, pipeline: bool, lines: &mut Vec<String>) {
+        let regs = (0..4).map(|n| (n, SOURCE_REG + n)).collect::<Vec<_>>();
+        for &(n, v) in &regs {
+            lines.push(format!("    vunpk v{v} <- l1[{}] gt4", slot + 8 * n));
+        }
+        lines.push("    vsync fe on=unpack".into());
+        for (k, m) in [(5, EXCHANGE_MASK), (10, EXCHANGE_MASK + 1)] {
+            for &(_, v) in &regs {
+                lines.push(format!("    vsel v{v}, v{v}, xor(v{v}, {k}), v{m}"));
+            }
+            if !pipeline {
+                lines.push("    vsync fe on=math".into());
+            }
+        }
+        lines.push("    vsync pack on=unpack".into());
+        for &(n, v) in &regs {
+            lines.push(format!("    vpack v{v} -> l1[{}] f16", spare + 8 * n));
+        }
+        lines.push("    vsync unpack on=pack".into());
+    }
+
+    /// Register `dest` of an entry of 4 rows of 2 words, from [`Shape::exchange_source`].
+    pub fn exchanged(&self, dest: usize, spare: usize, lines: &mut Vec<String>) {
+        let x = self.exchange.expect("an exchanged tile");
+        let held = EXCHANGE_MASK - 1;
+        lines.push(format!(
+            "    vunpk v{held} <- l1[{}] gt4 walk=(4, 16){}",
+            spare + x.band,
+            if x.cols == 16 { " n=4" } else { "" }
+        ));
+        lines.push("    vsync fe on=unpack".into());
+        for (r, half) in (0..4).flat_map(|r| (0..2).map(move |h| (r, h))) {
+            let from = if r < x.rows && half * 16 < x.cols {
+                format!("v{held}[{}]", 4 * half + r)
+            } else {
+                "k0".into()
+            };
+            lines.push(format!("    vmov v{dest}[{}], {from} vl=16", 2 * r + half));
+        }
     }
 
     pub fn rearrange(&self, dest: usize, pipeline: bool, lines: &mut Vec<String>) {

@@ -76,6 +76,8 @@ pub struct Ctx<'a> {
     /// staging register -> (the constant it holds, the code index after its seti)
     pub staged: IndexMap<String, (FKey, usize)>,
     pub pinned: HashSet<String>,
+    /// the pinned lane masks of a composed tile's exchange
+    pub exchanged: Option<[String; 2]>,
     pub ahead: bool,
     pub band: usize,
     pub remat: bool,
@@ -136,6 +138,7 @@ impl<'a> Ctx<'a> {
             pin: true,
             staged: IndexMap::new(),
             pinned: HashSet::new(),
+            exchanged: None,
             ahead: true,
             band: 1,
             remat: false,

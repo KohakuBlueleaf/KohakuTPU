@@ -4,6 +4,7 @@ from kohakuaccel.driver.node.queue import layout as QL
 from kohakuaccel.driver.node.queue.client import PreparedPackage
 from kohakutpu.application.runtime import packages as B
 from kohakutpu.application.runtime.card.common import Parts, Pending
+from kohakutpu.application.runtime.eager_batch import Deferred
 from kohakutpu.language.dsl.kernel import _MUTANT
 
 
@@ -36,12 +37,15 @@ class Submission(Parts):
 
     def submit(
         self, program, trace: bool = False, flags: int = 0, after: int | None = None
-    ) -> "Pending":
+    ) -> "Pending | Deferred":
         """`program` checked, built and queued on its nodes without waiting:
         the node runs its queue in order, so the next package is queued while
-        this one runs (L0.NQ.047). :meth:`collect` waits for it."""
-        if self._eager_batch is not None:
-            self._eager_batch.flush()
+        this one runs (L0.NQ.047). :meth:`collect` waits for it. Inside an
+        eager batch a plain run on one node joins the batch's list."""
+        batch = self._eager_batch
+        joins = batch is not None and not (flags or trace) and after is None
+        if batch is not None and not joins:
+            batch.flush()
         flags |= QL.RUN_F_TRACE if trace else 0
         if flags & (QL.RUN_F_TRACE | QL.RUN_F_NOENGINE) and not self.debug:
             raise RuntimeError(
@@ -77,21 +81,6 @@ class Submission(Parts):
         plain = {n: (pkg, b) for n, (pkg, _, b) in both.items()}
         lowered = {n: (pkg, b) for n, (_, pkg, b) in both.items()}
         built = plain if off else lowered
-        tags = {}
-        for n, (pkg, bindings) in built.items():
-            try:
-                # `B.built` admits lowered bytes; NOENGINE admits its own stream.
-                tag = self._submit(
-                    n, pkg.to_bytes(), bindings, flags=flags, admitted=not off
-                )
-            except Exception:
-                self._forget_residents((n,))
-                raise
-            tags[n] = (tag, pkg)
-            if off or after is not None:
-                self._forget_residents((n,))
-            elif predicted is not None:
-                self.residents[n].restore(predicted[n])
         if self.log is not None:
             self.log.append(
                 (
@@ -99,7 +88,31 @@ class Submission(Parts):
                     {n: (pkg.to_bytes(), tuple(b)) for n, (pkg, b) in built.items()},
                 )
             )
-        return Pending(single, tags, plain)
+
+        def publish() -> Pending:
+            tags = {}
+            for n, (pkg, bindings) in built.items():
+                try:
+                    # `B.built` admits lowered bytes; NOENGINE admits its own stream.
+                    tag = self._submit(
+                        n, pkg.to_bytes(), bindings, flags=flags, admitted=not off
+                    )
+                except Exception:
+                    self._forget_residents((n,))
+                    raise
+                tags[n] = (tag, pkg)
+            return Pending(single, tags, plain)
+
+        # The node runs its queue in order, list or not: IMEM ends as predicted.
+        for n in built:
+            if off or after is not None:
+                self._forget_residents((n,))
+            elif predicted is not None:
+                self.residents[n].restore(predicted[n])
+        if joins and batch is not None:
+            raw = {n: (pkg.to_bytes(), b) for n, (pkg, b) in built.items()}
+            return batch.add(raw, {n: pkg for n, (pkg, _) in plain.items()}, publish)
+        return publish()
 
     def submit_wire(self, raw, debug):
         """Already admitted native bytes; publication retains ordinary queue ownership."""

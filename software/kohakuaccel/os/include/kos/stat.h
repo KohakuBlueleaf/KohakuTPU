@@ -19,6 +19,11 @@ struct kos_kernel_stat {
     uint64_t frames_free, frames_total;
     uint64_t l0_maps, l0_tables, l0_traps;
     uint64_t dispatches, completions, faults;
+    /* Descriptor streams that ran whole; their cycles add up to each stream's
+     * span: emptying and mapping the engine, validating and queuing entries,
+     * waits for the engine within the stream, and the drain after its last entry. */
+    uint64_t de_streams, de_entries, cyc_de_open, cyc_de_load, cyc_de_room, cyc_de_tail;
+    uint64_t moves, cyc_move; /* k_move's copies */
 };
 
 struct kos_unit_stat {

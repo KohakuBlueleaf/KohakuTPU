@@ -876,12 +876,15 @@ class ResidentGraph:
     session; stop/reset the node before reclaiming its memory.
     """
 
-    def __init__(self, io, mailbox, timeout=60):
+    def __init__(self, io, mailbox, timeout=60, exited=None):
         self.io, self.mailbox, self.timeout = io, mailbox, timeout
         self.graph_epoch = 0
         self._prep_nonce = 0
         self.poisoned = False
         self.closed = False
+        # `exited()`: the node's exit code once its OS has shut down, else None.
+        # A resident that fails shuts the OS down and never writes what is waited for.
+        self._exited = exited
         self._wait(A.OSTPU_OFF_READY, A.OSTPU_MAGIC)
         _, self.tasks_pa, self.data_pa, self.data_ref = struct.unpack(
             "<4Q", io.read(mailbox + A.OSTPU_OFF_READY, 32)
@@ -909,6 +912,13 @@ class ResidentGraph:
             if time.monotonic() >= end:
                 self.poisoned = True
                 raise TimeoutError("OS graph mailbox deadline")
+            code = self._exited() if self._exited is not None else None
+            if code is not None:
+                self.poisoned = True
+                raise RuntimeError(
+                    f"the node's OS exited ({code}) before the mailbox read"
+                    f" {value:#x}: its kernel log says why"
+                )
             self.io.idle()
 
     def _active(self):

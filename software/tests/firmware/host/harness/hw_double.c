@@ -23,6 +23,7 @@
 int dbl_engine;
 uint64_t dbl_first_go, dbl_last_go, dbl_gos;
 unsigned dbl_windows[4];
+unsigned dbl_retire = RETIRE, dbl_lost, dbl_peak, dbl_clears;
 
 static uint64_t now, mb[5];
 static struct {
@@ -39,10 +40,12 @@ static struct {
 static unsigned pending_head, pending_n;
 static uint64_t cq[CQ];
 static unsigned cq_head, cq_n;
+static unsigned owed[256]; /* {y, x}: words not yet retired */
 
 static void retire(unsigned x, unsigned y)
 {
     unsigned c = smap[y << 4 | x];
+    owed[y << 4 | x] -= owed[y << 4 | x] != 0;
     if (enabled && c) {
         ctr[c - 1] = (ctr[c - 1] + 1) & CTR_MASK;
         return;
@@ -60,6 +63,8 @@ static void owe(unsigned x, unsigned y, uint64_t at)
 
 void dbl_peer_retires(unsigned x, unsigned y) { owe(x, y, now + PEER); }
 
+unsigned dbl_pending(void) { return pending_n; }
+
 static void go(void)
 {
     uint64_t dst = mb[KA_NM_DST];
@@ -68,7 +73,12 @@ static void go(void)
     unsigned x = fetch ? at & 15 : dst & 15, y = fetch ? (at >> 4) & 15 : (dst >> 8) & 15;
     unsigned n = fetch ? mb[KA_NM_ARG3] & 255 : 1;
     for (unsigned k = 0; k < n; ++k) {
-        owe(x, y, now + RETIRE + k);
+        if (dbl_lost) {
+            --dbl_lost;
+            continue;
+        }
+        owe(x, y, now + dbl_retire + k);
+        dbl_peak = ++owed[y << 4 | x] > dbl_peak ? owed[y << 4 | x] : dbl_peak;
     }
     dbl_first_go = dbl_gos ? dbl_first_go : now;
     dbl_last_go = now;
@@ -141,6 +151,9 @@ uint64_t dbl_rd(unsigned off)
                                 (uint64_t)issued << 16 | used
                           : 0;
     }
+    if (off == KA_R_DE_CTL) {
+        return (moves - moves_base) & CTR_MASK;
+    }
     if (off >= KA_R_DE_CTR && off < KA_R_DE_CTR + 8 * 32) {
         return ctr[(off - KA_R_DE_CTR) / 8];
     }
@@ -164,6 +177,7 @@ void dbl_wr(unsigned off, uint64_t v)
     else if (off == KA_R_DE_CTL) {
         enabled = v & 1;
         if (v & 2) {
+            ++dbl_clears;
             head = used = issued = 0;
             moves_base = moves;
             for (unsigned i = 0; i < 32; ++i) {

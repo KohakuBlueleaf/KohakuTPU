@@ -1,0 +1,15 @@
+run,kernels,seconds,slowest
+gpt.d2f.multimesh_v9t6.1n,3,5.303,2.957
+gpt.d2f.multimesh_v9t8.1n,3,5.525,3.164
+gru.d2f.multimesh_v9t6.1n,4,2.57,0.848
+gru.d2f.multimesh_v9t8.1n,4,3.051,0.889
+lenet.d2f.multimesh_v9t6.1n,64,73.888,19.574
+lenet.d2f.multimesh_v9t8.1n,41,68.187,19.525
+lenet.d2fj.multimesh_v9t6.1n,9,5.004,1.341
+lenet.d2fj.multimesh_v9t8.1n,31,14.007,3.163
+mixer.d2f.multimesh_v9t6.1n,2,9.142,8.648
+mixer.d2f.multimesh_v9t8.1n,2,9.412,8.923
+mlp.d2f.multimesh_v9t6.1n,1,1.501,1.501
+mlp.d2f.multimesh_v9t8.1n,1,1.071,1.071
+wide.d2f.multimesh_v9t6.1n,1,1.182,1.182
+wide.d2f.multimesh_v9t8.1n,1,1.562,1.562

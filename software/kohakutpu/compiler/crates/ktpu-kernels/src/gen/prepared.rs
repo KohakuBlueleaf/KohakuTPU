@@ -24,6 +24,9 @@ pub const COPIED_MUTANT: &str = "kernels.prepared/operand-copied";
 /// The reverse mutant of the [`Composed`] default.
 pub const MATERIALIZED_MUTANT: &str = "pipe/materialized";
 
+/// A composed kernel tiled as a kernel of its row shape, not its source's.
+pub const CONSUMER_TILES_MUTANT: &str = "kernels.prepared/consumer-tiles";
+
 /// When a pending operand's kernel reads it composed (L2.READ.001).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Composed {
@@ -124,6 +127,7 @@ pub fn mapped(made: &BTreeMap<usize, Read>) -> HashMap<usize, v::Mapped> {
                 v::Mapped {
                     steps: Read::steps(steps),
                     rows: None,
+                    cols: None,
                 },
             )),
             Read::Materialized(_) => None,
@@ -270,6 +274,60 @@ pub fn made_key(made: &BTreeMap<usize, Read>) -> Py {
     )
 }
 
+/// The columns of a destination row whose source lanes are `steps`' rows: the
+/// destination stride of the walk's level of consecutive lanes, every level
+/// after it whole source words.
+fn lane_columns(steps: &[relayout::Logical], lanes: i64) -> Option<i64> {
+    let [step] = steps else { return None };
+    let level = step.walk.iter().position(|l| l.1 == 1)?;
+    let later = &step.walk[level + 1..];
+    (step.dwalk[level].1 > 1 && later.iter().all(|l| l.1 % lanes == 0))
+        .then_some(step.dwalk[level].1)
+}
+
+/// `e`'s operands, output and rows over `steps`' destination rows, tiled so a
+/// tile's columns are whole source words: `(operands, out, rows, columns)`,
+/// the flat [1, W] read as [W / A, A] rows of whole words.
+fn word_tiled(
+    e: &E,
+    operands: &[Operand],
+    r: i64,
+    w: i64,
+    out: &Operand,
+    made: &BTreeMap<usize, Read>,
+    hw: &Hw,
+) -> Option<(Vec<Operand>, Operand, i64, i64)> {
+    if !expr::reduces(e).is_empty() || out.kind != Kind::Full || mutants::on(CONSUMER_TILES_MUTANT)
+    {
+        return None;
+    }
+    let a = made.values().find_map(|read| match read {
+        Read::Composed(steps) => lane_columns(steps, hw.lanes),
+        Read::Materialized(_) => None,
+    })?;
+    if a % hw.lanes != 0 || a < hw.kblock {
+        return None;
+    }
+    if w == a {
+        return Some((operands.to_vec(), *out, r, a));
+    }
+    let flat = |o: &Operand| match o.kind {
+        Kind::Col | Kind::Full if o.offset == 0 && (o.rows <= 1) => Some(Operand {
+            kind: Kind::Full,
+            pitch: a,
+            rows: w / a,
+            ..*o
+        }),
+        Kind::Scalar => Some(*o),
+        _ => None,
+    };
+    if r != 1 || w % a != 0 {
+        return None;
+    }
+    let ops = operands.iter().map(flat).collect::<Option<Vec<_>>>()?;
+    Some((ops, flat(out)?, w / a, a))
+}
+
 /// [`v::rows_kernel`] of `e` with operand i of `made` read from port `x{i}`
 /// by its [`Read`] (materialized: tables `p{i}_index{j}` / `p{i}_mask{j}`,
 /// a scratch shaped as its port), operand i of `alias` reading operand
@@ -286,12 +344,23 @@ pub fn rows_kernel(
     m: &Machine,
 ) -> R<Kernel> {
     let (hw, rl) = (Hw::of(m), relayout::Hw::of(m));
+    let tiled = word_tiled(e, operands, r, w, out, made, &hw);
+    let block = tiled.as_ref().map(|_| hw.kblock);
+    let (operands, out, r, w) = match &tiled {
+        Some((ops, o, rows, cols)) => (ops.as_slice(), o, *rows, *cols),
+        None => (operands, out, r, w),
+    };
     let quantum = if v::holds_stat(operands, out.kind) {
         hw.stat_rows()
     } else {
         hw.band
     };
-    let pl = v::plan(operands, out.kind, r, w, None, None, quantum, &hw)?;
+    let rest = block.map_or(0, |b| w % b);
+    // Untiled, the plan is the one `rows_shape` gives its caller to allocate by.
+    let pl = match block {
+        None => v::rows_shape(e, operands, r, w, out, None, &hw)?.pl,
+        Some(_) => v::plan(operands, out.kind, r, w - rest, None, block, quantum, &hw)?,
+    };
     if pl.nblk > 1 && expr::reduces(e).len() > 1 {
         return fail(
             "API.ROW.009",
@@ -403,8 +472,14 @@ pub fn rows_kernel(
                 None => {
                     v::rows_stage(t, &bufs, e, operands, out, sp, hw.vc, &Idx::Int(*row0), &hw)?
                 }
-                Some(rows) => v::tail_band(t, &bufs, e, operands, out, sp, *row0, *rows, w, &hw)?,
+                Some(rows) => {
+                    v::tail_band(t, &bufs, e, operands, out, sp, *row0, *rows, w - rest, &hw)?
+                }
             }
+        }
+        if rest > 0 {
+            let at = w - rest;
+            v::tail_columns(t, &bufs, e, operands, out, r, at, rest, quantum, &hw)?;
         }
         Ok(())
     })

@@ -212,11 +212,12 @@ impl Instance {
             let pitch = kw("read_pitch", cols as i64)?;
             let stride = kw("read_stride", 1)?;
             let valid = kw("read_rows", rows as i64)?;
+            let columns = kw("read_cols", cols as i64)?;
             let source_pitch = *b.shape.last().unwrap_or(&1);
             for r in 0..rows as i64 {
                 for c in 0..cols as i64 {
                     let logical = first + r * pitch + c * stride;
-                    let at = if r < valid {
+                    let at = if r < valid && c < columns {
                         elements[logical as usize]
                     } else {
                         -1

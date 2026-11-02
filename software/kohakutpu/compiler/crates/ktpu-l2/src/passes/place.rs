@@ -1,7 +1,10 @@
 //! `place` (L2.PASS.003): `par v in LO..HI on mg[any]` / `vc[any]` puts
 //! instance i on unit (v - LO), mod the machine's count when the instances
-//! outnumber the units or the count is not constant. A kind the machine has
-//! none of is refused.
+//! outnumber the units or the count is not constant; a phase that wraps starts
+//! on the unit after the last phase's last instance, so remainders rotate over
+//! the units. A kind the machine has none of is refused.
+
+use std::collections::BTreeMap;
 
 use ktpu_l1::text::{IntStyle, Stmt, Term};
 
@@ -12,6 +15,7 @@ use crate::target::Target;
 pub fn place(p: &Program, t: &Target) -> Result<Program> {
     let (params, stmts) = body_of(p)?;
     let r = p.module.reader();
+    let mut next: BTreeMap<String, i128> = BTreeMap::new();
     let out = walk(&stmts, &mut |s: Stmt, _scopes: &[Stmt]| {
         if s.op != "par" {
             return Ok(vec![s]);
@@ -51,7 +55,13 @@ pub fn place(p: &Program, t: &Target) -> Result<Program> {
             _ => None,
         };
         if n.map(|n| n > count).unwrap_or(true) {
-            idx = Term::BinOp('%', Box::new(idx), Box::new(Term::int(count as i128)));
+            let units = count as i128;
+            let first = next.entry(unit.clone()).or_insert(0);
+            if *first != 0 {
+                idx = Term::BinOp('+', Box::new(idx), Box::new(Term::int(*first)));
+            }
+            idx = Term::BinOp('%', Box::new(idx), Box::new(Term::int(units)));
+            *first = (*first + n.unwrap_or(0) as i128) % units;
         }
         let mut out = s.clone();
         let mut args: Vec<Term> = s.args.iter().take(2).cloned().collect();

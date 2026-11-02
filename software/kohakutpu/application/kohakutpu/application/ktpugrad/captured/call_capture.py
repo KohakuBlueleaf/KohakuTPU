@@ -23,7 +23,7 @@ BufferDevice = str | tuple[str, ...]
 
 def refresh():
     global ENABLED
-    ENABLED = ENV.get("KTPU_EAGER_CALL_CAPTURE", "0") == "1"
+    ENABLED = ENV.get("KTPU_EAGER_CALL_CAPTURE", "1") == "1"
     return ENABLED
 
 

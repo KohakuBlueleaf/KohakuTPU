@@ -128,6 +128,9 @@ struct kds_server_stat {
     uint64_t tasks, unit_batches;        /* tasks finished here; SYS_DISPATCH / SYS_ENGINE calls */
     uint64_t msgs_in, msgs_out;
     uint64_t cyc_msgs, cyc_run, cyc_issue, cyc_retire, cyc_send, cyc_event;
+    /* This node's kernel (kos/stat.h): where a descriptor stream's cycles went. */
+    uint64_t de_streams, de_entries, cyc_de_open, cyc_de_load, cyc_de_room, cyc_de_tail;
+    uint64_t moves, cyc_move;
 };
 int kds_server_stat(struct kds_server_stat *s); /* KOS_ENOENT: no server on this node */
 

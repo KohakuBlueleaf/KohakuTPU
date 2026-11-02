@@ -119,6 +119,8 @@ impl Sim<'_> {
             "gather" | "scatter" => self.indexed(st),
             "gt4" => self.gt4(st),
             "quant" => self.quant(st),
+            // A checked quant refuses non-finite input where it reads it.
+            "quant_check" => Ok(()),
             "tile_transpose" => self.tile_transpose(st),
             op => Err(format!("no node op {op} in this simulator")),
         }
@@ -388,6 +390,7 @@ impl Sim<'_> {
         let (r0, rows, k0, keys) = q.rect();
         let (s0, srows, t0, scols) = x.rect();
         let reader = Window::of(st, &self.env)?;
+        let checked = st.kw("finite").and_then(Term::as_int) != Some(1);
         for g in 0..rows / mx7::LANES as i64 {
             for k in 0..keys / mx7::KBLOCK as i64 {
                 let mut e = [[0u16; mx7::KBLOCK]; mx7::LANES];
@@ -401,6 +404,9 @@ impl Sim<'_> {
                         if let Some((sr, sc)) = element {
                             let bytes = self.mem.read(src.element(sr, sc)?, 2)?;
                             *value = u16::from_le_bytes([bytes[0], bytes[1]]);
+                            if checked && *value & 0x7c00 == 0x7c00 {
+                                return Err(format!("quant of a non-finite value at ({sr}, {sc})"));
+                            }
                         }
                     }
                 }

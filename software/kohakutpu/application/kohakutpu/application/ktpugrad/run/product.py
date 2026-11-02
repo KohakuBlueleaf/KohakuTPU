@@ -302,14 +302,13 @@ def _product_run(
             out=arguments["out"],
             steps={i: FM.costs.steps_recipe(v.steps) for i, v in pending.items()},
         )
-        # The prepared product is the DRAM product: a kernel of no ring.
-        depth = MM.resolved(arguments, dev.machine.machine_json)["knobs"]["ring_depth"]
-        plain = pending and depth == 0
+        # A read in the kernel saves a launch, so it takes the DRAM product
+        # (a kernel of no ring) over the ring.
         made = {str(i): [s.made_by() for s in v.steps] for i, v in pending.items()}
-        read = dict(arguments, made=made, composed=sorted(pending))
+        read = dict(arguments, made=made, composed=sorted(pending), ring_depth=0)
         call = {"gen": "matmul.mm_kernel", "args": arguments}
         steps = [s for v in pending.values() for s in v.steps]
-        if plain and FM.composed(
+        if pending and FM.composed(
             dev,
             {"gen": "matmul.mm_kernel", "args": read},
             [*map(FM.relayout_call, steps), call],
@@ -318,8 +317,9 @@ def _product_run(
                 del binds[f"in{i}"]
                 binds[f"p{i}_x"] = v.steps[0].src
             arguments = read
-        elif plain and FM.costs.choose("prepared_mm", recipe, dev.machine.board):
+        elif pending and FM.costs.choose("prepared_mm", recipe, dev.machine.board):
             plans = {i: FM.plans_of(dev, v.steps) for i, v in pending.items()}
+            arguments["ring_depth"] = 0
             arguments["made"] = {
                 str(i): [s.made_by() for s in v.steps] for i, v in pending.items()
             }

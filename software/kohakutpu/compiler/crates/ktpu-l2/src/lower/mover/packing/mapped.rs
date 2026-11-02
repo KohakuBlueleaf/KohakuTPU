@@ -123,6 +123,17 @@ fn image(
     for i in 0..n {
         lines.push(format!("    ainc a{} += {}", n + i, strides.1));
     }
+    // Entries sharing a fetch exchange its words together, or not at all.
+    let exchanged = (0..n)
+        .map(|i| {
+            let first = (0..=i).rev().find(|&k| !shared_source[k]).unwrap_or(0);
+            let end = (i + 1..n).find(|&k| !shared_source[k]).unwrap_or(n);
+            shapes[first..end].iter().all(|s| s.exchange.is_some())
+        })
+        .collect::<Vec<_>>();
+    if exchanged.iter().any(|&x| x) {
+        Shape::exchange_masks(&mut lines);
+    }
     let iteration = |prefetch: bool| {
         let mut code = Vec::new();
         for (i, shape) in shapes.iter().enumerate() {
@@ -130,7 +141,11 @@ fn image(
                 if !on("l2.readmap/no-fill-wait") {
                     code.push("    vsync fe on=fill".into());
                 }
-                shape.unpack(slot_of[i], &mut code);
+                if exchanged[i] {
+                    Shape::exchange_source(slot_of[i], readmap::SPARE, pack.pipeline, &mut code);
+                } else {
+                    shape.unpack(slot_of[i], &mut code);
+                }
                 if overlap {
                     if let Some(next_i) = (i + 1..n).find(|&k| !shared_source[k]) {
                         fill(
@@ -145,7 +160,11 @@ fn image(
                     }
                 }
             }
-            shape.rearrange(4 * i, pack.pipeline, &mut code);
+            if exchanged[i] {
+                shape.exchanged(4 * i, readmap::SPARE, &mut code);
+            } else {
+                shape.rearrange(4 * i, pack.pipeline, &mut code);
+            }
             if !shared_source[i] && !overlap {
                 if let Some(next_i) = (i + 1..n).find(|&k| !shared_source[k]) {
                     fill(
@@ -349,6 +368,15 @@ impl Window {
     }
 }
 
+/// A 4 x 32 entry's positions in the order [`ReadMap::exchange`] takes them.
+fn banded(entry: &[i64]) -> Vec<i64> {
+    (0..2)
+        .flat_map(|half| {
+            (0..4).flat_map(move |r| (0..16).map(move |l| entry[r * 32 + half * 16 + l]))
+        })
+        .collect()
+}
+
 /// The flag of a `0` or `1` keyword, off when absent.
 fn flag(body: &Body, op: &Op, env: &Env, key: &str) -> Result<bool> {
     match op.st.kw(key) {
@@ -401,7 +429,9 @@ fn schedule(
             for c in 0..sl[2].0 {
                 for d in 0..sl[3].0 {
                     let origin = (a * sl[0].1 + b * sl[1].1 + c * sl[2].1 + d * sl[3].1) / 2;
-                    let tile = map.tile(&window.entry(origin), knobs);
+                    let entry = window.entry(origin);
+                    let mut tile = map.tile(&entry, knobs);
+                    tile.shape.exchange = map.exchange(&banded(&entry), 4, &tile);
                     equal
                         .entry((tile.shape, tile.anchor))
                         .or_default()
@@ -453,14 +483,15 @@ fn schedule(
         let mut start = 0;
         while start < items.len() {
             let mut end = start + 1;
-            let mut seg_sum = items[start].0.segments.len();
+            let steps = |s: &Shape| s.exchange.map_or(s.segments.len(), |_| 8);
+            let mut seg_sum = steps(&items[start].0);
             let mut copy_sum = items[start].1.len();
             while end < items.len()
                 && end - start < max_chunk
-                && seg_sum + items[end].0.segments.len() <= knobs.image_segments
+                && seg_sum + steps(&items[end].0) <= knobs.image_segments
                 && copy_sum + items[end].1.len() <= knobs.image_copies
             {
-                seg_sum += items[end].0.segments.len();
+                seg_sum += steps(&items[end].0);
                 copy_sum += items[end].1.len();
                 end += 1;
             }

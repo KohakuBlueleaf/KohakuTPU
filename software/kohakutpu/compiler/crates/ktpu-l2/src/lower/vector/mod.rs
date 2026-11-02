@@ -278,6 +278,8 @@ impl Val {
 #[derive(Clone, Debug, Default)]
 pub struct Desc {
     pub ad: usize,
+    /// L1 word of the words an exchanged logical load passes through.
+    pub spare: i64,
     /// Original source-word staging for a logical load, assembled in registers.
     pub mapped: Option<crate::lower::readmap::Shape>,
     pub phases: Vec<crate::lower::readmap::Shape>,

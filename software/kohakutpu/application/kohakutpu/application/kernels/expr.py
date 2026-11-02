@@ -10,6 +10,7 @@ to [-pi, pi] and a polynomial, a truncation through the rounding constant);
 """
 
 import math
+import struct
 from dataclasses import dataclass
 
 import numpy as np
@@ -111,6 +112,33 @@ def reduces(e) -> list:
         found = [r for a in e.args for r in reduces(a)]
         return [r for i, r in enumerate(found) if all(r is not q for q in found[:i])]
     return []
+
+
+def intern(e):
+    """`e` with structurally equal subexpressions one node (`emit` and the
+    generators emit a node once): keyed by op and canonical operands in order,
+    a constant by its exact bits, so no arithmetic changes."""
+    seen: dict = {}
+    nodes: dict = {}
+
+    def walk(x):
+        got = seen.get(id(x))
+        if got is not None:
+            return got
+        if isinstance(x, Load):
+            key, node = ("load", x.i), x
+        elif isinstance(x, Const):
+            key, node = ("const", struct.pack("<d", x.value)), x
+        elif isinstance(x, Reduce):
+            arg = walk(x.arg)
+            key, node = ("reduce", x.op, id(arg)), Reduce(x.op, arg)
+        else:
+            args = tuple(walk(a) for a in x.args)
+            key, node = ("op", x.name, *map(id, args)), Op(x.name, args)
+        seen[id(x)] = got = nodes.setdefault(key, node)
+        return got
+
+    return walk(e)
 
 
 def count(e) -> int:
@@ -369,6 +397,7 @@ __all__ = [
     "count",
     "emit",
     "evaluate",
+    "intern",
     "op",
     "reduces",
 ]

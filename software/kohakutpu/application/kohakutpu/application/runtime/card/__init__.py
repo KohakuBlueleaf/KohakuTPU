@@ -147,6 +147,7 @@ class NodeCard(Recording, Submission, Collection):
         boot: str = "axi",
         arena_end: int | None = None,
         spin: float = 0.0,
+        nap: float = 0.0,
         sys_hz: float | None = None,
         wait_seconds: float | None = None,
         debug: bool = False,
@@ -279,6 +280,8 @@ class NodeCard(Recording, Submission, Collection):
                 i,
                 idle=idle,
                 spin=spin,
+                nap=nap,
+                hz=hz,
                 timeout=self.timeout,
                 clock=clock,
                 alarm=alarm,
@@ -603,7 +606,8 @@ def open_transport(kind: str = "jtag"):
 class SiliconCard(NodeCard):
     """The card itself: `transport` (an instance, or a `TRANSPORTS` name;
     JTAG by default) for everything; a wait polls back to back for `spin`
-    seconds, then sleeps `poll` seconds between polls; firmware streamed
+    seconds, then sleeps at most `poll` seconds between polls, and a prepared
+    list sleeps until its last run's time is nearly up; firmware streamed
     through each node's load window.
 
     Opens only at `profile` ("idle": the board's idle profile) on every node
@@ -646,11 +650,20 @@ class SiliconCard(NodeCard):
                         f"node {n} is not at profile {want!r}: (now, want) {off}; "
                         f"set the clocks first (CardClocks.set_all({want!r}))"
                     )
+        nap = 0.0 if idle else poll
         idle = idle or (lambda: time.sleep(poll))
         # The sysnode clock the firmware counts its waits in.
         sys_hz = b["profiles"][want]["sys"] * 1e6 if want is not None else None
         super().__init__(
-            t, t, board, idle=idle, boot="axi", spin=spin, sys_hz=sys_hz, **kw
+            t,
+            t,
+            board,
+            idle=idle,
+            boot="axi",
+            spin=spin,
+            nap=nap,
+            sys_hz=sys_hz,
+            **kw,
         )
         if native_poll:
             for queue in self.queues.values():

@@ -1,0 +1,85 @@
+target ktpu.v9
+
+fn rows_4b277ed3d8.l2(x0: f16[624, 16] @dram, in1: f16[48, 208] @dram, out: f16[48, 208] @dram)
+    h1 = buffer  : f16[48, 32] @dram
+    h2 = buffer  : f16[48, 32] @dram
+    par c1 in 0..2 on vc[c1]
+        for t1 in 0..((c1 + 2) / 2) + 1 - ((c1 + 1) / 2)
+            xl1 = load x0 read_map=((9984, 0, 0, 9984, ((48, 1), (208, 48)), ((48, 208), (208, 1))),) read_at=c1*3328 + ((c1 + 1) / 2)*3328 + t1*3328 read_pitch=208 read_stride=1  : f16[16, 32] @l1(gt4)
+            xl2 = load in1[c1*16 + ((c1 + 1) / 2)*16 + t1*16 : +16, 0 : +32]  : f16[16, 32] @l1(gt4)
+            v1 = unpack xl1                     : f32[16, 32] @reg(gt4)
+            e1 = mul v1, 0.9                    : f32[16, 32] @reg(gt4)
+            v2 = unpack xl2                     : f32[16, 32] @reg(gt4)
+            e2 = mul v2, 0.1                    : f32[16, 32] @reg(gt4)
+            e3 = add e1, e2                     : f32[16, 32] @reg(gt4)
+            p1 = pack e3                        : f16[16, 32] @l1(gt4)
+            store out[c1*16 + ((c1 + 1) / 2)*16 + t1*16 : +16, 0 : +32] <- p1
+    par c2 in 0..2 on vc[c2]
+        for t2 in 0..((c2 + 2) / 2) + 1 - ((c2 + 1) / 2)
+            xl3 = load x0 read_map=((9984, 0, 0, 9984, ((48, 1), (208, 48)), ((48, 208), (208, 1))),) read_at=c2*3328 + ((c2 + 1) / 2)*3328 + t2*3328 + 32 read_pitch=208 read_stride=1  : f16[16, 32] @l1(gt4)
+            xl4 = load in1[c2*16 + ((c2 + 1) / 2)*16 + t2*16 : +16, 32 : +32]  : f16[16, 32] @l1(gt4)
+            v3 = unpack xl3                     : f32[16, 32] @reg(gt4)
+            e4 = mul v3, 0.9                    : f32[16, 32] @reg(gt4)
+            v4 = unpack xl4                     : f32[16, 32] @reg(gt4)
+            e5 = mul v4, 0.1                    : f32[16, 32] @reg(gt4)
+            e6 = add e4, e5                     : f32[16, 32] @reg(gt4)
+            p2 = pack e6                        : f16[16, 32] @l1(gt4)
+            store out[c2*16 + ((c2 + 1) / 2)*16 + t2*16 : +16, 32 : +32] <- p2
+    par c3 in 0..2 on vc[c3]
+        for t3 in 0..((c3 + 2) / 2) + 1 - ((c3 + 1) / 2)
+            xl5 = load x0 read_map=((9984, 0, 0, 9984, ((48, 1), (208, 48)), ((48, 208), (208, 1))),) read_at=c3*3328 + ((c3 + 1) / 2)*3328 + t3*3328 + 64 read_pitch=208 read_stride=1  : f16[16, 32] @l1(gt4)
+            xl6 = load in1[c3*16 + ((c3 + 1) / 2)*16 + t3*16 : +16, 64 : +32]  : f16[16, 32] @l1(gt4)
+            v5 = unpack xl5                     : f32[16, 32] @reg(gt4)
+            e7 = mul v5, 0.9                    : f32[16, 32] @reg(gt4)
+            v6 = unpack xl6                     : f32[16, 32] @reg(gt4)
+            e8 = mul v6, 0.1                    : f32[16, 32] @reg(gt4)
+            e9 = add e7, e8                     : f32[16, 32] @reg(gt4)
+            p3 = pack e9                        : f16[16, 32] @l1(gt4)
+            store out[c3*16 + ((c3 + 1) / 2)*16 + t3*16 : +16, 64 : +32] <- p3
+    par c4 in 0..2 on vc[c4]
+        for t4 in 0..((c4 + 2) / 2) + 1 - ((c4 + 1) / 2)
+            xl7 = load x0 read_map=((9984, 0, 0, 9984, ((48, 1), (208, 48)), ((48, 208), (208, 1))),) read_at=c4*3328 + ((c4 + 1) / 2)*3328 + t4*3328 + 96 read_pitch=208 read_stride=1  : f16[16, 32] @l1(gt4)
+            xl8 = load in1[c4*16 + ((c4 + 1) / 2)*16 + t4*16 : +16, 96 : +32]  : f16[16, 32] @l1(gt4)
+            v7 = unpack xl7                     : f32[16, 32] @reg(gt4)
+            e10 = mul v7, 0.9                   : f32[16, 32] @reg(gt4)
+            v8 = unpack xl8                     : f32[16, 32] @reg(gt4)
+            e11 = mul v8, 0.1                   : f32[16, 32] @reg(gt4)
+            e12 = add e10, e11                  : f32[16, 32] @reg(gt4)
+            p4 = pack e12                       : f16[16, 32] @l1(gt4)
+            store out[c4*16 + ((c4 + 1) / 2)*16 + t4*16 : +16, 96 : +32] <- p4
+    par c5 in 0..2 on vc[c5]
+        for t5 in 0..((c5 + 2) / 2) + 1 - ((c5 + 1) / 2)
+            xl9 = load x0 read_map=((9984, 0, 0, 9984, ((48, 1), (208, 48)), ((48, 208), (208, 1))),) read_at=c5*3328 + ((c5 + 1) / 2)*3328 + t5*3328 + 128 read_pitch=208 read_stride=1  : f16[16, 32] @l1(gt4)
+            xl10 = load in1[c5*16 + ((c5 + 1) / 2)*16 + t5*16 : +16, 128 : +32]  : f16[16, 32] @l1(gt4)
+            v9 = unpack xl9                     : f32[16, 32] @reg(gt4)
+            e13 = mul v9, 0.9                   : f32[16, 32] @reg(gt4)
+            v10 = unpack xl10                   : f32[16, 32] @reg(gt4)
+            e14 = mul v10, 0.1                  : f32[16, 32] @reg(gt4)
+            e15 = add e13, e14                  : f32[16, 32] @reg(gt4)
+            p5 = pack e15                       : f16[16, 32] @l1(gt4)
+            store out[c5*16 + ((c5 + 1) / 2)*16 + t5*16 : +16, 128 : +32] <- p5
+    par c6 in 0..2 on vc[c6]
+        for t6 in 0..((c6 + 2) / 2) + 1 - ((c6 + 1) / 2)
+            xl11 = load x0 read_map=((9984, 0, 0, 9984, ((48, 1), (208, 48)), ((48, 208), (208, 1))),) read_at=c6*3328 + ((c6 + 1) / 2)*3328 + t6*3328 + 160 read_pitch=208 read_stride=1  : f16[16, 32] @l1(gt4)
+            xl12 = load in1[c6*16 + ((c6 + 1) / 2)*16 + t6*16 : +16, 160 : +32]  : f16[16, 32] @l1(gt4)
+            v11 = unpack xl11                   : f32[16, 32] @reg(gt4)
+            e16 = mul v11, 0.9                  : f32[16, 32] @reg(gt4)
+            v12 = unpack xl12                   : f32[16, 32] @reg(gt4)
+            e17 = mul v12, 0.1                  : f32[16, 32] @reg(gt4)
+            e18 = add e16, e17                  : f32[16, 32] @reg(gt4)
+            p6 = pack e18                       : f16[16, 32] @l1(gt4)
+            store out[c6*16 + ((c6 + 1) / 2)*16 + t6*16 : +16, 160 : +32] <- p6
+    fill h1 value=0
+    copy h1[0 : +48, 0 : +16] <- in1[0 : +48, 192 : +16]
+    par c7 in 0..2 on vc[c7]
+        for t7 in 0..((c7 + 2) / 2) + 1 - ((c7 + 1) / 2)
+            xl13 = load x0 read_map=((9984, 0, 0, 9984, ((48, 1), (208, 48)), ((48, 208), (208, 1))),) read_at=c7*3328 + ((c7 + 1) / 2)*3328 + t7*3328 + 192 read_pitch=208 read_stride=1 read_cols=16  : f16[16, 32] @l1(gt4)
+            xl14 = load h1[c7*16 + ((c7 + 1) / 2)*16 + t7*16 : +16, 0 : +32]  : f16[16, 32] @l1(gt4)
+            v13 = unpack xl13                   : f32[16, 32] @reg(gt4)
+            e19 = mul v13, 0.9                  : f32[16, 32] @reg(gt4)
+            v14 = unpack xl14                   : f32[16, 32] @reg(gt4)
+            e20 = mul v14, 0.1                  : f32[16, 32] @reg(gt4)
+            e21 = add e19, e20                  : f32[16, 32] @reg(gt4)
+            p7 = pack e21                       : f16[16, 32] @l1(gt4)
+            store h2[c7*16 + ((c7 + 1) / 2)*16 + t7*16 : +16, 0 : +32] <- p7
+    copy out[0 : +48, 192 : +16] <- h2[0 : +48, 0 : +16]

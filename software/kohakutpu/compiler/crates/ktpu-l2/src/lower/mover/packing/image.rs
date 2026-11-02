@@ -25,6 +25,9 @@ pub fn status(name: &str) -> String {
 pub struct Batch<'a> {
     pub name: &'a str,
     pub n: i64,
+    /// Entries a gathered row spans: entry `j`'s rows sit `across` entries
+    /// apart, its row `r` at `(j / across, r, j % across)` of the slot.
+    pub across: i64,
     pub source_stride: i64,
     pub stride: i64,
     pub incremental: bool,
@@ -42,6 +45,8 @@ pub struct Batch<'a> {
     pub fill_overlap: bool,
     pub zero_reuse: bool,
     pub classifier_banks: bool,
+    /// Whether a paired image's steady loop runs, or `None`: any trip count,
+    /// the loop guarded by VSKIPZ.
     pub steady: Option<bool>,
     pub odd: bool,
     /// The destination pairs K blocks (`nk` >= 2): zeros pack as `ZERO_LIFT`.
@@ -70,14 +75,7 @@ impl Batch<'_> {
             }
         } else {
             for j in 0..self.n {
-                self.entry(
-                    v,
-                    input + j * self.input_words(),
-                    output + j * 4,
-                    false,
-                    ind,
-                    lines,
-                );
+                self.entry(v, input, j, output + j * 4, ind, lines);
             }
         }
         if self.pipeline {
@@ -91,8 +89,11 @@ impl Batch<'_> {
         }
     }
 
-    fn input_words(&self) -> i64 {
-        self.valid_rows * self.row_words
+    /// The slot word of entry `j`'s row `row`, the slot at `input`.
+    fn input_of(&self, input: i64, j: i64, row: i64) -> i64 {
+        let (group, k) = (j / self.across, j % self.across);
+        let row_span = self.across * self.row_words;
+        input + (group * self.valid_rows + row) * row_span + k * self.row_words
     }
 
     fn lift(&self, v: i64, ind: &str, lines: &mut Vec<String>) {
@@ -101,8 +102,9 @@ impl Batch<'_> {
         }
     }
 
-    fn unpack(&self, v: i64, input: i64, ind: &str, lines: &mut Vec<String>) {
-        if self.valid_rows != 4 || self.row_words != 2 {
+    fn unpack(&self, v: i64, input: i64, j: i64, ind: &str, lines: &mut Vec<String>) {
+        let partial = self.valid_rows != 4 || self.row_words != 2;
+        if partial {
             let zero = if on("l2.packing/pad-nonzero") {
                 "k1"
             } else {
@@ -110,16 +112,21 @@ impl Batch<'_> {
             };
             lines.push(format!("{ind}vmov v{v}, {zero}"));
             lines.push(format!("{ind}vsync fe on=math"));
+        }
+        if partial || self.across > 1 {
             for row in 0..self.valid_rows {
                 lines.push(format!(
                     "{ind}vunpk v{v}[{}:] <- l1[{}] f16 n={}",
                     2 * row,
-                    input + row * self.row_words,
+                    self.input_of(input, j, row),
                     self.row_words
                 ));
             }
         } else {
-            lines.push(format!("{ind}vunpk v{v} <- l1[{input}] f16"));
+            lines.push(format!(
+                "{ind}vunpk v{v} <- l1[{}] f16",
+                self.input_of(input, j, 0)
+            ));
         }
     }
 
@@ -144,12 +151,7 @@ impl Batch<'_> {
             0
         };
         for j in 0..n {
-            self.unpack(
-                base + step * j,
-                input + (first + j) * self.input_words(),
-                ind,
-                lines,
-            );
+            self.unpack(base + step * j, input, first + j, ind, lines);
         }
         if !self.pipeline {
             lines.push(format!("{ind}vsync fe on=unpack"));
@@ -169,27 +171,17 @@ impl Batch<'_> {
         }
     }
 
-    fn entry(
-        &self,
-        v: i64,
-        input: i64,
-        output: i64,
-        rel: bool,
-        ind: &str,
-        lines: &mut Vec<String>,
-    ) {
-        let rel = if rel { " rel" } else { "" };
-        if self.valid_rows != 4 || self.row_words != 2 {
-            self.unpack(v, input, ind, lines);
-        } else if on("l2.packing/wrong-order") && rel.is_empty() {
+    fn entry(&self, v: i64, input: i64, j: i64, output: i64, ind: &str, lines: &mut Vec<String>) {
+        if on("l2.packing/wrong-order") && self.valid_rows == 4 && self.row_words == 2 {
+            let at = self.input_of(input, j, 0);
             for c in 0..8 {
                 lines.push(format!(
                     "{ind}vunpk v{v}[{c}:] <- l1[{}] f16 n=1",
-                    input + (c ^ 1)
+                    at + (c ^ 1)
                 ));
             }
         } else {
-            lines.push(format!("{ind}vunpk v{v} <- l1[{input}] f16{rel}"));
+            self.unpack(v, input, j, ind, lines);
         }
         lines.push(format!("{ind}vsync fe on=unpack"));
         self.lift(v, ind, lines);
@@ -215,10 +207,7 @@ impl Batch<'_> {
             lines.push(format!("{ind}vadd v{v}, v{v}, v{v}"));
             lines.push(format!("{ind}vsync fe on=math"));
         }
-        lines.push(format!(
-            "{ind}vpack v{v} -> l1[{output}] {}{rel}",
-            self.dtype
-        ));
+        lines.push(format!("{ind}vpack v{v} -> l1[{output}] {}", self.dtype));
         lines.push(format!("{ind}vsync fe on=pack"));
     }
 
@@ -274,7 +263,7 @@ impl Batch<'_> {
             format!(
                 "    ainc a0 += {}",
                 if self.incremental {
-                    self.n * self.source_stride
+                    self.n / self.across * self.source_stride
                 } else {
                     0
                 }
@@ -282,7 +271,7 @@ impl Batch<'_> {
             format!(
                 "    ainc a1 += {}",
                 if self.incremental {
-                    self.n * self.stride
+                    self.n / self.across * self.stride
                 } else {
                     0
                 }
@@ -320,21 +309,21 @@ impl Batch<'_> {
                 "    seti s0 = trips".into(),
             ]);
             if self.steady != Some(false) {
-                // Known trip topology needs no SKIPZ displacement across a
-                // large loop. Legacy parameterized images retain the guard.
+                // A loop VSKIPZ guards for any trip count, or one an image
+                // specialised on running it holds unguarded.
                 let outer = if self.steady.is_none() {
                     lines.push("    skipz s0".into());
                     "        "
                 } else {
                     "    "
                 };
-                let ind = format!("{outer}    ");
+                let ind = &format!("{outer}    ");
                 lines.push(format!("{outer}loop s0"));
                 lines.push(format!("{ind}vfill a0 -> l1[192] rel"));
-                self.compute(0, &ind, &mut lines);
+                self.compute(0, ind, &mut lines);
                 lines.push(format!("{ind}vsync fe on=fill"));
                 lines.push(format!("{ind}vfill a0 -> l1[0] rel"));
-                self.compute(1, &ind, &mut lines);
+                self.compute(1, ind, &mut lines);
                 lines.push(format!("{ind}vsync fe on=fill"));
             }
             lines.push("    vfill a0 -> l1[192] rel".into());

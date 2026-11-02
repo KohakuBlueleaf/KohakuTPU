@@ -103,10 +103,9 @@ class Device(Kernels, Allocation, Submission, Replay):
         self.eager_recipes = None
         self._recipe_capture = None
         self._recipe_recording = None
-        self._recipe_submitting = False
-        self.eager_exec = ENV.get("KTPU_EAGER_EXEC", "0") == "1"
-        self.auto_sequence = ENV.get("KTPU_AUTO_SEQUENCE", "0") == "1"
-        self.eager_recipe_enabled = ENV.get("KTPU_EAGER_RECIPE", "0") == "1"
+        self.eager_exec = ENV.get("KTPU_EAGER_EXEC", "1") == "1"
+        self.auto_sequence = ENV.get("KTPU_AUTO_SEQUENCE", "1") == "1"
+        self.eager_recipe_enabled = ENV.get("KTPU_EAGER_RECIPE", "1") == "1"
         self.native_recipe = ENV.get("KTPU_NATIVE_RECIPE", "1") == "1"
         self.wire_recipe = ENV.get("KTPU_WIRE_RECIPE", "1") == "1"
         self.eager_flush = ENV.get("KOHAKUTPU_EAGER_FLUSH", "1") == "1"

@@ -25,6 +25,7 @@ import zoo
 from examples.tinygrad import mnist_models
 
 from kohakuaccel.driver.node.queue import layout as QL
+from kohakutpu.application.ktpugrad.device import KTPUAllocator, KTPUGraph
 from kohakutpu.application.runtime import card as C
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import generated, packages, rows
@@ -243,6 +244,14 @@ def host_spans() -> Spans:
     spans.wrap(D.Device, "_collect_one", "collect")
     spans.wrap(D.Device, "compile_graph", "compile_graph")
     spans.wrap(packages, "built", "bind_admit")
+    # A TinyJit call: its input uploads, state walk, replay publish and restore.
+    spans.wrap(KTPUGraph, "__call__", "graph_call")
+    spans.wrap(KTPUGraph, "_fill", "graph_fill")
+    spans.wrap(KTPUGraph, "_storages", "graph_storages")
+    spans.wrap(KTPUGraph, "_restore", "graph_restore")
+    spans.wrap(KTPUAllocator, "_copyin", "copyin")
+    spans.wrap(KTPUAllocator, "_copyout", "copyout")
+    spans.wrap(D.Device, "replay", "replay")
     return spans
 
 
@@ -295,6 +304,36 @@ def ring_rows(device, ring: dict) -> list[dict]:
     return rows_
 
 
+def card_rows(runs, records: list[dict], ring: list[int] | None) -> list[dict]:
+    """One row a run, from `runs` (each with name, kind, wall) and the card's
+    `records`, one a collection. An eager list (`list_index` n > 1, its runs not a
+    TinyJit replay) is one record for its n runs: each run takes its own ring
+    `cycles` as `cycles` and `steps`, the first also the list's other phases and
+    `list_cycles`; without a ring, the run's own cycles. A replay is one row."""
+    rows_, at, slot = [], 0, 0
+    for rec in records:
+        n = rec.get("list_index", 0)
+        if at < len(runs) and runs[at].kind != "replay" and n > 1:
+            for k, run in enumerate(runs[at : at + n]):
+                cycles = ring[slot + k] if ring is not None else run.cycles
+                phases = dict(rec) if k == 0 else {key: 0 for key in rec}
+                phases |= dict(cycles=cycles, steps=cycles, list_index=0)
+                phases |= dict(in_list=n, list_pos=k, item_tag=rec.get("item_tag", 0))
+                if k == 0:
+                    phases["list_cycles"] = rec["cycles"]
+                rows_.append(
+                    dict(name=run.name, kind=run.kind, wall=run.wall, **phases)
+                )
+            at, slot = at + n, slot + n
+            continue
+        if at < len(runs):
+            run = runs[at]
+            rows_.append(dict(name=run.name, kind=run.kind, wall=run.wall, **rec))
+            slot += max(1, n) if run.kind == "replay" else 1
+        at += 1
+    return rows_
+
+
 def on_card(out: pathlib.Path, measure: bool, traced: bool):
     """Each run's card record in run order; the call given back writes them. `traced`
     boots the debug image, whose step records come back with each result."""
@@ -324,14 +363,13 @@ def on_card(out: pathlib.Path, measure: bool, traced: bool):
 
     def write():
         device = devices[-1]
-        rows_ = [
-            dict(name=r.name, kind=r.kind, wall=r.wall, **p)
-            for r, p in zip(device.runs, records, strict=False)
-        ]
+        slots = ring_rows(device, ring) if measure else None
+        cycles = [r["cycles"] for r in slots] if slots is not None else None
+        rows_ = card_rows(device.runs, records, cycles)
         text = "\n".join(json.dumps(r) for r in rows_)
         (out / "card.jsonl").write_text(text + "\n", encoding="utf-8")
-        if measure:
-            units = "\n".join(json.dumps(r) for r in ring_rows(device, ring))
+        if slots is not None:
+            units = "\n".join(json.dumps(r) for r in slots)
             (out / "units.jsonl").write_text(units + "\n", encoding="utf-8")
         return dict(
             counters={k: v for k, v in device.counters.items()},

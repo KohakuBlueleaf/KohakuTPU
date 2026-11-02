@@ -1,8 +1,10 @@
 """Running a generated rows kernel: `e` over [R, W] into an [R, W] view or a
 row statistic (R f16 values). A reduction across a row wider than one column
-block runs as per-block partials, then folds them (statistics alone) under
-the expression around the reduction; any other reduction across such a row
-is computed first, as a statistic the rest reads."""
+block runs in one kernel whose band holds whole rows where they fit, every
+reduction folded on the core. Otherwise it runs as per-block partials, then
+folds them (statistics alone) under the expression around the reduction; any
+other reduction across such a row is computed first, as a statistic the rest
+reads."""
 
 import json
 from dataclasses import replace
@@ -157,6 +159,15 @@ def run(
     if reds:
         blocks = FM.generated.rows_shape(dev, reds[0], operands, R, W, Operand("row"))[
             "nblk"
+        ]
+    if blocks > 1 and FM.generated.rows_shape(dev, e, operands, R, W, out)["nblk"] == 1:
+        # A band of whole rows: every reduction folds on the core.
+        binds = {
+            k: v.made().addr if isinstance(v, FM.Pending) else v
+            for k, v in binds.items()
+        }
+        return [
+            _launch(dev, e, operands, dict(binds, out=out_at), R, W, out, info, cores)
         ]
     pend = {k: v for k, v in binds.items() if isinstance(v, FM.Pending)}
     # A reduction's partials across column blocks: one launch reads the
@@ -348,10 +359,10 @@ def _whole_rows(operands, W: int) -> None:
 def substitute(e, red, fold, first: int = 1):
     """`e` with `red` replaced by `fold` (over Load 0) and the reads left
     outside it renumbered from `first`: ``(expression, original read
-    indices)``."""
-    keep, mapping = [], {}
+    indices)``; a node the expression shares stays one."""
+    keep, mapping, memo = [], {}, {}
 
-    def walk(x):
+    def rebuilt(x):
         if x is red:
             return fold
         if isinstance(x, X.Load):
@@ -364,6 +375,11 @@ def substitute(e, red, fold, first: int = 1):
         if isinstance(x, X.Reduce):
             return X.Reduce(x.op, walk(x.arg))
         return x
+
+    def walk(x):
+        if id(x) not in memo:
+            memo[id(x)] = rebuilt(x)
+        return memo[id(x)]
 
     return walk(e), keep
 

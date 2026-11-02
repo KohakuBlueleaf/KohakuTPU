@@ -4,7 +4,9 @@
  *           double's peer retiring P more -> "st sent retired"
  *   d       one dispatch to unit 0 -> "ticket"
  *   w       wait for every completion in flight -> "sent retired"
- *   m       one k_move -> "st" and the window writes by side and axis */
+ *   m       one k_move -> "st" and the window writes by side and axis
+ *   c       the stream counters -> "streams entries open load room tail span moves
+ *           move_cycles", span the double's own cycles across every stream */
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -78,7 +80,7 @@ int main(void)
     k_boot.nunits = 1;
     k_boot.unit[0] = (struct kos_unit){.type = 0x4D47, .x = X, .y = Y, .depth = 4};
     k_units_init();
-    uint64_t w[4] = {1, 2, 3, 4};
+    uint64_t w[4] = {1, 2, 3, 4}, span = 0;
     char op;
     while (scanf(" %c", &op) == 1) {
         if (op == 's') {
@@ -87,8 +89,16 @@ int main(void)
                 return 2;
             }
             words(n, p);
+            uint64_t t0 = dbl_cycles();
             int64_t st = k_de_stream(stream, entries);
+            span += dbl_cycles() - t0;
             printf("%" PRId64 " %" PRIu64 " %" PRIu64 "\n", st, kunits[0].sent, k_unit_retired(0));
+        }
+        else if (op == 'c') {
+            printf("%" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64
+                   " %" PRIu64 " %" PRIu64 "\n",
+                   kstat.de_streams, kstat.de_entries, kstat.cyc_de_open, kstat.cyc_de_load,
+                   kstat.cyc_de_room, kstat.cyc_de_tail, span, kstat.moves, kstat.cyc_move);
         }
         else if (op == 'd') {
             printf("%" PRId64 "\n", k_dispatch_local(0, w));

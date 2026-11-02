@@ -1,0 +1,137 @@
+{
+ "counters": {
+  "runs": 2946,
+  "cycles": 212983123,
+  "bytes_in": 29562236,
+  "bytes_out": 126032,
+  "library_hits": 2174,
+  "class_hits": 0,
+  "exact_hits": 2174,
+  "library_misses": 0,
+  "compile_calls": 0,
+  "compile_seconds": 0.0,
+  "kernel_reuses": 1953
+ },
+ "runs": 2946,
+ "transport": {},
+ "workload": "lenet",
+ "board": "multimesh_v9t6",
+ "nodes": 1,
+ "args": [
+  "--model",
+  "lenet",
+  "--batch",
+  "8",
+  "--steps",
+  "3",
+  "--board",
+  "multimesh_v9t6",
+  "--nodes",
+  "1",
+  "--library",
+  "build/perf/d2/multimesh_v9t6/lenet",
+  "--library-only",
+  "--no-jit",
+  "--test",
+  "8",
+  "--steps",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma",
+  "--report",
+  "/home/kblueleaf/kt/build/perf/traces/lenet.d2l.multimesh_v9t6.1n/report.json",
+  "--check",
+  "8"
+ ],
+ "seconds": 18.49,
+ "done": "exited",
+ "spans": {
+  "copyin": {
+   "calls": 57,
+   "seconds": 1.171243970937212
+  },
+  "compile_graph": {
+   "calls": 221,
+   "seconds": 1.303106057966943
+  },
+  "bind_admit": {
+   "calls": 2946,
+   "seconds": 0.5514765161642572
+  },
+  "submit": {
+   "calls": 2946,
+   "seconds": 1.7080446459003724
+  },
+  "generate_launch": {
+   "calls": 2174,
+   "seconds": 2.9557433921436314
+  },
+  "rows": {
+   "calls": 483,
+   "seconds": 4.114350514122634
+  },
+  "collect": {
+   "calls": 2960,
+   "seconds": 1.2341050285031088
+  },
+  "copyout": {
+   "calls": 22,
+   "seconds": 0.07785666694690008
+  }
+ },
+ "profile": "low",
+ "knobs": {
+  "KOHAKUTPU_BOOT_FLAGS": "0",
+  "KOHAKUTPU_PROFILE": "low"
+ },
+ "clocks": {
+  "0": {
+   "noc": 100.0,
+   "mat2x": 200.0,
+   "vec": 100.0,
+   "sys": 100.0,
+   "locked": true
+  },
+  "1": {
+   "noc": 100.0,
+   "mat2x": 200.0,
+   "vec": 100.0,
+   "sys": 100.0,
+   "locked": true
+  },
+  "2": {
+   "noc": 100.0,
+   "mat2x": 200.0,
+   "vec": 100.0,
+   "sys": 100.0,
+   "locked": true
+  },
+  "3": {
+   "noc": 100.0,
+   "mat2x": 200.0,
+   "vec": 100.0,
+   "sys": 100.0,
+   "locked": true
+  }
+ },
+ "check": {
+  "relative": 0.02187593495690091,
+  "cosine": 0.9999177732852077,
+  "passed": true
+ },
+ "profiled": null,
+ "jit": false,
+ "commit": "a5e68412+d2",
+ "firmware": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+ "when": 1793615939.1482456,
+ "launches": 2946,
+ "kernels": 215,
+ "compiles": [
+  [
+   "rows_e30a32d351",
+   0.831
+  ]
+ ]
+}

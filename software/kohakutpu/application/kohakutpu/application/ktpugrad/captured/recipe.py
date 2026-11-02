@@ -14,6 +14,7 @@ from kohakutpu.stack.rs import _rs
 
 KEPT = 512
 HOST_BYTES = 65536
+KEEPS = "keeps a read"
 
 
 def host_enabled(buffers, enabled=False):
@@ -150,6 +151,9 @@ class Recording:
     def on_read(self):
         if not self.depth:
             self.unsupported = "host read"
+
+    def on_keep(self):
+        self.unsupported = KEEPS
 
     def on_submit(self, submit_fn, compiled, bindings, kind, info):
         self.operations.append(("effects", self.effects_of()))
@@ -314,6 +318,8 @@ class Recipes:
     def __init__(self):
         self.entries = {}
         self.counts = Counter()
+        #: plans that keep what they read: each run decides from what is kept
+        self.keeping: set = set()
         self.native_program = ENV.get("KTPU_NATIVE_PROGRAM", "0") == "1"
         self.host_recipe = ENV.get("KTPU_HOST_RECIPE", "0") == "1"
         self.native = _rs.RecipeTable(KEPT) if self.native_program else None
@@ -329,6 +335,9 @@ class Recipes:
         if any(isinstance(b, StorageView) for b in buffers.values()):
             self.counts["views"] += 1
             return run.execute(dev, plan, buffers)
+        if plan.ast in self.keeping or any(st.kept for st in buffers.values()):
+            self.counts["kept"] += 1
+            return run.execute(dev, plan, buffers)
         hints = FM.hints(dev)
         revision = hints.revision if FM.LAYOUT_HINTS else 0
         context = (
@@ -336,7 +345,6 @@ class Recipes:
             dev.resident_mode,
             dev.home,
             host_key(buffers) if host_enabled(buffers, self.host_recipe) else None,
-            tuple(st.kept_state for st in buffers.values()),
         )
         if self.native is not None:
             launch_boundary.before_submit(dev)
@@ -362,6 +370,8 @@ class Recipes:
             entry.unsupported = "hint change"
         if entry.unsupported:
             self.counts[entry.unsupported] += 1
+            if entry.unsupported == KEEPS:
+                self.keeping.add(plan.ast)
             entry.close()
         else:
             # A recipe owns descriptors and constant pins, not the cold call's tensors.

@@ -21,6 +21,8 @@ from kohakuaccel.driver.node.queue.status import STATUS, WAITS  # noqa: F401
 RUN_F_CHECKSUM, RUN_F_IRQ = 1, 2
 #: The debug image only: trace this run; keep it off the dispatch engine.
 RUN_F_TRACE, RUN_F_NOENGINE = 4, 8
+#: LIST flag (ka/queue/layout.h KA_Q_LIST_F_CHAIN): one dispatch engine program.
+LIST_F_CHAIN = 1
 
 
 @dataclass(frozen=True)

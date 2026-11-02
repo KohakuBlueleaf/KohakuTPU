@@ -30,6 +30,10 @@ const ST_READY: u64 = 1;
 const ST_STOPPED: u64 = 2;
 const NOP: u64 = 0;
 const STOP: u64 = 2;
+const LIST: u64 = 6;
+const LIST_VERSION: u64 = 1;
+const LIST_F_CHAIN: u64 = 1;
+const ST_BAD_ARG: u64 = 0x53;
 const EXIT_STOP: u64 = 0x5701000000000000;
 const EXIT_BOOTARGS: u64 = 0xE100000000000000;
 const BOOT_ERR_MAGIC: u64 = 1;
@@ -118,6 +122,29 @@ fn a_node_boots_serves_and_stops() {
     assert_eq!(node.soc.card_u64(QUEUE + FW), ST_STOPPED);
     assert_eq!(completion(&mut node, 2).0, 0x33);
     assert!(stdout(&mut node).contains("[ka] stop: 2 entries"));
+}
+
+#[test]
+fn a_list_takes_the_chain_flag_and_refuses_any_other() {
+    let Some(mut node) = dispatcher() else { return };
+    boot_block(&mut node);
+    queue_header(&mut node);
+    assert!(
+        node.run_until(CYCLES, |s| s.card_u64(QUEUE + FW) == ST_READY),
+        "never ready"
+    );
+    for (i, flags) in [LIST_F_CHAIN, LIST_F_CHAIN << 1].into_iter().enumerate() {
+        let e = QUEUE + SQ + i as u64 * 64;
+        node.soc.card_set_u64(e + 40, LIST_VERSION);
+        node.soc.card_set_u64(e + 48, flags);
+        submit(&mut node, i as u64, LIST, 0x41 + i as u64, 0);
+    }
+    assert!(
+        node.run_until(CYCLES, |s| s.card_u64(QUEUE + CQ_TAIL) == 2),
+        "no completions"
+    );
+    assert_eq!(completion(&mut node, 0).1 & 0xFFFF, 0);
+    assert_eq!(completion(&mut node, 1).1 & 0xFFFF, ST_BAD_ARG);
 }
 
 #[test]

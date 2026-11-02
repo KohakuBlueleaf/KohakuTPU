@@ -34,8 +34,8 @@ state observers run eagerly because observation reads intermediate results.
 DRAM. Each copy has its own captured graph, input slots and scratch, so requests
 on different nodes overlap on the card until a result is read.
 `Sharded(model, nodes)` runs one batch across the nodes: `shards` gives each node
-a contiguous range of the first axis, each range is a `Resident` request, and the
-outputs join on that axis.
+a contiguous range of the first axis, each range is a `Resident` request on the
+card's copy of the batch, and the outputs join on that axis.
 
 ```python
 from kohakutpu.application.ktpugrad import Resident, Sharded

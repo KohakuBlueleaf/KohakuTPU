@@ -51,6 +51,13 @@ impl Ctx<'_> {
         g: &mut Emitter,
         ops: &[Arc<Node>],
     ) {
+        if self
+            .descs
+            .iter()
+            .any(|d| d.phases.iter().any(|p| p.exchange.is_some()))
+        {
+            self.exchange_masks(g);
+        }
         let fs = numbers(ops, self.body, &self.guards);
         let stk = self.t.stk_s() as usize;
         let kept = if fs.len() <= stk { fs.len() } else { stk - 1 };

@@ -1,0 +1,14 @@
+target ktpu.v9
+
+fn quant_padded_heads.l2(x: f16[26, 144] @dram, q: mx7a[32, 160] @dram(gm=4, nk=1))
+    quant q[0 : +16] <- x[0 : +13, 0 : +144] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1
+    quant q[16 : +16] <- x[13 : +13, 0 : +144] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1
+
+fn quant_padded_deferred.l2(x: f16[26, 144] @dram, q: mx7a[32, 160] @dram(gm=4, nk=1))
+    s = buffer  : f16[256] @dram
+    quant q[0 : +16] <- x[0 : +13, 0 : +144] status=s[0 : +128] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 pad=1
+    quant q[16 : +16] <- x[13 : +13, 0 : +144] status=s[128 : +128] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 pad=1
+    quant_check s
+
+fn quant_padded_paired.l2(x: f16[13, 128] @dram, q: mx7a[16, 192] @dram(gm=4, nk=2))
+    quant q <- x finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 pad=1 overlap=1

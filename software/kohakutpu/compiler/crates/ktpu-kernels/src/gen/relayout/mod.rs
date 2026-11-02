@@ -9,7 +9,8 @@
 //! - runs ([`Runs`]): the axis contiguous in the source too. Runs are cut
 //!   into segments inside one vector-core row of destination words; a
 //!   segment's source words are one gathered row (and the next word's row
-//!   when it is rotated), rotated and masked in the vector core, and
+//!   when it is rotated: the gathered row a word wider, walked one word on,
+//!   where it fits a vector-core row), rotated and masked in the vector core, and
 //!   scattered back as whole memory lines (`card.dram.line_bytes`,
 //!   L1.VER.017). A class (rotation, lane mask) is one loop; a width's
 //!   segments share their gathers and scatters. Segments sharing a line are
@@ -190,6 +191,14 @@ pub struct Group {
     pub at_s: i64,
     pub at_s2: Option<i64>,
     pub layers: Vec<Layer>,
+}
+
+impl Group {
+    /// Whether the next words are the gathered rows a line wider, walked one
+    /// word on: rotated, with that line inside a vector-core row.
+    pub fn shifted(&self, hw: &Hw) -> bool {
+        self.at_s2.is_some() && self.words < hw.row_words()
+    }
 }
 
 /// Segments from word table `src` (`src_words` words; index lists count rows

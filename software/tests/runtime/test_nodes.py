@@ -156,6 +156,16 @@ def test_a_batch_splits_by_range_across_the_nodes(two):
     close(Sharded(lambda x: x @ w)(tensor(a)).numpy(), a @ b)
 
 
+def test_a_realised_batch_stays_on_the_card_when_it_splits(two, monkeypatch):
+    a, b = R.normal(size=(7, 32)), R.normal(size=(32, 32))
+    w, x = tensor(b), tensor(a).realize()
+    model = Sharded(lambda x: x @ w)
+    with monkeypatch.context() as patch:
+        patch.setattr(Tensor, "numpy", lambda self: pytest.fail("host read"))
+        out = model(x)
+    close(out.numpy(), a @ b)
+
+
 def test_ranges_cover_the_batch_in_order():
     assert shards(7, [0, 1, 2]) == [(0, 0, 3), (1, 3, 5), (2, 5, 7)]
     assert shards(2, [0, 1, 2, 3]) == [(0, 0, 1), (1, 1, 2)]

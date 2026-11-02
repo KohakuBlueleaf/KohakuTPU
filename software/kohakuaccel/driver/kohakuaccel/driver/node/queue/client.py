@@ -36,6 +36,13 @@ PACKAGE_LINE = 32
 SUBMIT_BATCH = 4
 #: The longest sleep, seconds, between polls of a wait that finds nothing.
 POLL_BACKOFF = 0.00005
+#: A prepared list is first polled at this share of its last run, less
+#: `DUE_SLACK` seconds: the run's own cycles repeat, its queue service adds.
+DUE_SHARE = 0.95
+DUE_SLACK = 0.0005
+#: A quiet wait past `spin` sleeps this share of its age, so a completion
+#: nothing predicted is seen late by at most this share of the wait.
+NAP_SHARE = 1 / 16
 
 
 def engine_stat(stat: int) -> dict:
@@ -312,6 +319,8 @@ class NodeQueue:
         record: L.Record | None = None,
         *,
         layout: L.Layout,
+        nap: float = 0.0,
+        hz: float = 0.0,
     ) -> None:
         if base % 4096:
             raise ValueError(f"a queue region is page aligned; {base:#x} is not")
@@ -349,6 +358,15 @@ class NodeQueue:
         #: where a poll is cheap (PCIe, ~30 us) and a package short, an idle
         #: of any length is the wait.
         self.spin = spin
+        #: Longest sleep, wall seconds, of a `wait` on a real clock; a fault is
+        #: seen this late. 0: `idle` paces the wait and nothing is predicted.
+        self.nap = nap
+        #: The sysnode clock a completion's cycles count, for predicting.
+        self.hz = hz
+        #: tag -> when a list's wait first polls, on `clock`
+        self._due: dict[int, float] = {}
+        #: Where the lists already queued are predicted to end, on `clock`.
+        self._queued_end = 0.0
         #: Seconds any wait polls before it raises `TimeoutError`, unless the
         #: call names its own bound: no wait on the node is unbounded.
         self.timeout = timeout
@@ -452,6 +470,8 @@ class NodeQueue:
             # Nothing submitted before this is waited for: a node restarted
             # mid-run never completes it.
             self._list_tags.clear()
+            self._due.clear()
+            self._queued_end = 0.0
             self._package_tags.clear()
             self._package_pins.clear()
             self._prepared_keys.clear()
@@ -698,16 +718,24 @@ class NodeQueue:
                 if publishing is not None:
                     publishing()
 
-            return self.submit(
+            tag = self.submit(
                 prepared.descriptor,
                 op=self.layout.op_list,
                 words=self.layout.list_tail(
                     prepared.descriptor.address,
                     prepared.count,
                     prepared.generation,
+                    prepared.flags,
                 ),
                 publishing=publish,
             )
+            if self.nap:
+                self._queued_end = max(self.clock(), self._queued_end)
+                self._queued_end += prepared.seconds
+                self._due[tag] = (
+                    self._queued_end - (1 - DUE_SHARE) * prepared.seconds - DUE_SLACK
+                )
+            return tag
 
     # --------------------------------------------------------------- submit
     def submit(
@@ -941,6 +969,8 @@ class NodeQueue:
                     if c.status != layout.progress:
                         prepared = self._list_tags.pop(c.tag, None)
                         if prepared is not None:
+                            if self.hz:
+                                prepared.seconds = c.cycles / self.hz
                             prepared.acknowledge()
             return got
 
@@ -961,10 +991,15 @@ class NodeQueue:
         `timeout` when None). Raises :class:`NodeError` on a failed
         completion (unless `check` is False), :class:`FirmwareFatal` once the
         firmware's line reads FATAL (checked before each idle, DBG.SESS.004),
-        and :class:`TimeoutError` (:class:`OverBudget` past `alarm`)."""
+        and :class:`TimeoutError` (:class:`OverBudget` past `alarm`).
+
+        A list with a known last run sleeps to its due time, in naps, then
+        polls finely until it completes; any other wait past `spin` of finding
+        nothing naps."""
         with self._native_lock:
             timeout = self.timeout if timeout is None else timeout
             start = self._start()
+            due = self._due.pop(tag, 0.0)
             delay = min(self.backoff, 0.00001)
             while tag not in self._done:
                 waited = self._waited(start, f"tag {tag:#x}")
@@ -985,16 +1020,21 @@ class NodeQueue:
                 if not polled and tag not in self._done:
                     if service is not None:
                         service()
-                    if delay:
+                    left = due - start[0] - waited
+                    if delay and left <= 0:
                         time.sleep(delay)
                         delay = min(self.backoff, delay * 2)
-                    if waited >= self.spin:
+                    if left > 0 or min(waited, -left) >= self.spin:
                         st = self._poll_state
                         if st["state"] == "fatal":
                             if (st["fatal"] & EXIT_MASK) == EXIT_BOOTARGS:
                                 raise BootRefused(st, self.read_stdout())
                             raise FirmwareFatal(st, self.read_stdout())
-                        self._idle()
+                        if self.nap and (left > 0 or not due):
+                            rest = left if left > 0 else waited * NAP_SHARE
+                            time.sleep(min(self.nap, rest))
+                        elif not self.nap:
+                            self._idle()
             c = self._done.pop(tag)
             self._outstanding.discard(tag)
             if check and not c.ok:

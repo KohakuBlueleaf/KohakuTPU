@@ -47,6 +47,7 @@ pub const LOCAL: &[&str] = &[
     "kernels.expr/reduces_dup",
     crate::expr::intern::UNORDERED_MUTANT,
     crate::gen::reductions::SEPARATE_MUTANT,
+    crate::gen::vector::BLOCK_PARTIALS_MUTANT,
     crate::gen::relayout::LANES_MUTANT,
     crate::gen::relayout::LINES_MUTANT,
     crate::gen::prepared::SEPARATE_MUTANT,

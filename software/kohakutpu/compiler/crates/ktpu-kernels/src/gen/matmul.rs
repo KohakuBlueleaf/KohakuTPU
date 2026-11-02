@@ -68,6 +68,11 @@ pub const KNOBS: &[Knob] = &[
         group: Group::Plan,
     },
     Knob {
+        name: "waves",
+        env: "KTPU_MM_WAVES",
+        group: Group::Plan,
+    },
+    Knob {
         name: "batch_tiles",
         env: "KTPU_MM_BATCH_TILES",
         group: Group::Kernel,
@@ -121,6 +126,8 @@ pub struct Knobs {
     pub dense_n: bool,
     /// K padded to whole block pairs where the machine pairs blocks.
     pub pad_k: bool,
+    /// The N tile the clusters finish soonest ([`wave_tn`]), not the widest.
+    pub waves: bool,
     /// The clusters share out every batch's product tiles at once.
     pub batch_tiles: bool,
     /// Waves of product tiles in flight through an on-chip ring of row
@@ -145,9 +152,16 @@ pub struct Knobs {
     pub expr_cse: bool,
 }
 
-/// The knobs' defaults.
+/// The knobs' defaults: epilogue CSE, wave-priced N tiles, and a two-wave
+/// product ring with tail trips where the staging room holds it.
 pub fn defaults() -> Knobs {
-    unrecorded()
+    Knobs {
+        expr_cse: true,
+        waves: true,
+        ring_depth: 2,
+        tail_bands: true,
+        ..unrecorded()
+    }
 }
 
 /// The knobs of a call that records none: the contraction before them.
@@ -157,6 +171,7 @@ pub fn unrecorded() -> Knobs {
         n_tiles: 1,
         dense_n: false,
         pad_k: false,
+        waves: false,
         batch_tiles: false,
         ring_depth: 0,
         split_vc: false,
@@ -194,6 +209,7 @@ impl Knobs {
             "n_tiles" => self.n_tiles.into(),
             "dense_n" => self.dense_n.into(),
             "pad_k" => self.pad_k.into(),
+            "waves" => self.waves.into(),
             "batch_tiles" => self.batch_tiles.into(),
             "ring_depth" => self.ring_depth.into(),
             "split_vc" => self.split_vc.into(),
@@ -220,6 +236,7 @@ impl Knobs {
             "n_tiles" => self.n_tiles = int()?,
             "dense_n" => self.dense_n = flag()?,
             "pad_k" => self.pad_k = flag()?,
+            "waves" => self.waves = flag()?,
             "batch_tiles" => self.batch_tiles = flag()?,
             "ring_depth" => self.ring_depth = int()?,
             "split_vc" => self.split_vc = flag()?,
@@ -321,8 +338,8 @@ impl Mm {
 /// largest that divides the padded rows, or with `knobs.pad_m` the balanced
 /// tile (its tail zero-padded) where [`tile_cost`] prices it no higher; the
 /// N tile the widest power-of-two block the accumulator holds, halved to at
-/// least `knobs.n_tiles` tiles, or with `knobs.dense_n` the widest
-/// `mg.kblock` multiple dividing N. K pads to whole blocks, or with
+/// least `knobs.n_tiles` tiles, then with `knobs.waves` [`wave_tn`] of it,
+/// or with `knobs.dense_n` the widest `mg.kblock` multiple dividing N. K pads to whole blocks, or with
 /// `knobs.pad_k` (K past one block, blocks paired) to whole block pairs.
 #[allow(clippy::too_many_arguments)]
 pub fn plan(
@@ -375,6 +392,7 @@ pub fn plan(
     let Some(tm_div) = tm_div else {
         return fail("API.OP.006", format!("no product tile divides {mp} rows"));
     };
+    let rows = mp;
     let tn_of = |tm: i64| -> R<i64> {
         let mut tn = v::block(n, hw.max_block(), &hw)?;
         while (tm / band) * (tn / band) > hw.acc_subtiles {
@@ -394,6 +412,10 @@ pub fn plan(
         }
         while n / tn < knobs.n_tiles && tn / 2 >= kb && n % (tn / 2) == 0 {
             tn /= 2;
+        }
+        if knobs.waves {
+            // The ring spreads every batch's row tiles over the clusters.
+            return Ok(wave_tn(n, tm, nk, bt * cdiv(rows, tm), tn, &hw));
         }
         Ok(tn)
     };
@@ -423,6 +445,19 @@ pub fn plan(
         shared,
         quantum,
     })
+}
+
+/// The N tile, at most `widest`, of least `waves * tn` for `units` row tiles
+/// over the clusters (legal `kblock` multiples dividing `n`; widest of equals).
+pub fn wave_tn(n: i64, tm: i64, nk: i64, units: i64, widest: i64, hw: &Hw) -> i64 {
+    let band = hw.band;
+    (1..=widest / hw.kblock)
+        .map(|x| x * hw.kblock)
+        .filter(|&x| {
+            n % x == 0 && (tm / band) * (x / band) <= hw.acc_subtiles && (x / band) * nk <= hw.bank
+        })
+        .min_by_key(|&x| (cdiv(units * (n / x), hw.mg) * x, -x))
+        .unwrap_or(widest)
 }
 
 /// The most rows a product tile takes for one ring wave of tiles of the
@@ -728,11 +763,26 @@ pub fn quant_kernel_looped(
         // Unpadded row blocks stack contiguously: one quant over the stack.
         let blocks = if rows == rp { 1 } else { batches };
         let span = batches / blocks;
+        // Checked padded blocks defer their finite status to one check at the end.
+        let record = ktpu_machine::packing::quant_status_bytes(mach.quant_cores()) / 2;
+        let status = match vector && !finite && !looped && blocks > 1 {
+            true => Some(t.buffer(&[blocks * record], g::Dtype::F16, vec![])?),
+            false => None,
+        };
         for b in 0..blocks {
             let dst = q.at(&[sl(b * span * rp, (b + 1) * span * rp), ALL])?;
             let lo = r0 + b * span * rows;
             let from = x.at(&[sl(lo, lo + span * rows), sl(c0, c0 + cols)])?;
-            quant(t, &dst, &from, schedule_on, vector)?;
+            match &status {
+                Some(s) => {
+                    let at = s.at(&[sl(b * record, (b + 1) * record)])?;
+                    t.quant_deferred(&dst, &from, &at, schedule_on, vector)?;
+                }
+                None => quant(t, &dst, &from, schedule_on, vector)?,
+            }
+        }
+        if let Some(s) = &status {
+            t.quant_check(&s.whole())?;
         }
         Ok(())
     })

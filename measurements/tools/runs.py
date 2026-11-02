@@ -130,8 +130,10 @@ def load(name: str) -> Run:
     at = 0
     for i, c in enumerate(card):
         row = dict(c, index=i)
-        # A replay list is one card row and one ring slot per launch in it.
-        taken = units[at : at + (c["list_index"] if c["kind"] == "replay" else 1)]
+        # A replay list is one card row and one ring slot per launch in it; a
+        # replayed single run (list_index 0) takes one slot.
+        slots = max(1, c["list_index"]) if c["kind"] == "replay" else 1
+        taken = units[at : at + slots]
         at += len(taken)
         if taken:
             row["units"] = [u for t in taken for u in t["units"]]

@@ -1,0 +1,18 @@
+# Two phases of three instances each over two vector cores.
+target ktpu.v9
+
+fn tiny_rotate.l2(x: f16[48, 64] @dram, y: f16[48, 64] @dram)
+    par c in 0..3 on vc[any]
+        for t in 0..4
+            hl = load x[c*16 + t*4 : +4, 0 : +32]                   : f16[4, 32] @l1(gt4)
+            v = unpack hl                                           : f32[4, 32] @reg(gt4)
+            o = mul v, 2.0                                          : f32[4, 32] @reg(gt4)
+            q = pack o                                              : f16[4, 32] @l1(gt4)
+            store y[c*16 + t*4 : +4, 0 : +32] <- q
+    par c in 0..3 on vc[any]
+        for t in 0..4
+            hl = load x[c*16 + t*4 : +4, 32 : +32]                  : f16[4, 32] @l1(gt4)
+            v = unpack hl                                           : f32[4, 32] @reg(gt4)
+            o = mul v, 2.0                                          : f32[4, 32] @reg(gt4)
+            q = pack o                                              : f16[4, 32] @l1(gt4)
+            store y[c*16 + t*4 : +4, 32 : +32] <- q

@@ -38,7 +38,7 @@ def test_step_mfu_is_the_hand_figure():
     assert got["mfu_mem"] == pytest.approx(USEFUL / 720_000)
     # 256^3 MACs at 2 flops each, and 1000 beats on 16 lanes.
     assert got["flops"] == 2 * 16_777_216 + 16_000
-    row =by_kernel["m"].row(36.0)
+    row = by_kernel["m"].row(36.0)
     assert row["mfu_mg"] == pytest.approx(0.8192)
     assert row["bus"] == pytest.approx(458_752 / 360_000)
 

@@ -38,6 +38,8 @@ class SpecFirmware:
         self.epoch = 0
         self.list_index = 0
         self.item_tag = 0
+        #: What every completion reports as its run's cycles.
+        self.cycles = 0
 
     def rd(self, off):
         return self.m.read64(self.q + off)
@@ -185,7 +187,7 @@ class SpecFirmware:
             if (
                 epoch != self.epoch
                 or e[layout.list_version_word] != layout.list_version
-                or e[layout.list_flags]
+                or e[layout.list_flags] & ~L.LIST_F_CHAIN
             ):
                 status = layout.bad_arg
                 detail = 1 if epoch != self.epoch else 2
@@ -231,7 +233,7 @@ class SpecFirmware:
         word1 = (status & mask) | ((detail & mask) << 16) | (step_idx << 32)
         self.m.write64(at + layout.cq_tag, e[layout.run_tag])
         self.m.write64(at + layout.cq_status, word1)
-        self.m.write64(at + layout.cq_cycles, 0)
+        self.m.write64(at + layout.cq_cycles, self.cycles)
         self.m.write64(at + layout.cq_value, value)
         self.wr(layout.cq_tail, ct + 1)
         self.events.append(("complete", head, status))

@@ -1,7 +1,10 @@
 """HOSTL resident FIFO lists, retained through the terminal CQ acknowledgment."""
 
+import os
 import struct
 from dataclasses import dataclass, field
+
+from kohakuaccel.driver.node.queue.layout import LIST_F_CHAIN
 
 
 @dataclass
@@ -12,6 +15,10 @@ class ExecutionList:
     uploads: list = field(default_factory=list)
     inflight: int = 0
     closed: bool = False
+    #: Seconds of its last run, by the node's clock: when the next one is due.
+    seconds: float = 0.0
+    #: `LIST_F_*` of the list entry.
+    flags: int = 0
 
     @property
     def descriptor(self):
@@ -32,7 +39,10 @@ class ExecutionList:
 
 
 def prepare(queue, items):
-    """HOSTL ABI 1: (prepared package, bindings, timeout, flags, item tag)."""
+    """HOSTL ABI 1: (prepared package, bindings, timeout, flags, item tag).
+
+    `KOHAKUTPU_LIST_CHAIN=1` chains the items (L0.NQ.057); serial by default.
+    """
     with queue._native_lock:
         layout = queue.layout
         if (
@@ -44,6 +54,8 @@ def prepare(queue, items):
         if not items:
             raise ValueError("an execution list needs at least one item")
         result = ExecutionList(queue, queue._generation, len(items))
+        if os.environ.get("KOHAKUTPU_LIST_CHAIN", "0") == "1":
+            result.flags = LIST_F_CHAIN
         try:
             bindings, entries = bytearray(), []
             for package, binds, timeout, flags, tag in items:

@@ -1,8 +1,8 @@
 //! Logical source words staged into the ordinary typed vector pipeline.
 
-use super::emit::typed::Emitter;
+use super::emit::typed::{symbol, Emitter};
 use super::*;
-use crate::lower::readmap::{ReadMap, Tile};
+use crate::lower::readmap::{Exchange, ReadMap, Tile};
 use crate::lower::vector::gen::typed::{self as ir, Select};
 
 impl Ctx<'_> {
@@ -75,16 +75,25 @@ impl Ctx<'_> {
         } else {
             t.shape[0]
         };
+        let columns = if let Some(v) = o.st.kw("read_cols") {
+            crate::ir::const_of(self.body, &o.st, v, &env)?
+        } else {
+            t.shape[1]
+        };
+        let width = t.shape[1] as usize;
         let positions = positions
             .into_iter()
             .enumerate()
             .map(|(i, p)| {
-                let row = if t.mode.as_deref() == Some("gt4") {
-                    (i / (t.shape[1] as usize * 4)) * 4 + (i / 16) % 4
+                let (row, col) = if t.mode.as_deref() == Some("gt4") {
+                    (
+                        (i / (width * 4)) * 4 + (i / 16) % 4,
+                        ((i / 128) % (width / 32)) * 32 + ((i / 64) % 2) * 16 + i % 16,
+                    )
                 } else {
-                    i / t.shape[1] as usize
+                    (i / width, i % width)
                 };
-                if row >= valid as usize {
+                if row >= valid as usize || col >= columns as usize {
                     -1
                 } else {
                     p
@@ -98,7 +107,147 @@ impl Ctx<'_> {
                 "mapped tile fits its logical destination",
             ));
         }
-        Ok(Some(map.tile(&positions, &self.t.read)))
+        let mut tile = map.tile(&positions, &self.t.read);
+        if t.mode.as_deref() == Some("gt4") && width == 32 {
+            tile.shape.exchange = map.exchange(&positions, t.shape[0] as usize, &tile);
+        }
+        Ok(Some(tile))
+    }
+
+    /// The registers of an [`Exchange`]: GT4 source reads, two masked lane
+    /// swaps, then a pack and a GT4 read of its words.
+    fn exchange_unpack(
+        &self,
+        g: &mut Emitter,
+        x: Exchange,
+        slot: i64,
+        spare: i64,
+        target: &str,
+        local: &mut IndexMap<String, Val>,
+    ) {
+        let block = self.exchanged.as_ref().expect("a tile's exchange masks");
+        let unpack = |operand: Term, at: i64, options: Vec<Term>| {
+            ir::memory(ir::Memory::Unpack, operand, at, Some("gt4"), false, options).unwrap()
+        };
+        let regs = (x.cols / 8) as i64;
+        let mut held = Vec::new();
+        for n in 0..regs {
+            let s = g.sym();
+            g.op(
+                unpack(s.operand(Select::Whole), slot + 8 * n, vec![]),
+                vec![s.clone()],
+            );
+            held.push(s);
+        }
+        for (k, mask) in [5, 10].into_iter().zip(block) {
+            let mask = symbol(mask);
+            for s in held.iter_mut() {
+                let d = g.sym();
+                let a = s.operand(Select::Whole);
+                g.op(
+                    ir::math(
+                        "vsel",
+                        d.operand(Select::Whole),
+                        vec![
+                            a.clone(),
+                            ir::crossbar("xor", a, k),
+                            mask.operand(Select::Whole),
+                        ],
+                        vec![],
+                    ),
+                    vec![d.clone(), s.clone(), mask.clone()],
+                );
+                *s = d;
+            }
+        }
+        g.fixed(ir::sync("pack", "unpack", None));
+        for (n, s) in held.into_iter().enumerate() {
+            g.op(
+                ir::memory(
+                    ir::Memory::Pack,
+                    s.operand(Select::Whole),
+                    spare + 8 * n as i64,
+                    Some("f16"),
+                    false,
+                    vec![],
+                )
+                .unwrap(),
+                vec![s],
+            );
+        }
+        g.fixed(ir::sync("unpack", "pack", None));
+        let bands = self.tile.min(local[target].rows);
+        let zero = |d: &ir::Symbol, g: &mut Emitter, chunk: u64, n: i64| {
+            let k0 = Term::name("k0");
+            g.op(
+                ir::math(
+                    "vsel",
+                    d.operand(if n > 1 {
+                        Select::Stride(chunk)
+                    } else {
+                        Select::Chunk(chunk)
+                    }),
+                    vec![Term::name("k1"), k0.clone(), k0],
+                    vec![ir::kw("vl", Term::int((n * 16) as i128))],
+                ),
+                vec![d.clone()],
+            );
+        };
+        for b in 0..bands {
+            let d = g.sym();
+            local.get_mut(target).unwrap().regs.insert(b, d.name());
+            let mut options = vec![ir::kw("walk", ir::walk(&[(4, 16)]).unwrap())];
+            if x.cols == 16 {
+                options.push(ir::kw("n", Term::int(4)));
+            }
+            g.op(
+                unpack(d.operand(Select::Whole), spare + x.band as i64 + b, options),
+                vec![d.clone()],
+            );
+            if x.cols == 16 {
+                zero(&d, g, 4, 4);
+            }
+            for r in (0..4).filter(|r| 4 * b as usize + r >= x.rows) {
+                zero(&d, g, r as u64, 1);
+                if x.cols == 32 {
+                    zero(&d, g, 4 + r as u64, 1);
+                }
+            }
+        }
+    }
+
+    /// The pinned masks of a tile's exchange.
+    pub(super) fn exchange_masks(&mut self, g: &mut Emitter) {
+        let made = Exchange::mask_writes().map(|writes| {
+            let m = g.sym();
+            for (vl, set) in writes {
+                g.op(
+                    ir::math(
+                        "vmov",
+                        m.operand(Select::Chunk(0)),
+                        vec![Term::name(if set { "k1" } else { "k0" })],
+                        vec![ir::kw("vl", Term::int(vl as i128))],
+                    ),
+                    vec![m.clone()],
+                );
+            }
+            g.op(
+                ir::math(
+                    "vsel",
+                    m.operand(Select::Stride(1)),
+                    vec![
+                        Term::name("k1"),
+                        m.operand(Select::Chunk(0)),
+                        Term::name("k0"),
+                    ],
+                    vec![ir::kw("vl", Term::int(112))],
+                ),
+                vec![m.clone()],
+            );
+            self.pinned.insert(m.name());
+            m.name()
+        });
+        self.exchanged = Some(made);
     }
 
     pub(super) fn fill_typed(&self, g: &mut Emitter, d: &Desc, slot: i64, relative: bool) {
@@ -199,6 +348,12 @@ impl Ctx<'_> {
             return Ok(false);
         }
         let shape = &d.phases[self.phase % d.phases.len()];
+        if let Some(x) = shape.exchange {
+            if rows.iter().any(|r| !local[target].regs.contains_key(r)) {
+                self.exchange_unpack(g, x, slot, d.spare, target, local);
+            }
+            return Ok(true);
+        }
         let is_gt4 = load
             .ty
             .as_ref()

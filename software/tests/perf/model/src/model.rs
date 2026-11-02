@@ -40,6 +40,9 @@ pub struct Params {
     pub mg_fill_entry: f64,
     pub mg_start: f64,
     pub mg_sweep: f64,
+    /// The sweep at the clusters' peak (paired blocks), whatever the tier: the
+    /// matrix floor is the hardware's, not a calibration's.
+    pub mg_peak_sweep: f64,
     pub mg_drain_word: f64,
 }
 
@@ -51,6 +54,11 @@ impl Params {
                 .as_f64()
                 .or_else(|| v[k]["value"].as_f64())
                 .unwrap_or_else(|| panic!("params.json holds no {k}"))
+        };
+        let at_value = |k: &str| {
+            v[k]["value"]
+                .as_f64()
+                .unwrap_or_else(|| panic!("params.json holds no {k} value"))
         };
         Params {
             node_start: at("node_start"),
@@ -76,6 +84,7 @@ impl Params {
             mg_fill_entry: at("mg_fill_entry"),
             mg_start: at("mg_start"),
             mg_sweep: at("mg_sweep"),
+            mg_peak_sweep: at_value("mg_sweep"),
             mg_drain_word: at("mg_drain_word"),
         }
     }
@@ -872,7 +881,7 @@ pub fn kernel(module: &Module, name: &str, m: &Machine, p: &Params) -> Result<Va
             "words": w.words,
         },
         "floor": {
-            "mg": w.macs * p.mg_sweep / (16.0 * m.mg.kblock as f64 * mgs),
+            "mg": w.macs * p.mg_peak_sweep / (16.0 * m.mg.kblock as f64 * mgs),
             "vc": w.math_beats / vcs,
             "read": (w.read_bytes + w.mover_bytes) / p.read_bus,
             "write": w.write_bytes / p.write_bus,

@@ -254,6 +254,14 @@ maps local units (`u < 16`), resets the dispatch engine's completion counters,
 and feeds the command groups from IMEM-resident kernel code (`k_de_stream`)
 until the engine queue drains and the mover is idle.
 
+`struct kos_kernel_stat` totals every stream that ran whole, without a stamp per
+launch: `de_streams`, `de_entries`, and four cycle counters that add up to each
+stream's span. `cyc_de_open` empties and maps the engine, `cyc_de_load` validates,
+relocates and queues the entries, `cyc_de_room` waits for the engine between
+entries, and `cyc_de_tail` is the drain after the last entry. `moves` and
+`cyc_move` total `k_move`. `struct kds_server_stat` carries the same fields, so an
+`ostpu` run reports their change over the run beside the server's own.
+
 Every byte range the stream makes hardware touch is checked with
 `k_pa_ok(pa, bytes)` — whole range inside one of user-mapped `SYS_MMAP` frames
 (`umap`), the user landing zone (`KOS_USER_LAND_SIZE`), or shared DRAM — before

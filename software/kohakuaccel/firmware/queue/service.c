@@ -229,7 +229,8 @@ static void run_list(const uint64_t *w)
     struct ka_pkg_result res = {0};
     uint64_t time[KA_PT_N] = {0}, cycles = 0, sent = 0;
     unsigned irq = 0;
-    if (epoch != Q.epoch || version != KA_Q_LIST_VERSION || w[KA_SQ_LIST_FLAGS]) {
+    uint64_t flags = w[KA_SQ_LIST_FLAGS];
+    if (epoch != Q.epoch || version != KA_Q_LIST_VERSION || (flags & ~(uint64_t)KA_Q_LIST_F_CHAIN)) {
         push_cq(run_tag, KA_ST_BAD_ARG, epoch != Q.epoch ? 1 : 2, 0, 0, epoch, 0);
         return;
     }
@@ -250,6 +251,7 @@ static void run_list(const uint64_t *w)
                 .nbind = (unsigned)((item[KA_SQ_RUN_OP] >> KA_SQ_NBIND_SHIFT) & 0xffff),
                 .timeout = item[KA_SQ_RUN_TIMEOUT], .flags = (unsigned)item[KA_SQ_RUN_FLAGS],
                 .signal = on_signal, .ctx = 0, .peek = 0,
+                .chain = (flags & KA_Q_LIST_F_CHAIN) && i + 1 < count,
             };
 #ifdef KA_DEBUG
             ka_dbg_begin(item[KA_SQ_RUN_TAG], r.flags);
@@ -268,6 +270,7 @@ static void run_list(const uint64_t *w)
         }
         Q.list_index = i + 1;
     }
+    ka_package_unchain();
     ka_package_ahead_reset();
     ka_flush();
     push_cq(run_tag, res.status, res.detail, res.step, cycles,

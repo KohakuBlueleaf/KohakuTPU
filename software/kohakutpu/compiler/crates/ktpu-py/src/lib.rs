@@ -1159,9 +1159,10 @@ fn built_cycles(call: &Call, m: &Machine, root: &Cache) -> Option<i64> {
 }
 
 /// The relayout knobs' defaults (`ktpu_kernels::gen::relayout`), a JSON
-/// object: Python's `relayout.PULL_TREE`.
+/// object: Python's `relayout.PULL_TREE` and `relayout.MOVE_WORDS`.
 fn relayout_defaults() -> String {
-    serde_json::json!({"pull_tree": ktpu_kernels::gen::relayout::PULL_TREE}).to_string()
+    use ktpu_kernels::gen::relayout::{MOVE_WORDS, PULL_TREE};
+    serde_json::json!({"pull_tree": PULL_TREE, "move_words": MOVE_WORDS}).to_string()
 }
 
 #[pymodule]

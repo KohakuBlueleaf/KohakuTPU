@@ -1,7 +1,8 @@
 """MFU of a step, per kernel and whole: the share of a machine resource spent on math.
 
 Matrix and vector MFU are a kernel's math-only floors, in cycles with all units of the
-class running. Memory MFU is the bytes the math must move, each operand read once and
+class running at their peak: 1024 MACs a cluster cycle (paired blocks), one 16-lane beat
+a core cycle. Memory MFU is the bytes the math must move, each operand read once and
 each result written once a launch, against what the node's read and write paths carry
 together. Form changes count as no useful work on all three.
 """

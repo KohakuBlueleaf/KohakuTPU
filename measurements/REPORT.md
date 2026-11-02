@@ -5,9 +5,41 @@ Every number comes from `data/`; each section's figures carry the same numbers. 
 run has all four dies at one clock, because idle dies change node 0's cycles. Runs that
 did not are kept in `data/old/` and used nowhere.
 
-The first two sections are rounds `d1`, at commit 1abcfb30, and `c1`, at commit 56021fd4.
-The sections after them hold 56021fd4's zoo, kept as the baseline, except the rows that
-name `c1`.
+The first three sections are rounds `d2`, at commit a5e68412 with the performance batch
+on top, `d1`, at commit 1abcfb30, and `c1`, at commit 56021fd4. The sections after them
+hold 56021fd4's zoo, kept as the baseline, except the rows that name `c1`.
+
+## Round d2
+
+96 of 96 runs exited, the same matrix as d1: eight models, low, mid and ship, eager and
+TinyJit, 2+2 and 4+2, all dies at one clock, every launch an exact library hit. Tables and
+figures are under `rounds/d2`. The matrix MFU's floor is the matrix core's physical rate,
+so d1's matrix MFU times 0.7246 is the like-for-like figure; d1's column below is that
+product. Vector flops count the vector math beats a run issues, so a kernel that does its
+work in fewer beats lowers its own vector MFU.
+
+| At mid, 2+2, TinyJit; eager | Cadence, ms, d1 → d2 | Device M cycles, d1 → d2 | MFU matrix, vector, memory, d2 | Bus | GFLOPS |
+|---|---|---|---|---|---|
+| ViT-B | 661.3 → 271.5; 877.1 → 531.0 | 129.6 → 51.2; 131.7 → 50.9 | 16.14 (6.81), 13.17, 11.95%; 8.25, 6.74, 6.11% | 26.3%; 13.4% | 133.0; 68.0 |
+| ViT | 146.3 → 89.7; 365.7 → 317.2 | 25.6 → 14.8; 25.7 → 14.7 | 3.53 (2.22), 10.17, 6.59%; 1.00, 2.88, 1.86% | 18.4%; 5.2% | 29.6; 8.4 |
+| GPT | 126.5 → 80.1; 533.2 → 452.1 | 18.8 → 12.5; 18.7 → 12.4 | 0.58 (0.36), 4.73, 4.54%; 0.10, 0.84, 0.80% | 8.9%; 1.6% | 5.03; 0.89 |
+| LeNet | 124.4 → 111.2; 373.8 → 332.4 | 21.7 → 19.1; 21.7 → 19.0 | 0.14 (0.14), 1.56, 1.25%; 0.05, 0.52, 0.42% | 11.2%; 3.7% | 1.28; 0.43 |
+| wide | 99.4 → 24.0; 173.2 → 80.2 | 15.2 → 3.16; 15.4 → 3.13 | 0.15 (0.04), 6.91, 7.37%; 0.04, 2.07, 2.21% | 9.9%; 3.0% | 1.67; 0.50 |
+| Mixer | 86.1 → 70.3; 582.0 → 506.3 | 11.9 → 10.3; 11.9 → 10.2 | 0.10 (0.08), 2.65, 1.78%; 0.01, 0.37, 0.25% | 7.9%; 1.1% | 0.95; 0.13 |
+| MLP | 35.6 → 9.6; 85.6 → 43.4 | 5.98 → 1.09; 5.98 → 1.08 | 0.11 (0.03), 5.37, 5.58%; 0.02, 1.19, 1.23% | 7.6%; 1.7% | 1.23; 0.27 |
+| GRU | 33.6 → 36.2; 345.7 → 284.6 | 4.31 → 4.18; 4.35 → 4.16 | 0.05 (0.04), 1.00, 0.80%; 0.01, 0.13, 0.10% | 2.9%; 0.4% | 0.47; 0.06 |
+
+The bracket is d1's TinyJit matrix MFU on d2's floor.
+
+| Bottleneck | Size | Figure |
+|---|---|---|
+| Device cycles | Every model's TinyJit step fell at mid on 2+2: MLP 0.18×, wide 0.21×, ViT-B 0.40×, ViT 0.58×, GPT 0.66×, Mixer 0.86×, LeNet 0.88×, GRU 0.97×. Eager steps fall by the same ratios. 4+2 matches: ViT-B 45.0 M against d1's 126.6 M | `rounds/d2/data/zoo.csv` `cycles` |
+| Host in a TinyJit step | GRU's TinyJit cadence rose 33.6 to 36.2 ms at mid (29.4 to 33.0 on 4+2, 23.6 to 26.7 at ship) while its cycles fell 3%; Mixer at ship held at 55.2 ms against 54.5 while its cycles fell 14%. The host, not the card, sets these steps | `zoo.csv` `cadence`, `gap_ms` |
+| Host in an eager step | Eager steps are 2.0× (ViT-B) to 7.9× (GRU) their TinyJit cadence at mid: GRU 284.6 ms for 4.16 M cycles, Mixer 506.3 for 10.2 M, GPT 452.1 for 12.4 M | `zoo.csv` |
+| 4+2 against 2+2 | ViT-B TinyJit 241.8 ms against 271.5, 45.0 M cycles against 51.2: the extra clusters now take attention heads. ViT 13.4 M against 14.8 M; LeNet 20.4 M against 19.1 M, slower; the rest within 1% | `zoo.csv` |
+| Clock | TinyJit ms at low, mid, ship on 2+2: ViT-B 466, 272, 211; ViT 153, 90, 69; GPT 137, 80, 62; LeNet 189, 111, 86; Mixer 114, 70, 55; wide 37, 24, 18; GRU 57, 36, 27; MLP 16, 10, 8 | `zoo.csv` |
+| Compile | The library was filled over three fill rounds, so this is not a fill from empty: the last fill compiled 167 kernels in 201.4 s over 14 runs, slowest 19.6 s (a LeNet kernel), and the Mixer fix 1 kernel a board | `rounds/d2/data/compile.csv` |
+| Outputs | 71 of 96 pass max relative 0.03 and cosine 0.999 against CPU f32. 25 miss: every ViT run (0.042), every ViT-B (0.061 on 2+2, 0.057 on 4+2, d1 0.073 and 0.063), and LeNet eager at mid on 2+2 (0.037; its 11 other runs 0.018 to 0.022). Mixer passes at 0.028 on 2+2 and 0.022 on 4+2, against d1's 0.036 and 0.027, after `ISSUES.md` 45 | `build_round.py` output |
 
 ## Round d1
 

@@ -122,12 +122,12 @@ word 1 is the tag, returned in the completion. Words 2–7 depend on the opcode:
 | 1 `RUN` | the package's unit-global address | its length in bytes | the bindings' address (one 64-bit address per buffer), or 0 | per-wait timeout in cycles, 0 for the boot block's | flags: `[0]` verify the checksum, `[1]` raise the host interrupt once the completion is posted (control-registers.md §7.2 `R_IRQ`; a host that cannot take one leaves it clear) | §3.2 |
 | 2 `STOP` | the exit value | | | | | 0 |
 | 3..5 reserved | | | | | | `BAD_OP` |
-| 6 `LIST` | the descriptor array's unit-global address (`count` 64-byte `RUN` entries) | item count | queue epoch (`KA_Q_EPOCH`) | list ABI version (`KA_Q_LIST_VERSION`, `1`) | flags (`0`) | total instructions dispatched across completed items, or the failing item's value |
+| 6 `LIST` | the descriptor array's unit-global address (`count` 64-byte `RUN` entries) | item count | queue epoch (`KA_Q_EPOCH`) | list ABI version (`KA_Q_LIST_VERSION`, `1`) | flags: `[0]` chain the items on the dispatch engine (L0.NQ.057) | total instructions dispatched across completed items, or the failing item's value |
 
 For `LIST`, header validation checks the queue epoch, list ABI version and flags
 before reading descriptor items: an epoch mismatch (`word 4 != KA_Q_EPOCH`)
 posts `BAD_ARG` with `detail = 1` and `value = word 4`, while a version mismatch
-(`word 5 != KA_Q_LIST_VERSION`) or nonzero flags (`word 6 != 0`) posts `BAD_ARG`
+(`word 5 != KA_Q_LIST_VERSION`) or a flag past bit 0 (`word 6 >> 1 != 0`) posts `BAD_ARG`
 with `detail = 2` and `value = word 4`. Each descriptor item is a 64-byte `RUN`
 entry (`KA_SQ_RUN_*`). If item `i`'s opcode (`word 0 & 0xff`) is not `RUN`, the
 list stops at item `i`, prints `[ka] package <item_tag> failed: status 40 detail <op> step 0 value 0`

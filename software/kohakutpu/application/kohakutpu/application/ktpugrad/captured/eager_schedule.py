@@ -14,7 +14,7 @@ ENABLED = False
 
 def refresh():
     global ENABLED
-    ENABLED = ENV.get(VARIABLE, "0") == "1"
+    ENABLED = ENV.get(VARIABLE, "1") == "1"
     return ENABLED
 
 

@@ -191,6 +191,10 @@ class LoadWindow:
     def status(self) -> int:
         return self.t.read64(self.base + R_STATUS)
 
+    def exited(self) -> int | None:
+        """The core's exit code once it has exited (STATUS bit 3), else None."""
+        return self.t.read64(self.base + R_EXIT) if self.status() & 8 else None
+
     def console(self) -> str:
         out = []
         while True:

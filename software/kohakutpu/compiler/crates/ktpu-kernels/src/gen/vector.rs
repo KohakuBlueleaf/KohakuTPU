@@ -6,6 +6,7 @@
 //! (API.ROW.001-.004, .007). [`flat_kernel`]: N
 //! elements as rows of `vc.vlmax` values (API.ROW.006, .010).
 
+use super::relayout::Logical;
 use super::{cdiv, Hw};
 use crate::expr::{self, E};
 use crate::kernel::{build, Kernel, Port};
@@ -112,12 +113,12 @@ impl Operand {
         )
     }
 
-    fn rows_major(&self) -> bool {
+    pub(super) fn rows_major(&self) -> bool {
         matches!(self.kind, Kind::Full | Kind::Tile)
     }
 
     /// Its rows lie further apart than a descriptor's stride reaches.
-    fn wide(&self) -> bool {
+    pub(super) fn wide(&self) -> bool {
         self.rows_major() && self.pitch * Hw::item(self.dtype) > DIM_STRIDE_MAX
     }
 
@@ -191,6 +192,10 @@ pub enum Trips {
     /// divmod(n, cores)`): counts differ by at most one.
     Balanced,
 }
+
+/// The reverse mutant of whole rows a band: a reduction across column blocks
+/// planned as block partials again.
+pub const BLOCK_PARTIALS_MUTANT: &str = "vector/block-partials";
 
 /// The reverse mutant of the [`Knobs::trips`] default: the other split.
 pub const OTHER_SPLIT_MUTANT: &str = "vector/other-split";
@@ -374,14 +379,12 @@ pub fn plan(
         );
     }
     let b = match bands {
-        Some(b) if b != 0 => b,
+        Some(b) if b != 0 => b.min(fit),
         _ => fit.min(TRIP_BANDS),
     }
-    .max(1);
-    let mut rows = hw.band * b;
-    while rows % quantum != 0 {
-        rows += hw.band;
-    }
+    .max(need);
+    // Whole quantums within the bands that fit: rounding up would overrun the L1.
+    let rows = (hw.band * b / quantum).max(1) * quantum;
     let nb = cdiv(r, rows);
     Ok(Plan {
         wc,
@@ -451,11 +454,12 @@ pub fn port_shape(o: &Operand, rp: i64, w: i64, hw: &Hw) -> R<Vec<i64>> {
 }
 
 /// A composed operand's read: its `read_map` steps, the real rows of a band
-/// when only some are.
+/// and columns of a block when only some are.
 #[derive(Clone, Debug)]
 pub struct Mapped {
     pub steps: g::Attr,
     pub rows: Option<i64>,
+    pub cols: Option<i64>,
 }
 
 /// The rows kernel's buffers: `in0..` and `out`; an operand of `maps` reads
@@ -608,8 +612,30 @@ fn rectangle(
     Ok(())
 }
 
-/// A rows stage past a descriptor's stride: wide operands copied into narrow
-/// scratch a stride's reach of column blocks at a time, a wide output out.
+/// `o`'s rows of `buf` as a composed read of themselves: a descriptor rebased
+/// a row where no stride reaches the next.
+fn own_rows(o: &Operand, buf: &Buf) -> Mapped {
+    let shape = &buf.spec.shape;
+    let (rows, n) = (shape[0], shape.iter().product::<i64>());
+    let walk = vec![(rows, o.pitch), (o.pitch, 1)];
+    let steps = [Logical {
+        n,
+        at: 0,
+        dat: 0,
+        m: n,
+        walk: walk.clone(),
+        dwalk: walk,
+    }];
+    Mapped {
+        steps: g::Attr::Tuple(steps.iter().map(Logical::attr).collect()),
+        rows: None,
+        cols: None,
+    }
+}
+
+/// A rows stage past a descriptor's stride: f16 operands read composed, others
+/// copied into narrow scratch a stride's reach of column blocks at a time, a
+/// wide output out.
 #[allow(clippy::too_many_arguments)]
 fn narrow_stage(
     t: &mut Trace,
@@ -637,8 +663,14 @@ fn narrow_stage(
         rows: pl.rp,
         ..*o
     };
+    let mut maps = bufs.maps.clone();
+    for (i, o) in operands.iter().enumerate() {
+        if o.wide() && o.kind == Kind::Full && o.dtype == g::Dtype::F16 {
+            maps.entry(i).or_insert_with(|| own_rows(o, &bufs.ins[i]));
+        }
+    }
     let moved: Vec<usize> = (0..operands.len())
-        .filter(|i| operands[*i].wide() && !bufs.maps.contains_key(i))
+        .filter(|i| operands[*i].wide() && !maps.contains_key(i))
         .collect();
     let mut ins = bufs.ins.clone();
     let mut ops = operands.to_vec();
@@ -655,7 +687,7 @@ fn narrow_stage(
     let inner = Bufs {
         ins,
         out: dst.clone(),
-        maps: bufs.maps.clone(),
+        maps,
     };
     for start in (0..pl.nblk).step_by(per as usize) {
         let end = (start + per).min(pl.nblk);
@@ -806,6 +838,7 @@ pub(super) fn band_values(
                 pitch,
                 stride,
                 rows: mapped.rows,
+                cols: mapped.cols,
             };
             let shape = vec![pl.rows, pl.wc];
             vals.insert(i, Arg::Val(t.load_mapped(buf, &read, shape)?));
@@ -927,6 +960,66 @@ pub(super) fn store_over(
     Ok(())
 }
 
+/// One block of the whole row, a trip one `quantum` of rows, when `e` reduces
+/// across `pl`'s blocks, the band is no more values than a trip of
+/// [`TRIP_BANDS`] bands and its buffers fit the L1 as the lowering lays them:
+/// each reduction then folds inside the band, no partial leaving the core.
+#[allow(clippy::too_many_arguments)]
+fn whole_band(
+    e: &E,
+    operands: &[Operand],
+    out: &Operand,
+    r: i64,
+    w: i64,
+    quantum: i64,
+    pl: &Plan,
+    hw: &Hw,
+) -> Option<Plan> {
+    if pl.nblk == 1
+        || expr::reduces(e).is_empty()
+        || out.wide()
+        || operands.iter().any(Operand::wide)
+        || quantum * w > TRIP_BANDS * hw.band * max_block(hw)
+        || mutants::on(BLOCK_PARTIALS_MUTANT)
+    {
+        return None;
+    }
+    // The stream lowering's L1 (ktpu-l2 `lower/vector/ctx/prepare.rs`): a view
+    // read or written in the trip loop takes two buffers, a prologue's one; a
+    // store may take a load's two buffers of its words.
+    let words_of = |o: &Operand, n: i64| cdiv(n * Hw::item(o.dtype), hw.word_bytes);
+    let stat = stat_words(quantum, hw);
+    let looped = |o: &Operand| match o.kind {
+        Kind::Full | Kind::Tile => words_of(o, quantum * w),
+        Kind::Row => stat,
+        Kind::Scalar => 1,
+        Kind::Col => 0,
+    };
+    let once = |o: &Operand| match o.kind {
+        Kind::Col => words_of(o, w),
+        _ => 0,
+    };
+    let held: i64 = operands.iter().map(|o| 2 * looped(o) + once(o)).sum();
+    let stored = match out.kind {
+        Kind::Row => stat,
+        _ => words_of(out, quantum * w),
+    };
+    let band = |o: &Operand| o.rows_major() && looped(o) == stored;
+    let shared = operands.iter().any(band);
+    let words = held + if shared { 0 } else { 2 * stored };
+    if words > hw.l1_words {
+        return None;
+    }
+    let nb = cdiv(r, quantum);
+    Some(Plan {
+        wc: w,
+        nblk: 1,
+        rows: quantum,
+        nb,
+        rp: nb * quantum,
+    })
+}
+
 /// What a rows kernel's arguments decide: its plan, the rows a trip divides
 /// into, and the extents of `out`.
 pub struct RowsShape {
@@ -962,6 +1055,7 @@ pub fn rows_shape(
         hw.band
     };
     let pl = plan(operands, out.kind, r, w, bands, None, quantum, hw)?;
+    let pl = whole_band(e, operands, out, r, w, quantum, &pl, hw).unwrap_or(pl);
     if pl.nblk > 1 && reduces.len() > 1 {
         return fail(
             "API.ROW.009",
@@ -1140,6 +1234,81 @@ pub(super) fn tail_band(
             .at(&[sl(rr + row0, rr + row0 + rows), sl(cc, cc + w)])?;
         t.copy(&dst, &s.at(&[sl(0, rows), ALL])?, None, None)
     }
+}
+
+/// The `cols` (< a block) columns of `r` rows from column `w`, through a
+/// zeroed [`r`, block] scratch: no column past the row read or written.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn tail_columns(
+    t: &mut Trace,
+    bufs: &Bufs,
+    e: &E,
+    operands: &[Operand],
+    out: &Operand,
+    r: i64,
+    w: i64,
+    cols: i64,
+    quantum: i64,
+    hw: &Hw,
+) -> R<()> {
+    let block = hw.kblock;
+    let mut ins = bufs.ins.clone();
+    let mut ops = operands.to_vec();
+    let mut maps = bufs.maps.clone();
+    for (i, o) in operands.iter().enumerate() {
+        if let Some(mapped) = maps.get_mut(&i) {
+            mapped.cols = Some(cols);
+            ops[i].offset += w * o.logical_strides().1;
+            continue;
+        }
+        match o.kind {
+            Kind::Full | Kind::Tile => {
+                let (rr, cc) = o.divmod()?;
+                let s = t.buffer(&[r, block], o.dtype, vec![])?;
+                t.fill_value(&s.whole(), 0, None, None)?;
+                let src = bufs.ins[i].at(&[sl(rr, rr + r), sl(cc + w, cc + w + cols)])?;
+                t.copy(&s.at(&[sl(0, r), sl(0, cols)])?, &src, None, None)?;
+                ins[i] = s;
+                ops[i] = Operand {
+                    offset: 0,
+                    pitch: block,
+                    rows: r,
+                    ..*o
+                };
+            }
+            Kind::Col => {
+                let s = t.buffer(&[block], o.dtype, vec![])?;
+                t.fill_value(&s.whole(), 0, None, None)?;
+                let src = bufs.ins[i].at(&[sl(o.offset + w, o.offset + w + cols)])?;
+                t.copy(&s.at(&[sl(0, cols)])?, &src, None, None)?;
+                ins[i] = s;
+                ops[i] = Operand { offset: 0, ..*o };
+            }
+            Kind::Row | Kind::Scalar => {}
+        }
+    }
+    let s = t.buffer(&[r, block], out.dtype, vec![])?;
+    let tail = Operand {
+        offset: 0,
+        pitch: block,
+        rows: r,
+        ..*out
+    };
+    let inner = Bufs {
+        ins,
+        out: s.clone(),
+        maps,
+    };
+    let pl = plan(&ops, tail.kind, r, block, None, Some(block), quantum, hw)?;
+    for (sp, row0, rows) in &stages(&pl, r, quantum) {
+        match rows {
+            None => rows_stage(t, &inner, e, &ops, &tail, sp, hw.vc, &Idx::Int(*row0), hw)?,
+            Some(rows) => tail_band(t, &inner, e, &ops, &tail, sp, *row0, *rows, block, hw)?,
+        }
+    }
+    let (rr, cc) = out.divmod()?;
+    let dst = bufs.out.at(&[sl(rr, rr + r), sl(cc + w, cc + w + cols)])?;
+    t.copy(&dst, &s.at(&[sl(0, r), sl(0, cols)])?, None, None)
 }
 
 /// Rows of `vc.vlmax` values a flat trip takes: at most 16, double-buffered

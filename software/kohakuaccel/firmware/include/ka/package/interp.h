@@ -22,6 +22,9 @@ struct ka_pkg_run {
      * queue index; ~0 when none is queued. Called once this run's last
      * engine entry is queued, to read it ahead (L0.NQ.053). */
     uint64_t (*peek)(uint64_t entry[8]);
+    /* Another package of the same list follows: leave the dispatch engine
+     * running this one, so the next queues behind it (L0.NQ.057). */
+    int chain;
 };
 
 /* Entry `seq`'s words when they were read ahead, or 0. Valid until the next
@@ -65,6 +68,9 @@ struct ka_pkg_result {
 };
 
 int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out);
+
+/* After a chain's last package, which may have failed: the engine stopped. */
+void ka_package_unchain(void);
 
 /* Once, before the first package: the doorbell counts from here on are new. */
 void ka_package_boot(void);

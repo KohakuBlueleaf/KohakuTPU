@@ -337,14 +337,14 @@ pub fn vector_quant(
         ));
     }
     if let Some(Finite::Deferred(s)) = &status {
-        let need = padding::status_bytes(db, &dax, &sax, padded, cores);
+        let need = ktpu_machine::packing::quant_status_bytes(cores);
         if s.bytes < need {
             return Err(fail(
                 body,
                 st,
                 "L2.MOV.019",
                 format!(
-                    "a quant status of {} bytes: its pieces' records take {need}",
+                    "a quant status of {} bytes: its cores' records take {need}",
                     s.bytes
                 ),
             ));
@@ -364,7 +364,7 @@ pub fn vector_quant(
         body,
         op,
         tg,
-        status: None,
+        checked,
         finite_batch,
         overlap,
         classifier_overlap,
@@ -382,27 +382,27 @@ pub fn vector_quant(
         dn: &dn,
         db,
     };
+    // One finite status a quant: every piece folds into its core's sticky
+    // register, cleared before the first piece and read after the last.
+    let units: Vec<String> = (0..cores).map(|v| format!("vc[{v}]")).collect();
     let mut result = Stage::new(Vec::new(), Vec::new(), Vec::new());
-    let mut live = 0;
-    for piece in pieces {
-        // A deferred status gives each piece holding entries its own records.
-        let status = match &status {
-            Some(Finite::Deferred(s)) if piece.rows != 0 => {
-                let record = STATUS_RECORD * cores;
-                live += 1;
-                Some(Finite::Deferred(Status {
-                    offset: s.offset + (live - 1) * record,
-                    bytes: record,
-                    ..s.clone()
-                }))
-            }
-            other => other.clone(),
-        };
-        let stage = Schedule {
-            status: status.as_ref(),
-            ..schedule
+    if checked {
+        result.units = units.clone();
+        let name = format!("{}.mx7_clear_{}", body.name, images.len());
+        images.push(image::clear(&name));
+        for unit in &units {
+            result
+                .lines
+                .extend([format!("send {unit}"), format!("    run {name}()")]);
         }
-        .emit(piece, images)?;
+        // Enter a runtime walk with no completion debt from initialization.
+        result
+            .lines
+            .extend(units.iter().map(|unit| format!("wait {unit}")));
+    }
+    let tag = images.len();
+    for piece in pieces {
+        let stage = schedule.emit(piece, images)?;
         result.lines.extend(stage.lines);
         result.accesses.extend(stage.accesses);
         for unit in stage.units {
@@ -411,7 +411,32 @@ pub fn vector_quant(
             }
         }
     }
+    if let Some(status) = &status {
+        let name = format!("{}.mx7_status_{tag}", body.name);
+        images.push(image::status(&name));
+        finite_status(
+            status,
+            &name,
+            &units,
+            &mut result.lines,
+            &mut result.accesses,
+        );
+    }
     Ok(result)
+}
+
+/// IMEM words a batch image leaves for what its L1 lowering adds.
+const IMEM_MARGIN: usize = crate::lower::readmap::Knobs::DEFAULT.imem_margin;
+
+/// Loop words a VSKIPZ guard skips: its 8-bit field, less what L1 adds.
+const SKIP_ROOM: usize = 255 - 32;
+
+/// The instruction lines of an image's text.
+fn image_words(text: &str) -> usize {
+    text.lines()
+        .skip(1)
+        .filter(|l| !l.trim().is_empty())
+        .count()
 }
 
 #[derive(Clone, Copy)]
@@ -419,7 +444,7 @@ struct Schedule<'a> {
     body: &'a Body,
     op: &'a Op,
     tg: &'a Target,
-    status: Option<&'a Finite>,
+    checked: bool,
     finite_batch: i64,
     overlap: bool,
     classifier_overlap: bool,
@@ -440,11 +465,22 @@ struct Schedule<'a> {
 
 impl Schedule<'_> {
     fn emit(&self, piece: padding::Piece, images: &mut Vec<String>) -> Result<Stage> {
+        self.emit_across(piece, images, 16)
+    }
+
+    /// [`Self::emit`], a tile row spanning at most `widest` entries.
+    fn emit_across(
+        &self,
+        piece: padding::Piece,
+        images: &mut Vec<String>,
+        widest: i64,
+    ) -> Result<Stage> {
+        let again = piece.clone();
         let Self {
             body,
             op,
             tg,
-            status,
+            checked,
             finite_batch,
             overlap,
             classifier_overlap,
@@ -464,7 +500,6 @@ impl Schedule<'_> {
         } = *self;
         let st = &op.st;
         let err = |msg| fail(body, st, "L2.MOV.010", msg);
-        let checked = status.is_some();
         let policy = &tg.machine.conversion.fp16_mx7;
         let padding::Piece {
             dax,
@@ -478,12 +513,43 @@ impl Schedule<'_> {
         // Zero entries have no source walk and cannot raise the finite flag.
         let pitch = if valid_rows == 0 { 0 } else { pitch };
         let checked = checked && valid_rows != 0;
-        let status = status.filter(|_| checked);
         let partial = valid_rows != 4 || row_words != 2;
         let split_rows = pitch >= tg.step();
         if split_rows && tg.descriptors < 6 {
             return Err(err("large-pitch MX7 gathers require six descriptors".into()));
         }
+        // A tile row spans `across` entries of the axis whose entries continue
+        // one another's source rows: each row is one burst, not 64-byte pieces.
+        let limit = widest.min(if partial {
+            4
+        } else if checked && slots == 2 {
+            7
+        } else {
+            16
+        });
+        let (across, inner_dst) = match (0..4)
+            .filter(|&i| {
+                !split_rows
+                    && valid_rows != 0
+                    && row_words == 2
+                    && sl[i].0 > 1
+                    && sl[i].1 == sl[5].1 * row_words
+                    && dl[i].1 < tg.step()
+            })
+            .max_by_key(|&i| sl[i].0)
+        {
+            Some(i) => {
+                let n = (1..=limit.min(sl[i].0))
+                    .rev()
+                    .find(|n| sl[i].0 % n == 0)
+                    .unwrap();
+                let inner = dl[i].1;
+                sl[i] = (sl[i].0 / n, sl[i].1 * n);
+                dl[i] = (dl[i].0 / n, dl[i].1 * n);
+                (n, inner)
+            }
+            None => (1, 0),
+        };
         if stream_axes && !split_rows {
             // Reordering disjoint output entries preserves the address-pair map.
             // Jointly contiguous axes can be collapsed before selecting a stream.
@@ -512,7 +578,6 @@ impl Schedule<'_> {
         let stream_batch = stream_batch && valid_rows != 0 && !split_rows;
         let source_stride = if valid_rows == 0 { 0 } else { sl[2].1 };
         let incremental = source_stride < tg.step() && dl[2].1 < tg.step();
-        // Only a steady-state pair needs VSKIPZ's 255-word displacement bound.
         // Small partitions use a single batch instead of splitting 8 entries into
         // 7+1 and repeatedly replacing two images at every outer tile.
         let paired = checked && slots == 2 && sl[2].0 / cores >= 14;
@@ -525,27 +590,71 @@ impl Schedule<'_> {
         } else {
             16
         };
-        let batch = if incremental {
-            cap.min((tg.step() - 1) / source_stride.max(1))
+        let dtype = if flag.is_empty() ^ on("l2.packing/wrong-layout") {
+            "mx7a"
+        } else {
+            "mx7b"
+        };
+        // `n` stream groups a batch: `n * across` entries.
+        let image_of = |name: &str, n: i64, slots: i64, steady: Option<bool>, odd: bool| {
+            image::Batch {
+                name,
+                n: n * across,
+                across,
+                source_stride,
+                stride: dl[2].1,
+                incremental,
+                dtype,
+                slots,
+                checked,
+                split_rows,
+                finite_batch,
+                valid_rows,
+                row_words,
+                overlap,
+                classifier_overlap,
+                pipeline,
+                zero_classifier,
+                fill_overlap,
+                zero_reuse,
+                classifier_banks,
+                steady,
+                odd,
+                lift: db.get("nk") >= 2
+                    && !on("l2.packing/unit-scale-zero")
+                    && !crate::mutant::before_rul099(),
+            }
+            .emit()
+        };
+        // The largest image a batch of `n` groups makes fits a core's IMEM.
+        let room = tg.machine.vc.imem_words as usize - IMEM_MARGIN;
+        let fits = |n: i64| image_words(&image_of("probe", n, slots, None, stream_batch)) <= room;
+        // A loop VSKIPZ can skip keeps one image for every trip count; a
+        // longer one is specialised on whether it runs.
+        let guarded = |n: i64| {
+            let words = |steady| image_words(&image_of("probe", n, 2, Some(steady), false));
+            words(true) - words(false) <= SKIP_ROOM
+        };
+        let mut batch = if incremental {
+            (cap / across)
+                .max(1)
+                .min((tg.step() - 1) / source_stride.max(1))
                 .min((tg.step() - 1) / dl[2].1)
         } else {
             1 // Every entry is absolute when a gather stride cannot be represented.
         };
+        while batch > 1 && !fits(batch) {
+            batch -= 1;
+        }
+        if across > 1 && !fits(batch) {
+            return self.emit_across(again, images, across - 1);
+        }
         let tag = images.len();
         let cores = cores.min(sl[2].0);
         let units: Vec<String> = (0..cores).map(|v| format!("vc[{v}]")).collect();
         let mut lines = Vec::new();
         let mut inner = Vec::new();
         let mut emitted = std::collections::BTreeSet::new();
-        if checked {
-            let name = format!("{}.mx7_clear_{tag}", body.name);
-            images.push(image::clear(&name));
-            for unit in &units {
-                lines.extend([format!("send {unit}"), format!("    run {name}()")]);
-            }
-            // Enter a runtime walk with no completion debt from initialization.
-            lines.extend(units.iter().map(|unit| format!("wait {unit}")));
-        }
         for v in 0..cores {
             let first = sl[2].0 * v / cores;
             let end = sl[2].0 * (v + 1) / cores;
@@ -565,48 +674,19 @@ impl Schedule<'_> {
                 let consumed = if double && !odd { full / 2 * 2 } else { full };
                 let trips = if double { full / 2 - 1 } else { full };
                 let used_slots = if double { 2 } else { 1 };
-                let steady = stream_batch.then_some(trips != 0);
-                let suffix = if stream_batch {
-                    format!("_s{}_o{}", i32::from(trips != 0), i32::from(odd))
+                let steady = if stream_batch || (double && !guarded(n)) {
+                    Some(trips != 0)
                 } else {
-                    String::new()
+                    None
+                };
+                let suffix = match (stream_batch, steady) {
+                    (true, _) => format!("_s{}_o{}", i32::from(trips != 0), i32::from(odd)),
+                    (false, Some(s)) => format!("_s{}", i32::from(s)),
+                    (false, None) => String::new(),
                 };
                 let name = format!("{}.mx7_{tag}_{n}_{used_slots}{suffix}", body.name);
                 if emitted.insert((n, used_slots, steady, odd)) {
-                    let dtype = if flag.is_empty() ^ on("l2.packing/wrong-layout") {
-                        "mx7a"
-                    } else {
-                        "mx7b"
-                    };
-                    images.push(
-                        image::Batch {
-                            name: &name,
-                            n,
-                            source_stride,
-                            stride: dl[2].1,
-                            incremental,
-                            dtype,
-                            slots: used_slots,
-                            checked,
-                            split_rows,
-                            finite_batch,
-                            valid_rows,
-                            row_words,
-                            overlap,
-                            classifier_overlap,
-                            pipeline,
-                            zero_classifier,
-                            fill_overlap,
-                            zero_reuse,
-                            classifier_banks,
-                            steady,
-                            odd,
-                            lift: db.get("nk") >= 2
-                                && !on("l2.packing/unit-scale-zero")
-                                && !crate::mutant::before_rul099(),
-                        }
-                        .emit(),
-                    );
+                    images.push(image_of(&name, n, used_slots, steady, odd));
                 }
                 let s = soff + group * sl[2].1;
                 let d = dbase + group * dl[2].1;
@@ -640,12 +720,18 @@ impl Schedule<'_> {
                     }
                 } else {
                     inner.push(format!(
-                    "    desc a0 = {sn} + {s} + {src_reg} walk=((32, {row_words}), ({pitch}, {valid_rows}), ({}, {n}))",
+                    "    desc a0 = {sn} + {s} + {src_reg} walk=((32, {}), ({pitch}, {valid_rows}), ({}, {n}))",
+                    row_words * across,
                     if n == 1 { 0 } else { source_stride }
                 ));
                 }
+                let row = if across == 1 {
+                    String::new()
+                } else {
+                    format!("({inner_dst}, {across}), ")
+                };
                 inner.push(format!(
-                    "    desc a1 = {dn} + {d} + {dst_reg} walk=((32, 4), ({}, {n}))",
+                    "    desc a1 = {dn} + {d} + {dst_reg} walk=((32, 4), {row}({}, {n}))",
                     dl[2].1
                 ));
                 inner.push(format!("    run {name}({trips})"));
@@ -708,11 +794,8 @@ impl Schedule<'_> {
             }
         }
         let mut accesses = Vec::new();
-        if let Some(status) = status {
-            let name = format!("{}.mx7_status_{tag}", body.name);
-            images.push(image::status(&name));
-            finite_status(status, &name, &units, &mut lines, &mut accesses);
-        }
+        sl.push((across, sl[5].1 * row_words));
+        dl.push((across, inner_dst));
         for unit in &units {
             for mut a in [
                 mem_of(false, span_of(sn, soff, &sl, 32)),

@@ -198,7 +198,14 @@ fn runs(q: &[i64], rot: &[i64], b: &[i64], n: &[i64], e: &Ends, t: &mut Tables, 
             .collect();
         let need = if count > 0 {
             let lo_s = s1.iter().min().unwrap();
-            let hi_s = (0..count).map(|i| s2[i] + wd[i]).max().unwrap();
+            // A shifted group's rows (`Group::shifted`: a width with a rotated segment,
+            // under a row) are gathered a line wider: to s1 + wd + line.
+            let shifted =
+                |w: i64| w < hw.row_words() && (0..count).any(|j| wd[j] == w && rot[j] != 0);
+            let hi_s = (0..count)
+                .map(|i| s1[i] + wd[i] + if shifted(wd[i]) { lw } else { s2[i] - s1[i] })
+                .max()
+                .unwrap();
             0.max(-lo_s).max(hi_s - e.src_words)
         } else {
             0
@@ -297,7 +304,9 @@ pub(super) fn staging(r: &Runs, hw: &Hw) -> Vec<(String, i64, i64)> {
     let rows: i64 = r.groups.iter().map(|g| g.rows).sum();
     let mut out = vec![];
     if rows != 0 {
-        out.push(("rs".into(), rows, hw.row));
+        // A shifted group's walk reads one word past its rows: a row past every group's.
+        let past = r.groups.iter().any(|g| g.shifted(hw));
+        out.push(("rs".into(), rows + i64::from(past), hw.row));
         out.push(("ro".into(), rows, hw.row));
     }
     if r.groups.iter().any(|g| g.at_s2.is_some()) {

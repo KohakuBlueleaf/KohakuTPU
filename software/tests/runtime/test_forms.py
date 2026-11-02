@@ -4,15 +4,20 @@ from typing import cast
 
 import numpy as np
 from tinygrad.device import Buffer
+from tinygrad.engine import realize
 from tinygrad.engine.jit import TinyJit
 from tinygrad.helpers import Context
 from tinygrad.tensor import Tensor
 
+from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.ktpugrad.captured import recipe
 from kohakutpu.application.ktpugrad.device import KTPUGraph
+from kohakutpu.application.ktpugrad.run.reduce import _all_reduces
 from kohakutpu.application.ktpugrad.run.regions import _identity
+from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime.forms import F16
 from kohakutpu.application.runtime.memory.storage import Storage, StorageView
+from kohakutpu.application.runtime.rows import substitute
 
 R = np.random.default_rng(0)
 #: Of the largest value: contractions read seven bits a block.
@@ -206,10 +211,42 @@ def test_a_weights_transpose_and_packing_are_made_once(dev):
         y = x @ w.permute(1, 0).reshape(64, 96).permute(1, 0)
         seen.append(kinds(dev, lambda y=y, a=a: close(y.numpy(), a @ b)))
     made = {"transpose", "move"}
-    assert made & set(seen[0])
     assert not made & set(seen[1]) and not made & set(seen[2])
     assert seen[1].count("quant") == seen[2].count("quant") < seen[0].count("quant")
     close(y.numpy(), outs[2] @ b)
+
+
+def test_a_written_weights_packing_is_made_once_a_version(dev):
+    a, b = R.normal(size=(64, 16)), R.normal(size=(64, 92))
+    w, x = tensor(b), tensor(a)
+    w.assign(w * 2.0).realize()
+    read = lambda: x.permute(1, 0) @ w[:, 28:].permute(1, 0)
+    want = a.T @ (2 * b[:, 28:]).T
+    seen = [kinds(dev, lambda: close(read().numpy(), want)) for _ in range(3)]
+    assert "quant" in seen[0] and seen[1] == seen[2] == ["matmul"]
+    w.assign(w * 2.0).realize()
+    close(read().numpy(), 2 * want)
+
+
+def test_a_replayed_write_ends_what_reads_of_a_weight_made(dev):
+    a, b = R.normal(size=(64, 16)), R.normal(size=(64, 92))
+    w, x = tensor(b), tensor(a)
+    read = lambda: x.permute(1, 0) @ w[:, 28:].permute(1, 0)
+
+    def forward(t):
+        w.assign(w * t).realize()
+        return read().realize()
+
+    step = TinyJit(forward)
+    total = b.copy()
+    got = None
+    for _ in range(6):
+        total = total * 1.5
+        got = step(tensor(np.full((64, 92), 1.5))).numpy()
+    want = a.T @ total[:, 28:].T
+    close(got, want)
+    seen = kinds(dev, lambda: close(read().numpy(), want))
+    assert "quant" in seen, seen
 
 
 def test_a_kept_read_follows_a_new_upload(dev):
@@ -307,6 +344,43 @@ def test_a_layernorm_is_one_kernel(dev):
     assert len(runs) == 1
 
 
+def test_a_regions_members_share_what_they_compute_alike(dev, monkeypatch):
+    plans = []
+    submit = recipe.submit
+
+    def spied(rt, plan, buffers):
+        plans.append(plan)
+        return submit(rt, plan, buffers)
+
+    monkeypatch.setattr(recipe, "submit", spied)
+    a = R.normal(size=(16, 64))
+    x = tensor(a)
+    d = x - x.mean(-1, keepdim=True)
+    y = d / ((d * d).mean(-1, keepdim=True) + 1e-5).sqrt()
+    c = a - a.mean(-1, keepdims=True)
+    close(y.numpy(), c / np.sqrt((c * c).mean(-1, keepdims=True) + 1e-5))
+    region = next(p for p in plans if p.name.endswith("_region"))
+    assert len(_all_reduces(region.expr)) == 2
+
+
+def test_interning_merges_only_what_is_equal():
+    a, b = X.Load(0), X.Load(1)
+    ab = X.intern(X.op("add", X.op("sub", a, b), X.op("sub", X.Load(0), X.Load(1))))
+    assert ab.args[0] is ab.args[1]
+    ba = X.intern(X.op("add", X.op("sub", a, b), X.op("sub", b, a)))
+    assert ba.args[0] is not ba.args[1]
+    zero = X.intern(X.op("add", X.Const(0.0), X.Const(-0.0)))
+    assert zero.args[0] is not zero.args[1]
+
+
+def test_a_shared_node_stays_one_past_a_reduction(dev):
+    a = X.Load(0)
+    shared = X.op("mul", a, a)
+    e = X.op("add", shared, X.op("mul", X.Reduce("sum", shared), shared))
+    got, keep = substitute(e, e.args[1].args[0], X.Load(0))
+    assert got.args[0] is got.args[1].args[1] and keep == [0]
+
+
 def test_a_region_keeps_an_output_a_tensor_names(dev):
     a = R.normal(size=(16, 32))
     x = tensor(a)
@@ -315,6 +389,50 @@ def test_a_region_keeps_an_output_a_tensor_names(dev):
     c = a - a.mean(-1, keepdims=True)
     close(y.numpy(), (c * c).sum(-1, keepdims=True) * c)
     close(d.numpy(), c)
+
+
+def test_a_repeated_eager_step_runs_its_recipes_on_new_inputs(dev):
+    step = lambda t: ((t * 2.0).relu() + 1.0).contiguous() * t
+    for _ in range(4):
+        a = R.normal(size=(16, 32))
+        close(step(tensor(a)).numpy(), (np.maximum(a * 2.0, 0.0) + 1.0) * a)
+    assert dev.eager_recipes.counts["hit"] > 0
+
+
+def test_a_repeated_eager_step_compiles_once_and_repeats_as_a_sequence(
+    dev, monkeypatch
+):
+    compiled = []
+    compile_linear = realize.compile_linear
+
+    def counted(*args, **kwargs):
+        compiled.append(args)
+        return compile_linear(*args, **kwargs)
+
+    monkeypatch.setattr(realize, "compile_linear", counted)
+    steps = []
+    for _ in range(4):
+        a = R.normal(size=(16, 32))
+        x = tensor(a)
+        compiled.clear()
+        out = ((x * 3.0).relu() + 2.0).realize()
+        steps.append(len(compiled))
+        close(out.numpy(), np.maximum(a * 3.0, 0.0) + 2.0)
+    assert steps[-1] == 0 and dev.eager_sequences.counts["hit"] > 0
+
+
+def test_a_recorded_launch_is_submitted_once(dev, monkeypatch):
+    calls = []
+    submit = type(dev).submit
+
+    def counted(self, compiled, binds, kind="dsl", info=None):
+        calls.append(compiled.name)
+        return submit(self, compiled, binds, kind, info)
+
+    monkeypatch.setattr(type(dev), "submit", counted)
+    a = R.normal(size=(16, 32))
+    seen = kinds(dev, lambda: close((tensor(a) * 2.0).numpy(), a * 2.0))
+    assert len(calls) == len(seen) > 0
 
 
 def test_a_replayed_step_reads_its_new_input(dev):
@@ -333,6 +451,7 @@ def test_a_step_that_copies_its_input_still_replays(dev, monkeypatch):
         init(self, *args, **kwargs)
 
     monkeypatch.setattr(KTPUGraph, "__init__", counted)
+
     def forward(t):
         moved = (t + 0.0).contiguous().realize()
         return ((moved * 2.0).relu().realize() + 1.0).realize()
@@ -342,3 +461,24 @@ def test_a_step_that_copies_its_input_still_replays(dev, monkeypatch):
         a = R.normal(size=(16, 32))
         close(step(tensor(a)).numpy(), np.maximum(a * 2.0, 0.0) + 1.0)
     assert graphs and graphs[-1].counts["replayed"] > 0
+
+
+def test_a_replay_walks_the_batchs_buffers_once(dev, monkeypatch):
+    graphs = []
+    init = KTPUGraph.__init__
+
+    def counted(self, *args, **kwargs):
+        graphs.append(self)
+        init(self, *args, **kwargs)
+
+    monkeypatch.setattr(KTPUGraph, "__init__", counted)
+    step = TinyJit(lambda t: ((t * 2.0).relu().realize() + 1.0).realize())
+    for _ in range(5):
+        a = R.normal(size=(16, 32))
+        close(step(tensor(a)).numpy(), np.maximum(a * 2.0, 0.0) + 1.0)
+    graph = graphs[-1]
+    assert graph.counts["replayed"] > 0
+    walked = graph._storages()
+    monkeypatch.setattr(FM, "base_of", None)
+    # The calls' buffers are fixed: a replay reuses the walk its slots made.
+    assert graph._storages() is walked

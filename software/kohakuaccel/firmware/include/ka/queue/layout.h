@@ -102,9 +102,10 @@ enum ka_q_state {
 /* SQ entry words: op | nbind << 16, tag, then per op (docs/spec/node-queue.md s3.1)
  *   RUN   package, bytes, bindings, timeout, flags
  *   STOP  exit value
- *   LIST  descriptor address, item count, queue epoch, list ABI version, flags (0)
+ *   LIST  descriptor address, item count, queue epoch, list ABI version, flags
  *         Header validation refuses with BAD_ARG: detail 1 on epoch != Q.epoch,
- *         detail 2 on version != KA_Q_LIST_VERSION or flags != 0 (value = epoch).
+ *         detail 2 on version != KA_Q_LIST_VERSION or a flag not KA_Q_LIST_F_CHAIN
+ *         (value = epoch).
  *         Each descriptor item is a 64-byte RUN entry; an item whose opcode is not
  *         KA_SQ_RUN fails the list at that item with BAD_OP (detail = item op) and
  *         prints the per-item failure line before posting the completion.
@@ -137,5 +138,8 @@ enum ka_sq_list {
     KA_SQ_LIST_VERSION = 5,
     KA_SQ_LIST_FLAGS   = 6,
 };
+
+/* KA_SQ_LIST_FLAGS: the items run as one dispatch engine program (L0.NQ.057). */
+#define KA_Q_LIST_F_CHAIN 1u
 
 #endif

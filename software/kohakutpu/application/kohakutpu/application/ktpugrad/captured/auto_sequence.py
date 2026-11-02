@@ -21,9 +21,12 @@ class Sequences:
         self.entries = {}
         self.counts = Counter()
         self.previous = None
+        #: (sequence, list ordinal) -> seconds of that list's last run
+        self.durations = {}
 
     def clear(self):
         self.entries.clear()
+        self.durations.clear()
         self.previous = None
 
     def observe(self, key):
@@ -33,7 +36,10 @@ class Sequences:
         self.counts["hit" if hit else "miss"] += 1
         if not hit:
             if len(self.entries) == KEPT:
-                self.entries.pop(next(iter(self.entries)))
+                old = next(iter(self.entries))
+                self.entries.pop(old)
+                for k in [k for k in self.durations if k[0] == old]:
+                    del self.durations[k]
             self.entries[key] = None
         if self.previous is not None and key != self.previous:
             self.counts["divergence"] += 1
@@ -43,7 +49,7 @@ class Sequences:
 
 def scope(rt, linear, inputs):
     enabled = (
-        ENV.get("KTPU_AUTO_SEQUENCE", "0") == "1"
+        ENV.get("KTPU_AUTO_SEQUENCE", "1") == "1"
         if _MUTANT.get() == "app.sequence/unlatched"
         else rt.auto_sequence
     )
@@ -73,7 +79,8 @@ def scope(rt, linear, inputs):
         calls.append((plan.ast, tuple(desc)))
     if rt.eager_sequences is None:
         rt.eager_sequences = Sequences()
-    matched = rt.eager_sequences.observe(tuple(calls))
+    key = tuple(calls)
+    matched = rt.eager_sequences.observe(key)
     if not matched or not rt.card.queues:
         return nullcontext()
-    return batching(rt.card)
+    return batching(rt.card, key, rt.eager_sequences.durations)

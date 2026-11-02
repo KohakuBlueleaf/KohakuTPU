@@ -209,6 +209,8 @@ class KTPUGraph(GraphRunner):
         #: why each pair of consecutive records differed
         self.misses: list = []
         self.placement: Any = None
+        #: (slot count, storages) of the last `_storages` walk
+        self.named: Any = None
 
     def _fill(self, input_uops) -> bool:
         """Every input's host bytes into its slot; False where one has none."""
@@ -311,7 +313,10 @@ class KTPUGraph(GraphRunner):
         return out
 
     def _storages(self) -> list:
-        """Every storage the batch's kernels name (its slots included)."""
+        """Every storage the batch's kernels name (its slots included): the
+        calls' buffers are fixed, so the walk is redone only when a slot is new."""
+        if self.named is not None and self.named[0] == len(self.slots):
+            return self.named[1]
         seen: dict = {}
         for _, _, bufs, _ in self.calls:
             for b in bufs:
@@ -319,7 +324,23 @@ class KTPUGraph(GraphRunner):
                 seen.setdefault(id(st), st)
         for s in self.slots.values():
             seen.setdefault(id(s._buf), s._buf)
-        return list(seen.values())
+        self.named = (len(self.slots), list(seen.values()))
+        return self.named[1]
+
+    def _restore(self, storages: list, cores: dict) -> None:
+        """The planner's bookkeeping as the recorded call left it: a replay
+        changes the card's bytes, not the storages' records or what the vector
+        cores are known to hold."""
+        objs, held = self.log[3]
+        for st, (valid, host, dtype, forms) in zip(storages, objs, strict=True):
+            st.valid, st.dtype, st.forms = set(valid), dtype, dict(forms)
+            if not host:
+                st.host = None
+            if not st.unchanged:
+                # A write the planner did not see: what reads made is stale.
+                st.release_kept()
+        for n, snap in held.items():
+            cores[n].restore(snap)
 
     @staticmethod
     def _cores(cores: dict) -> tuple:
@@ -379,16 +400,7 @@ class KTPUGraph(GraphRunner):
         if self.log is not None and entry == self.log[0]:
             self.counts["replayed"] += 1
             runs = rt.replay(self.log[1], wait=wait or not rt.queued)
-            # The planner's bookkeeping as the recorded call left it: a
-            # replay changes the card's bytes, not the storages' records or
-            # what the vector cores are known to hold.
-            objs, held = self.log[3]
-            for st, (valid, host, dtype, forms) in zip(storages, objs, strict=True):
-                st.valid, st.dtype, st.forms = set(valid), dtype, dict(forms)
-                if not host:
-                    st.host = None
-            for n, snap in held.items():
-                cores[n].restore(snap)
+            self._restore(storages, cores)
             if any(isinstance(r, SUBMITTED) for r in runs):
                 return None
             return seconds(rt, runs)

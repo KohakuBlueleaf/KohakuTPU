@@ -26,10 +26,10 @@ def graph(generator, arguments, machine, mutant):
     if ring not in (0, 1, 2):
         raise ValueError("matmul ring depth must be 0, 1 or 2")
     source = rs._rs.generate(generator, arguments, machine, mutant)
-    if ring:
+    if ring and MM.resolved(json.loads(arguments), machine)["knobs"]["ring_depth"]:
         # Qualify the generator at its cached production boundary, not on hits.
         scratch = json.loads(source)["scratch"]
-        if not scratch or any(p["spec"]["space"] != "stage" for p in scratch):
+        if not any(p["spec"]["space"] == "stage" for p in scratch):
             raise ValueError("ring lowering requires the ring-capable compiler")
     return source
 

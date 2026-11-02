@@ -3,13 +3,14 @@
 //! to one) and a reduction down the rows (a halving tree), each one kernel
 //! whose every intermediate is an f16 scratch the next stage reads back.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use ktpu_graph as g;
 use ktpu_machine::Machine;
 
 use super::prepared::{self, Read};
+use super::relayout::Logical;
 use super::{relayout, vector as v, Hw};
 use crate::expr::{self, Expr, OpName, RedOp, E};
 use crate::kernel::{build, Kernel, Port};
@@ -21,6 +22,9 @@ use crate::trace::{Buf, Idx, Trace, R};
 /// The reverse mutant of the single-package default: every wide row and
 /// column reduction planned as separate launches again.
 pub const SEPARATE_MUTANT: &str = "rows/separate-launches";
+
+/// The reverse mutant of column tiles: every column reduction a halving tree.
+pub const COLUMN_TILES_MUTANT: &str = "reductions/column-tiles";
 
 /// The planner knobs of a rows reduction (Python's `runtime/rows.py`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,6 +138,59 @@ fn shift(o: &v::Operand, rows: i64, w: i64) -> v::Operand {
     v::Operand {
         offset: o.offset + by,
         ..*o
+    }
+}
+
+/// Whether four quarters of `ops`'s rows and an output fit a core's views.
+fn quarters(ops: &[v::Operand], views: usize) -> bool {
+    let rows = ops.iter().filter(|o| o.kind == v::Kind::Full).count();
+    let others = ops.len() - rows;
+    ops.iter()
+        .all(|o| matches!(o.kind, v::Kind::Full | v::Kind::Col | v::Kind::Scalar))
+        && 4 * rows + others < views
+}
+
+/// `arg` in each `q`-row quarter of its rows folded in the levels' order: the
+/// halves' rows paired first, then their quarters. A `col` or `scalar` operand
+/// is read once.
+fn quartered(
+    arg: &E,
+    op: RedOp,
+    ops: &[v::Operand],
+    inputs: &[Buf],
+    q: i64,
+    w: i64,
+) -> (E, Vec<v::Operand>, Vec<Buf>) {
+    let (mut all, mut ins) = (ops.to_vec(), inputs.to_vec());
+    let mut reads = vec![(0..ops.len()).collect::<Vec<_>>()];
+    for part in 1..4 {
+        let at = ops
+            .iter()
+            .enumerate()
+            .map(|(i, o)| {
+                if o.kind != v::Kind::Full {
+                    return i;
+                }
+                all.push(shift(o, part * q, w));
+                ins.push(inputs[i].clone());
+                all.len() - 1
+            })
+            .collect();
+        reads.push(at);
+    }
+    let of = |p: usize| reading(arg, &reads[p]);
+    let f = fold(op);
+    let e = both(f, both(f, of(0), of(2)), both(f, of(1), of(3)));
+    (e, all, ins)
+}
+
+/// `e` with its read i as read `to[i]`.
+fn reading(e: &E, to: &[usize]) -> E {
+    match e.as_ref() {
+        Expr::Load(i) => expr::load(to[*i]),
+        Expr::Const(_) => e.clone(),
+        Expr::Op(op, args) => Rc::new(Expr::Op(*op, args.iter().map(|a| reading(a, to)).collect())),
+        Expr::Reduce(op, a) => Rc::new(Expr::Reduce(*op, reading(a, to))),
     }
 }
 
@@ -299,11 +356,167 @@ pub fn wide_fold_kernel(
     Ok((k, nblk))
 }
 
+/// A column reduction read across: its operands over [W, R], a source row a
+/// tile column, and the output a statistic of W values.
+struct Across {
+    ops: Vec<v::Operand>,
+    maps: HashMap<usize, v::Mapped>,
+    out: v::Operand,
+}
+
+/// Whether `e` is zero wherever its rows-major reads are zero.
+fn vanishes(e: &E, ops: &[v::Operand]) -> bool {
+    use OpName as O;
+    let z = |a: &E| vanishes(a, ops);
+    match e.as_ref() {
+        Expr::Load(i) => ops[*i].rows_major(),
+        Expr::Const(x) => *x == 0.0,
+        Expr::Op(O::Mul | O::And, args) => args.iter().any(z),
+        Expr::Op(O::Add | O::Sub | O::Max | O::Min, args) => args.iter().all(z),
+        Expr::Op(O::Neg | O::Abs | O::Sqrt | O::Trunc | O::Sin | O::Id, args) => z(&args[0]),
+        Expr::Op(O::Where, args) => z(&args[1]) && z(&args[2]),
+        Expr::Op(O::Fma, args) => (z(&args[0]) || z(&args[1])) && z(&args[2]),
+        _ => false,
+    }
+}
+
+/// `ops` over [r, w] read across, when a half tile's columns are `r` whole
+/// source words, a sum of `arg`, zero on the tile's zeroed columns, and what
+/// is left of `e` around the reduction reads no row, and one descriptor reaches
+/// the next source row. Past that reach a tile rebases a word at a time: 3.18 M
+/// model cycles against the tree's 1.07 M at [16, 65536]; a whole tile's stream
+/// splits into a dispatch a trip, losing to the tree at 4096 columns.
+#[allow(clippy::too_many_arguments)]
+fn across(
+    arg: &E,
+    ops: &[v::Operand],
+    keep: &[usize],
+    op: RedOp,
+    r: i64,
+    w: i64,
+    out: &v::Operand,
+    hw: &Hw,
+) -> Option<Across> {
+    let whole = |n: i64| n % hw.lanes == 0;
+    if r != hw.lanes || op != RedOp::Sum || !whole(w) || mutants::on(COLUMN_TILES_MUTANT) {
+        return None;
+    }
+    if !vanishes(arg, ops) {
+        return None;
+    }
+    if out.rows > 1 || out.offset != 0 || keep.iter().any(|i| ops[*i].rows_major()) {
+        return None;
+    }
+    let mut maps = HashMap::new();
+    let mut read = Vec::new();
+    for (i, o) in ops.iter().enumerate() {
+        read.push(match o.kind {
+            v::Kind::Full if whole(o.pitch) && whole(o.offset) && !o.wide() => {
+                let n = r * w;
+                let dwalk = vec![(w, r), (r, 1)];
+                let steps = [Logical {
+                    n,
+                    at: o.offset,
+                    dat: 0,
+                    m: n,
+                    walk: vec![(w, 1), (r, o.pitch)],
+                    dwalk,
+                }];
+                let mapped = v::Mapped {
+                    steps: g::Attr::Tuple(steps.iter().map(Logical::attr).collect()),
+                    rows: None,
+                    cols: Some(r),
+                };
+                maps.insert(i, mapped);
+                v::Operand {
+                    offset: 0,
+                    pitch: r,
+                    rows: w,
+                    ..*o
+                }
+            }
+            v::Kind::Col if whole(o.offset) => v::Operand {
+                kind: v::Kind::Row,
+                rows: w,
+                ..*o
+            },
+            v::Kind::Scalar => *o,
+            _ => return None,
+        });
+    }
+    let out = v::Operand {
+        kind: v::Kind::Row,
+        offset: 0,
+        pitch: 0,
+        rows: w,
+        ..*out
+    };
+    Some(Across {
+        ops: read,
+        maps,
+        out,
+    })
+}
+
+/// `e` over [r, w] read across: every row of a column tile in the registers,
+/// folded there, and one word of the output stored; nothing in between.
+fn column_tiles(
+    e: &E,
+    ops: &[v::Operand],
+    tile: Across,
+    r: i64,
+    w: i64,
+    out: &v::Operand,
+    m: &Machine,
+) -> R<Kernel> {
+    let hw = Hw::of(m);
+    let (ports, given) = ports(ops, r, w, &[w.max(out.rows)], &hw)?;
+    let key = name(
+        "rows",
+        vec![
+            Py::str("col_tiles"),
+            Py::Str(expr::py(e).repr()),
+            Py::Tuple(ops.iter().map(v::Operand::py).collect()),
+            Py::Int(r),
+            Py::Int(w),
+            out.py(),
+            Py::Int(hw.vc),
+        ],
+    );
+    let quantum = hw.stat_rows();
+    let block = hw.kblock;
+    let pl = v::plan(
+        &tile.ops,
+        v::Kind::Row,
+        w,
+        block,
+        None,
+        Some(block),
+        quantum,
+        &hw,
+    )?;
+    build(&key, m, ports, given, |t, b| {
+        let k = ops.len();
+        let bufs = v::Bufs {
+            ins: b[..k].to_vec(),
+            out: b[k].clone(),
+            maps: tile.maps.clone(),
+        };
+        for (sp, row0, _) in v::stages(&pl, w, quantum) {
+            let at = Idx::Int(row0);
+            v::rows_stage(t, &bufs, e, &tile.ops, &tile.out, &sp, hw.vc, &at, &hw)?;
+        }
+        Ok(())
+    })
+}
+
 /// `launch_reductions.column_tree_kernel`: `e`, holding one reduction down
-/// the rows, over [r, w] into the one row `out`. Each level folds the top
+/// the rows, over [r, w] into the one row `out`: read across in column tiles
+/// ([`across`]) where they fit. Else each level folds the top
 /// half of the rows onto the bottom half (an odd last row carried into the
 /// next level's scratch); the first level computes the reduced expression
-/// on both halves on the fly unless its reads, twice over, pass a core's
+/// on both halves on the fly, two levels in one sweep where four quarters of
+/// its rows fit a core's views, unless its reads, twice over, pass a core's
 /// memory views or a statistic operand's rows do not split in whole words,
 /// when it is computed into a scratch first. A level's rows split into
 /// column blocks once they run out ([`v::rows_stage`]), and its partials
@@ -326,6 +539,11 @@ pub fn column_tree_kernel(
     };
     let mut keep = Vec::new();
     let post = substitute(e, &red, &mut keep);
+    if mode().is_none() && made.is_empty() {
+        if let Some(tile) = across(arg, ops, &keep, *op, r, w, out, &hw) {
+            return column_tiles(e, ops, tile, r, w, out, m);
+        }
+    }
     let out_shape = if out.kind == v::Kind::Row {
         vec![out.rows.max(v::stat_words(1, &hw) * hw.stat_rows())]
     } else {
@@ -373,8 +591,11 @@ pub fn column_tree_kernel(
         let elide =
             r > 1 && matches!(post.as_ref(), Expr::Load(0)) && keep.is_empty() && mode.is_none();
         while n > 1 {
-            let h = n / 2;
-            let next = h + n % 2;
+            // Two levels of one sweep: a partial fewer to write and read back.
+            let deep =
+                cur.is_none() && n % (4 * hw.band) == 0 && mode.is_none() && quarters(ops, views);
+            let h = if deep { n / 4 } else { n / 2 };
+            let next = if deep { h } else { h + n % 2 };
             let (target, target_op) = if next == 1 && elide {
                 (p[k].clone(), *out)
             } else if let (Some("alias_members"), Some(c)) = (mode, &cur) {
@@ -384,6 +605,20 @@ pub fn column_tree_kernel(
                 (b, v::Operand::full(w, next))
             };
             match &cur {
+                None if deep => {
+                    let (lvl, lvl_ops, lvl_ins) = quartered(arg, *op, ops, &inputs, h, w);
+                    emit(
+                        t,
+                        lvl_ins,
+                        target.clone(),
+                        &lvl,
+                        &lvl_ops,
+                        h,
+                        w,
+                        &target_op,
+                        &hw,
+                    )?;
+                }
                 None => {
                     let by = if mode == Some("wrong_order") { 0 } else { h };
                     let lvl = both(fold(*op), arg.clone(), renumber(arg, k));

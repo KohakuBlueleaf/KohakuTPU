@@ -9,7 +9,8 @@ one merged; the innermost destination axis picks the form:
 - runs (`Runs`): the axis contiguous in the source too. Runs are cut into
   segments inside one vector-core row of destination words; a segment's
   source words are one gathered row (and the next word's row when it is
-  rotated), rotated and masked in the vector core, and scattered back as
+  rotated: the gathered row a word wider, walked one word on, where it fits
+  a vector-core row), rotated and masked in the vector core, and scattered back as
   whole memory lines (`card.dram.line_bytes`, L1.VER.017: no two moves
   write part of one line). A class (rotation, lane mask) is one loop; a
   width's segments share their gathers and scatters. Segments sharing a
@@ -51,10 +52,13 @@ from kohakutpu.stack.rs import _rs
 
 #: Vector-core rows a trip takes.
 ROWS = 2
+_DEFAULTS = json.loads(_rs.RELAYOUT_DEFAULTS)
+#: Words one move takes (`ktpu_kernels::gen::relayout::MOVE_WORDS`, ISA.MV.007).
+MOVE_WORDS = _DEFAULTS["move_words"]
 #: Whether a `Pull`'s codes are predecoded into a selector tree (`tree_pull`)
 #: unless `KTPU_PULL_TREE` says; the default is the native planner's
 #: (`ktpu_kernels::gen::relayout::PULL_TREE`).
-PULL_TREE = json.loads(_rs.RELAYOUT_DEFAULTS)["pull_tree"]
+PULL_TREE = _DEFAULTS["pull_tree"]
 
 
 @dataclass(frozen=True)
@@ -467,9 +471,15 @@ def _emit_runs(r: Runs, bufs, index, mask, hw: Hw) -> None:
         )
         table = staged
     for g in r.groups:
+        # A rotated group's next words: one word more a gathered row, then the rows
+        # walked one word on, where that word fits the row.
+        shifted = g.at_s2 is not None and g.words < hw.row_words
         cols, rows = slice(0, g.words * lanes), slice(g.row0, g.row0 + g.rows)
-        kt.gather(bufs["rs"][rows, cols], table, _list(index, g.at_s, g.rows), fp=True)
-        if g.at_s2 is not None:
+        wide = slice(0, (g.words + shifted * hw.line) * lanes)
+        kt.gather(bufs["rs"][rows, wide], table, _list(index, g.at_s, g.rows), fp=True)
+        if shifted:
+            _next_words(g, bufs["rs"], bufs["rs2"], hw)
+        elif g.at_s2 is not None:
             kt.gather(
                 bufs["rs2"][rows, cols], table, _list(index, g.at_s2, g.rows), fp=True
             )
@@ -514,6 +524,19 @@ def _emit_runs(r: Runs, bufs, index, mask, hw: Hw) -> None:
                     hw.line * hw.word if dst.shape[-1] != hw.line_values else None
                 ),
             )
+
+
+def _next_words(g, rs, rs2, hw: Hw) -> None:
+    """Group `g`'s rows of `rs2` := its rows of `rs` one word on, as one
+    contiguous run (a run costs the mover what an indexed row does), in moves
+    of at most `MOVE_WORDS` words. Whole rows are whole lines (L1.VER.017);
+    the last word, from the row past the group's, is no word a segment reads."""
+    start = g.row0 * hw.row * 2
+    words = g.rows * hw.row_words
+    for done in range(0, words, MOVE_WORDS):
+        walk = ((min(MOVE_WORDS, words - done), hw.word),)
+        at = start + done * hw.word
+        kt.copy(rs2, rs, walk=walk, at=at + hw.word, dwalk=walk, dat=at)
 
 
 def _copies(cl: Cls) -> bool:

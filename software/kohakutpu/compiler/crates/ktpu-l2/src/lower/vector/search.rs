@@ -544,56 +544,65 @@ impl Search {
         }
         cands.sort_by_key(|c| c.1);
         let mut whys: Vec<String> = Vec::new();
-        let mut tried: Vec<(String, usize)> = Vec::new();
         // The first image that fits, past candidates its schedule outgrows,
-        // and the cheapest candidate that fits only cut into continuations.
+        // and the first candidate cheaper than it that cuts into continuations:
+        // a cut costs its candidate plus its parts, and the search seconds a part.
         let (mut fit, mut cut): (Option<Best>, Option<Best>) = (None, None);
         let splits = t.read.split_every_image || crate::lower::readmap::reads_mapped(&par.st);
-        for ((candidate, params, accesses), cycles) in cands {
-            let text = &candidate.source;
-            // A text tried before encodes as it did: its words are in `whys`.
-            let key = (text.clone(), params.len());
-            if !each && tried.contains(&key) {
-                continue;
+        for cutting in [false, true] {
+            if cutting && !splits {
+                break;
             }
-            tried.push(key);
-            let module = match read.get(text) {
-                Some(m) if !each => m,
-                _ => &candidate,
-            };
-            let n = params.len();
-            let (fill, copies) = (body.fill, body.vcopies);
-            let image = throttled(module, t)?;
-            match super::decompose::split(&image, name, n, t, cycles, splits, fill, copies) {
-                Err(e) => {
-                    let w = e.message.lines().next().unwrap_or("").to_string();
-                    if !whys.contains(&w) {
-                        whys.push(w);
-                    }
+            let mut tried: Vec<(String, usize)> = Vec::new();
+            for ((candidate, params, accesses), cycles) in &cands {
+                let beat = fit.as_ref().map(|f| f.cycles);
+                if cutting && (cut.is_some() || beat.is_some_and(|b| *cycles >= b)) {
+                    break;
                 }
-                Ok(split) if split.parts.is_empty() => {
-                    let best = Best {
-                        text: text.clone(),
-                        parts: split.parts,
-                        params,
-                        cycles: split.cycles,
-                        accesses,
-                    };
-                    if on("l2.vector/first-fit") || self.fits.whole(module, n, t) {
-                        fit = Some(best);
-                        break;
-                    }
-                    fit.get_or_insert(best);
+                let text = &candidate.source;
+                // A text tried before encodes as it did: its words are in `whys`.
+                let key = (text.clone(), params.len());
+                if !each && tried.contains(&key) {
+                    continue;
                 }
-                Ok(split) => {
-                    if cut.as_ref().is_none_or(|b| split.cycles < b.cycles) {
+                tried.push(key);
+                let module = match read.get(text) {
+                    Some(m) if !each => m,
+                    _ => candidate,
+                };
+                let n = params.len();
+                let (fill, copies) = (body.fill, body.vcopies);
+                let image = throttled(module, t)?;
+                let cost = (*cycles, beat);
+                match super::decompose::split(&image, name, n, t, cost, cutting, fill, copies) {
+                    Err(e) => {
+                        let w = e.message.lines().next().unwrap_or("").to_string();
+                        if !whys.contains(&w) {
+                            whys.push(w);
+                        }
+                    }
+                    Ok(split) if split.parts.is_empty() => {
+                        let best = Best {
+                            text: text.clone(),
+                            parts: split.parts,
+                            params: params.clone(),
+                            cycles: split.cycles,
+                            accesses: accesses.clone(),
+                        };
+                        if on("l2.vector/first-fit") || self.fits.whole(module, n, t) {
+                            fit = Some(best);
+                            break;
+                        }
+                        fit.get_or_insert(best);
+                    }
+                    Ok(split) => {
                         let parts = split.parts.iter().map(|p| p.1.as_str());
                         cut = Some(Best {
                             text: parts.collect::<Vec<_>>().join("\n"),
                             parts: split.parts,
-                            params,
+                            params: params.clone(),
                             cycles: split.cycles,
-                            accesses,
+                            accesses: accesses.clone(),
                         });
                     }
                 }

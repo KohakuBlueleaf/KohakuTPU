@@ -6,13 +6,15 @@ use g::ValueOp as Op;
 use ktpu_graph as g;
 
 /// A composed load (L2.READ.001): the `read_map` steps, the first logical
-/// value, a row's and a column's logical strides, the real rows if not all.
+/// value, a row's and a column's logical strides, the real rows and columns
+/// if not all.
 pub struct MappedLoad {
     pub steps: g::Attr,
     pub at: Idx,
     pub pitch: i64,
     pub stride: i64,
     pub rows: Option<i64>,
+    pub cols: Option<i64>,
 }
 
 impl MappedLoad {
@@ -25,6 +27,9 @@ impl MappedLoad {
         ];
         if let Some(r) = self.rows {
             kw.push(("read_rows".to_string(), g::Attr::Int(r)));
+        }
+        if let Some(c) = self.cols {
+            kw.push(("read_cols".to_string(), g::Attr::Int(c)));
         }
         kw
     }

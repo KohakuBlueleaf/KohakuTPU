@@ -166,8 +166,16 @@ STAT_NAMES = (
     "cyc_retire",
     "cyc_send",
     "cyc_event",
+    "de_streams",
+    "de_entries",
+    "cyc_de_open",
+    "cyc_de_load",
+    "cyc_de_room",
+    "cyc_de_tail",
+    "moves",
+    "cyc_move",
 )
-STAT_FMT = "<12Q"
+STAT_FMT = "<20Q"
 
 LAUNCH_REC_FIELDS = (
     "cyc_total",

@@ -474,18 +474,28 @@ static UNIT_SMALL void de_map_all(uint64_t valid)
     }
 }
 
+/* A wait inside a stream's loading. */
+static UNIT_SMALL int64_t de_room_q(uint64_t faults0, uint64_t *prog, unsigned max_used, int mode)
+{
+    uint64_t t0 = hw_cycles();
+    int64_t st = de_wait_q(faults0, prog, max_used, mode);
+    kstat.cyc_de_room += hw_cycles() - t0;
+    return st;
+}
+
 UNIT_SMALL int64_t k_de_stream(const uint64_t *entries, unsigned count)
 {
     if (!kn.engine || !HW_DE_MAGIC(hw_rd(HW_R_DE_WAIT))) {
         return KOS_EINVAL;
     }
-    uint64_t prog = 0;
+    uint64_t t_open = hw_cycles(), prog = 0;
     int64_t st = de_wait_q(kstat.faults, &prog, de_ready ? 0 : 0xffff, 2);
     if (st) {
         return st;
     }
     de_map_all(1UL << 31);
     mv.ok = 0;
+    uint64_t t_load = hw_cycles(), t_tail = 0, room0 = kstat.cyc_de_room;
     /* the mailbox registers as this stream wrote them; a GO before any DST
      * reads as a fetch with no descriptor and is refused */
     uint64_t faults0 = kstat.faults, base = (uint64_t)(uintptr_t)entries;
@@ -510,7 +520,7 @@ UNIT_SMALL int64_t k_de_stream(const uint64_t *entries, unsigned count)
                     st = (val & 7) ? KOS_EINVAL : KOS_EFAULT;
                     goto out;
                 }
-                st = de_wait_q(faults0, &prog, 0, 0);
+                st = de_room_q(faults0, &prog, 0, 0);
                 if (st || *(const volatile uint64_t *)(val | HW_UNC)) {
                     st = st ? st : KOS_EFAULT;
                     goto out;
@@ -525,7 +535,7 @@ UNIT_SMALL int64_t k_de_stream(const uint64_t *entries, unsigned count)
                 if (st > 0) {
                     /* an indexed GO reads the vector once everything before it
                      * has reached the mover; INDEX then names the kernel's copy */
-                    st = de_wait_q(faults0, &prog, 0, 1);
+                    st = de_room_q(faults0, &prog, 0, 1);
                     st = st ? st : mv_index(val);
                     if (st > 0) {
                         q_go[pushed++ & (KOS_DE_QUEUE_DEPTH - 1)] = 0;
@@ -574,7 +584,7 @@ UNIT_SMALL int64_t k_de_stream(const uint64_t *entries, unsigned count)
                 go = (uint16_t)(((u + 1) << 8) | n);
             }
             if (!room) {
-                st = de_wait_q(faults0, &prog, KOS_DE_QUEUE_DEPTH - 1, 0);
+                st = de_room_q(faults0, &prog, KOS_DE_QUEUE_DEPTH - 1, 0);
                 if (st) {
                     goto out;
                 }
@@ -594,6 +604,7 @@ UNIT_SMALL int64_t k_de_stream(const uint64_t *entries, unsigned count)
     uint64_t tw = hw_cycles();
     k_lring_cur.cyc_submit += tw - ts;
 #endif
+    t_tail = hw_cycles();
     st = de_wait_q(faults0, &prog, 0, 1);
 #ifdef KOS_LAUNCH_RING
     k_lring_cur.cyc_wait += hw_cycles() - tw;
@@ -626,11 +637,17 @@ out:
         }
     }
 #endif
+    if (t_tail) {
+        ++kstat.de_streams;
+        kstat.de_entries += count;
+        kstat.cyc_de_open += t_load - t_open;
+        kstat.cyc_de_load += t_tail - t_load - (kstat.cyc_de_room - room0);
+        kstat.cyc_de_tail += hw_cycles() - t_tail;
+    }
     return qst ? qst : st ? st : (kstat.faults != faults0 ? KOS_EFAULT : KOS_OK);
 }
 
-/* One 1-D copy of `words` 32-byte words between physical addresses. */
-int64_t k_move(uint64_t src, uint64_t dst, uint64_t words)
+static int64_t move_words(uint64_t src, uint64_t dst, uint64_t words)
 {
     if (!words || words > KOS_MOVE_MAX_WORDS || ((src | dst) & 31)) {
         return KOS_EINVAL;
@@ -651,6 +668,16 @@ int64_t k_move(uint64_t src, uint64_t dst, uint64_t words)
     }
     hw_wr(MV(0x00), KOS_MV_CTRL_1D);
     return mover_finish(done0);
+}
+
+/* One 1-D copy of `words` 32-byte words between physical addresses. */
+int64_t k_move(uint64_t src, uint64_t dst, uint64_t words)
+{
+    uint64_t t0 = hw_cycles();
+    int64_t st = move_words(src, dst, words);
+    ++kstat.moves;
+    kstat.cyc_move += hw_cycles() - t0;
+    return st;
 }
 
 /* A mover fault stays latched until the mover's next GO (mm_mover.v I_IDLE)

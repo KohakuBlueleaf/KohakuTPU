@@ -28,6 +28,14 @@ retain their `gm`/`gn` and `nk` layout; `nk` is not restricted to one.
 
 The lowerer partitions the view at valid extents and packed-layout boundaries.
 Full interior entries keep the ordinary batched double-buffered schedule.
+Where an axis's entries continue one another's source rows (the K blocks of a
+row group), a gather takes up to the batch's entries along it, so each source
+row is one burst of their joint width; the slot holds them row by row and each
+entry unpacks its four rows. A batch takes as many entries as its largest image
+fits a core's IMEM, narrowing the tile row when one row group alone does not. A
+double-buffered image whose steady loop is longer than VSKIPZ's 8-bit skip is
+specialised on whether the loop runs, and holds it unguarded; a shorter loop
+keeps its guard and one image for every trip count.
 A partial entry zeros its register and unpacks only valid row words into the
 corresponding chunks. Entirely padded entries pack zeros without source DMA
 or finite classification. No source padding is read and no padding is staged
@@ -58,14 +66,16 @@ requesting them with mover-quant is refused rather than silently staging.
 
 ## Deferred finite status
 
-A checked quant drains each core's sticky finite accumulator into a status
-buffer, then a node barrier and one `assert_zero` per core follow it. Given
-`status=VIEW`, the quant drains each core of each piece holding source
-entries into its own 128-byte record of `VIEW` (`f16[64]` a record) with no
-barrier, and a later `quant_check VIEW` checks every record pending inside it
-behind one barrier (L2.MOV.019). The records a quant takes are
+A checked quant clears each core's sticky finite accumulator once, every piece
+folds into it, and after the last piece it drains into a status buffer; a node
+barrier and one `assert_zero` per core follow. Given `status=VIEW`, the quant
+drains each core into its own 128-byte record of `VIEW` (`f16[64]` a record)
+with no barrier, and a later `quant_check VIEW` checks every record pending
+inside it behind one barrier (L2.MOV.019). The records a quant takes are
 `ktpu_machine::packing::quant_status_bytes`, the rule the lowering and the
-contraction kernel's quant ring both size by. A pending record is a linear
+contraction kernel's quant ring both size by. The application's padded quant
+kernel defers each checked batch's status this way and checks them all once
+at its end. A pending record is a linear
 resource: nothing writes over it before its check, and a function does not
 end with one unchecked.
 

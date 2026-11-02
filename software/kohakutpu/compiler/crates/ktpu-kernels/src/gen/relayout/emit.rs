@@ -440,8 +440,11 @@ fn emit_runs(t: &mut Trace, r: &Runs, bufs: &Bufs, index: &Buf, mask: &Buf, hw: 
         table = staged;
     }
     for g in &r.groups {
-        let (cols, rs) = (sl(0, g.words * lanes), sl(g.row0, g.row0 + g.rows));
-        let v = bufs["rs"].at(&[rs.clone(), cols.clone()])?;
+        let shifted = g.shifted(hw);
+        // A line wider, so every gathered row writes whole lines (L1.VER.017).
+        let wide = g.words + if shifted { hw.line } else { 0 };
+        let rs = sl(g.row0, g.row0 + g.rows);
+        let v = bufs["rs"].at(&[rs.clone(), sl(0, wide * lanes)])?;
         t.gather(
             &v,
             &table.whole(),
@@ -449,9 +452,13 @@ fn emit_runs(t: &mut Trace, r: &Runs, bufs: &Bufs, index: &Buf, mask: &Buf, hw: 
             true,
             None,
         )?;
-        if let Some(at_s2) = g.at_s2 {
-            let v = bufs["rs2"].at(&[rs, cols])?;
-            t.gather(&v, &table.whole(), &list(index, at_s2, g.rows)?, true, None)?;
+        match g.at_s2 {
+            Some(_) if shifted => next_words(t, g, &bufs["rs"], &bufs["rs2"], hw)?,
+            Some(at_s2) => {
+                let v = bufs["rs2"].at(&[rs, sl(0, g.words * lanes)])?;
+                t.gather(&v, &table.whole(), &list(index, at_s2, g.rows)?, true, None)?;
+            }
+            None => {}
         }
     }
     let stride =
@@ -489,6 +496,28 @@ fn emit_runs(t: &mut Trace, r: &Runs, bufs: &Bufs, index: &Buf, mask: &Buf, hw: 
             let ix = list(index, lay.at_d + copy, lay.rows - copy)?;
             t.scatter(&dst.whole(), &v, &ix, true, stride)?;
         }
+    }
+    Ok(())
+}
+
+/// Group `g`'s rows of `rs2` := its rows of `rs` one word on, as one contiguous run
+/// (a run costs the mover what an indexed row does), in moves of at most
+/// [`MOVE_WORDS`] words. Whole rows are whole lines (L1.VER.017); the last word,
+/// from the row past the group's, is no word a segment reads.
+fn next_words(t: &mut Trace, g: &Group, rs: &Buf, rs2: &Buf, hw: &Hw) -> R<()> {
+    let start = g.row0 * hw.row * 2;
+    let words = g.rows * hw.row_words();
+    let mut done = 0;
+    while done < words {
+        let walk = [(MOVE_WORDS.min(words - done), hw.word)];
+        let at = start + done * hw.word;
+        t.copy(
+            &rs2.whole(),
+            &rs.whole(),
+            Some((&walk, Some(at + hw.word))),
+            Some((&walk, Some(at))),
+        )?;
+        done += walk[0].0;
     }
     Ok(())
 }

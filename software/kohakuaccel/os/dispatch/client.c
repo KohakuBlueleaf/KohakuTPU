@@ -252,7 +252,17 @@ int kds_server_stat(struct kds_server_stat *s)
     if (!kds_k) {
         return KOS_ENOENT;
     }
+    struct kos_kernel_stat kernel;
+    kos_stat(KOS_S_KERNEL, &kernel, sizeof kernel);
     *s = kds_k->st;
+    s->de_streams = kernel.de_streams;
+    s->de_entries = kernel.de_entries;
+    s->cyc_de_open = kernel.cyc_de_open;
+    s->cyc_de_load = kernel.cyc_de_load;
+    s->cyc_de_room = kernel.cyc_de_room;
+    s->cyc_de_tail = kernel.cyc_de_tail;
+    s->moves = kernel.moves;
+    s->cyc_move = kernel.cyc_move;
     return KOS_OK;
 }
 

@@ -67,6 +67,15 @@ static uint64_t lring_sub, lring_wait;
 #define KA_MRING_UNITS     8u
 static uint64_t mring_n;
 #endif
+/* The ring writes unit counters after each package and the debug image traces
+ * each by itself: both need its units idle, so neither chains. */
+#if defined(KA_MEASURE) || defined(KA_DEBUG)
+#define KA_CHAINS 0
+#else
+#define KA_CHAINS 1
+#endif
+/* BAD_STEP's detail: a chain's counts did not land on what it waited for. */
+#define KA_DE_CHAIN_COUNT 0xdc
 
 void ka_package_ahead_reset(void) { entry_at = ~0UL; }
 
@@ -588,11 +597,28 @@ static struct {
     uint64_t mb[KA_NM_GO];   /* DST, ARG0..3 as last queued */
     unsigned mbv;            /* which of them `mb` holds */
     uint32_t exp[KA_MAX_PKG_UNITS];
+    uint32_t top[KA_DE_MOVER + 1]; /* the highest WAIT a stream named, per source */
     unsigned issued;         /* STAT's issue count when it last moved */
     uint64_t t_moved;
     uint16_t mapped[KA_MAX_PKG_UNITS]; /* coordinates the map holds, y << 8 | x */
     unsigned nmapped;
+    /* A chain (L0.NQ.057): the counters run on across packages. */
+    uint8_t slot[KA_MAX_PKG_UNITS];  /* each package unit's counter */
+    uint32_t base[KA_DE_MOVER + 1];  /* a counter's count where this package starts */
+    int held;                        /* a chained package is still running */
 } de;
+
+#define DE_HELD (KA_CHAINS && de.held)
+
+/* The value of a WAIT for `want` of this package's source `src`. */
+static inline uint64_t de_target(unsigned src, uint32_t want)
+{
+    if (!KA_CHAINS) {
+        return (uint64_t)src << 56 | (want & KA_DE_CTR_MASK);
+    }
+    unsigned c = src < KA_DE_MOVER ? de.slot[src] : KA_DE_MOVER;
+    return (uint64_t)c << 56 | ((want + de.base[c]) & KA_DE_CTR_MASK);
+}
 
 /* Faults and unclaimed signals, and no progress for a timeout. A faulted move
  * never completes, so the engine's WAIT for it would hold until the timeout:
@@ -676,7 +702,24 @@ static int de_wait(unsigned src, uint32_t want)
     if (src < eng.n && eng.u[src].sent > want + KA_DE_CTR_MASK / 2) {
         want = eng.u[src].sent - KA_DE_CTR_MASK / 2;
     }
-    return want ? de_push(KA_DE_WAIT, (uint64_t)src << 56 | (want & KA_DE_CTR_MASK)) : 0;
+    return want ? de_push(KA_DE_WAIT, de_target(src, want)) : 0;
+}
+
+/* A host-lowered WAIT, counted from the package's start: its value on the
+ * running counters. Waits on a source rise, so `top` ends at the package's total. */
+static uint64_t de_rebased(uint64_t v)
+{
+    if (!KA_CHAINS) {
+        return v;
+    }
+    unsigned src = (v >> 56) & 0x1f;
+    uint32_t want = (uint32_t)v & KA_DE_CTR_MASK;
+    uint32_t *top = &de.top[src < KA_DE_MOVER ? src : KA_DE_MOVER];
+    uint32_t ahead = (want - *top) & KA_DE_CTR_MASK;
+    if (ahead <= KA_DE_CTR_MASK / 2) {
+        *top += ahead;
+    }
+    return de_target(src, want);
 }
 
 static KA_HOT int de_send_word(unsigned unit, const uint64_t w[4])
@@ -813,6 +856,9 @@ static KA_HOT int de_stream(uint32_t first, uint32_t count)
             if (c > KA_DE_WAIT) {
                 return ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_OP_ENGINE, codes);
             }
+            if (c == KA_DE_WAIT) {
+                v = de_rebased(v);
+            }
             if (de_push(c, v)) {
                 return eng.status;
             }
@@ -856,25 +902,109 @@ static int de_drain(void)
     }
 }
 
+/* The engine stopped and cleared of the chain's state. */
+static void de_stop(void)
+{
+    ka_ctrl_wr(KA_R_DE_CTL, 2);
+    de.on = de.held = 0;
+    for (unsigned c = 0; c <= KA_DE_MOVER; ++c) {
+        de.base[c] = 0;
+    }
+}
+
+/* A package's WAIT totals joined to the counters' totals. */
+static void de_total(void)
+{
+    for (unsigned u = 0; u < eng.n; ++u) {
+        uint32_t t = eng.u[u].sent > de.exp[u] ? eng.u[u].sent : de.exp[u];
+        de.base[de.slot[u]] += t > de.top[u] ? t : de.top[u];
+    }
+    de.base[KA_DE_MOVER] += mv.gos > de.top[KA_DE_MOVER] ? mv.gos : de.top[KA_DE_MOVER];
+}
+
+/* A chain's targets are sums of what each package waited for, so a source that
+ * retired more than that released later WAITs early: the drained chain must
+ * land on them exactly. */
+static void de_settled(void)
+{
+    if (eng.status) {
+        return;
+    }
+    uint64_t moves = ka_ctrl_rd(KA_R_DE_CTL);
+    if (((uint32_t)moves ^ de.base[KA_DE_MOVER]) & KA_DE_CTR_MASK) {
+        ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_DE_CHAIN_COUNT, moves);
+    }
+    for (unsigned c = 0; c < de.nmapped; ++c) {
+        uint64_t ctr = ka_ctrl_rd(KA_R_DE_CTR + 8 * c);
+        if (((uint32_t)ctr ^ de.base[c]) & KA_DE_CTR_MASK) {
+            ka_engine_fail(&eng, KA_ST_BAD_STEP, KA_DE_CHAIN_COUNT, (uint64_t)c << 16 | ctr);
+        }
+    }
+}
+
+/* A chain ends without a package that drains it: what it queued runs out, a
+ * fault or a timeout is reported, and the engine stops. */
+void ka_package_unchain(void)
+{
+    if (!DE_HELD) {
+        return;
+    }
+    if (!de_drain()) {
+        de_settled();
+    }
+    de_stop();
+}
+
+/* Unit `u` onto the counter that has counted it through the chain, or a free one. */
+static int de_rejoin(unsigned u)
+{
+    uint16_t at = (uint16_t)((eng.u[u].y << 8) | eng.u[u].x);
+    unsigned c = 0;
+    while (c < de.nmapped && de.mapped[c] != at) {
+        ++c;
+    }
+    if (c == KA_DE_UNITS) {
+        return -1;
+    }
+    if (c == de.nmapped) {
+        ka_ctrl_wr(KA_R_DE_MAP, (1UL << 31) | ((uint64_t)c << 16) | at);
+        de.mapped[de.nmapped++] = at;
+    }
+    de.slot[u] = (uint8_t)c;
+    de.exp[u] = de.top[u] = 0;
+    return 0;
+}
+
 /* Whether this package runs through the engine, and if so the engine set up
- * for it: its units mapped to counters 0..n-1, counters and queue cleared. */
+ * for it: its units mapped to counters 0..n-1, counters and queue cleared, or
+ * behind a chain's package, on the counters it left running. */
 static int de_begin(void)
 {
     de.on = 0;
     uint64_t s = ka_ctrl_rd(KA_R_DE_STAT);
-    if ((ka_boot.flags & KA_BOOT_F_NOENGINE) || KA_DE_STAT_MAGIC(s) != KA_DE_MAGIC ||
-        eng.n > KA_DE_UNITS) {
-        return 0;
-    }
+    int fit = !(ka_boot.flags & KA_BOOT_F_NOENGINE) && KA_DE_STAT_MAGIC(s) == KA_DE_MAGIC &&
+              eng.n <= KA_DE_UNITS;
 #ifdef KA_DEBUG
-    if (ka_dbg_noengine()) {
-        return 0;
-    }
+    fit = fit && !ka_dbg_noengine();
 #endif
-    for (unsigned u = 0; u < eng.n; ++u) {
-        if (!eng.u[u].plain) {
+    for (unsigned u = 0; u < eng.n && fit; ++u) {
+        fit = eng.u[u].plain;
+    }
+    if (DE_HELD) {
+        int joined = fit;
+        for (unsigned u = 0; u < eng.n && joined; ++u) {
+            joined = !de_rejoin(u);
+        }
+        if (joined) {
+            de.top[KA_DE_MOVER] = 0;
+            de.mbv = 0;
+            de.on = 1;
             return 0;
         }
+        ka_package_unchain();
+    }
+    if (!fit) {
+        return 0;
     }
     for (unsigned i = 0; i < de.nmapped; ++i) {
         ka_ctrl_wr(KA_R_DE_MAP, de.mapped[i]);
@@ -884,8 +1014,10 @@ static int de_begin(void)
         uint16_t at = (uint16_t)((eng.u[u].y << 8) | eng.u[u].x);
         ka_ctrl_wr(KA_R_DE_MAP, (1UL << 31) | ((uint64_t)u << 16) | at);
         de.mapped[de.nmapped++] = at;
-        de.exp[u] = 0;
+        de.exp[u] = de.top[u] = 0;
+        de.slot[u] = (uint8_t)u;
     }
+    de.top[KA_DE_MOVER] = 0;
     ka_ctrl_wr(KA_R_DE_CTL, 3);
     de.cap = KA_DE_STAT_DEPTH(s);
     de.room = de.cap;
@@ -905,16 +1037,20 @@ static void de_end(void)
     }
     if (eng.status) {
         for (unsigned u = 0; u < eng.n; ++u) {
-            uint32_t got = (uint32_t)ka_ctrl_rd(KA_R_DE_CTR + 8 * u) & KA_DE_CTR_MASK;
-            uint32_t left = (eng.u[u].sent - got) & KA_DE_CTR_MASK;
+            unsigned c = de.slot[u];
+            uint32_t got = (uint32_t)ka_ctrl_rd(KA_R_DE_CTR + 8 * c) & KA_DE_CTR_MASK;
+            uint32_t left = (eng.u[u].sent + de.base[c] - got) & KA_DE_CTR_MASK;
             /* Host-lowered ENGINE words are not in `sent`: the count runs past it. */
             left = left > KA_DE_CTR_MASK / 2 ? 0 : left;
             eng.u[u].inflight = left;
             eng.outstanding += left;
         }
     }
-    ka_ctrl_wr(KA_R_DE_CTL, 2);
-    de.on = 0;
+    else if (DE_HELD) {
+        de_total();
+        de_settled();
+    }
+    de_stop();
 }
 
 /* Rings consumed so far, per source mesh, as the hardware's 16-bit counts. */
@@ -1455,7 +1591,8 @@ static KA_HOT int de_step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, i
     case KA_OP_JUMP:
         return jump(unit, count, arg, flags);
     case KA_OP_PATCH:
-        return patch(unit, count, arg);
+        /* A chain may run this same package still, reading what this rewrites. */
+        return (DE_HELD && de_drain()) ? eng.status : patch(unit, count, arg);
     default:
         /* The rest wait for what the engine holds; a SEND or RECV writes the
          * mailbox registers the engine's shadow tracks. */
@@ -1624,6 +1761,11 @@ int ka_package_run(const struct ka_pkg_run *r, struct ka_pkg_result *out)
         }
         if (de.on && !eng.status) {
             de_barrier();
+        }
+        if (KA_CHAINS && r->chain && de.on && !eng.status) {
+            de_total();
+            de.on = 0;
+            de.held = 1;
         }
         /* Only while the engine drains on its own: on the firmware path the
          * reading would delay this package's own completions. */

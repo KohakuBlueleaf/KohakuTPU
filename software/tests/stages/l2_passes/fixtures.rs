@@ -3,7 +3,7 @@
 #[path = "../common.rs"]
 mod common;
 
-use common::{fixtures, known, stage_suite, Fixture, Level, Pair};
+use common::{card, fixtures, known, software, stage_suite, Fixture, Level, Pair};
 use ktpu::{Backend, CardStack};
 use ktpu_isa::Machine as Card;
 
@@ -16,6 +16,19 @@ fn passes(f: &Fixture, card: &Card) -> Result<Pair, String> {
         before: (Level::L2, f.source.clone()),
         after: (Level::L2, s.print_l2(&done)),
     })
+}
+
+/// Three instances over two cores in each of two phases: 3 + 3, never 4 + 2.
+#[test]
+fn a_remainder_rotates_over_the_units() {
+    let path = software().join("tests/fixtures/l2/vector/rotate.ktpu");
+    let source = std::fs::read_to_string(path).expect("the fixture");
+    let s = CardStack::default();
+    let l2 = s.parse_l2(&source).expect("legal L2");
+    let done = s.passes(&l2, "tiny_rotate", &card()).expect("the passes");
+    let text = s.print_l2(&done);
+    assert!(text.contains("on vc[c % 2]"), "{text}");
+    assert!(text.contains("on vc[(c+1) % 2]"), "{text}");
 }
 
 #[test]

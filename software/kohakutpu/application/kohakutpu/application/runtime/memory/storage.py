@@ -10,14 +10,11 @@ back.
 """
 
 from dataclasses import dataclass
-from itertools import count
 from typing import Any, cast
 
 from kohakutpu.application.runtime import generated
 
 FLAT = ("flat",)
-#: A storage's `kept` state: a value never comes back.
-_KEPT_STATES = count(1)
 
 
 @dataclass
@@ -64,8 +61,6 @@ class Storage:
         self._freed: bool = False
         #: what reads of these unchanged bytes made, by read: kept until a write
         self.kept: dict = {}
-        #: names this `kept`: a recipe's addresses in it hold for no other
-        self.kept_state: int = 0
         #: these bytes are such a read's, so what reads them is kept too
         self.derived: bool = False
         #: the kept storage whose bytes and forms this one holds
@@ -89,7 +84,8 @@ class Storage:
         out.derived = True
         out.view_refs += 1
         self.kept[read] = out
-        self.kept_state = next(_KEPT_STATES)
+        if self.dev._recipe_recording is not None:
+            self.dev._recipe_recording.on_keep()
 
     def _holder(self) -> "Storage":
         """What keeps these bytes unchanged: this handle shares it, so a write
@@ -100,7 +96,7 @@ class Storage:
         st.forms, st.valid, st.zeroed = self.forms, self.valid, self.zeroed
         st.dtype, st.site = self.dtype, self.site
         st.host, st.host_f16_dtype = self.host, self.host_f16_dtype
-        st.kept, st.kept_state = self.kept, self.kept_state
+        st.kept = self.kept
         # No tensor names it: it goes with the last reference.
         st._freed, st.view_refs = True, 1
         self.owned, self.shared, self.derived = False, st, True
@@ -111,6 +107,7 @@ class Storage:
         if st is self or st is self.shared:
             return
         if self.shared is None:
+            self.release_kept()
             self.dev.free(self.addr)
         else:
             self._leave_shared()
@@ -118,7 +115,7 @@ class Storage:
         self.forms, self.valid, self.zeroed = st.forms, st.valid, st.zeroed
         self.dtype, self.site, self.derived = st.dtype, st.site, True
         self.host, self.host_f16_dtype = st.host, st.host_f16_dtype
-        self.kept, self.kept_state = st.kept, st.kept_state
+        self.kept = st.kept
         st.view_refs += 1
 
     def unshare(self) -> None:
@@ -148,10 +145,10 @@ class Storage:
     def overwritten(self) -> None:
         """A kernel is about to write these bytes: what reads of them made and
         their standing as a read's bytes end now."""
-        self._release_kept()
+        self.release_kept()
         self.derived = False
 
-    def _release_kept(self) -> None:
+    def release_kept(self) -> None:
         if not self.kept:
             return
         for st in self.kept.values():
@@ -159,7 +156,6 @@ class Storage:
             if st.view_refs <= 0 and st._freed:
                 st.free()
         self.kept = {}
-        self.kept_state = next(_KEPT_STATES)
 
     # ------------------------------------------------------------- forms
     def has(self, key: tuple) -> bool:
@@ -170,7 +166,7 @@ class Storage:
         valid)."""
         f = self.forms.get(key)
         if f is not None and (f.nbytes < nbytes or (key != FLAT and not f.owned)):
-            self._release_kept()
+            self.release_kept()
             f.release()
             if f.owned:
                 self.dev.free(f.addr)
@@ -195,7 +191,7 @@ class Storage:
         f = self.forms.get(FLAT)
         if not self.owned or f is None or f.nbytes >= min_bytes:
             return
-        self._release_kept()
+        self.release_kept()
         new_addr = self.dev.alloc(min_bytes)
         self.dev.free(self.addr)
         self.addr = new_addr
@@ -204,7 +200,7 @@ class Storage:
     def wrote(self, key: tuple, keep_host: bool = False) -> None:
         """A kernel wrote form `key`: every other form is stale (and no
         padding is known zero until its writer says so)."""
-        self._release_kept()
+        self.release_kept()
         self.derived = False
         for k, f in list(self.forms.items()):
             if k != key and not f.owned and k != FLAT:
@@ -229,7 +225,7 @@ class Storage:
             self.forms, self.valid, self.zeroed, self.kept = {}, set(), set(), {}
             self._leave_shared()
             return
-        self._release_kept()
+        self.release_kept()
         for f in list(self.forms.values()):
             f.release()
             if f.owned:

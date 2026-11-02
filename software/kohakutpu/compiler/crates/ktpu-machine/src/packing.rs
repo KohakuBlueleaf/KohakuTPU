@@ -54,31 +54,10 @@ pub fn pieces(
         .collect()
 }
 
-/// Bytes of a deferred quant's finite status (L2.MOV.010): a 128-byte
-/// record for each of `cores` cores of each piece holding source entries.
-pub fn status_bytes(cores: i64, pieces: &[(Run, Run)]) -> i64 {
-    let live = pieces
-        .iter()
-        .filter(|(r, c)| r.live != 0 && c.live != 0)
-        .count() as i64;
-    STATUS_RECORD * cores * live
-}
-
-/// Bytes of a quant's deferred status on `cores` cores: [`status_bytes`] of
-/// its [`pieces`] when padded, else one piece's records.
-pub fn quant_status_bytes(
-    cores: i64,
-    padded: bool,
-    rows: (i64, i64, i64),
-    cols: (i64, i64, i64),
-    groups: i64,
-    nk: i64,
-) -> i64 {
-    if padded {
-        status_bytes(cores, &pieces(rows, cols, groups, nk))
-    } else {
-        STATUS_RECORD * cores
-    }
+/// Bytes of a quant's deferred finite status (L2.MOV.010) on `cores` cores:
+/// one record a core, every piece folding into it.
+pub fn quant_status_bytes(cores: i64) -> i64 {
+    STATUS_RECORD * cores
 }
 
 /// Bytes of one core's finite status record.

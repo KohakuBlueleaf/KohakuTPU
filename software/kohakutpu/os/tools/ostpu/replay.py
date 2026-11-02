@@ -25,6 +25,9 @@ from relocate import relocate
 from run_card import Card, arrays, load_node
 
 from kohakuaccel.driver.device import rv64load
+
+#: The OS's page: a resident's span is whole pages.
+PAGE = 4096
 from kohakutpu.application.runtime.device import Device, Recorded
 from kohakutpu.application.runtime.os import abi as A
 from kohakutpu.application.runtime.os.graph import (
@@ -74,7 +77,6 @@ def decode_launch_ring(raw_ring, count):
 def run_os_capture(capture, a, board, out) -> dict[str, Any]:
     started = time.monotonic()
     board = dict(board)
-    board["dram"] = dict(board["dram"], private=a.private_bytes)
     if a.profile == "mid":
         board["clock_hz"] = 200_000_000
     card_board = (
@@ -123,6 +125,45 @@ def run_os_capture(capture, a, board, out) -> dict[str, Any]:
             json.dumps(dict(phase=phase, seconds=elapsed)) + "\n"
         )
 
+    def estimate_bytes(ev_list):
+        writes_b = sum(len(ev[2]) + TASK_BYTES for ev in ev_list if ev[0] == "write")
+        g = Graph(
+            batch=a.segment,
+            compact=True,
+            movers=True,
+            prune=ENV.get("KOHAKUTPU_OS_PRUNE", "0") == "1",
+            de_stream=de_stream_on,
+            de_fetch=de_fetch_on,
+            de_fuse=de_fuse_on,
+        )
+        fr = ()
+        if lring_on:
+            fr = g.launch_mark(fr, (1 << 64) - 1)
+        for idx, event in enumerate(ev_list):
+            if event[0] in ("program", "run"):
+                for item in event[1].values():
+                    raw = item[0] if event[0] == "run" else item.bound(False)
+                    fr = g.package(raw, [], units, after=fr, unit_types=types)
+                if lring_on:
+                    fr = g.launch_mark(fr, idx)
+        return len(g.pack()) + writes_b
+
+    init_run_evs = [ev for ev in capture["init"] if ev[0] in ("program", "run")]
+    step_bytes = max(
+        estimate_bytes(capture["step"]),
+        estimate_bytes(init_run_evs) if init_run_evs else 0,
+    )
+    # Doubled: stamps add tasks the estimate leaves out.
+    capacity = task_capacity(2 * (step_bytes + 8192 + TASK_BYTES - 1) // TASK_BYTES)
+    command = f"ostpu {capacity} {capture['extent']} {a.retain} -e"
+    # The board's span holds the OS and the KDS arena; the resident's tasks and
+    # data come on top, in whole pages.
+    resident = capacity * TASK_BYTES + capture["extent"]
+    private = a.private_bytes or (
+        int(str(board["dram"]["private"]), 0) + -(-resident // PAGE) * PAGE
+    )
+    board["dram"] = dict(board["dram"], private=private)
+
     image = pathlib.Path(a.image)
     parts = segments(image)
     card = Card(board, a.model, out / "model.log", a.xdma)
@@ -138,39 +179,6 @@ def run_os_capture(capture, a, board, out) -> dict[str, Any]:
                     card.write(pa, bytes(count))
             result["paint_seconds"] = time.monotonic() - t_paint0
 
-        def estimate_bytes(ev_list):
-            writes_b = sum(
-                len(ev[2]) + TASK_BYTES for ev in ev_list if ev[0] == "write"
-            )
-            g = Graph(
-                batch=a.segment,
-                compact=True,
-                movers=True,
-                prune=ENV.get("KOHAKUTPU_OS_PRUNE", "0") == "1",
-                de_stream=de_stream_on,
-                de_fetch=de_fetch_on,
-                de_fuse=de_fuse_on,
-            )
-            fr = ()
-            if lring_on:
-                fr = g.launch_mark(fr, (1 << 64) - 1)
-            for idx, event in enumerate(ev_list):
-                if event[0] in ("program", "run"):
-                    for item in event[1].values():
-                        raw = item[0] if event[0] == "run" else item.bound(False)
-                        fr = g.package(raw, [], units, after=fr, unit_types=types)
-                    if lring_on:
-                        fr = g.launch_mark(fr, idx)
-            return len(g.pack()) + writes_b
-
-        init_run_evs = [ev for ev in capture["init"] if ev[0] in ("program", "run")]
-        step_bytes = max(
-            estimate_bytes(capture["step"]),
-            estimate_bytes(init_run_evs) if init_run_evs else 0,
-        )
-        # Doubled: stamps add tasks the estimate leaves out.
-        capacity = task_capacity(2 * (step_bytes + 8192 + TASK_BYTES - 1) // TASK_BYTES)
-        command = f"ostpu {capacity} {capture['extent']} {a.retain} -e"
         t_load0 = time.monotonic()
         imem, spad, dram = arrays(image, tables(board, 0, 0, command)[0])
         for pa, data in parts:
@@ -183,7 +191,7 @@ def run_os_capture(capture, a, board, out) -> dict[str, Any]:
         window.boot()
         progress("booted; waiting for resident allocation")
         mailbox_pa = priv + size - KOS_LAND_SIZE + KDS_LZ_USER
-        session = ResidentGraph(card, mailbox_pa, timeout=180)
+        session = ResidentGraph(card, mailbox_pa, timeout=180, exited=window.exited)
         progress("arena ready")
         dev = Device("os", board=card_board, os_session=session, os_units=units)
         dev.card.segment, dev.card.compact, dev.card.movers = a.segment, True, True
@@ -388,7 +396,7 @@ def main():
     parser.add_argument("--profile-sys", action="store_true")
     parser.add_argument("--step-ring", action="store_true")
     parser.add_argument("--batch-repeats", type=int, default=1)
-    parser.add_argument("--private-bytes", type=lambda s: int(s, 0), default=1 << 20)
+    parser.add_argument("--private-bytes", type=lambda s: int(s, 0), default=None)
     a = parser.parse_args()
     a.jtag = a.jtag or a.xdma
     with gzip.open(pathlib.Path(a.capture), "rb") as f:

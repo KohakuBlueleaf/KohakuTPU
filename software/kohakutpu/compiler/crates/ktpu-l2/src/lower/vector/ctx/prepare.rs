@@ -156,6 +156,7 @@ impl<'a> Ctx<'a> {
         let mut phases = Vec::new();
         let mut advances = Vec::new();
         let mut mapped_span = None;
+        let mut exchanged = false;
         if let Some(tile) = &mapped {
             let tiles = if looped {
                 self.trips
@@ -187,6 +188,7 @@ impl<'a> Ctx<'a> {
                 .map(|t| t.shape.words.len().max(1) as i64)
                 .max()
                 .unwrap();
+            exchanged = looped && tiles.iter().any(|t| t.shape.exchange.is_some());
             mapped_span = Some((
                 tiles.iter().map(|t| t.anchor).min().unwrap(),
                 tiles
@@ -198,7 +200,9 @@ impl<'a> Ctx<'a> {
             for (i, tile) in tiles.iter().enumerate() {
                 let delta = tiles.get(i + 1).map_or(0, |next| next.anchor - tile.anchor);
                 advances.push(delta);
-                phases.push(tile.shape.clone());
+                let mut shape = tile.shape.clone();
+                shape.exchange = shape.exchange.filter(|_| looped);
+                phases.push(shape);
             }
         }
         let mut inc = 0;
@@ -316,8 +320,10 @@ impl<'a> Ctx<'a> {
             }
             vec![self.down]
         };
+        let spare = if exchanged { self.alloc(32, o)? } else { 0 };
         let mut d = Desc {
             ad: self.descs.len(),
+            spare,
             mapped: mapped.map(|t| t.shape),
             phases,
             advances,

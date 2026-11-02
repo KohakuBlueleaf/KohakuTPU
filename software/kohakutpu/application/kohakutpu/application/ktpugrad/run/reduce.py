@@ -123,7 +123,8 @@ def _leaf(plan: Plan, leaf) -> tuple:
         return replace(base, out_ranges=rs, out_shape=tuple(U.extent(r) for r in rs))
 
     orders = itertools.permutations(outside) if len(outside) <= ORDER_TRIES else []
-    for order in orders:
+    # A product the outer expression reads as it lies needs no transposed read.
+    for order in sorted(orders, key=lambda o: [rank.get(r, len(rank)) for r in o]):
         probe = _coalesce(laid(order))
         if _contraction(probe) is not None:
             return probe, list(order), True

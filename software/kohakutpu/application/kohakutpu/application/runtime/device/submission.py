@@ -14,11 +14,20 @@ from kohakutpu.application.runtime.device.common import (
     Run,
     Submitted,
 )
+from kohakutpu.application.runtime.eager_batch import Deferred
 from kohakutpu.application.runtime.memory.arena import OutOfMemory
 from kohakutpu.application.runtime.packages import Prebuilt, placed
 from kohakutpu.stack import rs
 from kohakutpu.stack.buffer import Buffer
 from kohakutpu.stack.kernel import arena_name
+
+
+def _entry(s: Submitted) -> int:
+    """The queue entry `s` holds: runs deferred into one eager list share it."""
+    p = s.pending
+    if isinstance(p, Deferred):
+        return id(p.group if p.group is not None else p.owner)
+    return id(s)
 
 
 class Submission(Parts):
@@ -112,7 +121,7 @@ class Submission(Parts):
                 held.update(s.references)
             over_bytes = sum(a.live[at] for a, at in held) > self.queue_bytes
             over_nodes = any(
-                sum(n in s.nodes for s in self.inflight)
+                len({_entry(s) for s in self.inflight if n in s.nodes})
                 >= min(queues[n].sq_n, queues[n].cq_n)
                 for n in nodes
                 if n in queues
@@ -145,14 +154,13 @@ class Submission(Parts):
         At most `max_inflight` runs
         are held; past that the oldest is collected first, and when memory
         pressure collects the oldest and retries after each completion."""
-        if self._recipe_recording is not None and not self._recipe_submitting:
-            self._recipe_submitting = True
-            try:
-                return self._recipe_recording.on_submit(
-                    self.submit, compiled, binds, kind, info
-                )
-            finally:
-                self._recipe_submitting = False
+        if self._recipe_recording is not None:
+            return self._recipe_recording.on_submit(
+                self._submitted, compiled, binds, kind, info
+            )
+        return self._submitted(compiled, binds, kind, info)
+
+    def _submitted(self, compiled, binds: dict, kind: str, info) -> Submitted:
         launch_boundary.before_submit(self)
         self._healthy()
         if self.closed:

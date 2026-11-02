@@ -109,7 +109,8 @@ def _absorb(plan: Plan, ids: dict, made: dict) -> _Made:
 
 
 def _one_read_each(made: _Made) -> tuple:
-    """`(expression, accesses)` with equal reads one access."""
+    """`(expression, accesses)` with equal reads one access, and what members
+    computed alike (a statistic each reads, a shared exponential) one node."""
     seen: dict = {}
     accesses: list = []
 
@@ -124,7 +125,7 @@ def _one_read_each(made: _Made) -> tuple:
             accesses.append(replace(a, slot=slot))
         return X.Load(seen[key])
 
-    return _rebuild(made.expr, f), accesses
+    return X.intern(_rebuild(made.expr, f)), accesses
 
 
 def _plan(last: Plan, members: tuple, made: _Made, out: int) -> Plan | None:

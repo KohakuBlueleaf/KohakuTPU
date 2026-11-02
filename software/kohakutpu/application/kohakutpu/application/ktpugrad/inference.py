@@ -5,7 +5,6 @@ from itertools import cycle
 
 from tinygrad.engine.jit import TinyJit
 from tinygrad.helpers import Context
-from tinygrad.tensor import Tensor
 
 from kohakutpu.application.runtime import device as D
 from kohakutpu.language.config import ENV
@@ -104,20 +103,18 @@ class Sharded:
     """One forward over a batch: each node owns a range of the batch axis.
 
     Every input's first axis is the batch; each range runs as a request of
-    a `Resident` and the outputs join on that axis.
+    a `Resident` and the outputs join on that axis. Inputs stay on the card:
+    a node reads its range of the realised batch, nothing comes to the host.
     """
 
     def __init__(self, forward, nodes=None, replay=None):
         self.resident = Resident(forward, nodes, replay)
 
     def __call__(self, *inputs):
-        hosts = [x.numpy() for x in inputs]
-        size = len(hosts[0])
+        inputs = tuple(x.realize() for x in inputs)
         outs = [
-            self.resident.on(
-                node, *(Tensor(h[a:b], device=x.device) for x, h in zip(inputs, hosts))
-            )
-            for node, a, b in shards(size, list(self.resident.copies))
+            self.resident.on(node, *(x[a:b] for x in inputs))
+            for node, a, b in shards(inputs[0].shape[0], list(self.resident.copies))
         ]
         return outs[0].cat(*outs[1:], dim=0).realize()
 

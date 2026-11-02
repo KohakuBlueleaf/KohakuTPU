@@ -26,7 +26,8 @@ pub struct Ring {
 }
 
 /// The ring `knobs` ask for on `mach`: at most `knobs.ring_depth` waves, as
-/// many as the staging room holds; an f16 A's quant ring, at most
+/// many as the staging room holds, none for an epilogue of no op; an f16 A's
+/// quant ring, at most
 /// `knobs.quant_ring`, where its slots fit the room the waves leave.
 pub fn resolve(mm: &Mm, e: &E, out: &Operand, knobs: &Knobs, mach: &Machine) -> Ring {
     let hw = Hw::of(mach);
@@ -39,7 +40,11 @@ pub fn resolve(mm: &Mm, e: &E, out: &Operand, knobs: &Knobs, mach: &Machine) -> 
     let groups = mm.bt * (mm.mp / mm.tm) * (ntn / tiles);
     let lanes = groups.min((hw.mg / tiles).max(1));
     let wave = 2 * lanes * mm.tm * tiles * mm.tn;
-    let depth = knobs.ring_depth.min(mach.stage_room() / wave);
+    // An epilogue of no op has no core work for the waves to overlap.
+    let depth = match expr::count(e) {
+        0 => 0,
+        _ => knobs.ring_depth.min(mach.stage_room() / wave),
+    };
     let row_tiles = mm.bt * (mm.mp / mm.tm);
     // Row tiles one wave of row groups reaches.
     let span = cdiv(lanes, groups / row_tiles) + 1;
@@ -356,17 +361,7 @@ fn quant_ring<'a>(
         g::BufSpace::Stage,
     )?;
     let ntm = mm.mp / mm.tm;
-    let record = |rows: i64| {
-        ktpu_machine::packing::quant_status_bytes(
-            mach.quant_cores(),
-            rows < mm.tm || mm.k < mm.kp,
-            (0, mm.tm, rows),
-            (0, mm.kp, mm.k),
-            mm.tm / hw.band,
-            mm.nk,
-        )
-    };
-    let slice = record(mm.tm).max(record(mm.m - (ntm - 1) * mm.tm)) / 2;
+    let slice = ktpu_machine::packing::quant_status_bytes(mach.quant_cores()) / 2;
     let status = if ring.quant == 2 {
         Some(t.buffer(&[mm.bt * ntm * slice], g::Dtype::F16, vec![])?)
     } else {

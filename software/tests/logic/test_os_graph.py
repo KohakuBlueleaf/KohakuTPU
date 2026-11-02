@@ -173,6 +173,21 @@ class Mailbox:
         return struct.pack("<4Q", *words).ljust(size, b"\0")[:size]
 
 
+class Silent:
+    """An OS that shut down before its resident wrote READY."""
+
+    def read(self, pa, size):
+        return bytes(size)
+
+    def idle(self):
+        pass
+
+
+def test_a_resident_that_never_starts_is_reported_not_waited_out():
+    with pytest.raises(RuntimeError, match=r"exited \(1\)"):
+        ResidentGraph(Silent(), 0, timeout=5, exited=lambda: 1)
+
+
 def test_a_session_refuses_a_data_arena_off_a_write_burst_line():
     assert ResidentGraph(Mailbox(0x1000 + DATA_ALIGN), 0).data_pa == 0x1100
     with pytest.raises(ValueError, match="task_capacity"):

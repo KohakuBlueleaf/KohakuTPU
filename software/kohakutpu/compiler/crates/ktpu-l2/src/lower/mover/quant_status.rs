@@ -1,5 +1,5 @@
 //! A deferred quant's finite status (L2.MOV.019): the caller's buffer holds
-//! a record for each core of each piece until a `quant_check` checks it.
+//! a record for each core until a `quant_check` checks it.
 
 use super::*;
 use crate::lower::sync::{Stage, FENCE};

@@ -34,11 +34,10 @@ def _held(dev, s, read):
 
 
 def _hold(dev, s, read, made):
-    """`made`, kept on `s` when `s`'s bytes cannot change between uses."""
+    """`made`, kept on `s` until its next write."""
     if s is not None and _active_scope(dev) is None:
         st, off = FM.base_of(s)
-        if st.unchanged:
-            st.keep((read, off), made)
+        st.keep((read, off), made)
     return made
 
 
