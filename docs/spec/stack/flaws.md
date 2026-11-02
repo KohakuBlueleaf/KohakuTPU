@@ -48,7 +48,9 @@ run as not modelled. Measured costs are in `measurements/REPORT.md`.
 
 F-001's vector copy, on the card: `examples/l2/mover/lone.ktpu` (256 words into
 every other word) takes 5,970 cycles on v9t8 at low, against 5,227 for the
-mover copy the flaw corrupts (`measurements/ISSUES.md` row 48).
+mover copy the flaw corrupts (`measurements/ISSUES.md` row 48). Over a model's warm
+step it is +1.2% on MLP and +0.6% to +0.8% on wide, and −0.7% to −0.8% on Mixer and
+−1.7% to −1.8% on LeNet, where the vector copy is the cheaper one (REPORT, round e1).
 
 ## The flaws
 

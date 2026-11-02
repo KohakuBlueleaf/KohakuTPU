@@ -5,10 +5,11 @@ Every number comes from `data/`; each section's figures carry the same numbers. 
 run has all four dies at one clock, because idle dies change node 0's cycles. Runs that
 did not are kept in `data/old/` and used nowhere.
 
-The first section is the output statistics of every model. The next three are rounds
-`d2`, at commit a5e68412 with the performance batch on top, `d1`, at commit 1abcfb30, and
-`c1`, at commit 56021fd4. The sections after them hold 56021fd4's zoo, kept as the
-baseline, except the rows that name `c1`.
+The first section is the output statistics of every model. The next four are rounds
+`e1`, at commit de2c9b1e with the silicon flaw registry and its handlings, `d2`, at
+commit a5e68412 with the performance batch on top, `d1`, at commit 1abcfb30, and `c1`,
+at commit 56021fd4. The sections after them hold 56021fd4's zoo, kept as the baseline,
+except the rows that name `c1`.
 
 ## Output statistics
 
@@ -44,6 +45,71 @@ reads 1 for MLP, GRU and wide (against f32) and ViT-B (against MXFP7); the liste
 value is inside both, since the card's largest error against the other is under the
 footprint's largest. Top-1 agrees with f32 on every image except ViT's 6 of 9; the MXFP7 run also
 agrees on 6 of 9: the nine images' f32 top-1 to top-2 gaps are 0.0001 to 0.079.
+
+## Round e1
+
+32 of 32 runs exited: eight models, eager and TinyJit, 2+2 and 4+2, all four dies at
+mid, the measure image, every launch an exact library hit. Tables and figures are under
+`rounds/e1`; `rounds/e1/data/zoo.csv` holds every column below. The commit carries the
+silicon flaw registry (`docs/spec/stack/flaws.md`): each handling is switched on by the
+flaw it handles, and F-001's handling is the vector-core copy of `L2.MOV.020`.
+
+| At mid, 2+2, TinyJit; eager | Cadence, ms, d2 → e1 | Device M cycles, d2 → e1 | MFU matrix, vector, memory, e1 | Bus | GFLOPS |
+|---|---|---|---|---|---|
+| ViT-B | 271.5 → 271.9; 531.0 → 521.9 | 51.22 → 51.30; 50.87 → 50.95 | 16.11, 13.15, 11.93%; 8.39, 6.85, 6.22% | 26.3%; 13.7% | 132.8; 69.2 |
+| ViT | 89.7 → 91.7; 317.2 → 320.2 | 14.75 → 14.76; 14.73 → 14.70 | 3.46, 9.95, 6.45%; 0.99, 2.85, 1.85% | 18.0%; 5.2% | 28.9; 8.3 |
+| GPT | 80.1 → 79.7; 452.1 → 452.5 | 12.48 → 12.48; 12.42 → 12.41 | 0.58, 4.76, 4.56%; 0.10, 0.84, 0.80% | 9.0%; 1.6% | 5.06; 0.89 |
+| LeNet | 111.2 → 111.3; 332.4 → 326.7 | 19.12 → 19.17; 19.01 → 19.06 | 0.14, 1.56, 1.24%; 0.05, 0.53, 0.42% | 11.2%; 3.8% | 1.28; 0.44 |
+| wide | 24.0 → 23.9; 80.2 → 79.7 | 3.16 → 3.16; 3.13 → 3.14 | 0.15, 6.95, 7.41%; 0.05, 2.08, 2.22% | 10.0%; 3.0% | 1.68; 0.50 |
+| Mixer | 70.3 → 71.7; 506.3 → 497.5 | 10.30 → 10.30; 10.19 → 10.19 | 0.09, 2.60, 1.75%; 0.01, 0.37, 0.25% | 7.8%; 1.1% | 0.93; 0.13 |
+| MLP | 9.6 → 9.6; 43.4 → 43.7 | 1.09 → 1.10; 1.08 → 1.08 | 0.11, 5.36, 5.57%; 0.02, 1.18, 1.22% | 7.6%; 1.7% | 1.22; 0.27 |
+| GRU | 36.2 → 35.6; 284.6 → 281.8 | 4.18 → 4.18; 4.16 → 4.16 | 0.05, 1.01, 0.81%; 0.01, 0.13, 0.10% | 2.9%; 0.4% | 0.48; 0.06 |
+
+| At mid, 4+2, TinyJit; eager | Cadence, ms, d2 → e1 | Device M cycles, d2 → e1 | MFU matrix, vector, memory, e1 | Bus | GFLOPS |
+|---|---|---|---|---|---|
+| ViT-B | 241.8 → 241.5; 505.0 → 504.0 | 45.02 → 45.00; 44.78 → 44.70 | 9.07, 14.81, 13.44%; 4.35, 7.10, 6.44% | 29.6%; 14.2% | 149.6; 71.7 |
+| ViT | 84.6 → 83.5; 310.5 → 308.4 | 13.45 → 13.44; 13.39 → 13.37 | 1.90, 10.93, 7.08%; 0.51, 2.96, 1.92% | 18.3%; 4.9% | 31.8; 8.6 |
+| GPT | 79.9 → 79.6; 445.4 → 443.9 | 12.44 → 12.44; 12.40 → 12.38 | 0.29, 4.76, 4.57%; 0.05, 0.85, 0.82% | 8.9%; 1.6% | 5.06; 0.91 |
+| LeNet | 117.2 → 116.9; 345.7 → 342.7 | 20.37 → 20.30; 20.17 → 20.21 | 0.07, 1.48, 1.19%; 0.02, 0.51, 0.40% | 9.9%; 3.4% | 1.22; 0.42 |
+| wide | 24.6 → 24.1; 79.1 → 79.6 | 3.15 → 3.16; 3.14 → 3.15 | 0.07, 6.88, 7.34%; 0.02, 2.09, 2.22% | 9.8%; 3.0% | 1.66; 0.50 |
+| Mixer | 70.1 → 69.4; 492.4 → 498.5 | 10.24 → 10.24; 10.15 → 10.21 | 0.05, 2.68, 1.81%; 0.01, 0.37, 0.25% | 8.0%; 1.1% | 0.96; 0.13 |
+| MLP | 9.7 → 9.7; 43.8 → 43.5 | 1.10 → 1.10; 1.09 → 1.09 | 0.05, 5.30, 5.51%; 0.01, 1.18, 1.23% | 7.5%; 1.7% | 1.21; 0.27 |
+| GRU | 33.0 → 32.9; 282.0 → 280.6 | 4.15 → 4.14; 4.14 → 4.13 | 0.03, 1.10, 0.88%; 0.00, 0.13, 0.10% | 3.1%; 0.4% | 0.52; 0.06 |
+
+The 4+2 matrix MFU is about half the 2+2 figure at the same cycles because its floor
+counts twice the clusters.
+
+| What | Size | Figure |
+|---|---|---|
+| Device cycles | Every row is within 0.6% of d2's, on both boards: the flaw handlings cost no cycles a step that the card can see | `rounds/e1/data/zoo.csv` `cycles`, against `rounds/d2/data/zoo.csv` |
+| Cadence | Within 2.2% of d2's on every row: the host and the card did what they did in d2 | `zoo.csv` `cadence` |
+| Host in a step | Eager steps at mid on 2+2 are 1.9× (ViT-B) to 7.9× (GRU) their TinyJit cadence. Host gap between launches a warm step, TinyJit against eager: GRU 208 against 223 ms, Mixer 245 against 368, wide 106 against 68, MLP 29 against 39, ViT-B 158 against 472 | `zoo.csv` `gap_ms`, `submit_ms` |
+| Outputs | Every run inside the MXFP7 footprint (`outside_footprint` 0 on all 32). Card against f32 and against simulated MXFP7, absolute max, mean, median, on 2+2: ViT-B 0.0989, 0.0209, 0.0175 and 0.0972, 0.0213, 0.0180 (MXFP7 against f32 max 0.1040); ViT 0.0336, 0.0073, 0.0061 and 0.0461, 0.0082, 0.0070 (0.0437); GPT 0.0193, 0.0061, 0.0056 and 0.0105, 0.0022, 0.0015 (0.0163); LeNet 0.0150, 0.0043, 0.0034 and 0.0120, 0.0040, 0.0035 (0.0154); Mixer 0.0105, 0.0029, 0.0023 and 0.0063, 0.0021, 0.0017 (0.0129); wide 0.0049, 0.0011, 0.0007 and 0.0017, 0.0004, 0.0002 (0.0051); MLP 0.0060, 0.0021, 0.0019 and 0.0020, 0.0001, 0.0001 (0.0060); GRU 0.0025, 0.0007, 0.0006 and 0.0013, 0.0004, 0.0003 (0.0018). Eager and TinyJit give the same values; 4+2 is in `zoo.csv` | `zoo.csv` `card_*`, `mxfp7_*` |
+| Compile | The library was filled from empty, eager and TinyJit two processes at a time on one library, so each kernel compiled once in whichever process reached it first: 970 kernels in 1,598 s on 2+2, slowest 58.7 s (a Mixer kernel); 802 kernels in 751 s on 4+2, slowest 25.8 s (LeNet) | `rounds/e1/data/compile.csv` |
+
+Cost of each flaw's handling a warm step, from the timed model: every kernel of the step
+that moves data is compiled for the machine as built and for the same machine with that
+one flaw marked absent, and both are timed (`software/tests/perf/flaws.py`, one
+`flaws.<board>.json` beside each eager trace of the shipping image, kept on the host
+under `build/perf/traces/*.e1n.*`). Only F-001 changes code the timed model reads.
+
+| F-001 handling, a warm step | Kernels, launches | Cycles, 2+2; 4+2 | Share of the step, 2+2; 4+2 |
+|---|---|---|---|
+| MLP | 2, 2 | +9,384; +9,384 | +1.18%; +1.16% |
+| wide | 2, 2 | +17,064; +17,064 | +0.77%; +0.64% |
+| Mixer | 1, 3 | −77,873; −77,873 | −0.80%; −0.74% |
+| LeNet | 9, 13 | −326,499; −326,499 | −1.76%; −1.69% |
+| GPT, ViT, ViT-B, GRU | 0 | 0 | 0 |
+
+A negative cost is a vector-core copy the model prices below the mover copy it replaces,
+whose destination steps one-word runs. The card's step cycles above do not resolve
+either sign. F-002 (L1 image encoder), F-003 and F-004 (package engine), F-005 to F-007
+(KohakuAccel OS and firmware) are handled below what the timed model reads.
+
+Row 31 (`ISSUES.md`) with per-node mover canaries, v9t6 at mid, four nodes: 44 of about
+400 node results over 100 overlapped rounds differ from the serial bytes; every node's
+canary is right before overlap and after every differing round; all 204 packages read back
+right. Details in the row.
 
 ## Round d2
 
