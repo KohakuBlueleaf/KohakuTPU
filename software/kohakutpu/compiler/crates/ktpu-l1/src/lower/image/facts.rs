@@ -27,6 +27,9 @@ pub struct CoreFacts {
     pub l1_words: u32,
     /// Flits an interlink packet carries (`il.packet_beats`).
     pub packet_beats: u32,
+    /// Silicon flaw F-002: the interlink sends a one-flit packet before its
+    /// flit shows (`flaws.F-002.present`).
+    pub il_tail: bool,
 }
 
 impl CoreFacts {
@@ -45,6 +48,7 @@ impl CoreFacts {
             dualq: m.vc.dualq != 0,
             l1_words: m.vc.l1_words,
             packet_beats: m.il.packet_beats,
+            il_tail: m.flaws.f002.present,
         }
     }
 }

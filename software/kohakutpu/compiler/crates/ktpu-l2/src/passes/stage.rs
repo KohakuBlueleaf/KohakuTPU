@@ -1,7 +1,7 @@
-//! `stage` (L2.PASS.001, F-001): on a mover that does not take a move whose
-//! read and write sides both step one-word runs (`mover.one_word_runs`
-//! false), each node-scope gather, scatter and copy some instance of which is
-//! such a move of more than one word goes through a contiguous scratch:
+//! `stage` (L2.PASS.001): on a mover with silicon flaw F-001
+//! (`flaws.F-001.present`), each node-scope gather, scatter and copy some
+//! instance of which steps one-word runs on both sides, more than one word,
+//! goes through a contiguous scratch:
 //!
 //! ```text
 //! gather D <- S ..   ->  gather hN <- S ..; copy D <- hN
@@ -135,7 +135,7 @@ pub fn stage(p: &Program, t: &Target) -> Result<Program> {
     if crate::mutant::on("l2.passes/stage-off") {
         return Ok(p.clone());
     }
-    if t.one_word_runs && !crate::mutant::on("l2.passes/stage-one-word-ignored") {
+    if !t.mover_lead && !crate::mutant::on("l2.passes/stage-one-word-ignored") {
         return Ok(p.clone());
     }
     let pl = plans(&p.body()?, t)?;

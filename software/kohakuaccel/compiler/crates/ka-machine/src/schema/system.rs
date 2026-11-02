@@ -14,9 +14,6 @@ pub struct Mover {
     pub fifo_depth: u32,
     /// (cycles a contiguous run, cycles a word) of a copy.
     pub copy_cost: (u32, u32),
-    /// Whether a move whose read and write sides both step runs of one
-    /// 32-byte word is safe (measured, `machines/measured.json`).
-    pub one_word_runs: bool,
     pub cfgq_depth: Runtime<u32>,
     pub cfgq_margin: Runtime<u32>,
     pub fault_bits: Runtime<u32>,

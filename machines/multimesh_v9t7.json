@@ -1,5 +1,5 @@
 {
- "schema": "36f0b5f2de74569e",
+ "schema": "8ca9a35b8d7dd23c",
  "name": "multimesh_v9t7",
  "image": "v9t7",
  "machine": {
@@ -300,7 +300,6 @@
     9,
     1
    ],
-   "one_word_runs": false,
    "faults": {
     "F_NONE": 0,
     "F_IDXLEN": 1,
@@ -652,6 +651,64 @@
     "KA_SIG_DATA_RECEIVED": 3,
     "KA_SIG_FAULT": 4
    }
+  },
+  "flaws": {
+   "F-001": {
+    "present": true,
+    "unit": "mover (mm_mover.v)",
+    "summary": "A one-beat copy burst chained off the previous burst's last beat pops the data FIFO before XPM fwft shows its word: the burst writes the word before, the pop is ignored and the word stays queued, so every later copy lands one word late until the mesh is reset.",
+    "witness": "tests/sysnode/mm_mover_stream_tb.v, tests/sysnode/mm_mover_wskid_tb.v (xsim on the real cell, Verilator on the fwft shim); v9t6 card 2026-10-22, 1024 back-to-back moves of 21 rows: gathers into one-word rows at a 256 B pitch poison from about 384 moves, scatters from one-word rows at a pitch poison",
+    "handling": "ktpu-l2 passes/stage.rs (L2.PASS.001)",
+    "fix": "A presentation register between u_dfifo and the W port, loaded only on !f_empty (about 257 FF and a few LUT)."
+   },
+   "F-002": {
+    "present": true,
+    "unit": "interlink (mag_ilink.v)",
+    "summary": "A one-flit outbound packet is read from u_enc two edges after its write, before XPM fwft shows it: the previous flit goes twice and the real one stays queued as the next packet's first flit.",
+    "witness": "v9t8 card, far vector peer drain of 32 words (ISSUES 14); the Verilated 2-node model with the fwft shim",
+    "handling": "ktpu-l1 lower/image/desc.rs far_splits (L1.VC.010)",
+    "fix": "OB_HDR and OB_DAT load ltx_dat and pop u_enc only when !ef_empty."
+   },
+   "F-003": {
+    "present": true,
+    "unit": "dispatch engine (dispatch_engine.v)",
+    "summary": "An engine RING writes the interlink with no check for room, so a ring past the interlink's queue is dropped and its receiver waits forever.",
+    "witness": "dispatch_engine.v write_ok (read, RUL.046)",
+    "handling": "ka-package engine.rs rings_overflow, replay.rs (RUL.046)",
+    "fix": "Hold a RING entry while the interlink reports node.ring_depth rings queued, and let the firmware read the interlink's queued count."
+   },
+   "F-004": {
+    "present": true,
+    "unit": "dispatch engine (dispatch_engine.v)",
+    "summary": "A WAIT compares its count modulo the counter: a target more than half the range behind reads as ahead and holds forever.",
+    "witness": "ISSUES 12 (v9t8 card); ka-package engine test a_wait_far_behind_what_was_sent_still_releases",
+    "handling": "ka-package engine.rs Stream::wait; firmware de_wait",
+    "fix": "Release a WAIT against the issued count, not the counter's sign."
+   },
+   "F-005": {
+    "present": true,
+    "unit": "RV64 MMU (rv64_mmu.v)",
+    "summary": "Under Sv39 a data access presented the cycle after a multi-cycle access completes takes that access's physical address.",
+    "witness": "software/os/tests/xlat/xlat.c on rv64_node_pair and the kos core model",
+    "handling": "KohakuAccel OS runs untranslated",
+    "fix": "Clear resolved_q on the data access's completion."
+   },
+   "F-006": {
+    "present": true,
+    "unit": "interlink (mag_ilink.v)",
+    "summary": "The signal word names a newly selected slot a cycle before its count follows: the first matching read carries the previous slot's count.",
+    "witness": "software/os/tests/sigslot/sigslot.c on rv64_node_pair",
+    "handling": "KohakuAccel OS hw_slot reads the word once more (include/kos/hw.h)",
+    "fix": "Register sig_sel beside sig_q and report the registered copy."
+   },
+   "F-007": {
+    "present": true,
+    "unit": "interlink (mag.v)",
+    "summary": "A node's signal slots, sent-ring count and faults reset only with the system, so a reloaded node starts with the previous run's counts.",
+    "witness": "v9t6 card (a second load hung in its first barrier); run_core.py --boots 2",
+    "handling": "firmware interp.c counts rings from the interlink's sent count; KohakuAccel OS start.h handshake",
+    "fix": "Reset the node-facing interlink state with the processor reset."
+   }
   }
  },
  "sources": {
@@ -799,7 +856,6 @@
   "mover.burst_max": "src/kohakuaccel/sysnode/mover/mm_mover.v:58",
   "mover.fifo_depth": "src/kohakuaccel/sysnode/mover/mm_mover.v:49",
   "mover.copy_cost": "machines/measured.json:mover.copy_cost (cycles a contiguous run, cycles a 32-byte word: four move-only kernels of 15000 to 39200 words at runs of 1 to 28 words, each within 2 %, Verilated card_v9t6_1n)",
-  "mover.one_word_runs": "machines/measured.json:mover.one_word_runs (a move whose read and write sides both step runs of one 32-byte word leaves the mover's data FIFO a word behind, every later move writing each word one position late until node reset: v9t6 card, 2026-10-22, 1024 back-to-back moves of 21 rows (gather into 1-word rows at a 256 B pitch poisons from ~384 moves, scatter from 1-word rows at a pitch poisons; contiguous 1-word rows, contiguous<->pitched copies and 2- and 4-word rows at a pitch clean))",
   "mover.faults": "src/kohakuaccel/sysnode/mover/mm_mover.v:134-137",
   "mover.cfgq_depth": "src/kohakuaccel/sysnode/mover/mm_mover.v:66",
   "mover.cfgq_margin": "src/kohakuaccel/sysnode/mover/mm_mover.v:68",
@@ -876,6 +932,48 @@
   "fw.package.unbounded": "software/kohakuaccel/firmware/include/ka/package/format.h:36",
   "fw.status": "software/kohakuaccel/firmware/include/ka/package/status.h:6",
   "fw.waits": "software/kohakuaccel/firmware/include/ka/package/status.h:33",
-  "fw.signals": "software/kohakuaccel/firmware/include/ka/hal/control.h:90"
+  "fw.signals": "software/kohakuaccel/firmware/include/ka/hal/control.h:90",
+  "flaws.F-001.present": "src/kohakuaccel/sysnode/mover/mm_mover.v:603; scripts/tcl/v9t7 KOHAKU_IL_MVSKID",
+  "flaws.F-001.unit": "derived: silicon flaw F-001",
+  "flaws.F-001.summary": "derived: silicon flaw F-001",
+  "flaws.F-001.witness": "derived: silicon flaw F-001",
+  "flaws.F-001.handling": "derived: silicon flaw F-001",
+  "flaws.F-001.fix": "derived: silicon flaw F-001",
+  "flaws.F-002.present": "src/kohakuaccel/sysnode/interlink/mag_ilink.v:689",
+  "flaws.F-002.unit": "derived: silicon flaw F-002",
+  "flaws.F-002.summary": "derived: silicon flaw F-002",
+  "flaws.F-002.witness": "derived: silicon flaw F-002",
+  "flaws.F-002.handling": "derived: silicon flaw F-002",
+  "flaws.F-002.fix": "derived: silicon flaw F-002",
+  "flaws.F-003.present": "src/kohakuaccel/sysnode/dispatch/dispatch_engine.v:179",
+  "flaws.F-003.unit": "derived: silicon flaw F-003",
+  "flaws.F-003.summary": "derived: silicon flaw F-003",
+  "flaws.F-003.witness": "derived: silicon flaw F-003",
+  "flaws.F-003.handling": "derived: silicon flaw F-003",
+  "flaws.F-003.fix": "derived: silicon flaw F-003",
+  "flaws.F-004.present": "src/kohakuaccel/sysnode/dispatch/dispatch_engine.v:168",
+  "flaws.F-004.unit": "derived: silicon flaw F-004",
+  "flaws.F-004.summary": "derived: silicon flaw F-004",
+  "flaws.F-004.witness": "derived: silicon flaw F-004",
+  "flaws.F-004.handling": "derived: silicon flaw F-004",
+  "flaws.F-004.fix": "derived: silicon flaw F-004",
+  "flaws.F-005.present": "src/kohakuaccel/pe/rv64-sys/core/rv64_mmu.v:200",
+  "flaws.F-005.unit": "derived: silicon flaw F-005",
+  "flaws.F-005.summary": "derived: silicon flaw F-005",
+  "flaws.F-005.witness": "derived: silicon flaw F-005",
+  "flaws.F-005.handling": "derived: silicon flaw F-005",
+  "flaws.F-005.fix": "derived: silicon flaw F-005",
+  "flaws.F-006.present": "src/kohakuaccel/sysnode/interlink/mag_ilink.v:295",
+  "flaws.F-006.unit": "derived: silicon flaw F-006",
+  "flaws.F-006.summary": "derived: silicon flaw F-006",
+  "flaws.F-006.witness": "derived: silicon flaw F-006",
+  "flaws.F-006.handling": "derived: silicon flaw F-006",
+  "flaws.F-006.fix": "derived: silicon flaw F-006",
+  "flaws.F-007.present": "src/kohakuaccel/sysnode/core/mag.v:788",
+  "flaws.F-007.unit": "derived: silicon flaw F-007",
+  "flaws.F-007.summary": "derived: silicon flaw F-007",
+  "flaws.F-007.witness": "derived: silicon flaw F-007",
+  "flaws.F-007.handling": "derived: silicon flaw F-007",
+  "flaws.F-007.fix": "derived: silicon flaw F-007"
  }
 }

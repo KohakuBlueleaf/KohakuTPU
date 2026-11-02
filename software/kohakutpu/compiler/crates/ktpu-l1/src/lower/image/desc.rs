@@ -162,10 +162,14 @@ pub type Splits = BTreeMap<u32, Split>;
 
 /// The descriptors whose far peer drain would end in a one-flit interlink
 /// packet: descriptor flit plus `count` words with count a multiple of
-/// `il.packet_beats`. The interlink's sender reads a one-flit packet's only
-/// flit before its FIFO shows it, so such a burst loses its last word and
-/// leaves it behind as the next burst's first flit (L1.VC.010).
+/// `il.packet_beats`, on an interlink with silicon flaw F-002: its sender
+/// reads a one-flit packet's only flit before its FIFO shows it, so such a
+/// burst loses its last word and leaves it behind as the next burst's first
+/// flit (L1.VC.010).
 pub fn far_splits(r: &Reader, stmts: &[Stmt], descs: &Descs, facts: &CoreFacts) -> Result<Splits> {
+    if !facts.il_tail {
+        return Ok(Splits::new());
+    }
     let mut drains = BTreeMap::new();
     peer_drains(stmts, &mut drains);
     let mut named = BTreeSet::new();

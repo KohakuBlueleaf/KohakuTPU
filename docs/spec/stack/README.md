@@ -47,6 +47,7 @@ Each clause is one list item:
 | DBG | `debug/firmware.md` |
 | RUL | `rulings.md` |
 | machine | `machine.md` (the machine files every hardware fact comes from) |
+| flaws | `flaws.md` (the silicon flaws, how the stack handles each and what it costs) |
 
 Each page ends with **Rulings**: the `rulings.md` clauses that settle what
 the code, docs and RTL disagreed on for that page.

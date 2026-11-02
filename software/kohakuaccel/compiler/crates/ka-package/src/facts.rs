@@ -32,6 +32,12 @@ pub struct Facts {
     pub max_buffers: usize,
     /// `node.ring_depth`: rings the interlink queues (RUL.046).
     pub ring_depth: usize,
+    /// Silicon flaw F-003: an engine RING has no room check
+    /// (`flaws.F-003.present`).
+    pub ring_unheld: bool,
+    /// Silicon flaw F-004: an engine WAIT on a count more than half the
+    /// counter's range behind holds forever (`flaws.F-004.present`).
+    pub wait_window: bool,
     /// `node.mover_span`: mover registers are below it.
     pub mover_span: u64,
     /// `unit.inst_depth`: a unit's instruction FIFO, the credit it is given.
@@ -109,6 +115,8 @@ impl Facts {
             max_pkg_units: m.fw().max_pkg_units as usize,
             max_buffers: m.fw().max_buffers as usize,
             ring_depth: m.node().ring_depth as usize,
+            ring_unheld: m.flaws().f003.present,
+            wait_window: m.flaws().f004.present,
             mover_span: m.node().mover_span as u64,
             il_slots: m.il().slots as u64,
             boot_version: m.fw().boot.version as u64,

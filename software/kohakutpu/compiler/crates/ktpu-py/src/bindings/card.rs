@@ -58,9 +58,6 @@ fn machine_view<'py>(
     vc.set_item("copies", c.rf_copies)?;
     vc.set_item("sig_bits", m.vc.sig_bits)?;
     params.set_item("VC", vc)?;
-    let mover = PyDict::new(py);
-    mover.set_item("one_word_runs", c.one_word_runs)?;
-    params.set_item("MOVER", mover)?;
     let sr = PyDict::new(py);
     if let Some(p) = c.sr.profile {
         for (k, v) in [

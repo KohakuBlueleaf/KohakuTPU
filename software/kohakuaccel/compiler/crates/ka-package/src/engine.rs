@@ -136,13 +136,17 @@ impl<'a> Stream<'a> {
     }
 
     /// A WAIT on `src` for `want`, left out when `want` is not positive
-    /// (L0.DE.006, L0.DE.030). The engine reads a count within half its range,
-    /// so a target further behind what was sent would hold forever: the wait
-    /// is for the oldest count it can still read.
+    /// (L0.DE.006, L0.DE.030). With silicon flaw F-004 the engine reads a
+    /// count within half its range, so a target further behind what was sent
+    /// would hold forever: the wait is for the oldest count it can still read.
     fn wait(&mut self, src: u64, want: i128) {
         let code = wait_code();
         let sent = self.sent.get(src as usize).copied().unwrap_or(self.gos);
-        let want = want.max(sent - (self.f.ctr_mask() >> 1) as i128);
+        let want = if self.f.wait_window {
+            want.max(sent - (self.f.ctr_mask() >> 1) as i128)
+        } else {
+            want
+        };
         if want > 0 || mutant::on("l0.lower/wait_always") {
             self.put(code, src << 56 | (want as u64 & self.f.ctr_mask()));
         }
@@ -413,7 +417,7 @@ fn lower_steps(pkg: &Package, f: &Facts) -> Result<Package> {
         );
     }
     let low = lowered(pkg, f, false)?;
-    if !rings_overflow(&low, f) || mutant::on("l0.lower/rings_in_engine") {
+    if !f.ring_unheld || !rings_overflow(&low, f) || mutant::on("l0.lower/rings_in_engine") {
         return Ok(low);
     }
     lowered(pkg, f, true)
@@ -546,6 +550,8 @@ mod tests {
             max_pkg_units: 16,
             max_buffers: 16,
             ring_depth: 16,
+            ring_unheld: true,
+            wait_window: true,
             mover_span: 0,
             inst_depth: 512,
             il_slots: 0,

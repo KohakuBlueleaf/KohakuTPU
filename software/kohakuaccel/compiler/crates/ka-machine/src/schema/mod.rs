@@ -5,6 +5,7 @@
 pub mod card;
 pub mod die;
 pub mod firmware;
+pub mod flaws;
 pub mod system;
 
 use serde::{Deserialize, Serialize, Serializer};
@@ -12,6 +13,7 @@ use serde::{Deserialize, Serialize, Serializer};
 pub use card::{Card, Clock, Dram, Host};
 pub use die::{Address, Coord, Noc, Staging, UnitDepths};
 pub use firmware::{Boot, Debug, Fw, FwMemory, Heap, Package, Queue};
+pub use flaws::{Flaw, Flaws};
 pub use system::{Engine, Il, Mover, MoverModes, Node};
 
 /// A fact no compile path reads: the runtime's, a generator's or a tool's.

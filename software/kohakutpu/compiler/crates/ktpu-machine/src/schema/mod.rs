@@ -27,6 +27,7 @@ pub struct Facts {
     pub node: Node,
     pub il: Il,
     pub fw: Fw,
+    pub flaws: Flaws,
 }
 
 /// Reliability policy, independent of conversion geometry and ISA support.

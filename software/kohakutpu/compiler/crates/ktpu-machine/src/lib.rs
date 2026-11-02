@@ -26,12 +26,13 @@ pub use schema::*;
 
 /// The schema definition this build reads: ka-machine's `src/schema/*.rs`,
 /// then this crate's, each in file-name order.
-pub const SCHEMA_SOURCES: [(&str, &str); 8] = [
+pub const SCHEMA_SOURCES: [(&str, &str); 9] = [
     ka_machine::SCHEMA_SOURCES[0],
     ka_machine::SCHEMA_SOURCES[1],
     ka_machine::SCHEMA_SOURCES[2],
     ka_machine::SCHEMA_SOURCES[3],
     ka_machine::SCHEMA_SOURCES[4],
+    ka_machine::SCHEMA_SOURCES[5],
     ("die.rs", include_str!("schema/die.rs")),
     ("kinds.rs", include_str!("schema/kinds.rs")),
     ("mod.rs", include_str!("schema/mod.rs")),
@@ -397,6 +398,9 @@ impl MachineFacts for Machine {
     }
     fn mover(&self) -> &Mover {
         &self.facts.mover
+    }
+    fn flaws(&self) -> &Flaws {
+        &self.facts.flaws
     }
     fn noc(&self) -> &Noc {
         &self.facts.die.noc

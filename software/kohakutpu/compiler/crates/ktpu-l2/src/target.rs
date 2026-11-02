@@ -66,7 +66,9 @@ pub struct Target {
     pub levels: usize,
     pub max_index: i64,
     pub row_words: i64,
-    pub one_word_runs: bool,
+    /// Silicon flaw F-001: the mover writes a word before its data FIFO
+    /// shows it (`flaws.F-001.present`).
+    pub mover_lead: bool,
     // interlink
     pub il_slots: i64,
     /// The stack's choices in composed reads.
@@ -118,7 +120,7 @@ impl Target {
             levels: m.mover.levels as usize,
             max_index: m.mover.max_index as i64,
             row_words: m.mover.row_words as i64,
-            one_word_runs: m.mover.one_word_runs,
+            mover_lead: m.flaws.f001.present,
             il_slots: m.il.slots as i64,
             read: crate::lower::readmap::Knobs::DEFAULT,
         }

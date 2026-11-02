@@ -23,7 +23,6 @@ pub struct Card {
     pub regs: u32,
     pub rf_copies: u32,
     pub sr: Sr,
-    pub one_word_runs: bool,
     address: Address,
     aperture: u32,
 }
@@ -108,7 +107,6 @@ impl Card {
             regs: m.vc.regs,
             rf_copies: m.vc.rf_copies,
             sr: m.sr.clone(),
-            one_word_runs: m.mover.one_word_runs,
             address: a,
             aperture,
         })

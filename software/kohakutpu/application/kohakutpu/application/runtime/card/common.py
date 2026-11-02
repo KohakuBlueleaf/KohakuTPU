@@ -2,7 +2,6 @@
 
 import dataclasses
 import enum
-import json
 import pathlib
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Final
@@ -198,17 +197,6 @@ def enumerated(meshes) -> dict:
     if any(f != found[0] for f in found):
         raise CardMismatch(f"the card's meshes hold different units: {found}")
     return found[0]
-
-
-def build_facts(machine_json: str) -> dict:
-    """`target.machine_of` keywords from a machine file (machines/*.json):
-    the vector cores' register count and read copies, the mover's facts."""
-    m = json.loads(machine_json)["machine"]
-    return {
-        "vregs": m["vc"]["regs"],
-        "vcopies": m["vc"]["rf_copies"],
-        "mover": {"one_word_runs": m["mover"]["one_word_runs"]},
-    }
 
 
 @dataclasses.dataclass

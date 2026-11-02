@@ -127,6 +127,18 @@ class Image:
                 return m, f"{path}:{n}"
         raise SystemExit(f"{path}: no line matches {pattern!r}")
 
+    def has_line(self, path: str, pattern: str, then: str | None = None):
+        """Whether repo file `path` has a line matching `pattern` (with the
+        next line matching `then`, when given): (bool, `path:line` or `path`)."""
+        rx, nx = re.compile(pattern), re.compile(then) if then else None
+        lines = _lines(ROOT / path)
+        for n, line in enumerate(lines, 1):
+            if rx.search(line) and (
+                nx is None or (n < len(lines) and nx.search(lines[n]))
+            ):
+                return True, f"{path}:{n}"
+        return False, f"{path}: no line matches {pattern!r}"
+
     def rtl_width(self, path: str, name: str):
         """Bits of the signal `name` as `path` declares it (`[N:0] name`)."""
         m, src = self.grep(path, rf"\[(\d+):0\]\s+(?:\w+\s*,\s*)*{name}\b")

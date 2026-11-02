@@ -162,7 +162,7 @@ impl Node<'_> {
             }
             C_RING => {
                 self.rings += 1;
-                if self.rings > f.ring_depth {
+                if f.ring_unheld && self.rings > f.ring_depth {
                     return refuse!(
                         "RUL.046",
                         "RING entry {} since the last wait; the interlink queues {}",

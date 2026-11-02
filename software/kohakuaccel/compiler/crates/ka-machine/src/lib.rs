@@ -12,10 +12,11 @@ pub use refusal::{refuse, Refusal};
 pub use schema::*;
 
 /// The schema files this crate defines, in file-name order.
-pub const SCHEMA_SOURCES: [(&str, &str); 5] = [
+pub const SCHEMA_SOURCES: [(&str, &str); 6] = [
     ("card.rs", include_str!("schema/card.rs")),
     ("die.rs", include_str!("schema/die.rs")),
     ("firmware.rs", include_str!("schema/firmware.rs")),
+    ("flaws.rs", include_str!("schema/flaws.rs")),
     ("mod.rs", include_str!("schema/mod.rs")),
     ("system.rs", include_str!("schema/system.rs")),
 ];
@@ -30,6 +31,7 @@ pub trait MachineFacts {
     fn unit_depths(&self) -> &UnitDepths;
     fn il(&self) -> &Il;
     fn mover(&self) -> &Mover;
+    fn flaws(&self) -> &Flaws;
     fn noc(&self) -> &Noc;
     fn word_bytes(&self) -> u32;
     fn fetch_port(&self) -> Coord;

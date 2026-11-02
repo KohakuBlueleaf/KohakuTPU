@@ -769,7 +769,6 @@ ROWS = [
         lambda i: i.rtl("src/kohakuaccel/sysnode/mover/mm_mover.v", "FIFO_D"),
     ),
     ("mover.copy_cost", lambda i: i.measured("mover.copy_cost")),
-    ("mover.one_word_runs", lambda i: i.measured("mover.one_word_runs")),
     ("mover.faults", mover_faults),
     ("mover.cfgq_depth", lambda i: i.rtl(MOVER, "CFGQ_D")),
     ("mover.cfgq_margin", lambda i: i.rtl(MOVER, "CFGQ_MARGIN")),
@@ -929,6 +928,152 @@ ROWS = [
     ("fw.waits", lambda i: i.fw_enum("package/status.h", "ka_wait")),
     ("fw.signals", lambda i: i.fw_enum("hal/control.h", "KA_SIG_")),
 ]
+
+
+DISPATCH = "src/kohakuaccel/sysnode/dispatch/dispatch_engine.v"
+MMU = "src/kohakuaccel/pe/rv64-sys/core/rv64_mmu.v"
+
+
+def mover_lead(img):
+    """F-001 needs the mover's ungated copy pop and the W skid that can take
+    a beat the edge after a chained burst starts (`mag.v` g_mvskid)."""
+    ungated, src = img.has_line(
+        MOVER, r"assign f_rd = xf \? fd_pop : \(\(wst == W_DATA\) && \(w_kind == K_RD\)"
+    )
+    skid = img.defines.get("KOHAKU_IL_MVSKID", "0") != "0"
+    return ungated and skid, f"{src}; scripts/tcl/{img.ver} KOHAKU_IL_MVSKID"
+
+
+#: Every silicon flaw: (id, unit, summary, witness, handling, fix, present).
+FLAWS = [
+    (
+        "F-001",
+        "mover (mm_mover.v)",
+        (
+            "A one-beat copy burst chained off the previous burst's last beat pops"
+            " the data FIFO before XPM fwft shows its word: the burst writes the"
+            " word before, the pop is ignored and the word stays queued, so every"
+            " later copy lands one word late until the mesh is reset."
+        ),
+        (
+            "tests/sysnode/mm_mover_stream_tb.v, tests/sysnode/mm_mover_wskid_tb.v"
+            " (xsim on the real cell, Verilator on the fwft shim); v9t6 card"
+            " 2026-10-22, 1024 back-to-back moves of 21 rows: gathers into"
+            " one-word rows at a 256 B pitch poison from about 384 moves, scatters"
+            " from one-word rows at a pitch poison"
+        ),
+        "ktpu-l2 passes/stage.rs (L2.PASS.001)",
+        (
+            "A presentation register between u_dfifo and the W port, loaded only"
+            " on !f_empty (about 257 FF and a few LUT)."
+        ),
+        mover_lead,
+    ),
+    (
+        "F-002",
+        "interlink (mag_ilink.v)",
+        (
+            "A one-flit outbound packet is read from u_enc two edges after its"
+            " write, before XPM fwft shows it: the previous flit goes twice and"
+            " the real one stays queued as the next packet's first flit."
+        ),
+        (
+            "v9t8 card, far vector peer drain of 32 words (ISSUES 14); the"
+            " Verilated 2-node model with the fwft shim"
+        ),
+        "ktpu-l1 lower/image/desc.rs far_splits (L1.VC.010)",
+        "OB_HDR and OB_DAT load ltx_dat and pop u_enc only when !ef_empty.",
+        lambda i: i.has_line(ILINK, r"W_FL:\s+ltx_dat <= ef_q;"),
+    ),
+    (
+        "F-003",
+        "dispatch engine (dispatch_engine.v)",
+        (
+            "An engine RING writes the interlink with no check for room, so a"
+            " ring past the interlink's queue is dropped and its receiver waits"
+            " forever."
+        ),
+        "dispatch_engine.v write_ok (read, RUL.046)",
+        "ka-package engine.rs rings_overflow, replay.rs (RUL.046)",
+        (
+            "Hold a RING entry while the interlink reports node.ring_depth rings"
+            " queued, and let the firmware read the interlink's queued count."
+        ),
+        lambda i: i.has_line(DISPATCH, r"&& !\(il_class && moving\);"),
+    ),
+    (
+        "F-004",
+        "dispatch engine (dispatch_engine.v)",
+        (
+            "A WAIT compares its count modulo the counter: a target more than"
+            " half the range behind reads as ahead and holds forever."
+        ),
+        (
+            "ISSUES 12 (v9t8 card); ka-package engine test"
+            " a_wait_far_behind_what_was_sent_still_releases"
+        ),
+        "ka-package engine.rs Stream::wait; firmware de_wait",
+        "Release a WAIT against the issued count, not the counter's sign.",
+        lambda i: i.has_line(DISPATCH, r"wire\s+wait_ok = !behind\[CTR_W-1\];"),
+    ),
+    (
+        "F-005",
+        "RV64 MMU (rv64_mmu.v)",
+        (
+            "Under Sv39 a data access presented the cycle after a multi-cycle"
+            " access completes takes that access's physical address."
+        ),
+        "software/os/tests/xlat/xlat.c on rv64_node_pair and the kos core model",
+        "KohakuAccel OS runs untranslated",
+        "Clear resolved_q on the data access's completion.",
+        lambda i: i.has_line(MMU, r"resolved_q <= resolved && same_req;"),
+    ),
+    (
+        "F-006",
+        "interlink (mag_ilink.v)",
+        (
+            "The signal word names a newly selected slot a cycle before its count"
+            " follows: the first matching read carries the previous slot's count."
+        ),
+        "software/os/tests/sigslot/sigslot.c on rv64_node_pair",
+        "KohakuAccel OS hw_slot reads the word once more (include/kos/hw.h)",
+        "Register sig_sel beside sig_q and report the registered copy.",
+        lambda i: i.has_line(ILINK, r"assign sig_word = \{.*sig_sel, sig_sweep,"),
+    ),
+    (
+        "F-007",
+        "interlink (mag.v)",
+        (
+            "A node's signal slots, sent-ring count and faults reset only with the"
+            " system, so a reloaded node starts with the previous run's counts."
+        ),
+        "v9t6 card (a second load hung in its first barrier); run_core.py --boots 2",
+        (
+            "firmware interp.c counts rings from the interlink's sent count;"
+            " KohakuAccel OS start.h handshake"
+        ),
+        "Reset the node-facing interlink state with the processor reset.",
+        lambda i: i.has_line(MAG, r"\) u_il \(", r"\.resetn\(resetn\)"),
+    ),
+]
+
+
+def flaw_rows():
+    rows = []
+    for fid, unit, summary, witness, handling, fix, present in FLAWS:
+        note = f"silicon flaw {fid}"
+        rows += [
+            (f"flaws.{fid}.present", present),
+            (f"flaws.{fid}.unit", lambda i, v=unit, n=note: derived(v, n)),
+            (f"flaws.{fid}.summary", lambda i, v=summary, n=note: derived(v, n)),
+            (f"flaws.{fid}.witness", lambda i, v=witness, n=note: derived(v, n)),
+            (f"flaws.{fid}.handling", lambda i, v=handling, n=note: derived(v, n)),
+            (f"flaws.{fid}.fix", lambda i, v=fix, n=note: derived(v, n)),
+        ]
+    return rows
+
+
+ROWS += flaw_rows()
 
 
 def check_unique():
