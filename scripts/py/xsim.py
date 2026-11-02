@@ -1276,6 +1276,13 @@ BENCHES = {
         + MOVER
         + ["src/kohakuaccel/verif/axi_ram.v", "tests/sysnode/mm_mover_tb.v"],
     ),
+    # The mover behind mag.v's IL_MVSKID skids: chained one-beat write bursts.
+    "mm_mover_wskid": (
+        "mm_mover_wskid_tb",
+        COMMON
+        + MOVER
+        + ["src/kohakuaccel/verif/axi_ram.v", "tests/sysnode/mm_mover_wskid_tb.v"],
+    ),
     # Back-to-back gathers, scatters and pitched copies against a jittered AXI
     # memory: every W beat, every FIFO pop and the idle FIFO checked.
     "mm_mover_stream": (
