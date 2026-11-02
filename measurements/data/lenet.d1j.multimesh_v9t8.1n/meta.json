@@ -1,0 +1,123 @@
+{
+ "counters": {
+  "runs": 1058,
+  "cycles": 283711723,
+  "bytes_in": 12334268,
+  "bytes_out": 126032,
+  "library_hits": 1034,
+  "class_hits": 0,
+  "exact_hits": 1034,
+  "library_misses": 0,
+  "compile_calls": 0,
+  "compile_seconds": 0.0,
+  "kernel_reuses": 815
+ },
+ "runs": 1058,
+ "transport": {},
+ "workload": "lenet",
+ "board": "multimesh_v9t8",
+ "nodes": 1,
+ "args": [
+  "--model",
+  "lenet",
+  "--batch",
+  "8",
+  "--steps",
+  "3",
+  "--board",
+  "multimesh_v9t8",
+  "--nodes",
+  "1",
+  "--library",
+  "build/perf/d1/multimesh_v9t8/lenet",
+  "--library-only",
+  "--test",
+  "8",
+  "--steps",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma",
+  "--report",
+  "/home/kblueleaf/kt/build/perf/traces/lenet.d1j.multimesh_v9t8.1n/report.json",
+  "--check",
+  "8"
+ ],
+ "seconds": 14.3,
+ "done": "exited",
+ "spans": {
+  "compile_graph": {
+   "calls": 219,
+   "seconds": 0.5448391390527831
+  },
+  "bind_admit": {
+   "calls": 1034,
+   "seconds": 0.249066215736093
+  },
+  "submit": {
+   "calls": 1034,
+   "seconds": 1.2350379840354435
+  },
+  "generate_launch": {
+   "calls": 1034,
+   "seconds": 2.0706154976651305
+  },
+  "rows": {
+   "calls": 216,
+   "seconds": 2.4600638300616993
+  },
+  "collect": {
+   "calls": 1072,
+   "seconds": 0.930764670134522
+  }
+ },
+ "profile": "mid",
+ "knobs": {
+  "KOHAKUTPU_BOOT_FLAGS": "0",
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "clocks": {
+  "0": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "1": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "2": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "3": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  }
+ },
+ "check": {
+  "relative": 0.02537715515060776,
+  "cosine": 0.9997681528276553,
+  "passed": true
+ },
+ "profiled": null,
+ "jit": true,
+ "commit": "1abcfb30",
+ "firmware": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+ "when": 1793599653.3264394,
+ "launches": 1034,
+ "kernels": 213,
+ "compiles": []
+}

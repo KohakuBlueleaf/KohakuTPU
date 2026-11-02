@@ -15,6 +15,9 @@ import re
 FORM_KINDS = ("quant", "convert", "transpose", "copy", "move")
 #: Bytes of an element in memory: MXFP7 is 128 B a 4 x 32 K entry.
 ELEMENT_BYTES = {"f16": 2, "f32": 4, "mx7a": 1, "mx7b": 1}
+#: A cluster MAC is a multiply and an add; a vector math beat is one op on 16 lanes.
+FLOPS_MAC = 2
+FLOPS_BEAT = 16
 PARAM = re.compile(r"(\w+): (\w+)\[([^\]]*)\] @(\w+)")
 PARAMS = pathlib.Path(__file__).with_name("params.json")
 
@@ -50,6 +53,7 @@ class Kernel:
     vc: float = 0.0
     useful: int = 0
     moved: float = 0.0
+    flops: float = 0.0
 
     def row(self, peak: float) -> dict:
         """The kernel's own MFU: its floors and bytes over its run cycles."""
@@ -78,6 +82,7 @@ def kernels(step: list[dict], timed: dict, programs: dict) -> dict[str, Kernel]:
             k.mg += t["floor"]["mg"]
             k.vc += t["floor"]["vc"]
             k.useful += useful_bytes(programs[name])
+            k.flops += FLOPS_MAC * work["macs"] + FLOPS_BEAT * work["math_beats"]
     return out
 
 
@@ -89,4 +94,5 @@ def whole(by_kernel: dict[str, Kernel], span: int, peak: float) -> dict:
         mfu_vc=sum(k.vc for k in rows) / span,
         mfu_mem=sum(k.useful for k in rows) / (span * peak),
         bus=sum(k.moved for k in rows) / (span * peak),
+        flops=sum(k.flops for k in rows),
     )

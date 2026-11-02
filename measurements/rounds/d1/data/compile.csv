@@ -1,0 +1,17 @@
+run,kernels,seconds,slowest
+gpt.d1f.multimesh_v9t6.1n,388,369.774,39.777
+gpt.d1f.multimesh_v9t8.1n,193,265.911,40.266
+gru.d1f.multimesh_v9t6.1n,150,104.412,13.49
+gru.d1f.multimesh_v9t8.1n,74,55.992000000000004,17.109
+lenet.d1f.multimesh_v9t6.1n,428,475.538,24.044
+lenet.d1f.multimesh_v9t8.1n,209,279.812,24.586
+mixer.d1f.multimesh_v9t6.1n,310,303.645,17.993
+mixer.d1f.multimesh_v9t8.1n,155,205.911,30.245
+mlp.d1f.multimesh_v9t6.1n,108,147.041,29.606
+mlp.d1f.multimesh_v9t8.1n,54,98.117,46.094
+vit.d1f.multimesh_v9t6.1n,64,150.158,43.502
+vit.d1f.multimesh_v9t8.1n,31,110.135,72.149
+vitb.d1f.multimesh_v9t6.1n,69,165.158,33.809
+vitb.d1f.multimesh_v9t8.1n,35,100.17,52.964
+wide.d1f.multimesh_v9t6.1n,134,226.172,34.95
+wide.d1f.multimesh_v9t8.1n,67,165.713,64.704

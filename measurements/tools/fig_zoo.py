@@ -31,7 +31,7 @@ def mfu_of(name: str, step: list[dict], cadence: int) -> dict:
     recorded with no timed records has no floors."""
     path = DATA / name / f"timed.{name.split('.')[-2]}.jsonl.gz"
     if not path.exists():
-        return {"mfu_mg": 0.0, "mfu_vc": 0.0, "mfu_mem": 0.0, "bus": 0.0}
+        return {"mfu_mg": 0.0, "mfu_vc": 0.0, "mfu_mem": 0.0, "bus": 0.0, "flops": 0.0}
     timed = [json.loads(x) for x in gunzipped(path).splitlines()]
     programs = json.loads(gunzipped(DATA / name / "kernels.l2.json.gz"))
     peak = sum(MFU.card_buses())
@@ -65,10 +65,12 @@ def row(name: str) -> dict | None:
             units[key] = units.get(key, 0) + u["busy_d"]
     cadence = run.cadence
     check = run.meta.get("check") or {}
+    mfu = mfu_of(name, step, cadence)
     return {
         "run": name,
         "model": model,
-        **mfu_of(name, step, cadence),
+        **mfu,
+        "gflops": mfu["flops"] / cadence * CLOCK.get(clock(run.meta), 0) / 1e3,
         "cadence": cadence,
         "mode": label,
         "board": name.split(".")[-2].removeprefix("multimesh_"),
@@ -188,19 +190,20 @@ def mfu_chart(rows: list[dict]) -> None:
         return
     labels = [f"{r['model']} {r['mode']}" for r in rows]
     panels = (
-        ("mfu_mg", "matrix MFU", SERIES[3]),
-        ("mfu_vc", "vector MFU", SERIES[0]),
-        ("mfu_mem", "memory MFU", SERIES[1]),
+        ("mfu_mg", "matrix MFU", SERIES[3], "{:.2%}"),
+        ("mfu_vc", "vector MFU", SERIES[0], "{:.2%}"),
+        ("mfu_mem", "memory MFU", SERIES[1], "{:.2%}"),
+        ("bus", "memory bus used", SERIES[2], "{:.2%}"),
+        ("gflops", "GFLOPS", SERIES[4], "{:.2f}"),
     )
     fig, axes = plt.subplots(
-        1, 3, figsize=(14, 0.3 * len(rows) + 1.4), sharey=True, layout="constrained"
+        1, 5, figsize=(20, 0.3 * len(rows) + 1.4), sharey=True, layout="constrained"
     )
-    for ax, (key, title, color) in zip(axes, panels, strict=True):
+    for ax, (key, title, color, text) in zip(axes, panels, strict=True):
         values = [r[key] for r in rows]
         ax.barh(labels, values, color=color)
         for i, v in enumerate(values):
-            ax.text(v, i, f" {v:.2%}", va="center", color=SECOND, fontsize=8)
-        ax.xaxis.set_major_formatter(lambda v, _: f"{v:.1%}")
+            ax.text(v, i, " " + text.format(v), va="center", color=SECOND, fontsize=8)
         ax.grid(axis="y", visible=False)
         ax.set_title(title)
     fig.suptitle("MFU of a warm step over its cadence, all clusters and cores")

@@ -5,8 +5,42 @@ Every number comes from `data/`; each section's figures carry the same numbers. 
 run has all four dies at one clock, because idle dies change node 0's cycles. Runs that
 did not are kept in `data/old/` and used nowhere.
 
-The first section is round `c1`, against commit 56021fd4. The sections after it hold
-that commit's zoo, kept as the baseline, except the rows that name `c1`.
+The first two sections are rounds `d1`, at commit 1abcfb30, and `c1`, at commit 56021fd4.
+The sections after them hold 56021fd4's zoo, kept as the baseline, except the rows that
+name `c1`.
+
+## Round d1
+
+96 of 96 runs exited: eight models, ViT-B added, low, mid and ship, eager and TinyJit,
+2+2 and 4+2, all dies at one clock, every launch an exact library hit. ViT and ViT-B run
+12 blocks; ViT-B TinyJit runs 6 inputs, because a graph replays only after two equal
+records. Tables and figures are under `rounds/d1`. Flops are 2 per MAC plus 16 per vector
+math beat; MFU is over the cadence, matrix and vector against their math-only floors,
+memory as useful bytes against 36 bytes a node cycle; `bus` is the bytes the bus moved.
+
+| At mid, 2+2 | Cadence, ms | Device M cycles | MFU matrix, vector, memory | Bus | GFLOPS |
+|---|---|---|---|---|---|
+| ViT-B TinyJit; eager | 661.3; 877.1 | 132.3; 131.7 | 9.40, 10.37, 5.45%; 7.09, 7.82, 4.11% | 14.9%; 11.2% | 56.5; 42.6 |
+| ViT | 146.3; 365.7 | 29.3; 25.7 | 3.06, 11.15, 4.11%; 1.22, 4.46, 1.65% | 11.0%; 4.4% | 18.9; 7.6 |
+| GPT | 126.5; 533.2 | 25.3; 18.7 | 0.50, 5.21, 2.87%; 0.12, 1.24, 0.68% | 6.1%; 1.5% | 3.33; 0.79 |
+| LeNet | 124.4; 373.8 | 24.9; 21.7 | 0.19, 1.80, 1.11%; 0.06, 0.60, 0.37% | 9.2%; 3.1% | 1.24; 0.41 |
+| wide | 99.4; 173.2 | 19.9; 15.4 | 0.05, 4.35, 1.78%; 0.03, 2.49, 1.02% | 5.2%; 3.0% | 0.57; 0.33 |
+| Mixer | 86.1; 582.0 | 17.2; 11.9 | 0.11, 3.69, 1.46%; 0.02, 0.55, 0.22% | 7.9%; 1.2% | 0.87; 0.13 |
+| MLP | 35.6; 85.6 | 7.1; 6.0 | 0.04, 4.37, 1.50%; 0.02, 1.82, 0.62% | 5.6%; 2.3% | 0.52; 0.22 |
+| GRU | 33.6; 345.7 | 6.7; 4.4 | 0.06, 1.17, 0.82%; 0.01, 0.11, 0.08% | 2.4%; 0.2% | 0.41; 0.04 |
+
+Device M cycles are a TinyJit cadence and an eager step's device cycles. Every eager step's
+device cycles equal c1's within 2%, on both boards and at all three clocks: this commit
+changed correctness, not speed.
+
+| Bottleneck | Size | Figure |
+|---|---|---|
+| 4+2 against 2+2 | TinyJit cadence the same at mid on every model (ViT-B 131.7 against 132.3 M); matrix MFU halves, ViT-B 4.72% against 9.40%. The two extra clusters do nothing | `rounds/d1/data/zoo.csv` |
+| Clock | TinyJit ms at low, mid, ship on 2+2: ViT-B 1178, 661, 494; ViT 269, 146, 126; GPT 208, 127, 85; LeNet 213, 124, 95; wide 160, 99, 79; Mixer 147, 86, 55; MLP 79, 36, 28; GRU 59, 34, 24. Cycles rise with the clock (ViT 26.9, 29.3, 37.9 M): DRAM does not scale | `zoo.csv` |
+| Host in an eager step | The host holds 25% (ViT-B) to 94% (GRU) of a step: GRU 346 ms against 33.6 TinyJit, Mixer 582 against 86.1, GPT 533 against 126.5 | `zoo.csv` `idle`, `gap_ms` |
+| 4+2 eager cadence | Not comparable: these 24 runs shared the host with compiler builds, and their cadence rose (Mixer 1404 ms against 582 on 2+2) while device cycles stayed at c1's. A clean figure needs a host with nothing else on it | `zoo.csv` `cycles`, `cadence` |
+| Compile | 16 library fills, 3,223.7 s; 2+2 LeNet 475.5 s for 428 kernels, GPT 369.8, Mixer 303.6, wide 226.2, ViT-B 165.2, ViT 150.2, MLP 147.0, GRU 104.4; slowest kernel 72.1 s | `rounds/d1/data/compile.csv` |
+| Outputs | 66 of 96 pass max relative 0.03 and cosine 0.999 against CPU f32. 30 miss: every ViT run (0.042), every ViT-B (0.073 on 2+2, 0.063 on 4+2), Mixer on 2+2 (0.036; 0.027 on 4+2). Eager and TinyJit give the same error. ViT and ViT-B traced stage by stage stay at the format's error, `ISSUES.md` 36 | `build_round.py` output |
 
 ## Round c1
 

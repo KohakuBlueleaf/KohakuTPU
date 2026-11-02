@@ -13,7 +13,13 @@ L2 = (
 # Two operands of 65,536 B and a result of 131,072 B; staging holds no DRAM traffic.
 USEFUL = 65_536 * 2 + 131_072
 TIMED = dict(
-    work=dict(read_bytes=2 * 131_072, write_bytes=131_072, mover_bytes=65_536),
+    work=dict(
+        read_bytes=2 * 131_072,
+        write_bytes=131_072,
+        mover_bytes=65_536,
+        macs=256**3,
+        math_beats=1000,
+    ),
     floor=dict(mg=MG_FLOOR, vc=0.0),
 )
 CONVERT = dict(work=dict(read_bytes=4096, write_bytes=4096, mover_bytes=0), floor=TIMED)
@@ -30,7 +36,9 @@ def test_step_mfu_is_the_hand_figure():
     assert got["mfu_mg"] == pytest.approx(0.4096)
     assert got["mfu_vc"] == 0.0
     assert got["mfu_mem"] == pytest.approx(USEFUL / 720_000)
-    row = by_kernel["m"].row(36.0)
+    # 256^3 MACs at 2 flops each, and 1000 beats on 16 lanes.
+    assert got["flops"] == 2 * 16_777_216 + 16_000
+    row =by_kernel["m"].row(36.0)
     assert row["mfu_mg"] == pytest.approx(0.8192)
     assert row["bus"] == pytest.approx(458_752 / 360_000)
 
@@ -39,7 +47,7 @@ def test_a_form_change_is_no_useful_work():
     step = [dict(name="c", kind="convert", cycles=1000)]
     by_kernel = mfu.kernels(step, dict(c=CONVERT), dict(c=L2))
     got = mfu.whole(by_kernel, span=1000, peak=36.0)
-    assert got["mfu_mg"] == got["mfu_mem"] == 0.0
+    assert got["mfu_mg"] == got["mfu_mem"] == got["flops"] == 0.0
     assert got["bus"] == pytest.approx(8192 / 36_000)
 
 
