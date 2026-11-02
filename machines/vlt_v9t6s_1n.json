@@ -641,7 +641,7 @@
     "unit": "mover (mm_mover.v)",
     "summary": "A one-beat copy burst chained off the previous burst's last beat pops the data FIFO before XPM fwft shows its word: the burst writes the word before, the pop is ignored and the word stays queued, so every later copy lands one word late until the mesh is reset.",
     "witness": "tests/sysnode/mm_mover_stream_tb.v, tests/sysnode/mm_mover_wskid_tb.v (xsim on the real cell, Verilator on the fwft shim); v9t6 card 2026-10-22, 1024 back-to-back moves of 21 rows: gathers into one-word rows at a 256 B pitch poison from about 384 moves, scatters from one-word rows at a pitch poison",
-    "handling": "ktpu-l2 passes/stage.rs (L2.PASS.001)",
+    "handling": "ktpu-l2 passes/stage.rs (L2.PASS.001), lower/mover/lone.rs (L2.MOV.020)",
     "fix": "A presentation register between u_dfifo and the W port, loaded only on !f_empty (about 257 FF and a few LUT)."
    },
    "F-002": {

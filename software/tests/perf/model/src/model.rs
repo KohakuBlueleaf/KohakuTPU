@@ -111,6 +111,10 @@ pub struct Work {
     pub write_bytes: f64,
     pub mover_bytes: f64,
     pub mover_statements: f64,
+    /// Words and statements of moves whose write side steps one-word runs:
+    /// the shape silicon flaw F-001 corrupts.
+    pub lone_words: f64,
+    pub lone_moves: f64,
     pub image_words: f64,
     pub words: f64,
     pub fe_syncs: f64,
@@ -227,6 +231,33 @@ fn walked(st: &Stmt) -> (f64, f64) {
         .min()
         .unwrap_or(1);
     (words as f64, (words as f64 / run.max(1) as f64).ceil())
+}
+
+/// Whether a copy, gather or scatter writes one-word runs: a copy's
+/// destination walk (its second) ends in a level that is not contiguous
+/// words, a gather or scatter moves rows of one word.
+fn lone_writes(st: &Stmt) -> bool {
+    match st.op.as_str() {
+        "gather" | "scatter" => int(st.kw("words")) == Some(1),
+        "copy" => {
+            let walks: Vec<&Vec<Term>> = st
+                .positional()
+                .into_iter()
+                .filter_map(|t| match t {
+                    Term::Call(name, levels) if name == "w" => Some(levels),
+                    _ => None,
+                })
+                .collect();
+            let last = walks.get(1).and_then(|w| {
+                w.iter().rev().find_map(|t| match t {
+                    Term::Tuple(l) => Some((l.first()?.as_int()?, signed(l.get(1)?)?)),
+                    _ => None,
+                })
+            });
+            !matches!(last, Some((count, 32)) if count > 1)
+        }
+        _ => false,
+    }
 }
 
 fn signed(t: &Term) -> Option<i64> {
@@ -591,6 +622,10 @@ impl Builder<'_> {
                 .push(mover, label, c, bytes, 0.0, self.mesh, vec![sent]);
             self.g.work.mover_bytes += bytes;
             self.g.work.mover_statements += 1.0;
+            if lone_writes(s) && words > 1.0 {
+                self.g.work.lone_words += words;
+                self.g.work.lone_moves += 1.0;
+            }
         }
         if posted {
             if let Some(n) = st.target_name() {
@@ -877,6 +912,8 @@ pub fn kernel(module: &Module, name: &str, m: &Machine, p: &Params) -> Result<Va
             "write_bytes": w.write_bytes,
             "mover_bytes": w.mover_bytes,
             "mover_statements": w.mover_statements,
+            "lone_words": w.lone_words,
+            "lone_moves": w.lone_moves,
             "image_words": w.image_words,
             "words": w.words,
         },

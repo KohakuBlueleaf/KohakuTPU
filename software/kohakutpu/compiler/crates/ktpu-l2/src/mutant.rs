@@ -206,6 +206,7 @@ pub const NAMES: &[&str] = &[
     "l2.passes/pipeline-off",
     "l2.passes/stage-off",
     "l2.passes/stage-one-word-ignored",
+    "l2.mover/lone-on-mover",
     "l2.passes/stage-every-move",
     "l2.lower/recv-unsent",
     "l2.lower/unreceived-ignored",

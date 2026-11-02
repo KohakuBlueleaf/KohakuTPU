@@ -19,7 +19,7 @@ Each handling reads its flaw's `present` and nothing else:
 
 | Flaw | Handling | Reads |
 |---|---|---|
-| F-001 | ktpu-l2 `passes/stage.rs` (L2.PASS.001) | `Target::mover_lead` |
+| F-001 | ktpu-l2 `passes/stage.rs` (L2.PASS.001): a move stepping one-word runs on both sides goes through a contiguous scratch; ktpu-l2 `lower/mover/lone.rs` (L2.MOV.020): a copy writing one-word runs runs on the vector cores. A die without vector cores keeps such a copy on the mover. | `Target::mover_lead` |
 | F-002 | ktpu-l1 `lower/image/desc.rs` `far_splits` (L1.VC.010) | `CoreFacts::il_tail` |
 | F-003 | ka-package `engine.rs` `rings_overflow`, `replay.rs` (RUL.046) | `Facts::ring_unheld` |
 | F-004 | ka-package `engine.rs` `Stream::wait` | `Facts::wait_window` |
@@ -35,6 +35,10 @@ in the kernel's L2 or L1 changes what `timed` reads (F-001); the others run in
 the L1 image encoder (F-002), the runtime's package lowering (F-003, F-004),
 the firmware or KohakuAccel OS (F-005 to F-007), and are listed with where they
 run as not modelled. Measured costs are in `measurements/REPORT.md`.
+
+F-001's vector copy, on the card: `examples/l2/mover/lone.ktpu` (256 words into
+every other word) takes 5,970 cycles on v9t8 at low, against 5,227 for the
+mover copy the flaw corrupts (`measurements/ISSUES.md` row 48).
 
 ## The flaws
 

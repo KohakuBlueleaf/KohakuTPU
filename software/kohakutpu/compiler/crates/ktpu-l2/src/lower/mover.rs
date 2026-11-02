@@ -4,6 +4,7 @@
 //! destination's walk is the iteration order (a scatter's, its source's; a
 //! transform's steps once per converted entry).
 
+mod lone;
 mod packing;
 pub mod quant_status;
 mod tiles;
@@ -11,6 +12,7 @@ mod views;
 mod walk;
 mod xform;
 
+pub use lone::{lone_copy, vector_copy};
 pub use packing::{composed_fits, quant_backend, vector_quant, Finite};
 pub use tiles::tile_transpose;
 

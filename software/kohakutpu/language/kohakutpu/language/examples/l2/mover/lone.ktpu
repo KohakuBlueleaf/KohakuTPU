@@ -1,0 +1,7 @@
+# Every word of x into every other word of y: a copy whose write side steps
+# one-word runs, the shape silicon flaw F-001 corrupts on the mover. On a
+# machine with the flaw it runs on the vector cores (L2.MOV.020).
+target ktpu.v9
+
+fn lone.l2(x: f16[256, 16] @dram, y: f16[512, 16] @dram)
+    copy y <- x walk=((256, 32),) dwalk=((256, 64),)

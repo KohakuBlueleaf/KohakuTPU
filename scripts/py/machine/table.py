@@ -962,7 +962,7 @@ FLAWS = [
             " one-word rows at a 256 B pitch poison from about 384 moves, scatters"
             " from one-word rows at a pitch poison"
         ),
-        "ktpu-l2 passes/stage.rs (L2.PASS.001)",
+        ("ktpu-l2 passes/stage.rs (L2.PASS.001), lower/mover/lone.rs" " (L2.MOV.020)"),
         (
             "A presentation register between u_dfifo and the W port, loaded only"
             " on !f_empty (about 257 FF and a few LUT)."
