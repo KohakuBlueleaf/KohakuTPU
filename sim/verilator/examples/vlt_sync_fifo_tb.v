@@ -3,8 +3,11 @@
 // under the C++ simulator, and both must agree word for word.
 //
 // Harder than a stream: the reader is stalled long enough to drive the FIFO
-// FULL and hold it there, then drains it EMPTY, so the wr_busy/rd_busy edges and
-// the fwft first-word timing are both exercised rather than stepped around.
+// FULL and hold it there, then drains it EMPTY, so the wr_busy/rd_busy edges are
+// exercised rather than stepped around. A second phase measures the fwft
+// first-word latency: one word written into the empty FIFO at edge W reads
+// busy until edge W+FIRST, and a pop issued while busy is ignored (the word
+// stays and pops later, once).
 
 `default_nettype none
 `timescale 1ns/1ps
@@ -14,6 +17,7 @@ module vlt_sync_fifo_tb;
     localparam integer DW    = 32;
     localparam integer DEPTH = 16;
     localparam integer N     = 400;
+    localparam integer FIRST = 2;   // xpm fwft: ram_empty, stage1, empty_fwft
 
     reg clk = 1'b0;
     reg rst = 1'b1;
@@ -35,7 +39,7 @@ module vlt_sync_fifo_tb;
     );
 
     integer sent = 0, got = 0, errors = 0, tick = 0;
-    integer max_level = 0, level = 0;
+    integer max_level = 0, level = 0, lat = 0;
 
     // The reader idles for the first 64 ticks so the FIFO is driven hard against
     // FULL before anything is drained.
@@ -77,7 +81,41 @@ module vlt_sync_fifo_tb;
             if (level > max_level) max_level = level;
         end
 
+        // First-word latency, with a pop issued on the edge before the word
+        // shows: written at edge W, busy is sampled after each later edge.
+        @(negedge clk);
+        rd_en = 1'b0;
+        repeat (8) @(negedge clk);
+        wr_data = 32'hA5A5_0001;
+        wr_en   = 1'b1;
+        @(negedge clk);
+        wr_en = 1'b0;
+        lat   = 0;
+        while (rd_busy && lat < 16) begin
+            rd_en = (lat == FIRST - 1);
+            @(negedge clk);
+            rd_en = 1'b0;
+            lat   = lat + 1;
+        end
+        if (lat != FIRST) begin
+            errors = errors + 1;
+            $display("  FAIL first word visible after %0d edges, want %0d", lat, FIRST);
+        end
+        if (rd_data !== 32'hA5A5_0001) begin
+            errors = errors + 1;
+            $display("  FAIL first word %h after an early pop", rd_data);
+        end
+        rd_en = 1'b1;
+        @(negedge clk);
+        rd_en = 1'b0;
+        repeat (4) @(negedge clk);
+        if (!rd_busy) begin
+            errors = errors + 1;
+            $display("  FAIL a second word after one write and one pop");
+        end
+
         $display("========================================");
+        $display("  first word after %0d edges", lat);
         $display("  peak occupancy %0d of %0d", max_level, DEPTH);
         if (errors == 0) $display("  PASS -- %0d words through, 0 errors", got);
         else             $display("  FAIL -- %0d words through, %0d errors", got, errors);

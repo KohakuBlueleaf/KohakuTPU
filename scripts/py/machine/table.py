@@ -853,6 +853,7 @@ ROWS = [
     # The interlink between nodes.
     ("il.slots", lambda i: i.rtl(ILINK, "SIG_SLOTS")),
     ("il.meshes", il_meshes),
+    ("il.packet_beats", lambda i: i.rtl(ILINK, "MAX_BEATS")),
     # Firmware: limits, formats and what the image carries.
     ("fw.image", lambda i: derived(i.fw, "the machine's firmware image")),
     ("fw.parts", lambda i: i.fw_parts()),

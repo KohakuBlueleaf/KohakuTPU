@@ -148,13 +148,19 @@ impl<'a> Encoder<'a> {
             ));
         }
         let ad = self.numbered(st, lhs, "a", self.facts.descriptors)?;
-        Ok(vec![self.word(
-            st,
-            VWord::Ainc {
-                ad,
-                inc: inc as i32,
-            },
-        )?])
+        let spare = self.split.get(&ad).map(|s| s.spare);
+        std::iter::once(ad)
+            .chain(spare)
+            .map(|ad| {
+                self.word(
+                    st,
+                    VWord::Ainc {
+                        ad,
+                        inc: inc as i32,
+                    },
+                )
+            })
+            .collect()
     }
 
     pub(super) fn pointer(&self, st: &Stmt) -> Result<Words> {

@@ -154,17 +154,28 @@ impl<'a> Encoder<'a> {
             Some(t) => self.int(st, t)? as u32,
             None => 0,
         };
-        Ok(vec![self.word(
-            st,
-            VWord::Drain {
-                ad,
-                l1off: off,
-                rel,
-                node: Some(Coord(x, y)),
-                buf_id: buf,
-                signal: flags.contains("signal"),
-            },
-        )?])
+        let drain = |ad, l1off, signal| {
+            self.word(
+                st,
+                VWord::Drain {
+                    ad,
+                    l1off,
+                    rel,
+                    node: Some(Coord(x, y)),
+                    buf_id: buf,
+                    signal,
+                },
+            )
+        };
+        let signal = flags.contains("signal");
+        match self.split.get(&ad) {
+            // The last word lands last, so only it signals.
+            Some(s) => Ok(vec![
+                drain(ad, off, false)?,
+                drain(s.spare, (off + s.first) % self.facts.l1_words, signal)?,
+            ]),
+            None => Ok(vec![drain(ad, off, signal)?]),
+        }
     }
 
     pub(super) fn dma(

@@ -149,6 +149,104 @@ fn fields(r: &Reader, st: &Stmt, facts: &CoreFacts, units: Option<&dyn Units>) -
     Ok(out)
 }
 
+/// A far peer drain cut in two: its first `first` words go on the descriptor
+/// itself, the last word on `spare` (L1.VC.010).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Split {
+    pub spare: u32,
+    pub first: u32,
+}
+
+/// Splits by the descriptor they cut.
+pub type Splits = BTreeMap<u32, Split>;
+
+/// The descriptors whose far peer drain would end in a one-flit interlink
+/// packet: descriptor flit plus `count` words with count a multiple of
+/// `il.packet_beats`. The interlink's sender reads a one-flit packet's only
+/// flit before its FIFO shows it, so such a burst loses its last word and
+/// leaves it behind as the next burst's first flit (L1.VC.010).
+pub fn far_splits(r: &Reader, stmts: &[Stmt], descs: &Descs, facts: &CoreFacts) -> Result<Splits> {
+    let mut drains = BTreeMap::new();
+    peer_drains(stmts, &mut drains);
+    let mut named = BTreeSet::new();
+    super::images::stmt_words(stmts, &mut named);
+    let mut used: BTreeSet<u32> = descs.keys().map(|(ad, _)| *ad).collect();
+    used.extend(
+        named
+            .iter()
+            .filter_map(|w| w.strip_prefix('a').and_then(|n| n.parse::<u32>().ok())),
+    );
+    let mut out = Splits::new();
+    for (ad, st) in drains {
+        let base = descs.get(&(ad, 0)).copied().unwrap_or(0);
+        let count: u64 = (1..=facts.dims)
+            .map(|f| (descs.get(&(ad, f)).copied().unwrap_or(0) & DIM_BOUND_MASK).max(1))
+            .product();
+        let far = (base >> 26) & 0xFF != 0;
+        if !far || count % facts.packet_beats as u64 != 0 {
+            continue;
+        }
+        let Some(spare) = (0..facts.descriptors).rev().find(|d| !used.contains(d)) else {
+            return Err(r.fail(
+                &st,
+                "L1.VC.010",
+                format!(
+                    "a{ad}'s far drain of {count} words splits onto a spare descriptor; a0..a{} are all named",
+                    facts.descriptors - 1
+                ),
+            ));
+        };
+        used.insert(spare);
+        out.insert(
+            ad,
+            Split {
+                spare,
+                first: count as u32 - 1,
+            },
+        );
+    }
+    Ok(out)
+}
+
+/// `descs` with every split applied: the cut descriptor walks its first
+/// words, the spare the last one, at the granule after them.
+pub fn split_descs(descs: &Descs, splits: &Splits, facts: &CoreFacts) -> Descs {
+    let mut out = descs.clone();
+    for (ad, s) in splits {
+        let base = descs.get(&(*ad, 0)).copied().unwrap_or(0);
+        let stride = descs.get(&(*ad, 1)).copied().unwrap_or(0) & !DIM_BOUND_MASK;
+        let granule = ((base & 0xFFFF) + s.first as u64) & 0xFFFF;
+        out.insert((s.spare, 0), (base & !0xFFFF) | granule);
+        out.insert((*ad, 1), stride | s.first as u64);
+        out.insert((s.spare, 1), stride | 1);
+        for f in 2..=facts.dims {
+            out.insert((*ad, f), 0);
+            out.insert((s.spare, f), 0);
+        }
+    }
+    out
+}
+
+/// Each descriptor a `vdrain ... to=` names, with its first such statement.
+fn peer_drains(stmts: &[Stmt], out: &mut BTreeMap<u32, Stmt>) {
+    for st in stmts {
+        if st.op == "vdrain" && st.kw("to").is_some() {
+            let ad = st
+                .positional()
+                .first()
+                .and_then(|t| t.as_name())
+                .and_then(|n| n.strip_prefix('a'))
+                .and_then(|n| n.parse::<u32>().ok());
+            if let Some(ad) = ad {
+                out.entry(ad).or_insert_with(|| st.clone());
+            }
+        }
+        peer_drains(&st.body, out);
+    }
+}
+
+const DIM_BOUND_MASK: u64 = (1 << ktpu_isa::unit::vector::DIM_BOUND_BITS) - 1;
+
 /// `peer(OFF, ack=UNIT, mesh=M, fin=UNIT, count=1)`: a peer drain's
 /// descriptor base (L1.VC.005, .009).
 pub fn peer_base(r: &Reader, st: &Stmt, call: &Term, units: Option<&dyn Units>) -> Result<u64> {

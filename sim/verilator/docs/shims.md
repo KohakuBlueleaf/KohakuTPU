@@ -97,8 +97,29 @@ Reporting peak occupancy alongside the ordering check found it immediately:
 Assuming symmetry — the obvious move — leaves the async cell wrong by one.
 
 The lesson generalises: **a cross-check must measure every property the design
-depends on, not just the one that is easy to check.** Ordering, capacity, and
-(still outstanding) reset-during-traffic are three separate measurements.
+depends on, not just the one that is easy to check.** Ordering, capacity,
+first-word latency and (still outstanding) reset-during-traffic are separate
+measurements.
+
+**First-word latency.** The sync shim ports XPM's fwft stage FSM
+(`xpm_fifo.sv` `gen_fwft`, READ_MODE 1): a word written into the empty FIFO at
+edge W is readable from edge W+3, and a pop issued before that is ignored. The
+bench writes one word into the empty FIFO, pops on the edge before it shows,
+and requires it visible after 2 edges and still present once:
+
+| Cell | real (xsim) | shim |
+|---|---|---|
+| `xpm_fifo_sync`, first word | 2 edges, early pop ignored | 2 edges, early pop ignored |
+| `xpm_fifo_async` 7/11 ns clocks, first word | 71.5 ns after the write edge | 71.5 ns |
+
+The async shim's read side is XPM's: the gray-synchronised write pointer is
+registered, the array's empty flag is registered from it, and the same fwft
+stage FSM sits behind it; the array fills at DEPTH-1, so the two stages bring
+capacity to DEPTH+1.
+
+A reader that pops on a timing guess instead of `rd_busy` is exposed by it:
+`mag_ilink`'s outbound loads a one-beat flit packet two edges after its only
+write (ISSUES row 14 in `measurements/`).
 
 ## Still unvalidated
 

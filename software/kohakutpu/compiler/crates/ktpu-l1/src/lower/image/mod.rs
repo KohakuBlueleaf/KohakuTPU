@@ -50,6 +50,8 @@ pub struct Encoder<'a> {
     pub entry: State,
     pub units: Option<&'a dyn Units>,
     pub config: usize,
+    /// Far peer drains encoded as two (L1.VC.010).
+    pub split: Splits,
 }
 
 type Words = Vec<u64>;

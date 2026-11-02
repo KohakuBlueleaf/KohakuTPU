@@ -86,4 +86,7 @@ pub struct Engine {
 pub struct Il {
     pub slots: u32,
     pub meshes: u32,
+    /// Flits one interlink packet carries: a far burst goes as packets of
+    /// this many, the last holding the rest.
+    pub packet_beats: u32,
 }

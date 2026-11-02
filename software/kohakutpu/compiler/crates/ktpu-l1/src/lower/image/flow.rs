@@ -17,6 +17,7 @@ impl<'a> Encoder<'a> {
             entry,
             units,
             config: 0,
+            split: Splits::new(),
         }
     }
 
@@ -144,13 +145,20 @@ impl<'a> Encoder<'a> {
                     return Err(self.fail(st, "L1.IMG.020", "ainc aN += BYTES"));
                 }
                 if let Some(Term::AddAssign(lhs, _)) = st.args.first() {
-                    done.insert(self.numbered(st, lhs, "a", self.facts.descriptors)?);
+                    let ad = self.numbered(st, lhs, "a", self.facts.descriptors)?;
+                    done.insert(ad);
+                    if let Some(s) = self.split.get(&ad) {
+                        done.insert(s.spare);
+                    }
                 }
             } else if st.op == "vfill" || st.op == "vdrain" {
                 let arrow = if st.op == "vfill" { "->" } else { "<-" };
                 let (ad, _, flags) = self.dma(st, arrow, &["signal"])?;
-                if flags.contains("rel") && !done.contains(&ad) && !out.contains(&ad) {
-                    out.push(ad);
+                let spare = self.split.get(&ad).filter(|_| st.op == "vdrain");
+                for d in std::iter::once(ad).chain(spare.map(|s| s.spare)) {
+                    if flags.contains("rel") && !done.contains(&d) && !out.contains(&d) {
+                        out.push(d);
+                    }
                 }
             }
             if !st.body.is_empty() {

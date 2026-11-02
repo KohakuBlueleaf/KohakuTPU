@@ -48,13 +48,15 @@ module xpm_fifo_async #(
     input  wire                        injectdbiterr,
     input  wire                        sleep
 );
-    // CAPACITY IS DEPTH+1 -- one, where the sync cell carries two. MEASURED on
+    // CAPACITY IS DEPTH+1: the array fills at DEPTH-1 (XPM's going_full looks
+    // two ahead) and the two fwft stages hold two more. MEASURED on
     // sim/verilator/examples/vlt_async_fifo_tb.v: the Xilinx cell peaks at 33
-    // words in flight at FIFO_WRITE_DEPTH 32, so this is not assumed symmetric
-    // with xpm_fifo_sync. Getting it wrong either way breaks a credit scheme.
-    localparam integer CAP  = FIFO_WRITE_DEPTH + 1;
-    localparam integer AW   = $clog2(CAP);
+    // words in flight at FIFO_WRITE_DEPTH 32. Getting it wrong either way breaks
+    // a credit scheme.
+    localparam integer CAP  = FIFO_WRITE_DEPTH - 1;
+    localparam integer AW   = $clog2(FIFO_WRITE_DEPTH + 1);
     localparam integer MEMD = 1 << AW;
+    localparam integer INV = 0, S2 = 1, S1 = 2, BOTH = 3;
 
     initial begin
         if (READ_MODE != "fwft")
@@ -91,9 +93,42 @@ module xpm_fifo_async #(
     reg [AW:0] wg_meta [0:CDC_SYNC_STAGES-1];
     reg [AW:0] rg_meta [0:CDC_SYNC_STAGES-1];
     integer i;
+    wire [AW:0] wgray_rd = wg_meta[CDC_SYNC_STAGES-1];
+    wire [AW:0] rgray_wr = rg_meta[CDC_SYNC_STAGES-1];
 
     wire do_wr = wr_en && !full;
-    wire do_rd = rd_en && !empty;
+
+    // Read side as xpm_fifo.sv: the synchronised write pointer is registered
+    // (wpr_gray_reg), the array's empty flag is registered from it, and the
+    // fwft stages behind it are the sync cell's FSM. A word written at a write
+    // edge is readable four read edges after it reaches the synchroniser.
+    reg  [AW:0] wbin_rd = {AW+1{1'b0}};
+    reg         ram_empty = 1'b1;
+    reg  [1:0]  st = INV;
+    reg  [READ_DATA_WIDTH-1:0] s1, s2 = {READ_DATA_WIDTH{1'b0}};
+    reg         emp = 1'b1;
+    reg  [1:0]  nst;
+    reg         do_rd, regout;
+    always @(*) begin
+        case (st)
+            INV: begin
+                nst = ram_empty ? INV : S1;
+                do_rd = !ram_empty; regout = 1'b0;
+            end
+            S1: begin
+                nst = ram_empty ? S2 : BOTH;
+                do_rd = !ram_empty; regout = 1'b1;
+            end
+            S2: begin
+                nst = rd_en ? (ram_empty ? INV : S1) : (ram_empty ? S2 : BOTH);
+                do_rd = !ram_empty; regout = 1'b0;
+            end
+            default: begin
+                nst = (ram_empty && rd_en) ? S2 : BOTH;
+                do_rd = !ram_empty && rd_en; regout = rd_en;
+            end
+        endcase
+    end
 
     always @(posedge wr_clk) begin
         if (rst) begin
@@ -109,12 +144,24 @@ module xpm_fifo_async #(
 
     always @(posedge rd_clk) begin
         if (rst) begin
-            rbin  <= {AW+1{1'b0}};
-            rgray <= {AW+1{1'b0}};
+            rbin      <= {AW+1{1'b0}};
+            rgray     <= {AW+1{1'b0}};
+            wbin_rd   <= {AW+1{1'b0}};
+            ram_empty <= 1'b1;
+            st        <= INV;
+            emp       <= 1'b1;
         end
-        else if (do_rd) begin
-            rbin  <= rbin + 1'b1;
-            rgray <= bin2gray(rbin + 1'b1);
+        else begin
+            if (do_rd) begin
+                s1    <= mem[rbin[AW-1:0]];
+                rbin  <= rbin + 1'b1;
+                rgray <= bin2gray(rbin + 1'b1);
+            end
+            if (regout) s2 <= s1;
+            wbin_rd   <= gray2bin(wgray_rd);
+            ram_empty <= (wbin_rd == rbin) || ((wbin_rd == rbin + 1'b1) && do_rd);
+            st        <= nst;
+            emp       <= ((st == S2) && rd_en) || ((st != S1) && emp);
         end
     end
 
@@ -134,12 +181,9 @@ module xpm_fifo_async #(
         end
     end
 
-    wire [AW:0] wgray_rd = wg_meta[CDC_SYNC_STAGES-1];
-    wire [AW:0] rgray_wr = rg_meta[CDC_SYNC_STAGES-1];
-
-    assign empty = (gray2bin(wgray_rd) == rbin);
+    assign empty = emp;
     assign full  = ((wbin - gray2bin(rgray_wr)) == CAP[AW:0]);
-    assign dout  = mem[rbin[AW-1:0]];
+    assign dout  = s2;
 
     reg wbusy = 1'b1;
     reg rbusy = 1'b1;

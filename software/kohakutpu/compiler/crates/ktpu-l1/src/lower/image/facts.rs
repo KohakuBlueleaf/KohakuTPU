@@ -24,6 +24,9 @@ pub struct CoreFacts {
     pub ainc_bits: u32,
     /// Whether the unpack and pack engines have a second queue (`vc.dualq`).
     pub dualq: bool,
+    pub l1_words: u32,
+    /// Flits an interlink packet carries (`il.packet_beats`).
+    pub packet_beats: u32,
 }
 
 impl CoreFacts {
@@ -40,6 +43,8 @@ impl CoreFacts {
             vlmax: m.vc.vlmax,
             ainc_bits: m.vc.ainc_bits,
             dualq: m.vc.dualq != 0,
+            l1_words: m.vc.l1_words,
+            packet_beats: m.il.packet_beats,
         }
     }
 }

@@ -136,7 +136,8 @@ pub struct Images<'a> {
     reader: Reader,
     macros: indexmap::IndexMap<String, (Vec<String>, Vec<Stmt>)>,
     plans: HashMap<String, Plan>,
-    encoded: HashMap<(String, Vec<i128>), (ImageWords, Descs)>,
+    rests: HashMap<(String, Vec<i128>), (Rc<Vec<Stmt>>, Descs)>,
+    encoded: HashMap<(String, Vec<i128>, Vec<(u32, Split)>), ImageWords>,
 }
 
 impl<'a> Images<'a> {
@@ -162,6 +163,7 @@ impl<'a> Images<'a> {
             reader: module.reader(),
             macros: module.macro_table(),
             plans: HashMap::new(),
+            rests: HashMap::new(),
             encoded: HashMap::new(),
         })
     }
@@ -245,7 +247,7 @@ impl<'a> Images<'a> {
             name.to_string(),
             plan.keys.iter().map(|i| args[*i]).collect::<Vec<_>>(),
         );
-        if !self.encoded.contains_key(&key) {
+        if !self.rests.contains_key(&key) {
             let mut stmts = expand.stmts(&plan.rest, &env)?;
             let mut lead = Descs::new();
             while stmts.first().is_some_and(|s| s.op == "desc") {
@@ -259,15 +261,27 @@ impl<'a> Images<'a> {
                     "an image's descriptors lead it: they are set before its RUN",
                 ));
             }
-            let mut enc =
-                Encoder::new(&self.reader, &self.isa, &self.facts, self.entry, self.units);
-            let words = enc.encode(&stmts)?;
-            self.encoded.insert(key.clone(), (Rc::new(words), lead));
+            self.rests.insert(key.clone(), (Rc::new(stmts), lead));
         }
-        let (words, lead) = &self.encoded[&key];
+        let (stmts, lead) = self.rests[&key].clone();
         let mut all = descs;
         all.extend(lead.iter().map(|(k, v)| (*k, *v)));
-        Ok((words.clone(), all))
+
+        // The split depends on descriptor values, which may come from
+        // arguments the words do not otherwise read.
+        let split = far_splits(&self.reader, &stmts[..], &all, &self.facts)?;
+        let wkey = (key.0, key.1, split.iter().map(|(a, s)| (*a, *s)).collect());
+        if !self.encoded.contains_key(&wkey) {
+            let mut enc =
+                Encoder::new(&self.reader, &self.isa, &self.facts, self.entry, self.units);
+            enc.split = split.clone();
+            let words = enc.encode(&stmts[..])?;
+            self.encoded.insert(wkey.clone(), Rc::new(words));
+        }
+        Ok((
+            self.encoded[&wkey].clone(),
+            split_descs(&all, &split, &self.facts),
+        ))
     }
 }
 

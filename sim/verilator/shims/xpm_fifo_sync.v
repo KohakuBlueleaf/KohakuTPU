@@ -60,34 +60,67 @@ module xpm_fifo_sync #(
             $fatal(1, "xpm_fifo_sync shim: USE_ADV_FEATURES=%b not modelled", USE_ADV_FEATURES);
     end
 
-    // CAPACITY IS DEPTH+2, NOT DEPTH. In fwft the real cell carries two words in
-    // output stages beyond the array, so it accepts DEPTH+2 before `full`.
-    // MEASURED, both simulators on sim/verilator/examples/vlt_sync_fifo_tb.v:
-    // the Xilinx cell peaks at 18 words in flight for FIFO_WRITE_DEPTH 16, this
-    // shim peaked at 16 before the fix. Two words shallow is not a margin issue
-    // -- mag_link sizes link credit against the real depth, so the sender pushes
-    // credit the FIFO cannot hold and the link deadlocks with no error.
-    localparam integer CAP = FIFO_WRITE_DEPTH + 2;
+    // The array plus XPM's two fwft output stages (xpm_fifo.sv gen_fwft, READ_MODE
+    // 1): stage 1 is the memory's read register, stage 2 the output register.
+    // Capacity is therefore DEPTH+2, and a word written into an empty FIFO at
+    // edge W is readable only from edge W+3 (ram_empty clears at W, the stage
+    // FSM leaves `invalid` at W+1, `empty` clears at W+2); a pop before that is
+    // ignored. Both are measured against the real cell by vlt_sync_fifo_tb.v.
+    localparam integer INV = 0, S2 = 1, S1 = 2, BOTH = 3;
 
-    reg [WRITE_DATA_WIDTH-1:0] mem [0:CAP-1];
+    reg [WRITE_DATA_WIDTH-1:0] mem [0:FIFO_WRITE_DEPTH-1];
     reg [31:0] wptr = 32'd0, rptr = 32'd0, cnt = 32'd0;
+    reg [1:0]  st = INV;
+    reg [READ_DATA_WIDTH-1:0] s1, s2 = {READ_DATA_WIDTH{1'b0}};
+    reg        emp = 1'b1;
 
-    wire do_wr = wr_en && !full;
-    wire do_rd = rd_en && !empty;
+    wire ram_empty = (cnt == 32'd0);
+    wire do_wr     = wr_en && !full;
+
+    reg [1:0] nst;
+    reg       ram_rd, regout;
+    always @(*) begin
+        case (st)
+            INV: begin
+                nst = ram_empty ? INV : S1;
+                ram_rd = !ram_empty; regout = 1'b0;
+            end
+            S1: begin
+                nst = ram_empty ? S2 : BOTH;
+                ram_rd = !ram_empty; regout = 1'b1;
+            end
+            S2: begin
+                nst = rd_en ? (ram_empty ? INV : S1) : (ram_empty ? S2 : BOTH);
+                ram_rd = !ram_empty; regout = 1'b0;
+            end
+            default: begin
+                nst = (ram_empty && rd_en) ? S2 : BOTH;
+                ram_rd = !ram_empty && rd_en; regout = rd_en;
+            end
+        endcase
+    end
 
     always @(posedge wr_clk) begin
         if (rst) begin
             wptr <= 32'd0;
             rptr <= 32'd0;
             cnt  <= 32'd0;
+            st   <= INV;
+            emp  <= 1'b1;
         end
         else begin
             if (do_wr) begin
                 mem[wptr] <= din;
-                wptr <= (wptr == CAP - 1) ? 32'd0 : wptr + 32'd1;
+                wptr <= (wptr == FIFO_WRITE_DEPTH - 1) ? 32'd0 : wptr + 32'd1;
             end
-            if (do_rd) rptr <= (rptr == CAP - 1) ? 32'd0 : rptr + 32'd1;
-            cnt <= cnt + (do_wr ? 32'd1 : 32'd0) - (do_rd ? 32'd1 : 32'd0);
+            if (ram_rd) begin
+                s1   <= mem[rptr];
+                rptr <= (rptr == FIFO_WRITE_DEPTH - 1) ? 32'd0 : rptr + 32'd1;
+            end
+            if (regout) s2 <= s1;
+            cnt <= cnt + (do_wr ? 32'd1 : 32'd0) - (ram_rd ? 32'd1 : 32'd0);
+            st  <= nst;
+            emp <= ((st == S2) && rd_en) || ((st != S1) && emp);
         end
     end
 
@@ -96,9 +129,9 @@ module xpm_fifo_sync #(
     reg busy = 1'b1;
     always @(posedge wr_clk) busy <= rst;
 
-    assign full  = (cnt == CAP);
-    assign empty = (cnt == 32'd0);
-    assign dout  = mem[rptr];
+    assign full  = (cnt == FIFO_WRITE_DEPTH);
+    assign empty = emp;
+    assign dout  = s2;
 
     assign wr_rst_busy = busy;
     assign rd_rst_busy = busy;
@@ -108,8 +141,8 @@ module xpm_fifo_sync #(
     assign underflow   = 1'b0;
     assign wr_ack      = 1'b0;
     assign data_valid  = 1'b0;
-    assign rd_data_count = cnt[$clog2(FIFO_WRITE_DEPTH):0];
-    assign wr_data_count = cnt[$clog2(FIFO_WRITE_DEPTH):0];
+    assign rd_data_count = cnt[$clog2(FIFO_WRITE_DEPTH):0] + {{$clog2(FIFO_WRITE_DEPTH){1'b0}}, st[0]} + {{$clog2(FIFO_WRITE_DEPTH){1'b0}}, st[1]};
+    assign wr_data_count = rd_data_count;
 
 endmodule
 

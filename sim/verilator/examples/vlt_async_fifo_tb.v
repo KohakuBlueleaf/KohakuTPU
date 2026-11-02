@@ -16,6 +16,7 @@ module vlt_async_fifo_tb;
     localparam integer DW    = 32;
     localparam integer DEPTH = 32;
     localparam integer N     = 512;
+    localparam real    FIRST_NS = 71.5;
 
     reg wr_clk = 1'b0;
     reg rd_clk = 1'b0;
@@ -55,6 +56,7 @@ module vlt_async_fifo_tb;
     integer wtick = 0;
     integer rtick = 0;
     integer max_level = 0;
+    real    probe_t   = 0.0;
 
     initial begin
         wr_rst = 1'b1;
@@ -75,6 +77,16 @@ module vlt_async_fifo_tb;
                 wr_en = 1'b0;
             end
         end
+        @(negedge wr_clk);
+        wr_en = 1'b0;
+
+        // First-word latency: one word into the drained FIFO.
+        wait (got == N);
+        repeat (40) @(negedge wr_clk);
+        wr_data = 32'hA5A5_0001;
+        wr_en   = 1'b1;
+        @(posedge wr_clk);
+        probe_t = $realtime;
         @(negedge wr_clk);
         wr_en = 1'b0;
     end
@@ -102,7 +114,20 @@ module vlt_async_fifo_tb;
         @(negedge rd_clk);
         rd_en = 1'b0;
 
+        wait (probe_t > 0.0);
+        while (rd_empty) @(negedge rd_clk);
+        if (rd_data !== 32'hA5A5_0001) begin
+            errors = errors + 1;
+            $display("  FAIL first word %h", rd_data);
+        end
+        // FIRST_NS is the real cell's, measured under xsim at these clocks.
+        if ($realtime - probe_t != FIRST_NS) begin
+            errors = errors + 1;
+            $display("  FAIL first word after %0.1f ns, want %0.1f", $realtime - probe_t, FIRST_NS);
+        end
+
         $display("========================================");
+        $display("  first word readable %0.1f ns after its write edge", $realtime - probe_t);
         // REPORTED, not asserted: peak in flight must MATCH the real cell, which
         // is what catches a shim that is a word or two shallow.
         $display("  peak occupancy %0d of %0d", max_level, DEPTH);
