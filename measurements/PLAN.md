@@ -49,7 +49,7 @@ Every experiment ends in a picture under `figures/` and its raw table under
 | H2 | Stage bars over the corpus; per-kernel prebuild times | Scaling scatter |
 | F1 | Every launch of every run | |
 | F2 | LeNet and ViT step records | |
-| F3 | The OS on the card over XDMA: primitives, trap path, dispatch paths, one die at low, mid, ship, both boards, and four dies at mid; two tinygrad captures on every path beside firmware, both boards, all clocks; projection a step | LeNet on the OS path, `ISSUES.md` 24; OS across dies on 2+2; replay across dies |
+| F3 | The OS on the card over XDMA: primitives, trap path, dispatch paths, one die at low, mid, ship, both boards, and four dies at mid; two tinygrad captures on every path beside firmware, both boards, all clocks; projection a step; LeNet replay on the OS path, both boards; OS across four dies on 2+2 | Replay across dies; OS across dies on 4+2, `ISSUES.md` 21 |
 | U1 | Every unit, every launch | |
 | U2 | Vector stalls and cluster sequencer states on the traced model, over whole runs of small kernels | Stalls per kernel; any kernel past 30 k cycles |
 | M1 | Stride, footprint, direction, agents, four start offsets, three clocks | Mover against vector at once |
@@ -58,6 +58,16 @@ Every experiment ends in a picture under `figures/` and its raw table under
 | Z3 | MLP, LeNet, ViT, Mixer, GRU, GPT, wide on 2+2 and 4+2, at low, mid and ship, eager and TinyJit, 84 runs; vector memory grid; tinygrad models on four nodes; six L1 multi-node examples; the OS on four dies | 6+2, which has no bitstream; distributed tinygrad, which the stack does not do, `ISSUES.md` 13 |
 | W1 | Serial floors and detectors for every run | Hand L1 floors |
 | E1 | LeNet and ViT by kernel and kind | |
+
+## A round
+
+Each later round tags its runs with the zoo's tags, `z` replaced by the round's name:
+`c1`, `c1j`, `c1l`, `c1jl`. `tools/host_round.py` on the host adds the timed model and
+the detectors and packs each finished trace into `data/`; `MEASURE_ROUND=c1
+tools/build_round.py` then writes the round's tables, figures, comparison against commit
+56021fd4 and index under `rounds/c1/`. `bringup read-clocks` saves all four dies'
+readbacks to `build/bringup/<board>/read-clocks.json`; a run carries them in
+`PERF_CLOCKS`, and one whose dies differ reads as clock `mixed`.
 
 ## Rules of the round
 

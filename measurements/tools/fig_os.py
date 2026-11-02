@@ -1,12 +1,14 @@
 """What a launch costs on each dispatch path, what that path would cost a step, and where
-the OS kernel's own cycles go. Every number is this zoo's on silicon: the firmware row
-from the grid, the OS rows from `data/os`, one die at low."""
+the OS kernel's own cycles go. Every number is this zoo's on silicon, one die at low: the
+firmware row from the MLP run, the OS rows from `data/os`."""
 
 import csv
 import json
+import statistics
 
 import matplotlib.pyplot as plt
-from style import DATA, SECOND, SERIES, save
+from runs import load, run_name
+from style import DATA, SECOND, SERIES, TABLES, save
 
 STAGES = ("enter", "save", "to_c", "call", "poll", "schedule", "to_resume", "out")
 CALLS = ("self", "yield", "send_here", "recv_ready")
@@ -63,13 +65,26 @@ def measures(run: str) -> dict[str, int]:
     return doc["measures"]["0"]
 
 
+def firmware_launch() -> int:
+    """The median launch's head, bind and barrier, MLP at low: this round's, the zoo's
+    in a round that did not run low."""
+    name = run_name("mlp", "zl", "multimesh_v9t6")
+    name = name if (DATA / name).exists() else "mlp.zl.multimesh_v9t6.1n"
+    step = load(name).step
+    return int(statistics.median(r["head"] + r["bind"] + r["barrier"] for r in step))
+
+
 def path_rows() -> list[tuple[str, int, str]]:
     """(label, cycles a launch, source)."""
     mail, engine = measures("t6low.all"), measures("t6low.engine")
     round_mail = measures("t6low.kdsmg")["kdsmg.round_cycles"]
     round_engine = measures("t6low.kdsmge")["kdsmg.round_cycles"]
     return [
-        ("firmware, host-lowered package (head, bind, barrier)", 1219, "firmware"),
+        (
+            "firmware, host-lowered package (head, bind, barrier)",
+            firmware_launch(),
+            "firmware",
+        ),
         ("kernel, MG mailbox round", mail["mg.mailbox_round_cycles"], "kernel"),
         ("kernel, MG engine round", engine["mg.engine_round_cycles"], "kernel"),
         ("dispatcher, one-task graph", mail["kdsbench.one"], "dispatcher"),
@@ -90,7 +105,7 @@ COLORS = {
 
 
 def launches() -> list[tuple[str, int, int]]:
-    with (DATA / "zoo.csv").open(encoding="utf-8") as f:
+    with (TABLES / "zoo.csv").open(encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     return [
         (f"{r['model']} {r['mode']}", int(r["launches"]), int(r["cycles"]))
@@ -119,7 +134,7 @@ def projection() -> None:
     rows = sorted(launches(), key=lambda r: r[2])
     mail, engine = measures("t6low.all"), measures("t6low.engine")
     chosen = (
-        (1219, "firmware"),
+        (firmware_launch(), "firmware"),
         (engine["mg.engine_round_cycles"], "kernel engine"),
         (mail["kdsbench.chain"], "chain task"),
         (mail["kdsbench.one"], "one-task graph"),

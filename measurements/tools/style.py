@@ -1,5 +1,6 @@
 """One look for every figure: the palette, marks and helpers the plot scripts share."""
 
+import os
 import pathlib
 
 import matplotlib
@@ -7,9 +8,17 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-FIGURES = ROOT / "figures"
+REPO = pathlib.Path(__file__).resolve().parents[2]
+#: The measurements tree: this repo's, or a scratch copy for a dry run.
+ROOT = pathlib.Path(os.environ.get("MEASURE_ROOT", REPO / "measurements"))
+#: The run tag this pass reads: `z` the committed zoo, another prefix a later round.
+#: A round's tags are the zoo's with `z` replaced: `c1`, `c1j`, `c1l`, `c1jl`.
+ROUND = os.environ.get("MEASURE_ROUND", "z")
 DATA = ROOT / "data"
+#: A round's own figures, tables and index, beside the zoo's and never over them.
+HOME = ROOT if ROUND == "z" else ROOT / "rounds" / ROUND
+FIGURES = HOME / "figures"
+TABLES = HOME / "data"
 
 SURFACE, INK, SECOND, MUTED = "#fcfcfb", "#0b0b0b", "#52514e", "#898781"
 GRID, AXIS = "#e1e0d9", "#c3c2b7"

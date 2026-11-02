@@ -1,6 +1,8 @@
 """The waste detectors on traces whose waste is known: each must find what was put
 in, and nothing in a trace without it."""
 
+import json
+
 import traces
 import waste
 
@@ -99,9 +101,74 @@ def test_the_step_is_the_repeat_not_what_follows():
     assert traces.period(list("abcd")) == (0, 0)
 
 
+def test_the_step_is_whole_not_a_block_inside_it():
+    forward = list("p") + list("abcd") * 12 + list("q")
+    names = list("xy") + forward * 2 + list("zz")
+    assert traces.period(names) == (2 + len(forward), len(forward))
+
+
+def test_steps_that_differ_in_a_few_kernels_are_one_step():
+    first = list("uvwxyzabcdefghijklmnop")
+    second = list(first)
+    second[3], second[17] = "1", "2"
+    names = first + second + list("rs")
+    assert traces.period(names) == (len(first), len(first))
+
+
+def test_more_repeats_than_asked_steps_are_blocks_of_one_step():
+    cold = list("xy") + list("abcdef") * 4
+    warm = list("pq") * 12
+    names = cold + warm + list("z")
+    assert traces.period(names) == (len(cold) + 22, 2)
+    assert traces.period(names, 2) == (len(cold), 24)
+
+
+def test_a_repeat_far_from_the_end_is_not_the_step():
+    names = list("uvwxyz") * 2 + list("abcdefghijklmnop")
+    assert traces.period(names) == (0, 0)
+
+
+def test_the_steps_asked_read_from_a_runs_arguments():
+    assert traces.planned(["--inputs", "10", "--board", "b", "--inputs", "2"]) == 2
+    assert traces.planned(["--steps", "3"]) == 3
+    assert traces.planned(["--board", "b"]) is None
+
+
+def test_a_run_of_many_steps_reads_one_step():
+    names = list("xy") + list("abcdef") * 9 + list("z")
+    assert traces.repeats(names) == (2, 9, 6)
+    assert traces.period(names) == (50, 6)
+
+
+def test_a_finding_past_the_step_is_not_the_steps(tmp_path):
+    (tmp_path / "kernels").mkdir()
+    runs = [("a", 100, 200), ("b", 200, 300)] * 2 + [("e", 100, 600)] * 2
+    timed = dict(cycles=1000.0, floor=dict(mg=1, vc=1, read=1, write=1))
+    rows, table = [], []
+    for name, read, write in runs:
+        rows.append(dict(name=name, kind="dsl", binds=dict(r=read, w=write)))
+        table.append(dict(timed, name=name))
+        (tmp_path / "kernels" / f"{name}.l2").write_text(
+            "fn t.l2(r: f16[4] @dram, w: f16[4] @dram)\n    copy w <- r\n", "utf-8"
+        )
+    text = "\n".join(json.dumps(r) for r in rows)
+    (tmp_path / "launches.jsonl").write_text(text, "utf-8")
+    text = "\n".join(json.dumps(r) for r in table)
+    (tmp_path / "timed.m.jsonl").write_text(text, "utf-8")
+    (tmp_path / "meta.json").write_text(json.dumps(dict(args=[])), "utf-8")
+    report = waste.report(tmp_path, "m")
+    assert report["step_launches"] == 2
+    assert [f["launch"] for f in report["findings"]] == [3]
+
+
 def test_writes_read_the_kernel_text():
     l2 = "fn t.l2(a: f16[4] @dram, b: f16[4] @dram)\n    quant b <- a\n"
     assert traces.writes(l2, ("a", "b")) == {"b"}
     assert traces.params(l2)["a"].bytes == 8
     l2 = "fn t.l2(a: f16[4] @dram, b: f16[4] @dram)\n    drain acc -> b[0 : +4]\n"
     assert traces.writes(l2, ("a", "b")) == {"b"}
+    for op in ("store", "scatter", "gather"):
+        l2 = f"fn t.l2(a: f16[4] @dram, b: f16[4] @dram)\n    {op} b[0 : +4] <- a\n"
+        assert traces.writes(l2, ("a", "b")) == {"b"}
+    l2 = "fn t.l2(a: f16[4] @dram)\n    h1 = fill a[0 : +4]  : f16[4] @vc\n"
+    assert traces.writes(l2, ("a",)) == set()

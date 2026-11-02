@@ -1,0 +1,2375 @@
+{
+  "workload": "vit",
+  "backend": "compare",
+  "board": "card_v9t6_4n_solo",
+  "card_board": "multimesh_v9t6",
+  "shared_bytes": 0,
+  "mode": "jtag",
+  "profile": "mid",
+  "bit_exact": true,
+  "launches": 24,
+  "os": {
+    "cold_cycles": 1087637,
+    "retained_cycles": 633825,
+    "submissions_per_step": 1,
+    "tasks": 73,
+    "wire_bytes": 182752,
+    "load_seconds": 0.021929723996436223,
+    "paint_seconds": 0.010358565996284597,
+    "run_seconds": 0.30518440299783833,
+    "results": [
+      {
+        "cycles": 1087637,
+        "completed": 1,
+        "submissions": 1,
+        "passes": 1,
+        "waits": 0,
+        "tasks": 73,
+        "unit_batches": 0,
+        "msgs_in": 1,
+        "msgs_out": 1,
+        "cyc_msgs": 447179,
+        "cyc_run": 648937,
+        "cyc_issue": 139,
+        "cyc_retire": 560,
+        "cyc_send": 752,
+        "cyc_event": 7888,
+        "outputs": [
+          "16b660b848b952b626bc74282ab149bcbbba24b873b4e6202ebb33b3dcb52ab6aeb636ba32b9cbb68ab676bc3cb840bb1bb804af87acceb811b60cb6b8b328b2aa2c85acb42d60b504a832b61b2eceb73ab880b8c0b732b5adb6f8b88cb6da3407b280309eb15537bc304a30d7b2d5b9f728dc2a5a3a4735a5b6d033322fad2b14306ca9e1b01c2f3eb84e387a358db866b578a440331a3851b673345530612f742d67b4b0b0002d122ee2b8aca684b6d09e5236e63626ae113002302634fa34a838f236c33870319337172fc73820217ca55cab78250632a92d4eaf392e803afc342c393f35b73b32392239bd3435b34f387a38313da73aa42df839e2388938"
+        ],
+        "stamps": [
+          [
+            12468021,
+            0,
+            0,
+            0
+          ],
+          [
+            12488702,
+            2,
+            0,
+            1
+          ],
+          [
+            12494138,
+            3,
+            0,
+            2
+          ],
+          [
+            12524366,
+            5,
+            0,
+            3
+          ],
+          [
+            12530005,
+            6,
+            0,
+            4
+          ],
+          [
+            12552550,
+            8,
+            0,
+            5
+          ],
+          [
+            12557946,
+            9,
+            0,
+            6
+          ],
+          [
+            12575876,
+            11,
+            0,
+            7
+          ],
+          [
+            12581050,
+            12,
+            0,
+            8
+          ],
+          [
+            12605619,
+            14,
+            0,
+            9
+          ],
+          [
+            12610790,
+            15,
+            0,
+            10
+          ],
+          [
+            12629567,
+            17,
+            0,
+            11
+          ],
+          [
+            12634854,
+            18,
+            0,
+            12
+          ],
+          [
+            12653403,
+            20,
+            0,
+            13
+          ],
+          [
+            12658918,
+            21,
+            0,
+            14
+          ],
+          [
+            12673651,
+            23,
+            0,
+            15
+          ],
+          [
+            12689013,
+            25,
+            0,
+            16
+          ],
+          [
+            12709343,
+            27,
+            0,
+            17
+          ],
+          [
+            12714650,
+            28,
+            0,
+            18
+          ],
+          [
+            12730253,
+            30,
+            0,
+            19
+          ],
+          [
+            12735486,
+            31,
+            0,
+            20
+          ],
+          [
+            12757158,
+            33,
+            0,
+            21
+          ],
+          [
+            12762433,
+            34,
+            0,
+            22
+          ],
+          [
+            12777039,
+            36,
+            0,
+            23
+          ],
+          [
+            12782565,
+            37,
+            0,
+            24
+          ],
+          [
+            12798596,
+            39,
+            0,
+            25
+          ],
+          [
+            12804470,
+            40,
+            0,
+            26
+          ],
+          [
+            12823517,
+            42,
+            0,
+            27
+          ],
+          [
+            12829151,
+            43,
+            0,
+            28
+          ],
+          [
+            12851499,
+            45,
+            0,
+            29
+          ],
+          [
+            12857245,
+            46,
+            0,
+            30
+          ],
+          [
+            12873350,
+            48,
+            0,
+            31
+          ],
+          [
+            12878981,
+            49,
+            0,
+            32
+          ],
+          [
+            12894299,
+            51,
+            0,
+            33
+          ],
+          [
+            12899899,
+            52,
+            0,
+            34
+          ],
+          [
+            12920616,
+            54,
+            0,
+            35
+          ],
+          [
+            12926859,
+            55,
+            0,
+            36
+          ],
+          [
+            12946208,
+            57,
+            0,
+            37
+          ],
+          [
+            12951766,
+            58,
+            0,
+            38
+          ],
+          [
+            12984254,
+            60,
+            0,
+            39
+          ],
+          [
+            12989958,
+            61,
+            0,
+            40
+          ],
+          [
+            13009541,
+            63,
+            0,
+            41
+          ],
+          [
+            13015538,
+            64,
+            0,
+            42
+          ],
+          [
+            13035362,
+            66,
+            0,
+            43
+          ],
+          [
+            13041107,
+            67,
+            0,
+            44
+          ],
+          [
+            13076009,
+            69,
+            0,
+            45
+          ],
+          [
+            13081673,
+            70,
+            0,
+            46
+          ],
+          [
+            13099239,
+            72,
+            0,
+            47
+          ]
+        ],
+        "syscall_profile": null,
+        "launch_ring": [],
+        "step_ring": null
+      },
+      {
+        "cycles": 633825,
+        "completed": 1,
+        "submissions": 1,
+        "passes": 1,
+        "waits": 0,
+        "tasks": 73,
+        "unit_batches": 0,
+        "msgs_in": 1,
+        "msgs_out": 1,
+        "cyc_msgs": 13628,
+        "cyc_run": 629173,
+        "cyc_issue": 139,
+        "cyc_retire": 570,
+        "cyc_send": 753,
+        "cyc_event": 9350800,
+        "outputs": [
+          "16b660b848b952b626bc74282ab149bcbbba24b873b4e6202ebb33b3dcb52ab6aeb636ba32b9cbb68ab676bc3cb840bb1bb804af87acceb811b60cb6b8b328b2aa2c85acb42d60b504a832b61b2eceb73ab880b8c0b732b5adb6f8b88cb6da3407b280309eb15537bc304a30d7b2d5b9f728dc2a5a3a4735a5b6d033322fad2b14306ca9e1b01c2f3eb84e387a358db866b578a440331a3851b673345530612f742d67b4b0b0002d122ee2b8aca684b6d09e5236e63626ae113002302634fa34a838f236c33870319337172fc73820217ca55cab78250632a92d4eaf392e803afc342c393f35b73b32392239bd3435b34f387a38313da73aa42df839e2388938"
+        ],
+        "stamps": [
+          [
+            22481751,
+            73,
+            0,
+            0
+          ],
+          [
+            22502341,
+            75,
+            0,
+            1
+          ],
+          [
+            22507681,
+            76,
+            0,
+            2
+          ],
+          [
+            22533427,
+            78,
+            0,
+            3
+          ],
+          [
+            22538941,
+            79,
+            0,
+            4
+          ],
+          [
+            22561149,
+            81,
+            0,
+            5
+          ],
+          [
+            22566487,
+            82,
+            0,
+            6
+          ],
+          [
+            22584385,
+            84,
+            0,
+            7
+          ],
+          [
+            22589631,
+            85,
+            0,
+            8
+          ],
+          [
+            22613631,
+            87,
+            0,
+            9
+          ],
+          [
+            22618683,
+            88,
+            0,
+            10
+          ],
+          [
+            22636866,
+            90,
+            0,
+            11
+          ],
+          [
+            22642112,
+            91,
+            0,
+            12
+          ],
+          [
+            22660236,
+            93,
+            0,
+            13
+          ],
+          [
+            22665646,
+            94,
+            0,
+            14
+          ],
+          [
+            22680199,
+            96,
+            0,
+            15
+          ],
+          [
+            22695463,
+            98,
+            0,
+            16
+          ],
+          [
+            22715518,
+            100,
+            0,
+            17
+          ],
+          [
+            22720666,
+            101,
+            0,
+            18
+          ],
+          [
+            22735997,
+            103,
+            0,
+            19
+          ],
+          [
+            22741347,
+            104,
+            0,
+            20
+          ],
+          [
+            22762301,
+            106,
+            0,
+            21
+          ],
+          [
+            22767644,
+            107,
+            0,
+            22
+          ],
+          [
+            22782180,
+            109,
+            0,
+            23
+          ],
+          [
+            22787703,
+            110,
+            0,
+            24
+          ],
+          [
+            22803860,
+            112,
+            0,
+            25
+          ],
+          [
+            22809853,
+            113,
+            0,
+            26
+          ],
+          [
+            22828820,
+            115,
+            0,
+            27
+          ],
+          [
+            22834559,
+            116,
+            0,
+            28
+          ],
+          [
+            22854940,
+            118,
+            0,
+            29
+          ],
+          [
+            22860738,
+            119,
+            0,
+            30
+          ],
+          [
+            22876832,
+            121,
+            0,
+            31
+          ],
+          [
+            22882590,
+            122,
+            0,
+            32
+          ],
+          [
+            22897804,
+            124,
+            0,
+            33
+          ],
+          [
+            22903392,
+            125,
+            0,
+            34
+          ],
+          [
+            22923981,
+            127,
+            0,
+            35
+          ],
+          [
+            22930168,
+            128,
+            0,
+            36
+          ],
+          [
+            22949295,
+            130,
+            0,
+            37
+          ],
+          [
+            22954931,
+            131,
+            0,
+            38
+          ],
+          [
+            22984152,
+            133,
+            0,
+            39
+          ],
+          [
+            22989763,
+            134,
+            0,
+            40
+          ],
+          [
+            23009465,
+            136,
+            0,
+            41
+          ],
+          [
+            23015430,
+            137,
+            0,
+            42
+          ],
+          [
+            23034863,
+            139,
+            0,
+            43
+          ],
+          [
+            23040697,
+            140,
+            0,
+            44
+          ],
+          [
+            23071700,
+            142,
+            0,
+            45
+          ],
+          [
+            23077365,
+            143,
+            0,
+            46
+          ],
+          [
+            23094569,
+            145,
+            0,
+            47
+          ]
+        ],
+        "syscall_profile": null,
+        "launch_ring": [],
+        "step_ring": null
+      },
+      {
+        "cycles": 633351,
+        "completed": 1,
+        "submissions": 1,
+        "passes": 1,
+        "waits": 0,
+        "tasks": 73,
+        "unit_batches": 0,
+        "msgs_in": 1,
+        "msgs_out": 1,
+        "cyc_msgs": 13198,
+        "cyc_run": 628890,
+        "cyc_issue": 139,
+        "cyc_retire": 560,
+        "cyc_send": 751,
+        "cyc_event": 9908599,
+        "outputs": [
+          "16b660b848b952b626bc74282ab149bcbbba24b873b4e6202ebb33b3dcb52ab6aeb636ba32b9cbb68ab676bc3cb840bb1bb804af87acceb811b60cb6b8b328b2aa2c85acb42d60b504a832b61b2eceb73ab880b8c0b732b5adb6f8b88cb6da3407b280309eb15537bc304a30d7b2d5b9f728dc2a5a3a4735a5b6d033322fad2b14306ca9e1b01c2f3eb84e387a358db866b578a440331a3851b673345530612f742d67b4b0b0002d122ee2b8aca684b6d09e5236e63626ae113002302634fa34a838f236c33870319337172fc73820217ca55cab78250632a92d4eaf392e803afc342c393f35b73b32392239bd3435b34f387a38313da73aa42df839e2388938"
+        ],
+        "stamps": [
+          [
+            33034129,
+            146,
+            0,
+            0
+          ],
+          [
+            33054763,
+            148,
+            0,
+            1
+          ],
+          [
+            33060132,
+            149,
+            0,
+            2
+          ],
+          [
+            33085869,
+            151,
+            0,
+            3
+          ],
+          [
+            33091401,
+            152,
+            0,
+            4
+          ],
+          [
+            33113559,
+            154,
+            0,
+            5
+          ],
+          [
+            33118788,
+            155,
+            0,
+            6
+          ],
+          [
+            33136594,
+            157,
+            0,
+            7
+          ],
+          [
+            33141844,
+            158,
+            0,
+            8
+          ],
+          [
+            33165927,
+            160,
+            0,
+            9
+          ],
+          [
+            33170993,
+            161,
+            0,
+            10
+          ],
+          [
+            33189270,
+            163,
+            0,
+            11
+          ],
+          [
+            33194515,
+            164,
+            0,
+            12
+          ],
+          [
+            33212589,
+            166,
+            0,
+            13
+          ],
+          [
+            33217981,
+            167,
+            0,
+            14
+          ],
+          [
+            33232531,
+            169,
+            0,
+            15
+          ],
+          [
+            33247782,
+            171,
+            0,
+            16
+          ],
+          [
+            33267806,
+            173,
+            0,
+            17
+          ],
+          [
+            33272954,
+            174,
+            0,
+            18
+          ],
+          [
+            33288400,
+            176,
+            0,
+            19
+          ],
+          [
+            33293813,
+            177,
+            0,
+            20
+          ],
+          [
+            33314777,
+            179,
+            0,
+            21
+          ],
+          [
+            33320052,
+            180,
+            0,
+            22
+          ],
+          [
+            33334652,
+            182,
+            0,
+            23
+          ],
+          [
+            33340181,
+            183,
+            0,
+            24
+          ],
+          [
+            33356275,
+            185,
+            0,
+            25
+          ],
+          [
+            33362272,
+            186,
+            0,
+            26
+          ],
+          [
+            33381130,
+            188,
+            0,
+            27
+          ],
+          [
+            33386957,
+            189,
+            0,
+            28
+          ],
+          [
+            33407411,
+            191,
+            0,
+            29
+          ],
+          [
+            33413204,
+            192,
+            0,
+            30
+          ],
+          [
+            33429456,
+            194,
+            0,
+            31
+          ],
+          [
+            33435219,
+            195,
+            0,
+            32
+          ],
+          [
+            33450343,
+            197,
+            0,
+            33
+          ],
+          [
+            33455938,
+            198,
+            0,
+            34
+          ],
+          [
+            33476419,
+            200,
+            0,
+            35
+          ],
+          [
+            33482611,
+            201,
+            0,
+            36
+          ],
+          [
+            33501809,
+            203,
+            0,
+            37
+          ],
+          [
+            33507449,
+            204,
+            0,
+            38
+          ],
+          [
+            33536705,
+            206,
+            0,
+            39
+          ],
+          [
+            33542367,
+            207,
+            0,
+            40
+          ],
+          [
+            33561466,
+            209,
+            0,
+            41
+          ],
+          [
+            33567352,
+            210,
+            0,
+            42
+          ],
+          [
+            33586824,
+            212,
+            0,
+            43
+          ],
+          [
+            33592660,
+            213,
+            0,
+            44
+          ],
+          [
+            33623785,
+            215,
+            0,
+            45
+          ],
+          [
+            33629499,
+            216,
+            0,
+            46
+          ],
+          [
+            33646659,
+            218,
+            0,
+            47
+          ]
+        ],
+        "syscall_profile": null,
+        "launch_ring": [],
+        "step_ring": null
+      }
+    ]
+  },
+  "firmware": {
+    "backend": "FW-RUN",
+    "fw_image": "build/fw/kohakutpu_node.elf",
+    "step0_cycles": 278036,
+    "step1_cycles": 261282,
+    "submissions_per_step": 24,
+    "run_seconds": 0.11135708499932662,
+    "results": [
+      {
+        "cycles": 278036,
+        "packages": [
+          {
+            "cycles": 11780,
+            "phases": {
+              "head": 1180,
+              "copy": 7,
+              "bind": 571,
+              "steps": 9849,
+              "barrier": 173,
+              "local": 0,
+              "total": 4640,
+              "first": 5472,
+              "last": 6023,
+              "sent": 123,
+              "idle": 0,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 20502,
+            "phases": {
+              "head": 765,
+              "copy": 7,
+              "bind": 846,
+              "steps": 18704,
+              "barrier": 180,
+              "local": 0,
+              "total": 22208,
+              "first": 151,
+              "last": 9662,
+              "sent": 676,
+              "idle": 90076,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 16727,
+            "phases": {
+              "head": 1065,
+              "copy": 7,
+              "bind": 959,
+              "steps": 14520,
+              "barrier": 176,
+              "local": 0,
+              "total": 6080,
+              "first": 179,
+              "last": 12925,
+              "sent": 171,
+              "idle": 69605,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 7990,
+            "phases": {
+              "head": 924,
+              "copy": 7,
+              "bind": 1310,
+              "steps": 5558,
+              "barrier": 191,
+              "local": 0,
+              "total": 6816,
+              "first": 130,
+              "last": 2729,
+              "sent": 204,
+              "idle": 68173,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 14412,
+            "phases": {
+              "head": 1077,
+              "copy": 7,
+              "bind": 566,
+              "steps": 12595,
+              "barrier": 167,
+              "local": 0,
+              "total": 19360,
+              "first": 179,
+              "last": 2582,
+              "sent": 592,
+              "idle": 77169,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 13574,
+            "phases": {
+              "head": 1177,
+              "copy": 7,
+              "bind": 1011,
+              "steps": 11203,
+              "barrier": 176,
+              "local": 0,
+              "total": 4960,
+              "first": 191,
+              "last": 5682,
+              "sent": 140,
+              "idle": 68925,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 12967,
+            "phases": {
+              "head": 1063,
+              "copy": 7,
+              "bind": 959,
+              "steps": 10762,
+              "barrier": 176,
+              "local": 0,
+              "total": 6752,
+              "first": 177,
+              "last": 5633,
+              "sent": 196,
+              "idle": 70525,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 5033,
+            "phases": {
+              "head": 923,
+              "copy": 7,
+              "bind": 894,
+              "steps": 3033,
+              "barrier": 176,
+              "local": 0,
+              "total": 1216,
+              "first": 161,
+              "last": 1836,
+              "sent": 31,
+              "idle": 69100,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 9577,
+            "phases": {
+              "head": 778,
+              "copy": 7,
+              "bind": 504,
+              "steps": 8121,
+              "barrier": 167,
+              "local": 0,
+              "total": 4224,
+              "first": 3785,
+              "last": 4267,
+              "sent": 110,
+              "idle": 61445,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 6980,
+            "phases": {
+              "head": 897,
+              "copy": 7,
+              "bind": 514,
+              "steps": 5397,
+              "barrier": 165,
+              "local": 0,
+              "total": 2656,
+              "first": 163,
+              "last": 2570,
+              "sent": 73,
+              "idle": 73627,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 15394,
+            "phases": {
+              "head": 1177,
+              "copy": 7,
+              "bind": 1011,
+              "steps": 13023,
+              "barrier": 176,
+              "local": 0,
+              "total": 26368,
+              "first": 192,
+              "last": 7843,
+              "sent": 808,
+              "idle": 75061,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 5171,
+            "phases": {
+              "head": 926,
+              "copy": 7,
+              "bind": 896,
+              "steps": 3166,
+              "barrier": 176,
+              "local": 0,
+              "total": 1152,
+              "first": 163,
+              "last": 1911,
+              "sent": 29,
+              "idle": 75397,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 4598,
+            "phases": {
+              "head": 921,
+              "copy": 7,
+              "bind": 134,
+              "steps": 3390,
+              "barrier": 146,
+              "local": 0,
+              "total": 320,
+              "first": 0,
+              "last": 0,
+              "sent": 0,
+              "idle": 55313,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 10948,
+            "phases": {
+              "head": 738,
+              "copy": 7,
+              "bind": 828,
+              "steps": 9199,
+              "barrier": 176,
+              "local": 0,
+              "total": 4512,
+              "first": 149,
+              "last": 4804,
+              "sent": 126,
+              "idle": 56497,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 14622,
+            "phases": {
+              "head": 929,
+              "copy": 7,
+              "bind": 903,
+              "steps": 12607,
+              "barrier": 176,
+              "local": 0,
+              "total": 6816,
+              "first": 163,
+              "last": 7639,
+              "sent": 196,
+              "idle": 73469,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 4554,
+            "phases": {
+              "head": 929,
+              "copy": 7,
+              "bind": 128,
+              "steps": 3344,
+              "barrier": 146,
+              "local": 0,
+              "total": 320,
+              "first": 0,
+              "last": 0,
+              "sent": 0,
+              "idle": 67674,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 5088,
+            "phases": {
+              "head": 877,
+              "copy": 7,
+              "bind": 872,
+              "steps": 3158,
+              "barrier": 174,
+              "local": 0,
+              "total": 2048,
+              "first": 161,
+              "last": 1886,
+              "sent": 57,
+              "idle": 56658,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 9428,
+            "phases": {
+              "head": 783,
+              "copy": 7,
+              "bind": 502,
+              "steps": 7969,
+              "barrier": 167,
+              "local": 0,
+              "total": 4640,
+              "first": 3786,
+              "last": 4268,
+              "sent": 123,
+              "idle": 55483,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 10981,
+            "phases": {
+              "head": 759,
+              "copy": 7,
+              "bind": 842,
+              "steps": 9197,
+              "barrier": 176,
+              "local": 0,
+              "total": 4512,
+              "first": 149,
+              "last": 4830,
+              "sent": 126,
+              "idle": 72285,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 24972,
+            "phases": {
+              "head": 1205,
+              "copy": 7,
+              "bind": 1014,
+              "steps": 22568,
+              "barrier": 178,
+              "local": 0,
+              "total": 18272,
+              "first": 192,
+              "last": 8388,
+              "sent": 554,
+              "idle": 70697,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 7673,
+            "phases": {
+              "head": 785,
+              "copy": 7,
+              "bind": 840,
+              "steps": 5863,
+              "barrier": 178,
+              "local": 0,
+              "total": 9280,
+              "first": 147,
+              "last": 2894,
+              "sent": 283,
+              "idle": 58184,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 13666,
+            "phases": {
+              "head": 1205,
+              "copy": 7,
+              "bind": 1008,
+              "steps": 11270,
+              "barrier": 176,
+              "local": 0,
+              "total": 6048,
+              "first": 189,
+              "last": 5724,
+              "sent": 174,
+              "idle": 74389,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 25176,
+            "phases": {
+              "head": 785,
+              "copy": 7,
+              "bind": 842,
+              "steps": 23366,
+              "barrier": 176,
+              "local": 0,
+              "total": 8352,
+              "first": 147,
+              "last": 18886,
+              "sent": 232,
+              "idle": 68597,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 6223,
+            "phases": {
+              "head": 923,
+              "copy": 7,
+              "bind": 890,
+              "steps": 4225,
+              "barrier": 178,
+              "local": 0,
+              "total": 2336,
+              "first": 161,
+              "last": 1853,
+              "sent": 66,
+              "idle": 57081,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          }
+        ],
+        "outputs": [
+          "16b660b848b952b626bc74282ab149bcbbba24b873b4e6202ebb33b3dcb52ab6aeb636ba32b9cbb68ab676bc3cb840bb1bb804af87acceb811b60cb6b8b328b2aa2c85acb42d60b504a832b61b2eceb73ab880b8c0b732b5adb6f8b88cb6da3407b280309eb15537bc304a30d7b2d5b9f728dc2a5a3a4735a5b6d033322fad2b14306ca9e1b01c2f3eb84e387a358db866b578a440331a3851b673345530612f742d67b4b0b0002d122ee2b8aca684b6d09e5236e63626ae113002302634fa34a838f236c33870319337172fc73820217ca55cab78250632a92d4eaf392e803afc342c393f35b73b32392239bd3435b34f387a38313da73aa42df839e2388938"
+        ],
+        "launch_ring": []
+      },
+      {
+        "cycles": 261282,
+        "packages": [
+          {
+            "cycles": 11376,
+            "phases": {
+              "head": 1166,
+              "copy": 7,
+              "bind": 582,
+              "steps": 9454,
+              "barrier": 167,
+              "local": 0,
+              "total": 4640,
+              "first": 5332,
+              "last": 5860,
+              "sent": 123,
+              "idle": 87015,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 15992,
+            "phases": {
+              "head": 721,
+              "copy": 7,
+              "bind": 842,
+              "steps": 14244,
+              "barrier": 178,
+              "local": 0,
+              "total": 22208,
+              "first": 114,
+              "last": 7871,
+              "sent": 676,
+              "idle": 71589,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 16410,
+            "phases": {
+              "head": 1032,
+              "copy": 7,
+              "bind": 963,
+              "steps": 14232,
+              "barrier": 176,
+              "local": 0,
+              "total": 6080,
+              "first": 142,
+              "last": 12641,
+              "sent": 171,
+              "idle": 66021,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 7728,
+            "phases": {
+              "head": 890,
+              "copy": 7,
+              "bind": 1275,
+              "steps": 5369,
+              "barrier": 187,
+              "local": 0,
+              "total": 6816,
+              "first": 126,
+              "last": 2763,
+              "sent": 204,
+              "idle": 63723,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 13943,
+            "phases": {
+              "head": 1039,
+              "copy": 7,
+              "bind": 566,
+              "steps": 12164,
+              "barrier": 167,
+              "local": 0,
+              "total": 19360,
+              "first": 140,
+              "last": 2197,
+              "sent": 592,
+              "idle": 73735,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 13302,
+            "phases": {
+              "head": 1142,
+              "copy": 7,
+              "bind": 1011,
+              "steps": 10966,
+              "barrier": 176,
+              "local": 0,
+              "total": 4960,
+              "first": 156,
+              "last": 5450,
+              "sent": 140,
+              "idle": 71591,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 12500,
+            "phases": {
+              "head": 1028,
+              "copy": 7,
+              "bind": 959,
+              "steps": 10330,
+              "barrier": 176,
+              "local": 0,
+              "total": 6752,
+              "first": 142,
+              "last": 5211,
+              "sent": 196,
+              "idle": 69135,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 5064,
+            "phases": {
+              "head": 889,
+              "copy": 7,
+              "bind": 894,
+              "steps": 3098,
+              "barrier": 176,
+              "local": 0,
+              "total": 1216,
+              "first": 126,
+              "last": 1877,
+              "sent": 31,
+              "idle": 68984,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 9188,
+            "phases": {
+              "head": 743,
+              "copy": 7,
+              "bind": 498,
+              "steps": 7773,
+              "barrier": 167,
+              "local": 0,
+              "total": 4224,
+              "first": 3605,
+              "last": 4087,
+              "sent": 110,
+              "idle": 61665,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 6829,
+            "phases": {
+              "head": 863,
+              "copy": 7,
+              "bind": 512,
+              "steps": 5282,
+              "barrier": 165,
+              "local": 0,
+              "total": 2656,
+              "first": 126,
+              "last": 2453,
+              "sent": 73,
+              "idle": 72491,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 14561,
+            "phases": {
+              "head": 1142,
+              "copy": 7,
+              "bind": 1010,
+              "steps": 12226,
+              "barrier": 176,
+              "local": 0,
+              "total": 26368,
+              "first": 156,
+              "last": 7047,
+              "sent": 808,
+              "idle": 76269,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 4985,
+            "phases": {
+              "head": 890,
+              "copy": 7,
+              "bind": 897,
+              "steps": 3015,
+              "barrier": 176,
+              "local": 0,
+              "total": 1152,
+              "first": 128,
+              "last": 1791,
+              "sent": 29,
+              "idle": 67169,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 4438,
+            "phases": {
+              "head": 886,
+              "copy": 7,
+              "bind": 128,
+              "steps": 3271,
+              "barrier": 146,
+              "local": 0,
+              "total": 320,
+              "first": 0,
+              "last": 0,
+              "sent": 0,
+              "idle": 54941,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 10654,
+            "phases": {
+              "head": 701,
+              "copy": 7,
+              "bind": 824,
+              "steps": 8946,
+              "barrier": 176,
+              "local": 0,
+              "total": 4512,
+              "first": 112,
+              "last": 4617,
+              "sent": 126,
+              "idle": 56988,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 13597,
+            "phases": {
+              "head": 894,
+              "copy": 7,
+              "bind": 903,
+              "steps": 11617,
+              "barrier": 176,
+              "local": 0,
+              "total": 6816,
+              "first": 128,
+              "last": 6778,
+              "sent": 196,
+              "idle": 72333,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 4449,
+            "phases": {
+              "head": 895,
+              "copy": 7,
+              "bind": 128,
+              "steps": 3273,
+              "barrier": 146,
+              "local": 0,
+              "total": 320,
+              "first": 0,
+              "last": 0,
+              "sent": 0,
+              "idle": 68725,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 4969,
+            "phases": {
+              "head": 843,
+              "copy": 7,
+              "bind": 872,
+              "steps": 3073,
+              "barrier": 174,
+              "local": 0,
+              "total": 2048,
+              "first": 126,
+              "last": 1881,
+              "sent": 57,
+              "idle": 63220,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 8940,
+            "phases": {
+              "head": 749,
+              "copy": 7,
+              "bind": 498,
+              "steps": 7519,
+              "barrier": 167,
+              "local": 0,
+              "total": 4640,
+              "first": 3603,
+              "last": 4085,
+              "sent": 123,
+              "idle": 54367,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 10701,
+            "phases": {
+              "head": 721,
+              "copy": 7,
+              "bind": 842,
+              "steps": 8955,
+              "barrier": 176,
+              "local": 0,
+              "total": 4512,
+              "first": 114,
+              "last": 4623,
+              "sent": 126,
+              "idle": 72407,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 21515,
+            "phases": {
+              "head": 1170,
+              "copy": 7,
+              "bind": 1014,
+              "steps": 19146,
+              "barrier": 178,
+              "local": 0,
+              "total": 18272,
+              "first": 156,
+              "last": 7594,
+              "sent": 554,
+              "idle": 72255,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 7449,
+            "phases": {
+              "head": 751,
+              "copy": 7,
+              "bind": 840,
+              "steps": 5669,
+              "barrier": 182,
+              "local": 0,
+              "total": 9280,
+              "first": 112,
+              "last": 2810,
+              "sent": 283,
+              "idle": 60117,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 13328,
+            "phases": {
+              "head": 1167,
+              "copy": 7,
+              "bind": 1008,
+              "steps": 10970,
+              "barrier": 176,
+              "local": 0,
+              "total": 6048,
+              "first": 154,
+              "last": 5458,
+              "sent": 174,
+              "idle": 75363,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 23382,
+            "phases": {
+              "head": 747,
+              "copy": 7,
+              "bind": 842,
+              "steps": 21610,
+              "barrier": 176,
+              "local": 0,
+              "total": 8352,
+              "first": 112,
+              "last": 17166,
+              "sent": 232,
+              "idle": 68233,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 5982,
+            "phases": {
+              "head": 889,
+              "copy": 7,
+              "bind": 890,
+              "steps": 4018,
+              "barrier": 178,
+              "local": 0,
+              "total": 2336,
+              "first": 126,
+              "last": 1742,
+              "sent": 66,
+              "idle": 60036,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          }
+        ],
+        "outputs": [
+          "16b660b848b952b626bc74282ab149bcbbba24b873b4e6202ebb33b3dcb52ab6aeb636ba32b9cbb68ab676bc3cb840bb1bb804af87acceb811b60cb6b8b328b2aa2c85acb42d60b504a832b61b2eceb73ab880b8c0b732b5adb6f8b88cb6da3407b280309eb15537bc304a30d7b2d5b9f728dc2a5a3a4735a5b6d033322fad2b14306ca9e1b01c2f3eb84e387a358db866b578a440331a3851b673345530612f742d67b4b0b0002d122ee2b8aca684b6d09e5236e63626ae113002302634fa34a838f236c33870319337172fc73820217ca55cab78250632a92d4eaf392e803afc342c393f35b73b32392239bd3435b34f387a38313da73aa42df839e2388938"
+        ],
+        "launch_ring": []
+      },
+      {
+        "cycles": 260976,
+        "packages": [
+          {
+            "cycles": 11376,
+            "phases": {
+              "head": 1166,
+              "copy": 7,
+              "bind": 582,
+              "steps": 9454,
+              "barrier": 167,
+              "local": 0,
+              "total": 4640,
+              "first": 5332,
+              "last": 5860,
+              "sent": 123,
+              "idle": 85119,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 15908,
+            "phases": {
+              "head": 721,
+              "copy": 7,
+              "bind": 842,
+              "steps": 14160,
+              "barrier": 178,
+              "local": 0,
+              "total": 22208,
+              "first": 114,
+              "last": 7868,
+              "sent": 676,
+              "idle": 70933,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 16410,
+            "phases": {
+              "head": 1032,
+              "copy": 7,
+              "bind": 962,
+              "steps": 14233,
+              "barrier": 176,
+              "local": 0,
+              "total": 6080,
+              "first": 143,
+              "last": 12641,
+              "sent": 171,
+              "idle": 58818,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 7656,
+            "phases": {
+              "head": 890,
+              "copy": 7,
+              "bind": 1275,
+              "steps": 5297,
+              "barrier": 187,
+              "local": 0,
+              "total": 6816,
+              "first": 126,
+              "last": 2774,
+              "sent": 204,
+              "idle": 65363,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 14003,
+            "phases": {
+              "head": 1039,
+              "copy": 7,
+              "bind": 566,
+              "steps": 12224,
+              "barrier": 167,
+              "local": 0,
+              "total": 19360,
+              "first": 140,
+              "last": 2196,
+              "sent": 592,
+              "idle": 75139,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 13302,
+            "phases": {
+              "head": 1142,
+              "copy": 7,
+              "bind": 1010,
+              "steps": 10967,
+              "barrier": 176,
+              "local": 0,
+              "total": 4960,
+              "first": 157,
+              "last": 5452,
+              "sent": 140,
+              "idle": 68311,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 12502,
+            "phases": {
+              "head": 1028,
+              "copy": 7,
+              "bind": 959,
+              "steps": 10332,
+              "barrier": 176,
+              "local": 0,
+              "total": 6752,
+              "first": 142,
+              "last": 5213,
+              "sent": 196,
+              "idle": 68978,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 4986,
+            "phases": {
+              "head": 889,
+              "copy": 7,
+              "bind": 894,
+              "steps": 3020,
+              "barrier": 176,
+              "local": 0,
+              "total": 1216,
+              "first": 126,
+              "last": 1799,
+              "sent": 31,
+              "idle": 70775,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 9206,
+            "phases": {
+              "head": 743,
+              "copy": 7,
+              "bind": 498,
+              "steps": 7791,
+              "barrier": 167,
+              "local": 0,
+              "total": 4224,
+              "first": 3605,
+              "last": 4087,
+              "sent": 110,
+              "idle": 60681,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 6827,
+            "phases": {
+              "head": 863,
+              "copy": 7,
+              "bind": 512,
+              "steps": 5280,
+              "barrier": 165,
+              "local": 0,
+              "total": 2656,
+              "first": 126,
+              "last": 2452,
+              "sent": 73,
+              "idle": 74541,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 14559,
+            "phases": {
+              "head": 1143,
+              "copy": 7,
+              "bind": 1010,
+              "steps": 12223,
+              "barrier": 176,
+              "local": 0,
+              "total": 26368,
+              "first": 156,
+              "last": 7043,
+              "sent": 808,
+              "idle": 75285,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 4982,
+            "phases": {
+              "head": 890,
+              "copy": 7,
+              "bind": 897,
+              "steps": 3012,
+              "barrier": 176,
+              "local": 0,
+              "total": 1152,
+              "first": 128,
+              "last": 1790,
+              "sent": 29,
+              "idle": 67495,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 4437,
+            "phases": {
+              "head": 886,
+              "copy": 7,
+              "bind": 128,
+              "steps": 3270,
+              "barrier": 146,
+              "local": 0,
+              "total": 320,
+              "first": 0,
+              "last": 0,
+              "sent": 0,
+              "idle": 56097,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 10654,
+            "phases": {
+              "head": 701,
+              "copy": 7,
+              "bind": 824,
+              "steps": 8946,
+              "barrier": 176,
+              "local": 0,
+              "total": 4512,
+              "first": 112,
+              "last": 4617,
+              "sent": 126,
+              "idle": 54856,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 13591,
+            "phases": {
+              "head": 894,
+              "copy": 7,
+              "bind": 903,
+              "steps": 11611,
+              "barrier": 176,
+              "local": 0,
+              "total": 6816,
+              "first": 128,
+              "last": 6772,
+              "sent": 196,
+              "idle": 71103,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 4447,
+            "phases": {
+              "head": 894,
+              "copy": 7,
+              "bind": 128,
+              "steps": 3272,
+              "barrier": 146,
+              "local": 0,
+              "total": 320,
+              "first": 0,
+              "last": 0,
+              "sent": 0,
+              "idle": 68315,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 4887,
+            "phases": {
+              "head": 843,
+              "copy": 7,
+              "bind": 872,
+              "steps": 2991,
+              "barrier": 174,
+              "local": 0,
+              "total": 2048,
+              "first": 126,
+              "last": 1800,
+              "sent": 57,
+              "idle": 54610,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 8900,
+            "phases": {
+              "head": 749,
+              "copy": 7,
+              "bind": 498,
+              "steps": 7479,
+              "barrier": 167,
+              "local": 0,
+              "total": 4640,
+              "first": 3603,
+              "last": 4085,
+              "sent": 123,
+              "idle": 54214,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 10700,
+            "phases": {
+              "head": 721,
+              "copy": 7,
+              "bind": 842,
+              "steps": 8954,
+              "barrier": 176,
+              "local": 0,
+              "total": 4512,
+              "first": 114,
+              "last": 4623,
+              "sent": 126,
+              "idle": 73145,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 21498,
+            "phases": {
+              "head": 1171,
+              "copy": 7,
+              "bind": 1014,
+              "steps": 19128,
+              "barrier": 178,
+              "local": 0,
+              "total": 18272,
+              "first": 156,
+              "last": 7605,
+              "sent": 554,
+              "idle": 70611,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 7445,
+            "phases": {
+              "head": 751,
+              "copy": 7,
+              "bind": 840,
+              "steps": 5669,
+              "barrier": 178,
+              "local": 0,
+              "total": 9280,
+              "first": 112,
+              "last": 2857,
+              "sent": 283,
+              "idle": 68973,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 13332,
+            "phases": {
+              "head": 1166,
+              "copy": 7,
+              "bind": 1009,
+              "steps": 10974,
+              "barrier": 176,
+              "local": 0,
+              "total": 6048,
+              "first": 154,
+              "last": 5463,
+              "sent": 174,
+              "idle": 74137,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 23402,
+            "phases": {
+              "head": 747,
+              "copy": 7,
+              "bind": 842,
+              "steps": 21630,
+              "barrier": 176,
+              "local": 0,
+              "total": 8352,
+              "first": 112,
+              "last": 17186,
+              "sent": 232,
+              "idle": 70037,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          },
+          {
+            "cycles": 5966,
+            "phases": {
+              "head": 888,
+              "copy": 7,
+              "bind": 891,
+              "steps": 4002,
+              "barrier": 178,
+              "local": 0,
+              "total": 2336,
+              "first": 126,
+              "last": 1743,
+              "sent": 66,
+              "idle": 58639,
+              "list_index": 0,
+              "item_tag": 0,
+              "epoch": 0
+            }
+          }
+        ],
+        "outputs": [
+          "16b660b848b952b626bc74282ab149bcbbba24b873b4e6202ebb33b3dcb52ab6aeb636ba32b9cbb68ab676bc3cb840bb1bb804af87acceb811b60cb6b8b328b2aa2c85acb42d60b504a832b61b2eceb73ab880b8c0b732b5adb6f8b88cb6da3407b280309eb15537bc304a30d7b2d5b9f728dc2a5a3a4735a5b6d033322fad2b14306ca9e1b01c2f3eb84e387a358db866b578a440331a3851b673345530612f742d67b4b0b0002d122ee2b8aca684b6d09e5236e63626ae113002302634fa34a838f236c33870319337172fc73820217ca55cab78250632a92d4eaf392e803afc342c393f35b73b32392239bd3435b34f387a38313da73aa42df839e2388938"
+        ],
+        "launch_ring": []
+      }
+    ]
+  },
+  "comparison": {
+    "speedup_cold_vs_fw": 0.2556330834644279,
+    "speedup_retained_vs_fw": 0.412230505265649,
+    "ratio_cold_over_fw": 3.911856737976377,
+    "ratio_retained_over_fw": 2.4258272670907295,
+    "os_submissions_per_step": 1,
+    "fw_submissions_per_step": 24
+  }
+}

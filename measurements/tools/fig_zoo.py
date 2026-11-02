@@ -3,11 +3,10 @@
 import csv
 import gzip
 import json
-import re
 
 import matplotlib.pyplot as plt
 from fig_run import split
-from runs import by_kind, load, names
+from runs import CLOCK, by_kind, clock, jit, load, mode, names
 from style import (
     DATA,
     FIGURES,
@@ -16,18 +15,18 @@ from style import (
     SECOND,
     SERIES,
     SURFACE,
+    TABLES,
     save,
     stacked_bars,
 )
 
-CLOCK = {"low": 100, "mid": 200, "ship": 300}
 FORM_KINDS = ("quant", "convert", "transpose", "copy", "move")
 
 
 def floors(name: str, step: list[dict], span: int) -> tuple[float, float]:
     """Math-only floors over the span: a floor is already per unit of its class, all
     units running. Form changes count as no useful work."""
-    machine = re.search(r"multimesh_\w+", name)[0]
+    machine = name.split(".")[-2]
     path = DATA / name / f"timed.{machine}.jsonl.gz"
     if not path.exists():
         return 0.0, 0.0
@@ -50,11 +49,10 @@ def row(name: str) -> dict | None:
     step = run.step
     if not step or "start" not in step[0]:
         return None
-    tag = name.split(".multimesh")[0]
-    model, _, mode = tag.partition(".")
+    model = name.partition(".")[0]
     nodes = name.rsplit(".", 1)[1]
-    mode += "" if nodes == "1n" else f" {nodes}"
-    mode += " 4+2" if "v9t8" in name else ""
+    label = mode(name) + ("" if nodes == "1n" else f" {nodes}")
+    label += " 4+2" if "v9t8" in name else ""
     span = step[-1]["start"] + step[-1]["cycles"] - step[0]["start"]
     node = split(run)
     totals = sorted(sum(r["cycles"] for r in s) for s in run.steps)
@@ -69,9 +67,13 @@ def row(name: str) -> dict | None:
         "model": model,
         "mfu_mg": mfu[0],
         "mfu_vc": mfu[1],
-        "mode": mode,
-        "board": re.search(r"multimesh_(\w+)", name)[1],
-        "clock": run.meta.get("profile") or "mid",
+        "mode": label,
+        "board": name.split(".")[-2].removeprefix("multimesh_"),
+        "clock": clock(run.meta),
+        "jit": jit(run.meta),
+        "commit": run.meta.get("commit"),
+        "image": run.meta["firmware"].rpartition("/")[2],
+        "knobs": " ".join(f"{k}={v}" for k, v in run.meta.get("knobs", {}).items()),
         "launches": len(step),
         "steps": len(run.steps),
         "cycles": sum(r["cycles"] for r in step),
@@ -90,7 +92,8 @@ def row(name: str) -> dict | None:
 
 def table(rows: list[dict]) -> None:
     keys = [k for k in rows[0] if k not in ("kinds", "units")]
-    path = DATA / "zoo.csv"
+    TABLES.mkdir(parents=True, exist_ok=True)
+    path = TABLES / "zoo.csv"
     with path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(keys)
@@ -165,9 +168,7 @@ def busy_chart(rows: list[dict]) -> None:
     ax.set_yticks(range(len(labels)), labels)
     ax.invert_yaxis()
     ax.grid(axis="y", visible=False)
-    ax.set_xlabel(
-        "sum over units of busy / span; 4.0 is all four units busy all the time"
-    )
+    ax.set_xlabel("sum over units of busy / span; 1.0 is one unit busy all the time")
     ax.set_title("Unit busy: blue vector cores, yellow clusters")
     save(fig, "zoo", "unit_busy")
 
@@ -253,6 +254,8 @@ def wall_chart(rows: list[dict]) -> None:
     """Eager against TinyJit at one clock: a step's span in time, node work inside it."""
     mhz = CLOCK["mid"] * 1e3
     rows = [r for r in rows if r["mode"] in ("z", "zj") and r["clock"] == "mid"]
+    if not rows:
+        return
     rows.sort(key=lambda r: (r["span"], r["mode"]))
     labels = [
         f"{r['model']} {'TinyJit' if r['mode'] == 'zj' else 'eager'}" for r in rows
@@ -290,6 +293,8 @@ def knob_chart(rows: list[dict]) -> None:
         "znc": "composed off",
     }
     chosen = [r for r in rows if r["model"] in ("mlp", "lenet") and r["mode"] in labels]
+    if not chosen:
+        return
     chosen.sort(key=lambda r: (r["model"], r["cycles"]))
     names_ = [f"{r['model']}, {labels[r['mode']]}" for r in chosen]
     fig, ax = plt.subplots(figsize=(10, 0.42 * len(chosen) + 1.4))

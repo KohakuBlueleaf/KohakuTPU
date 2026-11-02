@@ -5,7 +5,7 @@ import json
 
 import matplotlib.pyplot as plt
 import numpy as np
-from runs import by_kind, load
+from runs import by_kind, load, run_name
 from style import DATA, KINDS, MUTED, SECOND, SERIES, save, stacked_bars
 
 MODELS = ("mlp", "lenet", "vit", "mixer", "gru", "gpt", "wide")
@@ -26,10 +26,11 @@ def main():
     rows = []
     for model in MODELS:
         for board, machine in BOARDS.items():
-            name = f"{model}.z.{machine}.1n"
-            step = load(name).step
-            waste = json.loads((DATA / name / "waste.json").read_text("utf-8"))
-            rows.append((f"{model} {board}", step, waste["step_cycles"]))
+            name = run_name(model, "z", machine)
+            if (DATA / name / "waste.json").exists():
+                step = load(name).step
+                waste = json.loads((DATA / name / "waste.json").read_text("utf-8"))
+                rows.append((f"{model} {board}", step, waste["step_cycles"]))
     kinds_by_row = [by_kind(step, "cycles") for _, step, _ in rows]
     kinds = sorted({k for row in kinds_by_row for k in row})
     parts = {k: [row.get(k, 0) / 1e6 for row in kinds_by_row] for k in kinds}
@@ -62,7 +63,7 @@ def clocks(machine: str, board: str, out: str) -> None:
     for i, (tag, label, mhz) in enumerate(TAGS):
         cycles = []
         for model in MODELS:
-            name = f"{model}.{tag}.{machine}.1n"
+            name = run_name(model, tag, machine)
             ok = (DATA / name / "meta.json").exists()
             run = load(name) if ok else None
             cycles.append(sum(r["cycles"] for r in run.step) if run and run.step else 0)
@@ -82,7 +83,8 @@ def clocks(machine: str, board: str, out: str) -> None:
 
 
 def idle_dies() -> None:
-    """One Mixer step on node 0 at mid, by the clock of the dies that run nothing."""
+    """One Mixer step on node 0 at mid, by the clock of the dies that run nothing: the
+    zoo's own runs in every round."""
     rows = (
         ("zn5", "others low"),
         ("zn6", "node 1 ship, others low"),
@@ -107,7 +109,10 @@ def unit_share() -> None:
     for ax, machine in zip(axes, BOARDS.values(), strict=True):
         busy = {}
         for model in MODELS:
-            step = load(f"{model}.z.{machine}.1n").step
+            name = run_name(model, "z", machine)
+            if not (DATA / name / "meta.json").exists():
+                continue
+            step = load(name).step
             total = sum(r["cycles"] for r in step)
             for r in step:
                 for u in r.get("units", ()):
@@ -133,7 +138,7 @@ def wall() -> None:
         grid = np.full((len(MODELS), len(WALLS)), np.nan)
         for y, model in enumerate(MODELS):
             for x, (tag, _) in enumerate(WALLS):
-                meta = DATA / f"{model}.{tag}.{machine}.1n" / "meta.json"
+                meta = DATA / run_name(model, tag, machine) / "meta.json"
                 if meta.exists():
                     doc = json.loads(meta.read_text("utf-8"))
                     if doc.get("done") == "exited":

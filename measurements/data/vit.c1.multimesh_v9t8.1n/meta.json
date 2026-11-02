@@ -1,0 +1,113 @@
+{
+ "counters": {
+  "runs": 2389,
+  "cycles": 234198952,
+  "bytes_in": 14144800,
+  "bytes_out": 18000,
+  "library_hits": 2389,
+  "class_hits": 0,
+  "exact_hits": 2389,
+  "library_misses": 0,
+  "compile_calls": 0,
+  "compile_seconds": 0.0,
+  "kernel_reuses": 2357
+ },
+ "runs": 2389,
+ "transport": {},
+ "workload": "vit",
+ "board": "multimesh_v9t8",
+ "nodes": 1,
+ "args": [
+  "--batch",
+  "1",
+  "--inputs",
+  "10",
+  "--board",
+  "multimesh_v9t8",
+  "--nodes",
+  "1",
+  "--library",
+  "build/perf/c1/multimesh_v9t8/vit",
+  "--library-only",
+  "--no-jit",
+  "--inputs",
+  "9",
+  "--blocks",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma"
+ ],
+ "seconds": 15.61,
+ "done": "exited",
+ "spans": {
+  "compile_graph": {
+   "calls": 32,
+   "seconds": 0.030646803992567584
+  },
+  "bind_admit": {
+   "calls": 2389,
+   "seconds": 0.11648057207639795
+  },
+  "submit": {
+   "calls": 2389,
+   "seconds": 0.9963197203760501
+  },
+  "generate_launch": {
+   "calls": 2389,
+   "seconds": 1.1006199490075232
+  },
+  "rows": {
+   "calls": 468,
+   "seconds": 0.444437315891264
+  },
+  "collect": {
+   "calls": 2398,
+   "seconds": 0.07315368116542231
+  }
+ },
+ "profile": "mid",
+ "knobs": {
+  "KOHAKUTPU_BOOT_FLAGS": "0",
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "clocks": {
+  "0": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "1": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "2": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "3": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  }
+ },
+ "profiled": null,
+ "jit": false,
+ "commit": "56021fd4+",
+ "firmware": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+ "when": 1793574028.7020948,
+ "launches": 2389,
+ "kernels": 32,
+ "compiles": []
+}

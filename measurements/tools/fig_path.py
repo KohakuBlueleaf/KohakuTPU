@@ -5,10 +5,9 @@ import sys
 
 import matplotlib.pyplot as plt
 from fig_run import split
-from runs import load
+from runs import CLOCK, clock, load
 from style import MUTED, SECOND, SERIES, SURFACE, save
 
-CLOCK = {"low": 100e6, "mid": 200e6, "ship": 300e6}
 LAYERS = (
     ("tinygrad rewrite and schedule", SERIES[0]),
     ("ktpugrad and DSL", SERIES[1]),
@@ -36,7 +35,8 @@ def layer(row: dict) -> str:
 
 def host_layers(run) -> dict:
     """Own seconds by layer over the profiled launches, scaled to one step."""
-    span = 250 if "lenet" in run.name else 500
+    first, last = run.meta.get("profiled") or (0, 250 if "lenet" in run.name else 500)
+    span = last - first
     table: dict = collections.Counter()
     for row in run.profile:
         table[layer(row)] += row["own"]
@@ -46,21 +46,21 @@ def host_layers(run) -> dict:
 def path(name: str) -> None:
     run = load(name)
     out = name.split(".multimesh")[0]
-    clock = CLOCK[run.meta.get("profile") or "mid"]
+    hz = CLOCK[clock(run.meta)] * 1e6
     host = host_layers(run)
     node = split(run)
     step = run.step
     idle = sum(r.get("idle", 0) for r in step[1:])
     rows = [(k, host.get(k, 0) * 1e3, c) for k, c in LAYERS]
     rows += [
-        ("node waits for the host (idle)", idle / clock * 1e3, MUTED),
-        ("firmware head, bind, barrier", node["firmware"] / clock * 1e3, SERIES[6]),
+        ("node waits for the host (idle)", idle / hz * 1e3, MUTED),
+        ("firmware head, bind, barrier", node["firmware"] / hz * 1e3, SERIES[6]),
         (
             "no unit busy: mover, dispatch, sync",
-            node["neither"] / clock * 1e3,
+            node["neither"] / hz * 1e3,
             SERIES[1],
         ),
-        ("a compute unit busy", node["unit"] / clock * 1e3, SERIES[0]),
+        ("a compute unit busy", node["unit"] / hz * 1e3, SERIES[0]),
     ]
     fig, ax = plt.subplots(figsize=(14, 5))
     labels = [r[0] for r in rows]
@@ -70,8 +70,8 @@ def path(name: str) -> None:
         ax.text(v, i, f" {v:,.1f} ms", va="center", color=SECOND)
     ax.invert_yaxis()
     ax.grid(axis="y", visible=False)
-    ax.set_xlabel(f"milliseconds a warm step, node at {clock / 1e6:.0f} MHz")
-    wall = (step[-1]["start"] + step[-1]["cycles"] - step[0]["start"]) / clock * 1e3
+    ax.set_xlabel(f"milliseconds a warm step, node at {hz / 1e6:.0f} MHz")
+    wall = (step[-1]["start"] + step[-1]["cycles"] - step[0]["start"]) / hz * 1e3
     ax.set_title(
         f"{out}: the whole path of a warm step, top to bottom. Card span {wall:,.0f} ms. "
         "Host rows are under cProfile"

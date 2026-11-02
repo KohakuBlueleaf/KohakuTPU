@@ -16,19 +16,20 @@ DETECTORS = {
 
 
 def reports() -> dict:
-    """Each run's detectors, its step in the card's cycles rather than the model's."""
+    """Each run's detectors, keyed with its board and nodes. Detector cycles are the
+    timed model's, over the model's own step; `card_cycles` is the card's step."""
     out = {}
     for name in names():
         path = DATA / name / "waste.json"
         if path.exists():
             report = json.loads(path.read_text("utf-8"))
-            report["step_cycles"] = sum(r["cycles"] for r in load(name).step)
-            out[name.split(".multimesh")[0]] = report
+            report["card_cycles"] = sum(r["cycles"] for r in load(name).step)
+            out[name.replace(".multimesh_", " ")] = report
     return out
 
 
 def ladder(runs: dict) -> None:
-    order = sorted(runs, key=lambda n: runs[n]["step_cycles"])
+    order = sorted(runs, key=lambda n: runs[n]["card_cycles"])
     parts: dict[str, list[float]] = {
         "math floor": [],
         "memory floor over math": [],
@@ -40,17 +41,17 @@ def ladder(runs: dict) -> None:
         parts["math floor"].append(f["math"] / 1e6)
         parts["memory floor over math"].append((f["compute"] - f["math"]) / 1e6)
         parts["form work floor"].append((f["with_form"] - f["compute"]) / 1e6)
-        parts["over the floors"].append(max(0, r["step_cycles"] - f["with_form"]) / 1e6)
+        parts["over the floors"].append(max(0, r["card_cycles"] - f["with_form"]) / 1e6)
     colors = dict(zip(parts, (SERIES[2], SERIES[3], SERIES[0], MUTED), strict=True))
     fig, ax = plt.subplots(figsize=(12, 0.45 * len(order) + 1.6))
     stacked_bars(ax, order, parts, colors)
     for i, n in enumerate(order):
         r = runs[n]
-        share = r["floors"]["math"] / r["step_cycles"]
+        share = r["floors"]["math"] / r["card_cycles"]
         ax.text(
-            r["step_cycles"] / 1e6,
+            r["card_cycles"] / 1e6,
             i,
-            f" {r['step_cycles'] / 1e6:.1f} M, math {share:.1%}",
+            f" {r['card_cycles'] / 1e6:.1f} M, math {share:.1%}",
             va="center",
             color=SECOND,
             fontsize=8,
@@ -75,9 +76,9 @@ def recoverable(runs: dict) -> None:
     stacked_bars(ax, order, parts, colors)
     ax.xaxis.set_major_formatter(lambda v, _: f"{v:.1%}")
     ax.grid(axis="y", visible=False)
-    ax.set_xlabel("share of the warm step's cycles a detector names")
+    ax.set_xlabel("share of the timed model's warm step a detector names")
     ax.legend(ncol=3, loc="upper center", bbox_to_anchor=(0.5, 1.13))
-    ax.set_title("What the detectors would recover", pad=26)
+    ax.set_title("What the detectors would recover, in model cycles", pad=26)
     save(fig, "waste", "recoverable")
 
 
@@ -100,7 +101,7 @@ def chains(runs: dict) -> None:
     stacked_bars(ax, rows, parts, colors)
     ax.xaxis.set_major_formatter(lambda v, _: f"{v:.1%}")
     ax.grid(axis="y", visible=False)
-    ax.set_xlabel("share of a warm step, summed over runs")
+    ax.set_xlabel("share of a modelled warm step, summed over runs")
     ax.legend(ncol=4, loc="lower right")
     ax.set_title("Form chains between two computations")
     save(fig, "waste", "chains")

@@ -5,7 +5,7 @@ import base64
 import csv
 import html
 
-from style import DATA, FIGURES, ROOT
+from style import FIGURES, HOME, ROOT, ROUND, TABLES
 
 #: (anchor, title, lead, ((figure, caption, wide), ...)); a wide figure takes the row.
 SECTIONS = (
@@ -28,6 +28,23 @@ SECTIONS = (
                 "runs/vit.z/path",
                 "ViT: the same axis. The node waits on the host for most of the step.",
                 False,
+            ),
+        ),
+    ),
+    (
+        "compare",
+        "Against the baseline",
+        "This round against the zoo at commit 56021fd4, one row a like configuration.",
+        (
+            (
+                "compare/cycles",
+                "A warm step by kernel kind: the baseline's bar, then this round's.",
+                True,
+            ),
+            (
+                "compare/launches",
+                "Launches and span of a warm step against the baseline's.",
+                True,
             ),
         ),
     ),
@@ -148,6 +165,16 @@ SECTIONS = (
             (
                 "firmware/steps_vit",
                 "ViT on the debug image: the mover drives transpose, dispatch the rest.",
+                True,
+            ),
+            (
+                "firmware/steps_lenet_passes",
+                "LeNet's largest transposes and gathers, pass by pass, on one axis.",
+                True,
+            ),
+            (
+                "firmware/steps_vit_passes",
+                "ViT's largest transposes and gathers, pass by pass, on one axis.",
                 True,
             ),
             (
@@ -330,7 +357,7 @@ zoom.addEventListener('click', () => zoom.classList.remove('on'));
 
 
 def table() -> str:
-    path = DATA / "zoo.csv"
+    path = TABLES / "zoo.csv"
     if not path.exists():
         return ""
     with path.open(encoding="utf-8") as f:
@@ -380,8 +407,17 @@ def code(text: str) -> str:
     return "".join(f"<code>{p}</code>" if i % 2 else p for i, p in enumerate(parts))
 
 
+def round_figure(name: str) -> str:
+    """A figure's path in this round: a run's folder and name carry the round's tag."""
+    return name.replace(".z", f".{ROUND}") if ROUND != "z" else name
+
+
 def figure(name: str, caption: str, wide: bool = False) -> str:
-    data = base64.b64encode((FIGURES / f"{name}.png").read_bytes()).decode()
+    path = FIGURES / f"{round_figure(name)}.png"
+    if not path.exists():
+        print("no figure", path)
+        return ""
+    data = base64.b64encode(path.read_bytes()).decode()
     kind = " class='wide'" if wide else ""
     text = html.escape(caption)
     return (
@@ -391,8 +427,10 @@ def figure(name: str, caption: str, wide: bool = False) -> str:
 
 
 def note(name: str, caption: str) -> list[str]:
-    path = (FIGURES / f"{name}.png").relative_to(ROOT).as_posix()
-    return [f"![{caption}]({path})", "", caption, ""]
+    path = FIGURES / f"{round_figure(name)}.png"
+    if not path.exists():
+        return []
+    return [f"![{caption}]({path.relative_to(HOME).as_posix()})", "", caption, ""]
 
 
 def main():
@@ -419,6 +457,7 @@ def main():
     )
     readme += ["## Each run", ""]
     for at, run in enumerate(RUNS):
+        run = round_figure(run)
         cards = ""
         readme += [f"### {run}", ""]
         for stem, caption, wide in RUN_FIGURES:
@@ -439,8 +478,9 @@ def main():
         f"<a href='#raw'>Raw table</a></nav>{report()}{page}{table()}"
         f"</main><div id='zoom'><img alt=''></div><script>{ZOOM}</script></body></html>"
     )
-    (ROOT / "index.html").write_text(doc, "utf-8")
-    (ROOT / "README.md").write_text("\n".join(readme) + "\n", "utf-8")
+    HOME.mkdir(parents=True, exist_ok=True)
+    (HOME / "index.html").write_text(doc, "utf-8")
+    (HOME / "README.md").write_text("\n".join(readme) + "\n", "utf-8")
 
 
 if __name__ == "__main__":

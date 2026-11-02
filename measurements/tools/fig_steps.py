@@ -5,7 +5,8 @@ import json
 import sys
 
 import matplotlib.pyplot as plt
-from style import DATA, KINDS, MUTED, SECOND, SERIES, SURFACE, save, stacked_bars
+from matplotlib.patches import Patch
+from style import KINDS, MUTED, SECOND, SERIES, SURFACE, TABLES, save, stacked_bars
 
 OPS = {
     "MOVER": SERIES[5],
@@ -17,9 +18,43 @@ OPS = {
 }
 
 
+def passes(name: str, rows: list[dict], top: int = 6) -> None:
+    """The largest transposes and gathers pass by pass, each on its own time axis."""
+    timed = [r for r in rows if r.get("passes")]
+    groups = (
+        [r for r in timed if r["kind"] == "transpose"],
+        [r for r in timed if r["gather"]],
+    )
+    chosen = [r for g in groups for r in sorted(g, key=lambda r: -r["cycles"])[:top]]
+    if not chosen:
+        return
+    fig, ax = plt.subplots(figsize=(14, 0.42 * len(chosen) + 1.4))
+    for y, r in enumerate(chosen):
+        at = 0
+        for p in r["passes"]:
+            color = OPS.get(p["op"], MUTED)
+            ax.barh(y, p["cycles"] / 1e6, left=at / 1e6, color=color, edgecolor=SURFACE)
+            at += p["cycles"]
+        text = f" {at / 1e6:.2f} M, {len(r['passes'])} passes"
+        ax.text(at / 1e6, y, text, va="center", color=SECOND, fontsize=8)
+    what = ["transpose" if r["kind"] == "transpose" else "gather" for r in chosen]
+    labels = [f"{w} {r['name'][:10]}" for w, r in zip(what, chosen, strict=True)]
+    ax.set_yticks(range(len(chosen)), labels)
+    ax.invert_yaxis()
+    ax.grid(axis="y", visible=False)
+    ax.set_xlabel("node cycles from the launch's first step (M)")
+    handles = [Patch(color=c, label=o) for o, c in OPS.items()]
+    ax.legend(
+        handles=handles, ncol=len(OPS), loc="upper center", bbox_to_anchor=(0.5, 1.2)
+    )
+    ax.set_title(f"{name}: largest transposes and gathers, pass by pass", pad=26)
+    save(fig, "firmware", f"steps_{name}_passes")
+
+
 def main():
     name = sys.argv[1]
-    rows = json.loads((DATA / "steps" / f"{name}.json").read_text("utf-8"))
+    rows = json.loads((TABLES / "steps" / f"{name}.json").read_text("utf-8"))
+    passes(name, rows)
     kinds: dict = collections.defaultdict(collections.Counter)
     for r in rows:
         for op, v in r["ops"].items():

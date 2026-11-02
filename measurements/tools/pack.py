@@ -1,5 +1,6 @@
-"""Pack a recorded trace for the zoo, on the host: raw records gzipped, binds dropped,
-one row of kernel sizes, so `data/` stays small enough to keep.
+"""Pack a recorded trace for the zoo, on the host: raw records gzipped, binds and each
+kernel's L2 kept, L1 as a line count, so `data/` stays small enough to keep and a hash
+still names its program.
 
     python measurements/tools/pack.py TRACE_DIR OUT_DIR
 """
@@ -22,21 +23,20 @@ def main():
         waste = json.loads((trace / "waste.json").read_text("utf-8"))
         waste["findings"] = waste["findings"][:400]
         (out / "waste.json").write_text(json.dumps(waste), "utf-8")
-    rows = []
-    for line in (trace / "launches.jsonl").read_text("utf-8").splitlines():
-        row = json.loads(line)
-        row.pop("binds", None)
-        rows.append(json.dumps(row))
-    text = "\n".join(rows) + "\n"
-    (out / "launches.jsonl.gz").write_bytes(gzip.compress(text.encode()))
-    sizes = {}
+    launches = (trace / "launches.jsonl").read_bytes()
+    (out / "launches.jsonl.gz").write_bytes(gzip.compress(launches))
+    sizes, programs = {}, {}
     for path in sorted((trace / "kernels").glob("*.l1")):
-        l2 = path.with_suffix(".l2")
+        l2 = path.with_suffix(".l2").read_text("utf-8")
+        programs[path.stem] = l2
         sizes[path.stem] = {
             "l1": len(path.read_text("utf-8").splitlines()),
-            "l2": len(l2.read_text("utf-8").splitlines()),
+            "l2": len(l2.splitlines()),
         }
     (out / "kernels.json").write_text(json.dumps(sizes), "utf-8")
+    (out / "kernels.l2.json.gz").write_bytes(
+        gzip.compress(json.dumps(programs).encode())
+    )
     (out / "meta.json").write_text((trace / "meta.json").read_text("utf-8"), "utf-8")
 
 

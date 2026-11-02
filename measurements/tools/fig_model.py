@@ -9,11 +9,10 @@ import matplotlib.pyplot as plt
 from runs import load
 from style import DATA, KINDS, MUTED, SECOND, SURFACE, save
 
-MACHINE = "multimesh_v9t6"
-
 
 def timed(name: str) -> dict:
-    raw = (DATA / name / f"timed.{MACHINE}.jsonl.gz").read_bytes()
+    machine = name.split(".")[-2]
+    raw = (DATA / name / f"timed.{machine}.jsonl.gz").read_bytes()
     rows = [json.loads(x) for x in gzip.decompress(raw).decode().splitlines()]
     return {r["name"]: r for r in rows}
 

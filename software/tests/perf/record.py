@@ -53,7 +53,8 @@ WORKLOADS = {
         m: ("mnist_mlp.py", ["--model", m, "--batch", "8", "--steps", "3"])
         for m in MNIST
     },
-    "vit": ("vit_tiny.py", ["--batch", "1", "--inputs", "3"]),
+    "vit": ("vit_tiny.py", ["--batch", "1", "--inputs", "10"]),
+    "nodes": ("nodes_measure.py", ["--batch", "1", "--inputs", "8"]),
 }
 #: Where the measure image finds its ring, and a ring slot: run, start, cycles, MVSTAT,
 #: units, then per unit its coordinate, CU_COUNTERS and CU_DBG (interp.c `measure`).
@@ -376,8 +377,10 @@ def main() -> int:
         extra[extra.index("--batch") + 1] = str(args.batch)
     if args.library:
         extra += ["--library", str(args.library), "--library-only"]
+    if not args.jit:
+        extra += ["--no-jit"]
     if script == "mnist_mlp.py":
-        extra += ["--test", "8"] if args.jit else ["--no-jit", "--test", "8"]
+        extra += ["--test", "8"]
     if args.steps:
         steps = "--steps" if script == "mnist_mlp.py" else "--inputs"
         extra += [steps, str(args.steps)]
@@ -411,6 +414,8 @@ def main() -> int:
     except BaseException:  # noqa: BLE001
         done = traceback.format_exc()[-1800:]
     seconds = round(time.monotonic() - t0, 2)
+    if done != "exited":
+        print(done, flush=True)
     prof.write(trace.out)
     card_meta = write() if write is not None else {}
     trace.save(
@@ -424,6 +429,16 @@ def main() -> int:
             done=done,
             spans={k: dict(calls=v[0], seconds=v[1]) for k, v in spans.totals.items()},
             profile=os.environ.get("KOHAKUTPU_PROFILE"),
+            # Which paths ran: every stack knob this process saw, and the four dies'
+            # clocks as `bringup read-clocks` read them before the run.
+            knobs={
+                k: v
+                for k, v in sorted(os.environ.items())
+                if k.startswith(("KTPU_", "KOHAKUTPU_"))
+            },
+            clocks=json.loads(os.environ.get("PERF_CLOCKS", "null")),
+            profiled=[prof.first, prof.last] if prof.reached else None,
+            jit=args.jit,
             commit=os.environ.get("PERF_COMMIT"),
             firmware=str(C.FIRMWARE),
             when=time.time(),

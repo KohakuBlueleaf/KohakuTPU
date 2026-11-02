@@ -9,7 +9,7 @@ import collections
 import json
 import pathlib
 
-from traces import FORM_KINDS, Launch, load, step
+from traces import FORM_KINDS, Launch, load, planned, step
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 PARAMS = pathlib.Path(__file__).with_name("params.json")
@@ -160,10 +160,11 @@ def chains(launches: list[Launch]) -> list[dict]:
 
 def report(trace: pathlib.Path, machine: str) -> dict:
     launches = load(trace, machine)
-    warm = step(launches)
+    meta = json.loads((trace / "meta.json").read_text("utf-8"))
+    warm = step(launches, planned(meta["args"]))
     found = detect(launches)
-    first = warm[0].index
-    in_step = [f for f in found if f["launch"] >= first]
+    first, last = warm[0].index, warm[-1].index
+    in_step = [f for f in found if first <= f["launch"] <= last]
     by = collections.Counter()
     for f in in_step:
         by[f["detector"]] += f["cycles"]

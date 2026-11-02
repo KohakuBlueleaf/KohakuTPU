@@ -5,12 +5,17 @@ import dataclasses
 import gzip
 import json
 import pathlib
+import sys
 
-import numpy as np
-from style import DATA
+from style import DATA, REPO, ROUND
+
+sys.path.insert(0, str(REPO / "software" / "tests" / "perf"))
+from traces import planned, repeats
 
 UNIT_KIND = {0x4D47: "MG", 0x5643: "VC"}
 WRAP = 1 << 32
+#: Node clock of a profile, MHz.
+CLOCK = {"low": 100, "mid": 200, "ship": 300}
 
 
 def lines(path: pathlib.Path) -> list[dict]:
@@ -39,26 +44,32 @@ def unit_deltas(rows: list[dict]) -> None:
             last[key] = u
 
 
-def period(names: list[str]) -> tuple[int, int]:
-    """(first warm start, step length): the longest window repeated to the run's end
-    region, found over the names, the whole run when none repeats."""
-    n = len(names)
-    ids = {name: i for i, name in enumerate(dict.fromkeys(names))}
-    code = np.array([ids[name] for name in names])
-    best: list[tuple[int, int, int]] = []
-    for p in range(8, n // 2):
-        same = np.concatenate(([0], (code[:-p] == code[p:]).astype(int), [0]))
-        edges = np.flatnonzero(np.diff(same))
-        if not len(edges):
-            continue
-        spans = edges[1::2] - edges[::2]
-        at = int(np.argmax(spans))
-        best.append((int(spans[at]), p, int(edges[2 * at])))
-    if not best:
-        return 0, 0
-    longest = max(b[0] for b in best)
-    _run, p, first = next(b for b in best if b[0] >= 0.9 * longest and b[0] >= b[1])
-    return first, p
+def clock(meta: dict) -> str:
+    """The profile the run ran at; `mixed` when the dies' readbacks differ, because
+    idle dies change node 0's cycles. A run without readbacks has its label only."""
+    profile = meta.get("profile") or "mid"
+    dies = list((meta.get("clocks") or {}).values())
+    return "mixed" if any(d != dies[0] for d in dies) else profile
+
+
+def jit(meta: dict) -> bool:
+    """Whether TinyJit replayed the run, from its arguments on a run that predates the
+    `jit` key."""
+    return meta["jit"] if "jit" in meta else "--no-jit" not in meta["args"]
+
+
+def tag(mode: str) -> str:
+    """A zoo mode's run tag in this round: `zjl` is `c1jl` in round `c1`."""
+    return ROUND + mode.removeprefix("z")
+
+
+def mode(name: str) -> str:
+    """A run's zoo mode, whatever its round."""
+    return "z" + name.split(".multimesh")[0].partition(".")[2].removeprefix(ROUND)
+
+
+def run_name(model: str, zoo_mode: str, machine: str, nodes: str = "1n") -> str:
+    return f"{model}.{tag(zoo_mode)}.{machine}.{nodes}"
 
 
 @dataclasses.dataclass
@@ -70,23 +81,28 @@ class Run:
     profile: list[dict]
     start: int
     length: int
+    count: int
 
     @property
     def steps(self) -> list[list[dict]]:
-        """Each warm step's rows."""
+        """Each warm step's rows: the run's first repeat is its cold step."""
         if not self.length:
             return [self.rows]
-        out, at = [], self.start
-        while at + self.length <= len(self.rows):
-            out.append(self.rows[at : at + self.length])
-            at += self.length
+        at = range(self.start, self.start + self.count * self.length, self.length)
+        out = [self.rows[a : a + self.length] for a in at]
         return out[1:] if len(out) > 2 else out
 
     @property
     def step(self) -> list[dict]:
-        """The median warm step."""
-        ordered = sorted(self.steps, key=lambda s: sum(r["cycles"] for r in s))
-        return ordered[len(ordered) // 2]
+        """The warm step of median span on the node; of median run cycles for a run
+        recorded without start stamps."""
+
+        def span(s: list[dict]) -> int:
+            if "start" not in s[0]:
+                return sum(r["cycles"] for r in s)
+            return s[-1]["start"] + s[-1]["cycles"] - s[0]["start"]
+
+        return sorted(self.steps, key=span)[len(self.steps) // 2]
 
 
 def load(name: str) -> Run:
@@ -108,11 +124,12 @@ def load(name: str) -> Run:
             row["scratch"] = launches[i].get("scratch", 0)
         rows.append(row)
     unit_deltas(rows)
-    start, length = period([r["name"] for r in rows])
+    named = [r["name"] for r in rows]
+    start, count, length = repeats(named, planned(meta["args"]))
     kernels = json.loads((base / "kernels.json").read_text("utf-8"))
     prof = base / "profile.json.gz"
     profile = json.loads(gzip.decompress(prof.read_bytes())) if prof.exists() else []
-    return Run(name, meta, rows, kernels, profile, start, length)
+    return Run(name, meta, rows, kernels, profile, start, length, count)
 
 
 def by_kind(rows: list[dict], key: str) -> dict:
@@ -123,4 +140,7 @@ def by_kind(rows: list[dict], key: str) -> dict:
 
 
 def names() -> list[str]:
-    return sorted(p.name for p in DATA.glob("*.multimesh_*"))
+    """This round's card runs; a trace recorded offline has no card rows."""
+    runs = DATA.glob("*.multimesh_*/card.jsonl.gz")
+    found = sorted(p.parent.name for p in runs)
+    return [n for n in found if n.partition(".")[2].startswith(ROUND)]

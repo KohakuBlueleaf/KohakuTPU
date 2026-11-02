@@ -1,22 +1,25 @@
 """The path as a diagram: each stage a box, its measured cost for one warm step inside,
 the box's shade by its share, so the hot stage reads before any number does."""
 
+import collections
 import sys
 
 import matplotlib.pyplot as plt
-from fig_path import CLOCK, host_layers
+from fig_path import host_layers
 from fig_run import split
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
-from runs import load
+from runs import CLOCK, clock, load
 from style import BLUES, INK, SECOND, SURFACE, save
 
 
 def stages(run) -> list[tuple]:
-    clock = CLOCK[run.meta.get("profile") or "mid"]
+    hz = CLOCK[clock(run.meta)] * 1e6
     host = host_layers(run)
     node = split(run)
     step = run.step
-    ms = lambda cycles: cycles / clock * 1e3
+    ms = lambda cycles: cycles / hz * 1e3
+    units = {(u["kind"], u["x"], u["y"]) for r in step for u in r["units"]}
+    count = collections.Counter(u[0] for u in units)
     idle = sum(r.get("idle", 0) for r in step[1:])
     sent = sum(r.get("total", 0) for r in step)
     mg = sum(u["busy_d"] for r in step for u in r["units"] if u["kind"] == "MG")
@@ -50,8 +53,8 @@ def stages(run) -> list[tuple]:
         ("seam", "node waits", f"{len(step)} launches", ms(idle)),
         ("node", "firmware", "head, bind, barrier", ms(node["firmware"])),
         ("node", "mover, dispatch, sync", "no compute unit busy", ms(node["neither"])),
-        ("unit", "vector cores", "sum of busy, two units", ms(vc)),
-        ("unit", "clusters", "sum of busy, two units", ms(mg)),
+        ("unit", "vector cores", f"sum of busy, {count['VC']} units", ms(vc)),
+        ("unit", "clusters", f"sum of busy, {count['MG']} units", ms(mg)),
     ]
 
 

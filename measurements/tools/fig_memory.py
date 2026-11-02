@@ -6,11 +6,9 @@ import runpy
 
 import matplotlib.pyplot as plt
 import numpy as np
-from style import DATA, INK, SERIES, SURFACE, save
+from style import DATA, INK, REPO, SERIES, SURFACE, save
 
-GRID = runpy.run_path(
-    str(DATA.parents[1] / "software" / "tests" / "perf" / "memgrid.py")
-)
+GRID = runpy.run_path(str(REPO / "software" / "tests" / "perf" / "memgrid.py"))
 CLOCKS = ("low", "mid", "ship")
 AGENTS = {
     "vr": "vector read",
