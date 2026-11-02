@@ -42,10 +42,11 @@ def test_elementwise_rows(built, shape):
     (x * 2 + x.exp()).realize()
 
 
-@pytest.mark.parametrize("shape", [(1, 256), (8, 192), (64, 512)])
+@pytest.mark.parametrize("shape", [(1, 256), (8, 192), (64, 512), (196, 768)])
 def test_row_reductions(built, shape):
-    x = tensor(*shape)
+    x, y = tensor(*shape), tensor(*shape)
     x.softmax(-1).realize()
+    (x + y).softmax(-1).realize()
     (x - x.mean(-1, keepdim=True)).realize()
     x.sum(-1).realize()
     x.sum(0).realize()

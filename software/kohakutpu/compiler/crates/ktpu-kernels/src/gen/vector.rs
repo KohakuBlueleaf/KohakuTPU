@@ -1056,12 +1056,6 @@ pub fn rows_shape(
     };
     let pl = plan(operands, out.kind, r, w, bands, None, quantum, hw)?;
     let pl = whole_band(e, operands, out, r, w, quantum, &pl, hw).unwrap_or(pl);
-    if pl.nblk > 1 && reduces.len() > 1 {
-        return fail(
-            "API.ROW.009",
-            "several reductions over a row wider than one block",
-        );
-    }
     let out = if out.kind == Kind::Row {
         let rows = out.rows.max(stat_words(r, hw) * hw.stat_rows());
         if pl.nblk > 1 {
@@ -1092,6 +1086,12 @@ pub fn rows_kernel(
         quantum,
         out: out_shape,
     } = rows_shape(e, operands, r, w, out, bands, &hw)?;
+    if pl.nblk > 1 && expr::reduces(e).len() > 1 {
+        return fail(
+            "API.ROW.009",
+            "several reductions over a row wider than one block",
+        );
+    }
     let parts = stages(&pl, r, quantum);
     let mut ports = vec![];
     let mut given = vec![];
