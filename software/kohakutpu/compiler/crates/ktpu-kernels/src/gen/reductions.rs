@@ -364,20 +364,47 @@ struct Across {
     out: v::Operand,
 }
 
+/// What an expression is where its rows-major reads are zero and every other
+/// read is finite: zero, some finite value, or possibly not finite.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum AtZero {
+    Zero,
+    Finite,
+    Any,
+}
+
+/// `e` at that point (a zeroed column's value: `0 * log2(0)` is not zero).
+fn at_zero(e: &E, ops: &[v::Operand]) -> AtZero {
+    use AtZero::*;
+    use OpName as O;
+    let (op, args) = match e.as_ref() {
+        Expr::Load(i) => return if ops[*i].rows_major() { Zero } else { Finite },
+        Expr::Const(x) if *x == 0.0 => return Zero,
+        Expr::Const(x) => return if x.is_finite() { Finite } else { Any },
+        Expr::Reduce(..) => return Any,
+        Expr::Op(op, args) => (*op, args),
+    };
+    let a: Vec<AtZero> = args.iter().map(|x| at_zero(x, ops)).collect();
+    let top = a.iter().copied().max().unwrap_or(Finite);
+    if top == Any {
+        return Any;
+    }
+    match op {
+        O::Mul | O::And if a.contains(&Zero) => Zero,
+        O::Mul | O::And | O::Exp2 | O::Or | O::Xor | O::Not => Finite,
+        O::Cmplt | O::Cmpgt | O::Cmpeq | O::Cmpne => Finite,
+        O::Add | O::Sub | O::Max | O::Min | O::Neg | O::Abs | O::Trunc | O::Sin | O::Id => top,
+        O::Sqrt if top == Zero => Zero,
+        O::Where => a[1].max(a[2]),
+        O::Fma if (a[0] == Zero || a[1] == Zero) && a[2] == Zero => Zero,
+        O::Fma => Finite,
+        _ => Any,
+    }
+}
+
 /// Whether `e` is zero wherever its rows-major reads are zero.
 fn vanishes(e: &E, ops: &[v::Operand]) -> bool {
-    use OpName as O;
-    let z = |a: &E| vanishes(a, ops);
-    match e.as_ref() {
-        Expr::Load(i) => ops[*i].rows_major(),
-        Expr::Const(x) => *x == 0.0,
-        Expr::Op(O::Mul | O::And, args) => args.iter().any(z),
-        Expr::Op(O::Add | O::Sub | O::Max | O::Min, args) => args.iter().all(z),
-        Expr::Op(O::Neg | O::Abs | O::Sqrt | O::Trunc | O::Sin | O::Id, args) => z(&args[0]),
-        Expr::Op(O::Where, args) => z(&args[1]) && z(&args[2]),
-        Expr::Op(O::Fma, args) => (z(&args[0]) || z(&args[1])) && z(&args[2]),
-        _ => false,
-    }
+    at_zero(e, ops) == AtZero::Zero
 }
 
 /// `ops` over [r, w] read across, when a half tile's columns are `r` whole

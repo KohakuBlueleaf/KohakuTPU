@@ -108,6 +108,11 @@ def test_a_column_mean_counts_a_repeated_row_once_a_row(same):
     same(lambda a, b: (a + b).mean(1), x, y, tolerance=1e-2)
 
 
+def test_a_column_sum_stays_finite_where_its_padding_would_not(same):
+    x = np.abs(R.normal(size=(16, 64))) + 0.5
+    same(lambda a: (a * a.log2()).sum(0), x, tolerance=1e-2)
+
+
 def test_a_column_max_keeps_its_negative_columns(same):
     x = R.normal(size=(16, 512)) - 8.0
     same(lambda a: a.max(0), x, tolerance=1e-2)

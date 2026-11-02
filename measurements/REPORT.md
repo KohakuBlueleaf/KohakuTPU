@@ -29,14 +29,17 @@ work in fewer beats lowers its own vector MFU.
 | MLP | 35.6 → 9.6; 85.6 → 43.4 | 5.98 → 1.09; 5.98 → 1.08 | 0.11 (0.03), 5.37, 5.58%; 0.02, 1.19, 1.23% | 7.6%; 1.7% | 1.23; 0.27 |
 | GRU | 33.6 → 36.2; 345.7 → 284.6 | 4.31 → 4.18; 4.35 → 4.16 | 0.05 (0.04), 1.00, 0.80%; 0.01, 0.13, 0.10% | 2.9%; 0.4% | 0.47; 0.06 |
 
-The bracket is d1's TinyJit matrix MFU on d2's floor.
+The bracket is d1's TinyJit matrix MFU on d2's floor. `rounds/d2/data/compare.csv` compares
+against the 56021fd4 baseline runs (`.z`), not d1; the d1 columns here come from
+`rounds/d1/data/zoo.csv`. The measurement firmware image turns list chaining off, so these
+runs measure resident lists, not the resident chain.
 
 | Bottleneck | Size | Figure |
 |---|---|---|
 | Device cycles | Every model's TinyJit step fell at mid on 2+2: MLP 0.18×, wide 0.21×, ViT-B 0.40×, ViT 0.58×, GPT 0.66×, Mixer 0.86×, LeNet 0.88×, GRU 0.97×. Eager steps fall by the same ratios. 4+2 matches: ViT-B 45.0 M against d1's 126.6 M | `rounds/d2/data/zoo.csv` `cycles` |
 | Host in a TinyJit step | GRU's TinyJit cadence rose 33.6 to 36.2 ms at mid (29.4 to 33.0 on 4+2, 23.6 to 26.7 at ship) while its cycles fell 3%; Mixer at ship held at 55.2 ms against 54.5 while its cycles fell 14%. The host, not the card, sets these steps | `zoo.csv` `cadence`, `gap_ms` |
 | Host in an eager step | Eager steps are 2.0× (ViT-B) to 7.9× (GRU) their TinyJit cadence at mid: GRU 284.6 ms for 4.16 M cycles, Mixer 506.3 for 10.2 M, GPT 452.1 for 12.4 M | `zoo.csv` |
-| 4+2 against 2+2 | ViT-B TinyJit 241.8 ms against 271.5, 45.0 M cycles against 51.2: the extra clusters now take attention heads. ViT 13.4 M against 14.8 M; LeNet 20.4 M against 19.1 M, slower; the rest within 1% | `zoo.csv` |
+| 4+2 against 2+2 | ViT-B TinyJit 241.8 ms against 271.5, 45.0 M cycles against 51.2: 5.82 M of the 6.20 M difference is `quant` (4+2 packs unpaired, nk 1), matrix launches 0.38 M; QK spreads heads over the clusters, PV runs every head on MG 0. ViT 13.4 M against 14.8 M; LeNet 20.4 M against 19.1 M, slower: one composed pack costs 2.25 M on 4+2 against 1.13 M for 2+2's relayout and pack; the rest within 1% | `zoo.csv`, `data/vitb.d2j.*`, `data/lenet.d2j.*` |
 | Clock | TinyJit ms at low, mid, ship on 2+2: ViT-B 466, 272, 211; ViT 153, 90, 69; GPT 137, 80, 62; LeNet 189, 111, 86; Mixer 114, 70, 55; wide 37, 24, 18; GRU 57, 36, 27; MLP 16, 10, 8 | `zoo.csv` |
 | Compile | The library was filled over three fill rounds, so this is not a fill from empty: the last fill compiled 167 kernels in 201.4 s over 14 runs, slowest 19.6 s (a LeNet kernel), and the Mixer fix 1 kernel a board | `rounds/d2/data/compile.csv` |
 | Outputs | 71 of 96 pass max relative 0.03 and cosine 0.999 against CPU f32. 25 miss: every ViT run (0.042), every ViT-B (0.061 on 2+2, 0.057 on 4+2, d1 0.073 and 0.063), and LeNet eager at mid on 2+2 (0.037; its 11 other runs 0.018 to 0.022). Mixer passes at 0.028 on 2+2 and 0.022 on 4+2, against d1's 0.036 and 0.027, after `ISSUES.md` 45 | `build_round.py` output |
