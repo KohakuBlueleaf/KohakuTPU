@@ -70,12 +70,14 @@ class Storage:
         self.derived: bool = False
         #: the kept storage whose bytes and forms this one holds
         self.shared: Storage | None = None
+        #: a graph's input slot: the host rewrites these bytes every call
+        self.varying: bool = False
 
     # ------------------------------------------------------------- derived
     @property
     def unchanged(self) -> bool:
         """No kernel wrote these bytes from a value that can change."""
-        return self.host is not None or self.derived
+        return not self.varying and (self.host is not None or self.derived)
 
     def keep(self, read: Any, out: Any) -> None:
         """`out` (a storage, a `forms.Pending`) is what `read` makes of these

@@ -216,7 +216,8 @@ def _op(name, *a):
                 return x if c else y
             return kt.where(c, x, y)
         case "fma":
-            return a[0] * a[1] + a[2] if any(_num(x) for x in a) else kt.fma(*a)
+            # One rounding: only a product of two numbers folds first.
+            return a[0] * a[1] + a[2] if _num(a[0]) and _num(a[1]) else kt.fma(*a)
         case "and":
             return a[0] * a[1]
         case "or":

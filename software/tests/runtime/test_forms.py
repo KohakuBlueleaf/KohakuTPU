@@ -9,6 +9,7 @@ from tinygrad.helpers import Context
 from tinygrad.tensor import Tensor
 
 from kohakutpu.application.ktpugrad.captured import recipe
+from kohakutpu.application.ktpugrad.device import KTPUGraph
 from kohakutpu.application.ktpugrad.run.regions import _identity
 from kohakutpu.application.runtime.forms import F16
 from kohakutpu.application.runtime.memory.storage import Storage, StorageView
@@ -321,3 +322,23 @@ def test_a_replayed_step_reads_its_new_input(dev):
     for _ in range(4):
         a = R.normal(size=(16, 32))
         close(step(tensor(a)).numpy(), np.maximum(a * 2.0, 0.0) + 1.0)
+
+
+def test_a_step_that_copies_its_input_still_replays(dev, monkeypatch):
+    graphs = []
+    init = KTPUGraph.__init__
+
+    def counted(self, *args, **kwargs):
+        graphs.append(self)
+        init(self, *args, **kwargs)
+
+    monkeypatch.setattr(KTPUGraph, "__init__", counted)
+    def forward(t):
+        moved = (t + 0.0).contiguous().realize()
+        return ((moved * 2.0).relu().realize() + 1.0).realize()
+
+    step = TinyJit(forward)
+    for _ in range(6):
+        a = R.normal(size=(16, 32))
+        close(step(tensor(a)).numpy(), np.maximum(a * 2.0, 0.0) + 1.0)
+    assert graphs and graphs[-1].counts["replayed"] > 0

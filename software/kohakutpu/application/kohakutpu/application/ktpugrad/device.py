@@ -223,6 +223,7 @@ class KTPUGraph(GraphRunner):
             slot = self.slots.get(i)
             if slot is None:
                 slot = Buffer(buf.device, buf.size, buf.dtype).ensure_allocated()
+                slot._buf.varying = True
                 self.slots[i] = slot
             self.dev.allocator._copyin(slot._buf, memoryview(st.host))
             dt = self.host_forms.get(i)

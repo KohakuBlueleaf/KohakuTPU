@@ -290,7 +290,8 @@ impl Emitter<'_> {
                 Arg::Val(_) => self.math(Op::Sel, a),
             },
             OpName::Fma => {
-                if a.iter().any(num) {
+                // One rounding: only a product of two numbers folds first.
+                if num(&a[0]) && num(&a[1]) {
                     let p = self.mul(a[0], a[1])?;
                     self.add(p, a[2])
                 } else {

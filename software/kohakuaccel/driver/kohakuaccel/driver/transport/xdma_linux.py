@@ -342,9 +342,12 @@ def reset_link(index: int = 0, ko: str | None = None, params: str | None = None)
         finally:
             os.close(cfg)
         time.sleep(1.5)
-        (pci / "devices" / port.name / "remove").write_text("1")
-        time.sleep(1.0)
-        (pci / "rescan").write_text("1")
+        # A signal landing here must not leave the root port off the tree.
+        try:
+            (pci / "devices" / port.name / "remove").write_text("1")
+            time.sleep(1.0)
+        finally:
+            (pci / "rescan").write_text("1")
         time.sleep(2.0)
         if not (pci / "devices" / dev.name).exists():
             raise TransportUnavailable(f"{dev.name} did not come back after the reset")
