@@ -67,6 +67,15 @@ opt-level = 3
 lto = true
 codegen-units = 1
 
+# Release with thin LTO: from nothing in 48 s on the Linux host where `release`
+# needs its dependencies built first (then 80 s for the Python module); the
+# compiler stages run 11% slower than under `release` (compile_speed, 166 GPT
+# kernels: stage 165 s, thin 131 s, release 118 s).
+[profile.thin]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
 # The test tiers: release speed, rebuilt in seconds.
 [profile.stage]
 inherits = "release"
