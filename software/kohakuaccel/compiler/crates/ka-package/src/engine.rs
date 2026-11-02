@@ -573,8 +573,9 @@ mod tests {
         count.wrapping_sub(want) & 0xFFF < 2048
     }
 
-    #[test]
-    fn a_wait_far_behind_what_was_sent_still_releases() {
+    /// The WAIT targets (low 12 bits) a package of 3000 words then an AWAIT of
+    /// one lowers to.
+    fn far_waits(f: &Facts) -> Vec<u64> {
         let unit = Unit {
             type_code: 0,
             x: 1,
@@ -593,17 +594,62 @@ mod tests {
             payloads: vec![Word::ZERO; 3000],
             ..Package::default()
         };
-        let low = lower(&pkg, &facts()).unwrap();
-        let waits: Vec<u64> = low
-            .steps
+        let low = lower(&pkg, f).unwrap();
+        low.steps
             .iter()
             .filter(|s| s.op == Op::Engine)
             .flat_map(|s| entries(&low, s))
             .filter(|&(code, _)| code == WAIT)
             .map(|(_, value)| value & 0xFFF)
-            .collect();
+            .collect()
+    }
+
+    #[test]
+    fn a_wait_far_behind_what_was_sent_still_releases() {
+        let waits = far_waits(&facts());
         // Every word sent has retired: the unit's count is 3000 at each late wait.
         let late = &waits[waits.len() - 2..];
         assert!(late.iter().all(|&want| released(3000, want)), "{late:?}");
+    }
+
+    /// Without F-004 the waits keep the targets the package names: the
+    /// handling is the flaw's alone.
+    #[test]
+    fn without_f004_a_far_behind_wait_keeps_its_target() {
+        let waits = far_waits(&Facts {
+            wait_window: false,
+            ..facts()
+        });
+        let late = &waits[waits.len() - 2..];
+        assert!(late.iter().any(|&want| !released(3000, want)), "{late:?}");
+    }
+
+    /// Rings past the interlink's queue between waits stay firmware steps
+    /// with F-003, and go into the engine without it.
+    #[test]
+    fn rings_leave_the_engine_only_for_f003() {
+        let pkg = Package {
+            steps: (0..6)
+                .map(|_| Step::new(Op::Ring, 0, 1, 0, 0))
+                .chain([Step::new(Op::End, 0, 0, 0, 0)])
+                .collect(),
+            ..Package::default()
+        };
+        let small = Facts {
+            ring_depth: 4,
+            ..facts()
+        };
+        let rings = |f: &Facts| {
+            let low = lower(&pkg, f).unwrap();
+            low.steps.iter().filter(|s| s.op == Op::Ring).count()
+        };
+        assert_eq!(rings(&small), 6);
+        assert_eq!(
+            rings(&Facts {
+                ring_unheld: false,
+                ..small
+            }),
+            0
+        );
     }
 }

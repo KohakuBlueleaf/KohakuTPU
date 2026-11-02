@@ -978,8 +978,9 @@ FLAWS = [
             " the real one stays queued as the next packet's first flit."
         ),
         (
-            "v9t8 card, far vector peer drain of 32 words (ISSUES 14); the"
-            " Verilated 2-node model with the fwft shim"
+            "tests/sysnode/mag_ilink_tail_tb.v (xsim on the real cell, Verilator"
+            " on the fwft shim); v9t8 card, far vector peer drain of 32 words"
+            " (ISSUES 14)"
         ),
         "ktpu-l1 lower/image/desc.rs far_splits (L1.VC.010)",
         "OB_HDR and OB_DAT load ltx_dat and pop u_enc only when !ef_empty.",
@@ -993,7 +994,10 @@ FLAWS = [
             " ring past the interlink's queue is dropped and its receiver waits"
             " forever."
         ),
-        "dispatch_engine.v write_ok (read, RUL.046)",
+        (
+            "tests/sysnode/dispatch_engine_tb.v: six RINGs issue against an"
+            " interlink queue of four"
+        ),
         "ka-package engine.rs rings_overflow, replay.rs (RUL.046)",
         (
             "Hold a RING entry while the interlink reports node.ring_depth rings"
@@ -1009,8 +1013,8 @@ FLAWS = [
             " half the range behind reads as ahead and holds forever."
         ),
         (
-            "ISSUES 12 (v9t8 card); ka-package engine test"
-            " a_wait_far_behind_what_was_sent_still_releases"
+            "tests/sysnode/dispatch_engine_tb.v: a WAIT half the range behind"
+            " holds; ISSUES 12 (v9t8 card)"
         ),
         "ka-package engine.rs Stream::wait; firmware de_wait",
         "Release a WAIT against the issued count, not the counter's sign.",

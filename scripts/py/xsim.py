@@ -1253,6 +1253,15 @@ BENCHES = {
     # interlink_2mesh_tb.v is NOT here: it fails its own checks, superseded by
     # interlink_2mesh_1m. Triage before registering.
     # The link pair alone: credit and framing, no switch above them.
+    # mag_ilink alone: silicon flaw F-002, a one-flit packet sent early.
+    "mag_ilink_tail": (
+        "mag_ilink_tail_tb",
+        COMMON
+        + [
+            "src/kohakuaccel/sysnode/interlink/mag_ilink.v",
+            "tests/sysnode/mag_ilink_tail_tb.v",
+        ],
+    ),
     "mag_link": (
         "mag_link_tb",
         COMMON

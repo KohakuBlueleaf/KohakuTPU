@@ -107,7 +107,7 @@ module dispatch_engine_tb;
 
     wire sig_mapped = (sig_y < 4);
     wire claim_m = en_m && map_on && sig_mapped && (sig_code == 8'h00 || sig_code == 8'h01);
-    integer neg_tick = 0;
+    integer neg_tick = 0, rings = 0;
 
     always @(posedge clk) if (resetn) begin
         // writes in order, behind their waits
@@ -140,6 +140,7 @@ module dispatch_engine_tb;
 `endif
         end
 
+        if (t_en && t_code == 5'd26) rings = rings + 1;
         // the mailbox: a commit reaches it a cycle after issue
         dr_go <= t_en && t_code == 5'd5;
         if (offered && ($urandom % 3 == 0)) offered <= 1'b0;
@@ -298,11 +299,29 @@ module dispatch_engine_tb;
         #1;
         if (rd_data[32 +: CTR_W] != (gos_enq & 12'hfff)) fail("moves started");
         rd_addr = 5'd0;
+        // Silicon flaw F-004 (docs/spec/stack/flaws.md), asserted as recorded:
+        // a WAIT whose target is half the counter's range behind its count
+        // reads as ahead and holds the write behind it forever.
+        sig_v = 1'b0;
+        @(negedge clk);
+        push(6'd32, {3'd0, 5'd0, 56'd0} | ((cnt_m[0] - (1 << (CTR_W - 1))) & 12'hfff));
+        push(6'd1, 64'hF004);
+        repeat (200) @(negedge clk);
+        if (rd_data[15:0] != 2) fail("F-004: a far-behind WAIT no longer holds");
         cfg(2'd1, 64'd3);
+        sb_i = sb_n;
         repeat (NCTR + 2) @(negedge clk);
         rd_addr = 5'd16;
         #1;
         if (rd_data != 0) fail("counter after clear");
+
+        // Silicon flaw F-003, asserted as recorded: the engine has no interlink
+        // room input, so six RINGs issue against a queue of four never drained.
+        rd_addr = 5'd0;
+        rings = 0;
+        for (i = 0; i < 6; i = i + 1) push(6'd26, 64'd1);
+        repeat (50) @(negedge clk);
+        if (rings != 6) fail("F-003: RINGs past the interlink's queue were held");
 
         $display("@@@ entries %0d, cycles %0d, moves %0d, counts u0 %0d", sb_n, cyc, gos_enq, cnt_m[0]);
         if (errors == 0) $display("PASS dispatch_engine");

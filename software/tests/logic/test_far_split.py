@@ -32,8 +32,8 @@ def send(n: int, base: str, drains: str, extra: str = "") -> str:
     )
 
 
-def encode(text: str):
-    return _rs.image(text, "send", [4096], MACHINE)
+def encode(text: str, machine: str = MACHINE):
+    return _rs.image(text, "send", [4096], machine)
 
 
 def split_by_hand(n: int, flags: str, ainc: str = "") -> str:
@@ -72,6 +72,17 @@ def test_a_relative_split_steps_both_descriptors():
     assert stale[0] == encode(split_by_hand(BEATS, " rel"))[0]
     stepped = encode(send(BEATS, peer, drains, "    ainc a1 += 64\n"))
     assert stepped[0] == encode(split_by_hand(BEATS, " rel", "64"))[0]
+
+
+def test_without_f002_a_far_drain_keeps_one_descriptor():
+    doc = json.loads(MACHINE)
+    doc["machine"]["flaws"]["F-002"]["present"] = False
+    peer = f"peer(64, count=1, {FAR})"
+    _, descs = encode(
+        send(BEATS, peer, "    vdrain a1 <- l1[0] to=(0, 1)\n"), json.dumps(doc)
+    )
+
+    assert {ad for ad, _ in descs} == {0, 1}
 
 
 @pytest.mark.parametrize(
