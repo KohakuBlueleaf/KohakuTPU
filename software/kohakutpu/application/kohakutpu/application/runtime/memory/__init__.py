@@ -34,7 +34,7 @@ class CardMemory:
         #: up to its end, so no live span lies past the mark.
         self.painted = self.dram.lo
         #: `(stripe bytes, homes)` of the DRAM interleave; node -> its packages' home.
-        self.stripes = None
+        self.stripes: tuple = ()
         self.package_homes: dict = {}
 
     def near(self, node: int) -> tuple | None:
@@ -55,7 +55,7 @@ class CardMemory:
         """`nbytes` of `node`'s staging store."""
         return self.staging[node].alloc(nbytes, owner=owner)
 
-    def carve(self, nbytes: int, node: int | None = None) -> Arena:
+    def carve(self, nbytes: int, node: int | None = None) -> Arena | _rs.Arena:
         """An arena of its own over `nbytes` at the top of DRAM (zeroed now
         when painting), or of `node`'s staging store; held until the card
         closes."""

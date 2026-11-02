@@ -62,7 +62,7 @@ def main() -> int:
     print(
         f"  loaded ({info['mode']}, {info['load_seconds']:.1f}s): text {info['text']} B"
     )
-    text, t0 = "", time.monotonic()
+    text, t0, st = "", time.monotonic(), {}
     while time.monotonic() - t0 < 240:
         text += node.console()
         st = node.status()

@@ -3,9 +3,9 @@
 import numpy as np
 from examples.tinygrad.mnist_models import LeNet
 from examples.tinygrad.vit_tiny import seeded_model
-from tinygrad import Tensor
 from tinygrad.helpers import Context
 from tinygrad.nn.state import get_state_dict
+from tinygrad.tensor import Tensor
 
 from kohakutpu.application import ktpugrad
 from kohakutpu.application.ktpugrad.nn import place

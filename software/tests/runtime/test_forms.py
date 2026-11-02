@@ -1,11 +1,17 @@
 """What the runtime keeps between runs: forms of a buffer, memory, a replayed step."""
 
+from typing import cast
+
 import numpy as np
+from tinygrad.device import Buffer
 from tinygrad.engine.jit import TinyJit
 from tinygrad.helpers import Context
 from tinygrad.tensor import Tensor
 
 from kohakutpu.application.ktpugrad.captured import recipe
+from kohakutpu.application.ktpugrad.run.regions import _identity
+from kohakutpu.application.runtime.forms import F16
+from kohakutpu.application.runtime.memory.storage import Storage, StorageView
 
 R = np.random.default_rng(0)
 #: Of the largest value: contractions read seven bits a block.
@@ -74,6 +80,7 @@ def test_a_captured_softmax_is_one_kernel_and_keeps_what_it_returns(dev, monkeyp
     step = TinyJit(lambda x: (x.softmax(-1), x.sum(-1)))
     a = R.normal(size=(8, 32))
     tp = np.exp(a) / np.exp(a).sum(-1, keepdims=True)
+    got = None, None
     for _ in range(4):
         out, total = step(tensor(a).contiguous().realize())
         got = out.numpy(), total.numpy()
@@ -121,7 +128,7 @@ def test_a_pool_of_an_activation_computes_only_what_it_reads(dev, monkeypatch):
     monkeypatch.setattr(recipe, "submit", spied)
     a = R.normal(size=(4, 3, 14, 14))
     want = windows(np.maximum(a, 0) * 2 + 1, 5).max((-2, -1))
-    got = (tensor(a).relu() * 2 + 1).max_pool2d((5, 5), 1)
+    got = cast(Tensor, (tensor(a).relu() * 2 + 1).max_pool2d((5, 5), 1))
     seen = kinds(dev, lambda: close(got.numpy(), want))
     assert seen.count("convert") + seen.count("move") <= 1, seen
     assert sizes and max(sizes) < 25 * a.size, sizes
@@ -164,7 +171,8 @@ def test_a_read_through_keeps_what_a_later_batch_reads(dev):
     a = R.normal(size=(16, 32))
     with Context(JIT_BATCH_SIZE=2):
         step = TinyJit(fn)
-        for _ in range(4):
+        got = step(tensor(a).contiguous().realize())
+        for _ in range(3):
             got = step(tensor(a).contiguous().realize())
     close(got.numpy(), a.T + 4)
 
@@ -191,7 +199,7 @@ def test_a_weights_transpose_and_packing_are_made_once(dev):
     b = R.normal(size=(96, 64))
     w = tensor(b)
     outs = [R.normal(size=(32, 96)) for _ in range(3)]
-    seen = []
+    seen, y = [], w
     for a in outs:
         x = tensor(a)
         y = x @ w.permute(1, 0).reshape(64, 96).permute(1, 0)
@@ -231,6 +239,48 @@ def test_a_write_to_a_kept_reads_output_leaves_the_kept_read(dev):
     second.assign(tensor(R.normal(size=(96, 64)))).realize()
     close(first.numpy(), b.T)
     close(read().numpy(), b.T)
+
+
+def test_a_write_to_a_kept_reads_first_output_leaves_the_kept_read(dev):
+    b = R.normal(size=(64, 96))
+    w = tensor(b)
+    read = lambda: w.permute(1, 0).contiguous().realize()
+    first, second = read(), read()
+    first.assign(tensor(R.normal(size=(96, 64)))).realize()
+    close(second.numpy(), b.T)
+    close(read().numpy(), b.T)
+
+
+def test_a_partial_upload_keeps_the_rest_of_a_form_only_owner(dev):
+    st = form_only(dev)
+    allocator = cast(Buffer, tensor(np.zeros(16)).uop.buffer).allocator
+    raw = np.array([99], np.float32).tobytes()
+    allocator._copyin(StorageView(st, 4, 4), memoryview(raw))
+    got = np.frombuffer(dev.read(st.addr, 64), np.float32)
+    assert got.tolist() == [1, 99, *range(3, 17)]
+
+
+def test_a_view_reads_its_own_bytes_of_a_form_only_owner(dev):
+    st = form_only(dev)
+    allocator = cast(Buffer, tensor(np.zeros(16)).uop.buffer).allocator
+    got = bytearray(8)
+    allocator._copyout(memoryview(got), StorageView(st, 4, 8))
+    assert np.frombuffer(bytes(got), np.float32).tolist() == [2, 3]
+
+
+def test_a_region_reads_a_whole_view_as_its_storage(dev):
+    st = form_only(dev)
+    assert _identity(StorageView(st, 0, 64)) == _identity(st)
+    assert _identity(StorageView(st, 4, 8)) != _identity(st)
+
+
+def form_only(dev):
+    """An f32 owner of 1..16 whose only current form is f16."""
+    st = Storage(dev, 64)
+    f16 = st.form(F16, 32)
+    dev.write(f16.addr, np.arange(1, 17, dtype=np.float16).tobytes())
+    st.valid, st.dtype = {F16}, np.float32
+    return st
 
 
 def test_a_softmax_is_one_kernel(dev):

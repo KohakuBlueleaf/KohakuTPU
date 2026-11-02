@@ -7,6 +7,9 @@ frees live storage.
 
 from dataclasses import dataclass
 
+from kohakuaccel.driver.node.queue import NodeQueue
+from kohakuaccel.driver.node.queue.execution import ExecutionList
+
 
 class FirmwareRunner:
     def __init__(self, queue, timeout_cycles=0):
@@ -34,8 +37,8 @@ class FirmwareRunner:
 
 @dataclass
 class PreparedList:
-    queue: object
-    execution: object
+    queue: NodeQueue
+    execution: ExecutionList
     busy: bool = False
 
     def submit(self):

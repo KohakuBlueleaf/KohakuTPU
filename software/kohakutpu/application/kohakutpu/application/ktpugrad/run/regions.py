@@ -147,9 +147,15 @@ def _plan(last: Plan, members: tuple, made: _Made, out: int) -> Plan | None:
     )
 
 
+def _identity(buffer) -> tuple:
+    """A buffer's logical bytes: a whole view of a storage is that storage."""
+    st, off = FM.base_of(buffer)
+    return id(st), off, buffer.nbytes
+
+
 def _ids(plan: Plan, buffers: dict, known: dict) -> dict:
-    """Each slot of `plan` as the region's ordinal of its buffer."""
-    return {s: known.setdefault(id(b), len(known)) for s, b in buffers.items()}
+    """Each slot of `plan` as the region's ordinal of its bytes."""
+    return {s: known.setdefault(_identity(b), len(known)) for s, b in buffers.items()}
 
 
 def _region(members: list) -> tuple | None:
@@ -166,8 +172,14 @@ def _region(members: list) -> tuple | None:
     region = _PLANS[key]
     if region is None:
         return None
-    every = {("region", known[id(b)]): b for _, bs in members for b in bs.values()}
+    every = {
+        ("region", known[_identity(b)]): b for _, bs in members for b in bs.values()
+    }
     used = {a.slot for a in region.accesses if a.slot is not None}
+    # A member's output is gone once the region runs: nothing may still read it.
+    gone = {id(FM.base_of(b[p.out_slot])[0]) for p, b in members[:-1]}
+    if any(id(FM.base_of(every[s])[0]) in gone for s in used):
+        return None
     return region, {k: every[k] for k in {*used, region.out_slot}}
 
 
@@ -178,11 +190,11 @@ def _compose(members: list, ids: list) -> Plan | None:
     made: dict = {}
     try:
         for (plan, _), slots in zip(members, ids, strict=True):
-            got = _absorb(plan, slots, made)
-            made[slots[plan.out_slot]] = got
+            made[slots[plan.out_slot]] = _absorb(plan, slots, made)
     except _NoRegion:
         return None
-    return _plan(last, tuple(p for p, _ in members), got, ids[-1][last.out_slot])
+    out = ids[-1][last.out_slot]
+    return _plan(last, tuple(p for p, _ in members), made[out], out)
 
 
 def _reads(plan: Plan, buffers: dict) -> set:

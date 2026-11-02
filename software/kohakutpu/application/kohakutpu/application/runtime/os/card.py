@@ -82,6 +82,9 @@ class OSCard(OfflineCard):
         self.de_fetch = ENV.get("KOHAKUTPU_OS_DE_FETCH", "1") == "1"
         self.de_fuse = ENV.get("KOHAKUTPU_OS_DE_FUSE", "1") == "1"
         self.launch_ring = ENV.get("KOHAKUTPU_OS_LAUNCH_RING", "0") == "1"
+        # Launches that start a new descriptor stream on a fused graph.
+        breaks = ENV.get("KOHAKUTPU_OS_DE_BREAKS", "")
+        self.de_breaks = {int(b) for b in breaks.split(",") if b}
 
     def _execute(self, graph, repeats=1):
         self.session.prepare(graph)
@@ -189,6 +192,8 @@ class OSCard(OfflineCard):
                 raise ValueError(
                     "OS resident logs contain runs or constant writes, not reads"
                 )
+            if launches in self.de_breaks:
+                frontier = graph.de_break(frontier)
             if self.stamps:
                 frontier = graph.stamp(frontier, 2 * launches)
             branches = []

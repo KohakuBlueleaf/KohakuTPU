@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -37,12 +38,15 @@ def setup():
     firmware = SpecFirmware(mem, 0, record=LAYOUT.record, layout=LAYOUT)
     firmware.boot()
     queue.idle = firmware.step
-    card = SimpleNamespace(
-        queues={0: queue},
-        memory=memory,
-        machine_json="{}",
-        queue_layout=LAYOUT,
-        admission_cached=True,
+    card = cast(
+        NodeCard,
+        SimpleNamespace(
+            queues={0: queue},
+            memory=memory,
+            machine_json="{}",
+            queue_layout=LAYOUT,
+            admission_cached=True,
+        ),
     )
     a, b, c = (bytes([i]) * 128 for i in (1, 2, 3))
     log = [("run", {0: (raw, ())}) for raw in (a, b, a, c, a)]

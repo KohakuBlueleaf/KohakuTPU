@@ -1,12 +1,17 @@
 """What a card decides by itself: the resident knob and one-node submission."""
 
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime.card import NodeCard
-from kohakutpu.application.runtime.card.common import ResidentMode, parse_resident_mode
+from kohakutpu.application.runtime.card.common import (
+    Pending,
+    ResidentMode,
+    parse_resident_mode,
+)
 
 
 @pytest.mark.parametrize(
@@ -51,10 +56,10 @@ def test_a_wire_on_the_second_node_waits_on_that_node():
             record=None,
         )
 
-    card.queues = {0: queue(10), 1: queue(42)}
+    vars(card)["queues"] = {0: queue(10), 1: queue(42)}
     card.q = card.queues[0]
-    card._submit = lambda n, data, bindings, admitted=False: 7
+    vars(card)["_submit"] = lambda n, data, bindings, admitted=False: 7
     recipe = SimpleNamespace(plain=lambda h, t: b"plain")
     pending = card.submit_wire({1: (b"wire", ())}, {1: (recipe, [0], [])})
-    got = card.collect(pending)
+    got = card.collect(cast(Pending, pending))
     assert got["cycles"] == 42 and got["nodes"][1]["cycles"] == 42

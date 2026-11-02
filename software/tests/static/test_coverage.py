@@ -3,6 +3,7 @@ simulator takes, so a stage's proof chains into the stage below it."""
 
 import pathlib
 import re
+from typing import cast
 
 SOFTWARE = pathlib.Path(__file__).resolve().parents[2]
 COMPILER = SOFTWARE / "kohakutpu" / "compiler" / "crates"
@@ -31,7 +32,7 @@ L0_OUTSIDE = {
 
 def math_ops() -> set[str]:
     text = (COMPILER / "ktpu-isa/src/unit/vector/core.rs").read_text(encoding="utf-8")
-    body = re.search(r"pub enum MathOp \{(.*?)\}", text, re.DOTALL)[1]
+    body = cast(re.Match, re.search(r"pub enum MathOp \{(.*?)\}", text, re.DOTALL))[1]
     return {name.lower() for name in re.findall(r"(V\w+),", body)}
 
 
@@ -89,7 +90,7 @@ def test_every_l0_step_runs_or_says_where_it_is_proved():
         / "kohakuaccel/compiler/crates/ka-package/src/format/mod.rs"
     )
     source = text.read_text(encoding="utf-8")
-    body = re.search(r"pub enum Op \{(.*?)\n\}", source, re.DOTALL)[1]
+    body = cast(re.Match, re.search(r"pub enum Op \{(.*?)\n\}", source, re.DOTALL))[1]
     steps = set(re.findall(r"^\s*(\w+)\s*=", body, re.MULTILINE))
     run = set(
         re.findall(r"Op::(\w+)", (SIM / "l0" / "mod.rs").read_text(encoding="utf-8"))

@@ -331,8 +331,8 @@ def through(items: list, held: set) -> tuple:
         walks = _unwritten(walks, out)
         makers = _unwritten(makers, out)
         if _elementwise(plan, buffers):
-            reads = [a.slot for a in plan.accesses if a.slot is not None]
-            sources = tuple(id(FM.base_of(buffers[s])[0]) for s in reads)
+            slots = [a.slot for a in plan.accesses if a.slot is not None]
+            sources = tuple(id(FM.base_of(buffers[s])[0]) for s in slots)
             walk = _Walk(plan, buffers, (i, *made), sources)
             if _bare(plan, buffers):
                 walks[out] = walk

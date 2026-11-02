@@ -3,8 +3,15 @@
 import dataclasses
 import enum
 import json
+import pathlib
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Final
 
 from kohakuaccel.driver.node.queue import NodeQueue
+from kohakuaccel.driver.node.queue import layout as QL
+from kohakuaccel.driver.transport.rebase import UnitGlobal
+from kohakutpu.application.runtime.eager_batch import Batch
+from kohakutpu.application.runtime.machine import MachineSpec
 from kohakutpu.application.runtime.memory import CardMemory
 from kohakutpu.application.runtime.paths import ROOT
 from kohakutpu.language.dsl.kernel import _MUTANT
@@ -45,7 +52,14 @@ RESIDENT_ENV = "KOHAKUTPU_RESIDENT"
 #: A directory: a package that fails is kept there (bytes and bindings).
 FAILED_ENV = "KOHAKUTPU_KEEP_FAILED"
 
-_UNSET = object()
+
+class Unset(enum.Enum):
+    """A `resident_mode` nobody gave: the environment's."""
+
+    UNSET = enum.auto()
+
+
+_UNSET: Final = Unset.UNSET
 
 
 class ResidentMode(str, enum.Enum):
@@ -109,6 +123,56 @@ def cut(pkg, after: int):
     return dataclasses.replace(pkg, steps=pkg.steps[: after + 1])
 
 
+class Parts:
+    """What `NodeCard`'s parts read of one another, declared only: `NodeCard` or a
+    sibling part defines each."""
+
+    nodes: tuple[int, ...]
+    queues: dict[int, NodeQueue]
+    q: NodeQueue
+    mem: UnitGlobal
+    memory: CardMemory
+    machine: MachineSpec
+    machine_json: str
+    queue_layout: QL.Layout
+    fetch: tuple | None
+    fw: pathlib.Path
+    debug: bool
+    debug_regions: dict
+    check: str
+    checked: dict
+    log: list | None
+    residents: dict
+    runs: int
+    _eager_batch: Batch | None
+    _publication_epoch: int
+    _order: dict
+    _stdout: dict
+    _segs: dict
+    collect: Callable[..., dict]
+    get: Callable[[int, int], bytes]
+    restart: Callable[..., None]
+    verify: Callable[[dict], list]
+    _drain: Callable[[dict, list], None]
+    _forget_residents: Callable[..., None]
+    _segment: Callable[..., str]
+    _submit: Callable[..., int]
+
+    if TYPE_CHECKING:
+
+        @property
+        def admission_cached(self) -> bool: ...
+
+        @property
+        def resident_mode(self) -> ResidentMode: ...
+
+        @property
+        def submit_cache(self) -> bool: ...
+
+        @property
+        def timeout(self) -> float: ...
+
+
 class CardMismatch(RuntimeError):
     """The card's enumerated units are not the machine programs are built for."""
 
@@ -162,6 +226,10 @@ class Pending:
 
 class PreparedEvents(list):
     """Replay event wrappers and package uploads owned by one recording."""
+
+    budget: int
+    stream_workspace: list
+    selection: dict
 
     def __init__(self, source):
         super().__init__()

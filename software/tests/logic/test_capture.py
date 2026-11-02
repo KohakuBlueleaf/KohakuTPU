@@ -6,8 +6,9 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
-from tinygrad import Tensor
+from tinygrad.dtype import dtypes
 from tinygrad.helpers import Context
+from tinygrad.tensor import Tensor
 from tinygrad.uop import Ops
 from tinygrad.uop.ops import UOp, _rebuild_dtype
 
@@ -64,7 +65,7 @@ def test_placeholders_are_bounded(monkeypatch):
     unexpected = UOp(Ops.SINK, arg="not in original sink")
     with patch.object(C, "ORIGINAL", lambda sink: (sink, {unexpected: sink})):
         for size in range(200):
-            source = UOp.new_buffer("CPU", size + 1, C.tensor.dtypes.float32)
+            source = UOp.new_buffer("CPU", size + 1, dtypes.float32)
             table.call(source.sink())
             assert len(table.placeholders) <= C.KEPT * 32
     assert not table.entries
@@ -74,9 +75,9 @@ def test_the_native_signature_keeps_topology_tags_and_layout():
     def signature(root):
         return _rs.capture_graph(root, Ops.BUFFER)[0]
 
-    a = UOp.new_buffer("CPU", 8, C.tensor.dtypes.float32)
-    b = UOp.new_buffer("CPU", 8, C.tensor.dtypes.float32)
-    c = UOp.new_buffer("CPU", 8, C.tensor.dtypes.float32)
+    a = UOp.new_buffer("CPU", 8, dtypes.float32)
+    b = UOp.new_buffer("CPU", 8, dtypes.float32)
+    c = UOp.new_buffer("CPU", 8, dtypes.float32)
     shared = UOp.sink(a, a)
     assert signature(shared) == signature(UOp.sink(c, c))
     assert signature(shared) != signature(UOp.sink(a, b))
@@ -88,7 +89,7 @@ def test_the_native_signature_keeps_topology_tags_and_layout():
 
 def test_the_native_table_retains_no_cold_buffer():
     table = C.Captures(native=True)
-    source = UOp.new_buffer("CPU", 8, C.tensor.dtypes.float32)
+    source = UOp.new_buffer("CPU", 8, dtypes.float32)
     sink = UOp.sink(source)
     held = weakref.ref(source)
     with patch.object(C, "ORIGINAL", lambda root: (root, {root: root})):

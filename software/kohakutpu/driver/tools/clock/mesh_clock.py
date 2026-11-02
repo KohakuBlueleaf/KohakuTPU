@@ -85,8 +85,8 @@ def main() -> int:
         return 0
 
     try:
-        want = solve_best(args.freq, d=args.d) if args.k is None else None
-        got = set_mhz(raw, base, args.freq, d=args.d, k=args.k if args.k else want.k)
+        k = solve_best(args.freq, d=args.d).k if args.k is None else args.k
+        got = set_mhz(raw, base, args.freq, d=args.d, k=k)
     except ClockError as exc:
         print(f"\nrefused: {exc}")
         return 1

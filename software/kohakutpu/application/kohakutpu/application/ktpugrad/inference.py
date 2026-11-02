@@ -72,9 +72,15 @@ class Resident:
             return self.copies[node](*inputs)
 
     def __call__(self, requests):
-        """Each request's inputs on the next node in turn: the results."""
-        nodes = cycle(self.copies)
-        return [self.on(next(nodes), *inputs) for inputs in requests]
+        """Each request's inputs on the next node in turn: the results. A copy reuses
+        its result, so one is cloned before its node takes another request."""
+        results, last = [], {}
+        for node, inputs in zip(cycle(self.copies), requests):
+            if node in last:
+                results[last[node]] = results[last[node]].clone().realize()
+            last[node] = len(results)
+            results.append(self.on(node, *inputs))
+        return results
 
     def reset(self):
         for copy in self.copies.values():

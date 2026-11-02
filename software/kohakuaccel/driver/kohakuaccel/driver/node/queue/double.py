@@ -9,6 +9,7 @@ reserved opcodes refuse with BAD_OP.
 """
 
 import struct
+from typing import cast
 
 from kohakuaccel.driver.node.boot import args as B
 from kohakuaccel.driver.node.queue import layout as L
@@ -152,8 +153,9 @@ class SpecFirmware:
         head, tail = self.rd(layout.sq_head), self.rd(layout.sq_tail)
         if head == tail:
             return
-        ahead = self.next is not None and self.next[0] == head
-        e = self.next[1] if ahead else self.entry(head)
+        read_ahead = self.next
+        ahead = read_ahead is not None and read_ahead[0] == head
+        e = read_ahead[1] if read_ahead is not None and ahead else self.entry(head)
         self.next = None
         op = e[layout.run_op] & layout.op_mask
         self.epoch = self.rd(layout.epoch)
@@ -237,15 +239,12 @@ class SpecFirmware:
 
     def write_record(self, slot: int, tag: int, time: dict) -> None:
         """Write the run record before its CQ entry (L0.NQ.056)."""
-        nbytes = (
-            self.record.nbytes
-            if isinstance(self.record, L.Record)
-            else self.record["bytes"]
-        )
+        record = cast("L.Record | dict", self.record)
+        nbytes = record.nbytes if isinstance(record, L.Record) else record["bytes"]
         fields = (
-            {k: off for k, (off, _) in self.record.fields.items()}
-            if isinstance(self.record, L.Record)
-            else self.record["fields"]
+            {k: off for k, (off, _) in record.fields.items()}
+            if isinstance(record, L.Record)
+            else record["fields"]
         )
         base = self.rec_at + slot * nbytes
         words = {

@@ -54,6 +54,7 @@ class TemplateStore:
             rs._rs.template_certificate(package, table, self.machine)
         )
         proof = None
+        proven = False
         measured = {}
         if self.verification in ("proof", "both"):
             started = time.perf_counter()
@@ -69,8 +70,9 @@ class TemplateStore:
                 )
             )
             measured["proof"] = time.perf_counter() - started
+            proven = self.verification == "proof" and proof["status"] == "PROVEN"
         coverage_kind = "sample"
-        if self.verification == "proof" and proof["status"] == "PROVEN":
+        if proven:
             coverage_kind = "proof"
             coverage = [{n: b["lo"] for n, b in assumed["parameters"].items()}]
         else:

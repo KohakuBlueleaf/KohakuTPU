@@ -220,7 +220,7 @@ def _fast_chunk_attention(
         q = kt.buffer((planes * sk, dim), "f16")
         v = kt.buffer((planes * dim, sk), "f16")
         s = kt.buffer((words // 8, 128), "f16")
-        y_out = kt.buffer((srows, dim), "f16") if mover_overlap else None
+        y_out = kt.buffer((srows, dim), "f16") if mover_overlap else q
         qp = kt.buffer((planes * q_pad, dim), "mx7a", gm=q_tile // 4, nk=2)
         kp = kt.buffer((planes * sk, dim), "mx7b", gn=sk // 4, nk=2)
         vp = kt.buffer((planes * dim, sk), "mx7b", gn=dim // 4, nk=2)

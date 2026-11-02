@@ -1,5 +1,7 @@
 """Typed-graph composition, using GFUSE's hygienic private-edge substitution."""
 
+from typing import overload
+
 from kohakutpu.language import dsl as kt
 from kohakutpu.language.dsl import TensorSpec, Traced
 from kohakutpu.stack.kernel import dsl_machine
@@ -22,6 +24,14 @@ def names(graph, prefix):
     return result
 
 
+@overload
+def renamed(value: dict, mapping: dict, field: str = "") -> dict: ...
+
+
+@overload
+def renamed(value: list, mapping: dict, field: str = "") -> list: ...
+
+
 def renamed(value, mapping, field=""):
     if isinstance(value, dict):
         return {k: renamed(v, mapping, k) for k, v in value.items()}
@@ -40,7 +50,7 @@ def renamed(value, mapping, field=""):
     return value
 
 
-def compose(left, right, output, inputs, space="stage"):
+def compose(left, right, output, inputs, space="stage") -> dict:
     """The op builder owns the private, identically typed producer/consumer edge."""
     lm, rm = names(left, "p_"), names(right, "c_")
     internal = lm[output]
@@ -74,7 +84,7 @@ def sequence(graphs, space="stage"):
     """Execute chunk graphs sequentially while reusing scratch buffers."""
     first = graphs[0]
     shared = {s["name"] for s in first["scratch"] if _spec_bytes(s["spec"]) >= 256}
-    scratch = [
+    scratch: list[dict] = [
         dict(s, spec=dict(s["spec"], space=space))
         for s in first["scratch"]
         if s["name"] in shared
@@ -252,9 +262,9 @@ def trim_out_tail(graph, rows, capacity, out_name, machine, *, r0=0, total_rows=
     total_rows = rows if total_rows is None else total_rows
     k_loop = [s for s in graph["body"] if s.get("kind") == "for" and s.get("pipe")][-1]
     vc_par = k_loop["body"][1]
-    has_when = vc_par["body"][-1].get("kind") == "when"
-    when_stmt = vc_par["body"][-1] if has_when else None
-    t_loop = when_stmt["body"][-1] if has_when else vc_par["body"][-1]
+    when_stmt = vc_par["body"][-1]
+    has_when = when_stmt.get("kind") == "when"
+    t_loop = when_stmt["body"][-1] if has_when else when_stmt
     height = t_loop["body"][-2]["type"]["shape"][0]
     n_main = rows // height
     main_rows = n_main * height
@@ -433,7 +443,7 @@ class GraphKernel:
         self.inputs = [p["name"] for p in graph["ports"] if p["role"] == "in"]
         self.outputs = [p["name"] for p in graph["ports"] if p["role"] == "out"]
 
-    def trace(self, given=None, *, machine=None, check=None, **consts):
+    def trace(self, given=None, *, machine: kt.Machine, check=None, **consts):
         params = tuple(
             (
                 p["name"],

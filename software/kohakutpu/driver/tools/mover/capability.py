@@ -64,6 +64,7 @@ def move(m, src_dims, dst_dims, src=SRC, dst=DST) -> float:
     load(1, dp)
     t0 = time.perf_counter()
     put({0x00: ctrl, 0x10: dp[0][1], 0x18: dp[1][1]}, 0x00)
+    st = {}
     for _ in range(40000):
         st = MV.status(m.ctrl.read64(MV.AUX_STAT))
         if not st["busy"]:

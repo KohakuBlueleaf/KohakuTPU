@@ -2,10 +2,10 @@
 
 from kohakutpu.application.runtime import execution, replay_budget
 from kohakutpu.application.runtime import packages as B
-from kohakutpu.application.runtime.card.common import Pending, PreparedEvents
+from kohakutpu.application.runtime.card.common import Parts, Pending, PreparedEvents
 
 
-class Recording:
+class Recording(Parts):
     # ------------------------------------------------------ record / replay
     def record(self) -> None:
         """Log every host write, host read and run's packages from now on."""

@@ -28,6 +28,7 @@ import pathlib
 import re
 import sys
 import time
+from typing import cast
 
 # The framework's OS tools, as imports below.
 sys.path.insert(
@@ -94,9 +95,14 @@ class Card:
             for k in range(0, n, self.chunk)
         )
 
+    @property
+    def model(self) -> VerilatorTransport:
+        """The model's transport, while `sim`."""
+        return cast(VerilatorTransport, self.t)
+
     def idle(self) -> None:
         if self.sim:
-            self.t.run(20000)
+            self.model.run(20000)
         else:
             time.sleep(0.05)
 
@@ -125,8 +131,8 @@ def load_node(card: Card, node: int, mesh: int, imem: bytes, spad: bytes, mode: 
     win.stop()
     if mode == "burn":
         scope = cpu_scope(card.t, mesh)
-        card.t.poke(f"{scope}.u_imem.u_ram", "mem", 0, imem)
-        card.t.poke(scope, "spad", 0, spad)
+        card.model.poke(f"{scope}.u_imem.u_ram", "mem", 0, imem)
+        card.model.poke(scope, "spad", 0, spad)
     else:
         win.write_imem(imem)
         win.write_spad(0, spad)
@@ -214,7 +220,7 @@ def run(a, board: dict) -> dict:
             mm = MEASURE.match(line.strip())
             if mm:
                 meas.setdefault(str(i), {})[mm[1]] = int(mm[2])
-    st = card.t.status() if card.sim else {}
+    st = card.model.status() if card.sim else {}
     if card.sim:
         card.t.close()
     ok = all(nd["status"] & 0x8 and nd["exit"] == 0 for nd in nodes)

@@ -25,6 +25,8 @@ import pathlib
 import subprocess
 import threading
 import time
+from collections.abc import Callable
+from typing import cast
 
 from kohakuaccel.driver.transport.base import (
     MASK32,
@@ -178,7 +180,7 @@ class XdmaLinux(Transport):
         """One 32-bit AXI-Lite write."""
         if addr % 4 or not self._lite_span(addr, 4):
             raise ValueError(f"{addr:#x} is not a 32-bit control-space address")
-        self._u32[addr >> 2] = data & MASK32
+        cast(memoryview, self._u32)[addr >> 2] = data & MASK32
         self.counts["lite_w"] += 1
 
     def read32(self, addr: int) -> int:
@@ -186,7 +188,7 @@ class XdmaLinux(Transport):
         if addr % 4 or not self._lite_span(addr, 4):
             raise ValueError(f"{addr:#x} is not a 32-bit control-space address")
         self.counts["lite_r"] += 1
-        return self._u32[addr >> 2]
+        return cast(memoryview, self._u32)[addr >> 2]
 
     def write64(self, addr: int, data: int) -> None:
         aligned(addr)
@@ -215,12 +217,13 @@ class XdmaLinux(Transport):
             return
         self.counts["rmw"] += 1
         buf = bytearray(hi - lo)
-        if lo < addr:
-            buf[:LINE] = self._c2h_lines(lo, LINE)
-        if hi > end and (lo == addr or hi - lo > LINE):
-            buf[-LINE:] = self._c2h_lines(hi - LINE, LINE)
-        buf[addr - lo : addr - lo + len(data)] = data
-        self._h2c_lines(lo, bytes(buf))
+        with self._native_lock:
+            if lo < addr:
+                buf[:LINE] = self._c2h_lines(lo, LINE)
+            if hi > end and (lo == addr or hi - lo > LINE):
+                buf[-LINE:] = self._c2h_lines(hi - LINE, LINE)
+            buf[addr - lo : addr - lo + len(data)] = data
+            self._h2c_lines(lo, bytes(buf))
 
     def read_block(self, addr: int, nbytes: int) -> bytes:
         require_words(nbytes)
@@ -233,8 +236,9 @@ class XdmaLinux(Transport):
     def _h2c_lines(self, at: int, data: bytes) -> None:
         for off in range(0, len(data), self.max_xfer):
             n = min(self.max_xfer, len(data) - off)
-            self._staging[:n] = data[off : off + n]
-            self._retry("h2c", at + off, n, self._h2c_once)
+            with self._native_lock:
+                self._staging[:n] = data[off : off + n]
+                self._retry("h2c", at + off, n, self._h2c_once)
             self.counts["h2c"] += 1
             self.counts["h2c_bytes"] += n
 
@@ -247,14 +251,15 @@ class XdmaLinux(Transport):
         out = bytearray()
         for off in range(0, nbytes, self.max_xfer):
             n = min(self.max_xfer, nbytes - off)
-            self._retry("c2h", at + off, n, self._c2h_once)
-            out += self._staging[:n]
+            with self._native_lock:
+                self._retry("c2h", at + off, n, self._c2h_once)
+                out += self._staging[:n]
             self.counts["c2h"] += 1
             self.counts["c2h_bytes"] += n
         return bytes(out)
 
     def _c2h_once(self, at: int, n: int) -> None:
-        got = self._pread(self._c2h, self._addr, n, at)
+        got = cast(Callable, self._pread)(self._c2h, self._addr, n, at)
         if got != n:
             err = ctypes.get_errno()
             raise OSError(

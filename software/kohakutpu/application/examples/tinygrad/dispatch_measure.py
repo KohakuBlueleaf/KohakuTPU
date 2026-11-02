@@ -12,8 +12,10 @@ import os
 import pstats
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import numpy as np
@@ -93,7 +95,7 @@ def measure(args):
     original_result = getattr(dev.card, "_result", None)
 
     def result(*a, **kw):
-        got = original_result(*a, **kw)
+        got = cast(Callable, original_result)(*a, **kw)
         records.append(dict(got["phases"], cycles=got["cycles"]))
         return got
 
@@ -102,6 +104,7 @@ def measure(args):
 
     run = Inference(forward, replay=args.replay)
     samples = []
+    output = None
     profile = cProfile.Profile()
     try:
         with D.attached(dev), ExitStack() as stack:

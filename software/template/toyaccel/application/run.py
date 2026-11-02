@@ -6,6 +6,7 @@ same registers a card does.
 """
 
 import struct
+from typing import cast
 
 from kohakuaccel.driver.device import (
     CU_CAPS,
@@ -90,7 +91,7 @@ def main() -> int:
     card = SimMachine(units={c: SaxpyUnit() for c in machine.units})
 
     for coord in machine.units:
-        caps = discover(card, coord)
+        caps = cast(dict, discover(card, coord))
         print(f"  {coord}: {caps['registered']!r} v{caps['version']}  {caps}")
 
     card.upload(X_ADDR, struct.pack(f"<{n}f", *x))

@@ -46,7 +46,7 @@ def main() -> int:
     node = NodeBoot(t, m["ctrl"][0], 0, sim=t)
     args = BootArgs(queue=glob, mesh=0, timeout=idle_bound(board, WAIT))
     node.load(ROOT / "build/fw/xfprobe.elf", args, a.load)
-    text, t0 = "", time.monotonic()
+    text, t0, st = "", time.monotonic(), {}
     while time.monotonic() - t0 < 120:
         text += node.console()
         st = node.status()

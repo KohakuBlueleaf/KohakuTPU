@@ -2,7 +2,9 @@
 
 import bisect
 from collections import OrderedDict
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Protocol
 
 #: Retired allocation records retained in `SoftwareMMU.entries` for inspection.
 RETIRED_KEPT = 4096
@@ -14,12 +16,22 @@ VIRTUAL_OFFSET = 1 << 32
 VIRTUAL_ALIGN = 256
 
 
+class Spans(Protocol):
+    """What an allocation reads of its arena."""
+
+    @property
+    def live(self) -> Mapping[int, int]: ...
+
+    @property
+    def generations(self) -> Mapping[int, int]: ...
+
+
 @dataclass(frozen=True)
 class Allocation:
     virtual: int
     physical: int
     extent: int
-    arena: object
+    arena: Spans
     generation: int
 
     @property

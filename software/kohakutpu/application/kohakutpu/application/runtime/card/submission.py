@@ -3,11 +3,11 @@
 from kohakuaccel.driver.node.queue import layout as QL
 from kohakuaccel.driver.node.queue.client import PreparedPackage
 from kohakutpu.application.runtime import packages as B
-from kohakutpu.application.runtime.card.common import Pending
+from kohakutpu.application.runtime.card.common import Parts, Pending
 from kohakutpu.language.dsl.kernel import _MUTANT
 
 
-class Submission:
+class Submission(Parts):
     # ------------------------------------------------------------- run
     def run(
         self,

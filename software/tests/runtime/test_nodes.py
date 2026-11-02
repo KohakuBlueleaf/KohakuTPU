@@ -139,6 +139,17 @@ def test_requests_on_two_nodes_each_get_their_answer(two):
             close(out.numpy(), a @ b)
 
 
+def test_more_requests_than_nodes_each_keep_their_answer(two):
+    b = R.normal(size=(32, 32))
+    w = tensor(b)
+    model = Resident(lambda x: x @ w)
+    inputs = [R.normal(size=(16, 32)) for _ in range(5)]
+    model([(tensor(inputs[0]),)] * 2)
+    outs = model([(tensor(a),) for a in inputs])
+    for out, a in zip(outs, inputs, strict=True):
+        close(out.numpy(), a @ b)
+
+
 def test_a_batch_splits_by_range_across_the_nodes(two):
     a, b = R.normal(size=(7, 32)), R.normal(size=(32, 32))
     w = tensor(b)

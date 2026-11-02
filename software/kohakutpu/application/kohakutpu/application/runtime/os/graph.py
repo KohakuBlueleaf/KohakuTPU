@@ -149,6 +149,10 @@ class Graph:
         self.prune = prune
         self.ancestors = []
 
+    def de_break(self, frontier):
+        """End the open descriptor stream: the next package starts its own task."""
+        return (self.add(Task(A.KDS_NOP, pred=tuple(frontier))),)
+
     def _open_de(self, after):
         after = tuple(after)
         if self.de_fuse and self._de is not None and after == (self._de["task"],):

@@ -57,7 +57,7 @@ class StepChecker:
             p = original_plan(ast)
             self.asts[id(p)] = ast
             # Cached tinygrad programs can outlive this diagnostic context.
-            p._check_original_ast = ast
+            vars(p)["_check_original_ast"] = ast
             return p
 
         def execute(device, p, buffers):
@@ -193,7 +193,7 @@ class StepChecker:
                                 natural_kernel_passed=natural["passed"],
                             )
                             break
-                row = dict(
+                row: dict = dict(
                     index=index,
                     name=p.name,
                     kind=p.kind,

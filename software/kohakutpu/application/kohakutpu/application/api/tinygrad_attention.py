@@ -1,7 +1,8 @@
 """Tinygrad entry for bounded, masked device-side DSL attention."""
 
 import numpy as np
-from tinygrad import Tensor, dtypes
+from tinygrad.dtype import dtypes
+from tinygrad.tensor import Tensor
 
 from kohakutpu.application.api.attention import attention as device_attention
 from kohakutpu.application.api.tensor import Buf

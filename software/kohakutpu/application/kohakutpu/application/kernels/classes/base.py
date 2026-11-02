@@ -70,7 +70,7 @@ def port(o: Operand, rp: int, w: int):
     return kt.In(*shape), kt.TensorSpec.make(shape, o.dtype)
 
 
-def _rows_block(bufs, e, operands, out, pl: Plan, r, cb: int, pro: dict) -> None:
+def _rows_block(bufs, e, operands, out, pl: Plan, r, cb, pro: dict) -> None:
     """One band of rows from row `r`, column block `cb`."""
     col0 = cb * pl.wc
     vals = dict(pro)

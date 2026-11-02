@@ -2,7 +2,9 @@
 
 from collections import Counter
 from contextlib import nullcontext
+from typing import cast
 
+from tinygrad.device import Buffer
 from tinygrad.engine import realize
 from tinygrad.uop import Ops
 
@@ -58,7 +60,7 @@ def scope(rt, linear, inputs):
         plan = PLANS[call.src[0].src[3].arg]
         desc = []
         for uop in realize.resolve_params(call, inputs):
-            buffer = uop.buffer
+            buffer = cast(Buffer, uop.buffer)
             desc.append(
                 (
                     bases.setdefault(buffer.base, len(bases)),

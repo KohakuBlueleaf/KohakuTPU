@@ -5,13 +5,14 @@ import json
 import pickle
 import time
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import numpy as np
 from examples.tinygrad.vit_tiny import Block
-from tinygrad import Tensor
 from tinygrad.helpers import Context
 from tinygrad.nn.state import get_state_dict
+from tinygrad.tensor import Tensor
 
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import matmul as MM
@@ -279,7 +280,9 @@ def compile_artifact(args):
                 if result is None:
                     builds += 1
                     rs._rs.library_prebuild(str(args.library), source, machine)
-                    result = rs._rs.library_get(str(args.library), source, machine)
+                    result = cast(
+                        dict, rs._rs.library_get(str(args.library), source, machine)
+                    )
                 else:
                     hits += 1
                 assert not result["verdict"]["refused"], result["verdict"]
@@ -406,12 +409,14 @@ def execute(args):
                 if prepared is not None:
                     done = prepared.submit()
                     assert done.ok, done.describe()
-                    timings.append(dict(done.record, cycles=done.cycles))
+                    timings.append(dict(cast(dict, done.record), cycles=done.cycles))
                 else:
                     for p in packages:
                         done = q.wait(q.submit(p))
                         assert done.ok, done.describe()
-                        timings.append(dict(done.record, cycles=done.cycles))
+                        timings.append(
+                            dict(cast(dict, done.record), cycles=done.cycles)
+                        )
                 submit_wait_seconds = time.perf_counter() - mode_start
                 actual = card.get(at, nbytes)
                 if reference is None:

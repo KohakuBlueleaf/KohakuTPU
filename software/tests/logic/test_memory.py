@@ -1,6 +1,7 @@
 """The arenas and the software MMU: native against Python, homes against the DRAM map."""
 
 import random
+from typing import cast
 
 import pytest
 
@@ -83,7 +84,7 @@ def test_the_native_mmu_takes_its_domain_from_the_driver(monkeypatch):
 @pytest.mark.parametrize("lo", STARTS)
 def test_a_package_stays_on_its_home(lo, size, home):
     spans = [(lo, 1 << 24)]
-    at = place(spans, size, (STRIPE, HOMES, home))
+    at = cast(int, place(spans, size, (STRIPE, HOMES, home)))
     _, got, _, run = next(MAP.runs(at, size))
     assert (got, run) == (home, min(size, STRIPE))
     assert at >= lo

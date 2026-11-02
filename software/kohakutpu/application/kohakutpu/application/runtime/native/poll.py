@@ -12,7 +12,7 @@ class NativePoll:
         self.span = self.layout.so_wr + self.layout.line - self.layout.fw
         self.address = queue.mem._map(queue.base + self.layout.fw, self.span)
         self.sleep = float(ENV.get("KTPU_NATIVE_POLL_SLEEP", "0"))
-        self.result = None
+        self.result: tuple = ()
 
     def capture(self, address, nbytes):
         self.result = _rs.wait_tail(

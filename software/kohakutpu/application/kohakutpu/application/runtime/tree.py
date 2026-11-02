@@ -23,7 +23,7 @@ from kohakutpu.language import machine as MF
 OP = {"sum": "add", "max": "max", "prod": "mul"}
 
 
-def materialized(operands, R: int, views: int) -> bool:
+def materialized(operands, R: int, views: int) -> int:
     """Whether a tree's first level computes `e` into a scratch first: its
     reads twice over pass a core's memory `views` (`vc.descriptors`), or a
     statistic operand's halves do not split in whole words."""

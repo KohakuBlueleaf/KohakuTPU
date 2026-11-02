@@ -12,12 +12,25 @@ A Mailbox sends one payload and reports completions as they arrive:
     drain() -> list[(x, y, code, arg)]
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
 from types import SimpleNamespace
-from typing import Protocol
+from typing import Protocol, cast
 
 PackageError = ValueError
+
+
+class Table(Protocol):
+    """An enumeration whose members a package format names at run time."""
+
+    def __call__(self, value: int, /) -> IntEnum: ...
+
+    def __getattr__(self, name: str) -> IntEnum: ...
+
+
+def _table(name: str, members: dict) -> Table:
+    return cast(Table, IntEnum(name, members))
 
 
 class Reader(Protocol):
@@ -168,11 +181,11 @@ class Interpreter:
             for k in range(0, len(raw), self.reader.format["PAYLOAD"])
         ]
 
-    def run(self, pkg: bytes, bindings=None, max_polls: int = 1_000_000) -> Result:
+    def run(self, pkg, bindings=None, max_polls: int = 1_000_000) -> Result:
         raw = bytes(pkg) if isinstance(pkg, (bytes, bytearray)) else pkg.to_bytes()
         tables = self.reader.read(raw, bindings)
         f = self.reader.format
-        Op, Alu, Cond = (IntEnum(k, f[k]) for k in ("op", "alu", "cond"))
+        Op, Alu, Cond = (_table(k, f[k]) for k in ("op", "alu", "cond"))
         engine = SimpleNamespace(**f)
         ANY_UNIT, MOVER_SKIP, REGS = (f[k] for k in ("ANY_UNIT", "MOVER_SKIP", "REGS"))
         F_CTRL, F_IMM, F_INDEXED, F_MEM, F_POSTED, F_REG = (
@@ -234,7 +247,7 @@ class Interpreter:
             nonlocal moves_done
             while posted and (upto is None or moves_done < upto):
                 gos, writes = posted.pop(0)
-                self.mover(writes)
+                cast(Callable, self.mover)(writes)
                 moves_done += gos
 
         steps = list(pkg.steps)

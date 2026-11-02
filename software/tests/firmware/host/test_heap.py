@@ -77,7 +77,7 @@ def trace(seed, base, nbytes, granule, cap):
     rng = random.Random(seed)
     ref = Model(base, nbytes, granule, cap)
     lines = [f"i {base} {nbytes} {granule} {cap}"]
-    want = [(LAYOUT.ok, 0, 1)]
+    want: list = [(LAYOUT.ok, 0, 1)]
     live = []
     for k in range(OPS):
         if live and rng.random() < 0.45:

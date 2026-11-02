@@ -3,6 +3,7 @@
 import json
 import time
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from kohakutpu.application.runtime.graph.firmware import FirmwareRunner
 from kohakutpu.application.runtime.graph.native import (
@@ -14,10 +15,13 @@ from kohakutpu.application.runtime.graph.native import (
 from kohakutpu.language.config import ENV
 from kohakutpu.stack.kernel import arena_name
 
+if TYPE_CHECKING:
+    from kohakutpu.application.runtime.device import Device
+
 
 @dataclass
 class NativeRecording:
-    device: object
+    device: "Device"
     segments: list
     allocations: list
     before: int

@@ -490,7 +490,7 @@ def step_xmove(a) -> int:
         t.write_block(m["mem"][node] + poff, pat)
     mod = examples.load(examples.example(src))
     fn = mod.names()[0]
-    progs = kernel.compile(
+    progs: dict = kernel.compile(
         kernel.on_mesh(mod, fn, node), fn, card.machine, level="l1"
     ).programs(binds)
     print(

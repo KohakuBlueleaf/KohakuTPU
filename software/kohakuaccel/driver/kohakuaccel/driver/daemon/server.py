@@ -23,6 +23,7 @@ import pathlib
 import tempfile
 import threading
 import time
+from typing import cast
 
 from kohakuaccel.driver.daemon.governor import ClockGovernor
 from kohakuaccel.driver.daemon.protocol import (
@@ -156,7 +157,8 @@ class Daemon:
             self._done.set()
 
     async def _hw_call(self, fn, *args):
-        return await self._loop.run_in_executor(self._hw, fn, *args)
+        loop = cast(asyncio.AbstractEventLoop, self._loop)
+        return await loop.run_in_executor(self._hw, fn, *args)
 
     async def _tick_task(self) -> None:
         # One tick in flight at most: awaiting the executor result means a
@@ -267,6 +269,8 @@ class Daemon:
         return token
 
     def _op_run_end(self, conn, msg):
+        if self.governor is None:
+            raise RuntimeError("daemon runs without clock control")
         self.governor.run_end(msg["token"])
         conn.tokens.discard(msg["token"])
 
@@ -311,7 +315,8 @@ class Daemon:
         self.transport.reset_core()
 
     def _op_shutdown(self, conn, msg):
-        self._loop.call_soon_threadsafe(self._stopping.set)
+        loop = cast(asyncio.AbstractEventLoop, self._loop)
+        loop.call_soon_threadsafe(cast(asyncio.Event, self._stopping).set)
 
     # ------------------------------------------------------- simulated card
     def _op_sim_run(self, conn, msg):

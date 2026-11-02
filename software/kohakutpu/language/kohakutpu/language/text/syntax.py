@@ -10,6 +10,7 @@ import math
 import pathlib
 from dataclasses import dataclass, field
 from functools import cache
+from typing import cast
 
 from lark import Lark, Token, Transformer, v_args
 from lark.exceptions import UnexpectedCharacters, UnexpectedEOF, UnexpectedInput
@@ -199,7 +200,7 @@ class Stmt:
 
     op: str
     args: list = field(default_factory=list)
-    target: str | None = None
+    target: str | Computed | None = None
     annot: object = None
     body: list = field(default_factory=list)
     line: int = 0
@@ -224,19 +225,36 @@ class Stmt:
 
 # --------------------------------------------------------------------- parsing
 class _Indenter(Indenter):
-    NL_type = "_NL"
-    OPEN_PAREN_types = ("LPAR", "LSQB", "LBRACE")
-    CLOSE_PAREN_types = ("RPAR", "RSQB", "RBRACE")
-    INDENT_type = "_INDENT"
-    DEDENT_type = "_DEDENT"
-    tab_len = 4
+    @property
+    def NL_type(self) -> str:
+        return "_NL"
+
+    @property
+    def OPEN_PAREN_types(self) -> list:
+        return ["LPAR", "LSQB", "LBRACE"]
+
+    @property
+    def CLOSE_PAREN_types(self) -> list:
+        return ["RPAR", "RSQB", "RBRACE"]
+
+    @property
+    def INDENT_type(self) -> str:
+        return "_INDENT"
+
+    @property
+    def DEDENT_type(self) -> str:
+        return "_DEDENT"
+
+    @property
+    def tab_len(self) -> int:
+        return 4
 
     def handle_NL(self, token):
         try:
             yield from super().handle_NL(token)
         except DedentError:
             col = len(str(token).rsplit("\n", 1)[-1]) + 1
-            raise _BadDedent(token.end_line, col) from None
+            raise _BadDedent(cast(int, token.end_line), col) from None
 
 
 class _BadDedent(Exception):
@@ -502,7 +520,7 @@ def fmt(t) -> str:
         case Computed(p, i, None):
             return f"{p}{{{fmt(i)}}}"
         case Computed(p, i, slices):
-            return f"{p}{{{fmt(i)}}}[{', '.join(fmt(s) for s in slices)}]"
+            return f"{p}{{{fmt(i)}}}[{', '.join(fmt(s) for s in slices or ())}]"
         case AddAssign(a, b):
             return f"{fmt(a)} += {fmt(b)}"
         case Span(lo, hi):

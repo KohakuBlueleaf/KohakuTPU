@@ -376,6 +376,7 @@ def _emit_pull(p: Pull, bufs, index, mask, hw: Hw) -> None:
     for c in kt.par(ncore, on=kt.vc):
         for k in kt.range(n(c)):
             r = (start(c) + k) * ROWS
+            code = 0.0
             if not p.tree:
                 code = kt.unpack(kt.load(mask[p.codes + r : p.codes + r + ROWS, :]))
             acc = (
@@ -439,7 +440,7 @@ def _emit_shuffle(sh: Shuffle, bufs, mask, hw: Hw) -> None:
             tap = [kt.unpack(kt.load(mask[m : m + 1, :])) for m in taps]
             for k in kt.range(count(c)):
                 r = (start(c) + k) * ROWS
-                acc = None
+                acc = 0.0
                 for t in range(B):
                     v = kt.unpack(kt.load(s[t * rv + r : t * rv + r + ROWS, :]))
                     for (kk, _), m in zip(stages, regs):
@@ -531,7 +532,7 @@ def _program(lay: Layer, cl: Cls, bufs, mask, hw: Hw) -> None:
     s, o, s2, d = bufs["rs"], bufs["ro"], bufs.get("rs2"), bufs.get("rd")
     per = cl.rows // ROWS // hw.cores
     for c in kt.par(hw.cores, on=kt.vc):
-        rm = kt.unpack(kt.load(mask[cl.rmask : cl.rmask + 1, :])) if cl.rot else None
+        rm = kt.unpack(kt.load(mask[cl.rmask : cl.rmask + 1, :])) if cl.rot else 0.0
         em = (
             kt.unpack(kt.load(mask[cl.mask : cl.mask + 1, :])) if cl.mask >= 0 else None
         )

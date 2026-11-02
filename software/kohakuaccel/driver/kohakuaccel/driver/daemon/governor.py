@@ -24,7 +24,7 @@ class ClockGovernor:
         self.idle_seconds = idle_seconds
         self.idle_level = clock_ctl.idle_level
         #: mesh -> level currently applied, as far as policy knows.
-        self.current = {m: None for m in range(clock_ctl.nmesh)}
+        self.current: dict[int, str | None] = {m: None for m in range(clock_ctl.nmesh)}
         #: token -> (set of meshes, level)
         self.runs: dict[int, tuple[set, str]] = {}
         #: mesh -> monotonic time of last release/op touching it.

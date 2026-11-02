@@ -27,6 +27,7 @@ import subprocess
 import sys
 import time
 import xml.etree.ElementTree as ET
+from typing import cast
 
 SOFTWARE = pathlib.Path(__file__).resolve().parents[1]
 ROOT = SOFTWARE.parent
@@ -378,7 +379,7 @@ def run(suite: Suite, jobs: int, mutants: str | None) -> dict:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(description=cast(str, __doc__).split("\n")[0])
     ap.add_argument("suites", nargs="*")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--list", action="store_true")

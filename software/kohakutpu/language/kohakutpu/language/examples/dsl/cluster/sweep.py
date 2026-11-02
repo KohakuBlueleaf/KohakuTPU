@@ -9,6 +9,7 @@ in it -- the compiler orders the nodes where one reads what another wrote.
 """
 
 from collections.abc import Iterator
+from typing import Any, Protocol
 
 import kohakutpu.language.dsl as kt
 
@@ -41,9 +42,16 @@ def units(kind: str, wanted: int) -> int:
     return n if n <= per else -(-n // per) * per
 
 
-def sweep(
-    a: kt.Param, b: kt.Param, h: kt.Param, tm: int, tn: int, groups: int = 1
-) -> None:
+class Rows(Protocol):
+    """What a sweep reads of a side: a `kt.Param`, or a window of its rows."""
+
+    @property
+    def shape(self) -> tuple[int, ...]: ...
+
+    def __getitem__(self, key: Any, /) -> kt.View: ...
+
+
+def sweep(a: Rows, b: Rows, h: kt.Param, tm: int, tn: int, groups: int = 1) -> None:
     """``h = a @ b.T``: [tm, tn] tiles spread over the clusters, K in chunks
     of 32 * nk_for(K), each tile drained into the tiled scratch `h`. With
     `groups` G, a and b are G stacked blocks of rows and block g of h is

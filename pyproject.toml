@@ -26,7 +26,12 @@ extraPaths = [
     "software/kohakutpu/application",
     "software/template",
     "software/tests/perf",
+    # Tools a script reaches by the `sys.path` entry it adds at run time.
+    "software/kohakuaccel/os/tools",
+    "software/kohakutpu/os/tools/ostpu",
 ]
+# The sources run on Linux and on Windows: neither platform's stubs hide the other's.
+pythonPlatform = "All"
 
 [tool.ruff.lint.per-file-ignores]
 # UP031: 442 `%` format strings across 34 generators and golden models, most of

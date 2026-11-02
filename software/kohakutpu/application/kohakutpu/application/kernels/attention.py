@@ -47,15 +47,16 @@ def kernel(heads, sq, tk_total, dim, tq=64, tk=64, precise_scores=False):
         srows = heads * sq
         scores = kt.buffer((srows, tk_total), "f16", tile=(tq // 4, tk // 4))
         probs = kt.buffer((srows, tk_total), "mx7a", gm=tq // 4, nk=2)
+        # `low` and `low_product` are read only under `precise_scores`.
         low = (
             kt.buffer((srows, tk_total), "mx7a", gm=tq // 4, nk=2)
             if precise_scores
-            else None
+            else probs
         )
         low_product = (
             kt.buffer((srows, dim), "f16", tile=(tq // 4, dim // 4))
             if precise_scores
-            else None
+            else probs
         )
         nb = tk_total // tk
         maxima = kt.buffer((nb, srows), "f16")

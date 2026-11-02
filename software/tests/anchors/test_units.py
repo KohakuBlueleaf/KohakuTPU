@@ -6,7 +6,7 @@ import os
 
 import numpy as np
 import pytest
-from tinygrad import Tensor
+from tinygrad.tensor import Tensor
 
 os.environ.setdefault("KTPU_COMPOSED", "on")
 

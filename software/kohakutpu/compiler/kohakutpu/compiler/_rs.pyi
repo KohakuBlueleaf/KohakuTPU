@@ -1,6 +1,7 @@
 """The Rust stack (software/kohakutpu/compiler/crates, crate ktpu): graph or L2 -> L2 passes -> L1
 -> image schedule -> L0 packages -> verifier, each stage cached on disk."""
 
+from collections.abc import Callable
 from typing import TypedDict
 
 def affected_roots(roots: list, changed: dict) -> list[int]: ...
@@ -539,9 +540,20 @@ def cache_root() -> str | None:
     """Where `compile`'s stage caches live by default: `KTPU_COMPILE_CACHE`
     (alias `KTPU_RCACHE`; empty: off, None), else build/rcache."""
 
-def l2_of(graph_json: str, machine_json: str) -> str:
+def l2_of(graph_json: str, machine_json: str, mutant: str | None = None) -> str:
     """The tracer's graph (`Traced.graph` as JSON text) as L2 text, for the
     machine file `machine_json` (its text). Raises `Refused`."""
+
+def simulate_l2(
+    text: str,
+    name: str,
+    binds: dict[str, int],
+    read: Callable[[int, int], bytes],
+    write: Callable[[int, bytes], None],
+    seed: int = 1,
+) -> None:
+    """`name`'s L2 of `text` run with each parameter at its address, its bytes
+    through `read(address, count)` and `write(address, bytes)`."""
 
 def debug_decode(region: bytes, machine_json: str) -> dict:
     """A node's debug region (the debug firmware's per-step trace and

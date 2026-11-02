@@ -97,7 +97,7 @@ class Device(Kernels, Allocation, Submission, Replay):
         self._library = self._machine = None
         self.kernels: OrderedDict = OrderedDict()
         self.specialisations: OrderedDict = OrderedDict()
-        self.eager_schedules: Any = None
+        self.eager_schedules = None
         self.eager_calls = None
         self.eager_sequences = None
         self.eager_recipes = None

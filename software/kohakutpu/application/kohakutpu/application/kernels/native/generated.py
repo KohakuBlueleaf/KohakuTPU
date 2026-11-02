@@ -218,13 +218,13 @@ def _mlp_stage(
         n_tiles_override=first_nt,
     )
     piped = eff_ring > 0 and hidden % 64 == 0
-    vc_ep = first["body"][1]["body"][1] if piped else None
-    store_stmt = (
-        next(s for s in statements(vc_ep["body"]) if s.get("kind") == "store")
-        if piped
-        else None
-    )
-    wc = store_stmt["dst"]["axes"][1]["run"][1] if piped else hidden
+    vc_ep, store_stmt, wc = {}, {}, hidden
+    if piped:
+        vc_ep = first["body"][1]["body"][1]
+        store_stmt = next(
+            s for s in statements(vc_ep["body"]) if s.get("kind") == "store"
+        )
+        wc = store_stmt["dst"]["axes"][1]["run"][1]
     if activation == "gelu":
         x = X.Load(0)
         z = X.op(

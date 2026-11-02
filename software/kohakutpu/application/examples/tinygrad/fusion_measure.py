@@ -21,9 +21,10 @@ from examples.tinygrad import fusion_replay
 from examples.tinygrad.boundaries import boundary
 from examples.tinygrad.mnist_models import LeNet
 from examples.tinygrad.vit_tiny import Block, ViTTiny
-from tinygrad import Tensor, tensor
+from tinygrad import tensor
 from tinygrad.helpers import Context
 from tinygrad.nn.state import get_parameters, get_state_dict
+from tinygrad.tensor import Tensor
 from tinygrad.uop import Ops
 
 from kohakutpu.application.kernels import expr as X
@@ -101,7 +102,7 @@ def asts(linear):
     ]
 
 
-def describe(kernels):
+def describe(kernels) -> dict:
     rows, classes = [], set()
     for ast in kernels:
         try:

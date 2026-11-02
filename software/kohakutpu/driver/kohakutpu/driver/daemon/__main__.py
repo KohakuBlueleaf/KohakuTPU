@@ -99,9 +99,10 @@ def main() -> None:
     elif args.backend == "verilator":
         transport = sim = VerilatorTransport(build_dir=args.build)
 
-        def poll_idle():
+        def advance():
             transport.run(args.poll_cycles)
 
+        poll_idle = advance
     else:
         transport = JtagTransport()
         beats = board.get("max_burst_beats")

@@ -58,7 +58,7 @@ def run_firmware_capture(
             raise RuntimeError(
                 "HOSTL-LIST requested (--lists 1) but active runtime lacks prepare_execution"
             )
-        result = dict(
+        result: dict = dict(
             workload=capture["workload"],
             backend="HOSTL-LIST" if use_lists else "FW-RUN",
             runtime=str(pathlib.Path(runtime.__file__).resolve()),
@@ -165,7 +165,7 @@ def main():
     p.add_argument("--out", required=True)
     p.add_argument("--poison-reads", type=int, nargs="*", default=[])
     a = p.parse_args()
-    with gzip.open(a.capture, "rb") as f:
+    with gzip.open(pathlib.Path(a.capture), "rb") as f:
         capture = pickle.load(f)
     out = pathlib.Path(a.out)
     out.mkdir(parents=True, exist_ok=True)

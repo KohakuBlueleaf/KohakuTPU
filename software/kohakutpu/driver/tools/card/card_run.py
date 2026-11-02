@@ -141,6 +141,7 @@ def main() -> int:
     stat0 = mover.status(t.read64(c0 + mover.AUX_STAT))
     t0 = time.monotonic()
     mover.issue(t, prog, c0)
+    st = stat0
     for _ in range(200):
         st = mover.status(t.read64(c0 + mover.AUX_STAT))
         if not st["busy"]:

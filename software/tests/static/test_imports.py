@@ -15,6 +15,7 @@ import os
 import pathlib
 import subprocess
 import sys
+from typing import cast
 
 SOFTWARE = pathlib.Path(__file__).resolve().parents[2]
 MEMBERS = (
@@ -104,7 +105,7 @@ def violations(module: str, source: str, is_package: bool = False) -> list[str]:
             bad.append(f"{where}: {side} may not import project {tside}")
         if side == "kohakuaccel" and tside != "kohakuaccel":
             bad.append(f"{where}: the framework imports no project")
-        if tcomp not in DEPENDS[comp]:
+        if tcomp not in DEPENDS[cast(str, comp)]:
             bad.append(f"{where}: {comp} may not import {tcomp}")
     return bad
 

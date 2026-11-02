@@ -2,7 +2,7 @@
 
 import itertools
 from dataclasses import replace
-from typing import Any
+from typing import Any, overload
 
 import numpy as np
 from tinygrad.dtype import dtypes
@@ -301,6 +301,14 @@ def _ungated(dev, plan: Plan, bufs) -> list:
     finally:
         for t in tmps:
             t.free()
+
+
+@overload
+def _window(dev, plan: Plan, bufs) -> list | None: ...
+
+
+@overload
+def _window(dev, plan: Plan, bufs, contraction: object) -> list: ...
 
 
 def _window(dev, plan: Plan, bufs, contraction=None) -> list | None:
@@ -796,7 +804,8 @@ def _product(dev, plan: Plan, bufs) -> list:
     # Each batch's rows padded to whole quanta: the epilogue's operands and
     # output are [bt, mp] rows (none read or written past them).
     rpad = mm.mp != M
-    extras, binds, runs = [], {"a": qa, "b": qb}, []
+    binds: dict = {"a": qa, "b": qb}
+    extras, runs = [], []
     lays: list = []  # epilogue operands laid out for the kernel, freed after the run
     try:
         for i, acc in enumerate(plan.accesses, start=1):

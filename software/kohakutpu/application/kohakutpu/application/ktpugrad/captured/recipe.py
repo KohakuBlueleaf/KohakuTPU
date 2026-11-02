@@ -1,7 +1,7 @@
 """Cold eager planning records an address-parametric launch program."""
 
 from collections import Counter
-from typing import Any
+from typing import Any, cast
 
 from kohakutpu.application.ktpugrad import run
 from kohakutpu.application.runtime import forms as FM
@@ -376,7 +376,7 @@ class Recipes:
                 )
             entry.dev = None
             if self.native is not None:
-                self.native.insert(key, entry)
+                self.native.insert(cast(_rs.RecipeMiss, key), entry)
             else:
                 if len(self.entries) == KEPT:
                     self.entries.pop(next(iter(self.entries))).close()
@@ -407,7 +407,9 @@ def submit(dev, plan, buffers):
 def execute(dev, plan, buffers):
     if run.read_kept(dev, plan, buffers):
         return []
-    FM.base_of(buffers[plan.out_slot])[0].unshare()
+    out = FM.base_of(buffers[plan.out_slot])[0]
+    out.unshare()
+    out.overwritten()
     if (
         not dev.eager_recipe_enabled
         or run._active_scope(dev) is not None

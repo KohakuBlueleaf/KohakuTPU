@@ -15,6 +15,7 @@ from kohakutpu.application.runtime.card.common import (
     DBG_H_RD,
     DBG_LASTS,
     FAILED_ENV,
+    Parts,
     Pending,
 )
 from kohakutpu.application.runtime.eager_batch import Deferred
@@ -23,7 +24,7 @@ from kohakutpu.language.config import ENV
 from kohakutpu.stack.rs import _rs
 
 
-class Collection:
+class Collection(Parts):
     def _drain(self, pending: dict, cycles: list) -> None:
         for n, tags in pending.items():
             for tag in tags:

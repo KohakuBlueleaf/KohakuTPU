@@ -80,8 +80,12 @@ class KTPUAllocator(Allocator):
         if not off and len(raw) == st.nbytes and st.owned:
             # Full owner writes define the rounded allocation's padding as zero.
             self.rt.write(st.addr, raw + bytes(-len(raw) % 32))
-        elif off or len(raw) % 32:
-            # A partial view write preserves the other bytes of the owner.
+        elif off or len(raw) % 32 or st.dtype is not None:
+            # A partial view write preserves the other bytes of the owner, whatever
+            # form holds them.
+            if FLAT not in st.valid:
+                whole = FM.read(self.rt, st, st.dtype, self._elements(st))
+                self.rt.write(st.addr, whole + bytes(-len(whole) % 32))
             lo, hi = off & ~31, -(-(off + len(raw)) // 32) * 32
             old = bytearray(self.rt.read(st.addr + lo, hi - lo))
             old[off - lo : off - lo + len(raw)] = raw
@@ -100,6 +104,10 @@ class KTPUAllocator(Allocator):
                 st.nbytes // np.dtype(st.host_f16_dtype).itemsize,
             )
 
+    @staticmethod
+    def _elements(st: Storage) -> int:
+        return st.nbytes // np.dtype(st.dtype).itemsize
+
     def _copyout(self, dest: memoryview, src) -> None:
         st, off = FM.base_of(src)
         for form in st.forms.values():
@@ -109,7 +117,7 @@ class KTPUAllocator(Allocator):
         if dt is None or FLAT in st.valid:
             dest[:] = self.rt.read(st.addr + off, n)
             return
-        dest[:] = FM.read(self.rt, st, dt, n // np.dtype(dt).itemsize)
+        dest[:] = FM.read(self.rt, src, dt, n // np.dtype(dt).itemsize)
 
     def _offset(self, buf, size: int, offset: int):
         if isinstance(buf, StorageView):
@@ -242,7 +250,7 @@ class KTPUGraph(GraphRunner):
         if not can_fuse:
             for j, runtime in enumerate(self.runtimes):
                 with rt.placement_scope(self.placement if slots else None, j):
-                    runtime(*all_args[j])
+                    cast(KTPUProgram, runtime)(*all_args[j])
             return
         held = self._outputs()
         units: list = (
@@ -297,7 +305,8 @@ class KTPUGraph(GraphRunner):
                 out.add(id(FM.base_of(b.base._buf)[0]))
         for t in get_parameters(captured.ret):
             if t.device == NAME and t.uop.is_realized:
-                out.add(id(FM.base_of(t.uop.buffer.ensure_allocated()._buf)[0]))
+                buffer = cast(Buffer, t.uop.buffer)
+                out.add(id(FM.base_of(buffer.ensure_allocated()._buf)[0]))
         return out
 
     def _storages(self) -> list:

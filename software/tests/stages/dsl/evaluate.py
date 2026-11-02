@@ -3,6 +3,7 @@ the graph alone and shares nothing with the Rust path to L2, so an L2 that ends
 elsewhere is that path's doing. Numbers are ideal; the bound is the caller's."""
 
 import math
+from typing import cast
 
 import numpy as np
 
@@ -143,23 +144,27 @@ class Evaluator:
             return values[a["vview"]["value"]][slices(a["vview"]["axes"], self.env)]
         return self.view(a["view"])
 
+    def array(self, a, values) -> np.ndarray:
+        """An operand no step gives as a float."""
+        return cast(np.ndarray, self.operand(a, values))
+
     def on_value(self, s, values) -> None:
         op, shape = s["op"], tuple(s["type"]["shape"])
         args = s["args"]
         if op == "zero":
             out = np.zeros(shape)
         elif op in ("fill", "load"):
-            out = self.operand(args[0], values).copy()
+            out = self.array(args[0], values).copy()
             if op == "load" and out.size != math.prod(shape):
                 out = np.broadcast_to(out.reshape(-1), shape).copy()
         elif op == "gemm":
-            a, b = (self.operand(x, values) for x in args[:2])
+            a, b = (self.array(x, values) for x in args[:2])
             acc = self.operand(args[2], values) if len(args) > 2 else 0.0
             out = acc + a @ b.T
         elif op == "recv":
             out = self.links[self.unit].pop(0)
         elif op in ("rmax", "rsum"):
-            x = self.operand(args[0], values)
+            x = self.array(args[0], values)
             out = x.max(-1) if op == "rmax" else x.sum(-1)
         elif op in ("xlane", "xrot"):
             out = self.shuffled(op, args, values)
@@ -170,11 +175,11 @@ class Evaluator:
     def pure(self, op, shape, args, values):
         x = [self.operand(a, values) for a in args]
         if op in ("unpack", "pack"):
-            return x[0].copy()
+            return cast(np.ndarray, x[0]).copy()
         return np.broadcast_to(MATH[op](*[bands(v, shape) for v in x]), shape).copy()
 
     def shuffled(self, op, args, values):
-        x = self.operand(args[0], values)
+        x = self.array(args[0], values)
         k = int(self.operand(args[1], values))
         lane = np.arange(x.shape[-1]) % self.lanes
         chunk = np.arange(x.shape[-1]) - lane

@@ -1,6 +1,7 @@
 """The product runner: packing plans, pending forms, table boxes."""
 
 from dataclasses import replace
+from typing import cast
 
 import numpy as np
 from tinygrad.dtype import dtypes
@@ -194,7 +195,7 @@ def _packing_plan(dev, plan: Plan):
         U.extent(m),
         Np,
         _size(_ks(k)),
-        not any(plan.b.c(r) for r in batch),
+        not any(cast(Access, plan.b).c(r) for r in batch),
         quantum,
         machine_json=dev.machine.machine_json,
     )

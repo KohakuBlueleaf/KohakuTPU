@@ -142,6 +142,9 @@ def _spec_of(x) -> TensorSpec:
 class Kernel:
     """A traced kernel and its specialisations."""
 
+    #: What a generated kernel's class call decided, set by its generator.
+    class_info: dict
+
     def __init__(self, fn, name: str | None = None) -> None:
         self.fn = fn
         self.name = name or fn.__name__

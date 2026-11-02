@@ -12,6 +12,7 @@ import dataclasses
 import pathlib
 import socket
 import threading
+from typing import Any
 
 from kohakuaccel.driver.daemon.protocol import recv_msg, send_msg
 from kohakuaccel.driver.daemon.server import DEFAULT_PORT
@@ -42,7 +43,7 @@ class DaemonClient:
         self._id = 0
         self.hello = self.call("hello")
 
-    def call(self, op: str, **kw):
+    def call(self, op: str, **kw) -> Any:
         with self._lock:
             self._id += 1
             msg = {"id": self._id, "op": op, **kw}
@@ -145,7 +146,7 @@ class RemoteNodeQueue:
         got = client.call("node_attach", node=node, base=base, init=init, **geo)
         self.base, self.heap_off, self.size = got["base"], got["heap_off"], got["size"]
 
-    def _call(self, op: str, **kw):
+    def _call(self, op: str, **kw) -> Any:
         return self.client.call(op, node=self.node, **kw)
 
     def _final(self, d: dict, check: bool = True) -> Completion:

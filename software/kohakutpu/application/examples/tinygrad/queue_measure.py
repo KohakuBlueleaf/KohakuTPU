@@ -9,9 +9,9 @@ from types import SimpleNamespace
 import ktpu_pytest_lock
 import numpy as np
 from examples.tinygrad.mnist_mlp import LeNet
-from tinygrad import Tensor
 from tinygrad.helpers import Context
 from tinygrad.nn.state import get_parameters
+from tinygrad.tensor import Tensor
 
 from kohakutpu.application.ktpugrad.nn import Adam16, place
 from kohakutpu.application.runtime import device as D

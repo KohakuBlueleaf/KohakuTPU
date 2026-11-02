@@ -13,12 +13,9 @@ class Environment:
     def get(self, name: str) -> str | None: ...
 
     @overload
-    def get(self, name: str, default: str) -> str: ...
+    def get[T](self, name: str, default: T) -> str | T: ...
 
-    @overload
-    def get(self, name: str, default: None) -> str | None: ...
-
-    def get(self, name: str, default: str | None = None) -> str | None:
+    def get(self, name: str, default: object = None) -> object:
         return os.environ.get(name, default)
 
     def __contains__(self, name: str) -> bool:

@@ -428,7 +428,7 @@ def w_gather_scatter(w):
     )
     runtime.run()
     got_scatter = card.read(base_pa + SCAT_OFF, 128)
-    want_scatter = [None] * 4
+    want_scatter: list = [None] * 4
     for k, i in enumerate((3, 2, 1, 0)):
         want_scatter[i] = got_gather[32 * k : 32 * k + 32]
     assert got_scatter == b"".join(want_scatter), got_scatter.hex()
@@ -543,6 +543,7 @@ def w_b5(w):
     recovered.run(cpu_write=(base_ref + IN_OFF, 0x33330000))
     got_after_de = struct.unpack("<4Q", card.read(base_pa + OUT_OFF, 32))
     assert got_after_de == tuple(0x33330000 + i for i in range(4)), got_after_de
+    r_after_unit = {}
     for _ in range(5):
         card.write(base_pa + 128, b"\xa5" * 384)
         recovered.prepare(mg_graph(base_ref, rounds=1, chain=False, unit=0))
@@ -687,6 +688,8 @@ def measure(a):
             runtime.prepare(graph)
         card.write(runtime.data_pa, MG_SOURCE)
         card.write(runtime.data_pa + 128, b"\xa5" * 384)
+        dev = None
+        result: dict
         if a.adapter:
             units = {
                 (u["mesh"], u["x"], u["y"]): i for i, u in enumerate(board["units"])
@@ -725,7 +728,7 @@ def measure(a):
         got = card.read(runtime.data_pa + 128, 384)
         changed = [i for i in range(0, len(got), 8) if got[i : i + 8] != b"\xa5" * 8]
         assert changed == [128, 136, 144, 152], changed
-        if a.adapter:
+        if dev is not None:
             dev.close()
         else:
             runtime.close()
@@ -748,8 +751,8 @@ def measure(a):
                 if a.arithmetic
                 else "MG dispatch microcase (no matmul arithmetic)"
             ),
-            segment=dev.card.segment if a.adapter else 1,
-            compact=dev.card.compact if a.adapter else False,
+            segment=dev.card.segment if dev is not None else 1,
+            compact=dev.card.compact if dev is not None else False,
         )
         return result
     finally:

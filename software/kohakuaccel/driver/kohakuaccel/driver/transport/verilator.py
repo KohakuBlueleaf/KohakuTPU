@@ -14,6 +14,7 @@ import os
 import pathlib
 import re
 import subprocess
+from typing import IO, cast
 
 from kohakuaccel.driver.transport.base import (
     MASK64,
@@ -102,7 +103,7 @@ class VerilatorTransport(Transport):
         # Only a reply is returned; anything else on the channel is reported
         # and skipped, never mistaken for the answer to the command in flight.
         while True:
-            line = self.proc.stdout.readline()
+            line = cast(IO[str], self.proc.stdout).readline()
             if not line:
                 tail = ""
                 try:
@@ -118,8 +119,9 @@ class VerilatorTransport(Transport):
 
     def _cmd(self, text: str) -> str:
         self.calls += 1
-        self.proc.stdin.write(text + "\n")
-        self.proc.stdin.flush()
+        stdin = cast(IO[str], self.proc.stdin)
+        stdin.write(text + "\n")
+        stdin.flush()
         reply = self._line()
         if reply.startswith("E "):
             raise RuntimeError(f"harness: {reply[2:]} (on {text[:60]!r})")
@@ -208,8 +210,9 @@ class VerilatorTransport(Transport):
 
     def close(self) -> None:
         try:
-            self.proc.stdin.write("Q\n")
-            self.proc.stdin.flush()
+            stdin = cast(IO[str], self.proc.stdin)
+            stdin.write("Q\n")
+            stdin.flush()
             self.proc.wait(timeout=30)
         except Exception:  # noqa: BLE001 -- closing; the process is going away
             self.proc.kill()

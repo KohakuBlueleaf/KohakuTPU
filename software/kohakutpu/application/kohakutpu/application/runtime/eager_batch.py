@@ -8,10 +8,10 @@ from kohakutpu.application.runtime import packages as B
 
 @dataclass
 class Deferred:
-    owner: object
+    owner: "Batch"
     group: object = None
     first: bool = False
-    result: object = None
+    result: dict | None = None
     error: BaseException | None = None
 
 
@@ -84,7 +84,7 @@ class Batch:
         finally:
             execution.close()
 
-    def result(self, pending, *args, **kwargs):
+    def result(self, pending, *args, **kwargs) -> dict:
         if not isinstance(pending, Deferred):
             return self.collect(pending, *args, **kwargs)
         if pending.error is not None:

@@ -7,6 +7,7 @@ and can hide concurrency races; a pass never proves the uninstrumented run safe.
 import hashlib
 import re
 from contextlib import ExitStack
+from typing import cast
 from unittest.mock import patch
 
 import numpy as np
@@ -211,7 +212,7 @@ class DeterminismChecker:
         def plan(ast):
             p = original_plan(ast)
             self.asts[id(p)] = ast
-            p._check_original_ast = ast
+            vars(p)["_check_original_ast"] = ast
             return p
 
         def submit(device, compiled, bindings, kind="dsl", info=None):
@@ -222,7 +223,7 @@ class DeterminismChecker:
             ):
                 return original_submit(device, compiled, bindings, kind=kind, info=info)
             self.package_found = True
-            row = dict(
+            row: dict = dict(
                 schedule_index=self.current,
                 name=compiled.name,
                 kind=kind,
@@ -311,7 +312,7 @@ class DeterminismChecker:
                         obs.error(error, repeat)
                         raise
                 # Subsequent packages see exactly the first execution's bytes.
-                for at, raw in first_state.items():
+                for at, raw in cast(dict, first_state).items():
                     device.write(at, raw)
                 row["measured"] = True
                 row["stall_rate_observed"] = 0.0
@@ -341,7 +342,7 @@ class DeterminismChecker:
             ast = self.asts.get(id(p), getattr(p, "_check_original_ast", None))
             if ast is None:
                 raise RuntimeError(f"missing schedule AST for {index}:{p.name}")
-            row = dict(
+            row: dict = dict(
                 index=index,
                 name=p.name,
                 kind=p.kind,
@@ -430,7 +431,7 @@ class DeterminismChecker:
                     raise
                 finally:
                     self.observe_packages = False
-            first_state.restore()
+            cast(StorageSnapshot, first_state).restore()
             self.initialize_allocations = False
             row["measured"] = True
             print(

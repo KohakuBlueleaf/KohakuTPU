@@ -1,5 +1,7 @@
 """HOSTL list grouping at replay boundaries, with original failure ownership."""
 
+from typing import cast
+
 from kohakuaccel.driver.node.queue.client import NodeError
 from kohakutpu.application.runtime.replay_budget import held_bytes, padded
 
@@ -112,7 +114,9 @@ def collect(card, pending, dump):
             card._forget_residents(pending.tags)
             card._segment(node, tag, error.console)
             if error.completion.status != card.queues[node].layout.bad_arg:
-                pkg, bindings = packages[error.completion.record["list_index"]]
+                # An execution list runs only on a queue with a record ring.
+                record = cast(dict, error.completion.record)
+                pkg, bindings = packages[record["list_index"]]
                 card._keep_failed(pkg, bindings, error, node)
             raise
         card._segment(node, tag)

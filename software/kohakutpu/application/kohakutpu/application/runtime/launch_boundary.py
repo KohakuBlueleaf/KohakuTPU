@@ -3,7 +3,7 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-_PENDING = ContextVar("ktpu_deferred_launch", default=None)
+_PENDING: ContextVar[tuple | None] = ContextVar("ktpu_deferred_launch", default=None)
 
 
 @contextmanager

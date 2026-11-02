@@ -65,6 +65,7 @@ def main() -> int:
     # harmless -- it reloads what is already there instead of zeroing it.
     t0 = time.perf_counter()
     put({0x00: ctrl, 0x10: d_hdr, 0x18: d_dim}, 0x00)
+    st = before
     for _ in range(2000):
         st = MV.status(m.ctrl.read64(MV.AUX_STAT))
         if not st["busy"]:

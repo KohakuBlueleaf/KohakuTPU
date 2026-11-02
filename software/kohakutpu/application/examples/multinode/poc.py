@@ -8,6 +8,7 @@ import argparse
 import json
 import pathlib
 import time
+from typing import cast
 
 import numpy as np
 
@@ -359,7 +360,7 @@ def measure(dev, case="all"):
 
 def main():
     parser = argparse.ArgumentParser(
-        description=__doc__
+        description=cast(str, __doc__)
         + "\nThe measured device is runtime.device's: KOHAKUTPU_SIM_BUILD, "
         "KOHAKUTPU_BOARD, KOHAKUTPU_SIM_NODES."
     )

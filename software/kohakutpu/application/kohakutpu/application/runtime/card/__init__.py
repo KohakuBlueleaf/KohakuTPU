@@ -66,6 +66,7 @@ from kohakutpu.application.runtime.card.common import (
     CardMismatch,
     ClockMismatch,
     ResidentMode,
+    Unset,
     enumerated,
     firmware_wait_seconds,
     node_queue,
@@ -152,7 +153,7 @@ class NodeCard(Recording, Submission, Collection):
         stop_timeout: float = 5.0,
         clock=time.monotonic,
         alarm: float = 0.0,
-        resident_mode: str | None | object = _UNSET,
+        resident_mode: str | ResidentMode | None | Unset = _UNSET,
     ) -> None:
         if check not in verify.GATES:
             raise ValueError(f"check={check!r}: one of {verify.GATES}")

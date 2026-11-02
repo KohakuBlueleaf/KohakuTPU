@@ -38,6 +38,7 @@ from tinygrad.helpers import (
     perf_counter_us,
 )
 from tinygrad.renderer import Estimates
+from tinygrad.schedule import create_linear_with_vars as _CREATE_LINEAR
 from tinygrad.schedule import rangeify
 from tinygrad.uop import Ops
 from tinygrad.uop.ops import AxisType, PatternMatcher, ProgramInfo, UOp, UPat
@@ -188,7 +189,6 @@ _PM_EARLIEST = PatternMatcher(
 #: The tensor module's global `realize` runs a schedule with.
 RUN = "run_linear"
 _RUN_LINEAR = getattr(tensor, RUN)
-_CREATE_LINEAR = tensor.create_linear_with_vars
 
 
 def create_linear_with_vars(sink):
@@ -334,7 +334,7 @@ def to_program(ast, renderer):
 def refresh_knobs() -> None:
     if not installed():
         return
-    tensor.create_linear_with_vars = (
+    tensor.__dict__["create_linear_with_vars"] = (
         create_linear_with_vars if eager_schedule.refresh() else _CREATE_LINEAR
     )
     tensor._apply_map_to_tensors = (
@@ -385,7 +385,7 @@ def uninstall() -> None:
     setattr(realize, SEAM, _TO_PROGRAM)
     setattr(tensor, RUN, _RUN_LINEAR)
     CapturedJit.__call__ = _CAPTURED_CALL
-    tensor.create_linear_with_vars = _CREATE_LINEAR
+    tensor.__dict__["create_linear_with_vars"] = _CREATE_LINEAR
     tensor._apply_map_to_tensors = graph_walk._ORIGINAL
     tensor.transform_to_call = call_capture.ORIGINAL
 

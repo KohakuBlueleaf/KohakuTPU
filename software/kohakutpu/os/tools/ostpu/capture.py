@@ -6,13 +6,16 @@ import json
 import pathlib
 import pickle
 from dataclasses import replace
+from typing import cast
 from unittest.mock import patch
 
 import numpy as np
 from examples.tinygrad.vit_tiny import Block
-from tinygrad import Tensor, TinyJit, nn
+from tinygrad import nn
+from tinygrad.engine.jit import TinyJit
 from tinygrad.helpers import Context
 from tinygrad.nn.state import get_parameters
+from tinygrad.tensor import Tensor
 
 from kohakutpu.application.ktpugrad.device import KTPUGraph
 from kohakutpu.application.ktpugrad.nn import place
@@ -30,8 +33,8 @@ class ReducedLeNet:
         self.fc = nn.Linear(channels * spatial * spatial, 2)
 
     def __call__(self, x):
-        x = self.c1(x).relu().avg_pool2d(2)
-        x = self.c2(x).relu().avg_pool2d(2)
+        x = self.c1(x).relu().avg_pool2d((2, 2))
+        x = self.c2(x).relu().avg_pool2d((2, 2))
         return self.fc(x.flatten(1))
 
 
@@ -110,11 +113,15 @@ def capture_workload(
                 Tensor.realize(
                     loss,
                     logits,
-                    *[p.assign(p.detach() - p.grad * 0.01) for p in params],
+                    *[
+                        p.assign(p.detach() - cast(Tensor, p.grad) * 0.01)
+                        for p in params
+                    ],
                 )
             outputs = [loss, logits, *params]
         elif workload == "vit-qkv":
-            outputs = [model.qkv(model.norm1(x).realize()).realize()]
+            block = cast(Block, model)
+            outputs = [block.qkv(block.norm1(x).realize()).realize()]
         else:
             outputs = [model(x).realize()]
         reads.clear()
@@ -248,13 +255,13 @@ def capture_warmjit(board):
             ("write", base, dev.card.mem.read_block(base, extent)),
             *first_call_programs,
         ]
-        epochs = []
+        epochs, output = [], None
         for x in inputs:
             events.clear()
             output = fn(x)
             epochs.append(list(events))
         reads.clear()
-        output.numpy()
+        cast(Tensor, output).numpy()
         split = next(i for i, ev in enumerate(epochs[0]) if ev[0] == "program")
         step = epochs[0][split:]
         assert step == epochs[1][split:]

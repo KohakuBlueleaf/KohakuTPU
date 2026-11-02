@@ -60,7 +60,12 @@ extraPaths = [
     "kohakutpu/simulation",
     "kohakutpu/application",
     "template",
+    # Tools a script reaches by the `sys.path` entry it adds at run time.
+    "kohakuaccel/os/tools",
+    "kohakutpu/os/tools/ostpu",
 ]
+# The sources run on Linux and on Windows: neither platform's stubs hide the other's.
+pythonPlatform = "All"
 
 [tool.pytest.ini_options]
 # importlib names a test module by its path, so same-named files in two stages

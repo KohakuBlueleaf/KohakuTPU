@@ -13,7 +13,7 @@ import itertools
 from dataclasses import dataclass, field
 
 import numpy as np
-from tinygrad.dtype import dtypes
+from tinygrad.dtype import DType, dtypes
 from tinygrad.uop import Ops
 from tinygrad.uop.ops import UOp
 
@@ -54,7 +54,7 @@ class Plan:
     ast: object
     name: str
     out_slot: int
-    out_dtype: object
+    out_dtype: DType
     out_shape: tuple
     out_ranges: tuple  # outermost first
     expr: object = None

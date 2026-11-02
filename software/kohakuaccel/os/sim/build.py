@@ -15,6 +15,9 @@ import shutil
 import subprocess
 import sys
 import time
+from importlib.abc import Loader
+from importlib.machinery import ModuleSpec
+from typing import cast
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
@@ -23,9 +26,9 @@ PAIR_TOP = "src/kohakuaccel/verif/rv64_node_pair.v"
 
 
 def _load(name: str, path: pathlib.Path):
-    spec = importlib.util.spec_from_file_location(name, path)
+    spec = cast(ModuleSpec, importlib.util.spec_from_file_location(name, path))
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    cast(Loader, spec.loader).exec_module(mod)
     return mod
 
 

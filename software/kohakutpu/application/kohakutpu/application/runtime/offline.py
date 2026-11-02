@@ -18,6 +18,7 @@ from kohakutpu.application.runtime.card import (
     RESIDENT_ENV,
     NodeCard,
     ResidentMode,
+    Unset,
     parse_resident_mode,
 )
 from kohakutpu.application.runtime.machine import machine_of
@@ -87,7 +88,7 @@ class OfflineCard:
         nodes: tuple[int, ...] = (0,),
         check: str = "refuse",
         execute=None,
-        resident_mode: str | ResidentMode | None | object = _UNSET,
+        resident_mode: str | ResidentMode | None | Unset = _UNSET,
     ) -> None:
         self.board = load_board(board)
         mp = board_map(self.board)

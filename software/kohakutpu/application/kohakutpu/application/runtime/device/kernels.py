@@ -4,7 +4,7 @@ import json
 
 from kohakutpu.application.runtime import generated
 from kohakutpu.application.runtime.class_library import ClassLibrary
-from kohakutpu.application.runtime.device.common import KERNELS_KEPT
+from kohakutpu.application.runtime.device.common import KERNELS_KEPT, Parts
 from kohakutpu.application.runtime.graph.storage import stage_graph
 from kohakutpu.language.config import ENV
 from kohakutpu.language.dsl.kernel import _const_key
@@ -12,7 +12,7 @@ from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
 
 
-class Kernels:
+class Kernels(Parts):
     def kernel(self, source, graph=None, traced=None):
         """The `Compiled` of graph `source`, kept by its text: a launch seen
         before reuses it (its bound programs included), so a repeated eager

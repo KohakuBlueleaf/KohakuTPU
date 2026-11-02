@@ -165,6 +165,7 @@ class Submission(Parts):
         references = self._retain(binds.values())
         record_mark = len(self._record_pins)
         submitting = False
+        publication = s = None
         try:
             while (
                 self.max_inflight is not None

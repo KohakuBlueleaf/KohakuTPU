@@ -2,6 +2,8 @@
 the form its port reads (f16, f32, or an MXFP7 packing made on the card and
 kept while the tensor is unwritten), each output a new tensor."""
 
+from typing import Protocol
+
 import numpy as np
 
 from kohakutpu.application.api.tensor import Buf, Tensor, Unsupported
@@ -12,7 +14,20 @@ from kohakutpu.application.runtime.memory.storage import FLAT, Storage
 from kohakutpu.language import dsl as kt
 
 
-def call(kernel: kt.Kernel, *args: Tensor, **consts) -> tuple[Tensor, ...]:
+class CustomKernel(Protocol):
+    """What `call` reads of its kernel: a `kt.Kernel` or a generated graph's."""
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def inputs(self) -> list: ...
+
+    @property
+    def outputs(self) -> list: ...
+
+
+def call(kernel: CustomKernel, *args: Tensor, **consts) -> tuple[Tensor, ...]:
     """Run `kernel` on `args` (one an input port, in order) with `consts`;
     every output tensor, in port order."""
     ins, outs = kernel.inputs, kernel.outputs

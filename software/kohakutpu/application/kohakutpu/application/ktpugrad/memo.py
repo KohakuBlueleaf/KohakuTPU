@@ -6,7 +6,9 @@ and hints are interpreted by the runner on every call, after these decisions.
 
 import dataclasses
 from collections import OrderedDict
+from collections.abc import Callable
 from functools import wraps
+from typing import Protocol, cast
 
 import numpy as np
 from tinygrad.uop.ops import UOp
@@ -83,7 +85,16 @@ def freeze(value):
     return (type(value), value)
 
 
-def memo(fn):
+class Memoised[**P, R](Protocol):
+    """A memoised function, its cache and hit counts beside it."""
+
+    cache: OrderedDict
+    counts: dict
+
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R: ...
+
+
+def memo[**P, R](fn: Callable[P, R]) -> Memoised[P, R]:
     cache = OrderedDict()
     counts = {"hits": 0, "misses": 0}
 
@@ -103,6 +114,7 @@ def memo(fn):
             cache.popitem(last=False)
         return result
 
-    call.cache = cache
-    call.counts = counts
-    return call
+    memoised = cast("Memoised[P, R]", call)
+    memoised.cache = cache
+    memoised.counts = counts
+    return memoised

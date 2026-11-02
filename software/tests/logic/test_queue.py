@@ -24,11 +24,11 @@ class Memory(HostMemory):
         self.writes = []
         self.fail_at = None
 
-    def write_block(self, at, data):
-        if at == self.fail_at:
+    def write_block(self, addr, data):
+        if addr == self.fail_at:
             raise OSError("publication transport failure")
-        self.writes.append((at, bytes(data)))
-        return super().write_block(at, data)
+        self.writes.append((addr, bytes(data)))
+        return super().write_block(addr, data)
 
 
 def transcript(native):

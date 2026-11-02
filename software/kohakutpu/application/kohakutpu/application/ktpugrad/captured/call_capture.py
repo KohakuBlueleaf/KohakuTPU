@@ -1,6 +1,7 @@
 """Automatic address-parametric capture at a concrete eager realization boundary."""
 
 from collections import Counter
+from typing import cast
 
 from tinygrad import tensor
 from tinygrad.engine import realize
@@ -15,6 +16,9 @@ from kohakutpu.stack.rs import _rs
 ORIGINAL = tensor.transform_to_call
 KEPT = 128
 ENABLED = False
+
+#: A BUFFER node's device, which it always has.
+BufferDevice = str | tuple[str, ...]
 
 
 def refresh():
@@ -98,7 +102,7 @@ class Captures:
         for node in values.toposort():
             if node.op is Ops.BUFFER and node not in replacements and not keep_cold:
                 replacements[node] = UOp.new_buffer(
-                    node.device, node.max_numel(), node.dtype
+                    cast(BufferDevice, node.device), node.max_numel(), node.dtype
                 )
                 fresh.append(replacements[node])
         self.entries[key] = (
@@ -147,7 +151,9 @@ class Captures:
         replacements = {node: symbolic[node] for node in buffers if node in symbolic}
         replacements.update(
             {
-                node: UOp.new_buffer(node.device, node.max_numel(), node.dtype)
+                node: UOp.new_buffer(
+                    cast(BufferDevice, node.device), node.max_numel(), node.dtype
+                )
                 for node in cold
             }
         )

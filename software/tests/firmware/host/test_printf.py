@@ -3,6 +3,7 @@ values. The sign is part of the number, the pad goes before both: "%06d" of -12
 is "000-12"."""
 
 import re
+from typing import cast
 
 import native
 import pytest
@@ -34,7 +35,7 @@ def values(kind):
 
 
 def model(fmt, v):
-    m = re.fullmatch(r"%(0?)(\d*)(l?)([dux])", fmt)
+    m = cast(re.Match, re.fullmatch(r"%(0?)(\d*)(l?)([dux])", fmt))
     pad, width, conv = "0" if m[1] else " ", int(m[2] or 0), m[4]
     digits = format(abs(v), "x") if conv == "x" else str(abs(v))
     text = ("-" if v < 0 else "") + digits

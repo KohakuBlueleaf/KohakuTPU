@@ -1,6 +1,7 @@
 """Rust-built run packages and checker verdicts carried by the runtime."""
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import IntEnum
 from functools import lru_cache
@@ -51,15 +52,17 @@ class Refused(Exception):
 class Package:
     """Immutable wire bytes and read-only Rust-decoded diagnostic tables."""
 
-    _raw: object
+    _raw: bytes | Callable[[], bytes]
     machine_json: str
     mesh: int = 0
 
     @property
     def raw(self) -> bytes:
-        if callable(self._raw):
-            object.__setattr__(self, "_raw", self._raw())
-        return self._raw
+        raw = self._raw
+        if callable(raw):
+            raw = raw()
+            object.__setattr__(self, "_raw", raw)
+        return raw
 
     def to_bytes(self):
         return self.raw

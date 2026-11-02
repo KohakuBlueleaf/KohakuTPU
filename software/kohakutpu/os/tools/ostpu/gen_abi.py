@@ -7,6 +7,7 @@ import argparse
 import pathlib
 import re
 import sys
+from typing import cast
 
 ROOT = pathlib.Path(__file__).resolve().parents[5]
 ABI_H = ROOT / "software/kohakuaccel/os/include/kos/abi.h"
@@ -50,9 +51,8 @@ def parse_enum(text: str, prefix: str) -> dict:
 
 
 def parse_struct_fields(text: str, struct_name: str) -> tuple[str, ...]:
-    body = re.search(rf"struct\s+{struct_name}\s*\{{(.*?)\}};", text, re.DOTALL).group(
-        1
-    )
+    found = re.search(rf"struct\s+{struct_name}\s*\{{(.*?)\}};", text, re.DOTALL)
+    body = cast(re.Match, found).group(1)
     body = re.sub(r"/\*.*?\*/", "", body, flags=re.DOTALL)
     fields = []
     for stmt in body.split(";"):

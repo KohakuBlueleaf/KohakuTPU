@@ -11,7 +11,7 @@ back.
 
 from dataclasses import dataclass
 from itertools import count
-from typing import Any
+from typing import Any, cast
 
 from kohakutpu.application.runtime import generated
 
@@ -82,16 +82,36 @@ class Storage:
         bytes: held past its own free."""
         if out is self:
             return
+        if isinstance(out, Storage):
+            out = out._holder()
         out.derived = True
         out.view_refs += 1
         self.kept[read] = out
         self.kept_state = next(_KEPT_STATES)
 
+    def _holder(self) -> "Storage":
+        """What keeps these bytes unchanged: this handle shares it, so a write
+        through the handle detaches it as it would any other reader."""
+        if self.shared is not None:
+            return self.shared
+        st = Storage(self.dev, self.nbytes, self.addr, self.owned)
+        st.forms, st.valid, st.zeroed = self.forms, self.valid, self.zeroed
+        st.dtype, st.site = self.dtype, self.site
+        st.host, st.host_f16_dtype = self.host, self.host_f16_dtype
+        st.kept, st.kept_state = self.kept, self.kept_state
+        # No tensor names it: it goes with the last reference.
+        st._freed, st.view_refs = True, 1
+        self.owned, self.shared, self.derived = False, st, True
+        return st
+
     def adopt(self, st: "Storage") -> None:
         """Hold kept `st`'s bytes and forms instead of this storage's own."""
         if st is self or st is self.shared:
             return
-        self.dev.free(self.addr)
+        if self.shared is None:
+            self.dev.free(self.addr)
+        else:
+            self._leave_shared()
         self.addr, self.owned, self.shared = st.addr, False, st
         self.forms, self.valid, self.zeroed = st.forms, st.valid, st.zeroed
         self.dtype, self.site, self.derived = st.dtype, st.site, True
@@ -114,9 +134,20 @@ class Storage:
         at = self.form(key, held.nbytes).addr
         generated.copy(self.dev, held.nbytes, {"src": held.addr, "dst": at})
         self.valid, self.zeroed = {key}, {key} & st.zeroed
+        self.shared = st
+        self._leave_shared()
+
+    def _leave_shared(self) -> None:
+        st, self.shared = cast(Storage, self.shared), None
         st.view_refs -= 1
         if st.view_refs <= 0 and st._freed:
             st.free()
+
+    def overwritten(self) -> None:
+        """A kernel is about to write these bytes: what reads of them made and
+        their standing as a read's bytes end now."""
+        self._release_kept()
+        self.derived = False
 
     def _release_kept(self) -> None:
         if not self.kept:
@@ -193,11 +224,8 @@ class Storage:
             return
         self._freed = False
         if self.shared is not None:
-            st, self.shared = self.shared, None
             self.forms, self.valid, self.zeroed, self.kept = {}, set(), set(), {}
-            st.view_refs -= 1
-            if st.view_refs <= 0 and st._freed:
-                st.free()
+            self._leave_shared()
             return
         self._release_kept()
         for f in list(self.forms.values()):

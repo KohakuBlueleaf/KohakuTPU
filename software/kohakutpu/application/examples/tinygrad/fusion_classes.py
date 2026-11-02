@@ -12,7 +12,8 @@ from unittest.mock import patch
 
 import numpy as np
 from examples.tinygrad import fusion_measure, fusion_replay
-from tinygrad import Tensor, tensor
+from tinygrad import tensor
+from tinygrad.tensor import Tensor
 
 from kohakutpu.application.kernels import vector as V
 from kohakutpu.application.kernels.classes.policy import ShapeClass

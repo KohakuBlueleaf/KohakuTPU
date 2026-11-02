@@ -14,13 +14,13 @@ OP_SAXPY = 0x01
 
 SAXPY = InstFormat(
     "saxpy",
-    [
+    (
         Field("op", 8, const=OP_SAXPY),
         Field("n", 24, doc="elements, so one instruction covers up to 16M"),
         Field("a", 32, doc="the scalar, as float32 bits"),
         Field("x_addr", 64),
         Field("y_addr", 64),
-    ],
+    ),
     width=256,
     doc="y[0:n] = a*x[0:n] + y[0:n]",
 )
@@ -29,12 +29,12 @@ SAXPY = InstFormat(
 # disassembler has to actually choose.
 FILL = InstFormat(
     "fill",
-    [
+    (
         Field("op", 8, const=0x02),
         Field("n", 24),
         Field("value", 32, doc="float32 bits"),
         Field("addr", 64),
-    ],
+    ),
     width=256,
     doc="y[0:n] = value",
 )

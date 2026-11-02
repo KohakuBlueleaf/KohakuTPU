@@ -1,10 +1,19 @@
 """What the device's parts share: environment names, recorded and submitted runs."""
 
 import pathlib
+from collections import OrderedDict
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kohakutpu.application.runtime.paths import ROOT
+from kohakutpu.stack.rs import _rs
+
+if TYPE_CHECKING:
+    from kohakutpu.application.ktpugrad.captured.auto_sequence import Sequences
+    from kohakutpu.application.ktpugrad.captured.call_capture import Captures
+    from kohakutpu.application.ktpugrad.captured.eager_schedule import Schedules
+    from kohakutpu.application.ktpugrad.captured.recipe import Recipes
 
 DEVICE_ENV = "KOHAKUTPU_DEVICE"
 
@@ -61,6 +70,12 @@ REPLAY_PACKAGE_BYTES_ENV = "KOHAKUTPU_REPLAY_PACKAGE_BYTES"
 #: Where packages go: `any`, `near` or a home per node (`memory.package_homes`).
 PACKAGE_HOME_ENV = "KOHAKUTPU_PACKAGE_HOME"
 
+#: Addresses, or what gives them when a plan's run needs them.
+Addresses = Iterable[int] | Callable[[], Iterable[int]]
+
+#: A `submission_scope`: the plan's name, what it reads, what it writes.
+Scope = tuple[str, Addresses, Addresses]
+
 
 class Parts:
     """What `Device`'s parts read of one another, declared only: `Device.__init__` or a
@@ -74,10 +89,15 @@ class Parts:
     library: Any
     resident_mode: Any
     home: int | None
+    nodes: int
     line_bytes: int
     closed: bool
     queued: bool
     recording: bool
+    classes: bool
+    library_only: bool
+    specialise_cache: bool
+    node_overlap: bool
     eager_flush: bool
     prepared_replay: bool
     replay_overcommit: bool
@@ -86,15 +106,22 @@ class Parts:
     queue_bytes: int
     max_inflight: int | None
     counters: dict
-    kernels: Any
+    kernels: OrderedDict
+    specialisations: OrderedDict
+    constants: set
     runs: list
     inflight: list
     private: dict
     windows: dict
+    recipe_epoch: _rs.RecipeEpoch
+    eager_calls: "Captures | None"
+    eager_recipes: "Recipes | None"
+    eager_schedules: "Schedules | None"
+    eager_sequences: "Sequences | None"
     _uncertain: list
     _failure: Any
     _placement: Any
-    _scope: Any
+    _scope: Scope | None
     _record_pins: list
     _record_runs: list
     _record_templates: list

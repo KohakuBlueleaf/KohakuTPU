@@ -6,15 +6,16 @@ import json
 import pickle
 import time
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import numpy as np
 from examples.graph.native_measure import forbidden
 from examples.tinygrad.mnist_mlp import LeNet, train_step
 from examples.tinygrad.vit_tiny import Block, seeded_model
-from tinygrad import Tensor
 from tinygrad.helpers import Context
 from tinygrad.nn.state import get_parameters, get_state_dict
+from tinygrad.tensor import Tensor
 
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import vector as V
@@ -185,6 +186,7 @@ def build(args):
             x = Tensor(
                 rng.standard_normal(shape).astype(np.float16), device="KTPU"
             ).realize()
+            labels = optimizer = None
             if args.workload == "lenet":
                 labels = Tensor(
                     np.eye(10, dtype=np.float16)[rng.integers(0, 10, args.batch)],
@@ -194,7 +196,7 @@ def build(args):
             dev.record()
             if args.workload == "lenet":
                 with Context(TRAINING=1):
-                    loss, logits = train_step(model, optimizer, x, labels)
+                    loss, logits = train_step(model, optimizer, x, cast(Tensor, labels))
                 outputs = [loss, logits, *get_parameters(model)]
             else:
                 outputs = [model(x).realize()]

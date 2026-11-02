@@ -5,6 +5,7 @@ import gzip
 import json
 import pathlib
 import pickle
+import statistics
 import struct
 import sys
 import time
@@ -264,7 +265,11 @@ def run_os_capture(capture, a, board, out) -> dict[str, Any]:
                         ),
                     ),
                     model_status=(
-                        {k: v for k, v in card.t.status().items() if isinstance(v, int)}
+                        {
+                            k: v
+                            for k, v in card.model.status().items()
+                            if isinstance(v, int)
+                        }
                         if card.sim
                         else {}
                     ),
@@ -386,7 +391,7 @@ def main():
     parser.add_argument("--private-bytes", type=lambda s: int(s, 0), default=1 << 20)
     a = parser.parse_args()
     a.jtag = a.jtag or a.xdma
-    with gzip.open(a.capture, "rb") as f:
+    with gzip.open(pathlib.Path(a.capture), "rb") as f:
         capture = pickle.load(f)
     out = pathlib.Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -407,9 +412,9 @@ def main():
         ]
         assert bit_exact, "OS and firmware/HOSTL outputs differ"
         os_cold = os_res["results"][0]["cycles"]
-        os_ret = os_res["results"][1]["cycles"]
+        os_ret = statistics.median_high(r["cycles"] for r in os_res["results"][1:])
         fw_s0 = fw_res["results"][0]["cycles"]
-        fw_s1 = fw_res["results"][1]["cycles"]
+        fw_s1 = statistics.median_high(r["cycles"] for r in fw_res["results"][1:])
         result = dict(
             workload=capture["workload"],
             backend="compare",

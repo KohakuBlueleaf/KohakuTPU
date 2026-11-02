@@ -9,6 +9,7 @@ import json
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from itertools import accumulate
+from typing import overload
 
 from kohakutpu.application.runtime.class_library import ClassLibrary
 from kohakutpu.application.runtime.graph.storage import stage_alignment, stage_graph
@@ -42,6 +43,14 @@ def names(graph, prefix):
             if field in statement:
                 result[statement[field]] = prefix + statement[field]
     return result
+
+
+@overload
+def renamed(value: dict, mapping: dict, field: str = "") -> dict: ...
+
+
+@overload
+def renamed(value: list, mapping: dict, field: str = "") -> list: ...
 
 
 def renamed(value, mapping, field=""):

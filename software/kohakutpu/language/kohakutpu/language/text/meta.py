@@ -7,7 +7,9 @@ stays a name (a buffer, a register); `buf + 4K` with `buf` free stays an
 `Offset` of the name and one integer.
 """
 
+from collections.abc import Callable
 from dataclasses import replace
+from typing import NoReturn
 
 from kohakutpu.language.text.syntax import (
     AddAssign,
@@ -46,7 +48,12 @@ class Expander:
     reports at a statement. `unroll_all` makes every `for` unroll (an L1 body
     has no loop the hardware runs except `loop`)."""
 
-    def __init__(self, macros: dict, fail, unroll_all: bool = False) -> None:
+    def __init__(
+        self,
+        macros: dict,
+        fail: Callable[[Stmt, str], NoReturn],
+        unroll_all: bool = False,
+    ) -> None:
         self.macros = macros
         self.fail = fail
         self.unroll_all = unroll_all
@@ -81,7 +88,9 @@ class Expander:
         op = env[st.op].text if isinstance(env.get(st.op), Name) else st.op
         target = st.target
         if isinstance(target, Computed):
-            target = self.term(target, env, st).text
+            # A level that keeps loops names the target per instance.
+            value = self.term(target, env, st)
+            target = value.text if isinstance(value, Name) else value
         elif isinstance(env.get(target), Name):
             target = env[target].text
         return [
@@ -108,8 +117,10 @@ class Expander:
         ):
             self.fail(st, "wanted `for VAR in LO..HI [unroll]`")
         dom = self.term(pos[0].rhs, env, st)
-        if not isinstance(dom, Span) or not all(
-            isinstance(x, Int) for x in (dom.lo, dom.hi)
+        if (
+            not isinstance(dom, Span)
+            or not isinstance(dom.lo, Int)
+            or not isinstance(dom.hi, Int)
         ):
             self.fail(st, f"an unrolled `for` needs constant bounds, got {dom!r}")
         out = []
@@ -215,7 +226,7 @@ class Expander:
             if op in "/%" and y == 0:
                 self.fail(st, "division by zero")
             if op == "/" and isinstance(a, Int) and isinstance(b, Int):
-                return Int(x // y)
+                return Int(a.value // b.value)
             v = _ARITH[op](x, y)
             return Int(v) if isinstance(v, int) else Float(v)
         if op == "-" and isinstance(b, Int):

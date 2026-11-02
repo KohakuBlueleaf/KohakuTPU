@@ -196,8 +196,9 @@ def f16(dev, s, dtype, n: int) -> int:
     its elements; a sub-buffer's inside its base's)."""
     st, off = base_of(s)
     item = np.dtype(dtype).itemsize
-    if off and np.dtype(dtype) != np.float16:
-        return f16(dev, st, dtype, st.nbytes // item) + off // item * 2
+    whole = st.nbytes // item
+    if (off or n != whole) and np.dtype(dtype) != np.float16:
+        return f16(dev, st, dtype, whole) + off // item * 2
     if np.dtype(dtype) == np.float16:
         if FLAT in st.valid:
             return st.addr + off
@@ -420,6 +421,7 @@ class Pending:
             prev.wrote(FLAT)
             prev.dtype = np.float16
             self.storage = prev
+            return prev
         return self.storage
 
     def free(self) -> None:

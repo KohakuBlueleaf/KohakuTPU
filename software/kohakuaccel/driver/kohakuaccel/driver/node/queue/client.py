@@ -712,7 +712,7 @@ class NodeQueue:
     # --------------------------------------------------------------- submit
     def submit(
         self,
-        package: bytes | None = None,
+        package: bytes | PreparedPackage | None = None,
         bindings=None,
         op: int | None = None,
         timeout_cycles: int = 0,

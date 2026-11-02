@@ -89,7 +89,8 @@ def rust(case):
 
 def python(case):
     if case[0] == "rows":
-        k, given, _ = V.rows_kernel(*case[1:], CORES)
+        _, e, operands, R, W, out = case
+        k, given, _ = V.rows_kernel(e, operands, R, W, out, CORES)
     else:
         _, e, dtypes, n, scalars = case
         k, given = V.flat_kernel(e, dtypes, n, "f16", CORES, scalars)

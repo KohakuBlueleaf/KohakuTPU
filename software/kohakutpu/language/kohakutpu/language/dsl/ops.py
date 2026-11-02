@@ -223,7 +223,7 @@ def require(cond: bool, why: str) -> None:
         raise DSLError(f"{why}, at {at_caller()}")
 
 
-def _par_node(v: str, lo, hi, kind: str, at) -> dict:
+def _par_node(v: str, lo, hi, kind: str | None, at) -> dict:
     """A `par`'s graph node; `at` None is ``KIND[any]``."""
     return {
         "kind": "par",
@@ -730,20 +730,20 @@ def pack(x: Value, dtype: str = "f16", *, gt4=None) -> Value:
 def broadcast(x: Value, columns: int) -> Value:
     """Materialise a statistic across `columns` columns as GT4 register rows."""
     _need("vc", "broadcast")
-    x = _reg(x)
-    if not isinstance(x, Value) or not x.stat or columns <= 0 or columns % 32:
+    reg = _reg(x)
+    if not isinstance(reg, Value) or not reg.stat or columns <= 0 or columns % 32:
         raise DSLError(
             f"broadcast takes a statistic and whole 32-column blocks, at {at_caller()}"
         )
     return _value(
         "mul",
-        [f"{x.name}[:, *]", "1.0"],
+        [f"{reg.name}[:, *]", "1.0"],
         "f32",
-        (x.shape[0], columns),
+        (reg.shape[0], columns),
         "reg",
         "gt4",
         prefix="v",
-        nodes=[G.bcast(x.name), G.literal(1.0)],
+        nodes=[G.bcast(reg.name), G.literal(1.0)],
     )
 
 
@@ -844,7 +844,7 @@ def copy(
     dwalk=None,
     dat=None,
     classed=False,
-    node_loop=False,
+    node_loop: int = False,
 ) -> None:
     """Words of `src` into `dst` by the mover; `perm` reorders the source's
     word axes. `walk` (``[(count, byte stride), ...]``, outermost first,

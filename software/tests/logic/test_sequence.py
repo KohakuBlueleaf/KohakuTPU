@@ -1,6 +1,7 @@
 """Sequence topology is exact; a batch keeps host I/O in order and an error whole."""
 
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from tinygrad.uop import Ops
@@ -8,7 +9,7 @@ from tinygrad.uop.ops import UOp
 
 from kohakutpu.application.ktpugrad.captured.auto_sequence import Sequences, scope
 from kohakutpu.application.runtime.card import NodeCard
-from kohakutpu.application.runtime.eager_batch import Batch, batching
+from kohakutpu.application.runtime.eager_batch import Batch, Deferred, batching
 
 
 class CardDouble:
@@ -76,20 +77,21 @@ def test_a_scope_reads_the_latched_switch(monkeypatch):
 
 def test_a_cancelled_batch_publishes_nothing_and_keeps_the_error():
     card = CardDouble()
+    made: list[Deferred] = []
     with pytest.raises(RuntimeError, match="cancel capture"), batching(card):
-        pending = card.submit_wire({0: (b"wire", ())}, {})
+        made.append(cast(Deferred, card.submit_wire({0: (b"wire", ())}, {})))
         raise RuntimeError("cancel capture")
     assert card.submitted == []
     with pytest.raises(RuntimeError, match="cancel capture"):
-        pending.owner.result(pending)
+        made[0].owner.result(made[0])
 
 
 def test_host_io_never_overtakes_a_batch():
     card = CardDouble()
     with batching(card):
-        first = card.submit_wire({0: (b"wire", ())}, {})
+        first = cast(Deferred, card.submit_wire({0: (b"wire", ())}, {}))
         card.write(0, b"host")
-        second = card.submit_wire({0: (b"wire", ())}, {})
+        second = cast(Deferred, card.submit_wire({0: (b"wire", ())}, {}))
         card.get(0, 4)
     assert card.events == ["run", "write", "run", "read"]
     assert first.owner.result(first)["cycles"] == 1
