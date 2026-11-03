@@ -6,7 +6,12 @@ use super::*;
 mod typed;
 
 impl<'a> Ctx<'a> {
-    fn store_dests(&self, ops: &[Arc<Node>], target: &str, with_send: bool) -> Vec<usize> {
+    pub(in crate::lower::vector::ctx) fn store_dests(
+        &self,
+        ops: &[Arc<Node>],
+        target: &str,
+        with_send: bool,
+    ) -> Vec<usize> {
         let mut seen: IndexMap<Vec<i64>, usize> = IndexMap::new();
         for n in ops {
             let s = op(n);

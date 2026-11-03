@@ -74,6 +74,7 @@ class KTPUAllocator(Allocator):
     def _copyin(self, dest, src: memoryview) -> None:
         raw = bytes(src)
         st, off = FM.base_of(dest)
+        st.settle()
         st.unshare()
         for form in st.forms.values():
             self.rt.wait_address(form.addr, write=True)

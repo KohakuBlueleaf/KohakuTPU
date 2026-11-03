@@ -21,6 +21,7 @@ from kohakutpu.application.ktpugrad.run.common import (
     _half_target,
     _held,
     _hold,
+    _made_reads,
     _mult,
     _n,
     _out,
@@ -414,16 +415,18 @@ def _window(dev, plan: Plan, bufs, contraction=None) -> list | None:
 def _vector(dev, plan: Plan, bufs) -> list:
     payload: Any
     choice, payload = _vector_choice(plan)
+    # Products read a deferred form through its step; other kernels read it made.
+    if choice == "matmul":
+        return _matmul(dev, payload, bufs)
     if choice == "window":
         return _window(dev, plan, bufs, payload)
     if choice == "tabled":
         return _uploaded(dev, payload, bufs)
-    if choice == "enumerated":
-        return _enumerated(dev, plan, bufs, payload)
-    if choice == "matmul":
-        return _matmul(dev, payload, bufs)
     if choice == "materialise":
         return _materialise(dev, plan, bufs)
+    _made_reads(plan, bufs)
+    if choice == "enumerated":
+        return _enumerated(dev, plan, bufs, payload)
     if _selectors(plan):
         boxed = _boxes(dev, plan, bufs)
         if boxed is not None:
@@ -689,9 +692,9 @@ def _matmul(dev, plan: Plan, bufs) -> list:
     a, b = plan.a, plan.b
     if a is None or b is None:
         raise Refused("a matmul plan without its A and B reads")
-    batch = [r for r in plan.out_ranges if r in plan.batch]
+    batch = [r for r in plan.view if r in plan.batch]
     order = [*batch, m, n]
-    if {r: c for r, c in _out_coef(plan).items() if U.extent(r) > 1} != {
+    if plan.splits or {r: c for r, c in _out_coef(plan).items() if U.extent(r) > 1} != {
         r: c for r, c in _dense(order).items() if U.extent(r) > 1
     }:
         return _reordered(dev, plan, bufs, order)
@@ -750,11 +753,18 @@ def _reordered(dev, plan: Plan, bufs, order: list) -> list:
         out_ranges=tuple(order),
         out_shape=tuple(U.extent(r) for r in order),
         out_strides=None,
+        splits=(),
     )
+    # The temporary over the output's own ranges: each joined range's stride
+    # given to the two it joins (`Plan.splits`, the last joined first).
+    coef = _dense(order)
+    for f, p, q in reversed(plan.splits):
+        c = coef.pop(f)
+        coef[p], coef[q] = c * U.extent(q), c
     try:
         runs = _matmul(dev, sub, {**bufs, key: t})
         tplan, tbufs, finish = _half_target(dev, plan, bufs)
-        runs += _moved(dev, tplan, tbufs, t, _dense(order))
+        runs += _moved(dev, tplan, tbufs, t, coef)
         finish()
     finally:
         t.free()

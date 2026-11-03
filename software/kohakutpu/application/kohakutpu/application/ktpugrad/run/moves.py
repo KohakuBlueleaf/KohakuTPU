@@ -283,6 +283,9 @@ def _gather(dev, plan: Plan, bufs) -> list | None:
         dst.dtype = F.np_dtype(plan.out_dtype)
         dst.site = (site, dwalk[-1][0])
         return []
+    deferrable = FM.DEFERRED and whole and view is dst and dst.nbytes == 2 * n
+    if deferrable and _deferred(dev, acc, bufs, walk, dwalk, n, dst):
+        return []
     at = dst.addr + doff // 32 * 32
     dat = doff % 32 // 2
     m = n if whole else -(-(dat + 1 + sum((e - 1) * s for e, s in dwalk)) // 16) * 16
@@ -313,6 +316,26 @@ def _rows_out(dst: Storage, doff: int, dwalk, n: int) -> tuple | None:
     key = FM.rows_key(w, wp)
     m = n // w * wp
     return key, dst.form(key, 2 * m).addr, walk, m
+
+
+def _deferred(dev, acc, bufs, walk, dwalk, n: int, dst: Storage) -> bool:
+    """Whole output `dst` left to its reader (`forms.defer`): the `n` values
+    `acc`'s buffer walked by `walk` into `dwalk` make. False where the
+    buffer's bytes are kept unchanged (a kept read shares its output's forms),
+    are `dst`'s own or have no f16 form."""
+    st, off = FM.base_of(bufs[acc.slot])
+    owner = st.owner or st
+    if owner is dst or owner.unchanged or dst.shared is not None or not dst.owned:
+        return False
+    dt = F.np_dtype(acc.dtype)
+    N = _n(st, dt)
+    try:
+        src = FM.f16(dev, st, dt, N)
+    except FM.FormError:
+        return False
+    first = acc.off + off // np.dtype(dt).itemsize
+    FM.defer(dev, dst, owner, FM.Step(src, N, walk, first, dwalk, 0, n))
+    return True
 
 
 def _gather_to(dev, acc, bufs, walk, first, dwalk, dat, n, dst, keep=False) -> bool:

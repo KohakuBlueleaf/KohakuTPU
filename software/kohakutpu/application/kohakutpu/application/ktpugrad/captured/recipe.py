@@ -1,11 +1,12 @@
 """Cold eager planning records an address-parametric launch program."""
 
 from collections import Counter
+from dataclasses import dataclass
 from typing import Any, cast
 
 from kohakutpu.application.ktpugrad import run
+from kohakutpu.application.runtime import chain, launch_boundary
 from kohakutpu.application.runtime import forms as FM
-from kohakutpu.application.runtime import launch_boundary
 from kohakutpu.application.runtime.memory.storage import Form, StorageView
 from kohakutpu.application.runtime.native import launch as native_launch
 from kohakutpu.language.config import ENV
@@ -181,11 +182,12 @@ class Recording:
             self.depth -= 1
             self.dev._recipe_capture = prev_capture
 
-    def capture(self, plan, buffers):
+    def capture(self, cold):
+        """`cold()` (the cold planning of a plan or a group) recorded."""
         prev = self.dev._recipe_recording
         self.dev._recipe_recording = self
         try:
-            runs = run.execute(self.dev, plan, buffers)
+            runs = cold()
         finally:
             self.dev._recipe_recording = prev
         self.effects = self.effects_of()
@@ -338,6 +340,54 @@ class Recipes:
         if plan.ast in self.keeping or any(st.kept for st in buffers.values()):
             self.counts["kept"] += 1
             return run.execute(dev, plan, buffers)
+        if chain.enabled() and plan.kind == "matmul":
+            # A product the chain may hold runs from its plan each time.
+            self.counts["chain"] += 1
+            return run.execute(dev, plan, buffers)
+        return self._recorded(
+            dev, plan, buffers, lambda: run.execute(dev, plan, buffers)
+        )
+
+    def execute_group(self, dev, members, dead, info):
+        """A launch group (`members`: `(plan, buffers)`, run as one package)
+        replayed as one recipe, keyed by its members and which of their
+        buffers are dead after it (`dead`: spans)."""
+        buffers = {
+            (i, slot): b for i, (_, bs) in enumerate(members) for slot, b in bs.items()
+        }
+
+        def cold():
+            return run_group(dev, members, dead, info)
+
+        if any(isinstance(b, StorageView) for b in buffers.values()):
+            self.counts["views"] += 1
+            return cold()
+        if any(st.kept for st in buffers.values()):
+            self.counts["kept"] += 1
+            return cold()
+        gone = frozenset(
+            k for k, b in buffers.items() if any(lo <= b.addr < hi for lo, hi in dead)
+        )
+        last = len(members) - 1
+        group = Group(
+            (tuple(p.ast for p, _ in members), gone), (last, members[-1][0].out_slot)
+        )
+        if group.ast in self.keeping:
+            self.counts["kept"] += 1
+            return cold()
+        # What each member's `execute` does before its run, a replay too:
+        # the outputs own their bytes and end what reads of them kept.
+        for plan, bs in members:
+            out = FM.base_of(bs[plan.out_slot])[0]
+            out.unshare()
+            out.overwritten()
+        return self._recorded(dev, group, buffers, cold)
+
+    def _recorded(self, dev, plan, buffers, cold):
+        """`cold()` replayed from the recipe of `plan` over `buffers`, else
+        run and recorded as one."""
+        # What a chain holds runs before a recording or a replay starts.
+        launch_boundary.chain_flush(dev)
         hints = FM.hints(dev)
         revision = hints.revision if FM.LAYOUT_HINTS else 0
         context = (
@@ -362,7 +412,7 @@ class Recipes:
             dev, buffers, native=self.native_program, host_recipe=self.host_recipe
         )
         try:
-            runs = entry.capture(plan, buffers)
+            runs = entry.capture(cold)
         except BaseException:
             entry.close()
             raise
@@ -414,19 +464,56 @@ def submit(dev, plan, buffers):
         return execute(dev, plan, buffers)
 
 
-def execute(dev, plan, buffers):
-    if run.read_kept(dev, plan, buffers):
-        return []
-    out = FM.base_of(buffers[plan.out_slot])[0]
-    out.unshare()
-    out.overwritten()
+def _recipes(dev) -> "Recipes | None":
+    """The device's eager recipes, None where a run is not replayed (a fused
+    scope open, a recording, a placement)."""
     if (
         not dev.eager_recipe_enabled
         or run._active_scope(dev) is not None
         or dev.recording
         or dev._placement is not None
     ):
-        return run.execute(dev, plan, buffers)
+        return None
     if dev.eager_recipes is None:
         dev.eager_recipes = Recipes()
-    return dev.eager_recipes.execute(dev, plan, buffers)
+    return dev.eager_recipes
+
+
+def execute(dev, plan, buffers):
+    if run.read_kept(dev, plan, buffers):
+        return []
+    out = FM.base_of(buffers[plan.out_slot])[0]
+    out.unshare()
+    out.overwritten()
+    recipes = _recipes(dev)
+    if recipes is None:
+        return run.execute(dev, plan, buffers)
+    return recipes.execute(dev, plan, buffers)
+
+
+@dataclass(frozen=True)
+class Group:
+    """What keys a launch group's recipe: its members' asts and dead slots,
+    the slot of its last output."""
+
+    ast: tuple
+    out_slot: tuple
+    kind: str = "group"
+
+
+def run_group(dev, members, dead, info) -> list:
+    """`members` (`(plan, buffers)`) as one package, each under its own
+    submission scope; `dead`: spans no call after the group reads."""
+    runs: list = []
+    with run.multi_stage_scope(dev, dead_addrs=dead, count=len(members), info=info):
+        for plan, buffers in members:
+            runs += submit(dev, plan, buffers)
+    return runs
+
+
+def submit_group(dev, members, dead, info) -> list:
+    """A launch group, replayed from its recipe where the device keeps them."""
+    recipes = _recipes(dev)
+    if recipes is None:
+        return run_group(dev, members, dead, info)
+    return recipes.execute_group(dev, members, dead, info)

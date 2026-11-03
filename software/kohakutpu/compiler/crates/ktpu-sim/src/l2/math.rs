@@ -231,7 +231,9 @@ impl Instance {
             }
         } else {
             let (r0, vr, c0, vc) = v.rect();
-            if cols == 1 && (vr * vc) as usize == rows {
+            if (cols == 1 || vc as usize != cols) && (vr * vc) as usize == rows * cols {
+                // The view's elements in row-major order (L2.VC.003): a
+                // [1, 256] view is a [2, 128] value's two rows.
                 for i in 0..vr * vc {
                     out.push(code(sim, r0 + i / vc, c0 + i % vc)?);
                 }
@@ -275,6 +277,14 @@ impl Instance {
             return self.put(st, Rows { rows, cols, v });
         }
         if st.kw("lane").is_none() {
+            if let Ok(Operand::Value(x)) = self.operand(st.positional()[0]) {
+                if x.cols != cols && x.rows * x.cols == rows * cols {
+                    // The same row-major values in the register shape: an
+                    // L1 [2, 128] value unpacked as one [1, 256] row.
+                    let v = x.v.iter().map(|c| num::from_f16(*c as u16)).collect();
+                    return self.put(st, Rows { rows, cols, v });
+                }
+            }
             self.fits(st, rows, cols)?;
         }
         let from = self.operand(st.positional()[0])?;

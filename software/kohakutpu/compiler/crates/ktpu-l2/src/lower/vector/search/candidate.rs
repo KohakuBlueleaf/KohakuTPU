@@ -173,6 +173,16 @@ fn modulo_module(
     }) {
         return no("a store of loaded bytes");
     }
+    if ops.iter().any(|o| {
+        let Node::Op(x) = o.as_ref() else {
+            return false;
+        };
+        x.op == "unpack"
+            && matches!(x.st.positional().first(), Some(Term::Name(n)) if packed.contains(n))
+    }) {
+        // The schedule orders L1 only through its rings, not pack to unpack.
+        return no("a packed value read back in the trip");
+    }
     c.down = c.land;
     for n in &pre {
         c.prepare(n, false)?;

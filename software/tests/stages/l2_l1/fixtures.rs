@@ -82,6 +82,27 @@ fn a_pack_of_transposed_rows_exchanges_words_and_lanes() {
 }
 
 #[test]
+fn a_packed_value_reads_back_once_its_pack_is_done() {
+    let l1 = lowered("tests/fixtures/l2/fused", "packed_readback");
+    let pack = l1.find("vpack").expect("the pack");
+    let wait = l1
+        .find("vsync unpack on=pack")
+        .expect("the read-back waits");
+    assert!(pack < wait, "{l1}");
+}
+
+#[test]
+fn a_packed_value_read_back_computes_what_its_l2_does() {
+    let corpus = fixtures(&["tests/fixtures/l2/fused"], Level::L2);
+    for name in ["packed_readback", "compensated_readback"] {
+        let f = corpus.iter().find(|f| f.name == name).expect("the fixture");
+        let pair = lower(f, &common::card()).expect("it lowers");
+        // The L1's values on seeded inputs against the L2's.
+        assert_eq!(common::compare(&pair), Ok(None), "{name}");
+    }
+}
+
+#[test]
 fn the_lowering_keeps_every_fixture() {
     let corpus = fixtures(
         &[

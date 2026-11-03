@@ -63,6 +63,11 @@ pub const KNOBS: &[Knob] = &[
         group: Group::Plan,
     },
     Knob {
+        name: "n_tile",
+        env: "KTPU_MM_N_TILE",
+        group: Group::Plan,
+    },
+    Knob {
         name: "pad_k",
         env: "KTPU_MM_PAD_K",
         group: Group::Plan,
@@ -124,6 +129,8 @@ pub struct Knobs {
     pub n_tiles: i64,
     /// The widest N tile that divides N (not only powers of two).
     pub dense_n: bool,
+    /// Which N tile a product takes ([`NTile`]).
+    pub n_tile: NTile,
     /// K padded to whole block pairs where the machine pairs blocks.
     pub pad_k: bool,
     /// The N tile the clusters finish soonest ([`wave_tn`]), not the widest.
@@ -152,12 +159,39 @@ pub struct Knobs {
     pub expr_cse: bool,
 }
 
-/// The knobs' defaults: epilogue CSE, wave-priced N tiles, and a two-wave
-/// product ring with tail trips where the staging room holds it.
+/// A product's N tile (`KTPU_MM_N_TILE`): the dense one (the widest
+/// `mg.kblock` multiple dividing N, as `dense_n`), the plain one (`dense_n`
+/// as set), or whichever of the two [`wave_cost`] prices lower.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NTile {
+    Auto,
+    Dense,
+    Plain,
+}
+
+impl NTile {
+    pub fn name(self) -> &'static str {
+        match self {
+            NTile::Auto => "auto",
+            NTile::Dense => "dense",
+            NTile::Plain => "plain",
+        }
+    }
+
+    fn of(s: &str) -> Option<NTile> {
+        [NTile::Auto, NTile::Dense, NTile::Plain]
+            .into_iter()
+            .find(|t| t.name() == s)
+    }
+}
+
+/// The knobs' defaults: epilogue CSE, wave-priced N tiles chosen by cost,
+/// and a two-wave product ring with tail trips where the staging room holds it.
 pub fn defaults() -> Knobs {
     Knobs {
         expr_cse: true,
         waves: true,
+        n_tile: NTile::Auto,
         ring_depth: 2,
         tail_bands: true,
         ..unrecorded()
@@ -170,6 +204,7 @@ pub fn unrecorded() -> Knobs {
         pad_m: false,
         n_tiles: 1,
         dense_n: false,
+        n_tile: NTile::Plain,
         pad_k: false,
         waves: false,
         batch_tiles: false,
@@ -192,6 +227,7 @@ impl Knobs {
             if let Ok(raw) = std::env::var(knob.env) {
                 let v = match k.get(knob.name) {
                     serde_json::Value::Bool(_) => serde_json::Value::Bool(raw == "1"),
+                    serde_json::Value::String(_) => serde_json::Value::String(raw),
                     _ => raw
                         .parse::<i64>()
                         .unwrap_or_else(|_| panic!("{}={raw} is not an integer", knob.env))
@@ -208,6 +244,7 @@ impl Knobs {
             "pad_m" => self.pad_m.into(),
             "n_tiles" => self.n_tiles.into(),
             "dense_n" => self.dense_n.into(),
+            "n_tile" => self.n_tile.name().into(),
             "pad_k" => self.pad_k.into(),
             "waves" => self.waves.into(),
             "batch_tiles" => self.batch_tiles.into(),
@@ -235,6 +272,12 @@ impl Knobs {
             "pad_m" => self.pad_m = flag()?,
             "n_tiles" => self.n_tiles = int()?,
             "dense_n" => self.dense_n = flag()?,
+            "n_tile" => {
+                self.n_tile = match v.as_str().and_then(NTile::of) {
+                    Some(t) => t,
+                    None => return fail("API.OP.001", format!("n_tile {v}: auto, dense or plain")),
+                }
+            }
             "pad_k" => self.pad_k = flag()?,
             "waves" => self.waves = flag()?,
             "batch_tiles" => self.batch_tiles = flag()?,
@@ -339,7 +382,8 @@ impl Mm {
 /// tile (its tail zero-padded) where [`tile_cost`] prices it no higher; the
 /// N tile the widest power-of-two block the accumulator holds, halved to at
 /// least `knobs.n_tiles` tiles, then with `knobs.waves` [`wave_tn`] of it,
-/// or with `knobs.dense_n` the widest `mg.kblock` multiple dividing N. K pads to whole blocks, or with
+/// or with `knobs.dense_n` the widest `mg.kblock` multiple dividing N; `knobs.n_tile`
+/// picks the dense tile, the plain one, or the one [`wave_cost`] prices lower. K pads to whole blocks, or with
 /// `knobs.pad_k` (K past one block, blocks paired) to whole block pairs.
 #[allow(clippy::too_many_arguments)]
 pub fn plan(
@@ -393,12 +437,12 @@ pub fn plan(
         return fail("API.OP.006", format!("no product tile divides {mp} rows"));
     };
     let rows = mp;
-    let tn_of = |tm: i64| -> R<i64> {
+    let tn_with = |tm: i64, dense: bool| -> R<i64> {
         let mut tn = v::block(n, hw.max_block(), &hw)?;
         while (tm / band) * (tn / band) > hw.acc_subtiles {
             tn /= 2;
         }
-        if knobs.dense_n {
+        if dense {
             return Ok((1..=n.min(hw.max_block()) / kb)
                 .rev()
                 .map(|x| x * kb)
@@ -418,6 +462,18 @@ pub fn plan(
             return Ok(wave_tn(n, tm, nk, bt * cdiv(rows, tm), tn, &hw));
         }
         Ok(tn)
+    };
+    let tn_of = |tm: i64| -> R<i64> {
+        let dense = match knobs.n_tile {
+            NTile::Dense => true,
+            NTile::Plain => knobs.dense_n,
+            NTile::Auto => {
+                let units = bt * cdiv(rows, tm);
+                let cost = |tn| wave_cost(units, n, kp, nk, tm, tn, &hw);
+                cost(tn_with(tm, true)?) < cost(tn_with(tm, false)?)
+            }
+        };
+        tn_with(tm, dense)
     };
     let tm = if knobs.pad_m {
         let tm_bal = cdiv(cdiv(mp, cdiv(mp, max_tm)), quantum) * quantum;
@@ -482,6 +538,14 @@ pub fn tile_cost(mp: i64, n: i64, kp: i64, nk: i64, tm: i64, tn: i64, hw: &Hw) -
     let out_bytes = 2 * mp_pad * n;
     let pad_bytes = (mp_pad - mp) * (2 * kp + 4 * n);
     issue + (fill_bytes + 3 * out_bytes + pad_bytes) / hw.word_bytes + 64 * ntm * ntn
+}
+
+/// The plan's price of N tile `tn` for `units` row tiles of `tm` rows: the
+/// clusters' waves of tiles, each at [`tile_cost`] of one tile (its issue
+/// slots, A and B fills, drain and epilogue traffic, fixed cost).
+#[allow(clippy::too_many_arguments)]
+pub fn wave_cost(units: i64, n: i64, kp: i64, nk: i64, tm: i64, tn: i64, hw: &Hw) -> i64 {
+    cdiv(units * (n / tn), hw.mg) * tile_cost(tm, tn, kp, nk, tm, tn, hw)
 }
 
 /// Which packing: A (rows of the left operand) or B.

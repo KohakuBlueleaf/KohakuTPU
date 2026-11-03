@@ -1,3 +1,4 @@
+l2.passes/alias-in-place  SameValues
 l2.passes/any-on-absent-kind  Untouched
 l2.passes/pipeline-off  Untouched
 l2.passes/retile-columns-scaled  Untouched

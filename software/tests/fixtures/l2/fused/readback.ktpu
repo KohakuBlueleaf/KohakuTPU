@@ -1,0 +1,58 @@
+# A compensated weight write in one trip: the new weight packed and stored,
+# then read back as stored (L2.OP.014) for the excess the write left.
+target ktpu.v9
+
+fn packed_readback.l2(w: f16[1, 16] @dram, y: f16[1, 16] @dram, e: f16[1, 16] @dram)
+    hw = buffer  : f16[1, 128] @dram
+    hy = buffer  : f16[1, 128] @dram
+    he = buffer  : f16[1, 128] @dram
+    fill hw value=0
+    copy hw <- w walk=((1, 32),) dwalk=((1, 32),)
+    fill hy value=0
+    copy hy <- y walk=((1, 32),) dwalk=((1, 32),)
+    par c3 in 0..1 on vc[c3]
+        for t3 in 0..1
+            xl10 = load hw[0 : +1]  : f16[1, 128] @l1
+            xl11 = load hy[0 : +1]  : f16[1, 128] @l1
+            v10 = unpack xl10       : f32[1, 128] @reg
+            v11 = unpack xl11       : f32[1, 128] @reg
+            e25 = add v10, v11      : f32[1, 128] @reg
+            p12 = pack e25          : f16[1, 128] @l1
+            store hw[0 : +1] <- p12
+            e26 = mul v10, -1.0     : f32[1, 128] @reg
+            v12 = unpack p12        : f32[1, 128] @reg
+            e27 = add v12, e26      : f32[1, 128] @reg
+            e28 = mul v11, -1.0     : f32[1, 128] @reg
+            e29 = add e27, e28      : f32[1, 128] @reg
+            p13 = pack e29          : f16[1, 128] @l1
+            store he[0 : +1] <- p13
+    copy w <- hw walk=((1, 32),) dwalk=((1, 32),)
+    copy e <- he walk=((1, 32),) dwalk=((1, 32),)
+
+# The whole update over two cores' 16 trips of 4 rows: y = -(0.01 m + e)
+# stored and read back, the new weight over the weight read back, the excess.
+fn compensated_readback.l2(m: f16[128, 128] @dram, e: f16[128, 128] @dram, w: f16[128, 128] @dram, y: f16[128, 128] @dram)
+    par c1 in 0..2 on vc[c1]
+        for t1 in 0..16
+            xl1 = load m[c1*64 + t1*4 : +4]  : f16[4, 128] @l1
+            xl2 = load e[c1*64 + t1*4 : +4]  : f16[4, 128] @l1
+            xl3 = load w[c1*64 + t1*4 : +4]  : f16[4, 128] @l1
+            v1 = unpack xl1                  : f32[4, 128] @reg
+            e1 = mul v1, 0.01                : f32[4, 128] @reg
+            v2 = unpack xl2                  : f32[4, 128] @reg
+            e2 = add e1, v2                  : f32[4, 128] @reg
+            e3 = mul e2, -1.0                : f32[4, 128] @reg
+            p4 = pack e3                     : f16[4, 128] @l1
+            store y[c1*64 + t1*4 : +4] <- p4
+            v3 = unpack xl3                  : f32[4, 128] @reg
+            v4 = unpack p4                   : f32[4, 128] @reg
+            e4 = add v3, v4                  : f32[4, 128] @reg
+            p5 = pack e4                     : f16[4, 128] @l1
+            store w[c1*64 + t1*4 : +4] <- p5
+            e5 = mul v3, -1.0                : f32[4, 128] @reg
+            v5 = unpack p5                   : f32[4, 128] @reg
+            e6 = add v5, e5                  : f32[4, 128] @reg
+            e7 = mul v4, -1.0                : f32[4, 128] @reg
+            e8 = add e6, e7                  : f32[4, 128] @reg
+            p6 = pack e8                     : f16[4, 128] @l1
+            store e[c1*64 + t1*4 : +4] <- p6

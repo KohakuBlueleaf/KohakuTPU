@@ -94,6 +94,9 @@ struct Task {
     engine: usize,
     label: &'static str,
     cycles: f64,
+    /// Its cycles while no cluster of its node streams (a vector core's
+    /// fills alone, `Target::mem(false)`); `cycles` beside streaming clusters.
+    alone: f64,
     read: f64,
     write: f64,
     node: usize,
@@ -162,6 +165,7 @@ impl Graph {
             engine,
             label,
             cycles,
+            alone: cycles,
             read,
             write,
             node,
@@ -456,6 +460,8 @@ struct Builder<'a> {
     module: &'a Module,
     t: &'a Target,
     fill: (i64, i64),
+    /// In a kernel with clusters, a vector core's fill while none streams.
+    alone: Option<(i64, i64)>,
     node_engine: usize,
     mesh: usize,
     prefix: String,
@@ -573,7 +579,7 @@ impl Builder<'_> {
                 sent
             };
             add(&mut self.g.work, &work, repeats);
-            self.g.push(
+            let id = self.g.push(
                 engine,
                 "vc.run",
                 took * repeats,
@@ -582,6 +588,10 @@ impl Builder<'_> {
                 self.mesh,
                 vec![sent],
             );
+            if let Some(fill) = self.alone {
+                let (_, alone, _, _) = image(self.module, s, &descs, self.t, fill, self.p)?;
+                self.g.tasks[id].alone = alone * repeats;
+            }
         }
         Ok(())
     }
@@ -723,16 +733,19 @@ fn build(module: &Module, name: &str, t: &Target, p: &Params) -> Result<Graph, S
         img.stmts = unguarded(&img.stmts);
     }
     let module = &timed;
+    let fill = |shared: bool| {
+        let (latency, word) = t.mem(shared);
+        let word = (word as f64 * p.vc_memory_word).round() as i64;
+        ((latency as f64 - p.vc_fill_trim).max(0.0) as i64, word)
+    };
+    // A vector core is priced beside streaming clusters only while they stream.
     let mut b = Builder {
         g: Graph::default(),
         p,
         module,
         t,
-        fill: {
-            let (latency, word) = t.mem(clusters);
-            let word = (word as f64 * p.vc_memory_word).round() as i64;
-            ((latency as f64 - p.vc_fill_trim).max(0.0) as i64, word)
-        },
+        fill: fill(clusters),
+        alone: clusters.then(|| fill(false)),
         node_engine: 0,
         mesh: 0,
         prefix: String::new(),
@@ -851,6 +864,18 @@ fn simulate(g: &Graph, p: &Params) -> Timed {
             e.0 += t.read / t.cycles;
             e.1 += t.write / t.cycles;
         }
+        // Nodes whose clusters stream now: their vector cores' fills are shared.
+        let streaming: HashSet<usize> = active
+            .iter()
+            .map(|&a| &g.tasks[a])
+            .filter(|t| t.label.starts_with("mg.") && t.cycles > 0.0)
+            .map(|t| t.node)
+            .collect();
+        // Shared cycles a cycle: above one while the task's node streams no cluster.
+        let pace = |t: &Task| match streaming.contains(&t.node) || t.alone <= 0.0 {
+            true => 1.0,
+            false => t.cycles / t.alone,
+        };
         let share = |t: &Task| {
             let (r, w) = asked[&t.node];
             let fr = if t.read > 0.0 {
@@ -867,12 +892,12 @@ fn simulate(g: &Graph, p: &Params) -> Timed {
         };
         let dt = active
             .iter()
-            .map(|&a| left[a] / share(&g.tasks[a]))
+            .map(|&a| left[a] / (share(&g.tasks[a]) * pace(&g.tasks[a])))
             .fold(f64::INFINITY, f64::min);
         for &a in &active {
             let t = &g.tasks[a];
             let f = share(t);
-            left[a] -= dt * f;
+            left[a] -= dt * f * pace(t);
             *out.busy
                 .entry(g.engines[t.engine].clone())
                 .or_default()

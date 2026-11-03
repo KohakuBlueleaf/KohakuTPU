@@ -41,6 +41,15 @@ def _hold(dev, s, read, made):
     return made
 
 
+def _made_reads(plan: Plan, bufs: dict) -> None:
+    """Each deferred form `plan` reads made in place (`forms.defer`)."""
+    for a in plan.accesses:
+        if a.slot in bufs:
+            st = FM.base_of(bufs[a.slot])[0]
+            if FM.DEFER in st.valid:
+                st.forms[FM.DEFER].make()
+
+
 def _reform_one(dev, plan: Plan, a: Access | None, bufs: dict) -> Access | None:
     if a is None or a.slot is None:
         return a
@@ -64,6 +73,7 @@ def _reform_one(dev, plan: Plan, a: Access | None, bufs: dict) -> Access | None:
                 if alias not in bufs:
                     vf = st.forms[vkey]
                     bufs[alias] = Storage(dev, vf.nbytes, addr=vf.addr, owned=False)
+                    bufs[alias].owner = st
                 return replace(a, slot=alias, coef=coef, off=new_off, dtype=dtypes.half)
     key = FM.padded(st)
     allow_self = view_forms_enabled() and plan.kind == "vector"
@@ -80,6 +90,7 @@ def _reform_one(dev, plan: Plan, a: Access | None, bufs: dict) -> Access | None:
     if alias not in bufs:
         f = st.forms[key]
         bufs[alias] = Storage(dev, f.nbytes, addr=f.addr, owned=False)
+        bufs[alias].owner = st
     # The form holds f16 values whatever the buffer's element type.
     return replace(a, slot=alias, coef=coef, off=off_el, dtype=dtypes.half)
 

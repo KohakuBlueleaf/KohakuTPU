@@ -55,7 +55,7 @@ def _lay(dev, plan: Plan, bufs, tmps, c, side, outer, lane, key, defer=None) -> 
     `forms.Pending` for the packing's kernel when `forms.PREPARED`."""
     if defer is None:
         defer = FM.PREPARED and FM.PREPARED_QUANT
-    src, strides, off, step = _padded(
+    src, strides, off, made = _padded(
         dev, plan, bufs, tmps, c, side, side is c.a, defer
     )
     order = [*outer, *c.ks, lane]
@@ -66,11 +66,11 @@ def _lay(dev, plan: Plan, bufs, tmps, c, side, outer, lane, key, defer=None) -> 
         for r in [*outer, *c.ks]
     }
     coef[lane] = 1
-    if step is None and coef == {r: s for r, s in _dense(order).items()} and off == 0:
+    if made is None and coef == {r: s for r, s in _dense(order).items()} and off == 0:
         bufs[key] = bufs[src]
         return []
-    # With a step its source is already read through; the step is not kept.
-    s = None if step is not None else bufs[src]
+    # With steps its source is already read through; the steps are not kept.
+    s = None if made is not None else bufs[src]
     read = ("lay", defer, off, tuple((U.extent(r), coef[r]) for r in order[:-1]))
     held = _held(dev, s, read)
     if held is not None:
@@ -83,11 +83,12 @@ def _lay(dev, plan: Plan, bufs, tmps, c, side, outer, lane, key, defer=None) -> 
         walk = tuple((U.extent(r), coef[r]) for r in live)
         dwalk = tuple((U.extent(r), dense[r]) for r in live)
         n = _size(live)
-        if step is not None:
+        if made is not None:
+            m = made[-1].m
             steps = (
-                (step,)
-                if walk == dwalk and off == 0 and step.m == n
-                else (step, FM.Step(None, step.m, walk, off, dwalk, 0, n))
+                made
+                if walk == dwalk and off == 0 and m == n
+                else (*made, FM.Step(None, m, walk, off, dwalk, 0, n))
             )
         else:
             st, voff = FM.base_of(bufs[src])
@@ -124,10 +125,11 @@ def _lay(dev, plan: Plan, bufs, tmps, c, side, outer, lane, key, defer=None) -> 
 
 def _padded(dev, plan: Plan, bufs, tmps, c, side, copies=False, defer=False) -> tuple:
     """``(slot, {coordinate: element stride}, element of coordinate 0,
-    step)`` of `side`'s source with its lane innermost in whole words and
+    steps)`` of `side`'s source with its lane innermost in whole words and
     zero outside its gate's box: the buffer itself when it is so already
-    (step None), else gathered (`_gather_to`) into ``[coordinates.., lane]``
-    -- with `defer`, that gather's `forms.Step` (slot None), not run. A lane
+    (steps None, or a deferred source's step), else gathered (`_gather_to`)
+    into ``[coordinates.., lane]`` -- with `defer`, that gather's
+    `forms.Step`s (slot None), not run. A lane
     of one with `copies` (the other side's lanes zero) holds 16 copies of
     each value (`_lane_copies`): no transpose."""
     acc = side.acc
@@ -143,9 +145,12 @@ def _padded(dev, plan: Plan, bufs, tmps, c, side, copies=False, defer=False) -> 
         and all(d.stride % W.WORD == 0 for d in axes)
         and (voff // 2 + acc.off) % W.WORD == 0
         and acc.dtype == dtypes.half
-        and FLAT in st.valid
     ):
-        return acc.slot, {d: d.stride for d in side.dims}, acc.off, None
+        # A deferred source (`forms.defer`) is read through its step.
+        step = FM.deferred(st) if defer and not voff else None
+        if FLAT in st.valid or step is not None:
+            made = None if step is None else (step,)
+            return acc.slot, {d: d.stride for d in side.dims}, acc.off, made
     key = ("pad", id(side), id(plan))
     return _pad_copy(dev, bufs, tmps, acc, axes, key, lane, c.pad, copies, defer)
 
@@ -153,11 +158,11 @@ def _padded(dev, plan: Plan, bufs, tmps, c, side, copies=False, defer=False) -> 
 def _pad_copy(
     dev, bufs, tmps, acc, axes, key, lane=None, pad=1, copies=False, defer=False
 ):
-    """``(key, {coordinate: element stride}, element of coordinate 0, step)``:
+    """``(key, {coordinate: element stride}, element of coordinate 0, steps)``:
     `acc`'s source over its coordinates (`axes` outermost first, then the
     `lane` innermost, `pad` elements wide) gathered dense as f16 into
     ``bufs[key]``, every element outside the coordinates' boxes zero (with
-    `defer`, that gather as a `forms.Step`, key None, nothing run). A lane
+    `defer`, that gather as `forms.Step`s, key None, nothing run). A lane
     of one with `copies` holds 16 copies of each value (`_lane_copies`)."""
     ext = [d.span for d in axes] + [pad]
     dense = [int(np.prod(ext[i + 1 :])) for i in range(len(ext))]
@@ -180,15 +185,19 @@ def _pad_copy(
         if lane is None and copies:
             walk, dwalk = [*walk, (16, 0)], [*dwalk, (16, 1)]
         first += off // np.dtype(dt).itemsize
+        m = -(-n // 16) * 16
+        made = FM.deferred(st) if dt == np.float16 else None
+        if made is not None:
+            # A deferred source (`forms.defer`): its step, then this gather of it.
+            last = FM.Step(None, made.m, tuple(walk), first, tuple(dwalk), dat, m)
+            return None, strides, origin, (made, last)
         try:
             src, N, w, first, dw = _f16_walk(
                 dev, st, dt, tuple(walk), first, tuple(dwalk)
             )
         except FM.FormError:
             raise Refused("a padded operand with no f16 form") from None
-        m = -(-n // 16) * 16
-        step = FM.Step(src, N, w, first, dw, dat, m)
-        return None, strides, origin, step
+        return None, strides, origin, (FM.Step(src, N, w, first, dw, dat, m),)
     s = Storage(dev, 2 * -(-n // 16) * 16)
     tmps.append(s)
     if lane is None and copies:

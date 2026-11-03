@@ -8,6 +8,7 @@ import numpy as np
 
 from kohakutpu.application.kernels import matmul as MM
 from kohakutpu.application.plan.emit import expr
+from kohakutpu.application.runtime import launch_boundary
 from kohakutpu.language.config import ENV
 from kohakutpu.language.dsl import TensorSpec, Traced
 from kohakutpu.language.numerics import fp16
@@ -37,6 +38,11 @@ def graph(generator, arguments, machine, mutant):
 def source(dev, generator, arguments):
     """The graph of a generator call under the process's kernel knobs: what
     `launch` compiles, and what a trace-only capture records."""
+    return graph(*_call(dev, generator, prepared(generator, arguments)))
+
+
+def prepared(generator, arguments) -> dict:
+    """`arguments` under the process's kernel knobs, as the generator reads them."""
     if generator in ("matmul.quant_kernel", "matmul.quant_walk_kernel"):
         arguments = dict(arguments)
         arguments["schedule"] = {
@@ -54,7 +60,7 @@ def source(dev, generator, arguments):
         }
     if generator == "matmul.mm_kernel":
         arguments = {**MM.kernel_knobs(), **arguments}
-    return graph(*_call(dev, generator, _scheduled(arguments)))
+    return _scheduled(arguments)
 
 
 def _scheduled(arguments: dict) -> dict:
@@ -83,6 +89,15 @@ def _call(dev, generator, arguments) -> tuple:
 
 
 def launch(dev, generator, arguments, bindings, kind="dsl", info=None):
+    """One generated kernel on `dev`; inside a product chain (`chain.chaining`)
+    the chain decides when it runs and with what."""
+    held = launch_boundary.CHAIN.get()
+    if held is not None and held.dev is dev:
+        return held.launch(generator, arguments, bindings, kind, info)
+    return launch_now(dev, generator, arguments, bindings, kind, info)
+
+
+def launch_now(dev, generator, arguments, bindings, kind="dsl", info=None):
     compiled = dev.kernel(source(dev, generator, arguments))
     try:
         run = dev.run(compiled, bindings, kind=kind, info=info)

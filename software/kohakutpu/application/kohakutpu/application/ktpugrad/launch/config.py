@@ -78,7 +78,8 @@ _active_scopes: dict = {}
 
 class _MultiStageScope:
     """Collects elementwise (`_flat`, `_rows`) and `_copy` stages across a
-    fused group (or `_boxes`) and emits them as one multi-stage DSL package."""
+    fused group (or `_boxes`) and emits them as one multi-stage DSL package;
+    `dead_addrs` are the `(start, end)` spans no call after the group reads."""
 
     def __init__(self, dev, dead_addrs=(), count: int | None = None, info=None):
         self.dev = dev

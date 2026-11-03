@@ -240,8 +240,16 @@ def _contraction(plan: Plan) -> Plan | None:
     ks = tuple(r for r in plan.reduce_ranges if U.extent(r) > 1)
     if not ks:
         return None
+    if L.fusing_ranges() and plan.out_strides is None:
+        out_ranges, reads, splits = L.fuse_ranges(plan.out_ranges, reads, ks)
+        plan = replace(
+            plan,
+            out_ranges=out_ranges,
+            out_shape=tuple(U.extent(r) for r in out_ranges),
+            splits=splits,
+        )
     for a, b in (reads, reads[::-1]):
-        got = L._mnk(plan, a, b, ks)
+        got = L._mnk(replace(plan, out_ranges=plan.view), a, b, ks)
         if got is not None:
             m, n, batch = got
             return replace(

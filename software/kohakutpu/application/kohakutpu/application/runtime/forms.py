@@ -22,7 +22,12 @@ from kohakutpu.application.kernels import matmul as MM
 from kohakutpu.application.kernels import relayout as RL
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import costs, generated
-from kohakutpu.application.runtime.memory.storage import FLAT, Storage, StorageView
+from kohakutpu.application.runtime.memory.storage import (
+    FLAT,
+    Form,
+    Storage,
+    StorageView,
+)
 from kohakutpu.language import machine as MF
 from kohakutpu.language.config import ENV
 from kohakutpu.language.numerics import fp16
@@ -35,6 +40,9 @@ ROWS = "rows"
 #: ``("view", src_bytes, levels, at, shape, coef, off)``: a word-walk view of
 #: another f16 storage, read through by consumers without a materialising copy.
 VIEW = "view"
+#: The f16 values a relayout of another storage's bytes would write, not
+#: written: its consumer reads them through the relayout (`defer`).
+DEFER = ("deferred",)
 
 
 def rows_key(n: int, np_: int) -> tuple:
@@ -195,6 +203,8 @@ def f16(dev, s, dtype, n: int) -> int:
     """The address of `s`'s contents as f16 (`dtype` its element type, `n`
     its elements; a sub-buffer's inside its base's)."""
     st, off = base_of(s)
+    if DEFER in st.valid:
+        st.forms[DEFER].make()
     item = np.dtype(dtype).itemsize
     whole = st.nbytes // item
     if (off or n != whole) and np.dtype(dtype) != np.float16:
@@ -447,6 +457,51 @@ PREPARED_QUANT = (
 )
 #: When a pending read is composed (`prepared::Composed`): off, on or cost.
 COMPOSED = ENV.get("KTPU_COMPOSED", _PREPARED_DEFAULTS["composed"])
+#: Whether a whole relayout's output is left to its reader (`defer`), else
+#: written when its producer runs.
+DEFERRED = ENV.get("KTPU_DEFERRED", "1") == "1"
+
+
+def defer(dev, dst: Storage, owner: Storage, step: Step) -> None:
+    """`dst`'s f16 values are what `step` makes of `owner`'s bytes, not
+    written: a packing reads them through the step (`packed`, `deferred`);
+    any other read, a write of `dst` and a write of `owner` make them in
+    place first (`Storage.settle`), ending the reads kept of them. `owner`
+    stays allocated while the form stands."""
+    dst.wrote(DEFER)
+    f = Form(DEFER, dst.addr, dst.nbytes, False, src_st=owner, steps=(step,))
+
+    def make() -> None:
+        _relayouts(dev, f.steps, dst.addr)
+        del dst.forms[DEFER]
+        f.release()
+        dst.release_kept()
+        dst.valid.discard(DEFER)
+        dst.valid.add(FLAT)
+
+    f.make = make
+    owner.readers.append(make)
+    owner.view_refs += 1
+    dst.forms[DEFER] = f
+    dst.dtype = np.float16
+
+
+def deferred(st: Storage) -> Step | None:
+    """The step `st`'s deferred form stands for (`defer`), None without one."""
+    return st.forms[DEFER].steps[0] if DEFER in st.valid else None
+
+
+def _relayouts(dev, steps: tuple, dst: int) -> None:
+    """`steps` run as relayouts, the last into `dst`."""
+    temps: list[Storage] = []
+    for i, s in enumerate(steps):
+        src = temps[-1].addr if s.src is None else s.src
+        if i < len(steps) - 1:
+            temps.append(Storage(dev, max(32, 2 * s.m)))
+        at = temps[-1].addr if i < len(steps) - 1 else dst
+        relayout(dev, src, s.n, s.walk, s.at, s.dwalk, s.m, at, s.dat)
+    for t in temps:
+        t.free()
 
 
 def made_by(s: Step) -> dict:
@@ -574,6 +629,28 @@ def _prepared_quant(dev, steps, src, rows, cols, rp, cp, side, g, nk, batches):
     return call, {"p_x": steps[0].src, **step_binds(dev, plans, "p_")}
 
 
+def _stepped(dev, steps, holder, src, rows, cols, rp, cp, side, g, nk, batches):
+    """The address of the packing of the f16 values `steps` make, read
+    through them (composed, else a measured prepared recipe) into a form of
+    `holder`; None where neither takes them."""
+    args = (src, rows, cols, rp, cp, side, g, nk, batches)
+    key = ("composed_mx7", side, src, rows, cols, rp, cp, g, nk, batches)
+    if _composed_quant(dev, steps, holder, key, *args):
+        return holder.forms[key].addr
+    prepared = _prepared_quant(dev, steps, *args)
+    if prepared is None:
+        return None
+    key = ("prepared_mx7", side, src, rows, cols, rp, cp, g, nk, batches)
+    if key not in holder.valid:
+        f = holder.form(key, batches * rp * cp)
+        call, binds = prepared
+        generated.launch(
+            dev, "matmul.quant_kernel", call, dict(binds, q=f.addr), kind="quant"
+        )
+        holder.made(key)
+    return holder.forms[key].addr
+
+
 def _quant_call(src, rows, cols, rp, cp, side, g, nk, batches, strategy, **more):
     """The `matmul.quant_kernel` arguments of one packing."""
     return dict(
@@ -597,32 +674,21 @@ def packed(
     """The address of `batches` [rows, cols] blocks of `s` quantised into
     [batches * rp, cp] MXFP7 (A packing for `side` "a", else B; tiles of `g`
     lane groups, `nk` K-blocks a chunk), zero-padded; kept while `s` is
-    unwritten. Pending inputs and non-word column padding are materialized
-    before packing."""
+    unwritten. Pending inputs and deferred forms (`defer`) are read through
+    their steps where the packing takes them, else made first; non-word
+    column padding is laid out before packing."""
+    args = (src, rows, cols, rp, cp, side, g, nk, batches)
     if isinstance(s, Pending):
-        key = ("composed_mx7", side, src, rows, cols, rp, cp, g, nk, batches)
-        args = (src, rows, cols, rp, cp, side, g, nk, batches)
-        if _composed_quant(dev, s.steps, s.holder, key, *args):
-            return s.holder.forms[key].addr
-        prepared = _prepared_quant(
-            dev, s.steps, src, rows, cols, rp, cp, side, g, nk, batches
-        )
-        if prepared is not None:
-            key = ("prepared_mx7", side, src, rows, cols, rp, cp, g, nk, batches)
-            if key not in s.holder.valid:
-                f = s.holder.form(key, batches * rp * cp)
-                call, binds = prepared
-                generated.launch(
-                    dev,
-                    "matmul.quant_kernel",
-                    call,
-                    dict(binds, q=f.addr),
-                    kind="quant",
-                )
-                s.holder.made(key)
-            return s.holder.forms[key].addr
+        got = _stepped(dev, s.steps, s.holder, *args)
+        if got is not None:
+            return got
         s, dtype = s.made(), np.float16
     st, off = base_of(s)
+    if DEFER in st.valid:
+        got = None if off else _stepped(dev, st.forms[DEFER].steps, st, *args)
+        if got is not None:
+            return got
+        st.forms[DEFER].make()
     item = np.dtype(dtype).itemsize
     src = replace(src, offset=src.offset + off // item)
     key = ("mx7", side, src, rows, cols, rp, cp, g, nk, batches)
@@ -818,6 +884,8 @@ def read(dev, s, dtype, n: int) -> bytes:
     """`s`'s contents as `n` `dtype` values, from whichever form is current:
     row-major bytes, the f16 form, or the padded-rows form."""
     st, off = base_of(s)
+    if DEFER in st.valid:
+        st.forms[DEFER].make()
     dt = np.dtype(dtype)
     if FLAT in st.valid:
         return dev.read(st.addr + off, n * dt.itemsize)

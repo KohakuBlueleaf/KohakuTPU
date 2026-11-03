@@ -10,7 +10,7 @@ index-only subexpression inside data math a folded table operand.
 """
 
 import itertools
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 from tinygrad.dtype import DType, dtypes
@@ -21,6 +21,7 @@ from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.ktpugrad import uops as U
 from kohakutpu.application.ktpugrad.planning import domain as D
 from kohakutpu.application.ktpugrad.planning import fold as F
+from kohakutpu.language.config import ENV
 from kohakutpu.language.numerics import fp16
 
 
@@ -72,6 +73,14 @@ class Plan:
     #: the output's element strides by `out_ranges` when it is a window of
     #: its buffer (a box of a padded loop nest); None: dense
     out_strides: tuple | None = None
+    #: matmul: ``(f, p, q)`` ranges the product makes as one (`fuse_ranges`):
+    #: f is p * extent(q) + q, the output keeps p and q
+    splits: tuple = ()
+
+    @property
+    def view(self) -> tuple:
+        """`out_ranges` as the product makes them (`splits` joined)."""
+        return _view(self.out_ranges, self.splits)
 
     @property
     def out_n(self) -> int:
@@ -475,17 +484,30 @@ def _matmul(base: Plan, value, reader: _Reader) -> Plan | None:
     if not all(isinstance(r, X.Load) for r in reads):
         return None
     accs = [reader.accesses[r.i] for r in reads if isinstance(r, X.Load)]
+    # The epilogue: the reduction's value becomes Load(0), every other read
+    # shifts up by one.
+    shifted = _shift(base.expr, reader, X.Load(0))
+    splits: tuple = ()
+    if fusing_ranges() and base.out_strides is None:
+        out_ranges, fused, splits = fuse_ranges(
+            base.out_ranges, [*accs, *shifted[1]], ks
+        )
+        accs, shifted = fused[:2], (shifted[0], fused[2:])
+        base = replace(
+            base,
+            out_ranges=out_ranges,
+            out_shape=tuple(U.extent(r) for r in out_ranges),
+            splits=splits,
+        )
+    view = replace(base, out_ranges=base.view)
     for a, b in (accs, accs[::-1]):
-        got = _mnk(base, a, b, ks)
+        got = _mnk(view, a, b, ks)
         if got is not None:
             break
     else:
         return None
     m, n, batch = got
     k = ks
-    # The epilogue: the reduction's value becomes Load(0), every other read
-    # shifts up by one.
-    shifted = _shift(base.expr, reader, X.Load(0))
     return Plan(
         "matmul",
         base.ast,
@@ -501,7 +523,69 @@ def _matmul(base: Plan, value, reader: _Reader) -> Plan | None:
         b=b,
         mnk=(m, n, k),
         batch=batch,
+        splits=splits,
     )
+
+
+def fusing_ranges() -> bool:
+    """`KTPU_MM_FUSE_RANGES` (default 0): a contraction's output ranges its
+    reads walk as one are planned as one ([`fuse_ranges`])."""
+    return ENV.get("KTPU_MM_FUSE_RANGES", "0") == "1"
+
+
+def fuse_ranges(out_ranges: tuple, accesses: list, used: tuple = ()) -> tuple:
+    """``(out ranges, accesses, splits)``: every two live output ranges p, q
+    that each access walks as one (``c(p) == extent(q) * c(q)``, 0 included)
+    made one range f of their two extents, the heads of a contraction's N
+    and the row batches of its M as one N and one M. Where p and q neighbour
+    in the output, f stands in its ranges; else the output keeps them and
+    `splits` holds ``(f, p, q)``: the product is made over f and moved into
+    the output. `used` are other ranges the plan holds (its reductions)."""
+    splits: tuple = ()
+    while True:
+        view = _view(out_ranges, splits)
+        live = [r for r in view if U.extent(r) > 1]
+        near = list(itertools.pairwise(live))
+        pairs = near + [(p, q) for p in live for q in live if p is not q]
+        pair = next(
+            (
+                (p, q)
+                for p, q in pairs
+                if all(a.c(p) == U.extent(q) * a.c(q) for a in accesses)
+            ),
+            None,
+        )
+        if pair is None:
+            return out_ranges, accesses, splits
+        p, q = pair
+        known = [*out_ranges, *used, *(r for a in accesses for r, _ in a.coef)]
+        known += [r for s in splits for r in s]
+        f = UOp.range(
+            U.extent(p) * U.extent(q), 1 + max(r.arg[0] for r in known), q.arg[1]
+        )
+
+        adjacent = any(p is x and q is y for x, y in near) and all(
+            any(r is o for o in out_ranges) for r in (p, q)
+        )
+        if adjacent:
+            out_ranges = tuple(f if r is q else r for r in out_ranges if r is not p)
+        else:
+            splits = (*splits, (f, p, q))
+        accesses = [_joined(a, f, p, q) for a in accesses]
+
+
+def _joined(a: Access, f, p, q) -> Access:
+    """`a` walking `f` (p * extent(q) + q) where it walked p and q."""
+    coef = tuple((r, c) for r, c in a.coef if r is not p and r is not q)
+    return replace(a, coef=((f, a.c(q)), *coef) if a.c(q) else coef)
+
+
+def _view(out_ranges: tuple, splits: tuple) -> tuple:
+    """`out_ranges` as the product makes them: each split's two ranges as
+    its one range, where the inner one stood."""
+    for f, p, q in splits:
+        out_ranges = tuple(f if r is q else r for r in out_ranges if r is not p)
+    return out_ranges
 
 
 def _mnk(base: Plan, a: Access, b: Access, ks: tuple):

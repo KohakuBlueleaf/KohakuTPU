@@ -7,7 +7,18 @@ from tinygrad.uop import Ops
 
 from kohakutpu.application.ktpugrad import run as R
 from kohakutpu.application.ktpugrad.captured import recipe
+from kohakutpu.application.ktpugrad.launch import schedule as launch_schedule
 from kohakutpu.application.ktpugrad.planning.plans import PLANS
+from kohakutpu.application.runtime import chain
+
+
+def _own_spans(b: Buffer) -> set:
+    """The bytes `b` owns: its own range of its storage, the storage's forms
+    too where `b` is the whole storage."""
+    st, off = R.FM.base_of(b._buf)
+    if off or b.nbytes != st.nbytes:
+        return {(st.addr + off, st.addr + off + b.nbytes)}
+    return launch_schedule.spans(b._buf)
 
 
 def try_group(linear, ctx, used, inputs, held, rt, _on_ktpu):
@@ -86,22 +97,30 @@ def try_group(linear, ctx, used, inputs, held, rt, _on_ktpu):
                 ets = realize.pm_exec.rewrite(call, ctx) or []
                 realize.track_stats(ctx, call, perf_counter_us(), ets)
 
-            for g_idx, (grp, dead_addrs) in enumerate(groups):
-                if len(grp) == 1:
-                    run_unit(grp[0])
-                else:
-                    last_plan = units[grp[-1]][1]
-                    with R.multi_stage_scope(
-                        rt,
-                        dead_addrs=dead_addrs,
-                        count=len(grp),
-                        info={"plan": last_plan.name},
-                    ):
-                        for unit in grp:
-                            run_unit(unit)
-                for b in dead_by_grp.get(g_idx, ()):
-                    if b.is_allocated() and not b.allocated_views:
-                        b.deallocate()
+            with chain.chaining(rt) as chained:
+                for g_idx, (grp, dead_addrs) in enumerate(groups):
+                    # What no later call reads: an output the package need not store.
+                    dead = set(dead_addrs).union(
+                        *(
+                            _own_spans(b)
+                            for b in dead_by_grp.get(g_idx, ())
+                            if b.is_allocated() and not b.allocated_views
+                        )
+                    )
+                    if chained is not None:
+                        chained.dead = dead
+                    if len(grp) == 1:
+                        run_unit(grp[0])
+                    else:
+                        recipe.submit_group(
+                            rt,
+                            [units[unit][1:] for unit in grp],
+                            dead,
+                            {"plan": units[grp[-1]][1].name},
+                        )
+                    for b in dead_by_grp.get(g_idx, ()):
+                        if b.is_allocated() and not b.allocated_views:
+                            b.deallocate()
             for orig_i in sink_indices:
                 call = linear.src[orig_i]
                 ets = realize.pm_exec.rewrite(call, ctx) or []

@@ -24,11 +24,19 @@ class Form:
     nbytes: int
     owned: bool  # a side allocation, freed with the storage
     src_st: Any = None
+    #: a deferred form (`forms.defer`): the call that makes it in place, listed
+    #: in `src_st.readers` while it stands
+    make: Any = None
+    #: the relayout steps it is made by, from `src_st`'s bytes
+    steps: tuple = ()
 
     def release(self) -> None:
         if self.src_st is not None:
             st = self.src_st
             self.src_st = None
+            if self.make is not None:
+                st.readers.remove(self.make)
+                self.make = None
             st.view_refs -= 1
             if st.view_refs <= 0 and st._freed:
                 st.free()
@@ -67,6 +75,11 @@ class Storage:
         self.shared: Storage | None = None
         #: a graph's input slot: the host rewrites these bytes every call
         self.varying: bool = False
+        #: the deferred forms of other storages read from these bytes: each
+        #: call makes one (`forms.defer`)
+        self.readers: list = []
+        #: the storage whose form this handle names (a read's alias of it)
+        self.owner: Storage | None = None
 
     # ------------------------------------------------------------- derived
     @property
@@ -143,10 +156,21 @@ class Storage:
             st.free()
 
     def overwritten(self) -> None:
-        """A kernel is about to write these bytes: what reads of them made and
-        their standing as a read's bytes end now."""
+        """A kernel is about to write these bytes: the deferred forms read from
+        them or standing in them are made, what reads of them made and their
+        standing as a read's bytes end now."""
+        self.settle()
         self.release_kept()
         self.derived = False
+
+    def settle(self) -> None:
+        """Make every deferred form these bytes hold or another storage's
+        deferred form reads (`forms.defer`): before the bytes change."""
+        for make in list(self.readers):
+            make()
+        for f in list(self.forms.values()):
+            if f.make is not None:
+                f.make()
 
     def release_kept(self) -> None:
         if not self.kept:

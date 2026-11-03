@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 
+from kohakutpu.application.runtime import launch_boundary
 from kohakutpu.application.runtime.device.common import Parts
 from kohakutpu.application.runtime.memory.arena import OutOfMemory
 
@@ -154,7 +155,7 @@ class Allocation(Parts):
                     self._record_pins.append(ref)
 
     def free(self, addr: int) -> None:
-        if self.closed:
+        if self.closed or launch_boundary.held_free(self, addr):
             return
         if self._recipe_recording is not None:
             self._recipe_recording.on_free(addr)
@@ -167,6 +168,7 @@ class Allocation(Parts):
     def write(self, addr: int, raw: bytes) -> None:
         if self._recipe_recording is not None:
             self._recipe_recording.on_write(addr, raw)
+        launch_boundary.before_access(self, addr, len(raw))
         self.wait_address(addr, write=True)
         self._pin_record([addr])
         raw = bytes(raw)
@@ -185,6 +187,7 @@ class Allocation(Parts):
     def read(self, addr: int, nbytes: int) -> bytes:
         if self._recipe_recording is not None:
             self._recipe_recording.on_read()
+        launch_boundary.before_access(self, addr, int(nbytes))
         self.wait_address(addr)
         self._pin_record([addr])
         n = -(-int(nbytes) // self.card.line) * self.card.line

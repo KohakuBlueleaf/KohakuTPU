@@ -146,12 +146,17 @@ def _pending(dev, plan: Plan, acc: Access, order, bufs, side) -> FM.Pending | No
     coef, dense = dict(a.coef), _dense(live)
     walk = tuple((U.extent(r), coef.get(r, 0)) for r in live)
     dwalk = tuple((U.extent(r), dense[r]) for r in live)
-    try:
-        src, N, walk, first, dwalk = _f16_walk(dev, st, dt, walk, first, dwalk)
-    except FM.FormError:
-        return None
     n = _size(live)
-    steps = (FM.Step(src, N, walk, first, dwalk, 0, n),)
+    made = FM.deferred(st)
+    if made is not None:
+        # A deferred source (`forms.defer`): its step, then this read of it.
+        steps = (made, FM.Step(None, made.m, walk, first, dwalk, 0, n))
+    else:
+        try:
+            src, N, walk, first, dwalk = _f16_walk(dev, st, dt, walk, first, dwalk)
+        except FM.FormError:
+            return None
+        steps = (FM.Step(src, N, walk, first, dwalk, 0, n),)
     mm = _packing_plan(dev, plan)
     rows = mm.m if side == "a" else U.extent(plan.mnk[1])
     rp = mm.mp if side == "a" else mm.n

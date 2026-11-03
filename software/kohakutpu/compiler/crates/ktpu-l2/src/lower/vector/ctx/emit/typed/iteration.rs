@@ -168,6 +168,38 @@ impl Ctx<'_> {
             .copied()
             .filter(|o| self.descs[self.of[&o.uid]].shared.is_some())
             .collect();
+        // A value this trip packs and unpacks again (L2.OP.014): packed where
+        // the loop reaches its pack, read back once that pack is done.
+        let mut readback: HashMap<String, Vec<String>> = HashMap::new();
+        for o in ops.iter().map(|o| op(o)).filter(|o| o.op == "unpack") {
+            if let Some(src) = value_name(o.st.positional()[0]) {
+                if packed.contains(src) {
+                    readback
+                        .entry(src.to_string())
+                        .or_default()
+                        .push(o.target.clone().unwrap());
+                }
+            }
+        }
+        let read_back = |n: &Arc<Node>| {
+            let o = op(n);
+            o.op == "unpack"
+                && value_name(o.st.positional()[0]).is_some_and(|s| readback.contains_key(s))
+        };
+        let early: Vec<Arc<Node>> = ops.iter().filter(|n| !read_back(n)).cloned().collect();
+        let late: Vec<Arc<Node>> = ops
+            .iter()
+            .filter(|n| {
+                let o = op(n);
+                o.op != "pack" || !o.target.as_ref().is_some_and(|t| readback.contains_key(t))
+            })
+            .cloned()
+            .collect();
+        let drained = Term::int(if self.classed {
+            0
+        } else {
+            stores.len() as i128
+        });
         g.fixed(ir::instruction("vbar", vec![], vec![]));
         if prefetch {
             g.fixed(ir::sync("fill", "unpack", None));
@@ -218,14 +250,14 @@ impl Ctx<'_> {
             .iter()
             .position(|o| matches!(o.as_ref(), Node::Op(x) if is_in(&REDUCE, &x.op)));
         if self.ahead {
-            self.unpacks_typed(g, &ops, &flat(&bands[0]), &mut local, None)?;
+            self.unpacks_typed(g, &early, &flat(&bands[0]), &mut local, None)?;
         }
         for (k, grps) in bands.iter().enumerate() {
             let rws = flat(grps);
             if !self.ahead {
-                self.unpacks_typed(g, &ops, &rws, &mut local, None)?;
+                self.unpacks_typed(g, &early, &rws, &mut local, None)?;
             } else if k + 1 < bands.len() {
-                self.unpacks_typed(g, &ops, &flat(&bands[k + 1]), &mut local, None)?;
+                self.unpacks_typed(g, &early, &flat(&bands[k + 1]), &mut local, None)?;
             }
             let mut again: HashSet<String> = HashSet::new();
             for (i, n) in body.iter().enumerate() {
@@ -273,6 +305,16 @@ impl Ctx<'_> {
                     continue;
                 }
                 let o = op(n);
+                if let Some(again_of) = o.target.as_ref().and_then(|t| readback.get(t)) {
+                    if o.op == "pack" {
+                        if !self.pin {
+                            self.unpin_typed(g, o, &rws, &mut local, &mut again, None)?;
+                        }
+                        let ctx = (k, &drained, parity);
+                        self.readback_typed(g, &ops, o, again_of, &rws, &mut local, ctx)?;
+                        continue;
+                    }
+                }
                 if ["load", "store", "send", "recv", "unpack", "pack"].contains(&o.op.as_str())
                     || o.target
                         .as_ref()
@@ -290,27 +332,19 @@ impl Ctx<'_> {
                 self.compute_typed(g, o, grps, &rws, &mut local, &fused)?;
             }
             if !self.pin {
-                for o in &ops {
+                for o in &late {
                     if op(o).op == "pack" {
                         self.unpin_typed(g, op(o), &rws, &mut local, &mut again, None)?;
                     }
                 }
             }
             if k == 0 {
-                g.fixed(ir::sync(
-                    "pack",
-                    "drain",
-                    Some(Term::int(if self.classed {
-                        0
-                    } else {
-                        stores.len() as i128
-                    })),
-                ));
+                g.fixed(ir::sync("pack", "drain", Some(drained.clone())));
                 if !shared.is_empty() {
                     g.fixed(ir::sync("pack", "unpack", None));
                 }
             }
-            self.packs_typed(g, &ops, &rws, &mut local, parity)?;
+            self.packs_typed(g, &late, &rws, &mut local, parity)?;
         }
         for o in &streams {
             let PlanX::S(x) = &self.plan[&o.uid] else {
@@ -355,6 +389,44 @@ impl Ctx<'_> {
                 )
                 .unwrap(),
             );
+        }
+        Ok(())
+    }
+
+    /// Pack `o` for this band's rows into its store's L1 buffer now, then
+    /// unpack `again_of` from those bytes (`vsync unpack on=pack`): the
+    /// value as the store writes it. A store packed over a load keeps that
+    /// load's bytes until the band's packs, so it does not take a read-back.
+    #[allow(clippy::too_many_arguments)]
+    fn readback_typed(
+        &mut self,
+        g: &mut Emitter,
+        ops: &[Arc<Node>],
+        o: &Op,
+        again_of: &[String],
+        rws: &[i64],
+        local: &mut IndexMap<String, Val>,
+        (k, drained, parity): (usize, &Term, usize),
+    ) -> VResult<()> {
+        let target = o.target.clone().unwrap();
+        let dests = self.store_dests(ops, &target, false);
+        if dests.is_empty() || dests.iter().any(|&d| self.descs[d].shared.is_some()) {
+            return Err(VErr::Pressure);
+        }
+        if k == 0 {
+            g.fixed(ir::sync("pack", "drain", Some(drained.clone())));
+        }
+        let only: Vec<Arc<Node>> = ops
+            .iter()
+            .filter(|n| op(n).op != "pack" || op(n).target.as_deref() == Some(&target))
+            .cloned()
+            .collect();
+        self.packs_typed(g, &only, rws, local, parity)?;
+        let d = &self.descs[dests[0]];
+        local.insert(target, l1val(Some(d), ty(o), d.buf[parity], self.t));
+        g.fixed(ir::sync("unpack", "pack", None));
+        for u in again_of {
+            self.unpacks_typed(g, ops, rws, local, Some(u))?;
         }
         Ok(())
     }

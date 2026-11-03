@@ -1,5 +1,6 @@
 //! The generators, one module a Python one (`kernels/*.py`).
 
+pub mod chain;
 pub mod classes;
 pub mod convert;
 pub mod fused;

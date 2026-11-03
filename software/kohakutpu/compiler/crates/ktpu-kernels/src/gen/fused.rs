@@ -10,13 +10,13 @@ use ktpu_graph as g;
 use ktpu_machine::Machine;
 
 use super::{reductions, vector as v, Hw};
-use crate::expr::{self, E};
+use crate::expr::{self, Expr, E};
 use crate::kernel::{build, Kernel, Port};
 use crate::mutants;
 use crate::pyrepr::{name, Py};
 use crate::trace::buffer::{sl, spec, ALL};
 use crate::trace::control::At;
-use crate::trace::{Arg, Buf, Idx, Trace, R};
+use crate::trace::{fail, Arg, Buf, Idx, Trace, R};
 
 /// The reverse mutant of [`members`]: a band stores its first member alone.
 pub const LOST_MEMBER_MUTANT: &str = "fused/lost-member";
@@ -42,7 +42,9 @@ pub struct Staged {
 /// One stage of a package.
 pub enum Step {
     /// `exprs` into `outs` over `total` rows of `vc.vlmax` values, every
-    /// read at the output's index but `(i, lane)` of `lanes`.
+    /// read at the output's index but `(i, lane)` of `lanes`; operand
+    /// `ins.len() + k` is member k's packed value, stored where `kept[k]`
+    /// (each member a reference reads is stored).
     Flat {
         total: i64,
         dtypes: Vec<g::Dtype>,
@@ -51,6 +53,7 @@ pub enum Step {
         ins: Vec<String>,
         lanes: Vec<(usize, i64)>,
         outs: Vec<String>,
+        kept: Vec<bool>,
     },
     /// `exprs` over [r, w] rows of `operands` into `outs`, read as
     /// `out_operands`.
@@ -95,6 +98,7 @@ fn flat(
     ins: &[String],
     lanes: &[(usize, i64)],
     outs: &[String],
+    kept: &[bool],
     hw: &Hw,
 ) -> R<()> {
     let lane_of = |i: usize| lanes.iter().find(|(j, _)| *j == i).map(|(_, l)| *l);
@@ -105,7 +109,12 @@ fn flat(
         .map(|(_, d)| *d)
         .collect();
     let rows = v::flat_rows(&reads, lanes.len(), &vec![out_dtype; outs.len()], hw);
-    let (from, to) = (bufs(env, ins), bufs(env, outs));
+    let from = bufs(env, ins);
+    let to: Vec<Option<Buf>> = outs
+        .iter()
+        .zip(kept)
+        .map(|(n, k)| k.then(|| env[n].clone()))
+        .collect();
     let trip = |t: &mut Trace, r: &Idx, h: i64| -> R<()> {
         let mut vals = HashMap::new();
         for (i, b) in from.iter().enumerate() {
@@ -118,9 +127,42 @@ fn flat(
             };
             vals.insert(i, Arg::Val(x));
         }
-        for (e, b) in exprs.iter().zip(&to) {
+        let n_in = from.len();
+        // A member that is a copy of another stores that member's pack, right
+        // after it is made.
+        let root = |mut c: usize| {
+            while let Expr::Load(i) = exprs[c].as_ref() {
+                if *i < n_in {
+                    break;
+                }
+                c = *i - n_in;
+            }
+            c
+        };
+        for (k, e) in exprs.iter().enumerate() {
+            if root(k) != k {
+                continue;
+            }
             let x = expr::emit(t, e, &vals)?;
-            t.store(&b.at(&[sl(r, r.add(h)), ALL])?, x)?;
+            let held = match x {
+                Arg::Val(v) if t.value(v).space == g::ValSpace::L1 => v,
+                Arg::Val(v) => {
+                    let gt4 = t.value(v).mode == Some(g::Mode::Gt4);
+                    t.pack(v, out_dtype, gt4)?
+                }
+                Arg::Num(_) => {
+                    return fail(
+                        "DSL.VEC.033",
+                        "a fused flat member stores a value, not a number",
+                    )
+                }
+            };
+            for c in (k..exprs.len()).filter(|&c| root(c) == k) {
+                if let Some(b) = &to[c] {
+                    t.store(&b.at(&[sl(r, r.add(h)), ALL])?, Arg::Val(held))?;
+                }
+                vals.insert(n_in + c, Arg::Val(held));
+            }
         }
         Ok(())
     };
@@ -243,8 +285,9 @@ pub fn kernel(p: &Package, key: &str, m: &Machine) -> R<Kernel> {
                     ins,
                     lanes,
                     outs,
+                    kept,
                 } => flat(
-                    t, &env, *total, dtypes, *out_dtype, exprs, ins, lanes, outs, &hw,
+                    t, &env, *total, dtypes, *out_dtype, exprs, ins, lanes, outs, kept, &hw,
                 )?,
                 Step::Rows {
                     r,

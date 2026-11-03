@@ -29,7 +29,7 @@ from kohakutpu.application.ktpugrad.launch.config import (
 from kohakutpu.application.ktpugrad.launch.emit import flush_multi_stage
 from kohakutpu.application.ktpugrad.planning import fold as F
 from kohakutpu.application.ktpugrad.planning.lower import Plan, Refused
-from kohakutpu.application.ktpugrad.run.common import _dense, _reform
+from kohakutpu.application.ktpugrad.run.common import _dense, _made_reads, _reform
 from kohakutpu.application.ktpugrad.run.kernels import (
     _flat,
     _materialise,
@@ -53,6 +53,7 @@ from kohakutpu.application.ktpugrad.run.shape import _bind, classify
 from kohakutpu.application.ktpugrad.run.through import through
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import rows as RW
+from kohakutpu.application.runtime.chain import HELD
 from kohakutpu.application.runtime.memory.storage import FLAT
 
 
@@ -89,9 +90,14 @@ def read_kept(dev, plan: Plan, bufs: dict) -> bool:
 
 
 def execute(dev, plan: Plan, bufs: dict):
-    """Run `plan` with `bufs` (param slot -> storage); returns the runs."""
+    """Run `plan` with `bufs` (param slot -> storage); returns the runs. A
+    deferred form it reads is made first (`_made_reads`), but a product's
+    packings read theirs through its steps (`forms.packed`)."""
+    if plan.kind not in ("matmul", "vector"):
+        _made_reads(plan, bufs)
     fixed = _fixed_read(dev, plan, bufs)
-    runs = _run(dev, plan, bufs)
+    # A product held for a chain (`runtime.chain`) has not run yet.
+    runs = [r for r in _run(dev, plan, bufs) if r is not HELD]
     if fixed is not None:
         st, read, dst = fixed
         st.keep(read, dst)
@@ -233,6 +239,8 @@ def _copy(dev, plan: Plan, bufs) -> list:
 
 
 def _is_fusable_elem(plan: Plan | None) -> bool:
+    if plan is not None and plan.kind == "copy":
+        return plan.out_strides is None
     if plan is None or plan.kind != "vector" or plan.reduce_ranges:
         return False
     if isinstance(plan.expr, X.Load) or plan.out_strides is not None:
@@ -254,7 +262,8 @@ def units(items: list, held: set) -> list:
 
 
 def plan_schedule(items: list, held_ids: set | None = None) -> list:
-    """Only adjacent independent elementwise members share a launch."""
+    """Elementwise members and whole copies over one domain share a launch
+    (`launch.schedule.groups`)."""
     if not horizontal_fusion_enabled():
         return [([i], set()) for i in range(len(items))]
     return launch_schedule.groups(

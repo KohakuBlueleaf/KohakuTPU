@@ -11,7 +11,7 @@ use ktpu_machine::Machine;
 
 use super::prepared::{self, Read};
 use super::relayout::Logical;
-use super::{relayout, vector as v, Hw};
+use super::{vector as v, Hw};
 use crate::expr::{self, Expr, OpName, RedOp, E};
 use crate::kernel::{build, Kernel, Port};
 use crate::mutants;
@@ -208,13 +208,30 @@ pub(super) fn emit(
     dst: &v::Operand,
     hw: &Hw,
 ) -> R<()> {
+    emit_mapped(t, ins, out, e, ops, r, w, dst, HashMap::new(), hw)
+}
+
+/// [`emit`] with operand i read through `maps[i]` (a composed read).
+#[allow(clippy::too_many_arguments)]
+fn emit_mapped(
+    t: &mut Trace,
+    ins: Vec<Buf>,
+    out: Buf,
+    e: &E,
+    ops: &[v::Operand],
+    r: i64,
+    w: i64,
+    dst: &v::Operand,
+    maps: HashMap<usize, v::Mapped>,
+    hw: &Hw,
+) -> R<()> {
     let quantum = if v::holds_stat(ops, dst.kind) {
         hw.stat_rows()
     } else {
         hw.band
     };
     let pl = v::plan(ops, dst.kind, r, w, None, None, quantum, hw)?;
-    let bufs = v::Bufs::plain(ins, out);
+    let bufs = v::Bufs { ins, out, maps };
     for (sp, row, tail) in v::stages(&pl, r, quantum) {
         match tail {
             Some(rows) => v::tail_band(t, &bufs, e, ops, dst, &sp, row, rows, w, hw)?,
@@ -549,14 +566,15 @@ fn column_tiles(
 /// column blocks once they run out ([`v::rows_stage`]), and its partials
 /// stay on the chip when they fit the staging room. The expression around
 /// the reduction applies to the last row. Operand i of `made` is made inside
-/// the kernel by its plans (`prepared.input_buffer`).
+/// the kernel by its plans (`prepared.input_buffer`), or read composed: its
+/// steps on every load of it, from its source port.
 pub fn column_tree_kernel(
     e: &E,
     ops: &[v::Operand],
     r: i64,
     w: i64,
     out: &v::Operand,
-    made: &BTreeMap<usize, Vec<relayout::Plan>>,
+    made: &BTreeMap<usize, Read>,
     m: &Machine,
 ) -> R<Kernel> {
     let hw = Hw::of(m);
@@ -578,11 +596,9 @@ pub fn column_tree_kernel(
     };
     let plain = ports(ops, r, w, &out_shape, &hw)?;
     let names: Vec<String> = plain.0.iter().map(|p| p.name.clone()).collect();
-    let plans: BTreeMap<usize, Read> = made
-        .iter()
-        .map(|(i, p)| (*i, Read::Materialized(p.clone())))
-        .collect();
-    let made = prepared::made_inputs(&plans);
+    let plans = made;
+    let maps = prepared::mapped(plans);
+    let made = prepared::made_inputs(plans);
     let ((ports, given), shapes) = prepared::made_ports(plain, &made, m)?;
     let built: Vec<String> = ports.iter().map(|p| p.name.clone()).collect();
     let mut key = vec![
@@ -598,6 +614,16 @@ pub fn column_tree_kernel(
     if !made.is_empty() {
         key.push(prepared::made_key(&plans));
     }
+    // Two composed row reads, each read twice over by a level, run its stream
+    // loop past 128 vector registers (LeNet's [100, 128] backward norm); one,
+    // even read four times by a deep level (Mixer's [16, 65536]), lowers. The
+    // first level then computes e into a scratch, each composed read once.
+    let composed_rows = maps
+        .keys()
+        .filter(|i| ops[**i].kind == v::Kind::Full)
+        .count();
+    let scratch_first = composed_rows > 1;
+    key.push(Py::Int(scratch_first as i64));
     let key = name("rows", key);
     let mode = mode();
     let views = m.facts().vc.descriptors as usize;
@@ -605,14 +631,28 @@ pub fn column_tree_kernel(
         let p = &prepared::made_bufs(t, &names, &built, b, &made, &shapes, m)?;
         let k = ops.len();
         let inputs = p[..k].to_vec();
+        // Operand j of an emission reads operand own[j]'s map, if it has one.
+        let own: Vec<Option<usize>> = (0..k).map(Some).collect();
         let full = v::Operand::full(w, 0);
         let mut n = r;
         let mut cur: Option<Buf> = None;
         let row_split = (n / 2) % hw.stat_rows() != 0 || n % 2 != 0;
-        if n > 1 && (2 * k + 1 > views || (ops.iter().any(|o| o.kind == v::Kind::Row) && row_split))
-        {
+        let stats = ops.iter().any(|o| o.kind == v::Kind::Row) && row_split;
+        if n > 1 && (2 * k + 1 > views || stats || scratch_first) {
             let b = t.buffer_in(&[n, w], g::Dtype::F16, vec![], g::BufSpace::Mem)?;
-            emit(t, inputs.clone(), b.clone(), arg, ops, n, w, &full, &hw)?;
+            let all = remapped(&maps, &own);
+            emit_mapped(
+                t,
+                inputs.clone(),
+                b.clone(),
+                arg,
+                ops,
+                n,
+                w,
+                &full,
+                all,
+                &hw,
+            )?;
             cur = Some(b);
         }
         let elide =
@@ -634,7 +674,16 @@ pub fn column_tree_kernel(
             match &cur {
                 None if deep => {
                     let (lvl, lvl_ops, lvl_ins) = quartered(arg, *op, ops, &inputs, h, w);
-                    emit(
+                    let mut of = own.clone();
+                    for _ in 1..4 {
+                        let full_ops = ops.iter().enumerate();
+                        of.extend(
+                            full_ops
+                                .filter(|(_, o)| o.kind == v::Kind::Full)
+                                .map(|(i, _)| Some(i)),
+                        );
+                    }
+                    emit_mapped(
                         t,
                         lvl_ins,
                         target.clone(),
@@ -643,6 +692,7 @@ pub fn column_tree_kernel(
                         h,
                         w,
                         &target_op,
+                        remapped(&maps, &of),
                         &hw,
                     )?;
                 }
@@ -660,7 +710,7 @@ pub fn column_tree_kernel(
                             offset: h * w,
                             ..v::Operand::full(w, next)
                         };
-                        emit(
+                        emit_mapped(
                             t,
                             inputs.clone(),
                             target.clone(),
@@ -669,10 +719,12 @@ pub fn column_tree_kernel(
                             1,
                             w,
                             &dst,
+                            remapped(&maps, &own),
                             &hw,
                         )?;
                     }
-                    emit(
+                    let of: Vec<Option<usize>> = own.iter().chain(&own).copied().collect();
+                    emit_mapped(
                         t,
                         lvl_ins,
                         target.clone(),
@@ -681,6 +733,7 @@ pub fn column_tree_kernel(
                         h,
                         w,
                         &target_op,
+                        remapped(&maps, &of),
                         &hw,
                     )?;
                 }
@@ -725,15 +778,41 @@ pub fn column_tree_kernel(
         if elide {
             return Ok(());
         }
-        let (head, mut head_ins, mut head_ops) = match cur {
-            None => (arg.clone(), inputs, ops.to_vec()),
-            Some(b) => (expr::load(0), vec![b], vec![v::Operand::full(w, 1)]),
+        let (head, mut head_ins, mut head_ops, mut of) = match cur {
+            None => (arg.clone(), inputs, ops.to_vec(), own),
+            Some(b) => (
+                expr::load(0),
+                vec![b],
+                vec![v::Operand::full(w, 1)],
+                vec![None],
+            ),
         };
         let fin = place(&post, &head, head_ops.len());
         for &i in &keep {
             head_ops.push(ops[i]);
             head_ins.push(p[i].clone());
+            of.push(Some(i));
         }
-        emit(t, head_ins, p[k].clone(), &fin, &head_ops, 1, w, out, &hw)
+        let maps = remapped(&maps, &of);
+        emit_mapped(
+            t,
+            head_ins,
+            p[k].clone(),
+            &fin,
+            &head_ops,
+            1,
+            w,
+            out,
+            maps,
+            &hw,
+        )
     })
+}
+
+/// The maps of an emission whose operand j is the kernel's operand `of[j]`.
+fn remapped(maps: &HashMap<usize, v::Mapped>, of: &[Option<usize>]) -> HashMap<usize, v::Mapped> {
+    of.iter()
+        .enumerate()
+        .filter_map(|(j, i)| Some((j, maps.get(&(*i)?)?.clone())))
+        .collect()
 }

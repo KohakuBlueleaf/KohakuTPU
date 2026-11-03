@@ -59,12 +59,19 @@ pub fn space(p: &Program, t: &Target) -> Result<Program> {
         }
     }
     let r = p.module.reader();
+    // Sized as placed in DRAM with its layout kept: an MXFP7 scratch's size is its packing's.
     let nbytes = |s: &Stmt| -> Result<i64> {
-        let Some(Term::Placed(x, _)) = &s.annot else {
-            unreachable!()
+        let at = if crate::mutant::on("l2.passes/space-layout-dropped") {
+            let Some(Term::Placed(x, _)) = &s.annot else {
+                unreachable!()
+            };
+            Term::Placed(x.clone(), Box::new(Term::name("dram")))
+        } else {
+            respaced(s, "dram")
+                .annot
+                .expect("a scratch buffer is placed")
         };
-        let b = Buffer::of(&Term::Placed(x.clone(), Box::new(Term::name("dram"))))
-            .map_err(|e| r.fail(s, "L2.PASS.004", e))?;
+        let b = Buffer::of(&at).map_err(|e| r.fail(s, "L2.PASS.004", e))?;
         Ok(b.nbytes(t))
     };
     // Every scratch of a kernel shares one staging window: the room is theirs together.

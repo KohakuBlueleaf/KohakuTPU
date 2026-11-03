@@ -12,7 +12,8 @@
 use crate::expr;
 use crate::gen::vector::{Kind, Operand};
 use crate::gen::{
-    classes, convert, fused, lanes, matmul, prepared, reductions, relayout, transpose, vector, Hw,
+    chain, classes, convert, fused, lanes, matmul, prepared, reductions, relayout, transpose,
+    vector, Hw,
 };
 use crate::kernel::Kernel;
 use crate::trace::{fail, R};
@@ -260,20 +261,42 @@ fn dtypes(v: &Value) -> R<Vec<g::Dtype>> {
         .collect()
 }
 
+/// A flat stage's `kept`: one flag a member.
+fn kept(s: &Value, members: usize) -> R<Vec<bool>> {
+    let flags: Vec<bool> = arg(s, "kept")?
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(Value::as_bool)
+        .collect();
+    if flags.len() != members {
+        return fail(
+            "API.OP.001",
+            format!("kept names {} of {members} members", flags.len()),
+        );
+    }
+    Ok(flags)
+}
+
 fn fused_step(s: &Value) -> R<fused::Step> {
     Ok(match arg(s, "kind")?.as_str() {
-        Some("flat") => fused::Step::Flat {
-            total: int(s, "total")?,
-            dtypes: dtypes(arg(s, "dtypes")?)?,
-            out_dtype: dtype(arg(s, "out_dtype")?)?,
-            exprs: exprs(arg(s, "exprs")?)?,
-            ins: names(arg(s, "ins")?),
-            lanes: walk(arg(s, "lanes")?)?
-                .into_iter()
-                .map(|(i, l)| (i as usize, l))
-                .collect(),
-            outs: names(arg(s, "outs")?),
-        },
+        Some("flat") => {
+            let exprs = exprs(arg(s, "exprs")?)?;
+            fused::Step::Flat {
+                total: int(s, "total")?,
+                dtypes: dtypes(arg(s, "dtypes")?)?,
+                out_dtype: dtype(arg(s, "out_dtype")?)?,
+                kept: kept(s, exprs.len())?,
+                exprs,
+                ins: names(arg(s, "ins")?),
+                lanes: walk(arg(s, "lanes")?)?
+                    .into_iter()
+                    .map(|(i, l)| (i as usize, l))
+                    .collect(),
+                outs: names(arg(s, "outs")?),
+            }
+        }
         Some("rows") => fused::Step::Rows {
             r: int(s, "R")?,
             w: int(s, "W")?,
@@ -332,16 +355,6 @@ fn plan_list(v: &Value, m: &Machine) -> R<Vec<relayout::Plan>> {
         }
     }
     Ok(out)
-}
-
-/// `made`: operand index -> the `relayout.plan` calls making it (none when
-/// left out).
-fn made_plans(a: &Value, m: &Machine) -> R<BTreeMap<usize, Vec<relayout::Plan>>> {
-    let mut made = BTreeMap::new();
-    for (i, plans) in indexed(a.get("made").unwrap_or(&Value::Null))? {
-        made.insert(i, plan_list(plans, m)?);
-    }
-    Ok(made)
 }
 
 /// The walk pairs of a list of `relayout.plan` calls.
@@ -579,7 +592,7 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
         "reductions.column_tree_kernel" => {
             let (out, r, w) = (operand(arg(a, "out")?)?, int(a, "R")?, int(a, "W")?);
             let ops = operands(arg(a, "operands")?)?;
-            reductions::column_tree_kernel(&e("e")?, &ops, r, w, &out, &made_plans(a, m)?, m)?
+            reductions::column_tree_kernel(&e("e")?, &ops, r, w, &out, &made_reads(a, m)?, m)?
         }
         "vector.rows_kernel" => {
             let bands = a.get("bands").and_then(Value::as_i64);
@@ -667,6 +680,21 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
             )?
         }
         "fused.kernel" => fused::kernel(&fused_package(a)?, &a.to_string(), m)?,
+        "kernel.chain" => {
+            let part = |k: &str| -> R<Kernel> {
+                let p = arg(a, k)?;
+                let gen = arg(p, "gen")?.as_str().unwrap_or_default().to_string();
+                call(&gen, arg(p, "args")?, m)
+            };
+            let text = |k: &str| arg(a, k).map(|v| v.as_str().unwrap_or_default().to_string());
+            chain::kernel(
+                part("first")?,
+                part("second")?,
+                &text("from")?,
+                &text("to")?,
+                boolean(a, "keep")?,
+            )?
+        }
         "convert.copy_kernel" => convert::copy_kernel(int(a, "nbytes")?, m)?,
         "convert.walk_kernel" => convert::walk_kernel(
             int(a, "src_bytes")?,

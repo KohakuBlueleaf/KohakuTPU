@@ -19,8 +19,13 @@ from kohakutpu.application.runtime import costs
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime import rows as RW
 from kohakutpu.language import machine as MF
+from kohakutpu.language.config import ENV
 
 OP = {"sum": "add", "max": "max", "prod": "mul"}
+#: Whether a single-package tree reads its pending operands composed, else
+#: made in or before it. Off by default: a composed tree compiles in 20 s to
+#: 36 s at LeNet's shapes, which stalls LeNet's first step.
+COMPOSED = ENV.get("KTPU_COMPOSED_TREE", "0") == "1"
 
 
 def materialized(operands, R: int, views: int) -> int:
@@ -54,19 +59,34 @@ def _renumber(e, by: int):
     return e
 
 
-def _launch(dev, e, operands, R, W, out, binds, info, made=None):
-    arguments = {
+def _arguments(e, operands, R, W, out) -> dict:
+    return {
         "e": FM.generated.expr(e),
         "operands": [vars(o) for o in operands],
         "R": R,
         "W": W,
         "out": vars(out),
     }
+
+
+def _launch(dev, e, operands, R, W, out, binds, info, made=None, composed=()):
+    arguments = _arguments(e, operands, R, W, out)
     if made:
         arguments["made"] = made
+    if composed:
+        arguments["composed"] = list(composed)
     return FM.generated.launch(
         dev, "reductions.column_tree_kernel", arguments, binds, info=info
     )
+
+
+def _composed() -> bool:
+    """Whether a tree reads its pending operands composed: their steps on its
+    loads, no operand made. Decided without a compile: the kernel takes any
+    pending operand composed (`reductions::column_tree_kernel` computes e into
+    a scratch first where a level would read two composed rows twice over),
+    so only the knobs decide."""
+    return COMPOSED and FM.COMPOSED != "off"
 
 
 def column(
@@ -87,6 +107,16 @@ def column(
             out=vars(out),
             steps={i: costs.steps_recipe(v.steps) for i, v in pending.items()},
         )
+        if pending and _composed():
+            plain = {k: v for k, v in binds.items() if not isinstance(v, FM.Pending)}
+            plain["out"] = out_at
+            for i, v in pending.items():
+                plain[f"p{i}_x"] = v.steps[0].src
+            made = {str(i): [s.made_by() for s in v.steps] for i, v in pending.items()}
+            launch = _launch(
+                dev, e, operands, R, W, out, plain, info, made, sorted(pending)
+            )
+            return [launch]
         if pending and costs.choose("prepared_tree", recipe, dev.machine.board):
             plans = {i: FM.plans_of(dev, v.steps) for i, v in pending.items()}
             if all(ps is not None and ps[-1]["direct"] for ps in plans.values()):
