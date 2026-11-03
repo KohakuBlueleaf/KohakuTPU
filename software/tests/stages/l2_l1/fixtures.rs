@@ -103,6 +103,48 @@ fn a_packed_value_read_back_computes_what_its_l2_does() {
 }
 
 #[test]
+fn a_checked_pack_drains_one_record_a_core() {
+    let l1 = lowered("tests/fixtures/l2/fused", "checked_pack");
+    let runs = |image: &str| l1.matches(&format!(".{image}_")).count();
+    // One image each, run once on each core.
+    assert_eq!(runs("mx7_clear"), 1 + 2, "{l1}");
+    assert_eq!(runs("mx7_status"), 1 + 2, "{l1}");
+    assert_eq!(l1.matches("assert_zero").count(), 2, "{l1}");
+    assert_eq!(l1.matches("vmax v31, v31, s14").count(), 1, "{l1}");
+    assert!(l1.contains("vexp2d"), "{l1}");
+}
+
+/// Whether the checked-pack fixture's L2 and L1 stop with a NaN in `x`.
+fn nan_stops() -> (bool, bool) {
+    let corpus = fixtures(&["tests/fixtures/l2/fused"], Level::L2);
+    let f = corpus
+        .iter()
+        .find(|f| f.name == "checked_pack")
+        .expect("the fixture");
+    let pair = lower(f, &common::card()).expect("it lowers");
+    // Row 13, column 40: core 1's second trip.
+    let nan = |mem: &mut [u8], binds: &ktpu_sim::l1::Binds| {
+        let at = (binds["x"] + 2 * (13 * 64 + 40)) as usize;
+        mem[at..at + 2].copy_from_slice(&0x7E00u16.to_le_bytes());
+    };
+    let l2 = common::stops(&pair, false, &nan);
+    let l1 = common::stops(&pair, true, &nan);
+    assert_eq!(common::stops(&pair, true, &|_, _| {}), None);
+    (l2.is_some(), l1.is_some())
+}
+
+#[test]
+fn a_nan_in_a_checked_pack_fails_the_kernel() {
+    assert_eq!(nan_stops(), (true, true));
+    // Unclassified, the lowered kernel completes on the NaN.
+    let unchecked = ktpu::mutant::with("l2.vector/unchecked-pack", nan_stops);
+    assert_eq!(
+        unchecked.expect("a mutant this build carries"),
+        (true, false)
+    );
+}
+
+#[test]
 fn the_lowering_keeps_every_fixture() {
     let corpus = fixtures(
         &[

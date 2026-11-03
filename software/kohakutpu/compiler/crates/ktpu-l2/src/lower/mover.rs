@@ -140,7 +140,13 @@ pub fn class_copy_loop(
 ) -> Result<(Vec<String>, Vec<Access>)> {
     let st = &op.st;
     let ((dn, doff, dl), (sn, soff, sl)) = copy_walks(body, st, env, tg)?;
-    if !on("l2.mover/word-streams") {
+    // L1.MOV.019: on F-001 a register added to a write base is two words a step.
+    let looped = st.kw("node_loop").and_then(Term::as_int) != Some(2);
+    let odd_step = dl[..dl.len().saturating_sub(1)]
+        .iter()
+        .any(|&(n, s)| n > 1 && s % (2 * tg.word_bytes) != 0);
+    let unclaused = tg.mover_lead && looped && odd_step && !on("l2.mover/class-odd-step");
+    if !on("l2.mover/word-streams") || unclaused {
         let mut bulk = op.clone();
         bulk.st
             .args

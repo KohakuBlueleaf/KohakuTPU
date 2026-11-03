@@ -214,6 +214,8 @@ def from_output(dev, graph_data, output, traced=None):
             graph=graph_data,
         ),
         scratch=output.get("scratch"),
+        line_ports=tuple(output["f001"]["line_ports"]),
+        f001_split=output["f001"]["split"],
         bound=output["bound"],
         recipe_scope=(dev.recipe_epoch, dev.recipe_epoch.generation),
         native_recipe=dev.native_recipe,

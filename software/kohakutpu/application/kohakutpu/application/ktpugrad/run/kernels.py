@@ -11,7 +11,12 @@ from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.kernels import matmul as MM
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.ktpugrad import uops as U
-from kohakutpu.application.ktpugrad.launch.config import _active_scope, elide_rule
+from kohakutpu.application.ktpugrad.launch import emit as E
+from kohakutpu.application.ktpugrad.launch.config import (
+    _active_scope,
+    elide_rule,
+    fuse_mapped_enabled,
+)
 from kohakutpu.application.ktpugrad.planning import fold as F
 from kohakutpu.application.ktpugrad.planning import window as W
 from kohakutpu.application.ktpugrad.planning.lower import Access, Plan, Refused
@@ -501,20 +506,18 @@ def _rows(dev, plan: Plan, bufs) -> list:
         kernel = TR.column if kind == "down" else RW.run
         info = {"plan": plan.name, "view": kind}
         scope = _active_scope(dev)
+        staged = None
         if (
             scope is not None
             and kind == "rows"
             and not RW._reductions(expr)
             and out.kind != "row"
-            # A `forms.Pending` read is made inside its own rows kernel
-            # (`rows.run`); a multi-stage package takes only addresses.
-            and not any(isinstance(v, FM.Pending) for v in binds.values())
         ):
-            RW._whole_rows(operands, Wp)
-            ops_b, binds_b = RW._based(operands, dict(binds, out=out_at), "in")
-            (out_b,), binds_b = RW._based([out], binds_b, "out")
+            staged = _staged_rows(dev, expr, operands, binds, R, Wp, out, out_at)
+        if scope is not None and staged is not None:
+            ops_b, out_b, binds_b, made = staged
             scope.stages.append(
-                ("rows", expr, tuple(ops_b), R, Wp, out_b, dict(binds_b), info)
+                ("rows", expr, ops_b, R, Wp, out_b, binds_b, info, made)
             )
             runs += done()
             dst = FM.base_of(bufs[plan.out_slot])[0]
@@ -546,6 +549,36 @@ def _rows(dev, plan: Plan, bufs) -> list:
                     del scope.laid_cache[k]
             t.free()
     return runs
+
+
+def _staged_rows(dev, e, operands, binds, R: int, W: int, out, out_at) -> tuple | None:
+    """`(operands, out, binds, made)` of a rows stage a fused package takes,
+    every view rebased; a bound `forms.Pending` read composed (`rows.
+    composed_read`) from its source, bound as ``in{i}``. `made` is `(operand
+    -> steps, the stage's own prepared call)`, `({}, None)` with no pending
+    read. None where a pending read is not composed."""
+    RW._whole_rows(operands, W)
+    made: tuple = ({}, None)
+    if any(isinstance(v, FM.Pending) for v in binds.values()):
+        got = None
+        if FM.PREPARED and fuse_mapped_enabled():
+            got = RW.composed_read(dev, e, operands, binds, R, W, out)
+        if got is None:
+            return None
+        read, plain = got
+        solo = (read, dict(plain, out=out_at))
+        # An operand reading another's buffer again reads its source by its steps.
+        src = {int(i): plain.pop(f"x{i}") for i in read["made"]}
+        src |= {int(i): src[j] for i, j in read["alias"].items()}
+        steps = {int(i): s for i, s in read["made"].items()}
+        steps |= {int(i): steps[j] for i, j in read["alias"].items()}
+        made = (steps, solo)
+        operands = [Operand(**o) for o in read["operands"]]
+        binds = plain | {f"in{i}": a for i, a in src.items()}
+    else:
+        operands, binds = RW._based(operands, binds, "in")
+    (out,), binds = RW._based([out], dict(binds, out=out_at), "out")
+    return tuple(operands), out, binds, made
 
 
 def _uploaded(dev, plan: Plan, bufs) -> list:
@@ -656,35 +689,30 @@ def _flat(dev, plan: Plan, bufs, cores):
             at -= at % 32
         binds[f"in{i}"] = at
         dts.append("f16")
+    held = not part and (ost.dtype is not None or ost.host is not None)
     out_at, key = _out(dev, plan, bufs)
     binds["out"] = out_at
-    scope = _active_scope(dev)
-    if scope is not None:
-        scope.stages.append(
-            (
-                "flat",
-                plan.expr,
-                tuple(dts),
-                n,
-                "f16",
-                tuple(lanes),
-                dict(binds),
-                {"plan": plan.name},
-            )
-        )
-        _wrote(dev, plan, bufs, key)
-        return []
-    run = FM.generated.flat(
-        dev,
+    packs = E.packings(dev, ost, n, dict(lanes), len(dts)) if held else None
+    stage = (
+        "flat",
         plan.expr,
         tuple(dts),
         n,
-        binds,
-        info={"plan": plan.name},
-        scalars=tuple(lanes),
+        "f16",
+        tuple(lanes),
+        dict(binds),
+        {"plan": plan.name},
+        packs[:2] if packs else None,
     )
+    scope = _active_scope(dev)
+    runs = []
+    if scope is not None:
+        scope.stages.append(stage)
+    else:
+        runs.append(E._solo(dev, stage))
     _wrote(dev, plan, bufs, key)
-    return [run]
+    E.published(ost, held, packs)
+    return runs
 
 
 def _matmul(dev, plan: Plan, bufs) -> list:

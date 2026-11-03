@@ -87,7 +87,8 @@ class Trace:
         self.count = 0
         self.compiles: list[tuple] = []
         self.ended: float | None = None
-        self.row: dict = {}
+        #: Open events, innermost last, each with the host time of events nested in it.
+        self.open: list[list] = []
 
     def kernel(self, compiled) -> None:
         if compiled.name in self.kernels:
@@ -106,13 +107,26 @@ class Trace:
         with (self.out / "compiles.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps(dict(name=name, seconds=seconds)) + "\n")
 
-    def submitted(self, seconds: float) -> None:
-        """A launch's host cost goes out with it: the gap before, the submit."""
-        self.row["submit_ms"] = round(seconds * 1e3, 3)
-        self.launches.write(json.dumps(self.row) + "\n")
+    def opened(self, row: dict) -> int:
+        """`row` numbered on entry; an event opened inside another (a staged launch
+        flushed by a submit) names it as `parent`."""
+        row["seq"] = self.count
         self.count += 1
+        if self.open:
+            row["parent"] = self.open[-1][0]["seq"]
+        self.open.append([row, 0.0])
+        return row["seq"]
 
-    def launch(self, dev, compiled, binds: dict, kind: str, info, gap: float) -> None:
+    def submitted(self, seconds: float) -> None:
+        """The innermost event's host cost goes out with it: the gap before, the
+        submit less the events nested in it."""
+        row, nested = self.open.pop()
+        row["submit_ms"] = round((seconds - nested) * 1e3, 3)
+        if self.open:
+            self.open[-1][1] += seconds
+        self.launches.write(json.dumps(row) + "\n")
+
+    def launch(self, dev, compiled, binds: dict, kind: str, info, gap: float) -> int:
         self.kernel(compiled)
         phys = {p: int(dev.mmu.resolve(a)[1]) for p, a in binds.items()}
         keep = {
@@ -121,25 +135,24 @@ class Trace:
             if isinstance(v, (str, int, float, bool))
         }
         scratch = getattr(compiled, "scratch", None) or []
-        self.row = dict(
-            seq=self.count,
-            phase="capture" if dev.recording else "ordinary",
-            name=compiled.name,
-            kind=kind,
-            binds=phys,
-            scratch=sum(a["bytes"] for a in scratch),
-            info=keep,
-            gap_ms=round(gap * 1e3, 3),
+        return self.opened(
+            dict(
+                phase="capture" if dev.recording else "ordinary",
+                name=compiled.name,
+                kind=kind,
+                binds=phys,
+                scratch=sum(a["bytes"] for a in scratch),
+                info=keep,
+                gap_ms=round(gap * 1e3, 3),
+            )
         )
 
-    def replayed(self, gap: float) -> None:
+    def replayed(self, gap: float) -> int:
         """A TinyJit replay: one event, its runs each carrying its `seq`."""
-        self.row = dict(
-            seq=self.count,
-            phase="replay",
-            name="replay",
-            kind="replay",
-            gap_ms=round(gap * 1e3, 3),
+        return self.opened(
+            dict(
+                phase="replay", name="replay", kind="replay", gap_ms=round(gap * 1e3, 3)
+            )
         )
 
     def save(self, meta: dict) -> None:
@@ -214,28 +227,32 @@ def recording(trace: Trace, library: pathlib.Path | None, card: bool, prof: Prof
     replay = D.Device.replay
     compile_graph = D.Device.compile_graph
 
+    # Only a top-level event charges the gap since the last ended (a nested one
+    # is inside its parent's time); an event closes even when its submit raises.
     def on_submit(self, compiled, binds, kind="dsl", info=None):
         prof.at(trace.count)
         t0 = time.perf_counter()
-        gap, trace.ended = t0 - (trace.ended or t0), None
-        trace.launch(self, compiled, binds, kind, info, gap)
-        got = submit(self, compiled, binds, kind, info)
-        got.info["seq"] = trace.row["seq"]
-        done = time.perf_counter()
-        trace.ended = done
-        trace.submitted(done - t0)
+        gap = 0.0 if trace.open else t0 - (trace.ended or t0)
+        seq = trace.launch(self, compiled, binds, kind, info, gap)
+        try:
+            got = submit(self, compiled, binds, kind, info)
+        finally:
+            trace.ended = time.perf_counter()
+            trace.submitted(trace.ended - t0)
+        got.info["seq"] = seq
         return got
 
     def on_replay(self, log, *args, **kw):
         t0 = time.perf_counter()
-        gap, trace.ended = t0 - (trace.ended or t0), None
-        trace.replayed(gap)
-        got = replay(self, log, *args, **kw)
+        gap = 0.0 if trace.open else t0 - (trace.ended or t0)
+        seq = trace.replayed(gap)
+        try:
+            got = replay(self, log, *args, **kw)
+        finally:
+            trace.ended = time.perf_counter()
+            trace.submitted(trace.ended - t0)
         for event in got:
-            event.info["seq"] = trace.row["seq"]
-        done = time.perf_counter()
-        trace.ended = done
-        trace.submitted(done - t0)
+            event.info["seq"] = seq
         return got
 
     def on_compile(self, source):
@@ -282,6 +299,20 @@ def host_spans() -> Spans:
     spans.wrap(KTPUAllocator, "_copyout", "copyout")
     spans.wrap(D.Device, "replay", "replay")
     return spans
+
+
+def graphs_kept() -> list:
+    """Each TinyJit graph's kernel count, counts and per-call history (updated in
+    place) for `meta.json`: not the graph, whose release frees its pins."""
+    graphs: list = []
+    init = KTPUGraph.__init__
+
+    def kept(self, *a, **k):
+        init(self, *a, **k)
+        graphs.append((len(self.calls), self.counts, self.history))
+
+    KTPUGraph.__init__ = kept
+    return graphs
 
 
 def ring_open(device, ring: dict) -> None:
@@ -504,6 +535,7 @@ def main() -> int:
     prof = Profile(args.profile)
     recording(trace, args.library, args.card, prof)
     spans = host_spans()
+    graphs = graphs_kept()
     mnist_models.MODELS.update(zoo.MODELS)
     sys.argv = [str(EXAMPLES / script), *extra]
     signal.signal(signal.SIGTERM, ended)
@@ -533,6 +565,7 @@ def main() -> int:
             seconds=seconds,
             done=done,
             spans={k: dict(calls=v[0], seconds=v[1]) for k, v in spans.totals.items()},
+            graphs=[dict(kernels=k, counts=c, history=h) for k, c, h in graphs],
             profile=os.environ.get("KOHAKUTPU_PROFILE"),
             # Which paths ran: every stack knob this process saw, and the four dies'
             # clocks as `bringup read-clocks` read them before the run.

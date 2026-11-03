@@ -1,5 +1,5 @@
 {
- "schema": "8ca9a35b8d7dd23c",
+ "schema": "8c6c4f5e7a0bdb56",
  "name": "multimesh_v9t4",
  "image": "v9t4",
  "machine": {
@@ -280,7 +280,10 @@
    ],
    "launch_gap": 1649,
    "launch_front": 1900,
-   "step_cycles": 700
+   "send_cycles": 8,
+   "word_cycles": 6,
+   "image_word_cycles": 3.2,
+   "wait_cycles": 110
   },
   "mover": {
    "index_words": 256,
@@ -292,6 +295,10 @@
     9,
     1
    ],
+   "move_cycles": 640,
+   "statement_cycles": 1030,
+   "fill_cycles": 480,
+   "element_cycles": 9.6,
    "faults": {
     "F_NONE": 0,
     "F_IDXLEN": 1,
@@ -841,13 +848,20 @@
   "vc.fill_shared": "machines/measured.json:vc.fill_shared (the same fills beside a four-cluster matmul, Verilated card_v9t3_1n; no v9t6 figure yet (RUL.064))",
   "vc.launch_gap": "machines/measured.json:vc.launch_gap (idle cycles a launch adds: TG.RUN.015's read as one launch (idle 2346) and as two (idle 3995), Verilated card_v9t6_1n)",
   "vc.launch_front": "machines/measured.json:vc.launch_front (cycles a run spends outside its steps: head, copy, bind and barrier, 1707-2310 over nine kernels of 2 to 62 KB, Verilated card_v9t6_1n)",
-  "vc.step_cycles": "machines/measured.json:vc.step_cycles (cycles the node takes on a send or a load: best fit of ktpu_l2::cost over 113 kernels of LeNet, an MLP and a ViT block (600 to 800 equal), Verilated card_v9t6_1n)",
+  "vc.send_cycles": "machines/measured.json:vc.send_cycles (node cycles a vector send beyond its words: the timed model's fit to anchor send_two (software/tests/perf/anchors/node.ktpu), Verilated card_v9t6_1n)",
+  "vc.word_cycles": "machines/measured.json:vc.word_cycles (node cycles a unit word sent or a step loaded: the timed model's fit to anchors send_two and send_words, Verilated card_v9t6_1n)",
+  "vc.image_word_cycles": "machines/measured.json:vc.image_word_cycles (node cycles a program word sent to its core, once a launch: the timed model's fit to anchors long_64, long_256 and again_256, Verilated card_v9t6_1n)",
+  "vc.wait_cycles": "machines/measured.json:vc.wait_cycles (node cycles a wait on a unit, once the unit is done: the timed model's fit to anchors wait_8 and wait_32, Verilated card_v9t6_1n)",
   "mover.index_words": "src/kohakuaccel/sysnode/mover/mm_mover.v:46",
   "mover.max_index": "derived: mover.index_words x 8 indices a word",
   "mover.levels": "src/kohakuaccel/sysnode/mover/mx_tdesc.v:32",
   "mover.burst_max": "src/kohakuaccel/sysnode/mover/mm_mover.v:58",
   "mover.fifo_depth": "src/kohakuaccel/sysnode/mover/mm_mover.v:49",
   "mover.copy_cost": "machines/measured.json:mover.copy_cost (cycles a contiguous run, cycles a 32-byte word: four move-only kernels of 15000 to 39200 words at runs of 1 to 28 words, each within 2 %, Verilated card_v9t6_1n)",
+  "mover.move_cycles": "machines/measured.json:mover.move_cycles (node cycles a move statement before its first command: the timed model's fit to anchors copy_64 and copy_1024, Verilated card_v9t6_1n)",
+  "mover.statement_cycles": "machines/measured.json:mover.statement_cycles (mover cycles between two copies of a move: the timed model's fit to anchors ops_12 and ops_48, Verilated card_v9t6_1n)",
+  "mover.fill_cycles": "machines/measured.json:mover.fill_cycles (mover cycles between two fills of a move: the timed model's fit to anchor fills_12, Verilated card_v9t6_1n)",
+  "mover.element_cycles": "machines/measured.json:mover.element_cycles (mover cycles an indexed element of a gather or scatter beyond its words: the timed model's fit to anchors gather_1024 and scatter_1024, Verilated card_v9t6_1n)",
   "mover.faults": "src/kohakuaccel/sysnode/mover/mm_mover.v:134-137",
   "mover.cfgq_depth": "src/kohakuaccel/sysnode/mover/mm_mover.v:66",
   "mover.cfgq_margin": "src/kohakuaccel/sysnode/mover/mm_mover.v:68",

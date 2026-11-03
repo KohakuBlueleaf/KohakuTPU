@@ -146,7 +146,13 @@ pub fn rsqrt(a: u32) -> u32 {
 pub fn exp2d(a: u32, b: u32, tau: u32) -> (u32, bool) {
     let (x, y) = (value(a), value(b).clamp(-256.0, 255.0).floor());
     let r = (x - y).exp2();
-    (lane(r), x.abs() < 128.0 && !(r < 2f64.powi(tau as i32)))
+    // A NaN `a`, or a positive one at +inf or past 2^8, decodes to a special that
+    // latches whatever `b` is (v2_alu.v:373-374, 754).
+    let special = x.is_nan() || (x > 0.0 && exp_of(a) > 134);
+    (
+        lane(r),
+        special || (x.abs() < 128.0 && !(r < 2f64.powi(tau as i32))),
+    )
 }
 
 #[cfg(test)]

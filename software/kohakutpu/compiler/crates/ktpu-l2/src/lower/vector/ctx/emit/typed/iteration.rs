@@ -416,6 +416,8 @@ impl Ctx<'_> {
         if k == 0 {
             g.fixed(ir::sync("pack", "drain", Some(drained.clone())));
         }
+        // The last trip's read-back of these bytes is done before they are packed over.
+        g.fixed(ir::sync("pack", "unpack", None));
         let only: Vec<Arc<Node>> = ops
             .iter()
             .filter(|n| op(n).op != "pack" || op(n).target.as_deref() == Some(&target))

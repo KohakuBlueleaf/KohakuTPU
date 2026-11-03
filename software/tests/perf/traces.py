@@ -65,9 +65,12 @@ class Launch:
 
 def events(trace: pathlib.Path) -> list[dict]:
     """Every host event in order: kernel launches, and TinyJit replays (`phase`
-    "replay", each with its own gap before and publish time)."""
+    "replay", each with its own gap before and publish time). A nested event is
+    written when it ends, so before the one it ran inside: order is by `seq`."""
     rows = (trace / "launches.jsonl").read_text("utf-8").splitlines()
-    return [json.loads(line) for line in rows]
+    # Traces before launch identity carry no `seq` and nest nothing: the stable
+    # sort keeps their file order.
+    return sorted((json.loads(line) for line in rows), key=lambda r: r.get("seq", 0))
 
 
 def load(trace: pathlib.Path, machine: str) -> list[Launch]:

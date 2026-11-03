@@ -15,6 +15,9 @@ ktpu-machine.workspace = true
 rayon.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+ktpu-l2 = { workspace = true, features = ["mutants"] }
+
 [lib]
 path = "src/lib.rs"
 

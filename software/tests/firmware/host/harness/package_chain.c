@@ -2,7 +2,8 @@
  * runs a list: chained when CHAIN is set, stopped at a failure, the chain ended
  * after it. Lists are parted by "/". One line per package, status and the
  * retirements still to come when it returned; one per list, status, then clear
- * writes, peak words a unit held, GOs and retirements still to come.
+ * writes, peak words a unit held, GOs, retirements still to come, rings sent and
+ * rings dropped.
  *   package_chain ENGINE CHAIN RETIRE LOST EXTRA FILE... [/ FILE...]...
  * LOST of the list's first GOs never retire; with EXTRA, one retirement nobody
  * asked for follows the first package. */
@@ -60,7 +61,8 @@ static void run_list(char **files, int n, int chain, unsigned lost, int extra)
         bytes[i] = fread((char *)CARD + i * SLOT, 1, SLOT, f);
         fclose(f);
     }
-    dbl_gos = dbl_peak = dbl_clears = 0;
+    dbl_gos = dbl_peak = dbl_clears = dbl_ring_drops = 0;
+    unsigned rings0 = dbl_rings;
     dbl_lost = lost;
     int status = 0;
     for (int i = 0; i < n && !status; ++i) {
@@ -76,7 +78,10 @@ static void run_list(char **files, int n, int chain, unsigned lost, int extra)
         }
     }
     ka_package_unchain();
-    printf("L %d %u %u %" PRIu64 " %u\n", status, dbl_clears, dbl_peak, dbl_gos, dbl_pending());
+    for (uint64_t t0 = dbl_cycles(); dbl_cycles() - t0 < 1024;) {
+    }
+    printf("L %d %u %u %" PRIu64 " %u %u %u\n", status, dbl_clears, dbl_peak, dbl_gos,
+           dbl_pending(), dbl_rings - rings0, dbl_ring_drops);
 }
 
 int main(int argc, char **argv)

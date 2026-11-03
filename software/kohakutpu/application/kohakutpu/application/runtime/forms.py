@@ -148,6 +148,27 @@ def save_hints(learned: dict, library) -> None:
     path.write_text(json.dumps(held, indent=1, sort_keys=True), encoding="utf-8")
 
 
+#: Consumer packings by device: product site -> the `packed` form keys its
+#: consumers read (insertion-ordered), each written by the product's epilogue.
+_demands: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
+
+def demands(dev) -> dict:
+    """`dev`'s consumer packings by product site (`_demands`)."""
+    return _demands.setdefault(dev, {})
+
+
+def mm_site(expr, bt: int, m: int, n: int, k: int) -> tuple:
+    """The site of a product `expr` of `bt` [m, k] x [n, k] contractions."""
+    return ("mm", repr(expr), bt, m, n, k)
+
+
+def updated_site(st: Storage) -> tuple:
+    """The site of a buffer its writer updates in place (a parameter): the
+    buffer itself, each write the next version of the values it holds."""
+    return ("w", id(st))
+
+
 def padded(st: Storage) -> tuple | None:
     """The valid padded-rows form's key, when the row-major bytes are not."""
     if FLAT in st.valid:
@@ -460,6 +481,9 @@ COMPOSED = ENV.get("KTPU_COMPOSED", _PREPARED_DEFAULTS["composed"])
 #: Whether a whole relayout's output is left to its reader (`defer`), else
 #: written when its producer runs.
 DEFERRED = ENV.get("KTPU_DEFERRED", "1") == "1"
+#: A recorded graph's deferred form past its storage's last call: "drop"
+#: ends it unmade (`drop`), "make" makes it with the live ones at the exit.
+DEAD_DEFER = ENV.get("KTPU_DEAD_DEFER", "drop")
 
 
 def defer(dev, dst: Storage, owner: Storage, step: Step) -> None:
@@ -484,6 +508,13 @@ def defer(dev, dst: Storage, owner: Storage, step: Step) -> None:
     owner.view_refs += 1
     dst.forms[DEFER] = f
     dst.dtype = np.float16
+
+
+def drop(st: Storage) -> None:
+    """`st`'s deferred form ended unmade: nothing reads its values again."""
+    f = st.forms.pop(DEFER)
+    f.release()
+    st.valid.discard(DEFER)
 
 
 def deferred(st: Storage) -> Step | None:
@@ -651,6 +682,45 @@ def _stepped(dev, steps, holder, src, rows, cols, rp, cp, side, g, nk, batches):
     return holder.forms[key].addr
 
 
+def writer_quant(dev, key: tuple) -> dict | None:
+    """The `fused` quant step's packing (`fused::Step::Quant`) of form `key`
+    of a buffer's whole values, as `packed` launches it: rows not of whole
+    words read composed (None where that read does not lower)."""
+    _, side, src, rows, cols, rp, cp, g, nk, batches = key
+    out = {"side": side, "g": g, "nk": nk, "rp": rp, "cp": cp, "rows": rows}
+    if cols % 16 == 0:
+        recipe = costs.quant_recipe(src, rows, cols, rp, cp, side, g, nk, batches)
+        staged = costs.choose("staged_padding", recipe, dev.machine.board)
+        strategy = "staged" if staged else "native"
+        return dict(out, cols=cols, src=vars(src), pad_strategy=strategy)
+    dp = -(-cols // 16) * 16
+    laid = Operand("full", pitch=dp, rows=rows)
+    step = Step(
+        None,
+        rows * cols,
+        ((rows, cols), (cols, 1)),
+        0,
+        ((rows, dp), (cols, 1)),
+        0,
+        rows * dp,
+    )
+    composed = [made_by(step)]
+    args = _quant_call(laid, rows, dp, rp, cp, side, g, nk, batches, "native")
+    read = {
+        "gen": "matmul.quant_kernel",
+        "args": dict(args, prepared=composed, composed=[0]),
+    }
+    if not _decided(
+        "on",
+        json.dumps(read, sort_keys=True),
+        "[]",
+        generated.rs.machine_json(dev.machine),
+        generated.rs._MUTANT.get(),
+    ):
+        return None
+    return dict(out, cols=dp, src=vars(laid), composed=composed)
+
+
 def _quant_call(src, rows, cols, rp, cp, side, g, nk, batches, strategy, **more):
     """The `matmul.quant_kernel` arguments of one packing."""
     return dict(
@@ -730,6 +800,20 @@ def packed(
     n = st.nbytes // item
     # Whole rows of the buffer read (what a producer's row layout serves).
     whole_rows = src.kind == "full" and src.pitch == cols and src.offset % cols == 0
+    site = st.site[0] if st.site is not None else None
+    if (
+        site is not None
+        and batches == 1
+        and whole_rows
+        and src.offset == 0
+        and (
+            (site[0] == "mm" and (rows, cols, cp) == (site[3], site[4], site[4]))
+            or (site[0] == "w" and rows * cols * item == st.nbytes)
+        )
+    ):
+        # A product's or an updated buffer's whole values: packed by their
+        # writer from its next write.
+        demands(dev).setdefault(site, {})[key] = None
     held = _held_rows(st, src, cols)
     if held is not None:
         # Whole rows of a padded-rows form: read where they are.
@@ -931,12 +1015,14 @@ __all__ = [
     "Hints",
     "base_of",
     "compact",
+    "demands",
     "f16",
     "f16_rows",
     "for_port",
     "launch",
     "library_hints",
     "materialize_view",
+    "mm_site",
     "mx7",
     "packed",
     "padded",
@@ -947,6 +1033,7 @@ __all__ = [
     "save_hints",
     "seed_hints",
     "table",
+    "updated_site",
     "view_key",
     "viewed",
 ]

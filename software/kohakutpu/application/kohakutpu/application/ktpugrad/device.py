@@ -207,11 +207,14 @@ class KTPUGraph(GraphRunner):
         #: the verified call, replayed from an equal entry state
         self.log: Any = None
         self.counts = dict.fromkeys(("planned", "recorded", "replayed"), 0)
-        #: why each pair of consecutive records differed
-        self.misses: list = []
+        #: one line a call: planned, replayed, or recorded and why its record
+        #: did not verify (`_first_difference`)
+        self.history: list = []
         self.placement: Any = None
         #: (slot count, storages) of the last `_storages` walk
         self.named: Any = None
+        #: each storage the calls name, with the indices naming it (`_names`)
+        self.naming: Any = None
 
     def _fill(self, input_uops) -> bool:
         """Every input's host bytes into its slot; False where one has none."""
@@ -248,15 +251,17 @@ class KTPUGraph(GraphRunner):
             all_args.append(args)
             sched_items.append((runtime.plan, dict(zip(sorted(runtime.slots), args))))
         rt = self.dev.rt
+        held = self._outputs()
         can_fuse = R.horizontal_fusion_enabled() and not (
             rt.kind != "offline" and R._product.__name__ != "_product"
         )
         if not can_fuse:
+            ending = self._ending([[j] for j in range(len(self.runtimes))], held)
             for j, runtime in enumerate(self.runtimes):
                 with rt.placement_scope(self.placement if slots else None, j):
                     cast(KTPUProgram, runtime)(*all_args[j])
+                self._end(ending.get(j, ()))
             return
-        held = self._outputs()
         units: list = (
             [([j], *item) for j, item in enumerate(sched_items)]
             if held is None
@@ -271,7 +276,10 @@ class KTPUGraph(GraphRunner):
                 self.runtimes[members[0]](*all_args[members[0]])
 
         groups = R.plan_schedule([(p, by_slot) for _, p, by_slot in units])
-        for grp, dead_addrs in groups:
+        ending = self._ending(
+            [[j for unit in grp for j in units[unit][0]] for grp, _ in groups], held
+        )
+        for g, (grp, dead_addrs) in enumerate(groups):
             last_j = units[grp[-1]][0][-1]
             if len(grp) == 1:
                 with rt.placement_scope(self.placement if slots else None, last_j):
@@ -288,6 +296,46 @@ class KTPUGraph(GraphRunner):
                 ):
                     for unit in grp:
                         run_unit(unit)
+            self._end(ending.get(g, ()))
+
+    def _names(self) -> list:
+        """Each storage the calls name, with the call indices naming it
+        (`_storages`'s cache rule: the calls' buffers are fixed)."""
+        if self.naming is None:
+            named: dict = {}
+            for j, (_, _, bufs, _) in enumerate(self.calls):
+                for b in bufs:
+                    st, _ = FM.base_of(b._buf)
+                    named.setdefault(id(st), (st, set()))[1].add(j)
+            self.naming = list(named.values())
+        return self.naming
+
+    def _ending(self, order: list, held: set | None) -> dict:
+        """Position in `order` (each position the call indices it runs) ->
+        the storages whose deferred form ends unmade after it: the last
+        position running a call that names the storage (a unit composing
+        through a producer runs that producer's index again later), when
+        nothing outside the batch holds it. A form left standing would be
+        made, or restored by a replay after its release, in a later call."""
+        if held is None or FM.DEAD_DEFER != "drop":
+            return {}
+        last: dict = {}
+        for g, calls in enumerate(order):
+            for j in calls:
+                last[j] = g
+        ending: dict = {}
+        for st, calls in self._names():
+            if id(st) in held:
+                continue
+            g = max(last.get(j, len(order) - 1) for j in calls)
+            ending.setdefault(g, []).append(st)
+        return ending
+
+    @staticmethod
+    def _end(storages) -> None:
+        for st in storages:
+            if FM.DEFER in st.valid:
+                FM.drop(st)
 
     def _outputs(self) -> set | None:
         """Storages of what the captured graph returns, every tensor's (the
@@ -389,6 +437,7 @@ class KTPUGraph(GraphRunner):
         rt = self.dev.rt
         if not self._fill(input_uops):
             self.counts["planned"] += 1
+            self.history.append("planned: an input without host bytes")
             self._release_logs()
             self.prev = self.log = None
             self._plan(input_uops, slots=False)
@@ -400,6 +449,7 @@ class KTPUGraph(GraphRunner):
         entry = (self._state(storages), self._cores(cores), rt.private_state())
         if self.log is not None and entry == self.log[0]:
             self.counts["replayed"] += 1
+            self.history.append("replayed")
             runs = rt.replay(self.log[1], wait=wait or not rt.queued)
             self._restore(storages, cores)
             if any(isinstance(r, SUBMITTED) for r in runs):
@@ -414,6 +464,10 @@ class KTPUGraph(GraphRunner):
         rt.record()
         try:
             self._plan(input_uops, slots=True)
+            # What still stands deferred is live past the call: made inside
+            # the record, so no call's state holds a deferred form.
+            for st in storages:
+                st.settle()
         finally:
             log = rt.recorded()
         for i, slot in self.slots.items():
@@ -429,11 +483,17 @@ class KTPUGraph(GraphRunner):
         held = {n: c.snapshot() for n, c in cores.items()}
         got = (entry, log, exit_, (objs, held))
         reads = any(ev[0] == "read" for ev in log)
-        if not reads and self.prev is not None and got[:3] == self.prev[:3]:
+        if reads:
+            self.history.append("recorded: a host read")
+        elif self.prev is None:
+            self.history.append("recorded: first")
+        elif got[:3] == self.prev[:3]:
+            self.history.append("recorded: verified")
             self.log = got
             rt.prepare_recorded(log)
-        elif self.prev is not None:
-            self.misses.append(_first_difference(self.prev[:3], got[:3]))
+        else:
+            diff = _first_difference(self.prev[:3], got[:3])
+            self.history.append(f"recorded: {diff}")
         self.prev = None if reads else got
         if wait:
             rt.drain()

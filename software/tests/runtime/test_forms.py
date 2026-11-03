@@ -3,6 +3,7 @@
 from typing import cast
 
 import numpy as np
+import pytest
 from tinygrad.device import Buffer
 from tinygrad.engine import realize
 from tinygrad.engine.jit import TinyJit
@@ -461,6 +462,47 @@ def test_a_step_that_copies_its_input_still_replays(dev, monkeypatch):
         a = R.normal(size=(16, 32))
         close(step(tensor(a)).numpy(), np.maximum(a * 2.0, 0.0) + 1.0)
     assert graphs and graphs[-1].counts["replayed"] > 0
+
+
+@pytest.mark.parametrize("dead", ["drop", "make"])
+def test_a_step_with_a_deferred_relayout_replays(dev, monkeypatch, dead):
+    """A permute its product packs through stands deferred in each call: the
+    graph ends it at the storage's last call (or makes it in the record), so
+    no call's state holds a deferred form and the step replays."""
+    graphs, deferred = [], []
+    init, defer = KTPUGraph.__init__, FM.defer
+
+    def counted(self, *args, **kwargs):
+        graphs.append(self)
+        init(self, *args, **kwargs)
+
+    def spied(*a, **k):
+        deferred.append(a)
+        return defer(*a, **k)
+
+    monkeypatch.setattr(KTPUGraph, "__init__", counted)
+    monkeypatch.setattr(FM, "defer", spied)
+    monkeypatch.setattr(FM, "DEAD_DEFER", dead)
+    w0 = R.normal(size=(64, 32)) / 8
+    w = tensor(w0)
+
+    def permuted(h):
+        return h.reshape(4, 16, 64).permute(2, 1, 0).reshape(64, 64)
+
+    def forward(t):
+        h = (t * 2.0).relu().realize()
+        return (permuted(h).contiguous() @ w).realize()
+
+    step = TinyJit(forward)
+    # A producer emits its consumer's packing from the call after it learns
+    # the demand (`forms.demands`): one more recorded call before verifying.
+    for _ in range(8):
+        a = R.normal(size=(64, 64))
+        want = np.maximum(a * 2.0, 0.0).reshape(4, 16, 64).transpose(2, 1, 0)
+        close(step(tensor(a)).numpy(), want.reshape(64, 64) @ w0)
+    graph = graphs[-1]
+    assert deferred and graph.counts["replayed"] >= 2, graph.history
+    assert all(FM.DEFER not in st.valid for st in graph._storages())
 
 
 def test_a_replay_walks_the_batchs_buffers_once(dev, monkeypatch):

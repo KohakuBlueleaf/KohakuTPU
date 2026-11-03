@@ -100,7 +100,7 @@ pub fn lower(p: &Program, t: &Target, search: &Search) -> Result<String> {
                 StageX::Par(x) => {
                     let key = stage_key(&node_vars, x);
                     let rem = remote.get(&(n, key)).cloned().unwrap_or_default();
-                    let (lines, units, acc, segs) = par_stage(
+                    let (lines, units, acc, segs, records) = par_stage(
                         &body,
                         x,
                         t,
@@ -112,6 +112,10 @@ pub fn lower(p: &Program, t: &Target, search: &Search) -> Result<String> {
                         search,
                     )?;
                     pending.protect(&body, end_st, &acc)?;
+                    for (s, write) in &records {
+                        pending.claim(&body, &x[0].par().st, s)?;
+                        pending.record(s, std::slice::from_ref(write));
+                    }
                     let mut st = Stage::new(lines, units, acc);
                     st.group = s.tag;
                     st.segs = segs;
@@ -387,9 +391,18 @@ fn shared_image(images: &mut Vec<String>, text: &str, name: &str) -> String {
     name.to_string()
 }
 
-type ParOut = (Vec<String>, Vec<String>, Vec<Access>, Vec<Vec<String>>);
+/// The finite records a stage drains, each with its write.
+type Records = Vec<(mover::quant_status::Status, Access)>;
 
-/// `(lines, units, accesses, segments)` of one `par` stage.
+type ParOut = (
+    Vec<String>,
+    Vec<String>,
+    Vec<Access>,
+    Vec<Vec<String>>,
+    Records,
+);
+
+/// `(lines, units, accesses, segments, records)` of one `par` stage.
 #[allow(clippy::too_many_arguments)]
 fn par_stage(
     body: &Body,
@@ -421,12 +434,49 @@ fn par_stage(
     }
     if kind == "vc" {
         let (mut lines, mut units, mut acc) = (Vec::new(), Vec::new(), Vec::new());
+        // Each core's open finite record: cleared before its first checked
+        // instance, drained after its last (L2.VC.028).
+        let mut open: IndexMap<String, mover::quant_status::Status> = IndexMap::new();
+        let mut records = Vec::new();
+        let mut drain = |unit: &str,
+                         s: mover::quant_status::Status,
+                         images: &mut Vec<String>,
+                         lines: &mut Vec<String>,
+                         acc: &mut Vec<Access>| {
+            let name = format!("{}.mx7_status_{}", body.name, images.len());
+            let name = shared_image(images, &mover::quant_status::drain_image(&name), &name);
+            lines.extend([
+                format!("send {unit}"),
+                format!("{IND}run {name}({})", s.address()),
+            ]);
+            let (lo, hi) = mover::quant_status::DRAIN_L1;
+            acc.push(Access::new(unit, true, (unit, "l1"), lo, hi));
+            let write = Access::new(unit, true, ("mem", &s.name), s.offset, s.offset + s.bytes);
+            acc.push(write.clone());
+            records.push((s, write));
+        };
         for i in insts {
             let classed = i.par().st.kw("classed").is_some();
             if !classed && vector::idle(body, i.par(), &i.env)? {
                 continue;
             }
             let idx = i.index.unwrap();
+            let unit = format!("vc[{idx}]");
+            let record = vector::checked::record(body, i.par(), &i.env, t)?;
+            let kept = matches!((open.get(&unit), &record),
+                (Some(o), Some(r)) if o.name == r.name && o.offset == r.offset);
+            if !kept {
+                if let Some(s) = open.shift_remove(&unit) {
+                    drain(&unit, s, images, &mut lines, &mut acc);
+                }
+                if let Some(r) = &record {
+                    let name = format!("{}.mx7_clear_{}", body.name, images.len());
+                    let name =
+                        shared_image(images, &mover::quant_status::clear_image(&name), &name);
+                    lines.extend([format!("send {unit}"), format!("{IND}run {name}()")]);
+                    open.insert(unit.clone(), r.clone());
+                }
+            }
             let img = format!("{}_n{}_vc{idx}_{}", body.name, i.node, images.len());
             let (parts, params, got) =
                 vector::lower(body, i.par(), &i.env, &img, links, land, t, search)?;
@@ -469,8 +519,11 @@ fn par_stage(
                 lines.push(format!("{IND}run {img}({})", params.join(", ")));
             }
         }
+        for (unit, s) in std::mem::take(&mut open) {
+            drain(&unit, s, images, &mut lines, &mut acc);
+        }
         let segs = vec![lines.clone()];
-        return Ok((lines, units, acc, segs));
+        return Ok((lines, units, acc, segs, records));
     }
     if kind != "mg" {
         return Err(body.reader.fail(
@@ -514,14 +567,14 @@ fn par_stage(
         .any(|(_, s)| s.lines.iter().any(|l| l.far.is_some()));
     if !into.is_empty() || sends_far {
         let lines = added(body, &streams, &into, pst, remote, insts[0].node, t)?;
-        return Ok((lines.clone(), units, acc, vec![lines]));
+        return Ok((lines.clone(), units, acc, vec![lines], Vec::new()));
     }
     if streams
         .iter()
         .any(|(_, s)| s.lines.iter().any(|l| l.share.is_some()))
     {
         let lines = shared(body, &insts, streams, t)?;
-        return Ok((lines.clone(), units, acc, vec![lines]));
+        return Ok((lines.clone(), units, acc, vec![lines], Vec::new()));
     }
     let segs = segments(
         &streams
@@ -530,7 +583,7 @@ fn par_stage(
             .collect::<Vec<_>>(),
     );
     let lines = segs.iter().flatten().cloned().collect();
-    Ok((lines, units, acc, segs))
+    Ok((lines, units, acc, segs, Vec::new()))
 }
 
 /// Each stream's lines sent segment by segment, the units in turn.

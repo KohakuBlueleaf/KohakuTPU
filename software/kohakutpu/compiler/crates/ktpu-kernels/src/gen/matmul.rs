@@ -383,7 +383,8 @@ impl Mm {
 /// N tile the widest power-of-two block the accumulator holds, halved to at
 /// least `knobs.n_tiles` tiles, then with `knobs.waves` [`wave_tn`] of it,
 /// or with `knobs.dense_n` the widest `mg.kblock` multiple dividing N; `knobs.n_tile`
-/// picks the dense tile, the plain one, or the one [`wave_cost`] prices lower. K pads to whole blocks, or with
+/// picks the dense tile, the plain one, or the legal tile [`wave_cost`] prices
+/// lowest. K pads to whole blocks, or with
 /// `knobs.pad_k` (K past one block, blocks paired) to whole block pairs.
 #[allow(clippy::too_many_arguments)]
 pub fn plan(
@@ -437,22 +438,25 @@ pub fn plan(
         return fail("API.OP.006", format!("no product tile divides {mp} rows"));
     };
     let rows = mp;
+    // Every legal N tile for M tile `tm`, narrowest first: whole blocks dividing
+    // N that the accumulator and a bank hold, at least `knobs.n_tiles` of them.
+    let legal = move |tm: i64| {
+        (1..=n.min(hw.max_block()) / kb)
+            .map(move |x| x * kb)
+            .filter(move |&x| {
+                n % x == 0
+                    && (tm / band) * (x / band) <= hw.acc_subtiles
+                    && (x / band) * nk <= hw.bank
+                    && n / x >= knobs.n_tiles.min(n / kb)
+            })
+    };
     let tn_with = |tm: i64, dense: bool| -> R<i64> {
         let mut tn = v::block(n, hw.max_block(), &hw)?;
         while (tm / band) * (tn / band) > hw.acc_subtiles {
             tn /= 2;
         }
         if dense {
-            return Ok((1..=n.min(hw.max_block()) / kb)
-                .rev()
-                .map(|x| x * kb)
-                .find(|&x| {
-                    n % x == 0
-                        && (tm / band) * (x / band) <= hw.acc_subtiles
-                        && (x / band) * nk <= hw.bank
-                        && n / x >= knobs.n_tiles.min(n / kb)
-                })
-                .unwrap_or(tn));
+            return Ok(legal(tm).last().unwrap_or(tn));
         }
         while n / tn < knobs.n_tiles && tn / 2 >= kb && n % (tn / 2) == 0 {
             tn /= 2;
@@ -468,9 +472,11 @@ pub fn plan(
             NTile::Dense => true,
             NTile::Plain => knobs.dense_n,
             NTile::Auto => {
+                // The legal tile [`wave_cost`] prices lowest, the wider of equals.
                 let units = bt * cdiv(rows, tm);
-                let cost = |tn| wave_cost(units, n, kp, nk, tm, tn, &hw);
-                cost(tn_with(tm, true)?) < cost(tn_with(tm, false)?)
+                return Ok(legal(tm)
+                    .min_by_key(|&x| (wave_cost(units, n, kp, nk, tm, x, &hw), -x))
+                    .expect("a one-block N tile fits every M tile `max_tm` allows"));
             }
         };
         tn_with(tm, dense)
@@ -575,6 +581,49 @@ impl Side {
             Side::A => layout(&[("gm", groups), ("nk", nk)]),
             Side::B => layout(&[("gn", groups), ("nk", nk)]),
         }
+    }
+}
+
+/// A consumer's packing of the product's [M, N] output that the kernel also
+/// writes (port `q{i}` [rp, cp]): rows past M zero, as [`quant_kernel`] packs it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QDemand {
+    pub side: Side,
+    pub groups: i64,
+    pub nk: i64,
+    pub rp: i64,
+    pub cp: i64,
+}
+
+impl QDemand {
+    pub fn py(&self) -> Py {
+        Py::Obj(
+            "QDemand",
+            vec![
+                ("side", Py::str(self.side.name())),
+                ("g", Py::Int(self.groups)),
+                ("nk", Py::Int(self.nk)),
+                ("rp", Py::Int(self.rp)),
+                ("cp", Py::Int(self.cp)),
+            ],
+        )
+    }
+
+    fn port(&self, i: usize) -> R<(Port, (String, g::Spec))> {
+        self.named_port(&format!("q{i}"))
+    }
+
+    /// The packing's [rp, cp] output port `name`, in its side's layout.
+    pub(super) fn named_port(&self, name: &str) -> R<(Port, (String, g::Spec))> {
+        let (shape, dtype) = ([self.rp, self.cp], self.side.dtype());
+        let lay = self.side.layout(self.groups, self.nk);
+        Ok((
+            Port::output(name, &shape, dtype).with_layout(lay.clone()),
+            (
+                name.to_string(),
+                spec(&shape, dtype, lay, g::BufSpace::Dram)?,
+            ),
+        ))
     }
 }
 
@@ -691,7 +740,6 @@ pub fn quant_kernel_looped(
     let dtype = side.dtype();
     let lay = side.layout(groups, nk);
     if let prepared::Read::Composed(steps) = prepared {
-        let (r0, c0) = (src.offset / src.pitch, src.offset % src.pitch);
         let qs = [batches * rp, cp];
         let (mut ports, mut given) = prepared::input_ports(prepared, "p_", mach)?;
         ports.push(Port::output("q", &qs, dtype).with_layout(lay.clone()));
@@ -718,14 +766,20 @@ pub fn quant_kernel_looped(
                 prepared.py(),
             ],
         );
-        let ints = |v: &[i64]| g::Attr::Tuple(v.iter().map(|i| g::Attr::Int(*i)).collect());
-        let read = [
-            ("read_map", prepared::Read::steps(steps)),
-            ("read_shape", ints(&[src.pitch, r0, c0, rows, cols])),
-            ("read_batch", ints(&[batches, rp])),
-        ];
         return build(&key, mach, ports, given, |t, b| {
-            t.quant_mapped(&b[1].whole(), &b[0].whole(), finite, schedule, &read)
+            quant_composed(
+                t,
+                &b[1].whole(),
+                &b[0].whole(),
+                src,
+                rows,
+                cols,
+                rp,
+                batches,
+                finite,
+                schedule,
+                steps,
+            )
         });
     }
     if src.pitch <= 0
@@ -756,11 +810,6 @@ pub fn quant_kernel_looped(
         ),
         ("q".to_string(), spec(&qs, dtype, lay, g::BufSpace::Dram)?),
     ];
-    // The vector packing pads in the quant (`quant pad=1`, L2.MOV.010) and
-    // takes the schedule; the mover packs only whole views.
-    let vector = vector_packs(nk, rows != rp || cols != cp, mach);
-    let schedule_on: &[(&str, i64)] = if vector { schedule } else { &[] };
-    let scratch = staged || (!vector && (rows != rp || cols != cp));
     let mut key = vec![
         src.py(),
         Py::Int(rows),
@@ -790,13 +839,6 @@ pub fn quant_kernel_looped(
         key.push(Py::str("looped"));
     }
     let key = name("quant", key);
-    let quant = |t: &mut Trace, dst: &View, from: &View, on: &[(&str, i64)], pad: bool| {
-        if looped {
-            t.quant_looped(dst, from, finite, on, pad)
-        } else {
-            t.quant_scheduled(dst, from, finite, on, pad)
-        }
-    };
     let names: Vec<String> = ports.iter().map(|p| p.name.clone()).collect();
     let made_in: Vec<prepared::MadeInput> = if any {
         vec![prepared::MadeInput {
@@ -811,45 +853,109 @@ pub fn quant_kernel_looped(
     let built: Vec<String> = ports.iter().map(|p| p.name.clone()).collect();
     build(&key, mach, ports, given, |t, b| {
         let b = prepared::made_bufs(t, &names, &built, b, &made_in, &shapes, mach)?;
-        let (x, q) = (&b[0], &b[1]);
-        let (r0, c0) = (src.offset / src.pitch, src.offset % src.pitch);
-        if scratch {
-            let z = t.buffer(&[batches * rp, cp], g::Dtype::F16, vec![])?;
-            t.fill_value(&z.whole(), 0, None, None)?;
-            for bi in 0..batches {
-                let dst = z.at(&[sl(bi * rp, bi * rp + rows), sl(0, cols)])?;
-                let lo = r0 + bi * rows;
-                let from = x.at(&[sl(lo, lo + rows), sl(c0, c0 + cols)])?;
-                t.copy(&dst, &from, None, None)?;
-            }
-            return quant(t, &q.whole(), &z.whole(), schedule_on, false);
-        }
-        // Unpadded row blocks stack contiguously: one quant over the stack.
-        let blocks = if rows == rp { 1 } else { batches };
-        let span = batches / blocks;
-        // Checked padded blocks defer their finite status to one check at the end.
-        let record = ktpu_machine::packing::quant_status_bytes(mach.quant_cores()) / 2;
-        let status = match vector && !finite && !looped && blocks > 1 {
-            true => Some(t.buffer(&[blocks * record], g::Dtype::F16, vec![])?),
-            false => None,
-        };
-        for b in 0..blocks {
-            let dst = q.at(&[sl(b * span * rp, (b + 1) * span * rp), ALL])?;
-            let lo = r0 + b * span * rows;
-            let from = x.at(&[sl(lo, lo + span * rows), sl(c0, c0 + cols)])?;
-            match &status {
-                Some(s) => {
-                    let at = s.at(&[sl(b * record, (b + 1) * record)])?;
-                    t.quant_deferred(&dst, &from, &at, schedule_on, vector)?;
-                }
-                None => quant(t, &dst, &from, schedule_on, vector)?,
-            }
-        }
-        if let Some(s) = &status {
-            t.quant_check(&s.whole())?;
-        }
-        Ok(())
+        quant_into(
+            t, &b[0], &b[1], src, rows, cols, rp, cp, nk, batches, mach, finite, schedule, staged,
+            looped,
+        )
     })
+}
+
+/// `batches` [rows, cols] blocks of `x` read through the composed `steps`
+/// packed into `q` as [`quant_kernel_looped`] packs them (L2.READ.001).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn quant_composed(
+    t: &mut Trace,
+    q: &View,
+    x: &View,
+    src: &Operand,
+    rows: i64,
+    cols: i64,
+    rp: i64,
+    batches: i64,
+    finite: bool,
+    schedule: &[(&str, i64)],
+    steps: &[super::relayout::Logical],
+) -> R<()> {
+    let (r0, c0) = (src.offset / src.pitch, src.offset % src.pitch);
+    let ints = |v: &[i64]| g::Attr::Tuple(v.iter().map(|i| g::Attr::Int(*i)).collect());
+    let read = [
+        ("read_map", prepared::Read::steps(steps)),
+        ("read_shape", ints(&[src.pitch, r0, c0, rows, cols])),
+        ("read_batch", ints(&[batches, rp])),
+    ];
+    t.quant_mapped(q, x, finite, schedule, &read)
+}
+
+/// `batches` [rows, cols] blocks of `x` ([rows of `src.pitch`], `src` their
+/// first) packed into `q` ([batches * rp, cp]) as [`quant_kernel_looped`]
+/// packs them: `staged` always through a zeroed scratch.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn quant_into(
+    t: &mut Trace,
+    x: &Buf,
+    q: &Buf,
+    src: &Operand,
+    rows: i64,
+    cols: i64,
+    rp: i64,
+    cp: i64,
+    nk: i64,
+    batches: i64,
+    mach: &Machine,
+    finite: bool,
+    schedule: &[(&str, i64)],
+    staged: bool,
+    looped: bool,
+) -> R<()> {
+    // The vector packing pads in the quant (`quant pad=1`, L2.MOV.010) and
+    // takes the schedule; the mover packs only whole views.
+    let vector = vector_packs(nk, rows != rp || cols != cp, mach);
+    let schedule_on: &[(&str, i64)] = if vector { schedule } else { &[] };
+    let scratch = staged || (!vector && (rows != rp || cols != cp));
+    let quant = |t: &mut Trace, dst: &View, from: &View, on: &[(&str, i64)], pad: bool| {
+        if looped {
+            t.quant_looped(dst, from, finite, on, pad)
+        } else {
+            t.quant_scheduled(dst, from, finite, on, pad)
+        }
+    };
+    let (r0, c0) = (src.offset / src.pitch, src.offset % src.pitch);
+    if scratch {
+        let z = t.buffer(&[batches * rp, cp], g::Dtype::F16, vec![])?;
+        t.fill_value(&z.whole(), 0, None, None)?;
+        for bi in 0..batches {
+            let dst = z.at(&[sl(bi * rp, bi * rp + rows), sl(0, cols)])?;
+            let lo = r0 + bi * rows;
+            let from = x.at(&[sl(lo, lo + rows), sl(c0, c0 + cols)])?;
+            t.copy(&dst, &from, None, None)?;
+        }
+        return quant(t, &q.whole(), &z.whole(), schedule_on, false);
+    }
+    // Unpadded row blocks stack contiguously: one quant over the stack.
+    let blocks = if rows == rp { 1 } else { batches };
+    let span = batches / blocks;
+    // Checked padded blocks defer their finite status to one check at the end.
+    let record = ktpu_machine::packing::quant_status_bytes(mach.quant_cores()) / 2;
+    let status = match vector && !finite && !looped && blocks > 1 {
+        true => Some(t.buffer(&[blocks * record], g::Dtype::F16, vec![])?),
+        false => None,
+    };
+    for b in 0..blocks {
+        let dst = q.at(&[sl(b * span * rp, (b + 1) * span * rp), ALL])?;
+        let lo = r0 + b * span * rows;
+        let from = x.at(&[sl(lo, lo + span * rows), sl(c0, c0 + cols)])?;
+        match &status {
+            Some(s) => {
+                let at = s.at(&[sl(b * record, (b + 1) * record)])?;
+                t.quant_deferred(&dst, &from, &at, schedule_on, vector)?;
+            }
+            None => quant(t, &dst, &from, schedule_on, vector)?,
+        }
+    }
+    if let Some(s) = &status {
+        t.quant_check(&s.whole())?;
+    }
+    Ok(())
 }
 
 /// `batches` [rows, cols] blocks walked from `x` (`src_bytes` bytes) by
@@ -973,16 +1079,99 @@ fn quant_a(t: &mut Trace, dst: &View, src: &View, padded: bool, status: Option<&
     }
 }
 
-/// The epilogue's column block: the widest of GT4 blocks dividing the
-/// tile's width whose trip of `quantum` rows fits the L1.
-fn epilogue_block(mm: &Mm, operands: &[Operand], out: &Operand, hw: &Hw) -> i64 {
+/// The epilogue's column block: the widest of `chunk`-column blocks dividing
+/// the tile's width whose trip of `quantum` rows fits the L1.
+fn epilogue_block(mm: &Mm, operands: &[Operand], out: &Operand, chunk: i64, hw: &Hw) -> i64 {
     let need = mm.quantum / hw.band;
-    (1..=mm.tn / hw.kblock)
+    (1..=mm.tn / chunk)
         .rev()
-        .map(|k| k * hw.kblock)
+        .map(|k| k * chunk)
         .filter(|w| mm.tn % w == 0)
         .find(|w| v::bands_fit(operands, out.kind, *w, hw) >= need)
         .unwrap_or(hw.kblock)
+}
+
+/// What the kernel for `mm` lays out: the epilogue's operands (the product
+/// first), column block, plan, ring and the ring's trip segments.
+struct Laid {
+    operands: Vec<Operand>,
+    wc: i64,
+    pl: v::Plan,
+    ring: Ring,
+    segs: Vec<(i64, i64, v::Plan)>,
+}
+
+/// [`Laid`] for `mm` (`e` as computed): with demands, blocks whole chunks of
+/// each demand's K blocks and trips of one band ([`ring::packs`]).
+#[allow(clippy::too_many_arguments)]
+fn laid(
+    mm: &Mm,
+    e: &E,
+    extras: &[Operand],
+    out: &Operand,
+    knobs: &Knobs,
+    mach: &Machine,
+    demands: &[QDemand],
+) -> R<Laid> {
+    let hw = Hw::of(mach);
+    let mut operands = vec![Operand {
+        kind: Kind::Tile,
+        pitch: mm.n,
+        rows: mm.bt * mm.mp,
+        ..Operand::new(Kind::Tile)
+    }];
+    operands.extend_from_slice(extras);
+    let chunk = hw.kblock * demands.iter().map(|d| d.nk).max().unwrap_or(1);
+    let wc = epilogue_block(mm, &operands, out, chunk, &hw);
+    let bands = epilogue_bands(mm, &operands, out, wc, &hw)?;
+    let pl = v::plan(
+        &operands,
+        out.kind,
+        mm.m,
+        mm.n,
+        Some(bands),
+        Some(wc),
+        mm.quantum,
+        &hw,
+    )?;
+    let ring = ring::resolve(mm, e, out, knobs, mach);
+    let most = (!demands.is_empty()).then_some(hw.band);
+    let segs = match ring.depth > 0 {
+        true => ring::segments(mm, &ring, &operands, out, wc, most, &hw)?,
+        false => vec![],
+    };
+    Ok(Laid {
+        operands,
+        wc,
+        pl,
+        ring,
+        segs,
+    })
+}
+
+/// Whether the kernel for `mm` writes every one of `demands`: one batch through
+/// the ring into a full output, each packed there ([`ring::packs`]).
+#[allow(clippy::too_many_arguments)]
+pub fn packs_demands(
+    mm: &Mm,
+    e: &E,
+    extras: &[Operand],
+    out: &Operand,
+    knobs: &Knobs,
+    mach: &Machine,
+    demands: &[QDemand],
+) -> R<bool> {
+    if demands.is_empty() {
+        return Ok(true);
+    }
+    let hw = Hw::of(mach);
+    let l = laid(mm, &computed(e, knobs), extras, out, knobs, mach, demands)?;
+    Ok(l.ring.depth > 0
+        && mm.bt == 1
+        && out.kind == Kind::Full
+        && demands
+            .iter()
+            .all(|d| ring::packs(mm, &l.ring, &l.segs, l.wc, d, &hw)))
 }
 
 /// Bands a trip: the most that fit the L1 whose rows divide the tile, in
@@ -1005,7 +1194,7 @@ fn epilogue_bands(mm: &Mm, operands: &[Operand], out: &Operand, wc: i64, hw: &Hw
 
 /// The kernel for `mm` (API.OP.005, .007): ports `a` (mx7a), `b` (mx7b),
 /// `in1..` the epilogue's operands (`Load(i)`), `out`. A batch's product
-/// tiles, then its epilogue, a batch at a time; with `knobs.batch_tiles`
+/// tiles, then its epilogue, a batch at a time; where [`batches_tiles`]
 /// every batch's tiles at once, then each batch's epilogue; with a ring
 /// ([`ring::resolve`]) through `@stage` slots. Where it takes A as f16
 /// ([`takes_f16`]) port `a` is the f16 [bt * m, K], quantised in the kernel.
@@ -1018,11 +1207,12 @@ pub fn mm_kernel(
     knobs: &Knobs,
     mach: &Machine,
 ) -> R<Kernel> {
-    mm_kernel_made(mm, e, extras, out, knobs, mach, &BTreeMap::new())
+    mm_kernel_made(mm, e, extras, out, knobs, mach, &BTreeMap::new(), &[])
 }
 
-/// [`mm_kernel`] with epilogue operand i of `made` read inside the kernel
-/// by its [`prepared::Read`] (ports `p{i}_*` for `in{i}`).
+/// [`mm_kernel`] with operand i of `made` read in the kernel by its
+/// [`prepared::Read`] (ports `p{i}_*`), demand i written into port `q{i}`.
+#[allow(clippy::too_many_arguments)]
 pub fn mm_kernel_made(
     mm: &Mm,
     e: &E,
@@ -1031,43 +1221,35 @@ pub fn mm_kernel_made(
     knobs: &Knobs,
     mach: &Machine,
     made: &BTreeMap<usize, prepared::Read>,
+    demands: &[QDemand],
 ) -> R<Kernel> {
+    if !packs_demands(mm, e, extras, out, knobs, mach, demands)? {
+        return fail(
+            "API.OP.007",
+            "a product writes its consumers' packings from one batch through the ring",
+        );
+    }
     let cse = takes_cse(e, knobs);
     let e = &computed(e, knobs);
     let hw = Hw::of(mach);
     let (clusters, cores) = (hw.mg, hw.vc);
     let (ntm, ntn) = (mm.mp / mm.tm, mm.n / mm.tn);
     let tiles = ntm * ntn;
-    let batched = knobs.batch_tiles && mm.bt > 1;
+    let batched = batches_tiles(mm, knobs, clusters);
     let lay_a = Side::A.layout(mm.tm / hw.band, mm.nk);
     let lay_b = Side::B.layout(mm.tn / hw.band, mm.nk);
     let nb_rows = if mm.shared { mm.n } else { mm.bt * mm.n };
-    let mut operands = vec![Operand {
-        kind: Kind::Tile,
-        pitch: mm.n,
-        rows: mm.bt * mm.mp,
-        ..Operand::new(Kind::Tile)
-    }];
-    operands.extend_from_slice(extras);
-    let wc = epilogue_block(mm, &operands, out, &hw);
-    let bands = epilogue_bands(mm, &operands, out, wc, &hw)?;
-    let pl = v::plan(
-        &operands,
-        out.kind,
-        mm.m,
-        mm.n,
-        Some(bands),
-        Some(wc),
-        mm.quantum,
-        &hw,
-    )?;
-    let ring = ring::resolve(mm, e, out, knobs, mach);
-    let (segs, rows) = if ring.depth > 0 {
-        let segs = ring::segments(mm, &ring, &operands, out, wc, &hw)?;
-        let rows = (mm.bt - 1) * mm.mp + ring::cover(mm, &ring, &segs);
-        (segs, rows)
+    let Laid {
+        operands,
+        pl,
+        ring,
+        segs,
+        ..
+    } = laid(mm, e, extras, out, knobs, mach, demands)?;
+    let rows = if ring.depth > 0 {
+        (mm.bt - 1) * mm.mp + ring::cover(mm, &ring, &segs)
     } else {
-        (vec![], mm.bt * pl.rp)
+        mm.bt * pl.rp
     };
     let f16 = takes_f16(mm.k, mm.nk, knobs, mach);
     let (sa, sb) = ([mm.bt * mm.mp, mm.kp], [nb_rows, mm.kp]);
@@ -1102,6 +1284,11 @@ pub fn mm_kernel_made(
         "out".to_string(),
         spec(&os, out.dtype, vec![], g::BufSpace::Dram)?,
     ));
+    for (i, d) in demands.iter().enumerate() {
+        let (port, s) = d.port(i)?;
+        ports.push(port);
+        given.push(s);
+    }
     let mut key_args = vec![
         mm.py(),
         Py::Str(expr::py(e).repr()),
@@ -1126,6 +1313,9 @@ pub fn mm_kernel_made(
     }
     if !made.is_empty() {
         key_args.push(prepared::made_key(made));
+    }
+    if !demands.is_empty() {
+        key_args.push(Py::Tuple(demands.iter().map(QDemand::py).collect()));
     }
     let key = name("mm", key_args);
     let names: Vec<String> = ports.iter().map(|p| p.name.clone()).collect();
@@ -1198,7 +1388,7 @@ pub fn mm_kernel_made(
         }
         let b = &quantised[..];
         if ring.depth > 0 {
-            return ring::schedule(t, b, mm, e, extras, out, &ring, &segs, mach);
+            return ring::schedule(t, b, mm, e, extras, out, &ring, &segs, demands, mach);
         }
         let tile = vec![(
             "tile".to_string(),
@@ -1220,12 +1410,21 @@ pub fn mm_kernel_made(
     })
 }
 
+/// Whether a product without a ring runs every batch's tiles at once: with
+/// `knobs.batch_tiles`, or where that takes fewer waves of `clusters` than
+/// batch by batch (a batch's tiles underfill the clusters).
+pub fn batches_tiles(mm: &Mm, knobs: &Knobs, clusters: i64) -> bool {
+    let tiles = (mm.mp / mm.tm) * (mm.n / mm.tn);
+    let fewer = cdiv(mm.bt * tiles, clusters) < mm.bt * cdiv(tiles, clusters);
+    mm.bt > 1 && (knobs.batch_tiles || fewer)
+}
+
 /// `knobs` as the kernel for `mm`, epilogue `e` into `out` takes them on
 /// `mach`: a kernel knob that leaves the kernel unchanged is off.
 pub fn effective(mm: &Mm, e: &E, out: &Operand, knobs: &Knobs, mach: &Machine) -> Knobs {
     let r = ring::resolve(mm, &computed(e, knobs), out, knobs, mach);
     Knobs {
-        batch_tiles: knobs.batch_tiles && mm.bt > 1 && r.depth == 0,
+        batch_tiles: batches_tiles(mm, knobs, Hw::of(mach).mg) && r.depth == 0,
         ring_depth: r.depth,
         split_vc: r.parts > 1,
         tail_bands: r.tail_bands,

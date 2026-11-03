@@ -204,7 +204,7 @@ def measure(args):
                 ),
                 phases=dict(phases.totals),
                 profile=stream.getvalue(),
-                graphs=[dict(counts=g.counts, misses=g.misses[-3:]) for g in graphs],
+                graphs=[dict(counts=g.counts, history=g.history) for g in graphs],
                 output=output,
                 numeric_execution=args.device != "offline",
                 environment={

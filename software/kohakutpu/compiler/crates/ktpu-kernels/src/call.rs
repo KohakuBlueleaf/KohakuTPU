@@ -138,20 +138,57 @@ pub fn mm_plan(a: &Value, m: &Machine) -> R<matmul::Mm> {
     )
 }
 
-/// A `matmul.mm_kernel` call's kernel knobs as its kernel takes them
-/// (`matmul::effective`), and whether that is the kernel of none.
+/// A `matmul.mm_kernel` call's `q`: each consumer packing `{side, g, nk, rp, cp}`.
+fn demands(a: &Value) -> R<Vec<matmul::QDemand>> {
+    let list = a.get("q").and_then(Value::as_array);
+    list.map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .map(demand)
+        .collect()
+}
+
+fn demand(d: &Value) -> R<matmul::QDemand> {
+    Ok(matmul::QDemand {
+        side: quant_side(d)?,
+        groups: int(d, "g")?,
+        nk: int(d, "nk")?,
+        rp: int(d, "rp")?,
+        cp: int(d, "cp")?,
+    })
+}
+
+/// Whether a packed fused rows step over `R` x `W` of `operands` into `outs`
+/// outputs writes every packing `q` names ([`fused::packed_block`]).
+pub fn fused_packs(a: &Value, m: &Machine) -> R<bool> {
+    let block = fused::packed_block(
+        &operands(arg(a, "operands")?)?,
+        int(a, "outs")? as usize,
+        int(a, "R")?,
+        int(a, "W")?,
+        &demands(a)?,
+        &Hw::of(m),
+    );
+    Ok(block.is_some())
+}
+
+/// A `matmul.mm_kernel` call's kernel knobs as its kernel takes them, whether
+/// that is the kernel of none, and whether it writes every packing `q` names.
 pub fn mm_resolved(a: &Value, m: &Machine) -> R<Value> {
     let mm = mm_plan(made_by(arg(a, "mm")?, "matmul.plan")?, m)?;
     let e = expr::from_table(arg(a, "e")?)?;
     let knobs = matmul::unrecorded().read(a, matmul::Group::Kernel)?;
-    let got = matmul::effective(&mm, &e, &operand(arg(a, "out")?)?, &knobs, m);
+    let out = operand(arg(a, "out")?)?;
+    let extras = operands(a.get("extras").unwrap_or(&Value::Null))?;
+    let q = matmul::packs_demands(&mm, &e, &extras, &out, &knobs, m, &demands(a)?)?;
+    let got = matmul::effective(&mm, &e, &out, &knobs, m);
     let plain = got.args(matmul::Group::Kernel) == matmul::unrecorded().args(matmul::Group::Kernel);
     let knobs: serde_json::Map<String, Value> = got
         .args(matmul::Group::Kernel)
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
         .collect();
-    Ok(serde_json::json!({"knobs": knobs, "plain": plain}))
+    Ok(serde_json::json!({"knobs": knobs, "plain": plain, "q": q}))
 }
 
 /// Whether a contraction of `a`'s `k` and `nk` takes A as f16 under the
@@ -305,6 +342,44 @@ fn fused_step(s: &Value) -> R<fused::Step> {
             ins: names(arg(s, "ins")?),
             out_operands: operands(arg(s, "out_operands")?)?,
             outs: names(arg(s, "outs")?),
+            made: indexed(s.get("made").unwrap_or(&Value::Null))?
+                .into_iter()
+                .map(|(i, steps)| Ok((i, prepared::Read::Composed(logical_list(steps)?))))
+                .collect::<R<_>>()?,
+        },
+        Some("packed") => fused::Step::Packed {
+            r: int(s, "R")?,
+            w: int(s, "W")?,
+            exprs: exprs(arg(s, "exprs")?)?,
+            operands: operands(arg(s, "operands")?)?,
+            ins: names(arg(s, "ins")?),
+            outs: names(arg(s, "outs")?),
+            packs: arg(s, "packs")?
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .map(|p| {
+                    Ok(fused::Packing {
+                        member: int(p, "member")? as usize,
+                        port: text(p, "port")?,
+                        demand: demand(p)?,
+                    })
+                })
+                .collect::<R<_>>()?,
+        },
+        Some("quant") => fused::Step::Quant {
+            src: text(s, "x")?,
+            operand: operand(arg(s, "src")?)?,
+            rows: int(s, "rows")?,
+            cols: int(s, "cols")?,
+            demand: demand(s)?,
+            port: text(s, "port")?,
+            staged: s.get("pad_strategy").and_then(Value::as_str) == Some("staged"),
+            composed: match s.get("composed") {
+                Some(steps) => Some(logical_list(steps)?),
+                None => None,
+            },
         },
         Some("copy") => fused::Step::Copy {
             src: text(s, "src")?,
@@ -677,6 +752,7 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
                 &knobs,
                 m,
                 &made_reads(a, m)?,
+                &demands(a)?,
             )?
         }
         "fused.kernel" => fused::kernel(&fused_package(a)?, &a.to_string(), m)?,

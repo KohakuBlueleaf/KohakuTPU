@@ -22,9 +22,9 @@ Each handling reads its flaw's `present` and nothing else:
 
 | Flaw | Handling | Reads |
 |---|---|---|
-| F-001 | ktpu-l2 `lower/mover/burst.rs` `burst_safe`: a mover command is proven free of a chained one-beat write burst when it writes one word, or when every destination run starts an even word from a write-line-aligned base and holds an even number of words (every burst even at any page offset). ktpu-l2 `lower/mover/lone.rs` (L2.MOV.020): a copy with an unproven command runs on the vector cores; `passes/stage.rs` (L2.PASS.001): a gather or scatter stepping one-word runs on both sides, and a gather of even-word rows into an unproven walk, goes through a contiguous scratch. The runtime refuses a bind off a write line (`device/submission.py` `unaligned`), the base the proof assumes. Still exposed: a die without vector cores keeps an unproven copy on the mover; a gather of odd-word rows into an unproven walk and a scatter of rows the proof does not cover stay on the mover (no e1 kernel has one: all 370 indexed statements have even rows at 64-byte pitches). | `Target::mover_lead`; runtime `burst_line` |
+| F-001 | One proof, ktpu-l1 `flaw.rs` (L1.MOV.019): every encoded copy, gather and scatter is free (one word), proven from a write-line base (every destination run an even number of words starting an even word from it, every burst even at any page offset), or unproven, and an unproven one is split into commands each free or proven; a register count in an unproven command is refused, and a register added to a write base steps two words. The L2 lowering reads the same proof first and keeps its cheaper handlings: `lower/mover/lone.rs` (L2.MOV.020) runs a copy with an unproven command on the vector cores; `passes/stage.rs` (L2.PASS.001) sends a gather or scatter stepping one-word runs on both sides, and a gather of even-word rows into an unproven walk, through a contiguous scratch. Each compile names the parameters a proven command's base lies in (`f001.line_ports`); the runtime refuses only those bound off a write line (`device/submission.py` `unaligned`). Not covered: mover fields a class template patches at bind (`templates/proof_mover.rs`) are not proved against F-001. | `Target::mover_lead`; ktpu-l1 `flaws.f001`; runtime `burst_line` |
 | F-002 | ktpu-l1 `lower/image/desc.rs` `far_splits` (L1.VC.010) | `CoreFacts::il_tail` |
-| F-003 | ka-package `engine.rs` `lowered`: every RING stays a step; `replay.rs` refuses an engine RING entry (RUL.046). The firmware's `de_step` and the OS's `k_de_stream` run every RING through the room wait once the engine's queue has issued (firmware `ring`, OS `k_ring_word`), so one count covers every ring the node sends. | `Facts::ring_unheld`; firmware and OS on every image |
+| F-003 | ka-package `engine.rs` `lowered`: every RING stays a step; `replay.rs` refuses an engine RING entry (RUL.046). The firmware's `de_step` and the OS's `k_de_stream` run every RING through the room wait once the engine's queue has issued (firmware `ring`, OS `k_ring_word`), and the firmware's `de_stream` holds a raw ENGINE RING entry, and `pairs` a CTRL step's write to the interlink RING register, on the same wait and counts it (`ring_room`), so one count covers every ring the node sends. | `Facts::ring_unheld`; firmware and OS on every image |
 | F-004 | ka-package `engine.rs` `Stream::wait` | `Facts::wait_window` |
 | F-005, F-006, F-007 | KohakuAccel OS (`software/os`), firmware (F-007) | not machine-keyed |
 
@@ -34,8 +34,10 @@ Each flaw's witness bench asserts the flaw as recorded, so it fails on a
 simulation model that does not show it (the old Verilator FIFO stand-in) and on
 an RTL that fixes it. Each compile-path handling has a test that it fires on a
 machine with its flaw and does not without it: `tests/logic/test_flaws.py`
-(F-001: `lone`, `pagetail`, `oddrows` and the bind refusal), ktpu-l2
-`lower/mover/burst.rs` tests (the proof), `tests/logic/test_far_split.py` (F-002), ka-package `engine.rs`
+(F-001: `lone`, `pagetail`, `oddrows`, the split backstop, the class loop and
+the per-port bind rule), ktpu-l1 `flaw.rs` tests (the proof and the split,
+word for word), `tests/firmware/host/test_package_chain.py` (F-003's raw
+ENGINE RINGs), `tests/logic/test_far_split.py` (F-002), ka-package `engine.rs`
 `rings_leave_the_engine_only_for_f003`,
 `an_engine_ring_is_refused_only_for_f003` and
 `without_f004_a_far_behind_wait_keeps_its_target`. On the card, F-003's handling

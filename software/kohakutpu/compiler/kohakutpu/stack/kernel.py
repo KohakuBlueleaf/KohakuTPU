@@ -40,6 +40,10 @@ class Compiled:
     level: str = "l2"
     bound: str | None = None
     scratch: list | None = None
+    #: F-001 (L1.MOV.019): the parameters whose binding must start on a DRAM
+    #: write line, and the mover commands the split made of unproven ones.
+    line_ports: tuple = ()
+    f001_split: int = 0
     _progs: dict = field(default_factory=dict, repr=False, compare=False)
     _meta: tuple | None = field(default=None, init=False, repr=False, compare=False)
     _recipes: dict = field(default_factory=dict, init=False, repr=False, compare=False)
@@ -224,6 +228,8 @@ def compile(source, name=None, machine=None, level="l2"):
         level=level,
         bound=rust["bound"],
         scratch=rust.get("scratch"),
+        line_ports=tuple(rust["f001"]["line_ports"]),
+        f001_split=rust["f001"]["split"],
         recipe_scope=scope,
         native_recipe=native_recipe,
         wire_recipe=wire_recipe,

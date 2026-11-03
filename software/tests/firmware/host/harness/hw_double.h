@@ -13,6 +13,8 @@ extern unsigned dbl_windows[4];
 /* Cycles from a GO to its word's retirement; the next GOs that never retire; the
  * most words any one unit held unretired; writes of the engine's clear bit. */
 extern unsigned dbl_retire, dbl_lost, dbl_peak, dbl_clears;
+/* Rings the interlink sent, and rings it dropped with KA_IL_RING_DEPTH queued. */
+extern unsigned dbl_rings, dbl_ring_drops;
 
 uint64_t dbl_cycles(void);
 /* A retirement from (x, y) that no word of this node asked for. */

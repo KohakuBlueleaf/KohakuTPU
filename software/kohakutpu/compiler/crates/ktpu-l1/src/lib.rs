@@ -3,6 +3,7 @@
 
 pub mod build;
 pub mod error;
+pub mod flaw;
 pub mod layout;
 pub mod lower;
 pub mod mutant;

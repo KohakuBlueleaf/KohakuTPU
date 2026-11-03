@@ -157,6 +157,18 @@ pub struct NodeReader<'a> {
     pub configs: HashMap<Xy, BTreeMap<u32, u32>>,
     /// The scratch register patches compute in; a program names those below.
     pub tmp: u64,
+    /// F-001 (L1.MOV.019): each mover write base the proof holds from on a
+    /// write line, and the commands the split made.
+    pub f001: F001,
+}
+
+/// What a program's mover writes ask of F-001's handling (L1.MOV.019).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct F001 {
+    /// Write bases (bound addresses) whose proof needs the buffer on a line.
+    pub line_bases: Vec<i64>,
+    /// Commands the split made of commands the proof did not hold for.
+    pub split: usize,
 }
 
 impl<'a> NodeReader<'a> {
@@ -182,6 +194,7 @@ impl<'a> NodeReader<'a> {
             resident: HashMap::new(),
             configs: HashMap::new(),
             tmp: target.machine.fw.package.regs as u64 - 1,
+            f001: F001::default(),
         })
     }
 

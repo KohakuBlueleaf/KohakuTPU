@@ -369,19 +369,42 @@ impl Trace {
     /// 16 a word; its `[R, 32]` form is not made (RUL.030).
     #[track_caller]
     pub fn pack(&mut self, x: V, dtype: g::Dtype, gt4: bool) -> R<V> {
+        self.pack_status(x, dtype, gt4, None)
+    }
+
+    /// `qN = pack X status=STATUS : DTYPE` (L2.VC.028): an MXFP7 pack whose
+    /// non-finite value fails the kernel at the `quant_check` of `status`.
+    #[track_caller]
+    pub fn pack_checked(&mut self, x: V, dtype: g::Dtype, status: &View) -> R<V> {
+        self.pack_status(x, dtype, true, Some(status))
+    }
+
+    #[track_caller]
+    fn pack_status(&mut self, x: V, dtype: g::Dtype, gt4: bool, status: Option<&View>) -> R<V> {
         let at = here();
         self.need(Some(g::UnitKind::Vc), "pack")?;
         let xv = self.value(x).clone();
         let args = vec![self.value_arg(x)];
-        if matches!(dtype, g::Dtype::Mx7a | g::Dtype::Mx7b) {
+        let mx7 = matches!(dtype, g::Dtype::Mx7a | g::Dtype::Mx7b);
+        if status.is_some() && !mx7 {
+            return fail(
+                "DSL.VEC.032",
+                format!("a checked pack packs MXFP7, at {at}"),
+            );
+        }
+        if mx7 {
             if xv.mode != Some(g::Mode::Gt4) {
                 return fail(
                     "DSL.VEC.032",
                     format!("an MXFP7 pack takes GT4 rows (4 x 32 blocks), at {at}"),
                 );
             }
+            let kw = status
+                .map(|s| ("status".to_string(), g::Attr::View(s.graph())))
+                .into_iter()
+                .collect();
             let ty = (dtype, xv.shape.clone(), g::ValSpace::L1, None);
-            return Ok(self.new_value(Op::Pack, args, vec![], ty, "q", None, at));
+            return Ok(self.new_value(Op::Pack, args, kw, ty, "q", None, at));
         }
         if xv.stat() {
             if gt4 && crate::mutants::on("kernels.vector/stat_rows_form") {

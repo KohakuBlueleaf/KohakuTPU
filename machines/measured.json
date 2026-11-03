@@ -15,9 +15,21 @@
     "value": 1900,
     "source": "cycles a run spends outside its steps: head, copy, bind and barrier, 1707-2310 over nine kernels of 2 to 62 KB, Verilated card_v9t6_1n"
   },
-  "vc.step_cycles": {
-    "value": 700,
-    "source": "cycles the node takes on a send or a load: best fit of ktpu_l2::cost over 113 kernels of LeNet, an MLP and a ViT block (600 to 800 equal), Verilated card_v9t6_1n"
+  "vc.send_cycles": {
+    "value": 8,
+    "source": "node cycles a vector send beyond its words: the timed model's fit to anchor send_two (software/tests/perf/anchors/node.ktpu), Verilated card_v9t6_1n"
+  },
+  "vc.word_cycles": {
+    "value": 6,
+    "source": "node cycles a unit word sent or a step loaded: the timed model's fit to anchors send_two and send_words, Verilated card_v9t6_1n"
+  },
+  "vc.image_word_cycles": {
+    "value": 3.2,
+    "source": "node cycles a program word sent to its core, once a launch: the timed model's fit to anchors long_64, long_256 and again_256, Verilated card_v9t6_1n"
+  },
+  "vc.wait_cycles": {
+    "value": 110,
+    "source": "node cycles a wait on a unit, once the unit is done: the timed model's fit to anchors wait_8 and wait_32, Verilated card_v9t6_1n"
   },
   "mg.shared_b_max": {
     "value": 64,
@@ -26,5 +38,21 @@
   "mover.copy_cost": {
     "value": [9, 1],
     "source": "cycles a contiguous run, cycles a 32-byte word: four move-only kernels of 15000 to 39200 words at runs of 1 to 28 words, each within 2 %, Verilated card_v9t6_1n"
+  },
+  "mover.move_cycles": {
+    "value": 640,
+    "source": "node cycles a move statement before its first command: the timed model's fit to anchors copy_64 and copy_1024, Verilated card_v9t6_1n"
+  },
+  "mover.statement_cycles": {
+    "value": 1030,
+    "source": "mover cycles between two copies of a move: the timed model's fit to anchors ops_12 and ops_48, Verilated card_v9t6_1n"
+  },
+  "mover.fill_cycles": {
+    "value": 480,
+    "source": "mover cycles between two fills of a move: the timed model's fit to anchor fills_12, Verilated card_v9t6_1n"
+  },
+  "mover.element_cycles": {
+    "value": 9.6,
+    "source": "mover cycles an indexed element of a gather or scatter beyond its words: the timed model's fit to anchors gather_1024 and scatter_1024, Verilated card_v9t6_1n"
   }
 }

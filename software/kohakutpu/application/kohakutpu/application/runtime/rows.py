@@ -65,10 +65,11 @@ def _launch(dev, e, operands, binds, R, W, out, info, cores):
     return FM.generated.launch(dev, "vector.rows_kernel", arguments, binds, info=info)
 
 
-def _prepared(dev, e, operands, binds, R, W, out, out_at, info):
-    """One launch of `e` with each bound `forms.Pending` read composed or made
-    inside it (the generator `prepared.rows_kernel`); None when neither runs
-    (nothing run)."""
+def _pending_call(dev, e, operands, binds, R, W, out) -> tuple | None:
+    """`(plans, steps, arguments, binds)` of the `prepared.rows_kernel` call
+    making each bound `forms.Pending` (operand -> its plans, its steps; the
+    other binds rebased); None when one is not planned and composed reads
+    are off."""
     made, steps, alias, first = {}, {}, {}, {}
     for i in range(len(operands)):
         b = binds.get(f"in{i}")
@@ -94,6 +95,12 @@ def _prepared(dev, e, operands, binds, R, W, out, out_at, info):
         "made": {str(i): [*map(FM.made_by, s)] for i, s in steps.items()},
         "alias": {str(i): j for i, j in alias.items()},
     }
+    return made, steps, arguments, plain
+
+
+def _composed(dev, made: dict, steps: dict, arguments: dict) -> dict | None:
+    """The composed call of `arguments` where its pending reads are read
+    composed (`forms.composed`, against the launches making them), else None."""
     read = dict(arguments, composed=sorted(made))
     planned = all(p is not None for p in made.values())
     launches = (
@@ -101,12 +108,40 @@ def _prepared(dev, e, operands, binds, R, W, out, out_at, info):
         if planned
         else [FM.relayout_call(s) for ss in steps.values() for s in ss]
     )
+    if FM.composed(dev, {"gen": "prepared.rows_kernel", "args": read}, launches):
+        return read
+    return None
+
+
+def composed_read(dev, e, operands, binds, R, W, out) -> tuple | None:
+    """`(arguments, binds)` of the `prepared.rows_kernel` call reading each
+    bound `forms.Pending` composed (its source bound as ``x{i}``, ``out``
+    unbound); None where they are not read composed."""
+    got = _pending_call(dev, e, operands, binds, R, W, out)
+    if got is None:
+        return None
+    made, steps, arguments, plain = got
+    read = _composed(dev, made, steps, arguments)
+    if read is None:
+        return None
+    return read, plain | {f"x{i}": ss[0].src for i, ss in steps.items()}
+
+
+def _prepared(dev, e, operands, binds, R, W, out, out_at, info):
+    """One launch of `e` with each bound `forms.Pending` read composed or made
+    inside it (the generator `prepared.rows_kernel`); None when neither runs
+    (nothing run)."""
+    got = _pending_call(dev, e, operands, binds, R, W, out)
+    if got is None:
+        return None
+    made, steps, arguments, plain = got
     plain["out"] = out_at
     info = dict(info, prepared=sorted(made))
-    if FM.composed(dev, {"gen": "prepared.rows_kernel", "args": read}, launches):
+    read = _composed(dev, made, steps, arguments)
+    if read is not None:
         plain |= {f"x{i}": ss[0].src for i, ss in steps.items()}
         return FM.generated.launch(dev, "prepared.rows_kernel", read, plain, info=info)
-    if not planned:
+    if not all(p is not None for p in made.values()):
         return None
     for i, plans in made.items():
         plain[f"x{i}"] = steps[i][0].src
@@ -417,6 +452,7 @@ __all__ = [
     "MUTANT",
     "SINGLE_PACKAGE_AST",
     "RowsError",
+    "composed_read",
     "rows_of",
     "run",
     "single_package_enabled",

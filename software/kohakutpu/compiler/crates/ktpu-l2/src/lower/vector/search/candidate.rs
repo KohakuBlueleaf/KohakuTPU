@@ -80,6 +80,13 @@ fn image(
         }
     }
     events.extend_from_slice(tail);
+    if c.checked {
+        events.extend(
+            super::super::checked::fold(c.t)
+                .into_iter()
+                .map(Event::Fixed),
+        );
+    }
     events.push(Event::Fixed(ir::instruction("halt", vec![], vec![])));
     body.extend(ir::nest(&events).unwrap());
     let names = c
@@ -141,6 +148,8 @@ fn modulo_module(
     c.pre = pre.clone();
     c.guards = par.guards.clone();
     c.zero_sign = par.zero_sign;
+    c.checked = super::super::checked::holds(&pre) || super::super::checked::holds(&ops);
+    let regs = super::super::checked::registers(body.vregs, c.checked);
     for n in &lp.body {
         if matches!(n.as_ref(), Node::For(_)) {
             return no("a nested loop");
@@ -253,7 +262,7 @@ fn modulo_module(
     loop {
         let Some(p) = MO::plan(
             &mops,
-            body.vregs as i64,
+            regs as i64,
             &pinned,
             k_max,
             ii_max,
@@ -266,7 +275,7 @@ fn modulo_module(
             } else {
                 tried.join(", ")
             };
-            return Ok(Err(format!("no II up to {ii_max} colours in {} registers (K <= {k_max}) with an image in IMEM: {list}", body.vregs)));
+            return Ok(Err(format!("no II up to {ii_max} colours in {regs} registers (K <= {k_max}) with an image in IMEM: {list}")));
         };
         let mut top = c.top;
         let mut rings = vec![];

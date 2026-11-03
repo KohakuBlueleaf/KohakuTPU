@@ -51,6 +51,23 @@ pub fn region(body: &Body, st: &Stmt, term: &Term, env: &Env, tg: &Target) -> Re
     })
 }
 
+/// The image clearing a core's finite accumulator (v31) and its sticky latch.
+pub fn clear_image(name: &str) -> String {
+    super::packing::clear(name)
+}
+
+/// The image draining a core's finite accumulator into its record (`status`
+/// parameter), through L1 words [`DRAIN_L1`].
+pub fn drain_image(name: &str) -> String {
+    super::packing::status(name)
+}
+
+/// The L1 words the drain image packs the accumulator through.
+pub const DRAIN_L1: (i64, i64) = (384, 388);
+
+/// The vector register a checked core accumulates its finite status in.
+pub const STATUS_V: u32 = 31;
+
 /// The records still pending in a function.
 #[derive(Default)]
 pub struct Pending(Vec<Status>);
@@ -87,6 +104,11 @@ impl Pending {
                 "a quant status is no operand of its quant",
             ));
         }
+        self.claim(body, st, s)
+    }
+
+    /// Region `s` taken for a new record: over no pending record.
+    pub fn claim(&self, body: &Body, st: &Stmt, s: &Status) -> Result<()> {
         if self
             .0
             .iter()

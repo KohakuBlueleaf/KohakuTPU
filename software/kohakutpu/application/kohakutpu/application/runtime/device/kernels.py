@@ -67,6 +67,7 @@ class Kernels(Parts):
             output,
             traced,
         )
+        self.counters["f001_split"] += compiled.f001_split
         self.kernels[key] = (compiled, hit_kind)
         while len(self.kernels) > KERNELS_KEPT:
             self.kernels.popitem(last=False)

@@ -16,7 +16,9 @@ HERE = pathlib.Path(__file__).parent
 SOFTWARE = HERE.parents[1]
 ROOT = SOFTWARE.parent
 BOARD = "multimesh_v9t6"
-#: Of the halves' sum: a second launch's front and node floor the fused kernel saves.
+#: Of the halves' sum, either way: the second launch's front and node floor the
+#: fused kernel saves (740 of 131,744 cycles on this fixture). A quant priced as
+#: overlapping the product would read near the product alone (70,774).
 SLACK = 0.02
 
 
@@ -44,4 +46,4 @@ def cycles(timed, tmp_path) -> dict:
 def test_a_quant_before_the_product_is_priced_alone(timed, tmp_path):
     got = cycles(timed, tmp_path)
     halves = got["quant"] + got["product"]
-    assert got["fused"] <= halves * (1 + SLACK), got
+    assert halves * (1 - SLACK) <= got["fused"] <= halves * (1 + SLACK), got

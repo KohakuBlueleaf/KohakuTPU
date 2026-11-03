@@ -9,7 +9,7 @@
 pub mod cache;
 pub mod stage;
 
-use crate::output::{Compiled, Finding, Input, PackageOut, Refused, Scratch, Verdict};
+use crate::output::{Compiled, Finding, Input, PackageOut, Refused, Scratch, Verdict, F001};
 use cache::{Cache, Key};
 use ktpu_machine::{Machine, Refusal};
 use rayon::prelude::*;
@@ -35,7 +35,10 @@ pub fn spent() -> Vec<(&'static str, f64)> {
 fn timed<T>(stage: Stage, make: impl FnOnce() -> T) -> T {
     let t0 = Instant::now();
     let out = make();
-    let i = Stage::ALL.iter().position(|s| *s == stage).expect("every stage is listed");
+    let i = Stage::ALL
+        .iter()
+        .position(|s| *s == stage)
+        .expect("every stage is listed");
     SPENT[i].fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
     out
 }
@@ -219,6 +222,7 @@ impl<B: Backend> Run<'_, B> {
             let out = Ordered {
                 packages: b.order(p, m)?,
                 scratch: b.scratch(p),
+                f001: b.f001(p),
             };
             Ok((json(&out), ()))
         });
@@ -243,6 +247,7 @@ impl<B: Backend> Run<'_, B> {
             scratch: ordered.scratch,
             verdict,
             bound,
+            f001: ordered.f001,
         })
     }
 }
@@ -255,6 +260,8 @@ type ToL1<L1> = (String, String, Lazy<L1>, Vec<String>);
 struct Ordered {
     packages: BTreeMap<u32, PackageOut>,
     scratch: Vec<Scratch>,
+    #[serde(default)]
+    f001: F001,
 }
 
 fn built<'p, B: Backend>(

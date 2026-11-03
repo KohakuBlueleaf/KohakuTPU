@@ -29,7 +29,8 @@ pub(in crate::lower::vector) fn lower_band(
         body.vcopies,
         &crate::lower::vector::modulo::Core::of(t),
     );
-    let (assigned, _) = crate::lower::vector::assign_typed::assign(&events, &c.pinned, body.vregs);
+    let regs = crate::lower::vector::checked::registers(body.vregs, c.checked);
+    let (assigned, _) = crate::lower::vector::assign_typed::assign(&events, &c.pinned, regs);
     let result = image(&c, name, &assigned?).expect("generated band image");
     let fits = fits.whole(&result.0, result.1.len(), t) || on("l2.vector/imem-unbounded");
     let (_, lp) = crate::lower::vector::split(body, par)?;
@@ -51,7 +52,8 @@ pub(in crate::lower::vector) fn lower_band(
         body.vcopies,
         &crate::lower::vector::modulo::Core::of(t),
     );
-    let (assigned, _) = crate::lower::vector::assign_typed::assign(&events, &c.pinned, body.vregs);
+    let regs = crate::lower::vector::checked::registers(body.vregs, c.checked);
+    let (assigned, _) = crate::lower::vector::assign_typed::assign(&events, &c.pinned, regs);
     Ok(image(&c, name, &assigned?).expect("generated serial band image"))
 }
 
@@ -96,6 +98,10 @@ fn flat_band<'a>(
     c.pre = pre.clone();
     c.guards = par.guards.clone();
     c.zero_sign = par.zero_sign;
+    c.checked = crate::lower::vector::checked::holds(&pre)
+        || lp
+            .as_ref()
+            .is_some_and(|lp| crate::lower::vector::checked::holds(&ops_of(&lp.body)));
     if let Some(lp) = &lp {
         for n in &lp.body {
             if let Node::For(f) = n.as_ref() {
@@ -275,6 +281,11 @@ fn flat_band<'a>(
                 c.phase = tail;
                 c.iteration_typed(&mut g, &lp.body, tail % 2, tail + 1 < rest)?;
             }
+        }
+    }
+    if c.checked {
+        for st in crate::lower::vector::checked::fold(t) {
+            g.fixed(st);
         }
     }
     g.fixed(ir::instruction("halt", vec![], vec![]));

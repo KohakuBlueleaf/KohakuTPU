@@ -14,6 +14,14 @@ pub struct Mover {
     pub fifo_depth: u32,
     /// (cycles a contiguous run, cycles a word) of a copy.
     pub copy_cost: (u32, u32),
+    /// Node cycles a move statement before its first command.
+    pub move_cycles: u32,
+    /// Mover cycles between two copies of a move.
+    pub statement_cycles: u32,
+    /// Mover cycles between two fills of a move.
+    pub fill_cycles: u32,
+    /// Mover cycles an indexed element of a gather or scatter beyond its words.
+    pub element_cycles: f64,
     pub cfgq_depth: Runtime<u32>,
     pub cfgq_margin: Runtime<u32>,
     pub fault_bits: Runtime<u32>,

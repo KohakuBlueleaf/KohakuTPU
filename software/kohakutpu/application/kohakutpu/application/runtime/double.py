@@ -27,6 +27,7 @@ class DoubleCard(OfflineCard):
             "packages": {},
             "scratch": [],
             "bound": None,
+            "f001": {"line_ports": [], "split": 0},
         }
 
     def run_compiled(self, compiled, binds: dict) -> dict:

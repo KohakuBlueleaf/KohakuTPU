@@ -42,12 +42,13 @@ def timed():
     return SOFTWARE / "target" / "stage" / "timed"
 
 
-def worst(timed, truth, tmp_path, params, card=False) -> float:
+def worst(timed, truth, tmp_path, params, card=False, machine=None) -> float:
     board = truth.stem.split(".", 1)[1]
     path = tmp_path / "params.json"
     path.write_text(json.dumps(params), "utf-8")
     out = tmp_path / "model.jsonl"
-    cmd = [str(timed), "--machine", str(ROOT / "machines" / f"{board}.json")]
+    machine = machine or ROOT / "machines" / f"{board}.json"
+    cmd = [str(timed), "--machine", str(machine)]
     cmd += ["--params", str(path), "--out", str(out), str(HERE / "anchors")]
     cmd += [str(HERE / "anchors" / "memory"), "--card"] if card else []
     subprocess.run(cmd, check=True, capture_output=True)
@@ -70,6 +71,19 @@ def test_the_card_column_holds_its_anchors(timed, truth, tmp_path):
 @pytest.mark.parametrize("truth", VERILATOR, ids=lambda p: p.stem)
 @pytest.mark.parametrize("name", [k for k in PARAMS if k not in UNPINNED])
 def test_a_broken_parameter_leaves_the_budget(timed, truth, tmp_path, name):
+    """A parameter the machine holds (its `fact`) is broken in the machine file."""
     broken = json.loads(json.dumps(PARAMS))
-    broken[name]["value"] *= 3
-    assert worst(timed, truth, tmp_path, broken) > BUDGET
+    if "fact" not in broken[name]:
+        broken[name]["value"] *= 3
+        assert worst(timed, truth, tmp_path, broken) > BUDGET
+        return
+    board = truth.stem.split(".", 1)[1]
+    doc = json.loads((ROOT / "machines" / f"{board}.json").read_text("utf-8"))
+    *head, last = broken[name]["fact"].split(".")
+    section = doc["machine"]
+    for key in head:
+        section = section[key]
+    section[last] *= 3
+    machine = tmp_path / f"{board}.json"
+    machine.write_text(json.dumps(doc), "utf-8")
+    assert worst(timed, truth, tmp_path, broken, machine=machine) > BUDGET

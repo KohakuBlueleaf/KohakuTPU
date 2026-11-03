@@ -263,6 +263,8 @@ class Device(Kernels, Allocation, Submission, Replay):
             "compile_calls": 0,
             "compile_seconds": 0.0,
             "kernel_reuses": 0,
+            # Mover commands F-001's split made, over the kernels compiled (L1.MOV.019).
+            "f001_split": 0,
         }
         #: folded constants uploaded once, by content (`forms.table`)
         self.tables: dict = {}

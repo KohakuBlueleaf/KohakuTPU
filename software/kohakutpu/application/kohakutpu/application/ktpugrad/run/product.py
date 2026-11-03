@@ -337,6 +337,10 @@ def _product_run(
                 k: v.made().addr if isinstance(v, FM.Pending) else v
                 for k, v in binds.items()
             }
+        # Its own whole output: a site its consumers' packings are learned at.
+        site = FM.mm_site(plan.expr, bt, M, N, mm.k)
+        mine = not padded and not doff and plan.out_strides is None
+        packs = _packs(dev, site, arguments, binds, dst) if mine else []
         run = FM.generated.launch(
             dev,
             "matmul.mm_kernel",
@@ -347,6 +351,10 @@ def _product_run(
         )
         if not padded:
             _wrote(dev, plan, bufs, key)
+            if mine:
+                dst.site = (site, N)
+            for k in packs:
+                dst.made(k)
             return [run]
         if tmp is None:
             dst.wrote(FM.rows_key(N, Np))
@@ -382,6 +390,25 @@ def _product_run(
     finally:
         if tmp is not None:
             tmp.free()
+
+
+#: Whether a product's kernel writes its consumers' packings (`_packs`).
+PRODUCER_PACKS = ENV.get("KTPU_PRODUCER_PACKS", "1") == "1"
+
+
+def _packs(dev, site, arguments: dict, binds: dict, dst: Storage) -> list:
+    """The `forms.packed` keys `site`'s consumers read that the product's kernel
+    writes: each a `q{i}` of the call into its form of `dst`; none unless all."""
+    if not PRODUCER_PACKS:
+        return []
+    keys = list(FM.demands(dev).get(site, ()))
+    q = [{"side": k[1], "g": k[7], "nk": k[8], "rp": k[5], "cp": k[6]} for k in keys]
+    if not q or not MM.resolved(dict(arguments, q=q), dev.machine.machine_json)["q"]:
+        return []
+    arguments["q"] = q
+    for i, k in enumerate(keys):
+        binds[f"q{i}"] = dst.form(k, k[5] * k[6]).addr
+    return keys
 
 
 def _batched(acc, batch, step: int, what: str) -> None:

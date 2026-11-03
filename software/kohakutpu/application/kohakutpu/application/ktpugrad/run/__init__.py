@@ -15,6 +15,7 @@ from tinygrad.dtype import dtypes
 
 from kohakutpu.application.kernels import expr as X
 from kohakutpu.application.ktpugrad import uops as U
+from kohakutpu.application.ktpugrad.launch import emit as E
 from kohakutpu.application.ktpugrad.launch import schedule as launch_schedule
 from kohakutpu.application.ktpugrad.launch.config import (
     _active_scope,
@@ -140,35 +141,34 @@ def _run(dev, plan: Plan, bufs: dict):
                 target.dtype = F.np_dtype(plan.out_dtype)
                 if pkey in sst.zeroed:
                     target.zeroed.add(pkey)
-                return []
+                return _member_done(dev, [])
     if plan.kind not in ("vector", "copy"):
         return _execute(dev, plan, bufs)
     if plan.kind == "copy" and view_forms_enabled():
-        runs = _execute(dev, plan, bufs)
-        scope = _active_scope(dev)
-        if scope is not None and scope.remaining is not None:
-            scope.remaining -= 1
-            if scope.remaining <= 0:
-                runs += flush_multi_stage(scope)
-        return runs
+        return _member_done(dev, _execute(dev, plan, bufs))
     plan, aliased = _reform(dev, plan, bufs)
     if plan.kind == "copy" and any(
         a.slot != plan.out_slot and isinstance(a.slot, tuple) for a in plan.accesses
     ):
         plan = replace(plan, kind="vector")
     try:
-        runs = _execute(dev, plan, aliased)
-        scope = _active_scope(dev)
-        if scope is not None and scope.remaining is not None:
-            scope.remaining -= 1
-            if scope.remaining <= 0:
-                runs += flush_multi_stage(scope)
-        return runs
+        return _member_done(dev, _execute(dev, plan, aliased))
     finally:
         # An alias owns no bytes, only the forms a kernel made of it.
         for k, s in aliased.items():
             if k not in bufs:
                 s.free()
+
+
+def _member_done(dev, runs: list) -> list:
+    """A fused group's member ran, by whatever path: the group's last one
+    flushes the stages the group staged."""
+    scope = _active_scope(dev)
+    if scope is not None and scope.remaining is not None:
+        scope.remaining -= 1
+        if scope.remaining <= 0:
+            runs = runs + flush_multi_stage(scope)
+    return runs
 
 
 def _execute(dev, plan: Plan, bufs: dict):
@@ -222,20 +222,31 @@ def _copy(dev, plan: Plan, bufs) -> list:
         dst_.wrote(key)
         dst_.dtype = F.np_dtype(plan.out_dtype)
         return []
+    held = not (soff or doff) and (dst_.dtype is not None or dst_.host is not None)
+    f16 = key == FM.F16 or (
+        key == FLAT and np.dtype(F.np_dtype(plan.out_dtype)) == np.float16
+    )
+    packs = E.packings(dev, dst_, n // 2, {}, 1) if held and f16 else None
+    info = {"plan": plan.name}
     scope = _active_scope(dev)
-    if scope is not None:
-        scope.stages.append(("copy", int(n), int(a), int(b), {"plan": plan.name}))
-        dst_.wrote(key)
-        dst_.dtype = F.np_dtype(plan.out_dtype)
-        if key == FLAT and sst.host is not None and not soff and not doff:
-            dst_.host = sst.host
-        return []
-    run = FM.generated.copy(dev, n, {"src": a, "dst": b}, info={"plan": plan.name})
+    if packs is not None:
+        # Its consumers' packings written with it: the copy as a flat member.
+        binds = {"in0": int(a), "out": int(b)}
+        stage = ("flat", X.Load(0), ("f16",), n // 2, "f16", (), binds, info, packs[:2])
+        if scope is not None:
+            scope.stages.append(stage)
+        runs = [] if scope is not None else [E._solo(dev, stage)]
+    elif scope is not None:
+        scope.stages.append(("copy", int(n), int(a), int(b), info))
+        runs = []
+    else:
+        runs = [FM.generated.copy(dev, n, {"src": a, "dst": b}, info=info)]
     dst_.wrote(key)
     dst_.dtype = F.np_dtype(plan.out_dtype)
     if key == FLAT and sst.host is not None and not soff and not doff:
         dst_.host = sst.host
-    return [run]
+    E.published(dst_, held, packs)
+    return runs
 
 
 def _is_fusable_elem(plan: Plan | None) -> bool:

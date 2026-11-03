@@ -3,18 +3,19 @@
 //! `to`. With `keep` that output stays a port, written to DRAM for later
 //! readers; without it, it is a `@mem` scratch the `space` pass places in
 //! staging where it fits (L2.PASS.004), never stored to DRAM.
+//!
+//! The second kernel's names take the first prefix `c<k>_` (k from 2) under
+//! which none meets a name of the first, so chains nest. The graph's
+//! `consts.chain.ports` maps each second port to its name in the chain.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use ktpu_graph as g;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::kernel::Kernel;
 use crate::pyrepr::{name, Py};
 use crate::trace::{fail, R};
-
-/// The prefix every name of the second kernel takes.
-const SECOND: &str = "c2_";
 
 /// The JSON keys whose string values name a buffer, a value or a loop
 /// variable (DSL.GRAPH.002-.009).
@@ -90,10 +91,20 @@ pub fn kernel(first: Kernel, second: Kernel, from: &str, to: &str, keep: bool) -
         Err(e) => return fail("API.OP.001", format!("kernel.chain: {e}")),
     };
     names_in(&body, &["target", "var"], &mut own);
+    let mut taken: HashSet<String> = first.graph.ports.iter().map(|p| p.name.clone()).collect();
+    taken.extend(first.graph.scratch.iter().map(|p| p.name.clone()));
+    match serde_json::to_value(&first.graph.body) {
+        Ok(b) => names_in(&b, &NAMED, &mut taken),
+        Err(e) => return fail("API.OP.001", format!("kernel.chain: {e}")),
+    }
+    let prefix = (2..)
+        .map(|k| format!("c{k}_"))
+        .find(|p| own.iter().all(|n| n == from || !taken.contains(&format!("{p}{n}"))))
+        .unwrap_or_default();
     let link = to.to_string();
     let to_name = |n: &str| match n == from {
         true => link.clone(),
-        false => format!("{SECOND}{n}"),
+        false => format!("{prefix}{n}"),
     };
     renamed(&mut body, &own, &to_name);
     let body: Vec<g::Stmt> = match serde_json::from_value(body) {
@@ -130,6 +141,18 @@ pub fn kernel(first: Kernel, second: Kernel, from: &str, to: &str, keep: bool) -
         });
     }
     graph.body.extend(body);
+    let ports: BTreeMap<String, String> = second
+        .graph
+        .ports
+        .iter()
+        .filter(|p| p.name != from)
+        .map(|p| (p.name.clone(), to_name(&p.name)))
+        .collect();
+    graph.consts = json!({"chain": {
+        "first": first.graph.consts,
+        "second": second.graph.consts,
+        "ports": ports,
+    }});
     graph.name = name(
         "chain",
         vec![

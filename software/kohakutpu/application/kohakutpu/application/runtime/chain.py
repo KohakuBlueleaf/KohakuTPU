@@ -150,8 +150,10 @@ class Chain:
             "keep": keep,
         }
         self.held = None
+        named = json.loads(generated.source(self.dev, "kernel.chain", call))
+        names = named["consts"]["chain"]["ports"]
         binds = {k: v for k, v in b1.items() if keep or k != "out"}
-        binds.update({f"c2_{k}": v for k, v in bindings.items() if k != "a"})
+        binds.update({names[k]: v for k, v in bindings.items() if k != "a"})
         self.chained += 1
         chained = dict(info or {}, chain=[i1, keep])
         return self._now("kernel.chain", call, binds, kind, chained)

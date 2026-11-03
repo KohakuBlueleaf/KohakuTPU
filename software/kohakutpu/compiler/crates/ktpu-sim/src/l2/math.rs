@@ -177,9 +177,13 @@ impl Instance {
                 let (r, c) = shape(st)?;
                 self.fits(st, r, c)?;
                 let from = self.operand(pos[0])?;
-                let v = (0..r * c)
+                let v: Vec<u32> = (0..r * c)
                     .map(|i| u32::from(num::to_f16(from.at(i / c, i % c))))
                     .collect();
+                // A checked pack (`status=`) refuses a non-finite f16 value.
+                if st.kw("status").is_some() && v.iter().any(|x| x & 0x7c00 == 0x7c00) {
+                    return Err("a checked pack of a non-finite value".into());
+                }
                 self.put(
                     st,
                     Rows {

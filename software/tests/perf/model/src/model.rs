@@ -47,8 +47,9 @@ pub struct Params {
 }
 
 impl Params {
-    /// `tier` names the column read, `value` where a parameter holds no other.
-    pub fn of(v: &Value, tier: &str) -> Params {
+    /// `tier` names the column read, `value` where a parameter holds no other; a
+    /// parameter naming a machine `fact` (`ktpu_l2::cost`'s too) reads it from `m`.
+    pub fn of(v: &Value, tier: &str, m: &Machine) -> Params {
         let at = |k: &str| {
             v[k][tier]
                 .as_f64()
@@ -60,19 +61,20 @@ impl Params {
                 .as_f64()
                 .unwrap_or_else(|| panic!("params.json holds no {k} value"))
         };
+        let fact = |k: &str, x: f64| v[k][tier].as_f64().unwrap_or(x);
         Params {
             node_start: at("node_start"),
             node_floor: at("node_floor"),
-            node_send: at("node_send"),
-            node_word: at("node_word"),
-            node_move: at("node_move"),
-            node_image: at("node_image"),
-            node_wait: at("node_wait"),
+            node_send: fact("node_send", m.vc.send_cycles as f64),
+            node_word: fact("node_word", m.vc.word_cycles as f64),
+            node_move: fact("node_move", m.mover.move_cycles as f64),
+            node_image: fact("node_image", m.vc.image_word_cycles),
+            node_wait: fact("node_wait", m.vc.wait_cycles as f64),
             mover_run: at("mover_run"),
             mover_word: at("mover_word"),
-            mover_statement: at("mover_statement"),
-            mover_fill: at("mover_fill"),
-            mover_element: at("mover_element"),
+            mover_statement: fact("mover_statement", m.mover.statement_cycles as f64),
+            mover_fill: fact("mover_fill", m.mover.fill_cycles as f64),
+            mover_element: fact("mover_element", m.mover.element_cycles),
             vc_fe_sync: at("vc_fe_sync"),
             vc_pack_op: at("vc_pack_op"),
             vc_unpack_op: at("vc_unpack_op"),

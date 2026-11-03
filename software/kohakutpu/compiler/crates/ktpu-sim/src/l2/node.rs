@@ -389,7 +389,7 @@ impl Sim<'_> {
         };
         let (r0, rows, k0, keys) = q.rect();
         let (s0, srows, t0, scols) = x.rect();
-        let reader = Window::of(st, &self.env)?;
+        let reader = Window::of(st, &self.env, *src.shape.last().ok_or("a quant source")?)?;
         let checked = st.kw("finite").and_then(Term::as_int) != Some(1);
         for g in 0..rows / mx7::LANES as i64 {
             for k in 0..keys / mx7::KBLOCK as i64 {
@@ -434,7 +434,8 @@ struct Window {
 }
 
 impl Window {
-    fn of(st: &Stmt, env: &crate::l1::term::Env) -> R<Option<Window>> {
+    /// The window of `st`'s composed read of a source `source_pitch` values wide.
+    fn of(st: &Stmt, env: &crate::l1::term::Env, source_pitch: i64) -> R<Option<Window>> {
         if st.kw("read_map").is_none() {
             return Ok(None);
         }
@@ -455,7 +456,7 @@ impl Window {
             cols: dim(4)?,
             batches,
             padded,
-            source_pitch: 16,
+            source_pitch,
         }))
     }
 

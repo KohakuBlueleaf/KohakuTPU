@@ -23,9 +23,14 @@ from kohakutpu.application.ktpugrad.planning.lower import Access, Plan
 from kohakutpu.application.ktpugrad.run.reduce import MAX_READS, _rebuild
 from kohakutpu.application.ktpugrad.run.regions import _reads
 from kohakutpu.application.runtime import forms as FM
+from kohakutpu.language.config import ENV
 
 #: Points a composed read is checked over, at most.
 MAX_POINTS = 1 << 22
+#: A bare read that several kernels read: "compose" composes each reader
+#: through it (each repeats the walk), "once" leaves it to run once, its
+#: readers reading its contiguous output.
+SHARED = ENV.get("KTPU_THROUGH_SHARED", "compose")
 #: Plans by a kernel's plan and what it reads through; a key's plans stay held
 #: with its value, so no `id` is reused.
 _PLANS: dict = {}
@@ -262,15 +267,17 @@ def _fold(plan: Plan, buffers: dict, makers: dict, once: set, out: int) -> tuple
     return None
 
 
-def _read_through(plan: Plan, buffers: dict, walks: dict, out: int) -> tuple:
+def _read_through(plan: Plan, buffers: dict, walks: dict, out: int, once: set) -> tuple:
     """``(plan, buffers, kernels read through)``: the reads of `plan` of the
-    buffers `walks` (by storage) composed, none onto the storage it writes."""
+    buffers `walks` (by storage) composed, none onto the storage it writes,
+    and with `SHARED` "once" none of a buffer more than one kernel reads."""
     hits = {}
     for slot, buf in buffers.items():
         st, off = FM.base_of(buf)
         walk = walks.get(id(st))
         stale = walk is None or out in walk.sources
-        if not stale and not off and slot != plan.out_slot:
+        shared = SHARED == "once" and id(st) not in once
+        if not stale and not shared and not off and slot != plan.out_slot:
             hits[slot] = walk
     if not hits:
         return plan, buffers, ()
@@ -321,7 +328,7 @@ def through(items: list, held: set) -> tuple:
     composed, owners, through_of = [], [], set()
     for i, (plan, buffers) in enumerate(items):
         out = id(FM.base_of(buffers[plan.out_slot])[0])
-        plan, buffers, made = _read_through(plan, buffers, walks, out)
+        plan, buffers, made = _read_through(plan, buffers, walks, out, once)
         while folded := _fold(plan, buffers, makers, once, out):
             plan, buffers = folded[:2]
             made += folded[2]

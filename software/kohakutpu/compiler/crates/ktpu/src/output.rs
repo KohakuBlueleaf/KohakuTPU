@@ -47,6 +47,15 @@ pub struct Scratch {
     pub members: Vec<(String, u64)>,
 }
 
+/// What silicon flaw F-001's handling asks of a build (L1.MOV.019): the
+/// parameters (arenas by their name) whose binding must start on a DRAM write
+/// line, the proof holding from there, and the mover commands the split made.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct F001 {
+    pub line_ports: Vec<String>,
+    pub split: u64,
+}
+
 /// One static-checker finding.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Finding {
@@ -81,6 +90,10 @@ pub struct Compiled {
     /// does not follow its buffer, as past L0.BIND.005's buffer bound), when
     /// it is not: the card's packages are then built at each binding.
     pub bound: Option<String>,
+    /// F-001's per-port requirement and split count (empty when `bound`:
+    /// a build at its bindings proves every command at its own address).
+    #[serde(default)]
+    pub f001: F001,
 }
 
 /// A refusal and the stage that made it.

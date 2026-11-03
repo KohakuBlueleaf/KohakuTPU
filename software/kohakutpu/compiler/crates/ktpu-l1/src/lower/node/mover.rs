@@ -1,6 +1,8 @@
 //! Memory-mover moves: walks, gathers, fills and their register patches (L1.MOV.*).
 
 use super::*;
+use crate::flaw;
+use ktpu_isa::unit::mover::MOVE_WORDS;
 
 impl<'a> NodeReader<'a> {
     pub(super) fn move_(&mut self, st: &Stmt) -> Result<()> {
@@ -66,7 +68,111 @@ impl<'a> NodeReader<'a> {
         Ok(w.into_iter().map(|(r, v)| (r as u64, v)).collect())
     }
 
-    pub(super) fn mover_op(&self, st: &Stmt) -> Result<(Writes, Vec<Patch>)> {
+    /// The proof's machine facts on a machine with F-001, else None.
+    fn f001_facts(&self) -> Option<flaw::Facts> {
+        let m = self.target.machine;
+        m.flaws.f001.present.then(|| flaw::Facts {
+            word: m.die.word_bytes as i64,
+            line: i64::from(m.card.dram.line_bytes),
+            cap: i64::from(m.mover.burst_max),
+        })
+    }
+
+    /// One mover command's writes and patches, legal on F-001 (L1.MOV.019): a
+    /// command the proof holds for as written, else its split.
+    fn checked(
+        &mut self,
+        st: &Stmt,
+        mv: Move,
+        fix: &[(String, u64, i128)],
+    ) -> Result<(Writes, Vec<Patch>)> {
+        let Some(mut f) = self.f001_facts() else {
+            let writes = self.writes_of(st, &MoverOp::Move(mv))?;
+            let patches = self.mover_patches(st, &writes, fix)?;
+            return Ok((writes, patches));
+        };
+        // A register-set field the proof reads is not proven by its placeholder: a
+        // register write base is known to a word, a register count, pitch or row length not at all.
+        if fix.iter().any(|(n, _, _)| n == "dst.base") {
+            f.line = f.word;
+        }
+        let counted = fix.iter().any(|(n, _, _)| {
+            n.starts_with("dst.count") || matches!(n.as_str(), "count" | "pitch" | "words")
+        });
+        let need = if counted && flaw::reads(&mv) {
+            flaw::Need::Unproven
+        } else {
+            flaw::need(&mv, f)
+        };
+        if need != flaw::Need::Unproven || on("l1.mov/f001-unsplit") {
+            if need == flaw::Need::Line {
+                self.f001
+                    .line_bases
+                    .push(mv.dst.as_ref().map_or(0, |d| d.base));
+            }
+            let writes = self.writes_of(st, &MoverOp::Move(mv))?;
+            let patches = self.mover_patches(st, &writes, fix)?;
+            return Ok((writes, patches));
+        }
+        if let Some((name, _, _)) = fix
+            .iter()
+            .find(|(n, _, _)| !matches!(n.as_str(), "src.base" | "index"))
+        {
+            return Err(self.fail(
+                st,
+                "L1.MOV.019",
+                format!(
+                    "silicon flaw F-001: a mover write with its {name} from a register \
+                     is not proven free of a chained one-beat burst, and its split needs \
+                     that field constant"
+                ),
+            ));
+        }
+        let src_fixed = !fix.iter().any(|(n, _, _)| n == "src.base");
+        let pieces = flaw::split(&mv, f, src_fixed);
+        if pieces
+            .iter()
+            .any(|p| p.mv.index.is_some_and(|(at, _)| at % f.word != 0))
+        {
+            return Err(self.fail(
+                st,
+                "L1.MOV.019",
+                "silicon flaw F-001: a scatter's row off an index-list word (ISA.MV.054) \
+                 is not proven free of a chained one-beat burst and has no split",
+            ));
+        }
+        self.f001.split += pieces.len();
+        let (mut writes, mut patches) = (Vec::new(), Vec::new());
+        for p in pieces {
+            let shifted: Vec<(String, u64, i128)> = fix
+                .iter()
+                .filter(|_| p.mv.mode != MoveMode::Fill)
+                .map(|(n, r, c)| {
+                    let by = match n.as_str() {
+                        "src.base" => p.src_shift,
+                        _ => p.index_shift,
+                    };
+                    (n.clone(), *r, c + i128::from(by))
+                })
+                .collect();
+            if p.need == flaw::Need::Line {
+                self.f001
+                    .line_bases
+                    .push(p.mv.dst.as_ref().map_or(0, |d| d.base));
+            }
+            let w = self.writes_of(st, &MoverOp::Move(p.mv))?;
+            for q in self.mover_patches(st, &w, &shifted)? {
+                patches.push(Patch {
+                    word: writes.len() + q.word,
+                    ..q
+                });
+            }
+            writes.extend(w);
+        }
+        Ok((writes, patches))
+    }
+
+    pub(super) fn mover_op(&mut self, st: &Stmt) -> Result<(Writes, Vec<Patch>)> {
         let all = st.positional();
         let flags: BTreeSet<&str> = all.iter().filter_map(|p| p.as_name()).collect();
         let pos: Vec<&Term> = all.into_iter().filter(|p| p.as_name().is_none()).collect();
@@ -108,6 +214,40 @@ impl<'a> NodeReader<'a> {
                         groups: n,
                     },
                 };
+                if let (MoverOp::Copy { .. }, Some(f)) = (&op, self.f001_facts()) {
+                    let flags = self
+                        .isa
+                        .mover
+                        .flag_byte(true, 0)
+                        .map_err(|e| self.at(st, e))?;
+                    let walked = |at: i64, bytes: i64| Move {
+                        mode: MoveMode::Copy,
+                        src: Some(Walk::new(src + at, &[(bytes / f.word, f.word)])),
+                        dst: Some(Walk::new(dst + at, &[(bytes / f.word, f.word)])),
+                        ewidth: W32,
+                        flags,
+                        xform: (0, 0),
+                        imm: None,
+                        seed: None,
+                        index: None,
+                        row: None,
+                        fp: false,
+                    };
+                    match flaw::need(&walked(0, n), f) {
+                        flaw::Need::Line => self.f001.line_bases.push(dst as i64),
+                        flaw::Need::Unproven => {
+                            // The same words as walked moves of at most a move each, checked.
+                            let most = MOVE_WORDS as i64 * f.word;
+                            let mut writes = Vec::new();
+                            for at in (0..n).step_by(most as usize) {
+                                let mv = walked(at, (n - at).min(most));
+                                writes.extend(self.checked(st, mv, &[])?.0);
+                            }
+                            return Ok((writes, Vec::new()));
+                        }
+                        flaw::Need::Free => {}
+                    }
+                }
                 return Ok((self.writes_of(st, &op)?, Vec::new()));
             }
         }
@@ -296,9 +436,7 @@ impl<'a> NodeReader<'a> {
         if on("l1.mov/row-pitch") {
             mv.row = mv.row.map(|(pitch, words)| (2 * pitch, words));
         }
-        let writes = self.writes_of(st, &MoverOp::Move(mv))?;
-        let patches = self.mover_patches(st, &writes, &fix)?;
-        Ok((writes, patches))
+        self.checked(st, mv, &fix)
     }
 
     /// Patches for `fix` (`(field, register, constant)`) in `writes`.

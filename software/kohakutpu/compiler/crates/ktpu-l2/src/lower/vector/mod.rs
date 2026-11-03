@@ -8,6 +8,7 @@
 //! source read here for the last time.
 
 pub mod banks;
+pub mod checked;
 pub mod ctx;
 pub mod encode;
 pub mod gen;

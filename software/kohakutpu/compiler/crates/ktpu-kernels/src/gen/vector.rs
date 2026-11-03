@@ -15,7 +15,7 @@ use crate::pyrepr::{name, Py};
 use crate::trace::buffer::{f16, sl, spec, ALL};
 use crate::trace::control::At;
 use crate::trace::vector::MappedLoad;
-use crate::trace::{fail, Arg, Buf, Idx, Trace, R};
+use crate::trace::{fail, Arg, Buf, Idx, Trace, View, R, V};
 use ktpu_graph as g;
 use ktpu_isa::unit::vector::DIM_STRIDE_MAX;
 use ktpu_machine::Machine;
@@ -479,6 +479,38 @@ impl Bufs {
             maps: HashMap::new(),
         }
     }
+
+    /// The same reads into `out`.
+    pub fn to(&self, out: &Buf) -> Bufs {
+        Bufs {
+            ins: self.ins.clone(),
+            out: out.clone(),
+            maps: self.maps.clone(),
+        }
+    }
+}
+
+/// The reverse mutant of [`rows_trips`]: a band stores its first member alone.
+pub const LOST_MEMBER_MUTANT: &str = "fused/lost-member";
+
+/// One expression of a band and where it goes: `dst` read as `out` (a
+/// [`Bufs`]' `out` is not read where members are given).
+#[derive(Clone)]
+pub struct Member<'a> {
+    pub e: &'a E,
+    pub out: Operand,
+    pub dst: Buf,
+}
+
+impl<'a> Member<'a> {
+    /// `e` alone into `bufs.out`.
+    pub fn sole(e: &'a E, out: &Operand, bufs: &Bufs) -> [Member<'a>; 1] {
+        [Member {
+            e,
+            out: *out,
+            dst: bufs.out.clone(),
+        }]
+    }
 }
 
 /// One rows stage: the rectangle of row trips by column blocks over the cores
@@ -499,7 +531,34 @@ pub fn rows_stage(
         return narrow_stage(t, bufs, e, operands, out, pl, cores, row0, hw);
     }
     let plain = in_place(row0, operands.len());
-    rectangle(t, bufs, e, operands, out, pl, cores, 0, pl.nblk, &plain, hw)
+    let sole = Member::sole(e, out, bufs);
+    rectangle(t, bufs, &sole, operands, pl, cores, 0, pl.nblk, &plain, hw)
+}
+
+/// [`rows_stage`] of several members over one domain: a band reads each operand
+/// once and stores every member; past a descriptor's stride a member at a time.
+#[allow(clippy::too_many_arguments)]
+pub fn members_stage(
+    t: &mut Trace,
+    bufs: &Bufs,
+    members: &[Member],
+    operands: &[Operand],
+    pl: &Plan,
+    cores: i64,
+    row0: &Idx,
+    hw: &Hw,
+) -> R<()> {
+    if members.iter().any(|m| m.out.wide()) || operands.iter().any(Operand::wide) {
+        for m in members {
+            let b = bufs.to(&m.dst);
+            rows_stage(t, &b, m.e, operands, &m.out, pl, cores, row0, hw)?;
+        }
+        return Ok(());
+    }
+    let plain = in_place(row0, operands.len());
+    rectangle(
+        t, bufs, members, operands, pl, cores, 0, pl.nblk, &plain, hw,
+    )
 }
 
 /// Each of `n` operands and the output at the same row (from `row0`) and column.
@@ -533,15 +592,14 @@ pub fn tile_stage(
         return rows_stage(t, bufs, e, operands, out, pl, cores, row0, hw);
     }
     let plain = in_place(row0, operands.len());
+    let sole = Member::sole(e, out, bufs);
     let per = tile_rows / pl.rows;
     let n = cdiv(pl.nb, per);
     let at = if n > cores { At::Any } else { At::Var };
     for cb in 0..pl.nblk {
         t.par(n, g::UnitKind::Vc, at, |t, u| {
             let (first, trips, cb) = (u.mul(per), Idx::Int(per), Idx::Int(cb));
-            rows_trips(
-                t, bufs, e, operands, out, pl, &first, trips, &cb, &plain, hw,
-            )
+            rows_trips(t, bufs, &sole, operands, pl, &first, trips, &cb, &plain, hw)
         })?;
     }
     Ok(())
@@ -554,9 +612,8 @@ pub fn tile_stage(
 fn rectangle(
     t: &mut Trace,
     bufs: &Bufs,
-    e: &E,
+    members: &[Member],
     operands: &[Operand],
-    out: &Operand,
     pl: &Plan,
     cores: i64,
     b0: i64,
@@ -576,9 +633,8 @@ fn rectangle(
                 rows_trips(
                     t,
                     bufs,
-                    e,
+                    members,
                     operands,
-                    out,
                     pl,
                     &Idx::Int(0),
                     all,
@@ -597,9 +653,8 @@ fn rectangle(
             rows_trips(
                 t,
                 bufs,
-                e,
+                members,
                 operands,
-                out,
                 pl,
                 &first,
                 trips,
@@ -712,9 +767,9 @@ fn narrow_stage(
                 false => (r.add(row0), c.clone()),
             },
         };
-        let blocks = end - start;
+        let (blocks, sole) = (end - start, Member::sole(e, &tail, &inner));
         rectangle(
-            t, &inner, e, &ops, &tail, pl, cores, start, blocks, &origin, hw,
+            t, &inner, &sole, &ops, pl, cores, start, blocks, &origin, hw,
         )?;
         if out.wide() {
             let (rr, cc) = out.divmod()?;
@@ -728,15 +783,14 @@ fn narrow_stage(
     Ok(())
 }
 
-/// An instance's trips of column block `cb` from band `first`: the prologue
-/// (each `col` operand's block), then a band a trip, placed by `origin`.
+/// An instance's trips of column block `cb` from band `first`: the prologue (each
+/// `col` operand's block), then a band a trip at `origin` storing every member.
 #[allow(clippy::too_many_arguments)]
 fn rows_trips(
     t: &mut Trace,
     bufs: &Bufs,
-    e: &E,
+    members: &[Member],
     operands: &[Operand],
-    out: &Operand,
     pl: &Plan,
     first: &Idx,
     trips: Idx,
@@ -746,9 +800,19 @@ fn rows_trips(
 ) -> R<()> {
     let col = cb.mul(pl.wc);
     let pro = prologue(t, bufs, operands, pl, 0, &col)?;
+    let stored = if mutants::on(LOST_MEMBER_MUTANT) {
+        1
+    } else {
+        members.len()
+    };
     t.range(trips, |t, k| {
         let at = origin(&first.mul(pl.rows).add(k.mul(pl.rows)), &col);
-        rows_block(t, bufs, e, operands, out, pl, &at, 0, &pro, hw)
+        let vals = band_values(t, bufs, operands, pl, &at, 0, &pro, hw)?;
+        for m in &members[..stored] {
+            let x = expr::emit(t, m.e, &vals)?;
+            band_store(t, &m.dst, &m.out, pl, &at, 0, x)?;
+        }
+        Ok(())
     })
 }
 
@@ -901,6 +965,84 @@ pub(super) fn band_store(
     )
 }
 
+/// The consumers' MXFP7 packings a band also writes (`q`, at the output's rows and
+/// columns), checked into record `status`; `mask` (nonzero below M) zeroes rows past M.
+pub struct Packs {
+    pub q: Vec<Buf>,
+    pub status: View,
+    pub mask: Option<View>,
+}
+
+/// [`rows_block`] whose band also goes to `packs`: the stored f16 value read
+/// back, its rows past M zero, packed checked into each `q` at the band.
+#[allow(clippy::too_many_arguments)]
+pub fn rows_block_packed(
+    t: &mut Trace,
+    bufs: &Bufs,
+    e: &E,
+    operands: &[Operand],
+    out: &Operand,
+    pl: &Plan,
+    at: &Origin,
+    cb: i64,
+    pro: &HashMap<usize, Arg>,
+    hw: &Hw,
+    packs: &Packs,
+) -> R<()> {
+    let vals = band_values(t, bufs, operands, pl, at, cb, pro, hw)?;
+    let v = expr::emit(t, e, &vals)?;
+    let p = packed(t, bufs.out.spec.dtype, v)?;
+    if t.value(p).shape != [pl.rows, pl.wc] {
+        return fail(
+            "API.OP.007",
+            "a packed epilogue band is the band's own values, not a broadcast",
+        );
+    }
+    band_store(t, &bufs.out, out, pl, at, cb, Arg::Val(p))?;
+    let mut x = t.unpack(p, None)?;
+    if let Some(mask) = &packs.mask {
+        let m = t.load(mask, true)?;
+        x = t.math(g::ValueOp::Sel, &[Arg::Val(m), Arg::Val(x), Arg::Num(0.0)])?;
+    }
+    let (r, c) = &at.out;
+    let (rr, cc) = out.divmod()?;
+    let (r0, c0) = (Idx::Int(rr).add(r), c.add(cc + cb * pl.wc));
+    for q in &packs.q {
+        let qv = t.pack_checked(x, q.spec.dtype, &packs.status)?;
+        let view = q.at(&[sl(&r0, r0.add(pl.rows)), sl(&c0, c0.add(pl.wc))])?;
+        t.store(&view, Arg::Val(qv))?;
+    }
+    Ok(())
+}
+
+/// `v` as the @l1 value a store of element type `dtype` writes: a statistic
+/// broadcast to a block, a register value packed.
+fn packed(t: &mut Trace, dtype: g::Dtype, v: Arg) -> R<V> {
+    let mut v = v;
+    if let Arg::Val(x) = v {
+        let xv = t.value(x);
+        if xv.space == g::ValSpace::L1 && xv.shape.len() == 1 {
+            v = Arg::Val(t.unpack(x, None)?);
+        }
+    }
+    match v {
+        Arg::Num(_) => fail(
+            "API.OP.001",
+            "a rows kernel stores a computed value, not a number",
+        ),
+        Arg::Val(x) if t.value(x).space == g::ValSpace::L1 => Ok(x),
+        Arg::Val(x) => {
+            let x = if t.value(x).stat() && !crate::mutants::on("kernels.vector/stat_rows_form") {
+                t.broadcast(x, t.facts.kblock)?
+            } else {
+                x
+            };
+            let gt4 = t.value(x).stat() || t.value(x).mode == Some(g::Mode::Gt4);
+            t.pack(x, dtype, gt4)
+        }
+    }
+}
+
 /// `v` over the [rows, cols] window of `dst` at (r0, c0): packed once, then
 /// stored over each of its bands (a row broadcast is one band of 4 rows,
 /// repeated down).
@@ -913,31 +1055,7 @@ pub(super) fn store_over(
     cols: i64,
     v: Arg,
 ) -> R<()> {
-    let mut v = v;
-    if let Arg::Val(x) = v {
-        let xv = t.value(x);
-        if xv.space == g::ValSpace::L1 && xv.shape.len() == 1 {
-            v = Arg::Val(t.unpack(x, None)?);
-        }
-    }
-    let p = match v {
-        Arg::Num(_) => {
-            return fail(
-                "API.OP.001",
-                "a rows kernel stores a computed value, not a number",
-            )
-        }
-        Arg::Val(x) if t.value(x).space == g::ValSpace::L1 => x,
-        Arg::Val(x) => {
-            let x = if t.value(x).stat() && !crate::mutants::on("kernels.vector/stat_rows_form") {
-                t.broadcast(x, t.facts.kblock)?
-            } else {
-                x
-            };
-            let gt4 = t.value(x).stat() || t.value(x).mode == Some(g::Mode::Gt4);
-            t.pack(x, dst.spec.dtype, gt4)?
-        }
-    };
+    let p = packed(t, dst.spec.dtype, v)?;
     let shape = t.value(p).shape.clone();
     let (h, w) = if shape.len() == 2 {
         (shape[0], shape[1])
@@ -1146,6 +1264,24 @@ pub(super) fn tail_band(
     w: i64,
     hw: &Hw,
 ) -> R<()> {
+    let sole = Member::sole(e, out, bufs);
+    members_tail_band(t, bufs, &sole, operands, pl, row0, rows, w, hw)
+}
+
+/// [`tail_band`] of several members: each operand's rows copied once, every
+/// member computed from them ([`members_stage`]) and copied out.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn members_tail_band(
+    t: &mut Trace,
+    bufs: &Bufs,
+    members: &[Member],
+    operands: &[Operand],
+    pl: &Plan,
+    row0: i64,
+    rows: i64,
+    w: i64,
+    hw: &Hw,
+) -> R<()> {
     let mut ins = bufs.ins.clone();
     let mut ops = operands.to_vec();
     let mut maps = bufs.maps.clone();
@@ -1191,49 +1327,62 @@ pub(super) fn tail_band(
             rows: pl.rows,
         };
     }
-    let (s, tail) = if out.kind == Kind::Row {
-        let shape = if pl.nblk > 1 {
-            vec![pl.nblk, pl.rows]
+    let mut inner = Vec::with_capacity(members.len());
+    for m in members {
+        let out = &m.out;
+        let (s, tail) = if out.kind == Kind::Row {
+            let shape = if pl.nblk > 1 {
+                vec![pl.nblk, pl.rows]
+            } else {
+                vec![pl.rows]
+            };
+            let tail = Operand {
+                kind: Kind::Row,
+                dtype: out.dtype,
+                offset: 0,
+                pitch: 0,
+                rows: pl.rows,
+            };
+            (t.buffer(&shape, out.dtype, vec![])?, tail)
         } else {
-            vec![pl.rows]
+            let tail = Operand {
+                kind: out.kind,
+                dtype: out.dtype,
+                offset: 0,
+                pitch: w,
+                rows: pl.rows,
+            };
+            (t.buffer(&[pl.rows, w], out.dtype, vec![])?, tail)
         };
-        let tail = Operand {
-            kind: Kind::Row,
-            dtype: out.dtype,
-            offset: 0,
-            pitch: 0,
-            rows: pl.rows,
-        };
-        (t.buffer(&shape, out.dtype, vec![])?, tail)
-    } else {
-        let tail = Operand {
-            kind: out.kind,
-            dtype: out.dtype,
-            offset: 0,
-            pitch: w,
-            rows: pl.rows,
-        };
-        (t.buffer(&[pl.rows, w], out.dtype, vec![])?, tail)
-    };
-    let inner = Bufs {
+        inner.push(Member {
+            e: m.e,
+            out: tail,
+            dst: s,
+        });
+    }
+    let staged = Bufs {
         ins,
-        out: s.clone(),
+        out: inner[0].dst.clone(),
         maps,
     };
-    rows_stage(t, &inner, e, &ops, &tail, pl, hw.vc, &Idx::Int(0), hw)?;
-    if out.kind == Kind::Row && pl.nblk > 1 {
-        let dst = bufs.out.at(&[ALL, sl(row0, row0 + pl.rows)])?;
-        t.copy(&dst, &s.at(&[ALL, sl(0, pl.rows)])?, None, None)
-    } else if out.kind == Kind::Row {
-        let dst = bufs.out.at(&[sl(row0, row0 + pl.rows)])?;
-        t.copy(&dst, &s.at(&[sl(0, pl.rows)])?, None, None)
-    } else {
-        let (rr, cc) = out.divmod()?;
-        let dst = bufs
-            .out
-            .at(&[sl(rr + row0, rr + row0 + rows), sl(cc, cc + w)])?;
-        t.copy(&dst, &s.at(&[sl(0, rows), ALL])?, None, None)
+    members_stage(t, &staged, &inner, &ops, pl, hw.vc, &Idx::Int(0), hw)?;
+    for (m, s) in members.iter().zip(&inner) {
+        let (out, s) = (&m.out, &s.dst);
+        if out.kind == Kind::Row && pl.nblk > 1 {
+            let dst = m.dst.at(&[ALL, sl(row0, row0 + pl.rows)])?;
+            t.copy(&dst, &s.at(&[ALL, sl(0, pl.rows)])?, None, None)?;
+        } else if out.kind == Kind::Row {
+            let dst = m.dst.at(&[sl(row0, row0 + pl.rows)])?;
+            t.copy(&dst, &s.at(&[sl(0, pl.rows)])?, None, None)?;
+        } else {
+            let (rr, cc) = out.divmod()?;
+            let dst = m
+                .dst
+                .at(&[sl(rr + row0, rr + row0 + rows), sl(cc, cc + w)])?;
+            t.copy(&dst, &s.at(&[sl(0, rows), ALL])?, None, None)?;
+        }
     }
+    Ok(())
 }
 
 /// The `cols` (< a block) columns of `r` rows from column `w`, through a
@@ -1245,6 +1394,24 @@ pub(super) fn tail_columns(
     e: &E,
     operands: &[Operand],
     out: &Operand,
+    r: i64,
+    w: i64,
+    cols: i64,
+    quantum: i64,
+    hw: &Hw,
+) -> R<()> {
+    let sole = Member::sole(e, out, bufs);
+    members_tail_columns(t, bufs, &sole, operands, r, w, cols, quantum, hw)
+}
+
+/// [`tail_columns`] of several members: each operand's columns copied once,
+/// every member computed from them and copied out.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn members_tail_columns(
+    t: &mut Trace,
+    bufs: &Bufs,
+    members: &[Member],
+    operands: &[Operand],
     r: i64,
     w: i64,
     cols: i64,
@@ -1287,28 +1454,40 @@ pub(super) fn tail_columns(
             Kind::Row | Kind::Scalar => {}
         }
     }
-    let s = t.buffer(&[r, block], out.dtype, vec![])?;
-    let tail = Operand {
-        offset: 0,
-        pitch: block,
-        rows: r,
-        ..*out
-    };
-    let inner = Bufs {
+    let mut inner = Vec::with_capacity(members.len());
+    for m in members {
+        inner.push(Member {
+            e: m.e,
+            out: Operand {
+                offset: 0,
+                pitch: block,
+                rows: r,
+                ..m.out
+            },
+            dst: t.buffer(&[r, block], m.out.dtype, vec![])?,
+        });
+    }
+    let staged = Bufs {
         ins,
-        out: s.clone(),
+        out: inner[0].dst.clone(),
         maps,
     };
-    let pl = plan(&ops, tail.kind, r, block, None, Some(block), quantum, hw)?;
+    let mut planned = ops.clone();
+    planned.extend(inner[1..].iter().map(|_| Operand::full(block, 0)));
+    let kind = inner[0].out.kind;
+    let pl = plan(&planned, kind, r, block, None, Some(block), quantum, hw)?;
     for (sp, row0, rows) in &stages(&pl, r, quantum) {
         match rows {
-            None => rows_stage(t, &inner, e, &ops, &tail, sp, hw.vc, &Idx::Int(*row0), hw)?,
-            Some(rows) => tail_band(t, &inner, e, &ops, &tail, sp, *row0, *rows, block, hw)?,
+            None => members_stage(t, &staged, &inner, &ops, sp, hw.vc, &Idx::Int(*row0), hw)?,
+            Some(rows) => members_tail_band(t, &staged, &inner, &ops, sp, *row0, *rows, block, hw)?,
         }
     }
-    let (rr, cc) = out.divmod()?;
-    let dst = bufs.out.at(&[sl(rr, rr + r), sl(cc + w, cc + w + cols)])?;
-    t.copy(&dst, &s.at(&[sl(0, r), sl(0, cols)])?, None, None)
+    for (m, s) in members.iter().zip(&inner) {
+        let (rr, cc) = m.out.divmod()?;
+        let dst = m.dst.at(&[sl(rr, rr + r), sl(cc + w, cc + w + cols)])?;
+        t.copy(&dst, &s.dst.at(&[sl(0, r), sl(0, cols)])?, None, None)?;
+    }
+    Ok(())
 }
 
 /// Rows of `vc.vlmax` values a flat trip takes: at most 16, double-buffered

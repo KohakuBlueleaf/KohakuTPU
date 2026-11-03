@@ -50,9 +50,13 @@ def test_a_flaw_is_read_both_ways_and_an_unknown_line_stops(monkeypatch):
         image.flaw_line("new.v", flawed)
 
 
-def lowered(doc: dict, name: str = "lone") -> str:
+def compiled(doc: dict, name: str = "lone"):
     text = examples.example(f"mover/{name}", "l2").read_text("utf-8")
-    return rs.compile(text, name, json.dumps(doc))["l1"]
+    return rs.compile(text, name, json.dumps(doc))
+
+
+def lowered(doc: dict, name: str = "lone") -> str:
+    return compiled(doc, name)["l1"]
 
 
 def test_a_copy_overlapping_its_source_reads_it_whole_first():
@@ -97,14 +101,129 @@ def test_a_gather_into_odd_strided_rows_packs_then_copies_on_the_vector_cores():
     assert "-> w(y+0" in plain and "h0" not in plain
 
 
-def test_a_bind_off_the_write_line_is_refused_only_with_f001():
-    """L2.MOV.020's proof assumes every base a whole DRAM write line."""
+def test_only_a_port_a_mover_proof_leans_on_must_bind_on_a_write_line():
+    """L1.MOV.019: the scatter's rows are proven from its table's base, so
+    `t` must start on a line; the rows read and the index list need nothing."""
     doc = machine("multimesh_v9t8")
     line = submission.burst_line(json.dumps(doc))
     assert line == doc["machine"]["card"]["dram"]["line_bytes"] == 64
-    assert submission.unaligned({"x": 256, "y": 4160, "z": 96}, line) == ["z"]
+    ports = compiled(doc, "scatter")["f001"]["line_ports"]
+    assert ports == ["t"], ports
+    assert submission.unaligned({"s": 96, "idx": 32, "t": 4160}, line, ports) == []
+    assert submission.unaligned({"s": 96, "idx": 32, "t": 96}, line, ports) == ["t"]
     doc["machine"]["flaws"]["F-001"]["present"] = False
-    assert submission.unaligned({"z": 96}, submission.burst_line(json.dumps(doc))) == []
+    assert compiled(doc, "scatter")["f001"]["line_ports"] == []
+    assert (
+        submission.unaligned({"t": 96}, submission.burst_line(json.dumps(doc)), ports)
+        == []
+    )
+
+
+def test_a_copy_written_by_the_vector_cores_binds_anywhere():
+    """L2.MOV.020's vector copy leaves no mover write on `x` or `y`."""
+    assert compiled(machine("multimesh_v9t8"))["f001"] == {"line_ports": [], "split": 0}
+
+
+def without_vector_copy(flaw: bool = True) -> dict:
+    """v9t8 with no vector cores: L2.MOV.020 has none to copy on, so an
+    unproven copy stays on the mover."""
+    doc = machine("multimesh_v9t8")
+    doc["machine"]["die"]["units"]["vc"] = []
+    doc["machine"]["flaws"]["F-001"]["present"] = flaw
+    return doc
+
+
+def test_an_unproven_mover_copy_reaching_l1_is_split_into_proven_commands():
+    """L1.MOV.019's backstop: the copy kept on the mover leaves L1 as 256
+    one-word commands, none chaining."""
+    got = compiled(without_vector_copy())
+    assert "copy w(x" in got["l1"].replace(" + ", "+")
+    assert got["f001"]["split"] == 256, got["f001"]
+    assert compiled(without_vector_copy(flaw=False))["f001"]["split"] == 0
+
+
+REGISTER_COUNT = """target ktpu.v9
+
+fn regs.l1(x: f16[256, 16] @dram, y: f16[512, 16] @dram)
+    r1 = set 256
+    move
+        copy w(x + 0, (r1, 32)) -> w(y + 0, (r1, 64))
+"""
+
+
+def test_an_unproven_write_with_a_register_count_is_refused_on_f001():
+    """L1.MOV.019: a split needs the counts."""
+    doc = machine("multimesh_v9t8")
+    with pytest.raises(Exception, match="L1.MOV.019"):
+        rs.compile(REGISTER_COUNT, "regs", json.dumps(doc), l1=True)
+    doc["machine"]["flaws"]["F-001"]["present"] = False
+    rs.compile(REGISTER_COUNT, "regs", json.dumps(doc), l1=True)
+
+
+REGISTER_FIELDS = """target ktpu.v9
+
+fn regs.l1(x: f16[256, 16] @dram, y: f16[512, 16] @dram)
+    r1 = set {value}
+    move
+        copy {copy}
+"""
+
+
+def test_a_register_count_is_not_proven_by_its_placeholder():
+    """L1.MOV.019: a contiguous copy of r1 = 129 words bursts 128 + 1; its
+    count's placeholder 0 is an even run, but the command is refused."""
+    doc = machine("multimesh_v9t8")
+    text = REGISTER_FIELDS.format(
+        value=129, copy="w(x + 0, (r1, 32)) -> w(y + 0, (r1, 32))"
+    )
+    with pytest.raises(Exception, match="L1.MOV.019"):
+        rs.compile(text, "regs", json.dumps(doc), l1=True)
+
+
+def test_a_register_write_base_is_known_to_a_word():
+    """L1.MOV.019: y + r1 at r1 = 32 starts on an odd word; the placeholder's
+    offset 0 proves nothing, and the split needs the base's parity. One word
+    through a register base needs nothing."""
+    doc = machine("multimesh_v9t8")
+    text = REGISTER_FIELDS.format(
+        value=32, copy="w(x + 0, (4, 32)) -> w(y + 0 + r1, (4, 32))"
+    )
+    with pytest.raises(Exception, match="L1.MOV.019"):
+        rs.compile(text, "regs", json.dumps(doc), l1=True)
+    one = REGISTER_FIELDS.format(
+        value=32, copy="w(x + 0, (1, 32)) -> w(y + 0 + r1, (1, 32))"
+    )
+    assert not rs.compile(one, "regs", json.dumps(doc), l1=True)["verdict"]["refused"]
+    doc["machine"]["flaws"]["F-001"]["present"] = False
+    assert not rs.compile(text, "regs", json.dumps(doc), l1=True)["verdict"]["refused"]
+
+
+INDEXED = """target ktpu.v9
+
+fn rows.l1(x: f16[64, 48] @dram, i: i32[8] @dram, y: f16[16, 64] @dram)
+    move
+        {op}
+"""
+
+
+def test_a_split_gather_row_off_an_index_word_still_encodes():
+    """L1.MOV.019 / ISA.MV.054: two three-word rows 128 bytes apart split into
+    an even body and a lone tail a row; the second row's pieces read the list
+    from its word, the first row masked."""
+    doc = machine("multimesh_v9t8")
+    op = "gather x + 0 -> w(y + 0, (2, 128), (3, 32)) index=i + 0 n=2 pitch=96 words=3"
+    got = rs.compile(INDEXED.format(op=op), "rows", json.dumps(doc), l1=True)
+    assert got["f001"]["split"] == 4, got["f001"]
+    assert not got["verdict"]["refused"], got["verdict"]
+
+
+def test_a_split_scatter_row_off_an_index_word_is_refused():
+    """L1.MOV.019: a scatter row's write goes where its entry says, so no
+    window masks the rows before it; a split row past the list's word refuses."""
+    doc = machine("multimesh_v9t8")
+    op = "scatter w(x + 0, (4, 32)) -> y + 0 index=i + 0 n=2 pitch=96 words=2"
+    with pytest.raises(Exception, match="L1.MOV.019"):
+        rs.compile(INDEXED.format(op=op), "rows", json.dumps(doc), l1=True)
 
 
 def test_without_the_flaw_the_copy_stays_on_the_mover():

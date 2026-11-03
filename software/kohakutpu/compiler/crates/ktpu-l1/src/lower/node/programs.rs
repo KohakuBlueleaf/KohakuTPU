@@ -61,6 +61,7 @@ pub struct NodeProgram {
     pub node: Option<i128>,
     pub mesh: u32,
     pub program: Program,
+    pub f001: super::F001,
 }
 
 /// `{node: Program}` of `fn name.l1`, each parameter bound to an address: one
@@ -114,6 +115,7 @@ pub fn programs_spanned(
             node,
             mesh: t.mesh,
             program: reader.p,
+            f001: reader.f001,
         });
     }
     Ok(out)

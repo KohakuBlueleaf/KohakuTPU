@@ -746,7 +746,10 @@ ROWS = [
     ("vc.fill_shared", lambda i: i.measured("vc.fill_shared")),
     ("vc.launch_gap", lambda i: i.measured("vc.launch_gap")),
     ("vc.launch_front", lambda i: i.measured("vc.launch_front")),
-    ("vc.step_cycles", lambda i: i.measured("vc.step_cycles")),
+    ("vc.send_cycles", lambda i: i.measured("vc.send_cycles")),
+    ("vc.word_cycles", lambda i: i.measured("vc.word_cycles")),
+    ("vc.image_word_cycles", lambda i: i.measured("vc.image_word_cycles")),
+    ("vc.wait_cycles", lambda i: i.measured("vc.wait_cycles")),
     # Memory mover.
     (
         "mover.index_words",
@@ -772,6 +775,10 @@ ROWS = [
         lambda i: i.rtl("src/kohakuaccel/sysnode/mover/mm_mover.v", "FIFO_D"),
     ),
     ("mover.copy_cost", lambda i: i.measured("mover.copy_cost")),
+    ("mover.move_cycles", lambda i: i.measured("mover.move_cycles")),
+    ("mover.statement_cycles", lambda i: i.measured("mover.statement_cycles")),
+    ("mover.fill_cycles", lambda i: i.measured("mover.fill_cycles")),
+    ("mover.element_cycles", lambda i: i.measured("mover.element_cycles")),
     ("mover.faults", mover_faults),
     ("mover.cfgq_depth", lambda i: i.rtl(MOVER, "CFGQ_D")),
     ("mover.cfgq_margin", lambda i: i.rtl(MOVER, "CFGQ_MARGIN")),

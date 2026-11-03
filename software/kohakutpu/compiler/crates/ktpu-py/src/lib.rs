@@ -244,6 +244,10 @@ fn compiled<'py>(py: Python<'py>, c: &Compiled) -> PyResult<Bound<'py, PyDict>> 
     }
     d.set_item("scratch", scratch)?;
     d.set_item("bound", &c.bound)?;
+    let f001 = PyDict::new(py);
+    f001.set_item("line_ports", &c.f001.line_ports)?;
+    f001.set_item("split", c.f001.split)?;
+    d.set_item("f001", f001)?;
     let v = PyDict::new(py);
     v.set_item("refused", c.verdict.refused)?;
     let found = PyList::empty(py);
@@ -1103,6 +1107,17 @@ fn mm_takes_f16(args_json: &str, machine_json: &str) -> PyResult<bool> {
     ktpu_kernels::call::mm_takes_f16(&args, &m).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
+/// fused_packs(args_json, machine_json) -> bool: whether a packed fused rows
+/// step `{R, W, operands, outs, q}` writes every packing `q` names
+/// (`ktpu_kernels::call::fused_packs`); ValueError on a refusal.
+#[pyfunction]
+fn fused_packs(args_json: &str, machine_json: &str) -> PyResult<bool> {
+    let m = machine(machine_json)?;
+    let args = serde_json::from_str(args_json)
+        .map_err(|e| PyValueError::new_err(format!("fused packs arguments: {e}")))?;
+    ktpu_kernels::call::fused_packs(&args, &m).map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
 /// The rows reduction knobs' defaults (`ktpu_kernels::gen::reductions::
 /// defaults`), a JSON object: Python's `rows.SINGLE_PACKAGE_AST`.
 fn rows_defaults() -> String {
@@ -1203,6 +1218,7 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mm_knobs, m)?)?;
     m.add_function(wrap_pyfunction!(mm_plan, m)?)?;
     m.add_function(wrap_pyfunction!(mm_resolved, m)?)?;
+    m.add_function(wrap_pyfunction!(fused_packs, m)?)?;
     m.add_function(wrap_pyfunction!(mm_takes_f16, m)?)?;
     m.add("MM_KNOBS", mm_knob_table())?;
     m.add("VECTOR_DEFAULTS", vector_defaults())?;

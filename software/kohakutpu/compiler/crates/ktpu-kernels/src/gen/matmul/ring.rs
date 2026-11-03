@@ -113,13 +113,14 @@ impl Ring {
 }
 
 /// A part's epilogue trips `(first row, trips, plan)`: the widest dividing
-/// the part, or with `tail_bands` the widest and a tail trip.
+/// the part (at most `most` rows), or with `tail_bands` the widest and a tail trip.
 pub(super) fn segments(
     mm: &Mm,
     ring: &Ring,
     operands: &[Operand],
     out: &Operand,
     wc: i64,
+    most: Option<i64>,
     hw: &Hw,
 ) -> R<Vec<(i64, i64, v::Plan)>> {
     let part = ring.part_rows(mm);
@@ -127,7 +128,8 @@ pub(super) fn segments(
         tm: if ring.tail_bands { MAX_TM } else { part },
         ..*mm
     };
-    let rows = epilogue_bands(&planning, operands, out, wc, hw)? * hw.band;
+    let widest = epilogue_bands(&planning, operands, out, wc, hw)? * hw.band;
+    let rows = most.map_or(widest, |m| widest.min(m));
     let mut out_segments = Vec::new();
     let mut start = 0;
     while start < part {
@@ -149,27 +151,90 @@ pub(super) fn segments(
     Ok(out_segments)
 }
 
-/// The rows of a batch the ring's epilogue writes: through the end of the
-/// last trip starting below M.
-pub(super) fn cover(mm: &Mm, ring: &Ring, segs: &[(i64, i64, v::Plan)]) -> i64 {
+/// The `(first row, rows)` of every trip of a batch the ring's epilogue runs:
+/// those starting below M.
+fn trips_run(mm: &Mm, ring: &Ring, segs: &[(i64, i64, v::Plan)]) -> Vec<(i64, i64)> {
     let part = ring.part_rows(mm);
-    let mut end = 0;
+    let mut out = vec![];
     for tile in 0..mm.mp / mm.tm {
         for p in 0..ring.parts {
             for (start, count, pl) in segs {
                 for k in 0..*count {
                     let s = tile * mm.tm + p * part + start + k * pl.rows;
                     if s < mm.m {
-                        end = end.max(s + pl.rows);
+                        out.push((s, pl.rows));
                     }
                 }
             }
         }
     }
-    end
+    out
 }
 
-/// The ring's body: `b` the kernel's buffers (`a`, `b`, `in1..`, `out`).
+/// The rows of a batch the ring's epilogue writes: through the end of the
+/// last trip starting below M.
+pub(super) fn cover(mm: &Mm, ring: &Ring, segs: &[(i64, i64, v::Plan)]) -> i64 {
+    trips_run(mm, ring, segs)
+        .iter()
+        .map(|(s, r)| s + r)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Whether the trips pack `d`: N whole chunks of its K blocks in blocks of `wc`, rp
+/// past M, each trip one band (MXFP7 packs a band a trip) in rp and one packed tile.
+pub(super) fn packs(
+    mm: &Mm,
+    ring: &Ring,
+    segs: &[(i64, i64, v::Plan)],
+    wc: i64,
+    d: &QDemand,
+    hw: &Hw,
+) -> bool {
+    let chunk = hw.kblock * d.nk;
+    let tile = hw.band * d.groups;
+    // A loop of trips stays in one packed tile: its store views step affinely.
+    let part = ring.part_rows(mm);
+    let loops_in_tile = (0..mm.mp / mm.tm).all(|ti| {
+        (0..ring.parts).all(|p| {
+            segs.iter().all(|(start, count, pl)| {
+                let first = ti * mm.tm + p * part + start;
+                let live = (0..*count).filter(|k| first + k * pl.rows < mm.m).count() as i64;
+                live == 0 || first / tile == (first + live * pl.rows - 1) / tile
+            })
+        })
+    });
+    d.groups > 0
+        && d.cp == mm.n
+        && mm.n % chunk == 0
+        && wc % chunk == 0
+        && d.rp >= mm.m
+        && d.rp % hw.band == 0
+        && loops_in_tile
+        && trips_run(mm, ring, segs)
+            .iter()
+            .all(|(s, r)| *r == hw.band && s + r <= d.rp)
+}
+
+/// The trip of the last row tile holding row M inside it, past its first
+/// row: `(part, segment, trip, first row)`.
+fn straddle(mm: &Mm, ring: &Ring, segs: &[(i64, i64, v::Plan)]) -> Option<(i64, usize, i64, i64)> {
+    let (part, last) = (ring.part_rows(mm), mm.mp / mm.tm - 1);
+    for p in 0..ring.parts {
+        for (si, (start, count, pl)) in segs.iter().enumerate() {
+            for k in 0..*count {
+                let s = last * mm.tm + p * part + start + k * pl.rows;
+                if s < mm.m && mm.m < s + pl.rows {
+                    return Some((p, si, k, s));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The ring's body: `b` the kernel's buffers (`a`, `b`, `in1..`, `out`, a `q`
+/// a demand).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn schedule(
     t: &mut Trace,
@@ -180,6 +245,7 @@ pub(super) fn schedule(
     out: &Operand,
     ring: &Ring,
     segs: &[(i64, i64, v::Plan)],
+    demands: &[QDemand],
     mach: &Machine,
 ) -> R<()> {
     let hw = &Hw::of(mach);
@@ -214,6 +280,31 @@ pub(super) fn schedule(
     let ragged = ring.groups % ring.lanes != 0;
     let cores = ring.lanes * ring.parts;
     let on = if cores > hw.vc { At::Any } else { At::Var };
+    let first_q = 3 + extras.len();
+    let qs = b[first_q..first_q + demands.len()].to_vec();
+    // With packings the trip holding row M runs alone, its rows past M masked.
+    let cut = match qs.is_empty() {
+        true => None,
+        false => straddle(mm, ring, segs),
+    };
+    let mut runs: Vec<(usize, bool)> = (0..segs.len()).map(|si| (si, false)).collect();
+    runs.extend(cut.map(|(_, si, _, _)| (si, true)));
+    let phases = pl.nblk * runs.len() as i64;
+    let record = ktpu_machine::packing::STATUS_RECORD / 2;
+    let waves = cdiv(ring.groups, ring.lanes);
+    let status = match qs.is_empty() {
+        true => None,
+        false => Some(t.buffer(&[waves * phases * cores * record], g::Dtype::F16, vec![])?),
+    };
+    let mask = match cut {
+        Some((_, si, _, s0)) => {
+            let m = t.buffer(&[segs[si].2.rows, pl.wc], g::Dtype::F16, vec![])?;
+            t.fill_value(&m.whole(), 0, None, None)?;
+            t.fill_value(&m.at(&[sl(0, mm.m - s0), ALL])?, 0x3c00_3c00, None, None)?;
+            Some(m.whole())
+        }
+        None => None,
+    };
     let qa = quant_ring(t, b, mm, ring, mach)?;
     let mut bq = b.to_vec();
     if let Some(q) = &qa {
@@ -260,53 +351,96 @@ pub(super) fn schedule(
         if let Some(q) = qa.as_ref().filter(|q| q.ahead == 1) {
             q.wave(t, &w.add(1))?;
         }
-        // One phase a column block and segment: a vector instance runs one
-        // stream loop.
+        // One phase a column block and segment (and the cut trip): a vector
+        // instance runs one stream loop.
+        let mut phase = 0;
         for cb in 0..pl.nblk {
-            for (start, count, spl) in segs {
+            for &(si, masked) in &runs {
+                let (start, count, spl) = &segs[si];
+                let j = phase;
+                phase += 1;
+                let last = mm.mp / mm.tm - 1;
+                // The last row tile's trips a part: those starting below M but the cut one.
+                let lives: Vec<i64> = (0..ring.parts)
+                    .map(|pi| {
+                        let first = last * mm.tm + pi * part + start;
+                        let live =
+                            (0..*count).filter(|k| first + k * spl.rows < mm.m).count() as i64;
+                        live - i64::from(cut.is_some_and(|(pc, sc, _, _)| pc == pi && sc == si))
+                    })
+                    .collect();
+                let partial = past_m || cut.is_some();
+                if !masked && partial && last == 0 && lives.iter().all(|l| *l == 0) {
+                    continue;
+                }
                 t.par(cores, g::UnitKind::Vc, on, |t, u| {
                     let (lg, p) = (u.div(ring.parts), u.rem(ring.parts));
                     let gi = w.mul(ring.lanes).add(&lg);
+                    let packs = match &status {
+                        Some(s) => {
+                            let rec = w.mul(phases).add(j).mul(cores).add(&u).mul(record);
+                            Some(v::Packs {
+                                q: qs.clone(),
+                                status: s.at(&[sl(&rec, rec.add(record))])?,
+                                mask: mask.clone().filter(|_| masked),
+                            })
+                        }
+                        None => None,
+                    };
                     let work = |t: &mut Trace| {
                         let (bt, ti, tj0) = ring.group(mm, &gi);
                         let grow = bt.mul(mm.mp).add(ti.mul(mm.tm));
                         let gcol = tj0.mul(mm.tn);
                         let srow = slot0.add(&lg).mul(mm.tm);
-                        let trips = |t: &mut Trace, n: i64| -> R<()> {
+                        let trips = |t: &mut Trace, n: i64, k0: i64| -> R<()> {
                             let pro = v::prologue(t, &bufs, &operands, spl, cb, &gcol)?;
                             t.range(n, |t, k| {
-                                let local = p.mul(part).add(*start).add(k.mul(spl.rows));
+                                let local = p.mul(part).add(*start).add(k.add(k0).mul(spl.rows));
                                 let mut at = v::Origin::rows(&grow.add(&local), operands.len());
                                 for x in at.ins.iter_mut().skip(1) {
                                     x.1 = gcol.clone();
                                 }
                                 at.ins[0] = (srow.add(&local), Idx::Int(0));
                                 at.out.1 = gcol.clone();
-                                v::rows_block(t, &bufs, e, &operands, out, spl, &at, cb, &pro, hw)
+                                match &packs {
+                                    Some(pk) => v::rows_block_packed(
+                                        t, &bufs, e, &operands, out, spl, &at, cb, &pro, hw, pk,
+                                    ),
+                                    None => v::rows_block(
+                                        t, &bufs, e, &operands, out, spl, &at, cb, &pro, hw,
+                                    ),
+                                }
                             })
                         };
-                        if !past_m {
-                            return trips(t, *count);
+                        if masked {
+                            let (pc, _, kc, _) = cut.expect("a cut trip");
+                            return t.when(Cond::new(&ti, g::CmpOp::Eq, last), |t| {
+                                if ring.parts > 1 {
+                                    t.when(Cond::new(&p, g::CmpOp::Eq, pc), |t| trips(t, 1, kc))
+                                } else {
+                                    trips(t, 1, kc)
+                                }
+                            });
                         }
-                        // The last M tile of a batch runs the trips starting
-                        // below M: a count a part.
-                        let last = mm.mp / mm.tm - 1;
+                        if !partial {
+                            return trips(t, *count, 0);
+                        }
                         if last > 0 {
-                            t.when(Cond::new(&ti, g::CmpOp::Lt, last), |t| trips(t, *count))?;
+                            t.when(Cond::new(&ti, g::CmpOp::Lt, last), |t| trips(t, *count, 0))?;
+                        }
+                        if lives.iter().all(|l| *l == 0) {
+                            return Ok(());
                         }
                         t.when(Cond::new(&ti, g::CmpOp::Eq, last), |t| {
-                            for pi in 0..ring.parts {
-                                let first = last * mm.tm + pi * part + start;
-                                let live = (0..*count)
-                                    .filter(|k| first + k * spl.rows < mm.m)
-                                    .count() as i64;
+                            for (pi, &live) in lives.iter().enumerate() {
+                                let pi = pi as i64;
                                 if live == 0 {
                                     continue;
                                 }
                                 if ring.parts > 1 {
-                                    t.when(Cond::new(&p, g::CmpOp::Eq, pi), |t| trips(t, live))?;
+                                    t.when(Cond::new(&p, g::CmpOp::Eq, pi), |t| trips(t, live, 0))?;
                                 } else {
-                                    trips(t, live)?;
+                                    trips(t, live, 0)?;
                                 }
                             }
                             Ok(())
@@ -322,6 +456,20 @@ pub(super) fn schedule(
         }
         Ok(())
     })?;
+    if let Some(s) = &status {
+        // Rows past the trips run, to rp: packed zeros.
+        let end = cover(mm, ring, segs);
+        for q in &qs {
+            let rp = q.spec.shape[0];
+            if end < rp {
+                let z = t.buffer(&[rp - end, mm.n], g::Dtype::F16, vec![])?;
+                t.fill_value(&z.whole(), 0, None, None)?;
+                let dst = q.at(&[sl(end, rp), ALL])?;
+                t.quant_scheduled(&dst, &z.whole(), true, QUANT_SCHEDULE, false)?;
+            }
+        }
+        t.quant_check(&s.whole())?;
+    }
     match qa.and_then(|q| q.status) {
         Some(s) => t.quant_check(&s.whole()),
         None => Ok(()),

@@ -74,8 +74,14 @@ pub struct Vc {
     pub launch_gap: u32,
     /// Cycles a run spends outside its steps.
     pub launch_front: u32,
-    /// Cycles the node takes on a step of a run's program.
-    pub step_cycles: u32,
+    /// Node cycles a vector send beyond its words.
+    pub send_cycles: u32,
+    /// Node cycles a unit word sent, or a step loaded.
+    pub word_cycles: u32,
+    /// Node cycles a program word sent to its core, once a launch.
+    pub image_word_cycles: f64,
+    /// Node cycles a wait on a unit, once the unit is done.
+    pub wait_cycles: u32,
     /// The fault codes the core build raises (RUL.053).
     pub faults: Runtime<Vec<u32>>,
     /// The raised fault codes by their `F_*` name in v2_core.v.

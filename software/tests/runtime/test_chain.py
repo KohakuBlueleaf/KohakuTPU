@@ -2,6 +2,8 @@
 Linear -> ReLU -> Linear runs as one `kernel.chain` launch with the hidden
 activation in a scratch, and computes the bytes the two launches compute."""
 
+import json
+
 import numpy as np
 import pytest
 from tinygrad.tensor import Tensor
@@ -111,6 +113,30 @@ def test_a_pair_the_generator_would_refuse_is_not_linked():
     assert not chain.linkable(out, {"a": ("in", 0, spec(40, 128, "mx7a"))})
     assert not chain.linkable(out, {"a": ("in", 0, spec(40, 128, layout=[["t", 1]]))})
     assert not chain.linkable(out, {"a": ("out", 0, spec(40, 128))})
+
+
+def test_nested_chains_name_every_kernel_apart(tmp_path):
+    """chain(chain(A, B), C): C's names take a prefix none of A's or B's
+    names hold, and the graph's map names where each of C's ports went."""
+    copy = {"gen": "convert.copy_kernel", "args": {"nbytes": 256}}
+
+    def chained(first, to):
+        return {"first": first, "second": copy, "from": "src", "to": to, "keep": True}
+
+    dev = card.Device(
+        kind="offline", board="multimesh_v9t6", nodes=1, library=str(tmp_path)
+    )
+    inner = chained(copy, "dst")
+    outer = chained({"gen": "kernel.chain", "args": inner}, "c2_dst")
+    two = json.loads(generated.source(dev, "kernel.chain", inner))
+    three = json.loads(generated.source(dev, "kernel.chain", outer))
+    dev.close()
+    ports = [p["name"] for p in three["ports"]]
+    scratch = [s["name"] for s in three["scratch"]]
+    assert two["consts"]["chain"]["ports"] == {"dst": "c2_dst"}
+    assert three["consts"]["chain"]["ports"] == {"dst": "c3_dst"}
+    assert ports == ["src", "dst", "c2_dst", "c3_dst"], ports
+    assert len(set(ports + scratch)) == len(ports + scratch), (ports, scratch)
 
 
 def blocks(library, monkeypatch) -> tuple:

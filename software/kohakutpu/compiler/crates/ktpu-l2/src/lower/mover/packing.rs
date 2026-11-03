@@ -11,6 +11,7 @@ mod image;
 mod mapped;
 mod padding;
 
+pub(super) use image::{clear, status};
 pub use mapped::fits as composed_fits;
 
 /// Select a permitted backend. An op override never widens board admission.

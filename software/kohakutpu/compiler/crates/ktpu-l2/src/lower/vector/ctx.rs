@@ -96,6 +96,8 @@ pub struct Ctx<'a> {
     pub guards: Guards,
     /// how a value the instance does not change moves (`RPar::zero_sign`)
     pub zero_sign: ZeroSign,
+    /// the instance holds a checked pack: the status register is reserved
+    pub checked: bool,
 }
 
 fn op(n: &Node) -> &Op {
@@ -153,6 +155,7 @@ impl<'a> Ctx<'a> {
             tile: 1,
             guards: Guards::new(),
             zero_sign: ZeroSign::DEFAULT,
+            checked: false,
         })
     }
 

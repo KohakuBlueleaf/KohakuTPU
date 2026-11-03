@@ -330,6 +330,19 @@ pub fn compare(p: &Pair) -> Result<Option<Apart>, String> {
     Ok(None)
 }
 
+/// What `p`'s program (`after`, else `before`) stopped on from the seeded start
+/// that `poke` changed, if it stopped.
+pub fn stops(p: &Pair, after: bool, poke: &dyn Fn(&mut [u8], &Binds)) -> Option<String> {
+    let mut r = start(p).expect("a pair's start");
+    poke(&mut r.start, &r.binds);
+    let (m, text) = if after {
+        (&r.after, &p.after)
+    } else {
+        (&r.before, &p.before)
+    };
+    simulate(&r, m, text, &p.name, 1).err()
+}
+
 /// Compares every pair, reports, and refuses a stop or a difference.
 pub fn judge(pairs: &[(String, Result<Pair, String>)]) {
     let t0 = Instant::now();

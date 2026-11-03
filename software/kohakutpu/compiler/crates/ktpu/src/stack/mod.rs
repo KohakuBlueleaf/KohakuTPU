@@ -7,7 +7,7 @@
 
 pub mod lines;
 
-use crate::output::{Finding, PackageOut, Scratch};
+use crate::output::{Finding, PackageOut, Scratch, F001};
 use crate::pipeline::stage::{Backend, Stage};
 use ktpu_l1::layout::scratch::Arena;
 use ktpu_l1::lower::imem::Cores;
@@ -175,6 +175,10 @@ impl Backend for Stack {
         p.scratch.clone()
     }
 
+    fn f001(&self, p: &Programs) -> F001 {
+        p.f001()
+    }
+
     fn order(&self, p: &Programs, m: &Machine) -> Result<BTreeMap<u32, PackageOut>, Refusal> {
         order(p, m, None)
     }
@@ -299,6 +303,10 @@ impl Backend for CardStack {
 
     fn scratch(&self, p: &Programs) -> Vec<Scratch> {
         Stack.scratch(p)
+    }
+
+    fn f001(&self, p: &Programs) -> F001 {
+        p.f001()
     }
 
     fn order(&self, p: &Programs, m: &Machine) -> Result<BTreeMap<u32, PackageOut>, Refusal> {
@@ -624,6 +632,29 @@ pub struct Programs {
     /// The first run, by the fetch port it was built with.
     first: std::sync::Mutex<Vec<FirstBy>>,
     scratch: Vec<Scratch>,
+}
+
+impl Programs {
+    /// The parameter (or arena) each line-proven write base lies in, and the
+    /// split's commands, over every node (L1.MOV.019).
+    fn f001(&self) -> F001 {
+        let mut ports = std::collections::BTreeSet::new();
+        let mut split = 0;
+        for np in &self.programs {
+            split += np.f001.split as u64;
+            for &at in &np.f001.line_bases {
+                let at = at as u64;
+                let span = np.program.spans.range(..=at).next_back();
+                if let Some((base, _)) = span.filter(|(b, size)| at < *b + *size) {
+                    ports.extend(self.params.get(base).cloned());
+                }
+            }
+        }
+        F001 {
+            line_ports: ports.into_iter().collect(),
+            split,
+        }
+    }
 }
 
 type FirstBy = (

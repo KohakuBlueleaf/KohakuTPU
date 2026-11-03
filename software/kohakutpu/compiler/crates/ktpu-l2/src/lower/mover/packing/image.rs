@@ -15,11 +15,15 @@ pub(super) fn lift_seti() -> String {
 }
 
 pub fn clear(name: &str) -> String {
-    format!("image {name}()\n    vsync fe on=math\n    getstk s14\n    vmov v31, k0\n    vsync fe on=math\n    halt")
+    let v = crate::lower::mover::quant_status::STATUS_V;
+    format!("image {name}()\n    vsync fe on=math\n    getstk s14\n    vmov v{v}, k0\n    vsync fe on=math\n    halt")
 }
 
 pub fn status(name: &str) -> String {
-    format!("image {name}(status)\n    desc a2 = status walk=(32, 4)\n    vpack v31 -> l1[384] f16 n=4\n    vsync fe on=pack\n    vdrain a2 <- l1[384]\n    vsync fe on=drain\n    halt")
+    use crate::lower::mover::quant_status::{DRAIN_L1, STATUS_V};
+    let ((at, end), v) = (DRAIN_L1, STATUS_V);
+    let n = end - at;
+    format!("image {name}(status)\n    desc a2 = status walk=(32, {n})\n    vpack v{v} -> l1[{at}] f16 n={n}\n    vsync fe on=pack\n    vdrain a2 <- l1[{at}]\n    vsync fe on=drain\n    halt")
 }
 
 pub struct Batch<'a> {

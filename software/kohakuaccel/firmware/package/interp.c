@@ -835,8 +835,14 @@ static int de_mover(uint32_t first, uint32_t count, int posted)
     return posted ? 0 : de_wait(KA_DE_MOVER, mv.gos);
 }
 
+/* Rings this node has queued, RING steps and ENGINE entries alike, as the
+ * interlink's 16-bit sent count runs. */
+static uint16_t rings;
+static int ring_room(void);
+
 /* An ENGINE step: entries the host compiled, copied into the engine as read.
- * A code past WAIT would land on the engine's own control registers. */
+ * A code past WAIT would land on the engine's own control registers. A RING
+ * entry takes the room a RING step does (F-003): the engine checks none. */
 static KA_HOT int de_stream(uint32_t first, uint32_t count)
 {
     if (first > pk.npay || (count + 2) / 3 > pk.npay - first) {
@@ -859,6 +865,10 @@ static KA_HOT int de_stream(uint32_t first, uint32_t count)
             if (c == KA_DE_WAIT) {
                 v = de_rebased(v);
             }
+            if (c == KA_DE_IL(KA_IL_RING) && ring_room()) {
+                return eng.status;
+            }
+            rings += c == KA_DE_IL(KA_IL_RING);
             if (de_push(c, v)) {
                 return eng.status;
             }
@@ -1087,19 +1097,16 @@ static int wait_bell(unsigned mesh, uint32_t count)
 #define KA_COLD __attribute__((cold, noinline))
 #endif
 
-/* Rings this node has queued, as the interlink's 16-bit sent count runs. */
-static uint16_t rings;
-
 /* A step's timeout check: TIMEOUT(what, value) once `t0` is a timeout old. */
 static int expired(uint64_t t0, unsigned what, uint64_t value)
 {
     return ka_cycles() - t0 > eng.timeout ? ka_engine_fail(&eng, KA_ST_TIMEOUT, what, value) : 0;
 }
 
-/* A ring once fewer than KA_IL_RING_DEPTH are queued: a fifth would be dropped.
- * Rings another writer issued (a host ENGINE entry on a machine without F-003, an
- * OS) are not counted here, so a sent count past ours resyncs. */
-static KA_COLD int ring(unsigned mesh, uint32_t slot, uint64_t arg)
+/* Until fewer than KA_IL_RING_DEPTH rings are queued: a fifth would be dropped.
+ * Rings another writer issued (an OS) are not counted here, so a sent count past
+ * ours resyncs. */
+static KA_COLD int ring_room(void)
 {
     uint64_t t0 = ka_cycles();
     for (;;) {
@@ -1115,6 +1122,15 @@ static KA_COLD int ring(unsigned mesh, uint32_t slot, uint64_t arg)
         if (expired(t0, KA_WAIT_RING, sent)) {
             return eng.status;
         }
+    }
+    return 0;
+}
+
+/* A RING step. */
+static KA_COLD int ring(unsigned mesh, uint32_t slot, uint64_t arg)
+{
+    if (ring_room()) {
+        return eng.status;
     }
     ka_ctrl_wr(KA_R_IL + KA_IL_RING, (mesh & 3) | (uint64_t)(slot & 0xff) << 8 |
                                          (arg & 0xffff) << 16 | ((arg >> 16) & 1) << 32);
@@ -1182,6 +1198,14 @@ static KA_COLD int pairs(unsigned op, uint32_t first, uint32_t count, unsigned f
             }
             else if (at == KA_R_DCACHE) {
                 ka_dcache((unsigned)v);
+            }
+            else if (at == KA_R_IL + KA_IL_RING) {
+                /* A RING written raw takes the room a RING step does (F-003). */
+                if (ring_room()) {
+                    return eng.status;
+                }
+                ka_ctrl_wr((unsigned)at, v);
+                ++rings;
             }
             else {
                 ka_ctrl_wr((unsigned)at, v);

@@ -1,6 +1,7 @@
 //! Typed packs and compact statistics.
 
 use super::*;
+use crate::lower::vector::checked::{checked, UNCHECKED};
 use crate::lower::vector::ctx::emit::typed::{symbol, Emitter};
 use crate::lower::vector::gen::typed::{self as ir, Select, Symbol};
 use crate::lower::vector::tree::typed as tt;
@@ -56,9 +57,25 @@ impl Ctx<'_> {
                 }
                 let only = read_once(ops, o);
                 let lift = mx7_pack(o, ops, self.body);
+                let classify = checked(o) && !crate::mutant::on(UNCHECKED);
                 for &r in rows {
                     let tsym = g.sym();
                     let reg = symbol(&src.regs[&r]);
+                    if classify {
+                        // Inf/NaN * 0 is NaN, which EXP2D latches; a finite value gives
+                        // 2^0. The f16 pack saturates, so this is its f16 value's check.
+                        let flag = g.sym();
+                        let (f, k0) = (flag.operand(Select::Whole), Term::name("k0"));
+                        let at = vec![reg.operand(Select::Whole), k0.clone()];
+                        g.op(
+                            ir::math("vmul", f.clone(), at, vec![]),
+                            vec![flag.clone(), reg.clone()],
+                        );
+                        g.op(
+                            ir::math("vexp2d", f.clone(), vec![f, k0], vec![]),
+                            vec![flag.clone(), flag],
+                        );
+                    }
                     // Zeros lift in the move to quantiser order, or in place.
                     let ordered = only && with_tree(g, |g| tt::quantiser_order(g, &reg, &tsym));
                     if !ordered {

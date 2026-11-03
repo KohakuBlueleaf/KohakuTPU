@@ -49,13 +49,23 @@ form, not a refusal. Under `cost` a kernel that lowers is taken when its cycles
 are at most those of the materialized launches plus `vc.launch_gap` for each
 launch after the first.
 
-A kernel's cycles (`ktpu_l2::cost`) are read from its compiled L1:
+A kernel's cycles (`ktpu_l2::cost`) are read from its compiled L1, the node priced
+from the same machine facts the timed model (`software/tests/perf/model`) reads:
 
-- `vc.launch_front` for the run, `vc.step_cycles` for each send and load;
-- each vector image by the core's timing, a fill or drain through the walk sent
-  with it, `mover.copy_cost` for each contiguous run of the walk;
-- each move by `mover.copy_cost`: its contiguous runs, capped at
-  `mover.burst_max` words, and its words; a posted move runs beside the node;
+- `vc.launch_front` for the run, `vc.word_cycles` for each load;
+- each send `vc.send_cycles` and `vc.word_cycles` a word it sends (a descriptor
+  word its unit already holds is not sent), and `vc.image_word_cycles` a program
+  word the first time a unit runs that program in the launch;
+- each vector image by the core's timing (a `skipz` read as its body), a fill or
+  drain through the walk sent with it, `mover.copy_cost` for each contiguous run
+  of the walk; it starts once its unit is free and its send is done;
+- each wait on a unit `vc.wait_cycles` once the unit is done;
+- each move `mover.move_cycles` on the node, then its commands in turn on the
+  mover: `mover.fill_cycles` before each fill and `mover.statement_cycles` before
+  each other command after the first, `mover.copy_cost` (`mover.element_cycles` a
+  run of a gather or scatter) for each contiguous run, capped at `mover.burst_max`
+  words, and its words; a posted move runs beside the node, one not posted waits
+  for every unit and holds the node until it is done;
 - joined at the waits. Cluster programs take no time: both forms run the same
   ones.
 

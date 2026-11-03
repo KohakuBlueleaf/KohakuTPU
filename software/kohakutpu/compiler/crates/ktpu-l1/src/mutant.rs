@@ -166,6 +166,7 @@ pub const NAMES: &[&str] = &[
     "l1.mov/gather-fp",
     "l1.mov/seed-by-base",
     "l1.mov/row-pitch",
+    "l1.mov/f001-unsplit",
     "l1.lower/credit",
     "l1.ruled/before",
     "l1.lower/no-hook",

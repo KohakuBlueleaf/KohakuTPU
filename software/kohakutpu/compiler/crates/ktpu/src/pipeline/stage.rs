@@ -1,6 +1,6 @@
 //! The stages of a compile and what the pipeline asks of the stack.
 
-use crate::output::{Finding, PackageOut, Scratch};
+use crate::output::{Finding, PackageOut, Scratch, F001};
 use ktpu_machine::{Machine, Refusal};
 use std::collections::BTreeMap;
 
@@ -88,6 +88,10 @@ pub trait Backend: Sync {
     ) -> Result<Self::Programs, Refusal>;
     /// The arenas `programs` holds scratch in.
     fn scratch(&self, progs: &Self::Programs) -> Vec<Scratch>;
+    /// What F-001's handling asks of the programs' bindings (L1.MOV.019).
+    fn f001(&self, _progs: &Self::Programs) -> F001 {
+        F001::default()
+    }
     /// Each node's package, relocatable (no address in its bytes), its
     /// dispatches in an order the dispatch scheduler runs to the end.
     fn order(

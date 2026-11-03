@@ -19,11 +19,17 @@
 #define PEER 256u /* a stream's words are queued by then */
 #define PENDING 4096u
 #define CQ 1024u
+#define CODE_IL 24u
+#define RING_SEND 32u /* cycles the interlink takes to send one ring */
 
 int dbl_engine;
 uint64_t dbl_first_go, dbl_last_go, dbl_gos;
 unsigned dbl_windows[4];
 unsigned dbl_retire = RETIRE, dbl_lost, dbl_peak, dbl_clears;
+unsigned dbl_rings, dbl_ring_drops;
+
+static unsigned ring_queued;
+static uint64_t ring_next;
 
 static uint64_t now, mb[5];
 static struct {
@@ -95,6 +101,19 @@ static void write_mover(unsigned off, uint64_t v)
     }
 }
 
+/* An interlink register write: a ring past KA_IL_RING_DEPTH queued is dropped. */
+static void write_il(unsigned off)
+{
+    if (off != KA_IL_RING) {
+        return;
+    }
+    if (ring_queued == KA_IL_RING_DEPTH) {
+        ++dbl_ring_drops;
+        return;
+    }
+    ring_next = ring_queued++ ? ring_next : now + RING_SEND;
+}
+
 static void issue(void)
 {
     if (!enabled || !used) {
@@ -115,8 +134,11 @@ static void issue(void)
     else if (code == CODE_GO) {
         go();
     }
-    else if (code >= CODE_MOVER_CTRL && code < 24) {
+    else if (code >= CODE_MOVER_CTRL && code < CODE_IL) {
         write_mover(8 * (code - CODE_MOVER_CTRL), v);
+    }
+    else if (code >= CODE_IL) {
+        write_il(8 * (code - CODE_IL));
     }
     head = (head + 1) % DEPTH;
     --used;
@@ -130,6 +152,10 @@ static void tick(void)
         retire(pending[pending_head].x, pending[pending_head].y);
         pending_head = (pending_head + 1) % PENDING;
         --pending_n;
+    }
+    if (ring_queued && ring_next <= now) {
+        ++dbl_rings;
+        ring_next = --ring_queued ? now + RING_SEND : 0;
     }
     issue();
 }
@@ -156,6 +182,9 @@ uint64_t dbl_rd(unsigned off)
     }
     if (off >= KA_R_DE_CTR && off < KA_R_DE_CTR + 8 * 32) {
         return ctr[(off - KA_R_DE_CTR) / 8];
+    }
+    if (off == KA_R_SIG) {
+        return (uint64_t)(dbl_rings & 0xffffu) << 32;
     }
     if (off == KA_R_NM + 8 * KA_NM_STAT) {
         return cq_n;
@@ -201,5 +230,8 @@ void dbl_wr(unsigned off, uint64_t v)
     }
     else if (off >= KA_R_MV && off < KA_R_MV + KA_MV_SPAN) {
         write_mover(off - KA_R_MV, v);
+    }
+    else if (off >= KA_R_IL && off < KA_R_SIG) {
+        write_il(off - KA_R_IL);
     }
 }

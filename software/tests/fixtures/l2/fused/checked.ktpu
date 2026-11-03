@@ -1,0 +1,14 @@
+# An epilogue packing its result checked: each core's finite status drained
+# into its own record, then checked once.
+target ktpu.v9
+
+fn checked_pack.l2(x: f16[16, 64] @dram, q: mx7a[16, 64] @dram(gm=4, nk=2))
+    s = buffer  : f16[128] @dram
+    par c in 0..2 on vc[c]
+        for t in 0..2
+            xl = load x[c*8 + t*4 : +4, 0 : +64]       : f16[4, 64] @l1(gt4)
+            v = unpack xl                               : f32[4, 64] @reg(gt4)
+            o = mul v, 0.5                              : f32[4, 64] @reg(gt4)
+            p = pack o status=s[c*64 : +64]             : mx7a[4, 64] @l1
+            store q[c*8 + t*4 : +4, 0 : +64] <- p
+    quant_check s

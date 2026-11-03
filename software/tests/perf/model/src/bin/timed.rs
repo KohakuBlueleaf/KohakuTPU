@@ -54,7 +54,11 @@ fn main() {
     }
     let card = Card::load(machine.expect("--machine")).expect("the machine");
     let text = fs::read_to_string(params.expect("--params")).expect("the params");
-    let p = Params::of(&serde_json::from_str(&text).expect("JSON params"), &tier);
+    let p = Params::of(
+        &serde_json::from_str(&text).expect("JSON params"),
+        &tier,
+        &card,
+    );
 
     let mut files = Vec::new();
     for d in dirs {

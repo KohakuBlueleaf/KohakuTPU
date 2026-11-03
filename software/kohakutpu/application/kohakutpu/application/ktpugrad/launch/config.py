@@ -11,6 +11,7 @@ from kohakutpu.language.config import ENV
 VIEW_FORMS = False
 ELIDE_CONTIGUOUS = True
 HORIZONTAL_FUSION = True
+FUSE_MAPPED = True
 
 
 def view_forms_enabled() -> bool:
@@ -33,6 +34,12 @@ def horizontal_fusion_enabled() -> bool:
     return ENV.get("KTPU_HORIZONTAL_FUSION", "1" if HORIZONTAL_FUSION else "0") == "1"
 
 
+def fuse_mapped_enabled() -> bool:
+    """Whether a rows member reading a `forms.Pending` composed joins a fused
+    package (else it is its own `prepared.rows_kernel` launch)."""
+    return ENV.get("KTPU_FUSE_MAPPED", "1" if FUSE_MAPPED else "0") == "1"
+
+
 @contextlib.contextmanager
 def knobs(
     *,
@@ -40,15 +47,17 @@ def knobs(
     elide_contiguous: bool | None = None,
     single_package_ast: bool | None = None,
     horizontal_fusion: bool | None = None,
+    fuse_mapped: bool | None = None,
     mutant: str | None = None,
 ):
-    """Temporarily configure the four launch-reduction knobs and optional mutant."""
-    global VIEW_FORMS, ELIDE_CONTIGUOUS, HORIZONTAL_FUSION
+    """Temporarily configure the launch-reduction knobs and optional mutant."""
+    global VIEW_FORMS, ELIDE_CONTIGUOUS, HORIZONTAL_FUSION, FUSE_MAPPED
     prev = (
         VIEW_FORMS,
         ELIDE_CONTIGUOUS,
         RW.SINGLE_PACKAGE_AST,
         HORIZONTAL_FUSION,
+        FUSE_MAPPED,
         RW.MUTANT,
     )
     if view_forms is not None:
@@ -59,6 +68,8 @@ def knobs(
         RW.SINGLE_PACKAGE_AST = bool(single_package_ast)
     if horizontal_fusion is not None:
         HORIZONTAL_FUSION = bool(horizontal_fusion)
+    if fuse_mapped is not None:
+        FUSE_MAPPED = bool(fuse_mapped)
     if mutant is not None:
         RW.MUTANT = mutant
     try:
@@ -69,6 +80,7 @@ def knobs(
             ELIDE_CONTIGUOUS,
             RW.SINGLE_PACKAGE_AST,
             HORIZONTAL_FUSION,
+            FUSE_MAPPED,
             RW.MUTANT,
         ) = prev
 

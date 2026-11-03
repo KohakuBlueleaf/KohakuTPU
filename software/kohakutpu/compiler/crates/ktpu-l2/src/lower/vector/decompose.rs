@@ -139,7 +139,13 @@ pub fn split(
     if crate::mutant::on("l2.readmap/split-no-join") {
         normalized.retain(|s| s.op != "vsync");
     }
-    let flat = normalized;
+    let mut flat = normalized;
+    // A checked image's latch folds before every part's HALT.
+    let fold = match flat.len().checked_sub(4) {
+        Some(at) if super::checked::folds_at(&flat, at) => flat.split_off(at),
+        _ => Vec::new(),
+    };
+    let flat = flat;
     // RUN clears engine sticky state. Keep every observed EXP2D/GETSTK
     // interval in one image; RF, scalar registers and L1 survive the cut.
     let last_read = flat.iter().rposition(|s| s.op == "getstk");
@@ -215,6 +221,7 @@ pub fn split(
                 .map(key)
                 .collect::<std::collections::BTreeSet<_>>();
             trial.retain(|s| s.op != "desc" || needed.contains(&key(s)));
+            trial.extend(fold.iter().cloned());
             trial.push(ir::instruction("halt", vec![], vec![]));
             let m = print::image(&part_name, def.params.clone(), trial, module.vregs).unwrap();
             match encode::words_of(&m, &part_name, nparams, &t.machine) {

@@ -456,6 +456,12 @@ class Compiled(TypedDict):
     verdict: Verdict
     #: Why the build is not relocatable (STACK.RELOC), else None.
     bound: str | None
+    #: F-001 (L1.MOV.019): ports bound on a write line, split commands.
+    f001: F001
+
+class F001(TypedDict):
+    line_ports: list[str]
+    split: int
 
 class RefusedItem(TypedDict):
     stage: str
@@ -773,6 +779,7 @@ def mm_knobs() -> str: ...
 def mm_plan(args_json: str, machine_json: str, mutant: str | None = None) -> str: ...
 def mm_resolved(args_json: str, machine_json: str) -> str: ...
 def mm_takes_f16(args_json: str, machine_json: str) -> bool: ...
+def fused_packs(args_json: str, machine_json: str) -> bool: ...
 def read_composed(
     mode: str, read_json: str, launches_json: str, machine_json: str
 ) -> bool: ...

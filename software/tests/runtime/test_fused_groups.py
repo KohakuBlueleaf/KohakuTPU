@@ -1,6 +1,7 @@
 """Fused launch groups: a dependent elementwise chain over one domain is one
 package, gathered past unrelated items, with what it computes unchanged."""
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,8 +10,10 @@ from tinygrad.dtype import dtypes
 from tinygrad.helpers import Context
 from tinygrad.tensor import Tensor
 
+from kohakutpu.application.kernels import expr as X
+from kohakutpu.application.kernels.classes.base import Operand
 from kohakutpu.application.ktpugrad.captured import recipe
-from kohakutpu.application.ktpugrad.launch import schedule
+from kohakutpu.application.ktpugrad.launch import emit, schedule
 from kohakutpu.application.ktpugrad.launch.config import knobs
 from kohakutpu.application.ktpugrad.nn import Adam16
 from kohakutpu.application.runtime import device as card
@@ -59,53 +62,45 @@ def compensated_step(p0, e0, m0):
     return p, e, step
 
 
-@pytest.fixture
-def lowered(dev):
+@contextmanager
+def offline(dev):
     """The offline device on the double's board: every package lowered to L2
-    (the double does not)."""
+    (the double does not), no value computed (the double computes them)."""
     d = card.Device(kind="offline", board=dev.machine.board, nodes=1)
     with card.attached(d):
         yield d
     d.close()
 
 
-def test_a_compensated_update_is_one_launch_with_the_same_values(lowered, monkeypatch):
-    dev = lowered
+def _bytes(*ts) -> list:
+    return [t.numpy().tobytes() for t in ts]
+
+
+def test_a_compensated_update_is_one_launch_with_the_same_values(dev, monkeypatch):
     shape = (64, 256)
     p0, m0 = R.normal(size=shape), R.normal(size=shape)
     e0 = R.normal(size=shape) * 1e-3
     with knobs(horizontal_fusion=False):
         p_ref, e_ref, step = compensated_step(p0, e0, m0)
-        apart = launches(dev, step)
-    packages = []
-    launch = generated.launch
-
-    def spied(dev, generator, arguments, binds, info=None):
-        if generator == "fused.kernel":
-            packages.append(arguments)
-        return launch(dev, generator, arguments, binds, info=info)
-
-    monkeypatch.setattr(generated, "launch", spied)
+        step()
     p, e, step = compensated_step(p0, e0, m0)
-    fused = launches(dev, step)
+    assert launches(dev, step) == 1
+    assert _bytes(p, e) == _bytes(p_ref, e_ref)
+    assert _bytes(p) != [p0.astype(np.float16).tobytes()]
+
+    with offline(dev) as low:
+        with knobs(horizontal_fusion=False):
+            apart = launches(low, compensated_step(p0, e0, m0)[2])
+        packages = _spied_packages(monkeypatch)
+        fused = launches(low, compensated_step(p0, e0, m0)[2])
     assert (apart, fused) == (4, 1)
     # One loop: y stored (read back by value), the new weight stored only as
     # the weight's copy, the excess and the weight.
     (package,) = packages
     assert [s["kept"] for s in package["steps"]] == [[True, False, True, True]]
-    assert p.numpy().tobytes() == p_ref.numpy().tobytes()
-    assert e.numpy().tobytes() == e_ref.numpy().tobytes()
 
 
-def test_a_repeated_fused_group_replays_its_recipe(lowered, monkeypatch):
-    dev = lowered
-    cold = []
-    run_group = recipe.run_group
-
-    def counted(*a):
-        cold.append(a)
-        return run_group(*a)
-
+def test_a_repeated_fused_group_replays_its_recipe(dev, monkeypatch):
     shape = (64, 256)
     p0, m0 = R.normal(size=shape), R.normal(size=shape)
     e0 = R.normal(size=shape) * 1e-3
@@ -113,17 +108,28 @@ def test_a_repeated_fused_group_replays_its_recipe(lowered, monkeypatch):
         p_ref, e_ref, step = compensated_step(p0, e0, m0)
         for _ in range(3):
             step()
-    monkeypatch.setattr(recipe, "run_group", counted)
     p, e, step = compensated_step(p0, e0, m0)
-    planned = []
     for _ in range(3):
-        assert launches(dev, step) == 1
-        planned.append(len(cold))
+        step()
+    assert _bytes(p, e) == _bytes(p_ref, e_ref)
+
+    cold = []
+    run_group = recipe.run_group
+
+    def counted(*a):
+        cold.append(a)
+        return run_group(*a)
+
+    monkeypatch.setattr(recipe, "run_group", counted)
+    with offline(dev) as low:
+        step = compensated_step(p0, e0, m0)[2]
+        planned = []
+        for _ in range(3):
+            assert launches(low, step) == 1
+            planned.append(len(cold))
     # The first step reads its uploads, the second its own writes: from the
     # third on, the recorded package replays.
     assert planned[2] == planned[1]
-    assert p.numpy().tobytes() == p_ref.numpy().tobytes()
-    assert e.numpy().tobytes() == e_ref.numpy().tobytes()
 
 
 def _spied_packages(monkeypatch) -> list:
@@ -143,21 +149,106 @@ def _assign_result(b, x) -> None:
     b.assign((x * 2 + 1).contiguous())
 
 
-def test_a_copy_of_a_result_stores_its_pack_once_more(lowered, monkeypatch):
-    dev = lowered
+def _assigned(x0, b0) -> tuple:
+    x, b = tensor(x0), tensor(b0)
+    return b, lambda: (_assign_result(b, x), b.realize())
+
+
+def test_a_copy_of_a_result_stores_its_pack_once_more(dev, monkeypatch):
     x0, b0 = R.normal(size=(64, 256)), R.normal(size=(64, 256))
     with knobs(horizontal_fusion=False):
-        x, b = tensor(x0), tensor(b0)
-        apart = launches(dev, lambda: (_assign_result(b, x), b.realize()))
-        want = b.numpy().tobytes()
-    packages = _spied_packages(monkeypatch)
-    x, b = tensor(x0), tensor(b0)
-    fused = launches(dev, lambda: (_assign_result(b, x), b.realize()))
+        b, run = _assigned(x0, b0)
+        run()
+    want = b.numpy().tobytes()
+    assert want != b0.astype(np.float16).tobytes()
+    b, run = _assigned(x0, b0)
+    assert launches(dev, run) == 1
+    assert b.numpy().tobytes() == want
+
+    with offline(dev) as low:
+        with knobs(horizontal_fusion=False):
+            apart = launches(low, _assigned(x0, b0)[1])
+        packages = _spied_packages(monkeypatch)
+        fused = launches(low, _assigned(x0, b0)[1])
     assert (apart, fused) == (2, 1)
     # The result, dead after the loop, is stored only as its copy.
     (package,) = packages
     assert [s["kept"] for s in package["steps"]] == [[False, True]]
-    assert b.numpy().tobytes() == want
+
+
+def _flat_member(n: int, src: int, dst: int, dt: str = "f16") -> dict:
+    return {
+        "kind": "flat",
+        "n": n,
+        "total": -(-n // 128),
+        "out_dt": "f16",
+        "exprs": [X.Op("add", (X.Load(0), X.Load(0)))],
+        "dts": [dt],
+        "lanes": {},
+        "ins": [src],
+        "outs": [dst],
+        "over": None,
+        "packs": {},
+        "quants": {},
+    }
+
+
+def _rows_member(R_: int, W: int, src: int, dst: int) -> dict:
+    full = Operand("full", pitch=W, rows=R_)
+    return {
+        "kind": "rows",
+        "R": R_,
+        "W": W,
+        "exprs": [X.Load(0)],
+        "ops": [full],
+        "out_ops": [full],
+        "ins": [src],
+        "outs": [dst],
+        "made": {},
+    }
+
+
+def _loops(dev, stages: list) -> int:
+    return len(emit._merge(dev, stages, emit._Loop(dev, stages, set(), 8)))
+
+
+@pytest.mark.parametrize(("dst", "loops"), [(0, 1), (64, 2), (512, 1)])
+def test_a_copy_joins_a_loop_only_where_no_trip_overwrites_another_trip_read(
+    dev, dst, loops
+):
+    """Y = X + X over 256 values, then Y copied to X + `dst` bytes: the copy
+    writing X's own elements, or past them, shares the loop; writing X 32
+    values on, trip 0 would overwrite what trip 1 reads."""
+    x, y, n = 0x10000, 0x20000, 256
+    flat = _flat_member(n, x, y)
+    copy = {"kind": "copy", "nbytes": 2 * n, "ins": [y], "outs": [x + dst]}
+    assert _loops(dev, [flat, copy]) == loops
+
+
+def test_flat_members_writing_one_staged_word_keep_apart(dev):
+    """20 values are staged as whole 32-byte words: outputs 40 bytes apart
+    share the second word, so the second member starts its own loop."""
+    o, n = 0x20000, 20
+    first, second = _flat_member(n, 0x10000, o), _flat_member(n, 0x11000, o + 2 * n)
+    assert _loops(dev, [first, second]) == 2
+
+
+def test_an_f32_read_and_an_f16_write_at_one_address_are_not_one_element(dev):
+    """Trip i writes f16 bytes 2i.. that the f32 read reaches only at element
+    i/2: the write runs ahead of the read."""
+    x, n = 0x10000, 256
+    first = _flat_member(n, x, 0x20000, "f32")
+    second = _flat_member(n, 0x30000, x)
+    assert _loops(dev, [first, second]) == 2
+
+
+@pytest.mark.parametrize(("dst", "loops"), [(0x30000, 1), (0x10040, 2)])
+def test_rows_members_share_a_package_only_on_disjoint_bytes(dev, dst, loops):
+    """The second member writing inside the first one's input (64 bytes on)
+    keeps its own stage; writing elsewhere it joins."""
+    first = _rows_member(32, 64, 0x10000, 0x20000)
+    second = _rows_member(32, 64, 0x40000, dst)
+    assert _loops(dev, [first, second]) == loops
 
 
 #: Parameter shapes of the zoo's GRU and of the MNIST MLP: weights, biases

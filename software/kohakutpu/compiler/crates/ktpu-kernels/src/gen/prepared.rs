@@ -285,19 +285,21 @@ fn lane_columns(steps: &[relayout::Logical], lanes: i64) -> Option<i64> {
         .then_some(step.dwalk[level].1)
 }
 
-/// `e`'s operands, output and rows over `steps`' destination rows, tiled so a
-/// tile's columns are whole source words: `(operands, out, rows, columns)`,
-/// the flat [1, W] read as [W / A, A] rows of whole words.
-fn word_tiled(
-    e: &E,
+/// `exprs`' operands, outputs and rows over `steps`' destination rows, tiled
+/// so a tile's columns are whole source words: `(operands, outs, rows,
+/// columns)`, the flat [1, W] read as [W / A, A] rows of whole words.
+pub(super) fn word_tiled(
+    exprs: &[E],
     operands: &[Operand],
     r: i64,
     w: i64,
-    out: &Operand,
+    outs: &[Operand],
     made: &BTreeMap<usize, Read>,
     hw: &Hw,
-) -> Option<(Vec<Operand>, Operand, i64, i64)> {
-    if !expr::reduces(e).is_empty() || out.kind != Kind::Full || mutants::on(CONSUMER_TILES_MUTANT)
+) -> Option<(Vec<Operand>, Vec<Operand>, i64, i64)> {
+    if exprs.iter().any(|e| !expr::reduces(e).is_empty())
+        || outs.iter().any(|o| o.kind != Kind::Full)
+        || mutants::on(CONSUMER_TILES_MUTANT)
     {
         return None;
     }
@@ -309,7 +311,7 @@ fn word_tiled(
         return None;
     }
     if w == a {
-        return Some((operands.to_vec(), *out, r, a));
+        return Some((operands.to_vec(), outs.to_vec(), r, a));
     }
     let flat = |o: &Operand| match o.kind {
         Kind::Col | Kind::Full if o.offset == 0 && (o.rows <= 1) => Some(Operand {
@@ -325,7 +327,8 @@ fn word_tiled(
         return None;
     }
     let ops = operands.iter().map(flat).collect::<Option<Vec<_>>>()?;
-    Some((ops, flat(out)?, w / a, a))
+    let outs = outs.iter().map(flat).collect::<Option<Vec<_>>>()?;
+    Some((ops, outs, w / a, a))
 }
 
 /// [`v::rows_kernel`] of `e` with operand i of `made` read from port `x{i}`
@@ -344,10 +347,11 @@ pub fn rows_kernel(
     m: &Machine,
 ) -> R<Kernel> {
     let (hw, rl) = (Hw::of(m), relayout::Hw::of(m));
-    let tiled = word_tiled(e, operands, r, w, out, made, &hw);
+    let (es, outs) = (std::slice::from_ref(e), std::slice::from_ref(out));
+    let tiled = word_tiled(es, operands, r, w, outs, made, &hw);
     let block = tiled.as_ref().map(|_| hw.kblock);
     let (operands, out, r, w) = match &tiled {
-        Some((ops, o, rows, cols)) => (ops.as_slice(), o, *rows, *cols),
+        Some((ops, o, rows, cols)) => (ops.as_slice(), &o[0], *rows, *cols),
         None => (operands, out, r, w),
     };
     let quantum = if v::holds_stat(operands, out.kind) {

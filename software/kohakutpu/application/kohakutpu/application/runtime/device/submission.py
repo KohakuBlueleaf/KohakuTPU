@@ -31,9 +31,12 @@ def burst_line(machine_json: str) -> int | None:
     return m["card"]["dram"]["line_bytes"] if m["flaws"]["F-001"]["present"] else None
 
 
-def unaligned(full: dict, line: int | None) -> list[str]:
-    """The bound buffers whose base breaks `line`, the F-001 proof's base."""
-    return [] if line is None else sorted(k for k, v in full.items() if v % line)
+def unaligned(full: dict, line: int | None, ports) -> list[str]:
+    """Of `ports`, the buffers whose L1.MOV.019 proof leans on a write-line
+    base, those bound off `line`."""
+    if line is None:
+        return []
+    return sorted(k for k in ports if k in full and full[k] % line)
 
 
 def _entry(s: Submitted) -> int:
@@ -223,10 +226,10 @@ class Submission(Parts):
                 for p, off in a.get("members", ()):
                     full.setdefault(p, full[arena_name(a)] + off)
             line = burst_line(self.card.machine_json)
-            if off := unaligned(full, line):
+            if off := unaligned(full, line, compiled.line_ports):
                 raise ValueError(
                     f"silicon flaw F-001: {compiled.name} binds {off} off a "
-                    f"{line}-byte base, which L2.MOV.020's mover proof assumes"
+                    f"{line}-byte base, which L1.MOV.019's mover proof assumes"
                 )
             references.extend(self._retain(windowed.values()))
             self._pin_record(full.values())

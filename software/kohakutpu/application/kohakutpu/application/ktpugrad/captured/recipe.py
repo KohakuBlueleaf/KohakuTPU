@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from kohakutpu.application.ktpugrad import run
+from kohakutpu.application.ktpugrad.launch import config as launch_config
 from kohakutpu.application.runtime import chain, launch_boundary
 from kohakutpu.application.runtime import forms as FM
 from kohakutpu.application.runtime.memory.storage import Form, StorageView
@@ -395,6 +396,7 @@ class Recipes:
             dev.resident_mode,
             dev.home,
             host_key(buffers) if host_enabled(buffers, self.host_recipe) else None,
+            launch_config.fuse_mapped_enabled(),
         )
         if self.native is not None:
             launch_boundary.before_submit(dev)
