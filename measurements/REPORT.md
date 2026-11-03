@@ -5,8 +5,9 @@ Every number comes from `data/`; each section's figures carry the same numbers. 
 run has all four dies at one clock, because idle dies change node 0's cycles. Runs that
 did not are kept in `data/old/` and used nowhere.
 
-The first section is the output statistics of every model. The next four are rounds
-`e1`, at commit de2c9b1e with the silicon flaw registry and its handlings, `d2`, at
+The first section is the output statistics of every model. The next six are rounds
+`g1`, at commit 9da806c4, `f1`, at commit 97a4b0a7, `e1`, at commit de2c9b1e with the
+silicon flaw registry and its handlings, `d2`, at
 commit a5e68412 with the performance batch on top, `d1`, at commit 1abcfb30, and `c1`,
 at commit 56021fd4. The sections after them hold 56021fd4's zoo, kept as the baseline,
 except the rows that name `c1`.
@@ -45,6 +46,52 @@ reads 1 for MLP, GRU and wide (against f32) and ViT-B (against MXFP7); the liste
 value is inside both, since the card's largest error against the other is under the
 footprint's largest. Top-1 agrees with f32 on every image except ViT's 6 of 9; the MXFP7 run also
 agrees on 6 of 9: the nine images' f32 top-1 to top-2 gaps are 0.0001 to 0.079.
+
+## Round g1
+
+103 of 103 runs exited, every output inside the MXFP7 footprint (`outside_footprint` 0),
+no F-001 split command (`f001_split` 0): eight models, eager and TinyJit, 2+2 and 4+2, all
+four dies at mid, the measure image, plus nine TinyJit knob variants on 2+2 (71 runs; the
+composed tree is run on seven models, its LeNet library never filled: one kernel compiles
+past the 100 s fill bound). Tables under `rounds/g1`; `rounds/g1/data/zoo.csv` holds every
+column. The batch: one byte-span join test (ISSUES 51), deferred forms ended or made inside
+a TinyJit record (50, 52), F-001 proven at the mover command boundary (53, 57), chain
+renaming (54), raw RING credits (55), nested launch events (56), a checked MXFP7 pack in the
+vector lowering (L2.VC.028) with producers writing their consumer's packing (ring epilogues,
+`KTPU_PRODUCER_PACKS`) and optimizer writers writing the weight's (`KTPU_WRITER_PACKS`),
+fused rows members sharing a mapped read (`KTPU_FUSE_MAPPED`), the cost model priced from
+machine facts, the N tile over every legal divisor and batched tiles where batches
+underfill the clusters. Zoo inference is ViT and ViT-B (forward, batch 1); the other six
+models train (batch 8).
+
+| At mid, f1 → g1 | TinyJit ms, 2+2 | TinyJit M cycles, 2+2 | Eager M cycles, 2+2 | TinyJit ms, 4+2 | TinyJit M cycles, 4+2 |
+|---|---|---|---|---|---|
+| ViT-B | 264.9 → 263.7 | 49.5 → 49.3 | 49.2 → 49.0 | 232.9 → 248.6 | 44.6 → 46.5 (+4%) |
+| ViT | 88.1 → 84.3 | 14.1 → 13.4 (−5%) | 14.1 → 13.3 | 79.9 → 81.1 | 12.5 → 12.8 (+2%) |
+| GPT | 77.3 → 74.9 | 12.4 → 11.5 (−7%) | 11.8 → 11.3 | 78.0 → 74.4 | 12.4 → 11.5 (−7%) |
+| LeNet | 259.8 → 102.4 | 20.9 → 17.2 (−18%) | 17.6 → 17.1 | 258.2 → 107.6 | 22.0 → 18.5 (−16%) |
+| wide | 23.5 → 17.5 | 3.0 → 2.6 (−14%) | 2.9 → 2.5 | 21.8 → 19.9 | 3.0 → 2.6 (−13%) |
+| Mixer | 318 (ordinary) → 61.9 | 9.8 → 8.7 (−11%) | 9.7 → 9.4 | 319 (ordinary) → 61.2 | 9.8 → 8.7 (−11%) |
+| MLP | 9.5 → 8.7 | 1.1 → 0.9 (−17%) | 1.0 → 0.9 | 9.7 → 8.8 | 1.1 → 0.9 (−16%) |
+| GRU | 35.0 → 32.7 | 4.0 → 3.6 (−10%) | 3.9 → 3.7 | 34.8 → 32.9 | 4.0 → 3.7 (−8%) |
+
+| What | Size | Figure |
+|---|---|---|
+| TinyJit replay | Every TinyJit run records three or four calls then replays the rest: Mixer 7 replays of 11 calls, LeNet 8 (f1: 2 and 0); per-call outcomes in each run's `meta.json` `graphs.history`. Mixer's step 318 → 62 ms and LeNet's 259 → 102 ms are the replays coming back | `zoo.csv`, `data/*.g1j.*/meta.json` |
+| Eager | Within ±2% of f1 except v9t8 ViT-B (+4.1% cadence) and GRU (+2.2%); every model stays host-bound, step 2.1× (ViT-B) to 14.0× (GRU) the device time | `zoo.csv` `cadence` |
+| Inference | ViT −5% cycles on 2+2, ViT-B flat; on 4+2 ViT-B +4.2% (+1.87 M) and ViT +2.5% (+0.31 M). Cause: the packed FC1+GELU producer. On v9t8 ViT-B it grows 5.73 → 10.17 M and removes a 2.03 M quant, a 2.41 M boundary loss (ViT 0.38 M); MG work is unchanged, VC busy 8.5 → 14.4 M. On 2+2 the removed quant costs 4.76 M, so the same producer nearly breaks even. Batched P×V tiles save 0.51 M (ViT-B) and 0.07 M (ViT) (ISSUES 64) | `zoo.csv`, `mfu/*.csv`, `units.jsonl` |
+| Producer packing | Off against on (`pp`, 2+2): off is cheaper for ViT-B (−0.6%) and dearer for ViT (+1.7%), others within 0.2%. The epilogue repeats the quant work on rounded f16 (unpack, classify, checked pack, status records) instead of removing it; no 4+2 `pp` run exists | variant rows |
+| Writer packing | Off against on (`wp`): GRU +4.0%, Mixer +1.5%, others within 0.7%. Learning the demand records one more call, so a 12-step run replays once less (MLP 3 recorded 8 replayed off, 4 and 7 on). Replay lists are shorter with packing on: MLP 30 against 32 runs, GRU 229 against 258 | variant rows, `meta.json` |
+| Mapped fusion | Off against on (`fm`): wide +13.5%, MLP +12.8%, GRU +5.9%, GPT +2.9%, Mixer +2.7%, LeNet +2.6% cycles | variant rows |
+| Range fusion | On (`fr`, off by default): LeNet −10.8%, ViT −7.2%, ViT-B −3.9%, Mixer −2.3%, GPT −2.1% cycles; other changes within 0.2%. For ViT-B the QKV product absorbs its bias row kernel (3.97 + 1.28 → 3.29 M) | variant rows |
+| Composed tree | On (`ct`, off by default): Mixer −25.5%, GPT −2.2% cycles; LeNet does not fill (a kernel over the 100 s compile bound) | variant rows, `compile.csv` |
+| Chaining | On (`ch`, off by default): within ±0.3% cycles on every model | variant rows |
+| Deferral | Off (`d0`): LeNet +5.9%, Mixer +8.2%; dead deferred forms made (`dd`): LeNet +17.3%, Mixer +9.3% | variant rows |
+| Shared walk once | `ts` (`KTPU_THROUGH_SHARED=once`): LeNet +87%, wide +7.1%, GPT −4.2%; stays `compose` | variant rows |
+| Compile | Fills from empty, eight models side by side, summed durations: 679 kernels 860.0 s on 2+2 (slowest 84.9 s), 680 kernels 882.6 s on 4+2 (88.8 s); TinyJit adds 43–44 kernels a board; variants add 8–108 | `rounds/g1/data/compile.csv` |
+| Where ViT-B's step goes (v9t8 TinyJit, 46.5 M) | Packed FC1 21.9%; mapped Q/K/Vᵀ packs 20.5% (K→B pack wall 3.86 M against 1.96 M busy on each VC: jobs wait for every core after each pair); QKV product + bias 11.1%; softmax and norm output quants 9.2%; remaining matmul 17.9% | `mfu/vitb.g1j.multimesh_v9t8.1n.csv`, `units.jsonl` |
+| Metrics | "TinyJit cycles" is the selected ordinary warm step; replay-list medians agree within 0.3% (ViT-B 4+2 +4.1% against +4.2%). ViT-B runs have two replay starts, so its cadence is one interval | `fig_zoo.py`, `card.jsonl` |
+| Next | Every model runs on node 0 only. Next: tensor-parallel kernels over all four sysnodes (needs ISSUES 31 fixed so nodes overlap), the ViT-B batch-size sweep, producer packing admitted only when cheaper than producer plus quant (ISSUES 64), and range fusion on by default | |
 
 ## Round f1
 

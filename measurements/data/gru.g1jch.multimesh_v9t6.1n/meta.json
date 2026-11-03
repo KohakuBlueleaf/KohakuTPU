@@ -1,0 +1,227 @@
+{
+ "counters": {
+  "runs": 1426,
+  "cycles": 44282260,
+  "bytes_in": 517780,
+  "bytes_out": 39064,
+  "library_hits": 1342,
+  "class_hits": 0,
+  "exact_hits": 1342,
+  "library_misses": 0,
+  "compile_calls": 0,
+  "compile_seconds": 0.0,
+  "kernel_reuses": 1274,
+  "f001_split": 0
+ },
+ "runs": 1426,
+ "transport": {},
+ "workload": "gru",
+ "board": "multimesh_v9t6",
+ "nodes": 1,
+ "args": [
+  "--model",
+  "gru",
+  "--batch",
+  "8",
+  "--steps",
+  "3",
+  "--board",
+  "multimesh_v9t6",
+  "--nodes",
+  "1",
+  "--library",
+  "build/perf/g1v/ch/gru",
+  "--library-only",
+  "--test",
+  "8",
+  "--steps",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma",
+  "--report",
+  "/home/kblueleaf/kt/build/perf/traces/gru.g1jch.multimesh_v9t6.1n/report.json",
+  "--check",
+  "8"
+ ],
+ "seconds": 11.47,
+ "done": "exited",
+ "spans": {
+  "copyin": {
+   "calls": 71,
+   "seconds": 0.12147922193980776
+  },
+  "compile_graph": {
+   "calls": 68,
+   "seconds": 1.089791625039652
+  },
+  "bind_admit": {
+   "calls": 1370,
+   "seconds": 0.05101817587274127
+  },
+  "submit": {
+   "calls": 1370,
+   "seconds": 0.6156202456331812
+  },
+  "generate_launch": {
+   "calls": 1342,
+   "seconds": 1.8235381187696476
+  },
+  "rows": {
+   "calls": 98,
+   "seconds": 0.11308602700592019
+  },
+  "collect": {
+   "calls": 1453,
+   "seconds": 0.17134698037989438
+  },
+  "copyout": {
+   "calls": 14,
+   "seconds": 0.018540998949902132
+  },
+  "graph_fill": {
+   "calls": 11,
+   "seconds": 0.001360548019874841
+  },
+  "graph_storages": {
+   "calls": 11,
+   "seconds": 0.00017767099780030549
+  },
+  "graph_call": {
+   "calls": 11,
+   "seconds": 2.030957286944613
+  },
+  "replay": {
+   "calls": 7,
+   "seconds": 0.015372702007880434
+  },
+  "graph_restore": {
+   "calls": 7,
+   "seconds": 0.0011277769808657467
+  }
+ },
+ "graphs": [
+  {
+   "kernels": 179,
+   "counts": {
+    "planned": 0,
+    "recorded": 4,
+    "replayed": 7
+   },
+   "history": [
+    "recorded: first",
+    "recorded: entry item 0: ((frozenset({('flat',)}), False, None, ((('flat',), 4296878080, 1024),)), (frozenset({('flat',)}), False, None, ((('flat',), 4296879104, 11776),)), (frozenset({('flat',)}), False, <class 'numpy.float1 vs ((frozenset({('flat',)}), True, <class 'numpy.float16'>, ((('flat',), 4296878080, 1024),)), (frozenset({('flat',)}), False, None, ((('flat',), 4296879104, 11776),)), (frozenset({('flat',), ('mx7', 'b'",
+    "recorded: log: 275 vs 251 items",
+    "recorded: verified",
+    "replayed",
+    "replayed",
+    "replayed",
+    "replayed",
+    "replayed",
+    "replayed",
+    "replayed"
+   ]
+  }
+ ],
+ "profile": "mid",
+ "knobs": {
+  "KOHAKUTPU_BOOT_FLAGS": "0",
+  "KOHAKUTPU_PROFILE": "mid",
+  "KTPU_MM_CHAIN": "1"
+ },
+ "clocks": {
+  "0": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "1": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "2": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "3": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  }
+ },
+ "check": {
+  "card_f32": {
+   "absolute": {
+    "max": 0.0025309622287750244,
+    "mean": 0.0006619217339903117,
+    "median": 0.0005651954561471939
+   },
+   "relative": {
+    "max": 0.9206083448646692,
+    "mean": 0.02696077819245355,
+    "median": 0.009705317018391744
+   }
+  },
+  "card_mxfp7": {
+   "absolute": {
+    "max": 0.001338958740234375,
+    "mean": 0.00040307007730007173,
+    "median": 0.0003463625907897949
+   },
+   "relative": {
+    "max": 0.07963961039974285,
+    "mean": 0.011436840834350712,
+    "median": 0.005386538161236623
+   }
+  },
+  "mxfp7_f32": {
+   "absolute": {
+    "max": 0.0017596036195755005,
+    "mean": 0.0007104104617610574,
+    "median": 0.0006214193999767303
+   },
+   "relative": {
+    "max": 0.7969822302750447,
+    "mean": 0.025894864929001938,
+    "median": 0.009653818671753899
+   }
+  },
+  "elements": 80,
+  "outside_footprint": 0,
+  "worst": [],
+  "top1_f32": 1.0,
+  "top1_mxfp7": 1.0
+ },
+ "profiled": null,
+ "jit": true,
+ "commit": "77f80ced+batch-g",
+ "firmware": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+ "when": 1793702271.0582132,
+ "launches": 1377,
+ "kernels": 68,
+ "compiles": [
+  [
+   "rows_899627ef38",
+   0.113
+  ],
+  [
+   "rows_6a08ec163f",
+   0.132
+  ],
+  [
+   "rows_ad84b2539b",
+   0.764
+  ]
+ ]
+}
