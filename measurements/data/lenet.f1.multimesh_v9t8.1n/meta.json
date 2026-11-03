@@ -1,0 +1,175 @@
+{
+ "counters": {
+  "runs": 2262,
+  "cycles": 236204944,
+  "bytes_in": 29298108,
+  "bytes_out": 126032,
+  "library_hits": 1930,
+  "class_hits": 0,
+  "exact_hits": 1930,
+  "library_misses": 0,
+  "compile_calls": 0,
+  "compile_seconds": 0.0,
+  "kernel_reuses": 1756
+ },
+ "runs": 2262,
+ "transport": {},
+ "workload": "lenet",
+ "board": "multimesh_v9t8",
+ "nodes": 1,
+ "args": [
+  "--model",
+  "lenet",
+  "--batch",
+  "8",
+  "--steps",
+  "3",
+  "--board",
+  "multimesh_v9t8",
+  "--nodes",
+  "1",
+  "--library",
+  "build/perf/f1/multimesh_v9t8/lenet",
+  "--library-only",
+  "--no-jit",
+  "--test",
+  "8",
+  "--steps",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma",
+  "--report",
+  "/home/kblueleaf/kt/build/perf/traces/lenet.f1.multimesh_v9t8.1n/report.json",
+  "--check",
+  "8"
+ ],
+ "seconds": 19.02,
+ "done": "exited",
+ "spans": {
+  "copyin": {
+   "calls": 57,
+   "seconds": 0.44525881815934554
+  },
+  "compile_graph": {
+   "calls": 174,
+   "seconds": 1.2189477129431907
+  },
+  "bind_admit": {
+   "calls": 2262,
+   "seconds": 0.558692409977084
+  },
+  "submit": {
+   "calls": 2262,
+   "seconds": 1.461072605336085
+  },
+  "generate_launch": {
+   "calls": 1930,
+   "seconds": 2.9633045484661125
+  },
+  "rows": {
+   "calls": 471,
+   "seconds": 3.515456484950846
+  },
+  "collect": {
+   "calls": 2335,
+   "seconds": 1.0215548560081515
+  },
+  "copyout": {
+   "calls": 22,
+   "seconds": 0.005152698955498636
+  }
+ },
+ "profile": "mid",
+ "knobs": {
+  "KOHAKUTPU_BOOT_FLAGS": "0",
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "clocks": {
+  "0": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "1": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "2": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "3": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  }
+ },
+ "check": {
+  "card_f32": {
+   "absolute": {
+    "max": 0.012326866388320923,
+    "mean": 0.0038580649299547074,
+    "median": 0.003649495542049408
+   },
+   "relative": {
+    "max": 3.566885134605844,
+    "mean": 0.07868409956154855,
+    "median": 0.009904006506010666
+   }
+  },
+  "card_mxfp7": {
+   "absolute": {
+    "max": 0.012378692626953125,
+    "mean": 0.003968726843595505,
+    "median": 0.0032465457916259766
+   },
+   "relative": {
+    "max": 3.3051018690015153,
+    "mean": 0.09143336760153987,
+    "median": 0.010600427643442045
+   }
+  },
+  "mxfp7_f32": {
+   "absolute": {
+    "max": 0.01465529203414917,
+    "mean": 0.003945553931407631,
+    "median": 0.003358408808708191
+   },
+   "relative": {
+    "max": 1.6848682664438468,
+    "mean": 0.053629500877684554,
+    "median": 0.011527800806142421
+   }
+  },
+  "elements": 80,
+  "outside_footprint": 0,
+  "worst": [],
+  "top1_f32": 1.0,
+  "top1_mxfp7": 1.0
+ },
+ "profiled": null,
+ "jit": false,
+ "commit": "ad360ac5+f1",
+ "firmware": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+ "when": 1793662303.7207463,
+ "launches": 2262,
+ "kernels": 174,
+ "compiles": [
+  [
+   "rows_e30a32d351",
+   0.62
+  ]
+ ]
+}

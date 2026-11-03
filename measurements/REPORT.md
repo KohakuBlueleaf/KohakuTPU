@@ -46,6 +46,54 @@ value is inside both, since the card's largest error against the other is under 
 footprint's largest. Top-1 agrees with f32 on every image except ViT's 6 of 9; the MXFP7 run also
 agrees on 6 of 9: the nine images' f32 top-1 to top-2 gaps are 0.0001 to 0.079.
 
+## Round f1
+
+32 of 32 runs exited: eight models, eager and TinyJit, 2+2 and 4+2, all four dies at
+mid, the measure image, every launch an exact library hit. Tables and figures are under
+`rounds/f1`; `rounds/f1/data/zoo.csv` holds every column below. The commit adds F-003's
+ring path (every RING a firmware step), F-001's burst proof (`L2.MOV.020`: a copy with a
+mover command not proven free of a chained one-beat write burst runs on the vector cores),
+copy alias staging (`L2.MOV.021`), fused optimizer groups, deferred relayouts read
+through by packings, range fusion and the per-product N tile (`KTPU_MM_N_TILE=auto`), and
+a 22% faster cold compile. Defaults: fused norm/MLP chaining (`KTPU_MM_CHAIN`), range
+fusion (`KTPU_MM_FUSE_RANGES`) and the composed column tree stay off.
+
+| At mid, 2+2, TinyJit; eager | Cadence, ms, e1 → f1 | Device M cycles, e1 → f1 | MFU matrix, vector, memory, f1 | Bus | GFLOPS |
+|---|---|---|---|---|---|
+| ViT-B | 271.9 → 264.9; 521.9 → 523.3 | 51.30 → 49.49; 50.95 → 49.22 | 16.54, 13.50, 12.25%; 8.37, 6.84, 6.20% | 26.2%; 13.3% | 136.4; 69.0 |
+| ViT | 91.7 → 88.1; 320.2 → 318.6 | 14.76 → 14.14; 14.70 → 14.10 | 3.60, 10.36, 6.71%; 0.99, 2.86, 1.86% | 17.6%; 4.9% | 30.1; 8.3 |
+| GPT | 79.7 → 77.3; 452.5 → 362.5 | 12.48 → 12.39; 12.41 → 11.84 | 0.64, 4.90, 4.13%; 0.13, 1.05, 0.89% | 9.3%; 1.9% | 5.57; 1.11 |
+| LeNet | 111.3 → 259.8; 326.7 → 344.0 | 19.17 → 20.87; 19.06 → 17.60 | 0.06, 0.67, 0.50%; 0.05, 0.50, 0.37% | 4.9%; 2.8% | 0.55; 0.41 |
+| wide | 23.9 → 23.5; 79.7 → 75.8 | 3.16 → 3.00; 3.14 → 2.86 | 0.18, 7.08, 5.92%; 0.05, 2.19, 1.70% | 9.5%; 2.8% | 1.95; 0.53 |
+| Mixer | 71.7 → 1,092.9; 497.5 → 411.5 | 10.30 → 9.84; 10.19 → 9.74 | 0.01, 0.17, 0.11%; 0.02, 0.45, 0.28% | 0.5%; 1.3% | 0.06; 0.16 |
+| MLP | 9.6 → 9.5; 43.7 → 42.9 | 1.10 → 1.08; 1.08 → 1.01 | 0.13, 5.40, 4.29%; 0.02, 1.20, 0.85% | 7.1%; 1.4% | 1.41; 0.27 |
+| GRU | 35.6 → 35.0; 281.8 → 253.6 | 4.18 → 4.04; 4.16 → 3.94 | 0.05, 1.04, 0.80%; 0.01, 0.14, 0.11% | 3.0%; 0.4% | 0.49; 0.07 |
+
+| At mid, 4+2, TinyJit; eager | Cadence, ms, e1 → f1 | Device M cycles, e1 → f1 | MFU matrix, vector, memory, f1 | Bus | GFLOPS |
+|---|---|---|---|---|---|
+| ViT-B | 241.5 → 232.9; 504.0 → 494.4 | 45.00 → 44.61; 44.70 → 44.32 | 9.40, 15.36, 13.93%; 4.43, 7.23, 6.56% | 29.8%; 14.0% | 155.1; 73.1 |
+| ViT | 83.5 → 79.9; 308.4 → 299.9 | 13.44 → 12.49; 13.37 → 12.43 | 1.98, 11.42, 7.40%; 0.53, 3.04, 1.97% | 17.4%; 4.6% | 33.2; 8.9 |
+| GPT | 79.6 → 78.0; 443.9 → 358.8 | 12.44 → 12.38; 12.38 → 11.81 | 0.32, 4.86, 4.10%; 0.06, 1.06, 0.90% | 9.2%; 1.9% | 5.52; 1.12 |
+| LeNet | 116.9 → 258.2; 342.7 → 352.7 | 20.30 → 21.97; 20.21 → 18.88 | 0.03, 0.67, 0.50%; 0.02, 0.49, 0.36% | 4.6%; 2.4% | 0.55; 0.40 |
+| wide | 24.1 → 21.8; 79.6 → 75.5 | 3.16 → 2.98; 3.15 → 2.89 | 0.10, 7.62, 6.38%; 0.02, 2.20, 1.70% | 10.2%; 2.8% | 2.09; 0.53 |
+| Mixer | 69.4 → 1,093.4; 498.5 → 407.0 | 10.24 → 9.76; 10.21 → 9.63 | 0.00, 0.17, 0.11%; 0.01, 0.46, 0.29% | 0.5%; 1.4% | 0.06; 0.16 |
+| MLP | 9.7 → 9.7; 43.5 → 43.5 | 1.10 → 1.08; 1.09 → 1.02 | 0.06, 5.31, 4.23%; 0.01, 1.18, 0.84% | 7.0%; 1.4% | 1.39; 0.27 |
+| GRU | 32.9 → 34.8; 280.6 → 252.7 | 4.14 → 4.01; 4.13 → 3.91 | 0.03, 1.05, 0.80%; 0.00, 0.14, 0.11% | 3.0%; 0.4% | 0.49; 0.07 |
+
+| What | Size | Figure |
+|---|---|---|
+| Device cycles | Lower than e1 on 30 of 32 rows: ViT −4.0% (2+2) and −7.1% (4+2), ViT-B −3.4% and −0.9%, wide −5% to −9%, Mixer −4.5% to −5.7%, GRU −3% to −5%, GPT eager −4.6%, LeNet eager −7.7% and −6.6%, MLP eager −6.5%. LeNet TinyJit is +8.9% and +8.2% | `zoo.csv` `cycles`, against `rounds/e1/data/zoo.csv` |
+| Eager cadence | GPT −20%, Mixer −17% to −18%, GRU −10%: the fused optimizer groups (MLP 156 → 114 launches modelled) and fewer launches a step | `zoo.csv` `cadence` |
+| TinyJit regression | The replay graph records 2 replays in a Mixer run against 8 in e1, so most steps run as ordinary launches; with `KTPU_DEFERRED=0` (4+2) it records 8 replays, 1,387 launches (e1 8 and 1,887, f1 2 and 3,274). Mixer's 1,093 ms cadence is the one interval between its two replay starts, which encloses ordinary steps: it is not a step time. Its selected ordinary window spans 318.1 ms (2+2) and 319.2 ms (4+2) against e1's 69–72 ms replay cadence. LeNet's 259.8 / 258.2 ms matches its ordinary window (258.8 / 256.8 ms) against e1's 111–117 ms. Deferral changes graph state and lifetimes across calls; which graph comparison misses is not in the traces. Open (ISSUES 50) | `zoo.csv`; `mixer.fdef0j` trace on the host |
+| LeNet TinyJit cycles | +1.70 M (2+2) and +1.67 M (4+2): a new `quant` kernel (2.18 M and 2.16 M, once a step) while the old conversion (2.92 M and 2.91 M) stays in the TinyJit step; in the eager step that conversion is gone (−2.94 M and −2.96 M convert), which is why eager falls and TinyJit rises | `rounds/f1/data/mfu/lenet.*`, against e1 |
+| Outputs | Every run inside the MXFP7 footprint (`outside_footprint` 0 on all 32). Card against f32 and against simulated MXFP7, absolute max, mean, median, TinyJit on 2+2: ViT-B 0.0989, 0.0209, 0.0175 and 0.0972, 0.0213, 0.0180 (MXFP7 against f32 max 0.1040); ViT 0.0336, 0.0073, 0.0061 and 0.0461, 0.0082, 0.0070 (0.0437); GPT 0.0193, 0.0061, 0.0056 and 0.0105, 0.0022, 0.0015 (0.0163); LeNet 0.0150, 0.0043, 0.0034 and 0.0120, 0.0040, 0.0035 (0.0154); Mixer 0.0105, 0.0029, 0.0023 and 0.0063, 0.0021, 0.0017 (0.0129); wide 0.0037, 0.0008, 0.0006 and 0.0018, 0.0004, 0.0001 (0.0048); MLP 0.0060, 0.0021, 0.0019 and 0.0020, 0.0001, 0.0001 (0.0060); GRU 0.0025, 0.0007, 0.0006 and 0.0013, 0.0004, 0.0003 (0.0018) | `zoo.csv` `card_*`, `mxfp7_*` |
+| Compile | Each model's library filled from empty, eager then TinyJit, eight models at a time, then refilled for the grouped kernels after the fused-group recording fix; seconds are summed compile durations of competing processes: 719 kernels, 822.6 s on 2+2, slowest 53.4 s; 718 kernels, 834.7 s on 4+2, slowest 55.3 s (both a Mixer kernel). Single-threaded cold compile of e1's 669 distinct kernels: 1,434.8 → 1,118.8 s CPU, every output byte-identical | `rounds/f1/data/compile.csv` |
+| Review | Astra's review of the batch's code: a copy joined into a fused loop skips the alias test (ISSUES 51), TinyJit can restore a released deferred form (52), the F-001 bind guard refuses legal views (53), nested chaining names collide (54), raw ENGINE RINGs bypass F-003 credits (55), launch event identity is not reentrant (56), F-001 handling covers proven affine copies only (57). `test_phases.py` bounds a fused cost from above only, and `test_fused_groups.py` compares values on an offline device that does not execute. None is attributed to a round f1 output | `ISSUES.md` |
+| Next | Step shares, TinyJit 2+2: form packing (`quant` + `convert`) 70% of LeNet, 53% GRU, 42% Mixer, 40–43% GPT, ViT, ViT-B; vector work 67% MLP, 66% wide, 51% Mixer; matrix 34% ViT, 38% ViT-B, under 6% LeNet and Mixer. Order: deferred forms as graph effects and per-call measurement identity, then form packing, vector fusion after row 51, matrix tiling. Chaining, range fusion and the composed tree stay off until measured on and off | `rounds/f1/data/mfu/` |
+
+Warm steps are found over single kernel launches; a TinyJit replay list is one
+row of a recorded step's kernels and is counted in cadence, not in the per-kernel MFU.
+
 ## Round e1
 
 32 of 32 runs exited: eight models, eager and TinyJit, 2+2 and 4+2, all four dies at
