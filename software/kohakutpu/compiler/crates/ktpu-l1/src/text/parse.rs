@@ -68,8 +68,41 @@ fn read(text: &str) -> std::result::Result<Stmt, LineColLocation> {
             assert_eq!(format!("{got:?}"), format!("{want:?}"), "{text}");
             return got;
         }
+        grammar::read(text)
     }
-    grammar::read(text)
+    #[cfg(not(feature = "mutants"))]
+    read_seen(text)
+}
+
+/// Lines a thread keeps read: a compile reads its L2 text back after every
+/// pass and its L1 lines repeat, so most lines it reads it has read before.
+#[cfg(not(feature = "mutants"))]
+const SEEN_LINES: usize = 1 << 14;
+
+#[cfg(not(feature = "mutants"))]
+thread_local! {
+    static SEEN: std::cell::RefCell<std::collections::HashMap<String, Stmt>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// `grammar::read(text)`, a statement this thread read before cloned: the
+/// grammar's statement is a function of the line's text alone (its position
+/// is the caller's). A mutants build reads every line, so every mutated
+/// point a line reaches is noted.
+#[cfg(not(feature = "mutants"))]
+fn read_seen(text: &str) -> std::result::Result<Stmt, LineColLocation> {
+    if let Some(st) = SEEN.with(|s| s.borrow().get(text).cloned()) {
+        return Ok(st);
+    }
+    let st = grammar::read(text)?;
+    SEEN.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.len() >= SEEN_LINES {
+            s.clear();
+        }
+        s.insert(text.to_string(), st.clone());
+    });
+    Ok(st)
 }
 
 const TXT_ERR: &str = "L1.TXT.014";

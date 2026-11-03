@@ -98,9 +98,12 @@ pub fn body_of(p: &Program) -> Result<(Params, Vec<Stmt>)> {
 }
 
 /// The program of `stmts`: the module's target line and `fn name.l2`, read
-/// back.
+/// back; `p` itself when the text is `p`'s (reading it back gives `p`).
 pub fn write(p: &Program, params: &[(String, Term)], stmts: &[Stmt]) -> Result<Program> {
     let text = write_text(&p.module, &p.name, params, stmts);
+    if text == p.module.source {
+        return Ok(p.clone());
+    }
     let module = ktpu_l1::text::read(&text, &p.module.file)?;
     Ok(Program {
         module,

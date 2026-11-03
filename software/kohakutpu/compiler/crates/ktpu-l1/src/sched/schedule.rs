@@ -139,12 +139,35 @@ fn info(st: &Stmt, chunks: i128) -> Info {
 /// the core's `vc.chunks`, the words an unpack or pack without `n=` moves.
 pub fn preds(run: &[Stmt], chunks: u32) -> Vec<BTreeSet<usize>> {
     let info: Vec<Info> = run.iter().map(|st| info(st, chunks as i128)).collect();
+    // The pair test runs for every two statements of the run: registers as
+    // bit rows over the run's names, not string sets.
+    let mut number: HashMap<&str, usize> = HashMap::new();
+    for a in &info {
+        for r in a.defs.iter().chain(&a.uses) {
+            let n = number.len();
+            number.entry(r.as_str()).or_insert(n);
+        }
+    }
+    let width = number.len().div_ceil(64);
+    let bits = |set: &BTreeSet<String>| {
+        let mut row = vec![0u64; width];
+        for r in set {
+            let n = number[r.as_str()];
+            row[n / 64] |= 1 << (n % 64);
+        }
+        row
+    };
+    let meet = |x: &[u64], y: &[u64]| x.iter().zip(y).any(|(a, b)| a & b != 0);
+    let rows: Vec<(Vec<u64>, Vec<u64>)> = info
+        .iter()
+        .map(|a| (bits(&a.defs), bits(&a.uses)))
+        .collect();
     let mut preds: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); run.len()];
     for (j, b) in info.iter().enumerate() {
+        let (bd, bu) = &rows[j];
         for (i, a) in info.iter().enumerate().take(j) {
-            let reg = !a.defs.is_disjoint(&b.uses)
-                || !a.defs.is_disjoint(&b.defs)
-                || !a.uses.is_disjoint(&b.defs);
+            let (ad, au) = &rows[i];
+            let reg = meet(ad, bu) || meet(ad, bd) || meet(au, bd);
             let l1 = match (&a.l1, &b.l1) {
                 (Some(x), Some(y)) => !x.is_disjoint(y) && (a.write || b.write),
                 _ => false,

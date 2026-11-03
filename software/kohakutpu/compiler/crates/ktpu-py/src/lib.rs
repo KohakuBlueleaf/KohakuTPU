@@ -729,6 +729,13 @@ enum Machines {
     Each(Vec<String>),
 }
 
+/// stage_seconds() -> dict: seconds each compile stage's own work took in
+/// this process, over every thread; a cache hit costs none.
+#[pyfunction]
+fn stage_seconds() -> std::collections::BTreeMap<&'static str, f64> {
+    ktpu::pipeline::spent().into_iter().collect()
+}
+
 /// compile_many(sources, machine_json, cache=None, threads=None,
 /// zero_sign=None) -> list
 ///
@@ -1211,6 +1218,7 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(bind_cache_stats, m)?)?;
     m.add_function(wrap_pyfunction!(bind_cache_configure, m)?)?;
     m.add_function(wrap_pyfunction!(compile_many, m)?)?;
+    m.add_function(wrap_pyfunction!(stage_seconds, m)?)?;
     m.add_function(wrap_pyfunction!(template_compile, m)?)?;
     bindings::register(m)?;
     library::register(m)?;

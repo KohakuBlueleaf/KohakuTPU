@@ -15,6 +15,30 @@ use ktpu_machine::{Machine, Refusal};
 use rayon::prelude::*;
 use stage::{Backend, Stage};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
+
+/// Nanoseconds each stage's own work took in this process, summed over every
+/// thread (a cache hit costs none), in [`Stage::ALL`] order.
+static SPENT: [AtomicU64; Stage::ALL.len()] = [const { AtomicU64::new(0) }; Stage::ALL.len()];
+
+/// `(stage name, seconds)` of [`SPENT`].
+pub fn spent() -> Vec<(&'static str, f64)> {
+    Stage::ALL
+        .iter()
+        .zip(&SPENT)
+        .map(|(s, n)| (s.name(), n.load(Ordering::Relaxed) as f64 * 1e-9))
+        .collect()
+}
+
+/// `make()`, its time added to `stage`'s [`SPENT`].
+fn timed<T>(stage: Stage, make: impl FnOnce() -> T) -> T {
+    let t0 = Instant::now();
+    let out = make();
+    let i = Stage::ALL.iter().position(|s| *s == stage).expect("every stage is listed");
+    SPENT[i].fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+    out
+}
 
 /// A stage's output: its text form, and the typed value when this compile
 /// made it (a cache hit has only the text).
@@ -52,6 +76,7 @@ impl<B: Backend> Run<'_, B> {
         input: &[u8],
         make: impl FnOnce() -> Result<(Vec<u8>, U), Refusal>,
     ) -> Result<(Vec<u8>, Option<U>), Refused> {
+        let make = || timed(stage, make);
         let Some(version) = self.b.version(stage) else {
             let (bytes, typed) = make().map_err(at(stage))?;
             return Ok((bytes, Some(typed)));
