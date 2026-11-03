@@ -161,6 +161,37 @@ def test_a_finding_past_the_step_is_not_the_steps(tmp_path):
     assert [f["launch"] for f in report["findings"]] == [3]
 
 
+def test_a_replay_is_an_event_of_its_own_not_a_launch_gap(tmp_path):
+    """A TinyJit replay between two ordinary launches is its own row: the launch
+    after it keeps only its own gap, and the replay's host time is reported apart."""
+    (tmp_path / "kernels").mkdir()
+    (tmp_path / "kernels" / "a.l2").write_text(
+        "fn t.l2(r: f16[4] @dram, w: f16[4] @dram)\n    copy w <- r\n", "utf-8"
+    )
+    launch = dict(name="a", kind="dsl", binds=dict(r=100, w=200), submit_ms=1.0)
+    rows = [
+        dict(launch, seq=0, phase="ordinary", gap_ms=2.0),
+        dict(
+            seq=1,
+            phase="replay",
+            name="replay",
+            kind="replay",
+            gap_ms=3.0,
+            submit_ms=900.0,
+        ),
+        dict(launch, seq=2, phase="ordinary", gap_ms=4.0),
+    ]
+    text = "\n".join(json.dumps(r) for r in rows)
+    (tmp_path / "launches.jsonl").write_text(text, "utf-8")
+    timed = dict(name="a", cycles=1000.0, floor=dict(mg=1, vc=1, read=1, write=1))
+    (tmp_path / "timed.m.jsonl").write_text(json.dumps(timed), "utf-8")
+    (tmp_path / "meta.json").write_text(json.dumps(dict(args=[])), "utf-8")
+    assert [x.gap_ms for x in traces.load(tmp_path, "m")] == [2.0, 4.0]
+    host = waste.report(tmp_path, "m")["host_ms"]
+    assert host["replays"] == 1
+    assert (host["replay_between"], host["replay_publish"]) == (3.0, 900.0)
+
+
 def test_writes_read_the_kernel_text():
     l2 = "fn t.l2(a: f16[4] @dram, b: f16[4] @dram)\n    quant b <- a\n"
     assert traces.writes(l2, ("a", "b")) == {"b"}

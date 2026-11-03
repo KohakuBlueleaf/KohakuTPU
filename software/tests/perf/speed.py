@@ -9,7 +9,7 @@ import pathlib
 import sys
 
 import numpy as np
-from traces import period
+from traces import events, period
 
 SKIP = ("path", "name", "l1_bytes", "l2_bytes", "packages", "error", "total")
 
@@ -39,8 +39,11 @@ def table(rows: list[dict]) -> dict:
 
 def host(trace: pathlib.Path) -> dict:
     """A trace's host cost a launch: everything before its warm steps, and the last
-    of those, each as the gap before a launch and the submit itself, in ms."""
-    rows = [json.loads(x) for x in (trace / "launches.jsonl").open(encoding="utf-8")]
+    of those, each as the gap before a launch and the submit itself, in ms; and its
+    TinyJit replays, each as the gap before it and its publish."""
+    every = events(trace)
+    rows = [r for r in every if r.get("phase") != "replay"]
+    replays = [r for r in every if r.get("phase") == "replay"]
     start, length = period([r["name"] for r in rows])
     warm = rows[start : start + length] if length else rows
 
@@ -57,7 +60,7 @@ def host(trace: pathlib.Path) -> dict:
             submit_max=float(submits.max()),
         )
 
-    return dict(cold=part(rows[:start]), warm=part(warm))
+    return dict(cold=part(rows[:start]), warm=part(warm), replay=part(replays))
 
 
 def main():

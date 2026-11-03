@@ -9,7 +9,7 @@ import collections
 import json
 import pathlib
 
-from traces import FORM_KINDS, Launch, load, planned, step
+from traces import FORM_KINDS, Launch, events, load, planned, step
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 PARAMS = pathlib.Path(__file__).with_name("params.json")
@@ -158,6 +158,11 @@ def chains(launches: list[Launch]) -> list[dict]:
     return out
 
 
+def median(values: list[float]) -> float:
+    """The middle of `values` (the upper of two), 0 when there are none."""
+    return sorted(values)[len(values) // 2] if values else 0.0
+
+
 def report(trace: pathlib.Path, machine: str) -> dict:
     launches = load(trace, machine)
     meta = json.loads((trace / "meta.json").read_text("utf-8"))
@@ -171,10 +176,14 @@ def report(trace: pathlib.Path, machine: str) -> dict:
     total = sum(x.cycles for x in warm)
     table = labels(warm)
     busy = sum(table.values())
+    replays = [e for e in events(trace) if e.get("phase") == "replay"]
     return dict(
         host_ms=dict(
             between=sum(x.gap_ms for x in warm),
             submit=sum(x.submit_ms for x in warm),
+            replays=len(replays),
+            replay_between=median([e["gap_ms"] for e in replays]),
+            replay_publish=median([e["submit_ms"] for e in replays]),
         ),
         mfu=dict(
             mg=sum(x.timed["floor"]["mg"] for x in warm) / busy,

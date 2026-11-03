@@ -63,15 +63,22 @@ class Launch:
         self.submit_ms = row.get("submit_ms", 0.0)
 
 
+def events(trace: pathlib.Path) -> list[dict]:
+    """Every host event in order: kernel launches, and TinyJit replays (`phase`
+    "replay", each with its own gap before and publish time)."""
+    rows = (trace / "launches.jsonl").read_text("utf-8").splitlines()
+    return [json.loads(line) for line in rows]
+
+
 def load(trace: pathlib.Path, machine: str) -> list[Launch]:
+    """The kernel launches, in order; a replay is not one."""
     timed = {}
     for line in (trace / f"timed.{machine}.jsonl").read_text("utf-8").splitlines():
         row = json.loads(line)
         timed[row["name"]] = row
     launches = []
-    rows = (trace / "launches.jsonl").read_text("utf-8").splitlines()
-    for i, line in enumerate(rows):
-        row = json.loads(line)
+    kernels = [row for row in events(trace) if row.get("phase") != "replay"]
+    for i, row in enumerate(kernels):
         l2 = (trace / "kernels" / f"{row['name']}.l2").read_text("utf-8")
         launches.append(Launch(i, row, l2, timed[row["name"]]))
     return launches

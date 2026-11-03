@@ -122,11 +122,23 @@ class Trace:
         }
         scratch = getattr(compiled, "scratch", None) or []
         self.row = dict(
+            seq=self.count,
+            phase="capture" if dev.recording else "ordinary",
             name=compiled.name,
             kind=kind,
             binds=phys,
             scratch=sum(a["bytes"] for a in scratch),
             info=keep,
+            gap_ms=round(gap * 1e3, 3),
+        )
+
+    def replayed(self, gap: float) -> None:
+        """A TinyJit replay: one event, its runs each carrying its `seq`."""
+        self.row = dict(
+            seq=self.count,
+            phase="replay",
+            name="replay",
+            kind="replay",
             gap_ms=round(gap * 1e3, 3),
         )
 
@@ -199,6 +211,7 @@ def recording(trace: Trace, library: pathlib.Path | None, card: bool, prof: Prof
     """`Device` with each submit recorded, each library miss prebuilt, offline unless
     on the card."""
     submit = D.Device.submit
+    replay = D.Device.replay
     compile_graph = D.Device.compile_graph
 
     def on_submit(self, compiled, binds, kind="dsl", info=None):
@@ -207,6 +220,19 @@ def recording(trace: Trace, library: pathlib.Path | None, card: bool, prof: Prof
         gap, trace.ended = t0 - (trace.ended or t0), None
         trace.launch(self, compiled, binds, kind, info, gap)
         got = submit(self, compiled, binds, kind, info)
+        got.info["seq"] = trace.row["seq"]
+        done = time.perf_counter()
+        trace.ended = done
+        trace.submitted(done - t0)
+        return got
+
+    def on_replay(self, log, *args, **kw):
+        t0 = time.perf_counter()
+        gap, trace.ended = t0 - (trace.ended or t0), None
+        trace.replayed(gap)
+        got = replay(self, log, *args, **kw)
+        for event in got:
+            event.info["seq"] = trace.row["seq"]
         done = time.perf_counter()
         trace.ended = done
         trace.submitted(done - t0)
@@ -233,6 +259,7 @@ def recording(trace: Trace, library: pathlib.Path | None, card: bool, prof: Prof
             super().__init__("offline", *args, **kw)
 
     D.Device.submit = on_submit
+    D.Device.replay = on_replay
     D.Device.compile_graph = on_compile
     if not card:
         D.Device = Offline
@@ -324,13 +351,27 @@ def card_rows(runs, records: list[dict], ring: list[int] | None) -> list[dict]:
                 if k == 0:
                     phases["list_cycles"] = rec["cycles"]
                 rows_.append(
-                    dict(name=run.name, kind=run.kind, wall=run.wall, **phases)
+                    dict(
+                        name=run.name,
+                        kind=run.kind,
+                        wall=run.wall,
+                        seq=run.info.get("seq"),
+                        **phases,
+                    )
                 )
             at, slot = at + n, slot + n
             continue
         if at < len(runs):
             run = runs[at]
-            rows_.append(dict(name=run.name, kind=run.kind, wall=run.wall, **rec))
+            rows_.append(
+                dict(
+                    name=run.name,
+                    kind=run.kind,
+                    wall=run.wall,
+                    seq=run.info.get("seq"),
+                    **rec,
+                )
+            )
             slot += max(1, n) if run.kind == "replay" else 1
         at += 1
     return rows_

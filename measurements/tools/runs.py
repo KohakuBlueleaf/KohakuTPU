@@ -86,12 +86,19 @@ class Run:
     count: int
 
     @property
+    def launched(self) -> list[dict]:
+        """The rows of single kernels: a replay list runs a recorded step's kernels
+        as one row, with no cycles of its own kernels."""
+        return [r for r in self.rows if r["kind"] != "replay"]
+
+    @property
     def steps(self) -> list[list[dict]]:
-        """Each warm step's rows: the run's first repeat is its cold step."""
+        """Each warm step's kernel rows: the run's first repeat is its cold step."""
+        rows = self.launched
         if not self.length:
-            return [self.rows]
+            return [rows]
         at = range(self.start, self.start + self.count * self.length, self.length)
-        out = [self.rows[a : a + self.length] for a in at]
+        out = [rows[a : a + self.length] for a in at]
         return out[1:] if len(out) > 2 else out
 
     @property
@@ -126,10 +133,15 @@ def load(name: str) -> Run:
     units = lines(base / "units.jsonl.gz")
     launches = lines(base / "launches.jsonl.gz")
     meta = json.loads((base / "meta.json").read_text("utf-8"))
-    rows = []
+    rows: list[dict] = []
     at = 0
+    # A run recorded with event identities joins its host event by `seq`: one
+    # event may publish several card rows (a replay's lists), and its host time
+    # goes on the first. Older runs join by position.
+    by_seq = {e["seq"]: e for e in launches if "seq" in e}
+    joined: set = set()
     for i, c in enumerate(card):
-        row = dict(c, index=i)
+        row: dict = dict(c, index=i)
         # A replay list is one card row and one ring slot per launch in it; a
         # replayed single run (list_index 0) takes one slot.
         slots = max(1, c["list_index"]) if c["kind"] == "replay" else 1
@@ -139,13 +151,20 @@ def load(name: str) -> Run:
             row["units"] = [u for t in taken for u in t["units"]]
             row["start"] = taken[0]["start"]
             row["moves"] = sum(t["moves"] for t in taken)
-        if i < len(launches):
+        if by_seq:
+            event = by_seq.get(c.get("seq")) or {}
+            first = bool(event) and c["seq"] not in joined
+            joined.add(c.get("seq"))
+            row["gap_ms"] = event.get("gap_ms", 0.0) if first else 0.0
+            row["submit_ms"] = event.get("submit_ms", 0.0) if first else 0.0
+            row["scratch"] = event.get("scratch", 0)
+        elif i < len(launches):
             row["gap_ms"] = launches[i].get("gap_ms", 0.0)
             row["submit_ms"] = launches[i].get("submit_ms", 0.0)
             row["scratch"] = launches[i].get("scratch", 0)
         rows.append(row)
     unit_deltas(rows)
-    named = [r["name"] for r in rows]
+    named = [r["name"] for r in rows if r["kind"] != "replay"]
     start, count, length = repeats(named, planned(meta["args"]))
     kernels = json.loads((base / "kernels.json").read_text("utf-8"))
     prof = base / "profile.json.gz"
