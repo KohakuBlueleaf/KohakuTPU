@@ -1,0 +1,4 @@
+target ktpu.v9
+
+fn t_82fd674e412b810077f3f2b55f1673da0fb7f87aadd7743b959a448dcab84f7a.l2(x: f16[2304, 768] @dram, q: mx7b[2304, 768] @dram(gn=48, nk=1))
+    quant q[0 : +2304] <- x[0 : +2304, 0 : +768]

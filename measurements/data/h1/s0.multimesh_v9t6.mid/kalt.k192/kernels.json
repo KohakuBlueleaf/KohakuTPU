@@ -1,0 +1,23 @@
+{
+ "t_4c557dd1be770a09c40916a48a6014834d374cb937668e56e199baf5093a13ff": {
+  "signature": "a: mx7a[200, 192] @dram(gm=50, nk=2), b: mx7b[768, 192] @dram(gn=48, nk=2), out: f16[200, 768] @dram",
+  "g1": [],
+  "cases": [
+   "kalt.k192"
+  ]
+ },
+ "t_d415e0648e3c32dca65c01ff0c1c8071e44ae4dbafb47146c0ff1d6a5b7fa235": {
+  "signature": "x: f16[197, 192] @dram, q: mx7a[200, 192] @dram(gm=50, nk=2)",
+  "g1": [],
+  "cases": [
+   "kalt.k192"
+  ]
+ },
+ "t_f29ce8e10ffdfa648e812985b8fafef16012ce3af8c1e915d0df606d3cbec83d": {
+  "signature": "x: f16[768, 192] @dram, q: mx7b[768, 192] @dram(gn=48, nk=2)",
+  "g1": [],
+  "cases": [
+   "kalt.k192"
+  ]
+ }
+}

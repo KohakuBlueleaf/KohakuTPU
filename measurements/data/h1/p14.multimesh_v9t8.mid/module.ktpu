@@ -1,0 +1,1593 @@
+target ktpu.v9
+
+fn p14_0_flush.l1(polls: u64[12] @dram)
+    node 0
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 0 <- r9
+        store polls + 8 <- r10
+        store polls + 16 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 24 <- r9
+        store polls + 32 <- r10
+        store polls + 40 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 48 <- r9
+        store polls + 56 <- r10
+        store polls + 64 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 72 <- r9
+        store polls + 80 <- r10
+        store polls + 88 <- r13
+
+fn p14_0_both.l1(polls: u64[12] @dram)
+    node 0
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 0 <- r9
+        store polls + 8 <- r10
+        store polls + 16 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 24 <- r9
+        store polls + 32 <- r10
+        store polls + 40 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 48 <- r9
+        store polls + 56 <- r10
+        store polls + 64 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 72 <- r9
+        store polls + 80 <- r10
+        store polls + 88 <- r13
+
+fn p14_1_flush.l1(polls: u64[12] @dram)
+    node 1
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 0 <- r9
+        store polls + 8 <- r10
+        store polls + 16 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 24 <- r9
+        store polls + 32 <- r10
+        store polls + 40 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 48 <- r9
+        store polls + 56 <- r10
+        store polls + 64 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 72 <- r9
+        store polls + 80 <- r10
+        store polls + 88 <- r13
+
+fn p14_1_both.l1(polls: u64[12] @dram)
+    node 1
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 0 <- r9
+        store polls + 8 <- r10
+        store polls + 16 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 24 <- r9
+        store polls + 32 <- r10
+        store polls + 40 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 48 <- r9
+        store polls + 56 <- r10
+        store polls + 64 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 72 <- r9
+        store polls + 80 <- r10
+        store polls + 88 <- r13
+
+fn p14_2_flush.l1(polls: u64[12] @dram)
+    node 2
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 0 <- r9
+        store polls + 8 <- r10
+        store polls + 16 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 24 <- r9
+        store polls + 32 <- r10
+        store polls + 40 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 48 <- r9
+        store polls + 56 <- r10
+        store polls + 64 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 72 <- r9
+        store polls + 80 <- r10
+        store polls + 88 <- r13
+
+fn p14_2_both.l1(polls: u64[12] @dram)
+    node 2
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 0 <- r9
+        store polls + 8 <- r10
+        store polls + 16 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 24 <- r9
+        store polls + 32 <- r10
+        store polls + 40 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 48 <- r9
+        store polls + 56 <- r10
+        store polls + 64 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 72 <- r9
+        store polls + 80 <- r10
+        store polls + 88 <- r13
+
+fn p14_3_flush.l1(polls: u64[12] @dram)
+    node 3
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 0 <- r9
+        store polls + 8 <- r10
+        store polls + 16 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 24 <- r9
+        store polls + 32 <- r10
+        store polls + 40 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 48 <- r9
+        store polls + 56 <- r10
+        store polls + 64 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 72 <- r9
+        store polls + 80 <- r10
+        store polls + 88 <- r13
+
+fn p14_3_both.l1(polls: u64[12] @dram)
+    node 3
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 0 <- r9
+        store polls + 8 <- r10
+        store polls + 16 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 24 <- r9
+        store polls + 32 <- r10
+        store polls + 40 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 48 <- r9
+        store polls + 56 <- r10
+        store polls + 64 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 72 <- r9
+        store polls + 80 <- r10
+        store polls + 88 <- r13
+
+fn p14_01_flush.l1(polls: u64[24] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 0 <- r9
+        store polls + 8 <- r10
+        store polls + 16 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 24 <- r9
+        store polls + 32 <- r10
+        store polls + 40 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 48 <- r9
+        store polls + 56 <- r10
+        store polls + 64 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 72 <- r9
+        store polls + 80 <- r10
+        store polls + 88 <- r13
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 96 <- r9
+        store polls + 104 <- r10
+        store polls + 112 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 120 <- r9
+        store polls + 128 <- r10
+        store polls + 136 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 144 <- r9
+        store polls + 152 <- r10
+        store polls + 160 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 168 <- r9
+        store polls + 176 <- r10
+        store polls + 184 <- r13
+
+fn p14_01_both.l1(polls: u64[24] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 0 <- r9
+        store polls + 8 <- r10
+        store polls + 16 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 24 <- r9
+        store polls + 32 <- r10
+        store polls + 40 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 48 <- r9
+        store polls + 56 <- r10
+        store polls + 64 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 72 <- r9
+        store polls + 80 <- r10
+        store polls + 88 <- r13
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 96 <- r9
+        store polls + 104 <- r10
+        store polls + 112 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 120 <- r9
+        store polls + 128 <- r10
+        store polls + 136 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 144 <- r9
+        store polls + 152 <- r10
+        store polls + 160 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 168 <- r9
+        store polls + 176 <- r10
+        store polls + 184 <- r13
+
+fn p14_0123_flush.l1(polls: u64[48] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 0 <- r9
+        store polls + 8 <- r10
+        store polls + 16 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 24 <- r9
+        store polls + 32 <- r10
+        store polls + 40 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 48 <- r9
+        store polls + 56 <- r10
+        store polls + 64 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 72 <- r9
+        store polls + 80 <- r10
+        store polls + 88 <- r13
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 96 <- r9
+        store polls + 104 <- r10
+        store polls + 112 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 120 <- r9
+        store polls + 128 <- r10
+        store polls + 136 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 144 <- r9
+        store polls + 152 <- r10
+        store polls + 160 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 168 <- r9
+        store polls + 176 <- r10
+        store polls + 184 <- r13
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 192 <- r9
+        store polls + 200 <- r10
+        store polls + 208 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 216 <- r9
+        store polls + 224 <- r10
+        store polls + 232 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 240 <- r9
+        store polls + 248 <- r10
+        store polls + 256 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 264 <- r9
+        store polls + 272 <- r10
+        store polls + 280 <- r13
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 288 <- r9
+        store polls + 296 <- r10
+        store polls + 304 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 312 <- r9
+        store polls + 320 <- r10
+        store polls + 328 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 336 <- r9
+        store polls + 344 <- r10
+        store polls + 352 <- r13
+        ctrl dcache <- 1
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 360 <- r9
+        store polls + 368 <- r10
+        store polls + 376 <- r13
+
+fn p14_0123_both.l1(polls: u64[48] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 0 <- r9
+        store polls + 8 <- r10
+        store polls + 16 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 24 <- r9
+        store polls + 32 <- r10
+        store polls + 40 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 48 <- r9
+        store polls + 56 <- r10
+        store polls + 64 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 72 <- r9
+        store polls + 80 <- r10
+        store polls + 88 <- r13
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 96 <- r9
+        store polls + 104 <- r10
+        store polls + 112 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 120 <- r9
+        store polls + 128 <- r10
+        store polls + 136 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 144 <- r9
+        store polls + 152 <- r10
+        store polls + 160 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 168 <- r9
+        store polls + 176 <- r10
+        store polls + 184 <- r13
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 192 <- r9
+        store polls + 200 <- r10
+        store polls + 208 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 216 <- r9
+        store polls + 224 <- r10
+        store polls + 232 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 240 <- r9
+        store polls + 248 <- r10
+        store polls + 256 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 264 <- r9
+        store polls + 272 <- r10
+        store polls + 280 <- r13
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise0
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise0 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall0
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall0 if r7 < r11
+        store polls + 288 <- r9
+        store polls + 296 <- r10
+        store polls + 304 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise1
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise1 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall1
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall1 if r7 < r11
+        store polls + 312 <- r9
+        store polls + 320 <- r10
+        store polls + 328 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise2
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise2 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall2
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall2 if r7 < r11
+        store polls + 336 <- r9
+        store polls + 344 <- r10
+        store polls + 352 <- r13
+        ctrl dcache <- 3
+        r10 = set 0
+        r6 = set 64
+        label rise3
+        r11 = ctrl dcache
+        r10 = add r10, 1
+        r12 = mul r11, 64
+        r12 = add r12, r10
+        goto rise3 if r12 < r6
+        r9 = add r11, 0
+        r13 = set 0
+        r7 = set 0
+        label fall3
+        r11 = ctrl dcache
+        r13 = add r13, 1
+        goto fall3 if r7 < r11
+        store polls + 360 <- r9
+        store polls + 368 <- r10
+        store polls + 376 <- r13

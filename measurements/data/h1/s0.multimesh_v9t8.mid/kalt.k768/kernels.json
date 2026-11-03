@@ -1,0 +1,27 @@
+{
+ "t_62bd7e6e8d87379477062b28008d7da786674784f7715eb801e35fb50c509740": {
+  "signature": "a: mx7a[200, 768] @dram(gm=50, nk=1), b: mx7b[768, 768] @dram(gn=48, nk=1), out: f16[200, 768] @dram",
+  "g1": [],
+  "cases": [
+   "kalt.k768"
+  ]
+ },
+ "t_74c2941840bd77978d91b58ae4182a115c0d0d1ef24c64bc1042f79dec2b4256": {
+  "signature": "x: f16[197, 768] @dram, q: mx7a[200, 768] @dram(gm=50, nk=1)",
+  "g1": [
+   "t_74c2941840bd77978d91b58ae4182a115c0d0d1ef24c64bc1042f79dec2b4256"
+  ],
+  "cases": [
+   "kalt.k768"
+  ]
+ },
+ "t_da301229077f12ada3b9b9e142427a6792ecb7cb71311195acd854e3eda999f6": {
+  "signature": "x: f16[768, 768] @dram, q: mx7b[768, 768] @dram(gn=48, nk=1)",
+  "g1": [
+   "t_da301229077f12ada3b9b9e142427a6792ecb7cb71311195acd854e3eda999f6"
+  ],
+  "cases": [
+   "kalt.k768"
+  ]
+ }
+}

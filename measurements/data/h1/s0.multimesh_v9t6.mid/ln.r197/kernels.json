@@ -1,0 +1,11 @@
+{
+ "t_034e2d6be12685351a53319948eb280edbc66f4dec507159347c568ef04f9a1e": {
+  "signature": "in0: f16[197, 768] @dram, in1: f16[768] @dram, in2: f16[768] @dram, out: f16[197, 768] @dram",
+  "g1": [
+   "t_034e2d6be12685351a53319948eb280edbc66f4dec507159347c568ef04f9a1e"
+  ],
+  "cases": [
+   "ln.r197"
+  ]
+ }
+}

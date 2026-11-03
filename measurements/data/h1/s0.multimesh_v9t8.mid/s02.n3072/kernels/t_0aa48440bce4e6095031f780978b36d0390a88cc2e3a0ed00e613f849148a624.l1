@@ -1,0 +1,1497 @@
+target ktpu.v9 vregs=128 vcopies=2
+
+image t_0aa48440bce4e6095031f780978b36d0390a88cc2e3a0ed00e613f849148a624_n0_vc0_0(p_a0, p_a1, p_a2, p_a3)
+    desc a0=p_a0 walk=(32, 48)
+    desc a1=p_a1 walk=((32, 12), (1536, 4))
+    desc a2=p_a2 walk=((32, 12), (1536, 4))
+    desc a3=p_a3 walk=(32, 12)
+    ainc a0 += 1536
+    ainc a1 += 6144
+    ainc a2 += 6144
+    vfill a3 -> l1[500]
+    vbar
+    vunpk v0[1 :] <- l1[500] f16 walk=(0, 1) n=8
+    vunpk v1[1 :] <- l1[502] f16 walk=(0, 1) n=8
+    vunpk v2[1 :] <- l1[504] f16 walk=(0, 1) n=8
+    vunpk v3[1 :] <- l1[506] f16 walk=(0, 1) n=8
+    vunpk v4[1 :] <- l1[508] f16 walk=(0, 1) n=8
+    vunpk v5[1 :] <- l1[510] f16 walk=(0, 1) n=8
+    vsync fe on=unpack
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[0] rel
+    vfill a1 -> l1[96] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[48] rel
+    vfill a1 -> l1[144] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[288] rel
+    vfill a1 -> l1[336] rel
+    seti s15 = 15
+    loop s15
+        vsync unpack on=fill slack=4
+        vunpk v6 <- l1[0] gt4
+        vunpk v7 <- l1[8] gt4
+        vunpk v8 <- l1[16] gt4
+        vadd v9, v6, v0[1 :]
+        vunpk v10 <- l1[24] gt4
+        vadd v6, v7, v1[1 :]
+        vunpk v11 <- l1[32] gt4
+        vadd v7, v8, v2[1 :]
+        vunpk v12 <- l1[40] gt4
+        vadd v8, v10, v3[1 :]
+        vunpk v13[1 :] <- l1[96] f16 walk=(12, 1) n=8
+        vadd v10, v11, v4[1 :]
+        vunpk v14[1 :] <- l1[98] f16 walk=(12, 1) n=8
+        vadd v11, v12, v5[1 :]
+        vunpk v15[1 :] <- l1[100] f16 walk=(12, 1) n=8
+        vadd v16, v13[1 :], v9
+        vunpk v12[1 :] <- l1[102] f16 walk=(12, 1) n=8
+        vadd v17, v14[1 :], v6
+        vunpk v9[1 :] <- l1[104] f16 walk=(12, 1) n=8
+        vadd v18, v15[1 :], v7
+        vunpk v6[1 :] <- l1[106] f16 walk=(12, 1) n=8
+        vadd v19, v12[1 :], v8
+        vsync pack on=drain slack=2
+        vpack v16 -> l1[192] f16 walk=(12, 1)
+        vadd v20, v9[1 :], v10
+        vsync fill on=unpack slack=0
+        vfill a0 -> l1[0] rel
+        vfill a1 -> l1[96] rel
+        vpack v17 -> l1[194] f16 walk=(12, 1)
+        vadd v21, v6[1 :], v11
+        vpack v18 -> l1[196] f16 walk=(12, 1)
+        vpack v19 -> l1[198] f16 walk=(12, 1)
+        vpack v20 -> l1[200] f16 walk=(12, 1)
+        vpack v21 -> l1[202] f16 walk=(12, 1)
+        vsync drain on=pack slack=0
+        vdrain a2 <- l1[192] rel
+        vsync unpack on=fill slack=4
+        vunpk v6 <- l1[48] gt4
+        vunpk v7 <- l1[56] gt4
+        vunpk v8 <- l1[64] gt4
+        vadd v9, v6, v0[1 :]
+        vunpk v10 <- l1[72] gt4
+        vadd v6, v7, v1[1 :]
+        vunpk v11 <- l1[80] gt4
+        vadd v7, v8, v2[1 :]
+        vunpk v12 <- l1[88] gt4
+        vadd v8, v10, v3[1 :]
+        vunpk v13[1 :] <- l1[144] f16 walk=(12, 1) n=8
+        vadd v10, v11, v4[1 :]
+        vunpk v14[1 :] <- l1[146] f16 walk=(12, 1) n=8
+        vadd v11, v12, v5[1 :]
+        vunpk v15[1 :] <- l1[148] f16 walk=(12, 1) n=8
+        vadd v22, v13[1 :], v9
+        vunpk v12[1 :] <- l1[150] f16 walk=(12, 1) n=8
+        vadd v23, v14[1 :], v6
+        vunpk v9[1 :] <- l1[152] f16 walk=(12, 1) n=8
+        vadd v24, v15[1 :], v7
+        vunpk v6[1 :] <- l1[154] f16 walk=(12, 1) n=8
+        vadd v25, v12[1 :], v8
+        vsync pack on=drain slack=2
+        vpack v22 -> l1[240] f16 walk=(12, 1)
+        vadd v26, v9[1 :], v10
+        vsync fill on=unpack slack=0
+        vfill a0 -> l1[48] rel
+        vfill a1 -> l1[144] rel
+        vpack v23 -> l1[242] f16 walk=(12, 1)
+        vadd v27, v6[1 :], v11
+        vpack v24 -> l1[244] f16 walk=(12, 1)
+        vpack v25 -> l1[246] f16 walk=(12, 1)
+        vpack v26 -> l1[248] f16 walk=(12, 1)
+        vpack v27 -> l1[250] f16 walk=(12, 1)
+        vsync drain on=pack slack=0
+        vdrain a2 <- l1[240] rel
+        vsync unpack on=fill slack=4
+        vunpk v6 <- l1[288] gt4
+        vunpk v7 <- l1[296] gt4
+        vunpk v8 <- l1[304] gt4
+        vadd v9, v6, v0[1 :]
+        vunpk v10 <- l1[312] gt4
+        vadd v6, v7, v1[1 :]
+        vunpk v11 <- l1[320] gt4
+        vadd v7, v8, v2[1 :]
+        vunpk v12 <- l1[328] gt4
+        vadd v8, v10, v3[1 :]
+        vunpk v13[1 :] <- l1[336] f16 walk=(12, 1) n=8
+        vadd v10, v11, v4[1 :]
+        vunpk v14[1 :] <- l1[338] f16 walk=(12, 1) n=8
+        vadd v11, v12, v5[1 :]
+        vunpk v15[1 :] <- l1[340] f16 walk=(12, 1) n=8
+        vadd v28, v13[1 :], v9
+        vunpk v12[1 :] <- l1[342] f16 walk=(12, 1) n=8
+        vadd v29, v14[1 :], v6
+        vunpk v9[1 :] <- l1[344] f16 walk=(12, 1) n=8
+        vadd v30, v15[1 :], v7
+        vunpk v6[1 :] <- l1[346] f16 walk=(12, 1) n=8
+        vadd v31, v12[1 :], v8
+        vsync pack on=drain slack=2
+        vpack v28 -> l1[384] f16 walk=(12, 1)
+        vadd v32, v9[1 :], v10
+        vsync fill on=unpack slack=0
+        vfill a0 -> l1[288] rel
+        vfill a1 -> l1[336] rel
+        vpack v29 -> l1[386] f16 walk=(12, 1)
+        vadd v33, v6[1 :], v11
+        vpack v30 -> l1[388] f16 walk=(12, 1)
+        vpack v31 -> l1[390] f16 walk=(12, 1)
+        vpack v32 -> l1[392] f16 walk=(12, 1)
+        vpack v33 -> l1[394] f16 walk=(12, 1)
+        vsync drain on=pack slack=0
+        vdrain a2 <- l1[384] rel
+    vsync unpack on=fill slack=4
+    vunpk v6 <- l1[0] gt4
+    vunpk v7 <- l1[8] gt4
+    vunpk v8 <- l1[16] gt4
+    vadd v9, v6, v0[1 :]
+    vunpk v10 <- l1[24] gt4
+    vadd v6, v7, v1[1 :]
+    vunpk v11 <- l1[32] gt4
+    vadd v7, v8, v2[1 :]
+    vunpk v12 <- l1[40] gt4
+    vadd v8, v10, v3[1 :]
+    vunpk v13[1 :] <- l1[96] f16 walk=(12, 1) n=8
+    vadd v10, v11, v4[1 :]
+    vunpk v14[1 :] <- l1[98] f16 walk=(12, 1) n=8
+    vadd v11, v12, v5[1 :]
+    vunpk v15[1 :] <- l1[100] f16 walk=(12, 1) n=8
+    vadd v16, v13[1 :], v9
+    vunpk v12[1 :] <- l1[102] f16 walk=(12, 1) n=8
+    vadd v17, v14[1 :], v6
+    vunpk v9[1 :] <- l1[104] f16 walk=(12, 1) n=8
+    vadd v18, v15[1 :], v7
+    vunpk v6[1 :] <- l1[106] f16 walk=(12, 1) n=8
+    vadd v19, v12[1 :], v8
+    vsync pack on=drain slack=2
+    vpack v16 -> l1[192] f16 walk=(12, 1)
+    vadd v20, v9[1 :], v10
+    vsync fill on=unpack slack=0
+    vfill a0 -> l1[0] rel
+    vfill a1 -> l1[96] rel
+    vpack v17 -> l1[194] f16 walk=(12, 1)
+    vadd v21, v6[1 :], v11
+    vpack v18 -> l1[196] f16 walk=(12, 1)
+    vpack v19 -> l1[198] f16 walk=(12, 1)
+    vpack v20 -> l1[200] f16 walk=(12, 1)
+    vpack v21 -> l1[202] f16 walk=(12, 1)
+    vsync drain on=pack slack=0
+    vdrain a2 <- l1[192] rel
+    vsync unpack on=fill slack=4
+    vunpk v6 <- l1[48] gt4
+    vunpk v7 <- l1[56] gt4
+    vunpk v8 <- l1[64] gt4
+    vadd v9, v6, v0[1 :]
+    vunpk v10 <- l1[72] gt4
+    vadd v6, v7, v1[1 :]
+    vunpk v11 <- l1[80] gt4
+    vadd v7, v8, v2[1 :]
+    vunpk v12 <- l1[88] gt4
+    vadd v8, v10, v3[1 :]
+    vunpk v13[1 :] <- l1[144] f16 walk=(12, 1) n=8
+    vadd v10, v11, v4[1 :]
+    vunpk v14[1 :] <- l1[146] f16 walk=(12, 1) n=8
+    vadd v11, v12, v5[1 :]
+    vunpk v15[1 :] <- l1[148] f16 walk=(12, 1) n=8
+    vadd v22, v13[1 :], v9
+    vunpk v12[1 :] <- l1[150] f16 walk=(12, 1) n=8
+    vadd v23, v14[1 :], v6
+    vunpk v9[1 :] <- l1[152] f16 walk=(12, 1) n=8
+    vadd v24, v15[1 :], v7
+    vunpk v6[1 :] <- l1[154] f16 walk=(12, 1) n=8
+    vadd v25, v12[1 :], v8
+    vsync pack on=drain slack=2
+    vpack v22 -> l1[240] f16 walk=(12, 1)
+    vadd v26, v9[1 :], v10
+    vsync fill on=unpack slack=0
+    vfill a0 -> l1[48] rel
+    vfill a1 -> l1[144] rel
+    vpack v23 -> l1[242] f16 walk=(12, 1)
+    vadd v27, v6[1 :], v11
+    vpack v24 -> l1[244] f16 walk=(12, 1)
+    vpack v25 -> l1[246] f16 walk=(12, 1)
+    vpack v26 -> l1[248] f16 walk=(12, 1)
+    vpack v27 -> l1[250] f16 walk=(12, 1)
+    vsync drain on=pack slack=0
+    vdrain a2 <- l1[240] rel
+    vsync unpack on=fill slack=4
+    vunpk v6 <- l1[288] gt4
+    vunpk v7 <- l1[296] gt4
+    vunpk v8 <- l1[304] gt4
+    vadd v9, v6, v0[1 :]
+    vunpk v10 <- l1[312] gt4
+    vadd v6, v7, v1[1 :]
+    vunpk v11 <- l1[320] gt4
+    vadd v7, v8, v2[1 :]
+    vunpk v12 <- l1[328] gt4
+    vadd v8, v10, v3[1 :]
+    vunpk v13[1 :] <- l1[336] f16 walk=(12, 1) n=8
+    vadd v10, v11, v4[1 :]
+    vunpk v14[1 :] <- l1[338] f16 walk=(12, 1) n=8
+    vadd v11, v12, v5[1 :]
+    vunpk v15[1 :] <- l1[340] f16 walk=(12, 1) n=8
+    vadd v28, v13[1 :], v9
+    vunpk v12[1 :] <- l1[342] f16 walk=(12, 1) n=8
+    vadd v29, v14[1 :], v6
+    vunpk v9[1 :] <- l1[344] f16 walk=(12, 1) n=8
+    vadd v30, v15[1 :], v7
+    vunpk v6[1 :] <- l1[346] f16 walk=(12, 1) n=8
+    vadd v31, v12[1 :], v8
+    vsync pack on=drain slack=2
+    vpack v28 -> l1[384] f16 walk=(12, 1)
+    vadd v32, v9[1 :], v10
+    vpack v29 -> l1[386] f16 walk=(12, 1)
+    vadd v33, v6[1 :], v11
+    vpack v30 -> l1[388] f16 walk=(12, 1)
+    vpack v31 -> l1[390] f16 walk=(12, 1)
+    vpack v32 -> l1[392] f16 walk=(12, 1)
+    vpack v33 -> l1[394] f16 walk=(12, 1)
+    vsync drain on=pack slack=0
+    vdrain a2 <- l1[384] rel
+    vsync unpack on=fill slack=2
+    vunpk v6 <- l1[0] gt4
+    vunpk v7 <- l1[8] gt4
+    vunpk v8 <- l1[16] gt4
+    vadd v9, v6, v0[1 :]
+    vunpk v10 <- l1[24] gt4
+    vadd v6, v7, v1[1 :]
+    vunpk v11 <- l1[32] gt4
+    vadd v7, v8, v2[1 :]
+    vunpk v12 <- l1[40] gt4
+    vadd v8, v10, v3[1 :]
+    vunpk v13[1 :] <- l1[96] f16 walk=(12, 1) n=8
+    vadd v10, v11, v4[1 :]
+    vunpk v14[1 :] <- l1[98] f16 walk=(12, 1) n=8
+    vadd v11, v12, v5[1 :]
+    vunpk v15[1 :] <- l1[100] f16 walk=(12, 1) n=8
+    vadd v16, v13[1 :], v9
+    vunpk v12[1 :] <- l1[102] f16 walk=(12, 1) n=8
+    vadd v17, v14[1 :], v6
+    vunpk v9[1 :] <- l1[104] f16 walk=(12, 1) n=8
+    vadd v18, v15[1 :], v7
+    vunpk v6[1 :] <- l1[106] f16 walk=(12, 1) n=8
+    vadd v19, v12[1 :], v8
+    vsync pack on=drain slack=2
+    vpack v16 -> l1[192] f16 walk=(12, 1)
+    vadd v20, v9[1 :], v10
+    vpack v17 -> l1[194] f16 walk=(12, 1)
+    vadd v21, v6[1 :], v11
+    vpack v18 -> l1[196] f16 walk=(12, 1)
+    vpack v19 -> l1[198] f16 walk=(12, 1)
+    vpack v20 -> l1[200] f16 walk=(12, 1)
+    vpack v21 -> l1[202] f16 walk=(12, 1)
+    vsync drain on=pack slack=0
+    vdrain a2 <- l1[192] rel
+    vsync unpack on=fill slack=0
+    vunpk v6 <- l1[48] gt4
+    vunpk v7 <- l1[56] gt4
+    vunpk v8 <- l1[64] gt4
+    vadd v9, v6, v0[1 :]
+    vunpk v10 <- l1[72] gt4
+    vadd v6, v7, v1[1 :]
+    vunpk v11 <- l1[80] gt4
+    vadd v7, v8, v2[1 :]
+    vunpk v12 <- l1[88] gt4
+    vadd v8, v10, v3[1 :]
+    vunpk v13[1 :] <- l1[144] f16 walk=(12, 1) n=8
+    vadd v10, v11, v4[1 :]
+    vunpk v14[1 :] <- l1[146] f16 walk=(12, 1) n=8
+    vadd v11, v12, v5[1 :]
+    vunpk v15[1 :] <- l1[148] f16 walk=(12, 1) n=8
+    vadd v22, v13[1 :], v9
+    vunpk v12[1 :] <- l1[150] f16 walk=(12, 1) n=8
+    vadd v23, v14[1 :], v6
+    vunpk v9[1 :] <- l1[152] f16 walk=(12, 1) n=8
+    vadd v24, v15[1 :], v7
+    vunpk v6[1 :] <- l1[154] f16 walk=(12, 1) n=8
+    vadd v25, v12[1 :], v8
+    vsync pack on=drain slack=2
+    vpack v22 -> l1[240] f16 walk=(12, 1)
+    vadd v26, v9[1 :], v10
+    vpack v23 -> l1[242] f16 walk=(12, 1)
+    vadd v27, v6[1 :], v11
+    vpack v24 -> l1[244] f16 walk=(12, 1)
+    vpack v25 -> l1[246] f16 walk=(12, 1)
+    vpack v26 -> l1[248] f16 walk=(12, 1)
+    vpack v27 -> l1[250] f16 walk=(12, 1)
+    vsync drain on=pack slack=0
+    vdrain a2 <- l1[240] rel
+    halt
+
+fn t_0aa48440bce4e6095031f780978b36d0390a88cc2e3a0ed00e613f849148a624.l1(a: mx7a[200, 3072] @dram(gm=50, nk=1), b: mx7b[768, 3072] @dram(gn=48, nk=1), in1: f16[200, 768] @dram, in2: f16[768] @dram, out: f16[200, 768] @dram, h1: f16[1600, 192] @stage(tile=50x48))
+    send mg[0]
+        fill A0 <- a+0 n=50
+        fill B0 <- b+0 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=0
+        fill A1 <- a+6400 n=50
+        fill B1 <- b+6144 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+12800 n=50
+        fill B0 <- b+12288 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+19200 n=50
+        fill B1 <- b+18432 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+25600 n=50
+        fill B0 <- b+24576 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+32000 n=50
+        fill B1 <- b+30720 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+38400 n=50
+        fill B0 <- b+36864 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+44800 n=50
+        fill B1 <- b+43008 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+51200 n=50
+        fill B0 <- b+49152 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+57600 n=50
+        fill B1 <- b+55296 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+64000 n=50
+        fill B0 <- b+61440 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+70400 n=50
+        fill B1 <- b+67584 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+76800 n=50
+        fill B0 <- b+73728 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+83200 n=50
+        fill B1 <- b+79872 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+89600 n=50
+        fill B0 <- b+86016 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+96000 n=50
+        fill B1 <- b+92160 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+102400 n=50
+        fill B0 <- b+98304 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+108800 n=50
+        fill B1 <- b+104448 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+115200 n=50
+        fill B0 <- b+110592 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+121600 n=50
+        fill B1 <- b+116736 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+128000 n=50
+        fill B0 <- b+122880 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+134400 n=50
+        fill B1 <- b+129024 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+140800 n=50
+        fill B0 <- b+135168 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+147200 n=50
+        fill B1 <- b+141312 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+153600 n=50
+        fill B0 <- b+147456 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+160000 n=50
+        fill B1 <- b+153600 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+166400 n=50
+        fill B0 <- b+159744 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+172800 n=50
+        fill B1 <- b+165888 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+179200 n=50
+        fill B0 <- b+172032 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+185600 n=50
+        fill B1 <- b+178176 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+192000 n=50
+        fill B0 <- b+184320 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+198400 n=50
+        fill B1 <- b+190464 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+204800 n=50
+        fill B0 <- b+196608 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+211200 n=50
+        fill B1 <- b+202752 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+217600 n=50
+        fill B0 <- b+208896 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+224000 n=50
+        fill B1 <- b+215040 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+230400 n=50
+        fill B0 <- b+221184 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+236800 n=50
+        fill B1 <- b+227328 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+243200 n=50
+        fill B0 <- b+233472 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+249600 n=50
+        fill B1 <- b+239616 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+256000 n=50
+        fill B0 <- b+245760 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+262400 n=50
+        fill B1 <- b+251904 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+268800 n=50
+        fill B0 <- b+258048 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+275200 n=50
+        fill B1 <- b+264192 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+281600 n=50
+        fill B0 <- b+270336 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+288000 n=50
+        fill B1 <- b+276480 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+294400 n=50
+        fill B0 <- b+282624 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+300800 n=50
+        fill B1 <- b+288768 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+307200 n=50
+        fill B0 <- b+294912 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+313600 n=50
+        fill B1 <- b+301056 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+320000 n=50
+        fill B0 <- b+307200 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+326400 n=50
+        fill B1 <- b+313344 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+332800 n=50
+        fill B0 <- b+319488 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+339200 n=50
+        fill B1 <- b+325632 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+345600 n=50
+        fill B0 <- b+331776 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+352000 n=50
+        fill B1 <- b+337920 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+358400 n=50
+        fill B0 <- b+344064 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+364800 n=50
+        fill B1 <- b+350208 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+371200 n=50
+        fill B0 <- b+356352 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+377600 n=50
+        fill B1 <- b+362496 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+384000 n=50
+        fill B0 <- b+368640 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+390400 n=50
+        fill B1 <- b+374784 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+396800 n=50
+        fill B0 <- b+380928 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+403200 n=50
+        fill B1 <- b+387072 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+409600 n=50
+        fill B0 <- b+393216 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+416000 n=50
+        fill B1 <- b+399360 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+422400 n=50
+        fill B0 <- b+405504 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+428800 n=50
+        fill B1 <- b+411648 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+435200 n=50
+        fill B0 <- b+417792 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+441600 n=50
+        fill B1 <- b+423936 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+448000 n=50
+        fill B0 <- b+430080 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+454400 n=50
+        fill B1 <- b+436224 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+460800 n=50
+        fill B0 <- b+442368 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+467200 n=50
+        fill B1 <- b+448512 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+473600 n=50
+        fill B0 <- b+454656 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+480000 n=50
+        fill B1 <- b+460800 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+486400 n=50
+        fill B0 <- b+466944 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+492800 n=50
+        fill B1 <- b+473088 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+499200 n=50
+        fill B0 <- b+479232 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+505600 n=50
+        fill B1 <- b+485376 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+512000 n=50
+        fill B0 <- b+491520 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+518400 n=50
+        fill B1 <- b+497664 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+524800 n=50
+        fill B0 <- b+503808 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+531200 n=50
+        fill B1 <- b+509952 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+537600 n=50
+        fill B0 <- b+516096 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+544000 n=50
+        fill B1 <- b+522240 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+550400 n=50
+        fill B0 <- b+528384 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+556800 n=50
+        fill B1 <- b+534528 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+563200 n=50
+        fill B0 <- b+540672 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+569600 n=50
+        fill B1 <- b+546816 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+576000 n=50
+        fill B0 <- b+552960 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+582400 n=50
+        fill B1 <- b+559104 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+588800 n=50
+        fill B0 <- b+565248 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+595200 n=50
+        fill B1 <- b+571392 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+601600 n=50
+        fill B0 <- b+577536 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+608000 n=50
+        fill B1 <- b+583680 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1 emit=h1+0
+        drain h1+0 fused n=2400
+    send mg[1]
+        fill A0 <- a+0 n=50
+        fill B0 <- b+589824 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=0
+        fill A1 <- a+6400 n=50
+        fill B1 <- b+595968 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+12800 n=50
+        fill B0 <- b+602112 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+19200 n=50
+        fill B1 <- b+608256 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+25600 n=50
+        fill B0 <- b+614400 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+32000 n=50
+        fill B1 <- b+620544 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+38400 n=50
+        fill B0 <- b+626688 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+44800 n=50
+        fill B1 <- b+632832 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+51200 n=50
+        fill B0 <- b+638976 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+57600 n=50
+        fill B1 <- b+645120 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+64000 n=50
+        fill B0 <- b+651264 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+70400 n=50
+        fill B1 <- b+657408 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+76800 n=50
+        fill B0 <- b+663552 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+83200 n=50
+        fill B1 <- b+669696 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+89600 n=50
+        fill B0 <- b+675840 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+96000 n=50
+        fill B1 <- b+681984 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+102400 n=50
+        fill B0 <- b+688128 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+108800 n=50
+        fill B1 <- b+694272 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+115200 n=50
+        fill B0 <- b+700416 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+121600 n=50
+        fill B1 <- b+706560 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+128000 n=50
+        fill B0 <- b+712704 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+134400 n=50
+        fill B1 <- b+718848 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+140800 n=50
+        fill B0 <- b+724992 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+147200 n=50
+        fill B1 <- b+731136 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+153600 n=50
+        fill B0 <- b+737280 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+160000 n=50
+        fill B1 <- b+743424 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+166400 n=50
+        fill B0 <- b+749568 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+172800 n=50
+        fill B1 <- b+755712 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+179200 n=50
+        fill B0 <- b+761856 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+185600 n=50
+        fill B1 <- b+768000 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+192000 n=50
+        fill B0 <- b+774144 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+198400 n=50
+        fill B1 <- b+780288 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+204800 n=50
+        fill B0 <- b+786432 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+211200 n=50
+        fill B1 <- b+792576 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+217600 n=50
+        fill B0 <- b+798720 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+224000 n=50
+        fill B1 <- b+804864 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+230400 n=50
+        fill B0 <- b+811008 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+236800 n=50
+        fill B1 <- b+817152 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+243200 n=50
+        fill B0 <- b+823296 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+249600 n=50
+        fill B1 <- b+829440 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+256000 n=50
+        fill B0 <- b+835584 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+262400 n=50
+        fill B1 <- b+841728 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+268800 n=50
+        fill B0 <- b+847872 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+275200 n=50
+        fill B1 <- b+854016 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+281600 n=50
+        fill B0 <- b+860160 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+288000 n=50
+        fill B1 <- b+866304 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+294400 n=50
+        fill B0 <- b+872448 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+300800 n=50
+        fill B1 <- b+878592 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+307200 n=50
+        fill B0 <- b+884736 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+313600 n=50
+        fill B1 <- b+890880 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+320000 n=50
+        fill B0 <- b+897024 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+326400 n=50
+        fill B1 <- b+903168 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+332800 n=50
+        fill B0 <- b+909312 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+339200 n=50
+        fill B1 <- b+915456 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+345600 n=50
+        fill B0 <- b+921600 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+352000 n=50
+        fill B1 <- b+927744 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+358400 n=50
+        fill B0 <- b+933888 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+364800 n=50
+        fill B1 <- b+940032 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+371200 n=50
+        fill B0 <- b+946176 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+377600 n=50
+        fill B1 <- b+952320 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+384000 n=50
+        fill B0 <- b+958464 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+390400 n=50
+        fill B1 <- b+964608 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+396800 n=50
+        fill B0 <- b+970752 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+403200 n=50
+        fill B1 <- b+976896 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+409600 n=50
+        fill B0 <- b+983040 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+416000 n=50
+        fill B1 <- b+989184 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+422400 n=50
+        fill B0 <- b+995328 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+428800 n=50
+        fill B1 <- b+1001472 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+435200 n=50
+        fill B0 <- b+1007616 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+441600 n=50
+        fill B1 <- b+1013760 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+448000 n=50
+        fill B0 <- b+1019904 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+454400 n=50
+        fill B1 <- b+1026048 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+460800 n=50
+        fill B0 <- b+1032192 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+467200 n=50
+        fill B1 <- b+1038336 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+473600 n=50
+        fill B0 <- b+1044480 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+480000 n=50
+        fill B1 <- b+1050624 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+486400 n=50
+        fill B0 <- b+1056768 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+492800 n=50
+        fill B1 <- b+1062912 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+499200 n=50
+        fill B0 <- b+1069056 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+505600 n=50
+        fill B1 <- b+1075200 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+512000 n=50
+        fill B0 <- b+1081344 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+518400 n=50
+        fill B1 <- b+1087488 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+524800 n=50
+        fill B0 <- b+1093632 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+531200 n=50
+        fill B1 <- b+1099776 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+537600 n=50
+        fill B0 <- b+1105920 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+544000 n=50
+        fill B1 <- b+1112064 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+550400 n=50
+        fill B0 <- b+1118208 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+556800 n=50
+        fill B1 <- b+1124352 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+563200 n=50
+        fill B0 <- b+1130496 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+569600 n=50
+        fill B1 <- b+1136640 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+576000 n=50
+        fill B0 <- b+1142784 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+582400 n=50
+        fill B1 <- b+1148928 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+588800 n=50
+        fill B0 <- b+1155072 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+595200 n=50
+        fill B1 <- b+1161216 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+601600 n=50
+        fill B0 <- b+1167360 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+608000 n=50
+        fill B1 <- b+1173504 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1 emit=h1+76800
+        drain h1+76800 fused n=2400
+    send mg[2]
+        fill A0 <- a+0 n=50
+        fill B0 <- b+1179648 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=0
+        fill A1 <- a+6400 n=50
+        fill B1 <- b+1185792 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+12800 n=50
+        fill B0 <- b+1191936 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+19200 n=50
+        fill B1 <- b+1198080 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+25600 n=50
+        fill B0 <- b+1204224 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+32000 n=50
+        fill B1 <- b+1210368 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+38400 n=50
+        fill B0 <- b+1216512 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+44800 n=50
+        fill B1 <- b+1222656 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+51200 n=50
+        fill B0 <- b+1228800 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+57600 n=50
+        fill B1 <- b+1234944 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+64000 n=50
+        fill B0 <- b+1241088 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+70400 n=50
+        fill B1 <- b+1247232 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+76800 n=50
+        fill B0 <- b+1253376 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+83200 n=50
+        fill B1 <- b+1259520 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+89600 n=50
+        fill B0 <- b+1265664 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+96000 n=50
+        fill B1 <- b+1271808 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+102400 n=50
+        fill B0 <- b+1277952 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+108800 n=50
+        fill B1 <- b+1284096 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+115200 n=50
+        fill B0 <- b+1290240 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+121600 n=50
+        fill B1 <- b+1296384 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+128000 n=50
+        fill B0 <- b+1302528 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+134400 n=50
+        fill B1 <- b+1308672 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+140800 n=50
+        fill B0 <- b+1314816 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+147200 n=50
+        fill B1 <- b+1320960 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+153600 n=50
+        fill B0 <- b+1327104 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+160000 n=50
+        fill B1 <- b+1333248 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+166400 n=50
+        fill B0 <- b+1339392 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+172800 n=50
+        fill B1 <- b+1345536 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+179200 n=50
+        fill B0 <- b+1351680 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+185600 n=50
+        fill B1 <- b+1357824 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+192000 n=50
+        fill B0 <- b+1363968 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+198400 n=50
+        fill B1 <- b+1370112 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+204800 n=50
+        fill B0 <- b+1376256 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+211200 n=50
+        fill B1 <- b+1382400 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+217600 n=50
+        fill B0 <- b+1388544 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+224000 n=50
+        fill B1 <- b+1394688 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+230400 n=50
+        fill B0 <- b+1400832 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+236800 n=50
+        fill B1 <- b+1406976 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+243200 n=50
+        fill B0 <- b+1413120 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+249600 n=50
+        fill B1 <- b+1419264 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+256000 n=50
+        fill B0 <- b+1425408 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+262400 n=50
+        fill B1 <- b+1431552 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+268800 n=50
+        fill B0 <- b+1437696 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+275200 n=50
+        fill B1 <- b+1443840 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+281600 n=50
+        fill B0 <- b+1449984 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+288000 n=50
+        fill B1 <- b+1456128 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+294400 n=50
+        fill B0 <- b+1462272 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+300800 n=50
+        fill B1 <- b+1468416 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+307200 n=50
+        fill B0 <- b+1474560 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+313600 n=50
+        fill B1 <- b+1480704 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+320000 n=50
+        fill B0 <- b+1486848 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+326400 n=50
+        fill B1 <- b+1492992 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+332800 n=50
+        fill B0 <- b+1499136 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+339200 n=50
+        fill B1 <- b+1505280 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+345600 n=50
+        fill B0 <- b+1511424 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+352000 n=50
+        fill B1 <- b+1517568 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+358400 n=50
+        fill B0 <- b+1523712 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+364800 n=50
+        fill B1 <- b+1529856 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+371200 n=50
+        fill B0 <- b+1536000 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+377600 n=50
+        fill B1 <- b+1542144 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+384000 n=50
+        fill B0 <- b+1548288 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+390400 n=50
+        fill B1 <- b+1554432 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+396800 n=50
+        fill B0 <- b+1560576 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+403200 n=50
+        fill B1 <- b+1566720 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+409600 n=50
+        fill B0 <- b+1572864 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+416000 n=50
+        fill B1 <- b+1579008 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+422400 n=50
+        fill B0 <- b+1585152 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+428800 n=50
+        fill B1 <- b+1591296 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+435200 n=50
+        fill B0 <- b+1597440 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+441600 n=50
+        fill B1 <- b+1603584 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+448000 n=50
+        fill B0 <- b+1609728 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+454400 n=50
+        fill B1 <- b+1615872 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+460800 n=50
+        fill B0 <- b+1622016 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+467200 n=50
+        fill B1 <- b+1628160 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+473600 n=50
+        fill B0 <- b+1634304 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+480000 n=50
+        fill B1 <- b+1640448 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+486400 n=50
+        fill B0 <- b+1646592 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+492800 n=50
+        fill B1 <- b+1652736 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+499200 n=50
+        fill B0 <- b+1658880 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+505600 n=50
+        fill B1 <- b+1665024 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+512000 n=50
+        fill B0 <- b+1671168 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+518400 n=50
+        fill B1 <- b+1677312 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+524800 n=50
+        fill B0 <- b+1683456 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+531200 n=50
+        fill B1 <- b+1689600 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+537600 n=50
+        fill B0 <- b+1695744 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+544000 n=50
+        fill B1 <- b+1701888 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+550400 n=50
+        fill B0 <- b+1708032 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+556800 n=50
+        fill B1 <- b+1714176 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+563200 n=50
+        fill B0 <- b+1720320 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+569600 n=50
+        fill B1 <- b+1726464 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+576000 n=50
+        fill B0 <- b+1732608 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+582400 n=50
+        fill B1 <- b+1738752 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+588800 n=50
+        fill B0 <- b+1744896 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+595200 n=50
+        fill B1 <- b+1751040 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+601600 n=50
+        fill B0 <- b+1757184 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+608000 n=50
+        fill B1 <- b+1763328 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1 emit=h1+153600
+        drain h1+153600 fused n=2400
+    send mg[3]
+        fill A0 <- a+0 n=50
+        fill B0 <- b+1769472 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=0
+        fill A1 <- a+6400 n=50
+        fill B1 <- b+1775616 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+12800 n=50
+        fill B0 <- b+1781760 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+19200 n=50
+        fill B1 <- b+1787904 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+25600 n=50
+        fill B0 <- b+1794048 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+32000 n=50
+        fill B1 <- b+1800192 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+38400 n=50
+        fill B0 <- b+1806336 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+44800 n=50
+        fill B1 <- b+1812480 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+51200 n=50
+        fill B0 <- b+1818624 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+57600 n=50
+        fill B1 <- b+1824768 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+64000 n=50
+        fill B0 <- b+1830912 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+70400 n=50
+        fill B1 <- b+1837056 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+76800 n=50
+        fill B0 <- b+1843200 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+83200 n=50
+        fill B1 <- b+1849344 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+89600 n=50
+        fill B0 <- b+1855488 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+96000 n=50
+        fill B1 <- b+1861632 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+102400 n=50
+        fill B0 <- b+1867776 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+108800 n=50
+        fill B1 <- b+1873920 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+115200 n=50
+        fill B0 <- b+1880064 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+121600 n=50
+        fill B1 <- b+1886208 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+128000 n=50
+        fill B0 <- b+1892352 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+134400 n=50
+        fill B1 <- b+1898496 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+140800 n=50
+        fill B0 <- b+1904640 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+147200 n=50
+        fill B1 <- b+1910784 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+153600 n=50
+        fill B0 <- b+1916928 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+160000 n=50
+        fill B1 <- b+1923072 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+166400 n=50
+        fill B0 <- b+1929216 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+172800 n=50
+        fill B1 <- b+1935360 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+179200 n=50
+        fill B0 <- b+1941504 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+185600 n=50
+        fill B1 <- b+1947648 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+192000 n=50
+        fill B0 <- b+1953792 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+198400 n=50
+        fill B1 <- b+1959936 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+204800 n=50
+        fill B0 <- b+1966080 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+211200 n=50
+        fill B1 <- b+1972224 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+217600 n=50
+        fill B0 <- b+1978368 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+224000 n=50
+        fill B1 <- b+1984512 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+230400 n=50
+        fill B0 <- b+1990656 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+236800 n=50
+        fill B1 <- b+1996800 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+243200 n=50
+        fill B0 <- b+2002944 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+249600 n=50
+        fill B1 <- b+2009088 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+256000 n=50
+        fill B0 <- b+2015232 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+262400 n=50
+        fill B1 <- b+2021376 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+268800 n=50
+        fill B0 <- b+2027520 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+275200 n=50
+        fill B1 <- b+2033664 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+281600 n=50
+        fill B0 <- b+2039808 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+288000 n=50
+        fill B1 <- b+2045952 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+294400 n=50
+        fill B0 <- b+2052096 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+300800 n=50
+        fill B1 <- b+2058240 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+307200 n=50
+        fill B0 <- b+2064384 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+313600 n=50
+        fill B1 <- b+2070528 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+320000 n=50
+        fill B0 <- b+2076672 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+326400 n=50
+        fill B1 <- b+2082816 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+332800 n=50
+        fill B0 <- b+2088960 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+339200 n=50
+        fill B1 <- b+2095104 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+345600 n=50
+        fill B0 <- b+2101248 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+352000 n=50
+        fill B1 <- b+2107392 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+358400 n=50
+        fill B0 <- b+2113536 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+364800 n=50
+        fill B1 <- b+2119680 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+371200 n=50
+        fill B0 <- b+2125824 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+377600 n=50
+        fill B1 <- b+2131968 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+384000 n=50
+        fill B0 <- b+2138112 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+390400 n=50
+        fill B1 <- b+2144256 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+396800 n=50
+        fill B0 <- b+2150400 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+403200 n=50
+        fill B1 <- b+2156544 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+409600 n=50
+        fill B0 <- b+2162688 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+416000 n=50
+        fill B1 <- b+2168832 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+422400 n=50
+        fill B0 <- b+2174976 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+428800 n=50
+        fill B1 <- b+2181120 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+435200 n=50
+        fill B0 <- b+2187264 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+441600 n=50
+        fill B1 <- b+2193408 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+448000 n=50
+        fill B0 <- b+2199552 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+454400 n=50
+        fill B1 <- b+2205696 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+460800 n=50
+        fill B0 <- b+2211840 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+467200 n=50
+        fill B1 <- b+2217984 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+473600 n=50
+        fill B0 <- b+2224128 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+480000 n=50
+        fill B1 <- b+2230272 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+486400 n=50
+        fill B0 <- b+2236416 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+492800 n=50
+        fill B1 <- b+2242560 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+499200 n=50
+        fill B0 <- b+2248704 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+505600 n=50
+        fill B1 <- b+2254848 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+512000 n=50
+        fill B0 <- b+2260992 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+518400 n=50
+        fill B1 <- b+2267136 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+524800 n=50
+        fill B0 <- b+2273280 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+531200 n=50
+        fill B1 <- b+2279424 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+537600 n=50
+        fill B0 <- b+2285568 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+544000 n=50
+        fill B1 <- b+2291712 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+550400 n=50
+        fill B0 <- b+2297856 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+556800 n=50
+        fill B1 <- b+2304000 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+563200 n=50
+        fill B0 <- b+2310144 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+569600 n=50
+        fill B1 <- b+2316288 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+576000 n=50
+        fill B0 <- b+2322432 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+582400 n=50
+        fill B1 <- b+2328576 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+588800 n=50
+        fill B0 <- b+2334720 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+595200 n=50
+        fill B1 <- b+2340864 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1
+        fill A0 <- a+601600 n=50
+        fill B0 <- b+2347008 n=48
+        gemm 50x48x1 a=A0 b=B0 acc=1
+        fill A1 <- a+608000 n=50
+        fill B1 <- b+2353152 n=48
+        gemm 50x48x1 a=A1 b=B1 acc=1 emit=h1+230400
+        drain h1+230400 fused n=2400
+    k0_mg0 = mark mg[0]
+    k0_mg1 = mark mg[1]
+    k0_mg2 = mark mg[2]
+    k0_mg3 = mark mg[3]
+    wait mg[0] upto=k0_mg0
+    wait mg[1] upto=k0_mg1
+    wait mg[2] upto=k0_mg2
+    wait mg[3] upto=k0_mg3
+    send vc[0]
+        run t_0aa48440bce4e6095031f780978b36d0390a88cc2e3a0ed00e613f849148a624_n0_vc0_0(h1+0, in1+0, out+0, in2+0)
+    send vc[1]
+        run t_0aa48440bce4e6095031f780978b36d0390a88cc2e3a0ed00e613f849148a624_n0_vc0_0(h1+76800, in1+384, out+384, in2+384)
+    send vc[0]
+        run t_0aa48440bce4e6095031f780978b36d0390a88cc2e3a0ed00e613f849148a624_n0_vc0_0(h1+153600, in1+768, out+768, in2+768)
+    send vc[1]
+        run t_0aa48440bce4e6095031f780978b36d0390a88cc2e3a0ed00e613f849148a624_n0_vc0_0(h1+230400, in1+1152, out+1152, in2+1152)
+    barrier

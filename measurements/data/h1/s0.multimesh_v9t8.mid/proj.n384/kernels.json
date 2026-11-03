@@ -1,0 +1,32 @@
+{
+ "t_2234798b71399c35f765595494dbdb89baf6cec6271054d4361813ea8fdf977d": {
+  "signature": "src: f16[4728, 16] @dram, dst: f16[4800, 16] @dram",
+  "g1": [],
+  "cases": [
+   "proj.n384"
+  ]
+ },
+ "t_462a8c01b541fe703d261f7523c39bb570347550563a147f02133b810b3f1c17": {
+  "signature": "x: f16[384, 768] @dram, q: mx7b[384, 768] @dram(gn=24, nk=1)",
+  "g1": [],
+  "cases": [
+   "proj.n384"
+  ]
+ },
+ "t_66d718735e4e5cdb952c0c4f84c87e4fc8f0ace136c41bc26cd808952fc73409": {
+  "signature": "a: mx7a[200, 768] @dram(gm=50, nk=1), b: mx7b[384, 768] @dram(gn=24, nk=1), in1: f16[200, 384] @dram, in2: f16[384] @dram, out: f16[200, 384] @dram",
+  "g1": [],
+  "cases": [
+   "proj.n384"
+  ]
+ },
+ "t_74c2941840bd77978d91b58ae4182a115c0d0d1ef24c64bc1042f79dec2b4256": {
+  "signature": "x: f16[197, 768] @dram, q: mx7a[200, 768] @dram(gm=50, nk=1)",
+  "g1": [
+   "t_74c2941840bd77978d91b58ae4182a115c0d0d1ef24c64bc1042f79dec2b4256"
+  ],
+  "cases": [
+   "proj.n384"
+  ]
+ }
+}

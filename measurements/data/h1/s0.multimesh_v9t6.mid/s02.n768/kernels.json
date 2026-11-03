@@ -1,0 +1,41 @@
+{
+ "t_12ee62c27ad1f201bd56cef0c0aa3e759b1e62686bc1b866bccd4d342d8f2d1e": {
+  "signature": "a: mx7a[200, 768] @dram(gm=50, nk=2), b: mx7b[768, 768] @dram(gn=48, nk=2), in1: f16[768] @dram, out: f16[200, 768] @dram, q0: mx7a[200, 768] @dram(gm=50, nk=2)",
+  "g1": [],
+  "cases": [
+   "s02.n768"
+  ]
+ },
+ "t_8c76bfc1d4d24b3fa50c2b84889e0773bedd56c3bea201f5373b9b3a01ac29b3": {
+  "signature": "a: mx7a[200, 768] @dram(gm=50, nk=2), b: mx7b[768, 768] @dram(gn=48, nk=2), in1: f16[768] @dram, out: f16[200, 768] @dram",
+  "g1": [],
+  "cases": [
+   "s02.n768"
+  ]
+ },
+ "t_9730c2e33d908dfad1b6089023563ec28838cddc194e7d199db0d458ccc71a2b": {
+  "signature": "x: f16[768, 768] @dram, q: mx7b[768, 768] @dram(gn=48, nk=2)",
+  "g1": [
+   "t_9730c2e33d908dfad1b6089023563ec28838cddc194e7d199db0d458ccc71a2b"
+  ],
+  "cases": [
+   "s02.n768"
+  ]
+ },
+ "t_b794cd89e3488087b22730e6992082c67fb9f508fd94d0e92561d6518f9bde96": {
+  "signature": "a: mx7a[200, 768] @dram(gm=50, nk=2), b: mx7b[768, 768] @dram(gn=48, nk=2), out: f16[200, 768] @dram",
+  "g1": [],
+  "cases": [
+   "s02.n768"
+  ]
+ },
+ "t_ff627409ee1e283dc07c93d627095490c37db1e92377fa6f64ea1a73f2d69d57": {
+  "signature": "x: f16[197, 768] @dram, q: mx7a[200, 768] @dram(gm=50, nk=2)",
+  "g1": [
+   "t_ff627409ee1e283dc07c93d627095490c37db1e92377fa6f64ea1a73f2d69d57"
+  ],
+  "cases": [
+   "s02.n768"
+  ]
+ }
+}

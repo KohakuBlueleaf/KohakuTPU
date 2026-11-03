@@ -1,0 +1,8 @@
+target ktpu.v9
+
+fn t_49aaa3646d577d5bd62381eec66ef09b6d87153033e5f507773d8e3434b4ce9e.l2(x: f16[591, 224] @dram, q: mx7a[600, 224] @dram(gm=50, nk=1))
+    h1 = buffer  : f16[384] @dram
+    quant q[0 : +200] <- x[0 : +197, 0 : +208] status=h1[0 : +128] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1
+    quant q[200 : +200] <- x[197 : +197, 0 : +208] status=h1[128 : +128] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1
+    quant q[400 : +200] <- x[394 : +197, 0 : +208] status=h1[256 : +128] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1
+    quant_check h1

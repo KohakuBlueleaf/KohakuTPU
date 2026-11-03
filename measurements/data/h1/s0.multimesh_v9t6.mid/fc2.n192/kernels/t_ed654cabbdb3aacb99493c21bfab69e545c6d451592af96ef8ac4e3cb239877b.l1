@@ -1,0 +1,745 @@
+target ktpu.v9 vregs=128 vcopies=2
+
+image t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_clear_0()
+    vsync fe on=math
+    getstk s14
+    vmov v31, k0
+    vsync fe on=math
+    halt
+
+image t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(trips)
+    ainc a0 += 384
+    ainc a1 += 18432
+    seti s2 = 65536.0
+    seti s3 = 16.0
+    seti s4 = 3375104
+    vfill a0 -> l1[0] rel
+    vsync unpack on=fill
+    seti s0 = trips
+    skipz s0
+        loop s0
+            vfill a0 -> l1[192] rel
+            vsync pack on=drain slack=1
+            vunpk v0[0 :] <- l1[0] f16 n=2
+            vunpk v0[2 :] <- l1[4] f16 n=2
+            vunpk v0[4 :] <- l1[8] f16 n=2
+            vunpk v0[6 :] <- l1[12] f16 n=2
+            vunpk v4[0 :] <- l1[2] f16 n=2
+            vunpk v4[2 :] <- l1[6] f16 n=2
+            vunpk v4[4 :] <- l1[10] f16 n=2
+            vunpk v4[6 :] <- l1[14] f16 n=2
+            vunpk v8[0 :] <- l1[16] f16 n=2
+            vunpk v8[2 :] <- l1[20] f16 n=2
+            vunpk v8[4 :] <- l1[24] f16 n=2
+            vunpk v8[6 :] <- l1[28] f16 n=2
+            vunpk v12[0 :] <- l1[18] f16 n=2
+            vunpk v12[2 :] <- l1[22] f16 n=2
+            vunpk v12[4 :] <- l1[26] f16 n=2
+            vunpk v12[6 :] <- l1[30] f16 n=2
+            vsel v0, v0, s4, v0
+            vsel v4, v4, s4, v4
+            vsel v8, v8, s4, v8
+            vsel v12, v12, s4, v12
+            vmul v1, v0, k0
+            vmul v5, v4, k0
+            vmul v9, v8, k0
+            vmul v13, v12, k0
+            vexp2d v3, v1, k0
+            vexp2d v7, v5, k0
+            vexp2d v11, v9, k0
+            vexp2d v15, v13, k0
+            vpack v0 -> l1[128] mx7b
+            vpack v4 -> l1[132] mx7b
+            vpack v8 -> l1[136] mx7b
+            vpack v12 -> l1[140] mx7b
+            vunpk v0[0 :] <- l1[32] f16 n=2
+            vunpk v0[2 :] <- l1[36] f16 n=2
+            vunpk v0[4 :] <- l1[40] f16 n=2
+            vunpk v0[6 :] <- l1[44] f16 n=2
+            vunpk v4[0 :] <- l1[34] f16 n=2
+            vunpk v4[2 :] <- l1[38] f16 n=2
+            vunpk v4[4 :] <- l1[42] f16 n=2
+            vunpk v4[6 :] <- l1[46] f16 n=2
+            vsel v0, v0, s4, v0
+            vsel v4, v4, s4, v4
+            vmul v1, v0, k0
+            vmul v5, v4, k0
+            vexp2d v3, v1, k0
+            vexp2d v7, v5, k0
+            vpack v0 -> l1[144] mx7b
+            vpack v4 -> l1[148] mx7b
+            vsync fe on=unpack
+            vsync drain on=pack
+            vdrain a1 <- l1[128] rel
+            vsync unpack on=fill
+            vfill a0 -> l1[0] rel
+            vsync pack on=drain slack=1
+            vunpk v0[0 :] <- l1[192] f16 n=2
+            vunpk v0[2 :] <- l1[196] f16 n=2
+            vunpk v0[4 :] <- l1[200] f16 n=2
+            vunpk v0[6 :] <- l1[204] f16 n=2
+            vunpk v4[0 :] <- l1[194] f16 n=2
+            vunpk v4[2 :] <- l1[198] f16 n=2
+            vunpk v4[4 :] <- l1[202] f16 n=2
+            vunpk v4[6 :] <- l1[206] f16 n=2
+            vunpk v8[0 :] <- l1[208] f16 n=2
+            vunpk v8[2 :] <- l1[212] f16 n=2
+            vunpk v8[4 :] <- l1[216] f16 n=2
+            vunpk v8[6 :] <- l1[220] f16 n=2
+            vunpk v12[0 :] <- l1[210] f16 n=2
+            vunpk v12[2 :] <- l1[214] f16 n=2
+            vunpk v12[4 :] <- l1[218] f16 n=2
+            vunpk v12[6 :] <- l1[222] f16 n=2
+            vsel v0, v0, s4, v0
+            vsel v4, v4, s4, v4
+            vsel v8, v8, s4, v8
+            vsel v12, v12, s4, v12
+            vmul v1, v0, k0
+            vmul v5, v4, k0
+            vmul v9, v8, k0
+            vmul v13, v12, k0
+            vexp2d v3, v1, k0
+            vexp2d v7, v5, k0
+            vexp2d v11, v9, k0
+            vexp2d v15, v13, k0
+            vpack v0 -> l1[320] mx7b
+            vpack v4 -> l1[324] mx7b
+            vpack v8 -> l1[328] mx7b
+            vpack v12 -> l1[332] mx7b
+            vunpk v0[0 :] <- l1[224] f16 n=2
+            vunpk v0[2 :] <- l1[228] f16 n=2
+            vunpk v0[4 :] <- l1[232] f16 n=2
+            vunpk v0[6 :] <- l1[236] f16 n=2
+            vunpk v4[0 :] <- l1[226] f16 n=2
+            vunpk v4[2 :] <- l1[230] f16 n=2
+            vunpk v4[4 :] <- l1[234] f16 n=2
+            vunpk v4[6 :] <- l1[238] f16 n=2
+            vsel v0, v0, s4, v0
+            vsel v4, v4, s4, v4
+            vmul v1, v0, k0
+            vmul v5, v4, k0
+            vexp2d v3, v1, k0
+            vexp2d v7, v5, k0
+            vpack v0 -> l1[336] mx7b
+            vpack v4 -> l1[340] mx7b
+            vsync fe on=unpack
+            vsync drain on=pack
+            vdrain a1 <- l1[320] rel
+            vsync unpack on=fill
+    vfill a0 -> l1[192] rel
+    vsync pack on=drain slack=1
+    vunpk v0[0 :] <- l1[0] f16 n=2
+    vunpk v0[2 :] <- l1[4] f16 n=2
+    vunpk v0[4 :] <- l1[8] f16 n=2
+    vunpk v0[6 :] <- l1[12] f16 n=2
+    vunpk v4[0 :] <- l1[2] f16 n=2
+    vunpk v4[2 :] <- l1[6] f16 n=2
+    vunpk v4[4 :] <- l1[10] f16 n=2
+    vunpk v4[6 :] <- l1[14] f16 n=2
+    vunpk v8[0 :] <- l1[16] f16 n=2
+    vunpk v8[2 :] <- l1[20] f16 n=2
+    vunpk v8[4 :] <- l1[24] f16 n=2
+    vunpk v8[6 :] <- l1[28] f16 n=2
+    vunpk v12[0 :] <- l1[18] f16 n=2
+    vunpk v12[2 :] <- l1[22] f16 n=2
+    vunpk v12[4 :] <- l1[26] f16 n=2
+    vunpk v12[6 :] <- l1[30] f16 n=2
+    vsel v0, v0, s4, v0
+    vsel v4, v4, s4, v4
+    vsel v8, v8, s4, v8
+    vsel v12, v12, s4, v12
+    vmul v1, v0, k0
+    vmul v5, v4, k0
+    vmul v9, v8, k0
+    vmul v13, v12, k0
+    vexp2d v3, v1, k0
+    vexp2d v7, v5, k0
+    vexp2d v11, v9, k0
+    vexp2d v15, v13, k0
+    vpack v0 -> l1[128] mx7b
+    vpack v4 -> l1[132] mx7b
+    vpack v8 -> l1[136] mx7b
+    vpack v12 -> l1[140] mx7b
+    vunpk v0[0 :] <- l1[32] f16 n=2
+    vunpk v0[2 :] <- l1[36] f16 n=2
+    vunpk v0[4 :] <- l1[40] f16 n=2
+    vunpk v0[6 :] <- l1[44] f16 n=2
+    vunpk v4[0 :] <- l1[34] f16 n=2
+    vunpk v4[2 :] <- l1[38] f16 n=2
+    vunpk v4[4 :] <- l1[42] f16 n=2
+    vunpk v4[6 :] <- l1[46] f16 n=2
+    vsel v0, v0, s4, v0
+    vsel v4, v4, s4, v4
+    vmul v1, v0, k0
+    vmul v5, v4, k0
+    vexp2d v3, v1, k0
+    vexp2d v7, v5, k0
+    vpack v0 -> l1[144] mx7b
+    vpack v4 -> l1[148] mx7b
+    vsync fe on=unpack
+    vsync drain on=pack
+    vdrain a1 <- l1[128] rel
+    vsync unpack on=fill
+    vsync pack on=drain slack=1
+    vunpk v0[0 :] <- l1[192] f16 n=2
+    vunpk v0[2 :] <- l1[196] f16 n=2
+    vunpk v0[4 :] <- l1[200] f16 n=2
+    vunpk v0[6 :] <- l1[204] f16 n=2
+    vunpk v4[0 :] <- l1[194] f16 n=2
+    vunpk v4[2 :] <- l1[198] f16 n=2
+    vunpk v4[4 :] <- l1[202] f16 n=2
+    vunpk v4[6 :] <- l1[206] f16 n=2
+    vunpk v8[0 :] <- l1[208] f16 n=2
+    vunpk v8[2 :] <- l1[212] f16 n=2
+    vunpk v8[4 :] <- l1[216] f16 n=2
+    vunpk v8[6 :] <- l1[220] f16 n=2
+    vunpk v12[0 :] <- l1[210] f16 n=2
+    vunpk v12[2 :] <- l1[214] f16 n=2
+    vunpk v12[4 :] <- l1[218] f16 n=2
+    vunpk v12[6 :] <- l1[222] f16 n=2
+    vsel v0, v0, s4, v0
+    vsel v4, v4, s4, v4
+    vsel v8, v8, s4, v8
+    vsel v12, v12, s4, v12
+    vmul v1, v0, k0
+    vmul v5, v4, k0
+    vmul v9, v8, k0
+    vmul v13, v12, k0
+    vexp2d v3, v1, k0
+    vexp2d v7, v5, k0
+    vexp2d v11, v9, k0
+    vexp2d v15, v13, k0
+    vpack v0 -> l1[320] mx7b
+    vpack v4 -> l1[324] mx7b
+    vpack v8 -> l1[328] mx7b
+    vpack v12 -> l1[332] mx7b
+    vunpk v0[0 :] <- l1[224] f16 n=2
+    vunpk v0[2 :] <- l1[228] f16 n=2
+    vunpk v0[4 :] <- l1[232] f16 n=2
+    vunpk v0[6 :] <- l1[236] f16 n=2
+    vunpk v4[0 :] <- l1[226] f16 n=2
+    vunpk v4[2 :] <- l1[230] f16 n=2
+    vunpk v4[4 :] <- l1[234] f16 n=2
+    vunpk v4[6 :] <- l1[238] f16 n=2
+    vsel v0, v0, s4, v0
+    vsel v4, v4, s4, v4
+    vmul v1, v0, k0
+    vmul v5, v4, k0
+    vexp2d v3, v1, k0
+    vexp2d v7, v5, k0
+    vpack v0 -> l1[336] mx7b
+    vpack v4 -> l1[340] mx7b
+    vsync fe on=unpack
+    vsync drain on=pack
+    vdrain a1 <- l1[320] rel
+    vsync fe on=math
+    getstk s14
+    vmax v31, v31, s14
+    vsync fe on=math
+    halt
+
+image t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_status_1(status)
+    desc a2=status walk=(32, 4)
+    vpack v31 -> l1[384] f16 n=4
+    vsync fe on=pack
+    vdrain a2 <- l1[384]
+    vsync fe on=drain
+    halt
+
+fn t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.l1(x: f16[192, 3072] @dram, q: mx7b[192, 3072] @dram(gn=24, nk=2), __mx7_status_0: f16[128] @dram)
+    send vc[0]
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_clear_0()
+    send vc[1]
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_clear_0()
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 0 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 0 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 0 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 0 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 24576 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 256 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 24576 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 256 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 49152 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 512 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 49152 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 512 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 73728 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 768 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 73728 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 768 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 98304 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 1024 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 98304 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 1024 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 122880 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 1280 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 122880 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 1280 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 147456 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 1536 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 147456 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 1536 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 172032 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 1792 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 172032 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 1792 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 196608 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 2048 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 196608 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 2048 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 221184 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 2304 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 221184 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 2304 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 245760 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 2560 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 245760 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 2560 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 270336 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 2816 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 270336 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 2816 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 294912 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 3072 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 294912 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 3072 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 319488 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 3328 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 319488 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 3328 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 344064 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 3584 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 344064 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 3584 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 368640 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 3840 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 368640 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 3840 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 393216 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 4096 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 393216 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 4096 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 417792 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 4352 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 417792 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 4352 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 442368 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 4608 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 442368 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 4608 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 466944 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 4864 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 466944 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 4864 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 491520 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 5120 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 491520 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 5120 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 516096 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 5376 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 516096 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 5376 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 540672 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 5632 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 540672 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 5632 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 565248 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 5888 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 565248 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 5888 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 589824 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 294912 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 589824 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 294912 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 614400 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 295168 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 614400 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 295168 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 638976 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 295424 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 638976 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 295424 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 663552 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 295680 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 663552 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 295680 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 688128 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 295936 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 688128 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 295936 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 712704 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 296192 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 712704 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 296192 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 737280 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 296448 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 737280 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 296448 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 761856 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 296704 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 761856 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 296704 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 786432 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 296960 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 786432 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 296960 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 811008 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 297216 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 811008 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 297216 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 835584 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 297472 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 835584 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 297472 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 860160 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 297728 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 860160 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 297728 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 884736 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 297984 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 884736 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 297984 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 909312 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 298240 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 909312 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 298240 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 933888 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 298496 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 933888 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 298496 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 958464 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 298752 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 958464 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 298752 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 983040 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 299008 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 983040 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 299008 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 1007616 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 299264 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 1007616 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 299264 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 1032192 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 299520 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 1032192 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 299520 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 1056768 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 299776 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 1056768 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 299776 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 1081344 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 300032 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 1081344 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 300032 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 1105920 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 300288 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 1105920 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 300288 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 1130496 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 300544 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 1130496 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 300544 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        desc a0=x+0 + 1155072 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+0 + 300800 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    send vc[1]
+        desc a0=x+3072 + 1155072 walk=((32, 4), (6144, 4), (128, 3))
+        desc a1=q+147456 + 300800 walk=((32, 4), (128, 2), (6144, 3))
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_1_3_2(3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_status_1(__mx7_status_0+0)
+    send vc[1]
+        run t_ed654cabbdb3aacb99493c21bfab69e545c6d451592af96ef8ac4e3cb239877b.mx7_status_1(__mx7_status_0+128)
+    barrier
+    r14 = load __mx7_status_0+0
+    assert_zero r14 code=1
+    r14 = load __mx7_status_0+128
+    assert_zero r14 code=1
+    barrier

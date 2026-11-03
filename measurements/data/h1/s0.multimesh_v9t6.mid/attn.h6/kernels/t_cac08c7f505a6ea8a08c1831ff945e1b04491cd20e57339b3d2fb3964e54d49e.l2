@@ -1,0 +1,179 @@
+target ktpu.v9
+
+fn t_cac08c7f505a6ea8a08c1831ff945e1b04491cd20e57339b3d2fb3964e54d49e.l2(in0: f16[197, 1152] @dram, in1: f16[1152] @dram, out: f16[197, 1152] @dram)
+    h1 = buffer  : f16[4, 1152] @dram
+    h2 = buffer  : f16[4, 1152] @dram
+    par c1 in 0..2 on vc[c1]
+        xl1 = load in1[0 : +128]  : f16[4, 128] @l1(gt4)
+        v1 = unpack xl1           : f32[4, 128] @reg(gt4)
+        for t1 in 0..8
+            xl2 = load in0[c1*96 + t1*12 : +12, 0 : +128]  : f16[12, 128] @l1(gt4)
+            v2 = unpack xl2                     : f32[12, 128] @reg(gt4)
+            e1 = add v2, v1                     : f32[12, 128] @reg(gt4)
+            p1 = pack e1                        : f16[12, 128] @l1(gt4)
+            store out[c1*96 + t1*12 : +12, 0 : +128] <- p1
+    par c2 in 0..2 on vc[c2]
+        xl3 = load in1[128 : +128]  : f16[4, 128] @l1(gt4)
+        v3 = unpack xl3             : f32[4, 128] @reg(gt4)
+        for t2 in 0..8
+            xl4 = load in0[c2*96 + t2*12 : +12, 128 : +128]  : f16[12, 128] @l1(gt4)
+            v4 = unpack xl4                     : f32[12, 128] @reg(gt4)
+            e2 = add v4, v3                     : f32[12, 128] @reg(gt4)
+            p2 = pack e2                        : f16[12, 128] @l1(gt4)
+            store out[c2*96 + t2*12 : +12, 128 : +128] <- p2
+    par c3 in 0..2 on vc[c3]
+        xl5 = load in1[256 : +128]  : f16[4, 128] @l1(gt4)
+        v5 = unpack xl5             : f32[4, 128] @reg(gt4)
+        for t3 in 0..8
+            xl6 = load in0[c3*96 + t3*12 : +12, 256 : +128]  : f16[12, 128] @l1(gt4)
+            v6 = unpack xl6                     : f32[12, 128] @reg(gt4)
+            e3 = add v6, v5                     : f32[12, 128] @reg(gt4)
+            p3 = pack e3                        : f16[12, 128] @l1(gt4)
+            store out[c3*96 + t3*12 : +12, 256 : +128] <- p3
+    par c4 in 0..2 on vc[c4]
+        xl7 = load in1[384 : +128]  : f16[4, 128] @l1(gt4)
+        v7 = unpack xl7             : f32[4, 128] @reg(gt4)
+        for t4 in 0..8
+            xl8 = load in0[c4*96 + t4*12 : +12, 384 : +128]  : f16[12, 128] @l1(gt4)
+            v8 = unpack xl8                     : f32[12, 128] @reg(gt4)
+            e4 = add v8, v7                     : f32[12, 128] @reg(gt4)
+            p4 = pack e4                        : f16[12, 128] @l1(gt4)
+            store out[c4*96 + t4*12 : +12, 384 : +128] <- p4
+    par c5 in 0..2 on vc[c5]
+        xl9 = load in1[512 : +128]  : f16[4, 128] @l1(gt4)
+        v9 = unpack xl9             : f32[4, 128] @reg(gt4)
+        for t5 in 0..8
+            xl10 = load in0[c5*96 + t5*12 : +12, 512 : +128]  : f16[12, 128] @l1(gt4)
+            v10 = unpack xl10                   : f32[12, 128] @reg(gt4)
+            e5 = add v10, v9                    : f32[12, 128] @reg(gt4)
+            p5 = pack e5                        : f16[12, 128] @l1(gt4)
+            store out[c5*96 + t5*12 : +12, 512 : +128] <- p5
+    par c6 in 0..2 on vc[c6]
+        xl11 = load in1[640 : +128]  : f16[4, 128] @l1(gt4)
+        v11 = unpack xl11            : f32[4, 128] @reg(gt4)
+        for t6 in 0..8
+            xl12 = load in0[c6*96 + t6*12 : +12, 640 : +128]  : f16[12, 128] @l1(gt4)
+            v12 = unpack xl12                   : f32[12, 128] @reg(gt4)
+            e6 = add v12, v11                   : f32[12, 128] @reg(gt4)
+            p6 = pack e6                        : f16[12, 128] @l1(gt4)
+            store out[c6*96 + t6*12 : +12, 640 : +128] <- p6
+    par c7 in 0..2 on vc[c7]
+        xl13 = load in1[768 : +128]  : f16[4, 128] @l1(gt4)
+        v13 = unpack xl13            : f32[4, 128] @reg(gt4)
+        for t7 in 0..8
+            xl14 = load in0[c7*96 + t7*12 : +12, 768 : +128]  : f16[12, 128] @l1(gt4)
+            v14 = unpack xl14                   : f32[12, 128] @reg(gt4)
+            e7 = add v14, v13                   : f32[12, 128] @reg(gt4)
+            p7 = pack e7                        : f16[12, 128] @l1(gt4)
+            store out[c7*96 + t7*12 : +12, 768 : +128] <- p7
+    par c8 in 0..2 on vc[c8]
+        xl15 = load in1[896 : +128]  : f16[4, 128] @l1(gt4)
+        v15 = unpack xl15            : f32[4, 128] @reg(gt4)
+        for t8 in 0..8
+            xl16 = load in0[c8*96 + t8*12 : +12, 896 : +128]  : f16[12, 128] @l1(gt4)
+            v16 = unpack xl16                   : f32[12, 128] @reg(gt4)
+            e8 = add v16, v15                   : f32[12, 128] @reg(gt4)
+            p8 = pack e8                        : f16[12, 128] @l1(gt4)
+            store out[c8*96 + t8*12 : +12, 896 : +128] <- p8
+    par c9 in 0..2 on vc[c9]
+        xl17 = load in1[1024 : +128]  : f16[4, 128] @l1(gt4)
+        v17 = unpack xl17             : f32[4, 128] @reg(gt4)
+        for t9 in 0..8
+            xl18 = load in0[c9*96 + t9*12 : +12, 1024 : +128]  : f16[12, 128] @l1(gt4)
+            v18 = unpack xl18                   : f32[12, 128] @reg(gt4)
+            e9 = add v18, v17                   : f32[12, 128] @reg(gt4)
+            p9 = pack e9                        : f16[12, 128] @l1(gt4)
+            store out[c9*96 + t9*12 : +12, 1024 : +128] <- p9
+    par c10 in 0..2 on vc[c10]
+        xl19 = load in1[c10*128 : +128]  : f16[4, 128] @l1(gt4)
+        v19 = unpack xl19                : f32[4, 128] @reg(gt4)
+        for t10 in 0..1
+            xl20 = load in0[t10*4 + 192 : +4, c10*128 : +128]  : f16[4, 128] @l1(gt4)
+            v20 = unpack xl20                   : f32[4, 128] @reg(gt4)
+            e10 = add v20, v19                  : f32[4, 128] @reg(gt4)
+            p10 = pack e10                      : f16[4, 128] @l1(gt4)
+            store out[t10*4 + 192 : +4, c10*128 : +128] <- p10
+    par c11 in 0..2 on vc[c11]
+        xl21 = load in1[c11*128 + 256 : +128]  : f16[4, 128] @l1(gt4)
+        v21 = unpack xl21                      : f32[4, 128] @reg(gt4)
+        for t11 in 0..1
+            xl22 = load in0[t11*4 + 192 : +4, c11*128 + 256 : +128]  : f16[4, 128] @l1(gt4)
+            v22 = unpack xl22                   : f32[4, 128] @reg(gt4)
+            e11 = add v22, v21                  : f32[4, 128] @reg(gt4)
+            p11 = pack e11                      : f16[4, 128] @l1(gt4)
+            store out[t11*4 + 192 : +4, c11*128 + 256 : +128] <- p11
+    par c12 in 0..2 on vc[c12]
+        xl23 = load in1[c12*128 + 512 : +128]  : f16[4, 128] @l1(gt4)
+        v23 = unpack xl23                      : f32[4, 128] @reg(gt4)
+        for t12 in 0..1
+            xl24 = load in0[t12*4 + 192 : +4, c12*128 + 512 : +128]  : f16[4, 128] @l1(gt4)
+            v24 = unpack xl24                   : f32[4, 128] @reg(gt4)
+            e12 = add v24, v23                  : f32[4, 128] @reg(gt4)
+            p12 = pack e12                      : f16[4, 128] @l1(gt4)
+            store out[t12*4 + 192 : +4, c12*128 + 512 : +128] <- p12
+    par c13 in 0..2 on vc[c13]
+        xl25 = load in1[c13*128 + 768 : +128]  : f16[4, 128] @l1(gt4)
+        v25 = unpack xl25                      : f32[4, 128] @reg(gt4)
+        for t13 in 0..1
+            xl26 = load in0[t13*4 + 192 : +4, c13*128 + 768 : +128]  : f16[4, 128] @l1(gt4)
+            v26 = unpack xl26                   : f32[4, 128] @reg(gt4)
+            e13 = add v26, v25                  : f32[4, 128] @reg(gt4)
+            p13 = pack e13                      : f16[4, 128] @l1(gt4)
+            store out[t13*4 + 192 : +4, c13*128 + 768 : +128] <- p13
+    par c14 in 0..1 on vc[c14]
+        xl27 = load in1[c14*128 + 1024 : +128]  : f16[4, 128] @l1(gt4)
+        v27 = unpack xl27                       : f32[4, 128] @reg(gt4)
+        for t14 in 0..1
+            xl28 = load in0[t14*4 + 192 : +4, c14*128 + 1024 : +128]  : f16[4, 128] @l1(gt4)
+            v28 = unpack xl28                   : f32[4, 128] @reg(gt4)
+            e14 = add v28, v27                  : f32[4, 128] @reg(gt4)
+            p14 = pack e14                      : f16[4, 128] @l1(gt4)
+            store out[t14*4 + 192 : +4, c14*128 + 1024 : +128] <- p14
+    fill h1 value=0
+    copy h1[0 : +1] <- in0[196 : +1, 0 : +1152]
+    par c15 in 0..2 on vc[c15]
+        xl29 = load in1[c15*128 : +128]  : f16[4, 128] @l1(gt4)
+        v29 = unpack xl29                : f32[4, 128] @reg(gt4)
+        for t15 in 0..1
+            xl30 = load h1[t15*4 : +4, c15*128 : +128]  : f16[4, 128] @l1(gt4)
+            v30 = unpack xl30                   : f32[4, 128] @reg(gt4)
+            e15 = add v30, v29                  : f32[4, 128] @reg(gt4)
+            p15 = pack e15                      : f16[4, 128] @l1(gt4)
+            store h2[t15*4 : +4, c15*128 : +128] <- p15
+    par c16 in 0..2 on vc[c16]
+        xl31 = load in1[c16*128 + 256 : +128]  : f16[4, 128] @l1(gt4)
+        v31 = unpack xl31                      : f32[4, 128] @reg(gt4)
+        for t16 in 0..1
+            xl32 = load h1[t16*4 : +4, c16*128 + 256 : +128]  : f16[4, 128] @l1(gt4)
+            v32 = unpack xl32                   : f32[4, 128] @reg(gt4)
+            e16 = add v32, v31                  : f32[4, 128] @reg(gt4)
+            p16 = pack e16                      : f16[4, 128] @l1(gt4)
+            store h2[t16*4 : +4, c16*128 + 256 : +128] <- p16
+    par c17 in 0..2 on vc[c17]
+        xl33 = load in1[c17*128 + 512 : +128]  : f16[4, 128] @l1(gt4)
+        v33 = unpack xl33                      : f32[4, 128] @reg(gt4)
+        for t17 in 0..1
+            xl34 = load h1[t17*4 : +4, c17*128 + 512 : +128]  : f16[4, 128] @l1(gt4)
+            v34 = unpack xl34                   : f32[4, 128] @reg(gt4)
+            e17 = add v34, v33                  : f32[4, 128] @reg(gt4)
+            p17 = pack e17                      : f16[4, 128] @l1(gt4)
+            store h2[t17*4 : +4, c17*128 + 512 : +128] <- p17
+    par c18 in 0..2 on vc[c18]
+        xl35 = load in1[c18*128 + 768 : +128]  : f16[4, 128] @l1(gt4)
+        v35 = unpack xl35                      : f32[4, 128] @reg(gt4)
+        for t18 in 0..1
+            xl36 = load h1[t18*4 : +4, c18*128 + 768 : +128]  : f16[4, 128] @l1(gt4)
+            v36 = unpack xl36                   : f32[4, 128] @reg(gt4)
+            e18 = add v36, v35                  : f32[4, 128] @reg(gt4)
+            p18 = pack e18                      : f16[4, 128] @l1(gt4)
+            store h2[t18*4 : +4, c18*128 + 768 : +128] <- p18
+    par c19 in 0..1 on vc[c19]
+        xl37 = load in1[c19*128 + 1024 : +128]  : f16[4, 128] @l1(gt4)
+        v37 = unpack xl37                       : f32[4, 128] @reg(gt4)
+        for t19 in 0..1
+            xl38 = load h1[t19*4 : +4, c19*128 + 1024 : +128]  : f16[4, 128] @l1(gt4)
+            v38 = unpack xl38                   : f32[4, 128] @reg(gt4)
+            e19 = add v38, v37                  : f32[4, 128] @reg(gt4)
+            p19 = pack e19                      : f16[4, 128] @l1(gt4)
+            store h2[t19*4 : +4, c19*128 + 1024 : +128] <- p19
+    copy out[196 : +1, 0 : +1152] <- h2[0 : +1]

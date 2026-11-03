@@ -1,0 +1,36 @@
+target ktpu.v9
+
+fn t_62bd7e6e8d87379477062b28008d7da786674784f7715eb801e35fb50c509740.l2(a: mx7a[200, 768] @dram(gm=50, nk=1), b: mx7b[768, 768] @dram(gn=48, nk=1), out: f16[200, 768] @dram)
+    h1 = buffer  : f16[200, 768] @dram(tile=50x48)
+    par u1 in 0..4 on mg[u1]
+        for k1 in 0..1
+            acc1 = zero  : f32[200, 192] @acc
+            for k2 in 0..24
+                a1 = fill a[((u1 + k1*4) / 4)*200 : +200, k2*32 : +32]  : mx7a[200, 32] @A
+                b1 = fill b[((u1 + k1*4) % 4)*192 : +192, k2*32 : +32]  : mx7b[192, 32] @B
+                acc1 = gemm a1, b1, acc1        : f32[200, 192] @acc
+            drain acc1 -> h1[((u1 + k1*4) / 4)*200 : +200, ((u1 + k1*4) % 4)*192 : +192]
+    par c1 in 0..2 on vc[c1]
+        for t1 in 0..((c1 + 2) / 2) + 12 - ((c1 + 1) / 2)
+            xl1 = load h1[c1*96 + ((c1 + 1) / 2)*8 + t1*8 : +8, 0 : +192]  : f16[8, 192] @l1(gt4)
+            v1 = unpack xl1                     : f32[8, 192] @reg(gt4)
+            p1 = pack v1                        : f16[8, 192] @l1(gt4)
+            store out[c1*96 + ((c1 + 1) / 2)*8 + t1*8 : +8, 0 : +192] <- p1
+    par c2 in 0..2 on vc[c2]
+        for t2 in 0..((c2 + 2) / 2) + 12 - ((c2 + 1) / 2)
+            xl2 = load h1[c2*96 + ((c2 + 1) / 2)*8 + t2*8 : +8, 192 : +192]  : f16[8, 192] @l1(gt4)
+            v2 = unpack xl2                     : f32[8, 192] @reg(gt4)
+            p2 = pack v2                        : f16[8, 192] @l1(gt4)
+            store out[c2*96 + ((c2 + 1) / 2)*8 + t2*8 : +8, 192 : +192] <- p2
+    par c3 in 0..2 on vc[c3]
+        for t3 in 0..((c3 + 2) / 2) + 12 - ((c3 + 1) / 2)
+            xl3 = load h1[c3*96 + ((c3 + 1) / 2)*8 + t3*8 : +8, 384 : +192]  : f16[8, 192] @l1(gt4)
+            v3 = unpack xl3                     : f32[8, 192] @reg(gt4)
+            p3 = pack v3                        : f16[8, 192] @l1(gt4)
+            store out[c3*96 + ((c3 + 1) / 2)*8 + t3*8 : +8, 384 : +192] <- p3
+    par c4 in 0..2 on vc[c4]
+        for t4 in 0..((c4 + 2) / 2) + 12 - ((c4 + 1) / 2)
+            xl4 = load h1[c4*96 + ((c4 + 1) / 2)*8 + t4*8 : +8, 576 : +192]  : f16[8, 192] @l1(gt4)
+            v4 = unpack xl4                     : f32[8, 192] @reg(gt4)
+            p4 = pack v4                        : f16[8, 192] @l1(gt4)
+            store out[c4*96 + ((c4 + 1) / 2)*8 + t4*8 : +8, 576 : +192] <- p4

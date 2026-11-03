@@ -1,0 +1,65 @@
+target ktpu.v9
+
+fn t_dd4870c6ccba100b37d4de8bfa166facd57d61ed99c2ddb6fbf8669f202241c1.l2(a: mx7a[200, 768] @dram(gm=50, nk=2), b: mx7b[1536, 768] @dram(gn=64, nk=2), in1: f16[1536] @dram, out: f16[200, 1536] @dram, q0: mx7a[200, 1536] @dram(gm=50, nk=2))
+    h1 = buffer  : f16[800, 256] @stage(tile=50x64)
+    h2 = buffer  : f16[768] @dram
+    h3 = buffer  : f16[4, 256] @dram
+    fill h3 value=0
+    fill h3[0 : +1] value=1006648320
+    for k1 in 0..3 pipe=2
+        par u1 in 0..2 on mg[u1]
+            for k2 in 0..1
+                acc1 = zero  : f32[200, 256] @acc
+                for k3 in 0..12
+                    a1 = fill a[((k1*2 + u1 + k2*2) / 6)*200 + (((k1*2 + u1 + k2*2) % 6) / 6)*200 : +200, k3*64 : +64]  : mx7a[200, 64] @A
+                    b1 = fill b[(((k1*2 + u1 + k2*2) % 6) % 6)*256 : +256, k3*64 : +64]  : mx7b[256, 64] @B
+                    acc1 = gemm a1, b1, acc1    : f32[200, 256] @acc
+                drain acc1 -> h1[(k1 % 2)*400 + u1*200 + k2*400 : +200, 0 : +256]
+        par c1 in 0..2 on vc[c1]
+            when (((k1*2 + c1) % 6) / 6) == 0
+                xl1 = load in1[(((k1*2 + c1) % 6) % 6)*256 : +256]  : f16[4, 256] @l1(gt4)
+                v1 = unpack xl1                 : f32[4, 256] @reg(gt4)
+                for t1 in 0..49
+                    xl2 = load h1[(k1 % 2)*400 + c1*200 + t1*4 : +4, 0 : +256]  : f16[4, 256] @l1(gt4)
+                    v2 = unpack xl2             : f32[4, 256] @reg(gt4)
+                    e1 = add v2, v1             : f32[4, 256] @reg(gt4)
+                    e2 = mul e1, e1             : f32[4, 256] @reg(gt4)
+                    e3 = mul e2, e1             : f32[4, 256] @reg(gt4)
+                    e4 = mul 0.044715, e3       : f32[4, 256] @reg(gt4)
+                    e5 = add e1, e4             : f32[4, 256] @reg(gt4)
+                    e6 = mul e5, -2.302208198144325  : f32[4, 256] @reg(gt4)
+                    e7 = exp2 e6                : f32[4, 256] @reg(gt4)
+                    e8 = add 1.0, e7            : f32[4, 256] @reg(gt4)
+                    e9 = inv e8                 : f32[4, 256] @reg(gt4)
+                    e10 = mul e9, e1            : f32[4, 256] @reg(gt4)
+                    p1 = pack e10               : f16[4, 256] @l1(gt4)
+                    store out[((k1*2 + c1) / 6)*200 + (((k1*2 + c1) % 6) / 6)*200 + t1*4 : +4, (((k1*2 + c1) % 6) % 6)*256 : +256] <- p1
+                    v3 = unpack p1              : f32[4, 256] @reg(gt4)
+                    q1 = pack v3 status=h2[k1*256 + c1*64 : +64]  : mx7a[4, 256] @l1
+                    store q0[((k1*2 + c1) / 6)*200 + (((k1*2 + c1) % 6) / 6)*200 + t1*4 : +4, (((k1*2 + c1) % 6) % 6)*256 : +256] <- q1
+        par c2 in 0..2 on vc[c2]
+            when (((k1*2 + c2) % 6) / 6) == 0
+                xl3 = load in1[(((k1*2 + c2) % 6) % 6)*256 : +256]  : f16[4, 256] @l1(gt4)
+                v4 = unpack xl3                 : f32[4, 256] @reg(gt4)
+                for t2 in 0..1
+                    xl4 = load h1[(k1 % 2)*400 + c2*200 + t2*4 + 196 : +4, 0 : +256]  : f16[4, 256] @l1(gt4)
+                    v5 = unpack xl4             : f32[4, 256] @reg(gt4)
+                    e11 = add v5, v4            : f32[4, 256] @reg(gt4)
+                    e12 = mul e11, e11          : f32[4, 256] @reg(gt4)
+                    e13 = mul e12, e11          : f32[4, 256] @reg(gt4)
+                    e14 = mul 0.044715, e13     : f32[4, 256] @reg(gt4)
+                    e15 = add e11, e14          : f32[4, 256] @reg(gt4)
+                    e16 = mul e15, -2.302208198144325  : f32[4, 256] @reg(gt4)
+                    e17 = exp2 e16              : f32[4, 256] @reg(gt4)
+                    e18 = add 1.0, e17          : f32[4, 256] @reg(gt4)
+                    e19 = inv e18               : f32[4, 256] @reg(gt4)
+                    e20 = mul e19, e11          : f32[4, 256] @reg(gt4)
+                    p2 = pack e20               : f16[4, 256] @l1(gt4)
+                    store out[((k1*2 + c2) / 6)*200 + (((k1*2 + c2) % 6) / 6)*200 + t2*4 + 196 : +4, (((k1*2 + c2) % 6) % 6)*256 : +256] <- p2
+                    v6 = unpack p2              : f32[4, 256] @reg(gt4)
+                    xl5 = load h3               : f16[4, 256] @l1(gt4)
+                    v7 = unpack xl5             : f32[4, 256] @reg(gt4)
+                    o1 = sel v7, v6, 0.0        : f32[4, 256] @reg(gt4)
+                    q2 = pack o1 status=h2[k1*256 + c2*64 + 128 : +64]  : mx7a[4, 256] @l1
+                    store q0[((k1*2 + c2) / 6)*200 + (((k1*2 + c2) % 6) / 6)*200 + t2*4 + 196 : +4, (((k1*2 + c2) % 6) % 6)*256 : +256] <- q2
+    quant_check h2

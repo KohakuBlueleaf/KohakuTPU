@@ -1,0 +1,127 @@
+{
+ "args": {
+  "board": "multimesh_v9t6",
+  "profile": "mid",
+  "device": "card",
+  "transport": "xdma",
+  "sysnode": "0",
+  "only": "^s02.n3072$",
+  "reps": "1,8,64",
+  "replays": "20",
+  "seed": "7",
+  "measure": "True",
+  "library": "build/perf/h1lib/multimesh_v9t6",
+  "out": "measurements/data/h1/s0.multimesh_v9t6.mid/s02.n3072"
+ },
+ "board": "multimesh_v9t6",
+ "profile": "mid",
+ "sysnode": 0,
+ "opened": [
+  0
+ ],
+ "commit": {
+  "head": "7d2c37255006c0d2a8a0a161e1090e9ccd77a5b0",
+  "dirty": true,
+  "changed": " 10 files changed, 253 insertions(+), 150 deletions(-)",
+  "copied": "2026-11-03T14:20:26Z"
+ },
+ "knobs": {
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "firmware": {
+  "path": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+  "bytes": 241728,
+  "mtime": 1793652746.296582
+ },
+ "clocks": {
+  "0": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "1": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "2": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "3": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  }
+ },
+ "timebase": {
+  "0": {
+   "cycles": 4259515,
+   "first": [
+    4258551,
+    4260307
+   ],
+   "lo": -792,
+   "hi": 964,
+   "ns": [
+    224324215014925,
+    224324215019254
+   ]
+  }
+ },
+ "started": 1793716337.3171072,
+ "timebase_after": {
+  "0": {
+   "cycles": 16986818372,
+   "first": [
+    16986816863,
+    16986819160
+   ],
+   "lo": -788,
+   "hi": 1509,
+   "ns": [
+    224409126091740,
+    224409126096308
+   ]
+  }
+ },
+ "drift": {
+  "0": {
+   "lo": -1752,
+   "hi": 2301,
+   "over": 16982556556
+  }
+ },
+ "ended": 1793716422.2281935,
+ "counters": {
+  "runs": 1823,
+  "cycles": 4522785396,
+  "bytes_in": 754229760,
+  "bytes_out": 44178432,
+  "library_hits": 1487,
+  "class_hits": 0,
+  "exact_hits": 1487,
+  "library_misses": 0,
+  "compile_calls": 0,
+  "compile_seconds": 0.0,
+  "kernel_reuses": 1479,
+  "f001_split": 0
+ },
+ "launches": 1823,
+ "kernels": 8,
+ "compiles": [
+  [
+   "mm_c7c9a84db5",
+   1.989
+  ]
+ ]
+}

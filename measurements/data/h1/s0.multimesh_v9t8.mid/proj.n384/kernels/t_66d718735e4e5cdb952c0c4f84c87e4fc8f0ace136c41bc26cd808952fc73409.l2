@@ -1,0 +1,25 @@
+target ktpu.v9
+
+fn t_66d718735e4e5cdb952c0c4f84c87e4fc8f0ace136c41bc26cd808952fc73409.l2(a: mx7a[200, 768] @dram(gm=50, nk=1), b: mx7b[384, 768] @dram(gn=24, nk=1), in1: f16[200, 384] @dram, in2: f16[384] @dram, out: f16[200, 384] @dram)
+    h1 = buffer  : f16[1600, 96] @stage(tile=50x24)
+    for k1 in 0..1 pipe=2
+        par u1 in 0..4 on mg[u1]
+            for k2 in 0..1
+                acc1 = zero  : f32[200, 96] @acc
+                for k3 in 0..24
+                    a1 = fill a[((k1*4 + u1 + k2*4) / 4)*200 + (((k1*4 + u1 + k2*4) % 4) / 4)*200 : +200, k3*32 : +32]  : mx7a[200, 32] @A
+                    b1 = fill b[(((k1*4 + u1 + k2*4) % 4) % 4)*96 : +96, k3*32 : +32]  : mx7b[96, 32] @B
+                    acc1 = gemm a1, b1, acc1    : f32[200, 96] @acc
+                drain acc1 -> h1[(k1 % 2)*800 + u1*200 + k2*800 : +200, 0 : +96]
+        par c1 in 0..4 on vc[any]
+            xl1 = load in2[(((k1*4 + c1) % 4) % 4)*96 : +96]  : f16[4, 96] @l1(gt4)
+            v1 = unpack xl1                     : f32[4, 96] @reg(gt4)
+            for t1 in 0..25
+                xl2 = load h1[(k1 % 2)*800 + c1*200 + t1*8 : +8, 0 : +96]  : f16[8, 96] @l1(gt4)
+                xl3 = load in1[((k1*4 + c1) / 4)*200 + (((k1*4 + c1) % 4) / 4)*200 + t1*8 : +8, (((k1*4 + c1) % 4) % 4)*96 : +96]  : f16[8, 96] @l1(gt4)
+                v2 = unpack xl2                 : f32[8, 96] @reg(gt4)
+                e1 = add v2, v1                 : f32[8, 96] @reg(gt4)
+                v3 = unpack xl3                 : f32[8, 96] @reg(gt4)
+                e2 = add v3, e1                 : f32[8, 96] @reg(gt4)
+                p1 = pack e2                    : f16[8, 96] @l1(gt4)
+                store out[((k1*4 + c1) / 4)*200 + (((k1*4 + c1) % 4) / 4)*200 + t1*8 : +8, (((k1*4 + c1) % 4) % 4)*96 : +96] <- p1

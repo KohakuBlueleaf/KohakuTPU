@@ -1,0 +1,5 @@
+target ktpu.v9 vregs=128 vcopies=2
+
+fn t_30355edd48a41780f9dd7a422fcef6814ab92828179757eb5e3028720150b18f.l1(src: f16[8736, 16] @dram, dst: f16[8568, 16] @dram)
+    move
+        copy w(src+0, (12, 23296), (714, 32)) -> w(dst+0, (8568, 32))

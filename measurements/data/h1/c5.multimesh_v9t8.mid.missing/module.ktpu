@@ -1,0 +1,70 @@
+target ktpu.v9
+
+image cp(x, y)
+    desc a0 = x walk=(32, 64)
+    desc a1 = y walk=(32, 64)
+    vfill a0 -> l1[0]
+    vsync drain on=fill
+    vdrain a1 <- l1[0]
+    vsync fe on=drain
+    halt
+
+fn c5_missing_producer.l1(x: f16[1024] @dram, z: f16[1024] @dram, y0: f16[1024] @dram, y1: f16[1024] @dram, y2: f16[1024] @dram, y3: f16[1024] @dram)
+    node 0
+        send vc[0]
+            run cp(x, y0)
+        wait vc[0]
+        ring mesh=1 slot=9 amount=1
+    node 1
+        send vc[0]
+            run cp(x, y1)
+        wait vc[0]
+        wait slot 9 n=1 consume
+        send vc[0]
+            run cp(x, z)
+        wait vc[0]
+    node 2
+        send vc[0]
+            run cp(x, y2)
+        wait vc[0]
+    node 3
+        send vc[0]
+            run cp(x, y3)
+        wait vc[0]
+
+fn c5_stalled_consumer.l1(x: f16[1024] @dram, z: f16[1024] @dram, y0: f16[1024] @dram, y1: f16[1024] @dram, y2: f16[1024] @dram, y3: f16[1024] @dram)
+    node 0
+        send vc[0]
+            run cp(x, y0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        send vc[0]
+            run cp(x, z)
+        wait vc[0]
+    node 1
+        send vc[0]
+            run cp(x, y1)
+        wait vc[0]
+        wait slot 9 n=1 consume
+        wait slot 2 n=1 consume
+        ring mesh=0 slot=3 amount=1
+    node 2
+        send vc[0]
+            run cp(x, y2)
+        wait vc[0]
+        ring mesh=1 slot=9 amount=1
+    node 3
+        send vc[0]
+            run cp(x, y3)
+        wait vc[0]
+
+fn c5_refuse_amount.l1(x: f16[1024] @dram, y: f16[1024] @dram)
+    node 0
+        ring mesh=1 slot=2 amount=65536
+
+fn c5_refuse_line.l1(x: f16[1024] @dram, y: f16[1024] @dram)
+    node 0
+        move
+            copy w(x, (1, 32)) -> w(y, (1, 32))
+            copy w(x + 32, (1, 32)) -> w(y + 32, (1, 32))

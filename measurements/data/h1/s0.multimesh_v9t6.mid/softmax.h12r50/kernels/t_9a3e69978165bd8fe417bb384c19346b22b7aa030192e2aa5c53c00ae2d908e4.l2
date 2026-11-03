@@ -1,0 +1,21 @@
+target ktpu.v9
+
+fn t_9a3e69978165bd8fe417bb384c19346b22b7aa030192e2aa5c53c00ae2d908e4.l2(in0: f16[600, 224] @dram, in1: f16[224] @dram, out: f16[600, 224] @dram)
+    par c1 in 0..2 on vc[c1]
+        xl1 = load in1[0 : +224]  : f16[4, 224] @l1(gt4)
+        v1 = unpack xl1           : f32[4, 224] @reg(gt4)
+        for t1 in 0..((c1 + 2) / 2) + 37 - ((c1 + 1) / 2)
+            xl2 = load in0[c1*296 + ((c1 + 1) / 2)*8 + t1*8 : +8, 0 : +224]  : f16[8, 224] @l1(gt4)
+            v2 = unpack xl2                     : f32[8, 224] @reg(gt4)
+            o1 = sel v1, v2, -65504.0           : f32[8, 224] @reg(gt4)
+            s1 = rmax o1                        : f32[8] @reg
+            e1 = mul s1, -1.0                   : f32[8] @reg
+            e2 = add v2, e1[:, *]               : f32[8, 224] @reg(gt4)
+            e3 = mul e2, 1.4426950408889634     : f32[8, 224] @reg(gt4)
+            e4 = exp2 e3                        : f32[8, 224] @reg(gt4)
+            o2 = sel v1, e4, 0.0                : f32[8, 224] @reg(gt4)
+            s2 = rsum o2                        : f32[8] @reg
+            e5 = inv s2                         : f32[8] @reg
+            e6 = mul e4, e5[:, *]               : f32[8, 224] @reg(gt4)
+            p1 = pack e6                        : f16[8, 224] @l1(gt4)
+            store out[c1*296 + ((c1 + 1) / 2)*8 + t1*8 : +8, 0 : +224] <- p1

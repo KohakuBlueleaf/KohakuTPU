@@ -1,0 +1,2843 @@
+target ktpu.v9
+
+fn p4_burst_01_n1_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=1 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=1 consume
+        r9 = set 1
+        store count + 8 <- r9
+        wait bell 0 n=2
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_01_n1_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=1 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=1 consume
+        r9 = set 1
+        store count + 8 <- r9
+        wait bell 0 n=2
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_01_n2_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=2 consume
+        r9 = set 2
+        store count + 8 <- r9
+        wait bell 0 n=3
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_01_n2_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=2 consume
+        r9 = set 2
+        store count + 8 <- r9
+        wait bell 0 n=3
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_01_n3_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=3 consume
+        r9 = set 3
+        store count + 8 <- r9
+        wait bell 0 n=4
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_01_n3_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=3 consume
+        r9 = set 3
+        store count + 8 <- r9
+        wait bell 0 n=4
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_01_n4_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=4 consume
+        r9 = set 4
+        store count + 8 <- r9
+        wait bell 0 n=5
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_01_n4_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=4 consume
+        r9 = set 4
+        store count + 8 <- r9
+        wait bell 0 n=5
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_01_n5_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=5 consume
+        r9 = set 5
+        store count + 8 <- r9
+        wait bell 0 n=6
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_01_n5_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=5 consume
+        r9 = set 5
+        store count + 8 <- r9
+        wait bell 0 n=6
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_01_n6_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=6 consume
+        r9 = set 6
+        store count + 8 <- r9
+        wait bell 0 n=7
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_01_n6_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=6 consume
+        r9 = set 6
+        store count + 8 <- r9
+        wait bell 0 n=7
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_01_n7_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=7 consume
+        r9 = set 7
+        store count + 8 <- r9
+        wait bell 0 n=8
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_01_n7_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=7 consume
+        r9 = set 7
+        store count + 8 <- r9
+        wait bell 0 n=8
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_01_n8_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=8 consume
+        r9 = set 8
+        store count + 8 <- r9
+        wait bell 0 n=9
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_01_n8_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=8 consume
+        r9 = set 8
+        store count + 8 <- r9
+        wait bell 0 n=9
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_02_n1_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=2 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 2 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=1 consume
+        r9 = set 1
+        store count + 8 <- r9
+        wait bell 0 n=2
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_02_n1_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=2 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 2 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=1 consume
+        r9 = set 1
+        store count + 8 <- r9
+        wait bell 0 n=2
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_02_n2_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 2 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=2 consume
+        r9 = set 2
+        store count + 8 <- r9
+        wait bell 0 n=3
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_02_n2_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 2 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=2 consume
+        r9 = set 2
+        store count + 8 <- r9
+        wait bell 0 n=3
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_02_n3_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 2 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=3 consume
+        r9 = set 3
+        store count + 8 <- r9
+        wait bell 0 n=4
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_02_n3_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 2 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=3 consume
+        r9 = set 3
+        store count + 8 <- r9
+        wait bell 0 n=4
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_02_n4_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 2 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=4 consume
+        r9 = set 4
+        store count + 8 <- r9
+        wait bell 0 n=5
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_02_n4_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 2 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=4 consume
+        r9 = set 4
+        store count + 8 <- r9
+        wait bell 0 n=5
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_02_n5_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 2 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=5 consume
+        r9 = set 5
+        store count + 8 <- r9
+        wait bell 0 n=6
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_02_n5_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 2 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=5 consume
+        r9 = set 5
+        store count + 8 <- r9
+        wait bell 0 n=6
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_02_n6_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 2 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=6 consume
+        r9 = set 6
+        store count + 8 <- r9
+        wait bell 0 n=7
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_02_n6_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 2 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=6 consume
+        r9 = set 6
+        store count + 8 <- r9
+        wait bell 0 n=7
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_02_n7_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 2 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=7 consume
+        r9 = set 7
+        store count + 8 <- r9
+        wait bell 0 n=8
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_02_n7_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 2 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=7 consume
+        r9 = set 7
+        store count + 8 <- r9
+        wait bell 0 n=8
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_02_n8_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 2 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=8 consume
+        r9 = set 8
+        store count + 8 <- r9
+        wait bell 0 n=9
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_02_n8_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 2 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=8 consume
+        r9 = set 8
+        store count + 8 <- r9
+        wait bell 0 n=9
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_03_n1_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=1 consume
+        r9 = set 1
+        store count + 8 <- r9
+        wait bell 0 n=2
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_03_n1_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=1 consume
+        r9 = set 1
+        store count + 8 <- r9
+        wait bell 0 n=2
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_03_n2_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=2 consume
+        r9 = set 2
+        store count + 8 <- r9
+        wait bell 0 n=3
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_03_n2_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=2 consume
+        r9 = set 2
+        store count + 8 <- r9
+        wait bell 0 n=3
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_03_n3_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=3 consume
+        r9 = set 3
+        store count + 8 <- r9
+        wait bell 0 n=4
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_03_n3_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=3 consume
+        r9 = set 3
+        store count + 8 <- r9
+        wait bell 0 n=4
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_03_n4_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=4 consume
+        r9 = set 4
+        store count + 8 <- r9
+        wait bell 0 n=5
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_03_n4_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=4 consume
+        r9 = set 4
+        store count + 8 <- r9
+        wait bell 0 n=5
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_03_n5_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=5 consume
+        r9 = set 5
+        store count + 8 <- r9
+        wait bell 0 n=6
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_03_n5_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=5 consume
+        r9 = set 5
+        store count + 8 <- r9
+        wait bell 0 n=6
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_03_n6_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=6 consume
+        r9 = set 6
+        store count + 8 <- r9
+        wait bell 0 n=7
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_03_n6_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=6 consume
+        r9 = set 6
+        store count + 8 <- r9
+        wait bell 0 n=7
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_03_n7_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=7 consume
+        r9 = set 7
+        store count + 8 <- r9
+        wait bell 0 n=8
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_03_n7_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=7 consume
+        r9 = set 7
+        store count + 8 <- r9
+        wait bell 0 n=8
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_03_n8_d0.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=8 consume
+        r9 = set 8
+        store count + 8 <- r9
+        wait bell 0 n=9
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_burst_03_n8_d20000.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=8 consume
+        r9 = set 8
+        store count + 8 <- r9
+        wait bell 0 n=9
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_sink0_n1.l1(count: u64[4] @dram, slots: u64[5] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=3 consume
+        r9 = set 3
+        store count + 0 <- r9
+        wait bell 1 n=2
+        wait bell 2 n=2
+        wait bell 3 n=2
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=2 amount=1
+        r9 = set 0
+        store count + 8 <- r9
+        wait bell 0 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=2 amount=1
+        r9 = set 0
+        store count + 16 <- r9
+        wait bell 0 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=2 amount=1
+        r9 = set 0
+        store count + 24 <- r9
+        wait bell 0 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 32 <- r14
+
+fn p4_sink0_n4.l1(count: u64[4] @dram, slots: u64[5] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=12 consume
+        r9 = set 12
+        store count + 0 <- r9
+        wait bell 1 n=5
+        wait bell 2 n=5
+        wait bell 3 n=5
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        r9 = set 0
+        store count + 8 <- r9
+        wait bell 0 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        r9 = set 0
+        store count + 16 <- r9
+        wait bell 0 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        r9 = set 0
+        store count + 24 <- r9
+        wait bell 0 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 32 <- r14
+
+fn p4_sink0_n8.l1(count: u64[4] @dram, slots: u64[5] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=24 consume
+        r9 = set 24
+        store count + 0 <- r9
+        wait bell 1 n=9
+        wait bell 2 n=9
+        wait bell 3 n=9
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        r9 = set 0
+        store count + 8 <- r9
+        wait bell 0 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        r9 = set 0
+        store count + 16 <- r9
+        wait bell 0 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        ring mesh=0 slot=2 amount=1
+        r9 = set 0
+        store count + 24 <- r9
+        wait bell 0 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 32 <- r14
+
+fn p4_sink3_n1.l1(count: u64[4] @dram, slots: u64[5] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        wait bell 2 n=1
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 8 <- r9
+        wait bell 0 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 16 <- r9
+        wait bell 0 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=3 consume
+        r9 = set 3
+        store count + 24 <- r9
+        wait bell 0 n=2
+        wait bell 1 n=1
+        wait bell 2 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 32 <- r14
+
+fn p4_sink3_n4.l1(count: u64[4] @dram, slots: u64[5] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        wait bell 2 n=1
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 8 <- r9
+        wait bell 0 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 16 <- r9
+        wait bell 0 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=12 consume
+        r9 = set 12
+        store count + 24 <- r9
+        wait bell 0 n=5
+        wait bell 1 n=4
+        wait bell 2 n=4
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 32 <- r14
+
+fn p4_sink3_n8.l1(count: u64[4] @dram, slots: u64[5] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 1 n=1
+        wait bell 2 n=1
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 8 <- r9
+        wait bell 0 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        r9 = set 0
+        store count + 16 <- r9
+        wait bell 0 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=24 consume
+        r9 = set 24
+        store count + 24 <- r9
+        wait bell 0 n=9
+        wait bell 1 n=8
+        wait bell 2 n=8
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 32 <- r14
+
+fn p4_epochs_03.l1(count: u64[2] @dram, slots: u64[4] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ring mesh=3 slot=2 amount=2
+        wait slot 3 n=1 consume
+        ring mesh=3 slot=2 amount=3
+        wait slot 3 n=1 consume
+        ring mesh=3 slot=2 amount=5
+        wait slot 3 n=1 consume
+        ring mesh=3 slot=2 amount=8
+        wait slot 3 n=1 consume
+        ring mesh=3 slot=2 amount=13
+        wait slot 3 n=1 consume
+        ring mesh=3 slot=2 amount=21
+        wait slot 3 n=1 consume
+        ring mesh=3 slot=2 amount=34
+        wait slot 3 n=1 consume
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=9
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=1 consume
+        ring mesh=0 slot=3 amount=1
+        wait slot 2 n=2 consume
+        ring mesh=0 slot=3 amount=1
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1
+        wait slot 2 n=5 consume
+        ring mesh=0 slot=3 amount=1
+        wait slot 2 n=8 consume
+        ring mesh=0 slot=3 amount=1
+        wait slot 2 n=13 consume
+        ring mesh=0 slot=3 amount=1
+        wait slot 2 n=21 consume
+        ring mesh=0 slot=3 amount=1
+        wait slot 2 n=34 consume
+        ring mesh=0 slot=3 amount=1
+        r9 = set 87
+        store count + 8 <- r9
+        wait bell 0 n=9
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 24 <- r14
+
+fn p4_epochs_30.l1(count: u64[2] @dram, slots: u64[4] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ring mesh=3 slot=3 amount=1
+        wait slot 2 n=2 consume
+        ring mesh=3 slot=3 amount=1
+        wait slot 2 n=3 consume
+        ring mesh=3 slot=3 amount=1
+        wait slot 2 n=5 consume
+        ring mesh=3 slot=3 amount=1
+        wait slot 2 n=8 consume
+        ring mesh=3 slot=3 amount=1
+        wait slot 2 n=13 consume
+        ring mesh=3 slot=3 amount=1
+        wait slot 2 n=21 consume
+        ring mesh=3 slot=3 amount=1
+        wait slot 2 n=34 consume
+        ring mesh=3 slot=3 amount=1
+        r9 = set 87
+        store count + 8 <- r9
+        wait bell 3 n=9
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ring mesh=0 slot=2 amount=2
+        wait slot 3 n=1 consume
+        ring mesh=0 slot=2 amount=3
+        wait slot 3 n=1 consume
+        ring mesh=0 slot=2 amount=5
+        wait slot 3 n=1 consume
+        ring mesh=0 slot=2 amount=8
+        wait slot 3 n=1 consume
+        ring mesh=0 slot=2 amount=13
+        wait slot 3 n=1 consume
+        ring mesh=0 slot=2 amount=21
+        wait slot 3 n=1 consume
+        ring mesh=0 slot=2 amount=34
+        wait slot 3 n=1 consume
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 0 n=9
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 24 <- r14
+
+fn p4_enginewrap_03.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 8197
+        label trip
+        ring mesh=3 slot=2 amount=1
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        wait slot 2 n=8197 consume
+        r9 = set 8197
+        store count + 8 <- r9
+        wait bell 0 n=8198
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_enginewrap_30.l1(count: u64[2] @dram, slots: u64[3] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        settle 20000
+        wait slot 2 n=8197 consume
+        r9 = set 8197
+        store count + 8 <- r9
+        wait bell 3 n=8198
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 8197
+        label trip
+        ring mesh=0 slot=2 amount=1
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 0 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p4_bellwrap_03.l1(count: u64[2] @dram, slots: u64[4] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 32768
+        label trip0
+        ring mesh=3 slot=2 amount=1
+        r1 = add r1, 1
+        goto trip0 if r1 < r2
+        wait slot 3 n=1 consume
+        r1 = set 0
+        r2 = set 32768
+        label trip1
+        ring mesh=3 slot=2 amount=1
+        r1 = add r1, 1
+        goto trip1 if r1 < r2
+        wait slot 3 n=1 consume
+        r1 = set 0
+        r2 = set 32768
+        label trip2
+        ring mesh=3 slot=2 amount=1
+        r1 = add r1, 1
+        goto trip2 if r1 < r2
+        wait slot 3 n=1 consume
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 3 n=4
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait bell 0 n=32768
+        ring mesh=0 slot=3 amount=1
+        wait bell 0 n=32768
+        ring mesh=0 slot=3 amount=1
+        wait bell 0 n=32768
+        ring mesh=0 slot=3 amount=1
+        wait slot 2 n=98304 consume
+        r9 = set 98304
+        store count + 8 <- r9
+        wait bell 0 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 24 <- r14
+
+fn p4_bellwrap_30.l1(count: u64[2] @dram, slots: u64[4] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        wait bell 3 n=32768
+        ring mesh=3 slot=3 amount=1
+        wait bell 3 n=32768
+        ring mesh=3 slot=3 amount=1
+        wait bell 3 n=32768
+        ring mesh=3 slot=3 amount=1
+        wait slot 2 n=98304 consume
+        r9 = set 98304
+        store count + 8 <- r9
+        wait bell 3 n=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 32768
+        label trip0
+        ring mesh=0 slot=2 amount=1
+        r1 = add r1, 1
+        goto trip0 if r1 < r2
+        wait slot 3 n=1 consume
+        r1 = set 0
+        r2 = set 32768
+        label trip1
+        ring mesh=0 slot=2 amount=1
+        r1 = add r1, 1
+        goto trip1 if r1 < r2
+        wait slot 3 n=1 consume
+        r1 = set 0
+        r2 = set 32768
+        label trip2
+        ring mesh=0 slot=2 amount=1
+        r1 = add r1, 1
+        goto trip2 if r1 < r2
+        wait slot 3 n=1 consume
+        r9 = set 0
+        store count + 0 <- r9
+        wait bell 0 n=4
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 24 <- r14
+
+fn p4_stale_01_q2.l1(mark: u64[1] @dram, seen: u64[4] @dram, slots: u64[6] @dram)
+    node 0
+        wait slot 1 n=2 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        settle 20000
+        store mark + 0 <- 1153216173857309696
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1153216178152276992
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1153216182447244288
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1153216186742211584
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 0 <- r5
+        ring mesh=0 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 8 <- r5
+        ring mesh=0 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 16 <- r5
+        ring mesh=0 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 24 <- r5
+        ring mesh=0 slot=3 amount=1
+        wait slot 4 n=4 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 24 <- r14
+        ctrl il_select <- 4
+        r14 = ctrl sig
+        store slots + 32 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=4 amount=1
+        ring mesh=1 slot=4 amount=1
+        ring mesh=1 slot=4 amount=1
+        ring mesh=1 slot=4 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 40 <- r14
+
+fn p4_stale_02_q1.l1(mark: u64[1] @dram, seen: u64[4] @dram, slots: u64[6] @dram)
+    node 0
+        wait slot 1 n=2 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        settle 20000
+        store mark + 0 <- 1153216173857309696
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1153216178152276992
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1153216182447244288
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1153216186742211584
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=4 amount=1
+        ring mesh=2 slot=4 amount=1
+        ring mesh=2 slot=4 amount=1
+        ring mesh=2 slot=4 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 0 <- r5
+        ring mesh=0 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 8 <- r5
+        ring mesh=0 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 16 <- r5
+        ring mesh=0 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 24 <- r5
+        ring mesh=0 slot=3 amount=1
+        wait slot 4 n=4 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 32 <- r14
+        ctrl il_select <- 4
+        r14 = ctrl sig
+        store slots + 40 <- r14
+
+fn p4_stale_03_q2.l1(mark: u64[1] @dram, seen: u64[4] @dram, slots: u64[6] @dram)
+    node 0
+        wait slot 1 n=2 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        settle 20000
+        store mark + 0 <- 1153216173857309696
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1153216178152276992
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1153216182447244288
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1153216186742211584
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=4 amount=1
+        ring mesh=3 slot=4 amount=1
+        ring mesh=3 slot=4 amount=1
+        ring mesh=3 slot=4 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 0 <- r5
+        ring mesh=0 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 8 <- r5
+        ring mesh=0 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 16 <- r5
+        ring mesh=0 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 24 <- r5
+        ring mesh=0 slot=3 amount=1
+        wait slot 4 n=4 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 32 <- r14
+        ctrl il_select <- 4
+        r14 = ctrl sig
+        store slots + 40 <- r14
+
+fn p4_stale_10_q2.l1(mark: u64[1] @dram, seen: u64[4] @dram, slots: u64[6] @dram)
+    node 0
+        wait slot 1 n=2 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 0 <- r5
+        ring mesh=1 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 8 <- r5
+        ring mesh=1 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 16 <- r5
+        ring mesh=1 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 24 <- r5
+        ring mesh=1 slot=3 amount=1
+        wait slot 4 n=4 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 4
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        store mark + 0 <- 1171230572366791680
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1171230576661758976
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1171230580956726272
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1171230585251693568
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 32 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=4 amount=1
+        ring mesh=0 slot=4 amount=1
+        ring mesh=0 slot=4 amount=1
+        ring mesh=0 slot=4 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 40 <- r14
+
+fn p4_stale_12_q3.l1(mark: u64[1] @dram, seen: u64[4] @dram, slots: u64[6] @dram)
+    node 1
+        wait slot 1 n=2 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        settle 20000
+        store mark + 0 <- 1171230572366791680
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1171230576661758976
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1171230580956726272
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1171230585251693568
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        ring mesh=1 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 0 <- r5
+        ring mesh=1 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 8 <- r5
+        ring mesh=1 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 16 <- r5
+        ring mesh=1 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 24 <- r5
+        ring mesh=1 slot=3 amount=1
+        wait slot 4 n=4 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 24 <- r14
+        ctrl il_select <- 4
+        r14 = ctrl sig
+        store slots + 32 <- r14
+    node 3
+        ring mesh=1 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=4 amount=1
+        ring mesh=2 slot=4 amount=1
+        ring mesh=2 slot=4 amount=1
+        ring mesh=2 slot=4 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 40 <- r14
+
+fn p4_stale_13_q2.l1(mark: u64[1] @dram, seen: u64[4] @dram, slots: u64[6] @dram)
+    node 1
+        wait slot 1 n=2 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        settle 20000
+        store mark + 0 <- 1171230572366791680
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1171230576661758976
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1171230580956726272
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1171230585251693568
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        ring mesh=1 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=4 amount=1
+        ring mesh=3 slot=4 amount=1
+        ring mesh=3 slot=4 amount=1
+        ring mesh=3 slot=4 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 3
+        ring mesh=1 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 0 <- r5
+        ring mesh=1 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 8 <- r5
+        ring mesh=1 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 16 <- r5
+        ring mesh=1 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 24 <- r5
+        ring mesh=1 slot=3 amount=1
+        wait slot 4 n=4 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 32 <- r14
+        ctrl il_select <- 4
+        r14 = ctrl sig
+        store slots + 40 <- r14
+
+fn p4_stale_20_q1.l1(mark: u64[1] @dram, seen: u64[4] @dram, slots: u64[6] @dram)
+    node 0
+        wait slot 1 n=2 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 0 <- r5
+        ring mesh=2 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 8 <- r5
+        ring mesh=2 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 16 <- r5
+        ring mesh=2 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 24 <- r5
+        ring mesh=2 slot=3 amount=1
+        wait slot 4 n=4 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 4
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=4 amount=1
+        ring mesh=0 slot=4 amount=1
+        ring mesh=0 slot=4 amount=1
+        ring mesh=0 slot=4 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        store mark + 0 <- 1189244970876273664
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1189244975171240960
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1189244979466208256
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1189244983761175552
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 32 <- r14
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 40 <- r14
+
+fn p4_stale_21_q0.l1(mark: u64[1] @dram, seen: u64[4] @dram, slots: u64[6] @dram)
+    node 0
+        wait slot 1 n=2 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=1 slot=4 amount=1
+        ring mesh=1 slot=4 amount=1
+        ring mesh=1 slot=4 amount=1
+        ring mesh=1 slot=4 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 0 <- r5
+        ring mesh=2 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 8 <- r5
+        ring mesh=2 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 16 <- r5
+        ring mesh=2 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 24 <- r5
+        ring mesh=2 slot=3 amount=1
+        wait slot 4 n=4 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+        ctrl il_select <- 4
+        r14 = ctrl sig
+        store slots + 24 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        store mark + 0 <- 1189244970876273664
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1189244975171240960
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1189244979466208256
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1189244983761175552
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 32 <- r14
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 40 <- r14
+
+fn p4_stale_23_q1.l1(mark: u64[1] @dram, seen: u64[4] @dram, slots: u64[6] @dram)
+    node 1
+        wait slot 1 n=2 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        ring mesh=3 slot=4 amount=1
+        ring mesh=3 slot=4 amount=1
+        ring mesh=3 slot=4 amount=1
+        ring mesh=3 slot=4 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=1 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        store mark + 0 <- 1189244970876273664
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1189244975171240960
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1189244979466208256
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1189244983761175552
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 3
+        ring mesh=1 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 0 <- r5
+        ring mesh=2 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 8 <- r5
+        ring mesh=2 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 16 <- r5
+        ring mesh=2 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 24 <- r5
+        ring mesh=2 slot=3 amount=1
+        wait slot 4 n=4 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 32 <- r14
+        ctrl il_select <- 4
+        r14 = ctrl sig
+        store slots + 40 <- r14
+
+fn p4_stale_30_q1.l1(mark: u64[1] @dram, seen: u64[4] @dram, slots: u64[6] @dram)
+    node 0
+        wait slot 1 n=2 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 0 <- r5
+        ring mesh=3 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 8 <- r5
+        ring mesh=3 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 16 <- r5
+        ring mesh=3 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 24 <- r5
+        ring mesh=3 slot=3 amount=1
+        wait slot 4 n=4 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 4
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=4 amount=1
+        ring mesh=0 slot=4 amount=1
+        ring mesh=0 slot=4 amount=1
+        ring mesh=0 slot=4 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        store mark + 0 <- 1207259369385755648
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1207259373680722944
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1207259377975690240
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1207259382270657536
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 32 <- r14
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 40 <- r14
+
+fn p4_stale_31_q0.l1(mark: u64[1] @dram, seen: u64[4] @dram, slots: u64[6] @dram)
+    node 0
+        wait slot 1 n=2 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        ring mesh=1 slot=4 amount=1
+        ring mesh=1 slot=4 amount=1
+        ring mesh=1 slot=4 amount=1
+        ring mesh=1 slot=4 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 0 <- r5
+        ring mesh=3 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 8 <- r5
+        ring mesh=3 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 16 <- r5
+        ring mesh=3 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 24 <- r5
+        ring mesh=3 slot=3 amount=1
+        wait slot 4 n=4 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+        ctrl il_select <- 4
+        r14 = ctrl sig
+        store slots + 24 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        store mark + 0 <- 1207259369385755648
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1207259373680722944
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1207259377975690240
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1207259382270657536
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 32 <- r14
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 40 <- r14
+
+fn p4_stale_32_q1.l1(mark: u64[1] @dram, seen: u64[4] @dram, slots: u64[6] @dram)
+    node 1
+        wait slot 1 n=2 consume
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        ring mesh=2 slot=4 amount=1
+        ring mesh=2 slot=4 amount=1
+        ring mesh=2 slot=4 amount=1
+        ring mesh=2 slot=4 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=1 slot=1 amount=1
+        wait slot 1 n=1 consume
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 0 <- r5
+        ring mesh=3 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 8 <- r5
+        ring mesh=3 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 16 <- r5
+        ring mesh=3 slot=3 amount=1
+        wait slot 2 n=1 consume
+        r5 = load mark + 0
+        store seen + 24 <- r5
+        ring mesh=3 slot=3 amount=1
+        wait slot 4 n=4 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+        ctrl il_select <- 4
+        r14 = ctrl sig
+        store slots + 24 <- r14
+    node 3
+        ring mesh=1 slot=1 amount=1
+        wait slot 1 n=1 consume
+        settle 20000
+        store mark + 0 <- 1207259369385755648
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1207259373680722944
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1207259377975690240
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        settle 20000
+        store mark + 0 <- 1207259382270657536
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 32 <- r14
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 40 <- r14

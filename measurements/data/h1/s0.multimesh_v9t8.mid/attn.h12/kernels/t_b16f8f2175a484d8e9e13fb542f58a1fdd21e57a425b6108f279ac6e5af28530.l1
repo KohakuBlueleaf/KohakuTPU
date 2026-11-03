@@ -1,0 +1,831 @@
+target ktpu.v9 vregs=128 vcopies=2
+
+image t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_0(p_a0, p_a1, p_a2)
+    desc a0=p_a0 walk=((32, 16), (4608, 4))
+    desc a1=p_a1 walk=((32, 16), (4608, 4))
+    desc a2=p_a2 walk=(32, 16)
+    ainc a0 += 18432
+    ainc a1 += 18432
+    vfill a2 -> l1[496]
+    vbar
+    vunpk v0 <- l1[496] f16 walk=(0, 1)
+    vunpk v1 <- l1[498] f16 walk=(0, 1)
+    vunpk v2 <- l1[500] f16 walk=(0, 1)
+    vunpk v3 <- l1[502] f16 walk=(0, 1)
+    vunpk v4 <- l1[504] f16 walk=(0, 1)
+    vunpk v5 <- l1[506] f16 walk=(0, 1)
+    vunpk v6 <- l1[508] f16 walk=(0, 1)
+    vunpk v7 <- l1[510] f16 walk=(0, 1)
+    vsync fe on=unpack
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[0] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[64] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[256] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[320] rel
+    vsync unpack on=fill slack=3
+    vunpk v8[1 :] <- l1[0] f16 walk=(16, 1) n=8
+    vunpk v10[1 :] <- l1[2] f16 walk=(16, 1) n=8
+    vunpk v11[1 :] <- l1[4] f16 walk=(16, 1) n=8
+    vadd v12, v8[1 :], v0
+    vunpk v13[1 :] <- l1[6] f16 walk=(16, 1) n=8
+    vadd v14, v10[1 :], v1
+    vunpk v8[1 :] <- l1[8] f16 walk=(16, 1) n=8
+    vadd v15, v11[1 :], v2
+    vunpk v10[1 :] <- l1[10] f16 walk=(16, 1) n=8
+    vadd v16, v13[1 :], v3
+    vsync pack on=drain slack=63
+    vpack v12 -> l1[128] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[12] f16 walk=(16, 1) n=8
+    vadd v17, v8[1 :], v4
+    vpack v14 -> l1[130] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[14] f16 walk=(16, 1) n=8
+    vadd v18, v10[1 :], v5
+    vpack v15 -> l1[132] f16 walk=(16, 1)
+    vadd v19, v11[1 :], v6
+    vsync fill on=unpack slack=0
+    vfill a0 -> l1[0] rel
+    seti s15 = 5
+    loop s15
+        vsync unpack on=fill slack=3
+        vunpk v8[1 :] <- l1[64] f16 walk=(16, 1) n=8
+        vpack v16 -> l1[134] f16 walk=(16, 1)
+        vadd v20, v13[1 :], v7
+        vunpk v10[1 :] <- l1[66] f16 walk=(16, 1) n=8
+        vpack v17 -> l1[136] f16 walk=(16, 1)
+        vunpk v11[1 :] <- l1[68] f16 walk=(16, 1) n=8
+        vadd v21, v8[1 :], v0
+        vpack v18 -> l1[138] f16 walk=(16, 1)
+        vunpk v13[1 :] <- l1[70] f16 walk=(16, 1) n=8
+        vadd v22, v10[1 :], v1
+        vpack v19 -> l1[140] f16 walk=(16, 1)
+        vunpk v8[1 :] <- l1[72] f16 walk=(16, 1) n=8
+        vadd v23, v11[1 :], v2
+        vpack v20 -> l1[142] f16 walk=(16, 1)
+        vunpk v10[1 :] <- l1[74] f16 walk=(16, 1) n=8
+        vadd v24, v13[1 :], v3
+        vsync drain on=pack slack=0
+        vdrain a1 <- l1[128] rel
+        vsync pack on=drain slack=3
+        vpack v21 -> l1[192] f16 walk=(16, 1)
+        vunpk v11[1 :] <- l1[76] f16 walk=(16, 1) n=8
+        vadd v25, v8[1 :], v4
+        vpack v22 -> l1[194] f16 walk=(16, 1)
+        vunpk v13[1 :] <- l1[78] f16 walk=(16, 1) n=8
+        vadd v26, v10[1 :], v5
+        vpack v23 -> l1[196] f16 walk=(16, 1)
+        vadd v27, v11[1 :], v6
+        vsync fill on=unpack slack=0
+        vfill a0 -> l1[64] rel
+        vsync unpack on=fill slack=3
+        vunpk v8[1 :] <- l1[256] f16 walk=(16, 1) n=8
+        vpack v24 -> l1[198] f16 walk=(16, 1)
+        vadd v28, v13[1 :], v7
+        vunpk v10[1 :] <- l1[258] f16 walk=(16, 1) n=8
+        vpack v25 -> l1[200] f16 walk=(16, 1)
+        vunpk v11[1 :] <- l1[260] f16 walk=(16, 1) n=8
+        vadd v29, v8[1 :], v0
+        vpack v26 -> l1[202] f16 walk=(16, 1)
+        vunpk v13[1 :] <- l1[262] f16 walk=(16, 1) n=8
+        vadd v30, v10[1 :], v1
+        vpack v27 -> l1[204] f16 walk=(16, 1)
+        vunpk v8[1 :] <- l1[264] f16 walk=(16, 1) n=8
+        vadd v31, v11[1 :], v2
+        vpack v28 -> l1[206] f16 walk=(16, 1)
+        vunpk v10[1 :] <- l1[266] f16 walk=(16, 1) n=8
+        vadd v32, v13[1 :], v3
+        vsync drain on=pack slack=0
+        vdrain a1 <- l1[192] rel
+        vsync pack on=drain slack=3
+        vpack v29 -> l1[384] f16 walk=(16, 1)
+        vunpk v11[1 :] <- l1[268] f16 walk=(16, 1) n=8
+        vadd v33, v8[1 :], v4
+        vpack v30 -> l1[386] f16 walk=(16, 1)
+        vunpk v13[1 :] <- l1[270] f16 walk=(16, 1) n=8
+        vadd v34, v10[1 :], v5
+        vpack v31 -> l1[388] f16 walk=(16, 1)
+        vadd v35, v11[1 :], v6
+        vsync fill on=unpack slack=0
+        vfill a0 -> l1[256] rel
+        vsync unpack on=fill slack=3
+        vunpk v8[1 :] <- l1[320] f16 walk=(16, 1) n=8
+        vpack v32 -> l1[390] f16 walk=(16, 1)
+        vadd v36, v13[1 :], v7
+        vunpk v10[1 :] <- l1[322] f16 walk=(16, 1) n=8
+        vpack v33 -> l1[392] f16 walk=(16, 1)
+        vunpk v11[1 :] <- l1[324] f16 walk=(16, 1) n=8
+        vadd v37, v8[1 :], v0
+        vpack v34 -> l1[394] f16 walk=(16, 1)
+        vunpk v13[1 :] <- l1[326] f16 walk=(16, 1) n=8
+        vadd v38, v10[1 :], v1
+        vpack v35 -> l1[396] f16 walk=(16, 1)
+        vunpk v8[1 :] <- l1[328] f16 walk=(16, 1) n=8
+        vadd v39, v11[1 :], v2
+        vpack v36 -> l1[398] f16 walk=(16, 1)
+        vunpk v10[1 :] <- l1[330] f16 walk=(16, 1) n=8
+        vadd v40, v13[1 :], v3
+        vsync drain on=pack slack=0
+        vdrain a1 <- l1[384] rel
+        vsync pack on=drain slack=3
+        vpack v37 -> l1[448] f16 walk=(16, 1)
+        vunpk v11[1 :] <- l1[332] f16 walk=(16, 1) n=8
+        vadd v41, v8[1 :], v4
+        vpack v38 -> l1[450] f16 walk=(16, 1)
+        vunpk v13[1 :] <- l1[334] f16 walk=(16, 1) n=8
+        vadd v42, v10[1 :], v5
+        vpack v39 -> l1[452] f16 walk=(16, 1)
+        vadd v43, v11[1 :], v6
+        vsync fill on=unpack slack=0
+        vfill a0 -> l1[320] rel
+        vsync unpack on=fill slack=3
+        vunpk v8[1 :] <- l1[0] f16 walk=(16, 1) n=8
+        vpack v40 -> l1[454] f16 walk=(16, 1)
+        vadd v9, v13[1 :], v7
+        vunpk v10[1 :] <- l1[2] f16 walk=(16, 1) n=8
+        vpack v41 -> l1[456] f16 walk=(16, 1)
+        vunpk v11[1 :] <- l1[4] f16 walk=(16, 1) n=8
+        vadd v12, v8[1 :], v0
+        vpack v42 -> l1[458] f16 walk=(16, 1)
+        vunpk v13[1 :] <- l1[6] f16 walk=(16, 1) n=8
+        vadd v14, v10[1 :], v1
+        vpack v43 -> l1[460] f16 walk=(16, 1)
+        vunpk v8[1 :] <- l1[8] f16 walk=(16, 1) n=8
+        vadd v15, v11[1 :], v2
+        vpack v9 -> l1[462] f16 walk=(16, 1)
+        vunpk v10[1 :] <- l1[10] f16 walk=(16, 1) n=8
+        vadd v16, v13[1 :], v3
+        vsync drain on=pack slack=0
+        vdrain a1 <- l1[448] rel
+        vsync pack on=drain slack=3
+        vpack v12 -> l1[128] f16 walk=(16, 1)
+        vunpk v11[1 :] <- l1[12] f16 walk=(16, 1) n=8
+        vadd v17, v8[1 :], v4
+        vpack v14 -> l1[130] f16 walk=(16, 1)
+        vunpk v13[1 :] <- l1[14] f16 walk=(16, 1) n=8
+        vadd v18, v10[1 :], v5
+        vpack v15 -> l1[132] f16 walk=(16, 1)
+        vadd v19, v11[1 :], v6
+        vsync fill on=unpack slack=0
+        vfill a0 -> l1[0] rel
+    vsync unpack on=fill slack=3
+    vunpk v8[1 :] <- l1[64] f16 walk=(16, 1) n=8
+    vpack v16 -> l1[134] f16 walk=(16, 1)
+    vadd v20, v13[1 :], v7
+    vunpk v10[1 :] <- l1[66] f16 walk=(16, 1) n=8
+    vpack v17 -> l1[136] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[68] f16 walk=(16, 1) n=8
+    vadd v21, v8[1 :], v0
+    vpack v18 -> l1[138] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[70] f16 walk=(16, 1) n=8
+    vadd v22, v10[1 :], v1
+    vpack v19 -> l1[140] f16 walk=(16, 1)
+    vunpk v8[1 :] <- l1[72] f16 walk=(16, 1) n=8
+    vadd v23, v11[1 :], v2
+    vpack v20 -> l1[142] f16 walk=(16, 1)
+    vunpk v10[1 :] <- l1[74] f16 walk=(16, 1) n=8
+    vadd v24, v13[1 :], v3
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[128] rel
+    vsync pack on=drain slack=3
+    vpack v21 -> l1[192] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[76] f16 walk=(16, 1) n=8
+    vadd v25, v8[1 :], v4
+    vpack v22 -> l1[194] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[78] f16 walk=(16, 1) n=8
+    vadd v26, v10[1 :], v5
+    vpack v23 -> l1[196] f16 walk=(16, 1)
+    vadd v27, v11[1 :], v6
+    vsync unpack on=fill slack=2
+    vunpk v8[1 :] <- l1[256] f16 walk=(16, 1) n=8
+    vpack v24 -> l1[198] f16 walk=(16, 1)
+    vadd v28, v13[1 :], v7
+    vunpk v10[1 :] <- l1[258] f16 walk=(16, 1) n=8
+    vpack v25 -> l1[200] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[260] f16 walk=(16, 1) n=8
+    vadd v29, v8[1 :], v0
+    vpack v26 -> l1[202] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[262] f16 walk=(16, 1) n=8
+    vadd v30, v10[1 :], v1
+    vpack v27 -> l1[204] f16 walk=(16, 1)
+    vunpk v8[1 :] <- l1[264] f16 walk=(16, 1) n=8
+    vadd v31, v11[1 :], v2
+    vpack v28 -> l1[206] f16 walk=(16, 1)
+    vunpk v10[1 :] <- l1[266] f16 walk=(16, 1) n=8
+    vadd v32, v13[1 :], v3
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[192] rel
+    vsync pack on=drain slack=3
+    vpack v29 -> l1[384] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[268] f16 walk=(16, 1) n=8
+    vadd v33, v8[1 :], v4
+    vpack v30 -> l1[386] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[270] f16 walk=(16, 1) n=8
+    vadd v34, v10[1 :], v5
+    vpack v31 -> l1[388] f16 walk=(16, 1)
+    vadd v35, v11[1 :], v6
+    vsync unpack on=fill slack=1
+    vunpk v8[1 :] <- l1[320] f16 walk=(16, 1) n=8
+    vpack v32 -> l1[390] f16 walk=(16, 1)
+    vadd v36, v13[1 :], v7
+    vunpk v10[1 :] <- l1[322] f16 walk=(16, 1) n=8
+    vpack v33 -> l1[392] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[324] f16 walk=(16, 1) n=8
+    vadd v37, v8[1 :], v0
+    vpack v34 -> l1[394] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[326] f16 walk=(16, 1) n=8
+    vadd v38, v10[1 :], v1
+    vpack v35 -> l1[396] f16 walk=(16, 1)
+    vunpk v8[1 :] <- l1[328] f16 walk=(16, 1) n=8
+    vadd v39, v11[1 :], v2
+    vpack v36 -> l1[398] f16 walk=(16, 1)
+    vunpk v10[1 :] <- l1[330] f16 walk=(16, 1) n=8
+    vadd v40, v13[1 :], v3
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[384] rel
+    vsync pack on=drain slack=3
+    vpack v37 -> l1[448] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[332] f16 walk=(16, 1) n=8
+    vadd v41, v8[1 :], v4
+    vpack v38 -> l1[450] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[334] f16 walk=(16, 1) n=8
+    vadd v42, v10[1 :], v5
+    vpack v39 -> l1[452] f16 walk=(16, 1)
+    vadd v43, v11[1 :], v6
+    vsync unpack on=fill slack=0
+    vunpk v8[1 :] <- l1[0] f16 walk=(16, 1) n=8
+    vpack v40 -> l1[454] f16 walk=(16, 1)
+    vadd v9, v13[1 :], v7
+    vunpk v10[1 :] <- l1[2] f16 walk=(16, 1) n=8
+    vpack v41 -> l1[456] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[4] f16 walk=(16, 1) n=8
+    vadd v12, v8[1 :], v0
+    vpack v42 -> l1[458] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[6] f16 walk=(16, 1) n=8
+    vadd v14, v10[1 :], v1
+    vpack v43 -> l1[460] f16 walk=(16, 1)
+    vunpk v8[1 :] <- l1[8] f16 walk=(16, 1) n=8
+    vadd v15, v11[1 :], v2
+    vpack v9 -> l1[462] f16 walk=(16, 1)
+    vunpk v10[1 :] <- l1[10] f16 walk=(16, 1) n=8
+    vadd v16, v13[1 :], v3
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[448] rel
+    vsync pack on=drain slack=3
+    vpack v12 -> l1[128] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[12] f16 walk=(16, 1) n=8
+    vadd v17, v8[1 :], v4
+    vpack v14 -> l1[130] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[14] f16 walk=(16, 1) n=8
+    vadd v18, v10[1 :], v5
+    vpack v15 -> l1[132] f16 walk=(16, 1)
+    vadd v19, v11[1 :], v6
+    vpack v16 -> l1[134] f16 walk=(16, 1)
+    vadd v20, v13[1 :], v7
+    vpack v17 -> l1[136] f16 walk=(16, 1)
+    vpack v18 -> l1[138] f16 walk=(16, 1)
+    vpack v19 -> l1[140] f16 walk=(16, 1)
+    vpack v20 -> l1[142] f16 walk=(16, 1)
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[128] rel
+    halt
+
+image t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc1_1(p_a0, p_a1, p_a2)
+    desc a0=p_a0 walk=((32, 16), (4608, 4))
+    desc a1=p_a1 walk=((32, 16), (4608, 4))
+    desc a2=p_a2 walk=(32, 16)
+    ainc a0 += 18432
+    ainc a1 += 18432
+    vfill a2 -> l1[496]
+    vbar
+    vunpk v0 <- l1[496] f16 walk=(0, 1)
+    vunpk v1 <- l1[498] f16 walk=(0, 1)
+    vunpk v2 <- l1[500] f16 walk=(0, 1)
+    vunpk v3 <- l1[502] f16 walk=(0, 1)
+    vunpk v4 <- l1[504] f16 walk=(0, 1)
+    vunpk v5 <- l1[506] f16 walk=(0, 1)
+    vunpk v6 <- l1[508] f16 walk=(0, 1)
+    vunpk v7 <- l1[510] f16 walk=(0, 1)
+    vsync fe on=unpack
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[0] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[64] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[256] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[320] rel
+    vsync unpack on=fill slack=3
+    vunpk v8[1 :] <- l1[0] f16 walk=(16, 1) n=8
+    vunpk v10[1 :] <- l1[2] f16 walk=(16, 1) n=8
+    vunpk v11[1 :] <- l1[4] f16 walk=(16, 1) n=8
+    vadd v12, v8[1 :], v0
+    vunpk v13[1 :] <- l1[6] f16 walk=(16, 1) n=8
+    vadd v14, v10[1 :], v1
+    vunpk v8[1 :] <- l1[8] f16 walk=(16, 1) n=8
+    vadd v15, v11[1 :], v2
+    vunpk v10[1 :] <- l1[10] f16 walk=(16, 1) n=8
+    vadd v16, v13[1 :], v3
+    vsync pack on=drain slack=63
+    vpack v12 -> l1[128] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[12] f16 walk=(16, 1) n=8
+    vadd v17, v8[1 :], v4
+    vpack v14 -> l1[130] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[14] f16 walk=(16, 1) n=8
+    vadd v18, v10[1 :], v5
+    vpack v15 -> l1[132] f16 walk=(16, 1)
+    vadd v19, v11[1 :], v6
+    vsync fill on=unpack slack=0
+    vfill a0 -> l1[0] rel
+    seti s15 = 4
+    loop s15
+        vsync unpack on=fill slack=3
+        vunpk v8[1 :] <- l1[64] f16 walk=(16, 1) n=8
+        vpack v16 -> l1[134] f16 walk=(16, 1)
+        vadd v20, v13[1 :], v7
+        vunpk v10[1 :] <- l1[66] f16 walk=(16, 1) n=8
+        vpack v17 -> l1[136] f16 walk=(16, 1)
+        vunpk v11[1 :] <- l1[68] f16 walk=(16, 1) n=8
+        vadd v21, v8[1 :], v0
+        vpack v18 -> l1[138] f16 walk=(16, 1)
+        vunpk v13[1 :] <- l1[70] f16 walk=(16, 1) n=8
+        vadd v22, v10[1 :], v1
+        vpack v19 -> l1[140] f16 walk=(16, 1)
+        vunpk v8[1 :] <- l1[72] f16 walk=(16, 1) n=8
+        vadd v23, v11[1 :], v2
+        vpack v20 -> l1[142] f16 walk=(16, 1)
+        vunpk v10[1 :] <- l1[74] f16 walk=(16, 1) n=8
+        vadd v24, v13[1 :], v3
+        vsync drain on=pack slack=0
+        vdrain a1 <- l1[128] rel
+        vsync pack on=drain slack=3
+        vpack v21 -> l1[192] f16 walk=(16, 1)
+        vunpk v11[1 :] <- l1[76] f16 walk=(16, 1) n=8
+        vadd v25, v8[1 :], v4
+        vpack v22 -> l1[194] f16 walk=(16, 1)
+        vunpk v13[1 :] <- l1[78] f16 walk=(16, 1) n=8
+        vadd v26, v10[1 :], v5
+        vpack v23 -> l1[196] f16 walk=(16, 1)
+        vadd v27, v11[1 :], v6
+        vsync fill on=unpack slack=0
+        vfill a0 -> l1[64] rel
+        vsync unpack on=fill slack=3
+        vunpk v8[1 :] <- l1[256] f16 walk=(16, 1) n=8
+        vpack v24 -> l1[198] f16 walk=(16, 1)
+        vadd v28, v13[1 :], v7
+        vunpk v10[1 :] <- l1[258] f16 walk=(16, 1) n=8
+        vpack v25 -> l1[200] f16 walk=(16, 1)
+        vunpk v11[1 :] <- l1[260] f16 walk=(16, 1) n=8
+        vadd v29, v8[1 :], v0
+        vpack v26 -> l1[202] f16 walk=(16, 1)
+        vunpk v13[1 :] <- l1[262] f16 walk=(16, 1) n=8
+        vadd v30, v10[1 :], v1
+        vpack v27 -> l1[204] f16 walk=(16, 1)
+        vunpk v8[1 :] <- l1[264] f16 walk=(16, 1) n=8
+        vadd v31, v11[1 :], v2
+        vpack v28 -> l1[206] f16 walk=(16, 1)
+        vunpk v10[1 :] <- l1[266] f16 walk=(16, 1) n=8
+        vadd v32, v13[1 :], v3
+        vsync drain on=pack slack=0
+        vdrain a1 <- l1[192] rel
+        vsync pack on=drain slack=3
+        vpack v29 -> l1[384] f16 walk=(16, 1)
+        vunpk v11[1 :] <- l1[268] f16 walk=(16, 1) n=8
+        vadd v33, v8[1 :], v4
+        vpack v30 -> l1[386] f16 walk=(16, 1)
+        vunpk v13[1 :] <- l1[270] f16 walk=(16, 1) n=8
+        vadd v34, v10[1 :], v5
+        vpack v31 -> l1[388] f16 walk=(16, 1)
+        vadd v35, v11[1 :], v6
+        vsync fill on=unpack slack=0
+        vfill a0 -> l1[256] rel
+        vsync unpack on=fill slack=3
+        vunpk v8[1 :] <- l1[320] f16 walk=(16, 1) n=8
+        vpack v32 -> l1[390] f16 walk=(16, 1)
+        vadd v36, v13[1 :], v7
+        vunpk v10[1 :] <- l1[322] f16 walk=(16, 1) n=8
+        vpack v33 -> l1[392] f16 walk=(16, 1)
+        vunpk v11[1 :] <- l1[324] f16 walk=(16, 1) n=8
+        vadd v37, v8[1 :], v0
+        vpack v34 -> l1[394] f16 walk=(16, 1)
+        vunpk v13[1 :] <- l1[326] f16 walk=(16, 1) n=8
+        vadd v38, v10[1 :], v1
+        vpack v35 -> l1[396] f16 walk=(16, 1)
+        vunpk v8[1 :] <- l1[328] f16 walk=(16, 1) n=8
+        vadd v39, v11[1 :], v2
+        vpack v36 -> l1[398] f16 walk=(16, 1)
+        vunpk v10[1 :] <- l1[330] f16 walk=(16, 1) n=8
+        vadd v40, v13[1 :], v3
+        vsync drain on=pack slack=0
+        vdrain a1 <- l1[384] rel
+        vsync pack on=drain slack=3
+        vpack v37 -> l1[448] f16 walk=(16, 1)
+        vunpk v11[1 :] <- l1[332] f16 walk=(16, 1) n=8
+        vadd v41, v8[1 :], v4
+        vpack v38 -> l1[450] f16 walk=(16, 1)
+        vunpk v13[1 :] <- l1[334] f16 walk=(16, 1) n=8
+        vadd v42, v10[1 :], v5
+        vpack v39 -> l1[452] f16 walk=(16, 1)
+        vadd v43, v11[1 :], v6
+        vsync fill on=unpack slack=0
+        vfill a0 -> l1[320] rel
+        vsync unpack on=fill slack=3
+        vunpk v8[1 :] <- l1[0] f16 walk=(16, 1) n=8
+        vpack v40 -> l1[454] f16 walk=(16, 1)
+        vadd v9, v13[1 :], v7
+        vunpk v10[1 :] <- l1[2] f16 walk=(16, 1) n=8
+        vpack v41 -> l1[456] f16 walk=(16, 1)
+        vunpk v11[1 :] <- l1[4] f16 walk=(16, 1) n=8
+        vadd v12, v8[1 :], v0
+        vpack v42 -> l1[458] f16 walk=(16, 1)
+        vunpk v13[1 :] <- l1[6] f16 walk=(16, 1) n=8
+        vadd v14, v10[1 :], v1
+        vpack v43 -> l1[460] f16 walk=(16, 1)
+        vunpk v8[1 :] <- l1[8] f16 walk=(16, 1) n=8
+        vadd v15, v11[1 :], v2
+        vpack v9 -> l1[462] f16 walk=(16, 1)
+        vunpk v10[1 :] <- l1[10] f16 walk=(16, 1) n=8
+        vadd v16, v13[1 :], v3
+        vsync drain on=pack slack=0
+        vdrain a1 <- l1[448] rel
+        vsync pack on=drain slack=3
+        vpack v12 -> l1[128] f16 walk=(16, 1)
+        vunpk v11[1 :] <- l1[12] f16 walk=(16, 1) n=8
+        vadd v17, v8[1 :], v4
+        vpack v14 -> l1[130] f16 walk=(16, 1)
+        vunpk v13[1 :] <- l1[14] f16 walk=(16, 1) n=8
+        vadd v18, v10[1 :], v5
+        vpack v15 -> l1[132] f16 walk=(16, 1)
+        vadd v19, v11[1 :], v6
+        vsync fill on=unpack slack=0
+        vfill a0 -> l1[0] rel
+    vsync unpack on=fill slack=3
+    vunpk v8[1 :] <- l1[64] f16 walk=(16, 1) n=8
+    vpack v16 -> l1[134] f16 walk=(16, 1)
+    vadd v20, v13[1 :], v7
+    vunpk v10[1 :] <- l1[66] f16 walk=(16, 1) n=8
+    vpack v17 -> l1[136] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[68] f16 walk=(16, 1) n=8
+    vadd v21, v8[1 :], v0
+    vpack v18 -> l1[138] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[70] f16 walk=(16, 1) n=8
+    vadd v22, v10[1 :], v1
+    vpack v19 -> l1[140] f16 walk=(16, 1)
+    vunpk v8[1 :] <- l1[72] f16 walk=(16, 1) n=8
+    vadd v23, v11[1 :], v2
+    vpack v20 -> l1[142] f16 walk=(16, 1)
+    vunpk v10[1 :] <- l1[74] f16 walk=(16, 1) n=8
+    vadd v24, v13[1 :], v3
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[128] rel
+    vsync pack on=drain slack=3
+    vpack v21 -> l1[192] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[76] f16 walk=(16, 1) n=8
+    vadd v25, v8[1 :], v4
+    vpack v22 -> l1[194] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[78] f16 walk=(16, 1) n=8
+    vadd v26, v10[1 :], v5
+    vpack v23 -> l1[196] f16 walk=(16, 1)
+    vadd v27, v11[1 :], v6
+    vsync fill on=unpack slack=0
+    vfill a0 -> l1[64] rel
+    vsync unpack on=fill slack=3
+    vunpk v8[1 :] <- l1[256] f16 walk=(16, 1) n=8
+    vpack v24 -> l1[198] f16 walk=(16, 1)
+    vadd v28, v13[1 :], v7
+    vunpk v10[1 :] <- l1[258] f16 walk=(16, 1) n=8
+    vpack v25 -> l1[200] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[260] f16 walk=(16, 1) n=8
+    vadd v29, v8[1 :], v0
+    vpack v26 -> l1[202] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[262] f16 walk=(16, 1) n=8
+    vadd v30, v10[1 :], v1
+    vpack v27 -> l1[204] f16 walk=(16, 1)
+    vunpk v8[1 :] <- l1[264] f16 walk=(16, 1) n=8
+    vadd v31, v11[1 :], v2
+    vpack v28 -> l1[206] f16 walk=(16, 1)
+    vunpk v10[1 :] <- l1[266] f16 walk=(16, 1) n=8
+    vadd v32, v13[1 :], v3
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[192] rel
+    vsync pack on=drain slack=3
+    vpack v29 -> l1[384] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[268] f16 walk=(16, 1) n=8
+    vadd v33, v8[1 :], v4
+    vpack v30 -> l1[386] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[270] f16 walk=(16, 1) n=8
+    vadd v34, v10[1 :], v5
+    vpack v31 -> l1[388] f16 walk=(16, 1)
+    vadd v35, v11[1 :], v6
+    vsync fill on=unpack slack=0
+    vfill a0 -> l1[256] rel
+    vsync unpack on=fill slack=3
+    vunpk v8[1 :] <- l1[320] f16 walk=(16, 1) n=8
+    vpack v32 -> l1[390] f16 walk=(16, 1)
+    vadd v36, v13[1 :], v7
+    vunpk v10[1 :] <- l1[322] f16 walk=(16, 1) n=8
+    vpack v33 -> l1[392] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[324] f16 walk=(16, 1) n=8
+    vadd v37, v8[1 :], v0
+    vpack v34 -> l1[394] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[326] f16 walk=(16, 1) n=8
+    vadd v38, v10[1 :], v1
+    vpack v35 -> l1[396] f16 walk=(16, 1)
+    vunpk v8[1 :] <- l1[328] f16 walk=(16, 1) n=8
+    vadd v39, v11[1 :], v2
+    vpack v36 -> l1[398] f16 walk=(16, 1)
+    vunpk v10[1 :] <- l1[330] f16 walk=(16, 1) n=8
+    vadd v40, v13[1 :], v3
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[384] rel
+    vsync pack on=drain slack=3
+    vpack v37 -> l1[448] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[332] f16 walk=(16, 1) n=8
+    vadd v41, v8[1 :], v4
+    vpack v38 -> l1[450] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[334] f16 walk=(16, 1) n=8
+    vadd v42, v10[1 :], v5
+    vpack v39 -> l1[452] f16 walk=(16, 1)
+    vadd v43, v11[1 :], v6
+    vsync fill on=unpack slack=0
+    vfill a0 -> l1[320] rel
+    vsync unpack on=fill slack=3
+    vunpk v8[1 :] <- l1[0] f16 walk=(16, 1) n=8
+    vpack v40 -> l1[454] f16 walk=(16, 1)
+    vadd v9, v13[1 :], v7
+    vunpk v10[1 :] <- l1[2] f16 walk=(16, 1) n=8
+    vpack v41 -> l1[456] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[4] f16 walk=(16, 1) n=8
+    vadd v12, v8[1 :], v0
+    vpack v42 -> l1[458] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[6] f16 walk=(16, 1) n=8
+    vadd v14, v10[1 :], v1
+    vpack v43 -> l1[460] f16 walk=(16, 1)
+    vunpk v8[1 :] <- l1[8] f16 walk=(16, 1) n=8
+    vadd v15, v11[1 :], v2
+    vpack v9 -> l1[462] f16 walk=(16, 1)
+    vunpk v10[1 :] <- l1[10] f16 walk=(16, 1) n=8
+    vadd v16, v13[1 :], v3
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[448] rel
+    vsync pack on=drain slack=3
+    vpack v12 -> l1[128] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[12] f16 walk=(16, 1) n=8
+    vadd v17, v8[1 :], v4
+    vpack v14 -> l1[130] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[14] f16 walk=(16, 1) n=8
+    vadd v18, v10[1 :], v5
+    vpack v15 -> l1[132] f16 walk=(16, 1)
+    vadd v19, v11[1 :], v6
+    vsync unpack on=fill slack=2
+    vunpk v8[1 :] <- l1[64] f16 walk=(16, 1) n=8
+    vpack v16 -> l1[134] f16 walk=(16, 1)
+    vadd v20, v13[1 :], v7
+    vunpk v10[1 :] <- l1[66] f16 walk=(16, 1) n=8
+    vpack v17 -> l1[136] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[68] f16 walk=(16, 1) n=8
+    vadd v21, v8[1 :], v0
+    vpack v18 -> l1[138] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[70] f16 walk=(16, 1) n=8
+    vadd v22, v10[1 :], v1
+    vpack v19 -> l1[140] f16 walk=(16, 1)
+    vunpk v8[1 :] <- l1[72] f16 walk=(16, 1) n=8
+    vadd v23, v11[1 :], v2
+    vpack v20 -> l1[142] f16 walk=(16, 1)
+    vunpk v10[1 :] <- l1[74] f16 walk=(16, 1) n=8
+    vadd v24, v13[1 :], v3
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[128] rel
+    vsync pack on=drain slack=3
+    vpack v21 -> l1[192] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[76] f16 walk=(16, 1) n=8
+    vadd v25, v8[1 :], v4
+    vpack v22 -> l1[194] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[78] f16 walk=(16, 1) n=8
+    vadd v26, v10[1 :], v5
+    vpack v23 -> l1[196] f16 walk=(16, 1)
+    vadd v27, v11[1 :], v6
+    vsync unpack on=fill slack=1
+    vunpk v8[1 :] <- l1[256] f16 walk=(16, 1) n=8
+    vpack v24 -> l1[198] f16 walk=(16, 1)
+    vadd v28, v13[1 :], v7
+    vunpk v10[1 :] <- l1[258] f16 walk=(16, 1) n=8
+    vpack v25 -> l1[200] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[260] f16 walk=(16, 1) n=8
+    vadd v29, v8[1 :], v0
+    vpack v26 -> l1[202] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[262] f16 walk=(16, 1) n=8
+    vadd v30, v10[1 :], v1
+    vpack v27 -> l1[204] f16 walk=(16, 1)
+    vunpk v8[1 :] <- l1[264] f16 walk=(16, 1) n=8
+    vadd v31, v11[1 :], v2
+    vpack v28 -> l1[206] f16 walk=(16, 1)
+    vunpk v10[1 :] <- l1[266] f16 walk=(16, 1) n=8
+    vadd v32, v13[1 :], v3
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[192] rel
+    vsync pack on=drain slack=3
+    vpack v29 -> l1[384] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[268] f16 walk=(16, 1) n=8
+    vadd v33, v8[1 :], v4
+    vpack v30 -> l1[386] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[270] f16 walk=(16, 1) n=8
+    vadd v34, v10[1 :], v5
+    vpack v31 -> l1[388] f16 walk=(16, 1)
+    vadd v35, v11[1 :], v6
+    vsync unpack on=fill slack=0
+    vunpk v8[1 :] <- l1[320] f16 walk=(16, 1) n=8
+    vpack v32 -> l1[390] f16 walk=(16, 1)
+    vadd v36, v13[1 :], v7
+    vunpk v10[1 :] <- l1[322] f16 walk=(16, 1) n=8
+    vpack v33 -> l1[392] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[324] f16 walk=(16, 1) n=8
+    vadd v37, v8[1 :], v0
+    vpack v34 -> l1[394] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[326] f16 walk=(16, 1) n=8
+    vadd v38, v10[1 :], v1
+    vpack v35 -> l1[396] f16 walk=(16, 1)
+    vunpk v8[1 :] <- l1[328] f16 walk=(16, 1) n=8
+    vadd v39, v11[1 :], v2
+    vpack v36 -> l1[398] f16 walk=(16, 1)
+    vunpk v10[1 :] <- l1[330] f16 walk=(16, 1) n=8
+    vadd v40, v13[1 :], v3
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[384] rel
+    vsync pack on=drain slack=3
+    vpack v37 -> l1[448] f16 walk=(16, 1)
+    vunpk v11[1 :] <- l1[332] f16 walk=(16, 1) n=8
+    vadd v41, v8[1 :], v4
+    vpack v38 -> l1[450] f16 walk=(16, 1)
+    vunpk v13[1 :] <- l1[334] f16 walk=(16, 1) n=8
+    vadd v42, v10[1 :], v5
+    vpack v39 -> l1[452] f16 walk=(16, 1)
+    vadd v43, v11[1 :], v6
+    vpack v40 -> l1[454] f16 walk=(16, 1)
+    vadd v9, v13[1 :], v7
+    vpack v41 -> l1[456] f16 walk=(16, 1)
+    vpack v42 -> l1[458] f16 walk=(16, 1)
+    vpack v43 -> l1[460] f16 walk=(16, 1)
+    vpack v9 -> l1[462] f16 walk=(16, 1)
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[448] rel
+    halt
+
+image t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_2(p_a0, p_a1, p_a2)
+    desc a0=p_a0 walk=((32, 16), (4608, 4))
+    desc a1=p_a1 walk=((32, 16), (4608, 4))
+    desc a2=p_a2 walk=(32, 16)
+    vfill a2 -> l1[496]
+    vbar
+    vsync fe on=unpack
+    vfill a0 -> l1[0] rel
+    vbar
+    vunpk v0[1 :] <- l1[0] f16 walk=(16, 1) n=8
+    vunpk v1[1 :] <- l1[2] f16 walk=(16, 1) n=8
+    vunpk v2[1 :] <- l1[4] f16 walk=(16, 1) n=8
+    vunpk v3[1 :] <- l1[6] f16 walk=(16, 1) n=8
+    vunpk v4[1 :] <- l1[8] f16 walk=(16, 1) n=8
+    vunpk v5[1 :] <- l1[10] f16 walk=(16, 1) n=8
+    vunpk v6[1 :] <- l1[12] f16 walk=(16, 1) n=8
+    vunpk v7[1 :] <- l1[14] f16 walk=(16, 1) n=8
+    vunpk v8 <- l1[496] f16 walk=(0, 1)
+    vunpk v9 <- l1[498] f16 walk=(0, 1)
+    vunpk v10 <- l1[500] f16 walk=(0, 1)
+    vunpk v11 <- l1[502] f16 walk=(0, 1)
+    vunpk v12 <- l1[504] f16 walk=(0, 1)
+    vunpk v13 <- l1[506] f16 walk=(0, 1)
+    vunpk v14 <- l1[508] f16 walk=(0, 1)
+    vunpk v15 <- l1[510] f16 walk=(0, 1)
+    vadd v0, v0[1 :], v8
+    vadd v1, v1[1 :], v9
+    vadd v2, v2[1 :], v10
+    vadd v3, v3[1 :], v11
+    vadd v4, v4[1 :], v12
+    vadd v5, v5[1 :], v13
+    vadd v6, v6[1 :], v14
+    vadd v7, v7[1 :], v15
+    vsync pack on=drain slack=1
+    vpack v0 -> l1[128] f16 walk=(16, 1)
+    vpack v1 -> l1[130] f16 walk=(16, 1)
+    vpack v2 -> l1[132] f16 walk=(16, 1)
+    vpack v3 -> l1[134] f16 walk=(16, 1)
+    vpack v4 -> l1[136] f16 walk=(16, 1)
+    vpack v5 -> l1[138] f16 walk=(16, 1)
+    vpack v6 -> l1[140] f16 walk=(16, 1)
+    vpack v7 -> l1[142] f16 walk=(16, 1)
+    vsync drain on=pack
+    vdrain a1 <- l1[128] rel
+    halt
+
+fn t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530.l1(in0: f16[197, 2304] @dram, in1: f16[2304] @dram, out: f16[197, 2304] @dram, h1: f16[4, 2304] @dram, h2: f16[4, 2304] @dram)
+    send vc[0]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_0(in0+0, out+0, in1+0)
+    send vc[1]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc1_1(in0+460800, out+460800, in1+0)
+    k0_vc0 = mark vc[0]
+    k0_vc1 = mark vc[1]
+    wait vc[0] upto=k0_vc0
+    wait vc[1] upto=k0_vc1
+    send vc[0]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_0(in0+512, out+512, in1+512)
+    send vc[1]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc1_1(in0+461312, out+461312, in1+512)
+    k1_vc0 = mark vc[0]
+    k1_vc1 = mark vc[1]
+    wait vc[0] upto=k1_vc0
+    wait vc[1] upto=k1_vc1
+    send vc[0]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_0(in0+1024, out+1024, in1+1024)
+    send vc[1]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc1_1(in0+461824, out+461824, in1+1024)
+    k2_vc0 = mark vc[0]
+    k2_vc1 = mark vc[1]
+    wait vc[0] upto=k2_vc0
+    wait vc[1] upto=k2_vc1
+    send vc[0]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_0(in0+1536, out+1536, in1+1536)
+    send vc[1]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc1_1(in0+462336, out+462336, in1+1536)
+    k3_vc0 = mark vc[0]
+    k3_vc1 = mark vc[1]
+    wait vc[0] upto=k3_vc0
+    wait vc[1] upto=k3_vc1
+    send vc[0]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_0(in0+2048, out+2048, in1+2048)
+    send vc[1]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc1_1(in0+462848, out+462848, in1+2048)
+    k4_vc0 = mark vc[0]
+    k4_vc1 = mark vc[1]
+    wait vc[0] upto=k4_vc0
+    wait vc[1] upto=k4_vc1
+    send vc[0]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_0(in0+2560, out+2560, in1+2560)
+    send vc[1]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc1_1(in0+463360, out+463360, in1+2560)
+    k5_vc0 = mark vc[0]
+    k5_vc1 = mark vc[1]
+    wait vc[0] upto=k5_vc0
+    wait vc[1] upto=k5_vc1
+    send vc[0]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_0(in0+3072, out+3072, in1+3072)
+    send vc[1]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc1_1(in0+463872, out+463872, in1+3072)
+    k6_vc0 = mark vc[0]
+    k6_vc1 = mark vc[1]
+    wait vc[0] upto=k6_vc0
+    wait vc[1] upto=k6_vc1
+    send vc[0]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_0(in0+3584, out+3584, in1+3584)
+    send vc[1]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc1_1(in0+464384, out+464384, in1+3584)
+    k7_vc0 = mark vc[0]
+    k7_vc1 = mark vc[1]
+    wait vc[0] upto=k7_vc0
+    wait vc[1] upto=k7_vc1
+    send vc[0]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_0(in0+4096, out+4096, in1+4096)
+    send vc[1]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc1_1(in0+464896, out+464896, in1+4096)
+    mv9 = move posted
+        fill w(h1+0, (576, 32)) value=0
+        copy w(in0+903168, (144, 32)) -> w(h1+0, (144, 32))
+    wait moves mv9
+    send vc[0]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_2(h1+0, h2+0, in1+0)
+    send vc[1]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_2(h1+512, h2+512, in1+512)
+    k10_vc0 = mark vc[0]
+    k10_vc1 = mark vc[1]
+    wait vc[0] upto=k10_vc0
+    wait vc[1] upto=k10_vc1
+    send vc[0]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_2(h1+1024, h2+1024, in1+1024)
+    send vc[1]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_2(h1+1536, h2+1536, in1+1536)
+    k11_vc0 = mark vc[0]
+    k11_vc1 = mark vc[1]
+    wait vc[0] upto=k11_vc0
+    wait vc[1] upto=k11_vc1
+    send vc[0]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_2(h1+2048, h2+2048, in1+2048)
+    send vc[1]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_2(h1+2560, h2+2560, in1+2560)
+    k12_vc0 = mark vc[0]
+    k12_vc1 = mark vc[1]
+    wait vc[0] upto=k12_vc0
+    wait vc[1] upto=k12_vc1
+    send vc[0]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_2(h1+3072, h2+3072, in1+3072)
+    send vc[1]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_2(h1+3584, h2+3584, in1+3584)
+    k13_vc0 = mark vc[0]
+    k13_vc1 = mark vc[1]
+    wait vc[0] upto=k13_vc0
+    wait vc[1] upto=k13_vc1
+    send vc[0]
+        run t_b16f8f2175a484d8e9e13fb542f58a1fdd21e57a425b6108f279ac6e5af28530_n0_vc0_2(h1+4096, h2+4096, in1+4096)
+    k14_vc0 = mark vc[0]
+    wait vc[0] upto=k14_vc0
+    move
+        copy w(h2+0, (144, 32)) -> w(out+903168, (144, 32))

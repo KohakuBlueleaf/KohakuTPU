@@ -1,0 +1,243 @@
+target ktpu.v9 vregs=128 vcopies=2
+
+image release_frontier_n0_vc0_0(p_a0, p_a1)
+    desc a0=p_a0 walk=(32, 8)
+    desc a1=p_a1 walk=(32, 8)
+    ainc a0 += 256
+    ainc a1 += 256
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[0] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[8] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[32] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[40] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[48] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[56] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[64] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[72] rel
+    vsync unpack on=fill slack=7
+    vunpk v0 <- l1[0] f16
+    vsync unpack on=fill slack=6
+    vunpk v1 <- l1[8] f16
+    vsync pack on=drain slack=63
+    vpack v0 -> l1[16] f16
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[16] rel
+    vsync unpack on=fill slack=5
+    vunpk v2 <- l1[32] f16
+    vsync pack on=drain slack=63
+    vpack v1 -> l1[24] f16
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[24] rel
+    vsync unpack on=fill slack=4
+    vunpk v3 <- l1[40] f16
+    vsync pack on=drain slack=63
+    vpack v2 -> l1[80] f16
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[80] rel
+    vsync unpack on=fill slack=3
+    vunpk v4 <- l1[48] f16
+    vsync pack on=drain slack=63
+    vpack v3 -> l1[88] f16
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[88] rel
+    vsync unpack on=fill slack=2
+    vunpk v5 <- l1[56] f16
+    vsync pack on=drain slack=63
+    vpack v4 -> l1[96] f16
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[96] rel
+    vsync unpack on=fill slack=1
+    vunpk v6 <- l1[64] f16
+    vsync pack on=drain slack=63
+    vpack v5 -> l1[104] f16
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[104] rel
+    vsync unpack on=fill slack=0
+    vunpk v7 <- l1[72] f16
+    vsync pack on=drain slack=63
+    vpack v6 -> l1[112] f16
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[112] rel
+    vsync pack on=drain slack=63
+    vpack v7 -> l1[120] f16
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[120] rel
+    halt
+
+image release_frontier_n1_vc0_1(p_a0, p_a1, p_a2)
+    desc a0=p_a0 walk=(32, 8)
+    desc a1=p_a1 walk=(32, 8)
+    desc a2=p_a2 walk=(32, 8)
+    ainc a0 += 256
+    ainc a1 += 256
+    ainc a2 += 256
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[0] rel
+    vfill a1 -> l1[16] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[8] rel
+    vfill a1 -> l1[24] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[48] rel
+    vfill a1 -> l1[96] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[56] rel
+    vfill a1 -> l1[104] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[64] rel
+    vfill a1 -> l1[112] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[72] rel
+    vfill a1 -> l1[120] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[80] rel
+    vfill a1 -> l1[128] rel
+    vsync unpack on=fill slack=12
+    vunpk v0[1 :] <- l1[0] f16 n=8
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[88] rel
+    vfill a1 -> l1[136] rel
+    vunpk v1 <- l1[16] f16
+    vsync unpack on=fill slack=12
+    vunpk v3[1 :] <- l1[8] f16 n=8
+    vunpk v4 <- l1[24] f16
+    vadd v5, v0[1 :], v1
+    vsync unpack on=fill slack=10
+    vunpk v6[1 :] <- l1[48] f16 n=8
+    vunpk v0 <- l1[96] f16
+    vadd v7, v3[1 :], v4
+    vsync unpack on=fill slack=8
+    vunpk v1[1 :] <- l1[56] f16 n=8
+    vsync pack on=drain slack=63
+    vpack v5 -> l1[32] f16
+    vunpk v3 <- l1[104] f16
+    vadd v8, v6[1 :], v0
+    vsync drain on=pack slack=0
+    vdrain a2 <- l1[32] rel
+    vsync unpack on=fill slack=6
+    vunpk v4[1 :] <- l1[64] f16 n=8
+    vsync pack on=drain slack=63
+    vpack v7 -> l1[40] f16
+    vunpk v0 <- l1[112] f16
+    vadd v9, v1[1 :], v3
+    vsync drain on=pack slack=0
+    vdrain a2 <- l1[40] rel
+    vsync unpack on=fill slack=4
+    vunpk v6[1 :] <- l1[72] f16 n=8
+    vsync pack on=drain slack=63
+    vpack v8 -> l1[144] f16
+    vunpk v1 <- l1[120] f16
+    vadd v10, v4[1 :], v0
+    vsync drain on=pack slack=0
+    vdrain a2 <- l1[144] rel
+    vsync unpack on=fill slack=2
+    vunpk v3[1 :] <- l1[80] f16 n=8
+    vsync pack on=drain slack=63
+    vpack v9 -> l1[152] f16
+    vunpk v4 <- l1[128] f16
+    vadd v11, v6[1 :], v1
+    vsync drain on=pack slack=0
+    vdrain a2 <- l1[152] rel
+    vsync unpack on=fill slack=0
+    vunpk v12[1 :] <- l1[88] f16 n=8
+    vsync pack on=drain slack=63
+    vpack v10 -> l1[160] f16
+    vunpk v6 <- l1[136] f16
+    vadd v13, v3[1 :], v4
+    vsync drain on=pack slack=0
+    vdrain a2 <- l1[160] rel
+    vsync pack on=drain slack=63
+    vpack v11 -> l1[168] f16
+    vadd v2, v12[1 :], v6
+    vsync drain on=pack slack=0
+    vdrain a2 <- l1[168] rel
+    vsync pack on=drain slack=63
+    vpack v13 -> l1[176] f16
+    vsync drain on=pack slack=0
+    vdrain a2 <- l1[176] rel
+    vsync pack on=drain slack=63
+    vpack v2 -> l1[184] f16
+    vsync drain on=pack slack=0
+    vdrain a2 <- l1[184] rel
+    halt
+
+image spin(n, l)
+    desc a0 = l walk=(32, 32)
+    seti s0 = n
+    loop s0
+        vfill a0 -> l1[0] rel
+        vsync fe on=fill
+    halt
+
+fn c4_frontier.l1(x0: f16[8, 128] @dram, x1: f16[8, 128] @dram, a: f16[8, 128] @dram, b: f16[8, 128] @dram, y: f16[8, 128] @dram, seen: u64[8] @dram)
+    node 0
+        send vc[0]
+            run release_frontier_n0_vc0_0(x0+0, a+0)
+        send vc[1]
+            run release_frontier_n0_vc0_0(x1+0, b+0)
+        k1_vc1 = mark vc[1]
+        wait vc[1] upto=k1_vc1
+        ring mesh=1 slot=0
+        barrier
+    node 1
+        wait slot 0 consume n=1
+        r5 = load a + 0
+        store seen + 0 <- r5
+        r5 = load a + 1016
+        store seen + 8 <- r5
+        r5 = load a + 1024
+        store seen + 16 <- r5
+        r5 = load a + 2040
+        store seen + 24 <- r5
+        r5 = load b + 0
+        store seen + 32 <- r5
+        r5 = load b + 1016
+        store seen + 40 <- r5
+        r5 = load b + 1024
+        store seen + 48 <- r5
+        r5 = load b + 2040
+        store seen + 56 <- r5
+        send vc[0]
+            run release_frontier_n1_vc0_1(a+0, b+0, y+0)
+        barrier
+
+fn c4_frontier_late.l1(x0: f16[8, 128] @dram, x1: f16[8, 128] @dram, a: f16[8, 128] @dram, b: f16[8, 128] @dram, y: f16[8, 128] @dram, seen: u64[8] @dram, l: f16[512] @dram)
+    node 0
+        send vc[0]
+            run spin(2048, l)
+        send vc[0]
+            run release_frontier_n0_vc0_0(x0+0, a+0)
+        send vc[1]
+            run release_frontier_n0_vc0_0(x1+0, b+0)
+        k1_vc1 = mark vc[1]
+        wait vc[1] upto=k1_vc1
+        ring mesh=1 slot=0
+        barrier
+    node 1
+        wait slot 0 consume n=1
+        r5 = load a + 0
+        store seen + 0 <- r5
+        r5 = load a + 1016
+        store seen + 8 <- r5
+        r5 = load a + 1024
+        store seen + 16 <- r5
+        r5 = load a + 2040
+        store seen + 24 <- r5
+        r5 = load b + 0
+        store seen + 32 <- r5
+        r5 = load b + 1016
+        store seen + 40 <- r5
+        r5 = load b + 1024
+        store seen + 48 <- r5
+        r5 = load b + 2040
+        store seen + 56 <- r5
+        send vc[0]
+            run release_frontier_n1_vc0_1(a+0, b+0, y+0)
+        barrier

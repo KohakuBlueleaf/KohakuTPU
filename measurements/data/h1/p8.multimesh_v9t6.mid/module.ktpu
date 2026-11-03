@@ -1,0 +1,1670 @@
+target ktpu.v9
+
+image load(n, x)
+    desc a0 = x walk=(32, 64)
+    ainc a0 += 2048
+    seti s0 = n
+    loop s0
+        vfill a0 -> l1[0] rel
+        vsync fe on=fill
+    halt
+
+fn p8_0_dram_32b.l1(x: f16[16] @dram, y: f16[16] @dram)
+    node 0
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+
+fn p8_0_dram_1024b.l1(x: f16[512] @dram, y: f16[512] @dram)
+    node 0
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+
+fn p8_0_dram_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @dram)
+    node 0
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+
+fn p8_0_dram_2048b.l1(x: f16[1024] @dram, y: f16[1024] @dram)
+    node 0
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+
+fn p8_0_dram_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @dram)
+    node 0
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+
+fn p8_0_dram_65536b.l1(x: f16[32768] @dram, y: f16[32768] @dram)
+    node 0
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+
+fn p8_0_dram_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @dram)
+    node 0
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+
+fn p8_0_dram_1048576b.l1(x: f16[524288] @dram, y: f16[524288] @dram)
+    node 0
+        move
+            copy w(x + 0, (16384, 32)) -> w(y + 0, (16384, 32))
+            copy w(x + 524288, (16384, 32)) -> w(y + 524288, (16384, 32))
+
+fn p8_0_dram_1048576b_odd.l1(x: f16[524288] @dram, y: f16[524288] @dram)
+    node 0
+        move
+            copy w(x + 32, (16383, 32)) -> w(y + 32, (16383, 32))
+            copy w(x + 524288, (16383, 32)) -> w(y + 524288, (16383, 32))
+
+fn p8_0_stage0_32b.l1(x: f16[16] @dram, y: f16[16] @stage(node=0))
+    node 0
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+
+fn p8_0_stage0_1024b.l1(x: f16[512] @dram, y: f16[512] @stage(node=0))
+    node 0
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+
+fn p8_0_stage0_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @stage(node=0))
+    node 0
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+
+fn p8_0_stage0_2048b.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=0))
+    node 0
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+
+fn p8_0_stage0_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=0))
+    node 0
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+
+fn p8_0_stage0_65536b.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=0))
+    node 0
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+
+fn p8_0_stage0_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=0))
+    node 0
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+
+fn p8_0_stage1_32b.l1(x: f16[16] @dram, y: f16[16] @stage(node=1))
+    node 0
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+        ring mesh=1 slot=2 amount=1
+    node 1
+        wait slot 2 n=1 consume
+
+fn p8_0_stage1_1024b.l1(x: f16[512] @dram, y: f16[512] @stage(node=1))
+    node 0
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+        ring mesh=1 slot=2 amount=1
+    node 1
+        wait slot 2 n=1 consume
+
+fn p8_0_stage1_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @stage(node=1))
+    node 0
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+        ring mesh=1 slot=2 amount=1
+    node 1
+        wait slot 2 n=1 consume
+
+fn p8_0_stage1_2048b.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=1))
+    node 0
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+        ring mesh=1 slot=2 amount=1
+    node 1
+        wait slot 2 n=1 consume
+
+fn p8_0_stage1_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=1))
+    node 0
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+        ring mesh=1 slot=2 amount=1
+    node 1
+        wait slot 2 n=1 consume
+
+fn p8_0_stage1_65536b.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=1))
+    node 0
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+        ring mesh=1 slot=2 amount=1
+    node 1
+        wait slot 2 n=1 consume
+
+fn p8_0_stage1_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=1))
+    node 0
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+        ring mesh=1 slot=2 amount=1
+    node 1
+        wait slot 2 n=1 consume
+
+fn p8_0_stage2_32b.l1(x: f16[16] @dram, y: f16[16] @stage(node=2))
+    node 0
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+        ring mesh=2 slot=2 amount=1
+    node 2
+        wait slot 2 n=1 consume
+
+fn p8_0_stage2_1024b.l1(x: f16[512] @dram, y: f16[512] @stage(node=2))
+    node 0
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+        ring mesh=2 slot=2 amount=1
+    node 2
+        wait slot 2 n=1 consume
+
+fn p8_0_stage2_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @stage(node=2))
+    node 0
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+        ring mesh=2 slot=2 amount=1
+    node 2
+        wait slot 2 n=1 consume
+
+fn p8_0_stage2_2048b.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=2))
+    node 0
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+        ring mesh=2 slot=2 amount=1
+    node 2
+        wait slot 2 n=1 consume
+
+fn p8_0_stage2_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=2))
+    node 0
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+        ring mesh=2 slot=2 amount=1
+    node 2
+        wait slot 2 n=1 consume
+
+fn p8_0_stage2_65536b.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=2))
+    node 0
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+        ring mesh=2 slot=2 amount=1
+    node 2
+        wait slot 2 n=1 consume
+
+fn p8_0_stage2_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=2))
+    node 0
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+        ring mesh=2 slot=2 amount=1
+    node 2
+        wait slot 2 n=1 consume
+
+fn p8_0_stage3_32b.l1(x: f16[16] @dram, y: f16[16] @stage(node=3))
+    node 0
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_0_stage3_1024b.l1(x: f16[512] @dram, y: f16[512] @stage(node=3))
+    node 0
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_0_stage3_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @stage(node=3))
+    node 0
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_0_stage3_2048b.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=3))
+    node 0
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_0_stage3_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=3))
+    node 0
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_0_stage3_65536b.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=3))
+    node 0
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_0_stage3_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=3))
+    node 0
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_1_dram_32b.l1(x: f16[16] @dram, y: f16[16] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 1
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_1_dram_1024b.l1(x: f16[512] @dram, y: f16[512] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 1
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_1_dram_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 1
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_1_dram_2048b.l1(x: f16[1024] @dram, y: f16[1024] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 1
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_1_dram_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 1
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_1_dram_65536b.l1(x: f16[32768] @dram, y: f16[32768] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 1
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_1_dram_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 1
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_1_dram_1048576b.l1(x: f16[524288] @dram, y: f16[524288] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 1
+        move
+            copy w(x + 0, (16384, 32)) -> w(y + 0, (16384, 32))
+            copy w(x + 524288, (16384, 32)) -> w(y + 524288, (16384, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_1_dram_1048576b_odd.l1(x: f16[524288] @dram, y: f16[524288] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 1
+        move
+            copy w(x + 32, (16383, 32)) -> w(y + 32, (16383, 32))
+            copy w(x + 524288, (16383, 32)) -> w(y + 524288, (16383, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_1_stage0_32b.l1(x: f16[16] @dram, y: f16[16] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 1
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_1_stage0_1024b.l1(x: f16[512] @dram, y: f16[512] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 1
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_1_stage0_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 1
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_1_stage0_2048b.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 1
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_1_stage0_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 1
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_1_stage0_65536b.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 1
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_1_stage0_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 1
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_1_stage1_32b.l1(x: f16[16] @dram, y: f16[16] @stage(node=1))
+    node 1
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+
+fn p8_1_stage1_1024b.l1(x: f16[512] @dram, y: f16[512] @stage(node=1))
+    node 1
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+
+fn p8_1_stage1_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @stage(node=1))
+    node 1
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+
+fn p8_1_stage1_2048b.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=1))
+    node 1
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+
+fn p8_1_stage1_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=1))
+    node 1
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+
+fn p8_1_stage1_65536b.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=1))
+    node 1
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+
+fn p8_1_stage1_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=1))
+    node 1
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+
+fn p8_1_stage2_32b.l1(x: f16[16] @dram, y: f16[16] @stage(node=2))
+    node 1
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+        ring mesh=2 slot=2 amount=1
+    node 2
+        wait slot 2 n=1 consume
+
+fn p8_1_stage2_1024b.l1(x: f16[512] @dram, y: f16[512] @stage(node=2))
+    node 1
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+        ring mesh=2 slot=2 amount=1
+    node 2
+        wait slot 2 n=1 consume
+
+fn p8_1_stage2_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @stage(node=2))
+    node 1
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+        ring mesh=2 slot=2 amount=1
+    node 2
+        wait slot 2 n=1 consume
+
+fn p8_1_stage2_2048b.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=2))
+    node 1
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+        ring mesh=2 slot=2 amount=1
+    node 2
+        wait slot 2 n=1 consume
+
+fn p8_1_stage2_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=2))
+    node 1
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+        ring mesh=2 slot=2 amount=1
+    node 2
+        wait slot 2 n=1 consume
+
+fn p8_1_stage2_65536b.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=2))
+    node 1
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+        ring mesh=2 slot=2 amount=1
+    node 2
+        wait slot 2 n=1 consume
+
+fn p8_1_stage2_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=2))
+    node 1
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+        ring mesh=2 slot=2 amount=1
+    node 2
+        wait slot 2 n=1 consume
+
+fn p8_1_stage3_32b.l1(x: f16[16] @dram, y: f16[16] @stage(node=3))
+    node 1
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_1_stage3_1024b.l1(x: f16[512] @dram, y: f16[512] @stage(node=3))
+    node 1
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_1_stage3_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @stage(node=3))
+    node 1
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_1_stage3_2048b.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=3))
+    node 1
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_1_stage3_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=3))
+    node 1
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_1_stage3_65536b.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=3))
+    node 1
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_1_stage3_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=3))
+    node 1
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_2_dram_32b.l1(x: f16[16] @dram, y: f16[16] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_2_dram_1024b.l1(x: f16[512] @dram, y: f16[512] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_2_dram_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_2_dram_2048b.l1(x: f16[1024] @dram, y: f16[1024] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_2_dram_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_2_dram_65536b.l1(x: f16[32768] @dram, y: f16[32768] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_2_dram_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_2_dram_1048576b.l1(x: f16[524288] @dram, y: f16[524288] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 0, (16384, 32)) -> w(y + 0, (16384, 32))
+            copy w(x + 524288, (16384, 32)) -> w(y + 524288, (16384, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_2_dram_1048576b_odd.l1(x: f16[524288] @dram, y: f16[524288] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 32, (16383, 32)) -> w(y + 32, (16383, 32))
+            copy w(x + 524288, (16383, 32)) -> w(y + 524288, (16383, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_2_stage0_32b.l1(x: f16[16] @dram, y: f16[16] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_2_stage0_1024b.l1(x: f16[512] @dram, y: f16[512] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_2_stage0_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_2_stage0_2048b.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_2_stage0_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_2_stage0_65536b.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_2_stage0_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_2_stage1_32b.l1(x: f16[16] @dram, y: f16[16] @stage(node=1))
+    node 1
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+        ring mesh=1 slot=2 amount=1
+
+fn p8_2_stage1_1024b.l1(x: f16[512] @dram, y: f16[512] @stage(node=1))
+    node 1
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+        ring mesh=1 slot=2 amount=1
+
+fn p8_2_stage1_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @stage(node=1))
+    node 1
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+        ring mesh=1 slot=2 amount=1
+
+fn p8_2_stage1_2048b.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=1))
+    node 1
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+        ring mesh=1 slot=2 amount=1
+
+fn p8_2_stage1_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=1))
+    node 1
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+        ring mesh=1 slot=2 amount=1
+
+fn p8_2_stage1_65536b.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=1))
+    node 1
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+        ring mesh=1 slot=2 amount=1
+
+fn p8_2_stage1_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=1))
+    node 1
+        wait slot 2 n=1 consume
+    node 2
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+        ring mesh=1 slot=2 amount=1
+
+fn p8_2_stage2_32b.l1(x: f16[16] @dram, y: f16[16] @stage(node=2))
+    node 2
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+
+fn p8_2_stage2_1024b.l1(x: f16[512] @dram, y: f16[512] @stage(node=2))
+    node 2
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+
+fn p8_2_stage2_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @stage(node=2))
+    node 2
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+
+fn p8_2_stage2_2048b.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=2))
+    node 2
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+
+fn p8_2_stage2_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=2))
+    node 2
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+
+fn p8_2_stage2_65536b.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=2))
+    node 2
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+
+fn p8_2_stage2_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=2))
+    node 2
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+
+fn p8_2_stage3_32b.l1(x: f16[16] @dram, y: f16[16] @stage(node=3))
+    node 2
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_2_stage3_1024b.l1(x: f16[512] @dram, y: f16[512] @stage(node=3))
+    node 2
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_2_stage3_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @stage(node=3))
+    node 2
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_2_stage3_2048b.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=3))
+    node 2
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_2_stage3_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=3))
+    node 2
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_2_stage3_65536b.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=3))
+    node 2
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_2_stage3_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=3))
+    node 2
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+        ring mesh=3 slot=2 amount=1
+    node 3
+        wait slot 2 n=1 consume
+
+fn p8_3_dram_32b.l1(x: f16[16] @dram, y: f16[16] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_3_dram_1024b.l1(x: f16[512] @dram, y: f16[512] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_3_dram_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_3_dram_2048b.l1(x: f16[1024] @dram, y: f16[1024] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_3_dram_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_3_dram_65536b.l1(x: f16[32768] @dram, y: f16[32768] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_3_dram_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_3_dram_1048576b.l1(x: f16[524288] @dram, y: f16[524288] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 0, (16384, 32)) -> w(y + 0, (16384, 32))
+            copy w(x + 524288, (16384, 32)) -> w(y + 524288, (16384, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_3_dram_1048576b_odd.l1(x: f16[524288] @dram, y: f16[524288] @dram)
+    node 0
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 32, (16383, 32)) -> w(y + 32, (16383, 32))
+            copy w(x + 524288, (16383, 32)) -> w(y + 524288, (16383, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_3_stage0_32b.l1(x: f16[16] @dram, y: f16[16] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_3_stage0_1024b.l1(x: f16[512] @dram, y: f16[512] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_3_stage0_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_3_stage0_2048b.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_3_stage0_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_3_stage0_65536b.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_3_stage0_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=0))
+    node 0
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+        ring mesh=0 slot=2 amount=1
+
+fn p8_3_stage1_32b.l1(x: f16[16] @dram, y: f16[16] @stage(node=1))
+    node 1
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+        ring mesh=1 slot=2 amount=1
+
+fn p8_3_stage1_1024b.l1(x: f16[512] @dram, y: f16[512] @stage(node=1))
+    node 1
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+        ring mesh=1 slot=2 amount=1
+
+fn p8_3_stage1_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @stage(node=1))
+    node 1
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+        ring mesh=1 slot=2 amount=1
+
+fn p8_3_stage1_2048b.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=1))
+    node 1
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+        ring mesh=1 slot=2 amount=1
+
+fn p8_3_stage1_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=1))
+    node 1
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+        ring mesh=1 slot=2 amount=1
+
+fn p8_3_stage1_65536b.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=1))
+    node 1
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+        ring mesh=1 slot=2 amount=1
+
+fn p8_3_stage1_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=1))
+    node 1
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+        ring mesh=1 slot=2 amount=1
+
+fn p8_3_stage2_32b.l1(x: f16[16] @dram, y: f16[16] @stage(node=2))
+    node 2
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+        ring mesh=2 slot=2 amount=1
+
+fn p8_3_stage2_1024b.l1(x: f16[512] @dram, y: f16[512] @stage(node=2))
+    node 2
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+        ring mesh=2 slot=2 amount=1
+
+fn p8_3_stage2_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @stage(node=2))
+    node 2
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+        ring mesh=2 slot=2 amount=1
+
+fn p8_3_stage2_2048b.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=2))
+    node 2
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+        ring mesh=2 slot=2 amount=1
+
+fn p8_3_stage2_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=2))
+    node 2
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+        ring mesh=2 slot=2 amount=1
+
+fn p8_3_stage2_65536b.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=2))
+    node 2
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+        ring mesh=2 slot=2 amount=1
+
+fn p8_3_stage2_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=2))
+    node 2
+        wait slot 2 n=1 consume
+    node 3
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+        ring mesh=2 slot=2 amount=1
+
+fn p8_3_stage3_32b.l1(x: f16[16] @dram, y: f16[16] @stage(node=3))
+    node 3
+        move
+            copy w(x + 0, (1, 32)) -> w(y + 0, (1, 32))
+
+fn p8_3_stage3_1024b.l1(x: f16[512] @dram, y: f16[512] @stage(node=3))
+    node 3
+        move
+            copy w(x + 0, (32, 32)) -> w(y + 0, (32, 32))
+
+fn p8_3_stage3_1024b_odd.l1(x: f16[512] @dram, y: f16[512] @stage(node=3))
+    node 3
+        move
+            copy w(x + 32, (30, 32)) -> w(y + 32, (30, 32))
+
+fn p8_3_stage3_2048b.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=3))
+    node 3
+        move
+            copy w(x + 0, (64, 32)) -> w(y + 0, (64, 32))
+
+fn p8_3_stage3_2048b_odd.l1(x: f16[1024] @dram, y: f16[1024] @stage(node=3))
+    node 3
+        move
+            copy w(x + 32, (62, 32)) -> w(y + 32, (62, 32))
+
+fn p8_3_stage3_65536b.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=3))
+    node 3
+        move
+            copy w(x + 0, (2048, 32)) -> w(y + 0, (2048, 32))
+
+fn p8_3_stage3_65536b_odd.l1(x: f16[32768] @dram, y: f16[32768] @stage(node=3))
+    node 3
+        move
+            copy w(x + 32, (2046, 32)) -> w(y + 32, (2046, 32))
+
+fn p8_movers0.l1(x: f16[524288] @dram, y: f16[524288] @dram)
+    node 0
+        t = move posted
+            copy w(x + 0, (16384, 32)) -> w(y + 0, (16384, 32))
+            copy w(x + 524288, (16384, 32)) -> w(y + 524288, (16384, 32))
+        wait moves t
+
+fn p8_movers0_loaded.l1(x: f16[524288] @dram, y: f16[524288] @dram, l: f16[2097152] @dram)
+    node 0
+        send vc[0]
+            run load(2048, l)
+        send mg[0]
+            fill A0 <- l + 0 n=128
+            fill A1 <- l + 16384 n=128
+            fill A0 <- l + 32768 n=128
+            fill A1 <- l + 49152 n=128
+            fill A0 <- l + 65536 n=128
+            fill A1 <- l + 81920 n=128
+            fill A0 <- l + 98304 n=128
+            fill A1 <- l + 114688 n=128
+            fill A0 <- l + 131072 n=128
+            fill A1 <- l + 147456 n=128
+            fill A0 <- l + 163840 n=128
+            fill A1 <- l + 180224 n=128
+            fill A0 <- l + 196608 n=128
+            fill A1 <- l + 212992 n=128
+            fill A0 <- l + 229376 n=128
+            fill A1 <- l + 245760 n=128
+            fill A0 <- l + 262144 n=128
+            fill A1 <- l + 278528 n=128
+            fill A0 <- l + 294912 n=128
+            fill A1 <- l + 311296 n=128
+            fill A0 <- l + 327680 n=128
+            fill A1 <- l + 344064 n=128
+            fill A0 <- l + 360448 n=128
+            fill A1 <- l + 376832 n=128
+            fill A0 <- l + 393216 n=128
+            fill A1 <- l + 409600 n=128
+            fill A0 <- l + 425984 n=128
+            fill A1 <- l + 442368 n=128
+            fill A0 <- l + 458752 n=128
+            fill A1 <- l + 475136 n=128
+            fill A0 <- l + 491520 n=128
+            fill A1 <- l + 507904 n=128
+            fill A0 <- l + 524288 n=128
+            fill A1 <- l + 540672 n=128
+            fill A0 <- l + 557056 n=128
+            fill A1 <- l + 573440 n=128
+            fill A0 <- l + 589824 n=128
+            fill A1 <- l + 606208 n=128
+            fill A0 <- l + 622592 n=128
+            fill A1 <- l + 638976 n=128
+            fill A0 <- l + 655360 n=128
+            fill A1 <- l + 671744 n=128
+            fill A0 <- l + 688128 n=128
+            fill A1 <- l + 704512 n=128
+            fill A0 <- l + 720896 n=128
+            fill A1 <- l + 737280 n=128
+            fill A0 <- l + 753664 n=128
+            fill A1 <- l + 770048 n=128
+            fill A0 <- l + 786432 n=128
+            fill A1 <- l + 802816 n=128
+            fill A0 <- l + 819200 n=128
+            fill A1 <- l + 835584 n=128
+            fill A0 <- l + 851968 n=128
+            fill A1 <- l + 868352 n=128
+            fill A0 <- l + 884736 n=128
+            fill A1 <- l + 901120 n=128
+            fill A0 <- l + 917504 n=128
+            fill A1 <- l + 933888 n=128
+            fill A0 <- l + 950272 n=128
+            fill A1 <- l + 966656 n=128
+            fill A0 <- l + 983040 n=128
+            fill A1 <- l + 999424 n=128
+            fill A0 <- l + 1015808 n=128
+            fill A1 <- l + 1032192 n=128
+        t = move posted
+            copy w(x + 0, (16384, 32)) -> w(y + 0, (16384, 32))
+            copy w(x + 524288, (16384, 32)) -> w(y + 524288, (16384, 32))
+        wait moves t
+
+fn p8_movers01.l1(x: f16[1048576] @dram, y: f16[1048576] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        t = move posted
+            copy w(x + 0, (16384, 32)) -> w(y + 0, (16384, 32))
+            copy w(x + 524288, (16384, 32)) -> w(y + 524288, (16384, 32))
+        wait moves t
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        t = move posted
+            copy w(x + 1048576, (16384, 32)) -> w(y + 1048576, (16384, 32))
+            copy w(x + 1572864, (16384, 32)) -> w(y + 1572864, (16384, 32))
+        wait moves t
+
+fn p8_movers01_loaded.l1(x: f16[1048576] @dram, y: f16[1048576] @dram, l: f16[2097152] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        send vc[0]
+            run load(2048, l)
+        send mg[0]
+            fill A0 <- l + 0 n=128
+            fill A1 <- l + 16384 n=128
+            fill A0 <- l + 32768 n=128
+            fill A1 <- l + 49152 n=128
+            fill A0 <- l + 65536 n=128
+            fill A1 <- l + 81920 n=128
+            fill A0 <- l + 98304 n=128
+            fill A1 <- l + 114688 n=128
+            fill A0 <- l + 131072 n=128
+            fill A1 <- l + 147456 n=128
+            fill A0 <- l + 163840 n=128
+            fill A1 <- l + 180224 n=128
+            fill A0 <- l + 196608 n=128
+            fill A1 <- l + 212992 n=128
+            fill A0 <- l + 229376 n=128
+            fill A1 <- l + 245760 n=128
+            fill A0 <- l + 262144 n=128
+            fill A1 <- l + 278528 n=128
+            fill A0 <- l + 294912 n=128
+            fill A1 <- l + 311296 n=128
+            fill A0 <- l + 327680 n=128
+            fill A1 <- l + 344064 n=128
+            fill A0 <- l + 360448 n=128
+            fill A1 <- l + 376832 n=128
+            fill A0 <- l + 393216 n=128
+            fill A1 <- l + 409600 n=128
+            fill A0 <- l + 425984 n=128
+            fill A1 <- l + 442368 n=128
+            fill A0 <- l + 458752 n=128
+            fill A1 <- l + 475136 n=128
+            fill A0 <- l + 491520 n=128
+            fill A1 <- l + 507904 n=128
+            fill A0 <- l + 524288 n=128
+            fill A1 <- l + 540672 n=128
+            fill A0 <- l + 557056 n=128
+            fill A1 <- l + 573440 n=128
+            fill A0 <- l + 589824 n=128
+            fill A1 <- l + 606208 n=128
+            fill A0 <- l + 622592 n=128
+            fill A1 <- l + 638976 n=128
+            fill A0 <- l + 655360 n=128
+            fill A1 <- l + 671744 n=128
+            fill A0 <- l + 688128 n=128
+            fill A1 <- l + 704512 n=128
+            fill A0 <- l + 720896 n=128
+            fill A1 <- l + 737280 n=128
+            fill A0 <- l + 753664 n=128
+            fill A1 <- l + 770048 n=128
+            fill A0 <- l + 786432 n=128
+            fill A1 <- l + 802816 n=128
+            fill A0 <- l + 819200 n=128
+            fill A1 <- l + 835584 n=128
+            fill A0 <- l + 851968 n=128
+            fill A1 <- l + 868352 n=128
+            fill A0 <- l + 884736 n=128
+            fill A1 <- l + 901120 n=128
+            fill A0 <- l + 917504 n=128
+            fill A1 <- l + 933888 n=128
+            fill A0 <- l + 950272 n=128
+            fill A1 <- l + 966656 n=128
+            fill A0 <- l + 983040 n=128
+            fill A1 <- l + 999424 n=128
+            fill A0 <- l + 1015808 n=128
+            fill A1 <- l + 1032192 n=128
+        t = move posted
+            copy w(x + 0, (16384, 32)) -> w(y + 0, (16384, 32))
+            copy w(x + 524288, (16384, 32)) -> w(y + 524288, (16384, 32))
+        wait moves t
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run load(2048, l)
+        send mg[0]
+            fill A0 <- l + 0 n=128
+            fill A1 <- l + 16384 n=128
+            fill A0 <- l + 32768 n=128
+            fill A1 <- l + 49152 n=128
+            fill A0 <- l + 65536 n=128
+            fill A1 <- l + 81920 n=128
+            fill A0 <- l + 98304 n=128
+            fill A1 <- l + 114688 n=128
+            fill A0 <- l + 131072 n=128
+            fill A1 <- l + 147456 n=128
+            fill A0 <- l + 163840 n=128
+            fill A1 <- l + 180224 n=128
+            fill A0 <- l + 196608 n=128
+            fill A1 <- l + 212992 n=128
+            fill A0 <- l + 229376 n=128
+            fill A1 <- l + 245760 n=128
+            fill A0 <- l + 262144 n=128
+            fill A1 <- l + 278528 n=128
+            fill A0 <- l + 294912 n=128
+            fill A1 <- l + 311296 n=128
+            fill A0 <- l + 327680 n=128
+            fill A1 <- l + 344064 n=128
+            fill A0 <- l + 360448 n=128
+            fill A1 <- l + 376832 n=128
+            fill A0 <- l + 393216 n=128
+            fill A1 <- l + 409600 n=128
+            fill A0 <- l + 425984 n=128
+            fill A1 <- l + 442368 n=128
+            fill A0 <- l + 458752 n=128
+            fill A1 <- l + 475136 n=128
+            fill A0 <- l + 491520 n=128
+            fill A1 <- l + 507904 n=128
+            fill A0 <- l + 524288 n=128
+            fill A1 <- l + 540672 n=128
+            fill A0 <- l + 557056 n=128
+            fill A1 <- l + 573440 n=128
+            fill A0 <- l + 589824 n=128
+            fill A1 <- l + 606208 n=128
+            fill A0 <- l + 622592 n=128
+            fill A1 <- l + 638976 n=128
+            fill A0 <- l + 655360 n=128
+            fill A1 <- l + 671744 n=128
+            fill A0 <- l + 688128 n=128
+            fill A1 <- l + 704512 n=128
+            fill A0 <- l + 720896 n=128
+            fill A1 <- l + 737280 n=128
+            fill A0 <- l + 753664 n=128
+            fill A1 <- l + 770048 n=128
+            fill A0 <- l + 786432 n=128
+            fill A1 <- l + 802816 n=128
+            fill A0 <- l + 819200 n=128
+            fill A1 <- l + 835584 n=128
+            fill A0 <- l + 851968 n=128
+            fill A1 <- l + 868352 n=128
+            fill A0 <- l + 884736 n=128
+            fill A1 <- l + 901120 n=128
+            fill A0 <- l + 917504 n=128
+            fill A1 <- l + 933888 n=128
+            fill A0 <- l + 950272 n=128
+            fill A1 <- l + 966656 n=128
+            fill A0 <- l + 983040 n=128
+            fill A1 <- l + 999424 n=128
+            fill A0 <- l + 1015808 n=128
+            fill A1 <- l + 1032192 n=128
+        t = move posted
+            copy w(x + 1048576, (16384, 32)) -> w(y + 1048576, (16384, 32))
+            copy w(x + 1572864, (16384, 32)) -> w(y + 1572864, (16384, 32))
+        wait moves t
+
+fn p8_movers0123.l1(x: f16[2097152] @dram, y: f16[2097152] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        t = move posted
+            copy w(x + 0, (16384, 32)) -> w(y + 0, (16384, 32))
+            copy w(x + 524288, (16384, 32)) -> w(y + 524288, (16384, 32))
+        wait moves t
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        t = move posted
+            copy w(x + 1048576, (16384, 32)) -> w(y + 1048576, (16384, 32))
+            copy w(x + 1572864, (16384, 32)) -> w(y + 1572864, (16384, 32))
+        wait moves t
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        t = move posted
+            copy w(x + 2097152, (16384, 32)) -> w(y + 2097152, (16384, 32))
+            copy w(x + 2621440, (16384, 32)) -> w(y + 2621440, (16384, 32))
+        wait moves t
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        t = move posted
+            copy w(x + 3145728, (16384, 32)) -> w(y + 3145728, (16384, 32))
+            copy w(x + 3670016, (16384, 32)) -> w(y + 3670016, (16384, 32))
+        wait moves t
+
+fn p8_movers0123_loaded.l1(x: f16[2097152] @dram, y: f16[2097152] @dram, l: f16[2097152] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run load(2048, l)
+        send mg[0]
+            fill A0 <- l + 0 n=128
+            fill A1 <- l + 16384 n=128
+            fill A0 <- l + 32768 n=128
+            fill A1 <- l + 49152 n=128
+            fill A0 <- l + 65536 n=128
+            fill A1 <- l + 81920 n=128
+            fill A0 <- l + 98304 n=128
+            fill A1 <- l + 114688 n=128
+            fill A0 <- l + 131072 n=128
+            fill A1 <- l + 147456 n=128
+            fill A0 <- l + 163840 n=128
+            fill A1 <- l + 180224 n=128
+            fill A0 <- l + 196608 n=128
+            fill A1 <- l + 212992 n=128
+            fill A0 <- l + 229376 n=128
+            fill A1 <- l + 245760 n=128
+            fill A0 <- l + 262144 n=128
+            fill A1 <- l + 278528 n=128
+            fill A0 <- l + 294912 n=128
+            fill A1 <- l + 311296 n=128
+            fill A0 <- l + 327680 n=128
+            fill A1 <- l + 344064 n=128
+            fill A0 <- l + 360448 n=128
+            fill A1 <- l + 376832 n=128
+            fill A0 <- l + 393216 n=128
+            fill A1 <- l + 409600 n=128
+            fill A0 <- l + 425984 n=128
+            fill A1 <- l + 442368 n=128
+            fill A0 <- l + 458752 n=128
+            fill A1 <- l + 475136 n=128
+            fill A0 <- l + 491520 n=128
+            fill A1 <- l + 507904 n=128
+            fill A0 <- l + 524288 n=128
+            fill A1 <- l + 540672 n=128
+            fill A0 <- l + 557056 n=128
+            fill A1 <- l + 573440 n=128
+            fill A0 <- l + 589824 n=128
+            fill A1 <- l + 606208 n=128
+            fill A0 <- l + 622592 n=128
+            fill A1 <- l + 638976 n=128
+            fill A0 <- l + 655360 n=128
+            fill A1 <- l + 671744 n=128
+            fill A0 <- l + 688128 n=128
+            fill A1 <- l + 704512 n=128
+            fill A0 <- l + 720896 n=128
+            fill A1 <- l + 737280 n=128
+            fill A0 <- l + 753664 n=128
+            fill A1 <- l + 770048 n=128
+            fill A0 <- l + 786432 n=128
+            fill A1 <- l + 802816 n=128
+            fill A0 <- l + 819200 n=128
+            fill A1 <- l + 835584 n=128
+            fill A0 <- l + 851968 n=128
+            fill A1 <- l + 868352 n=128
+            fill A0 <- l + 884736 n=128
+            fill A1 <- l + 901120 n=128
+            fill A0 <- l + 917504 n=128
+            fill A1 <- l + 933888 n=128
+            fill A0 <- l + 950272 n=128
+            fill A1 <- l + 966656 n=128
+            fill A0 <- l + 983040 n=128
+            fill A1 <- l + 999424 n=128
+            fill A0 <- l + 1015808 n=128
+            fill A1 <- l + 1032192 n=128
+        t = move posted
+            copy w(x + 0, (16384, 32)) -> w(y + 0, (16384, 32))
+            copy w(x + 524288, (16384, 32)) -> w(y + 524288, (16384, 32))
+        wait moves t
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run load(2048, l)
+        send mg[0]
+            fill A0 <- l + 0 n=128
+            fill A1 <- l + 16384 n=128
+            fill A0 <- l + 32768 n=128
+            fill A1 <- l + 49152 n=128
+            fill A0 <- l + 65536 n=128
+            fill A1 <- l + 81920 n=128
+            fill A0 <- l + 98304 n=128
+            fill A1 <- l + 114688 n=128
+            fill A0 <- l + 131072 n=128
+            fill A1 <- l + 147456 n=128
+            fill A0 <- l + 163840 n=128
+            fill A1 <- l + 180224 n=128
+            fill A0 <- l + 196608 n=128
+            fill A1 <- l + 212992 n=128
+            fill A0 <- l + 229376 n=128
+            fill A1 <- l + 245760 n=128
+            fill A0 <- l + 262144 n=128
+            fill A1 <- l + 278528 n=128
+            fill A0 <- l + 294912 n=128
+            fill A1 <- l + 311296 n=128
+            fill A0 <- l + 327680 n=128
+            fill A1 <- l + 344064 n=128
+            fill A0 <- l + 360448 n=128
+            fill A1 <- l + 376832 n=128
+            fill A0 <- l + 393216 n=128
+            fill A1 <- l + 409600 n=128
+            fill A0 <- l + 425984 n=128
+            fill A1 <- l + 442368 n=128
+            fill A0 <- l + 458752 n=128
+            fill A1 <- l + 475136 n=128
+            fill A0 <- l + 491520 n=128
+            fill A1 <- l + 507904 n=128
+            fill A0 <- l + 524288 n=128
+            fill A1 <- l + 540672 n=128
+            fill A0 <- l + 557056 n=128
+            fill A1 <- l + 573440 n=128
+            fill A0 <- l + 589824 n=128
+            fill A1 <- l + 606208 n=128
+            fill A0 <- l + 622592 n=128
+            fill A1 <- l + 638976 n=128
+            fill A0 <- l + 655360 n=128
+            fill A1 <- l + 671744 n=128
+            fill A0 <- l + 688128 n=128
+            fill A1 <- l + 704512 n=128
+            fill A0 <- l + 720896 n=128
+            fill A1 <- l + 737280 n=128
+            fill A0 <- l + 753664 n=128
+            fill A1 <- l + 770048 n=128
+            fill A0 <- l + 786432 n=128
+            fill A1 <- l + 802816 n=128
+            fill A0 <- l + 819200 n=128
+            fill A1 <- l + 835584 n=128
+            fill A0 <- l + 851968 n=128
+            fill A1 <- l + 868352 n=128
+            fill A0 <- l + 884736 n=128
+            fill A1 <- l + 901120 n=128
+            fill A0 <- l + 917504 n=128
+            fill A1 <- l + 933888 n=128
+            fill A0 <- l + 950272 n=128
+            fill A1 <- l + 966656 n=128
+            fill A0 <- l + 983040 n=128
+            fill A1 <- l + 999424 n=128
+            fill A0 <- l + 1015808 n=128
+            fill A1 <- l + 1032192 n=128
+        t = move posted
+            copy w(x + 1048576, (16384, 32)) -> w(y + 1048576, (16384, 32))
+            copy w(x + 1572864, (16384, 32)) -> w(y + 1572864, (16384, 32))
+        wait moves t
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run load(2048, l)
+        send mg[0]
+            fill A0 <- l + 0 n=128
+            fill A1 <- l + 16384 n=128
+            fill A0 <- l + 32768 n=128
+            fill A1 <- l + 49152 n=128
+            fill A0 <- l + 65536 n=128
+            fill A1 <- l + 81920 n=128
+            fill A0 <- l + 98304 n=128
+            fill A1 <- l + 114688 n=128
+            fill A0 <- l + 131072 n=128
+            fill A1 <- l + 147456 n=128
+            fill A0 <- l + 163840 n=128
+            fill A1 <- l + 180224 n=128
+            fill A0 <- l + 196608 n=128
+            fill A1 <- l + 212992 n=128
+            fill A0 <- l + 229376 n=128
+            fill A1 <- l + 245760 n=128
+            fill A0 <- l + 262144 n=128
+            fill A1 <- l + 278528 n=128
+            fill A0 <- l + 294912 n=128
+            fill A1 <- l + 311296 n=128
+            fill A0 <- l + 327680 n=128
+            fill A1 <- l + 344064 n=128
+            fill A0 <- l + 360448 n=128
+            fill A1 <- l + 376832 n=128
+            fill A0 <- l + 393216 n=128
+            fill A1 <- l + 409600 n=128
+            fill A0 <- l + 425984 n=128
+            fill A1 <- l + 442368 n=128
+            fill A0 <- l + 458752 n=128
+            fill A1 <- l + 475136 n=128
+            fill A0 <- l + 491520 n=128
+            fill A1 <- l + 507904 n=128
+            fill A0 <- l + 524288 n=128
+            fill A1 <- l + 540672 n=128
+            fill A0 <- l + 557056 n=128
+            fill A1 <- l + 573440 n=128
+            fill A0 <- l + 589824 n=128
+            fill A1 <- l + 606208 n=128
+            fill A0 <- l + 622592 n=128
+            fill A1 <- l + 638976 n=128
+            fill A0 <- l + 655360 n=128
+            fill A1 <- l + 671744 n=128
+            fill A0 <- l + 688128 n=128
+            fill A1 <- l + 704512 n=128
+            fill A0 <- l + 720896 n=128
+            fill A1 <- l + 737280 n=128
+            fill A0 <- l + 753664 n=128
+            fill A1 <- l + 770048 n=128
+            fill A0 <- l + 786432 n=128
+            fill A1 <- l + 802816 n=128
+            fill A0 <- l + 819200 n=128
+            fill A1 <- l + 835584 n=128
+            fill A0 <- l + 851968 n=128
+            fill A1 <- l + 868352 n=128
+            fill A0 <- l + 884736 n=128
+            fill A1 <- l + 901120 n=128
+            fill A0 <- l + 917504 n=128
+            fill A1 <- l + 933888 n=128
+            fill A0 <- l + 950272 n=128
+            fill A1 <- l + 966656 n=128
+            fill A0 <- l + 983040 n=128
+            fill A1 <- l + 999424 n=128
+            fill A0 <- l + 1015808 n=128
+            fill A1 <- l + 1032192 n=128
+        t = move posted
+            copy w(x + 2097152, (16384, 32)) -> w(y + 2097152, (16384, 32))
+            copy w(x + 2621440, (16384, 32)) -> w(y + 2621440, (16384, 32))
+        wait moves t
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run load(2048, l)
+        send mg[0]
+            fill A0 <- l + 0 n=128
+            fill A1 <- l + 16384 n=128
+            fill A0 <- l + 32768 n=128
+            fill A1 <- l + 49152 n=128
+            fill A0 <- l + 65536 n=128
+            fill A1 <- l + 81920 n=128
+            fill A0 <- l + 98304 n=128
+            fill A1 <- l + 114688 n=128
+            fill A0 <- l + 131072 n=128
+            fill A1 <- l + 147456 n=128
+            fill A0 <- l + 163840 n=128
+            fill A1 <- l + 180224 n=128
+            fill A0 <- l + 196608 n=128
+            fill A1 <- l + 212992 n=128
+            fill A0 <- l + 229376 n=128
+            fill A1 <- l + 245760 n=128
+            fill A0 <- l + 262144 n=128
+            fill A1 <- l + 278528 n=128
+            fill A0 <- l + 294912 n=128
+            fill A1 <- l + 311296 n=128
+            fill A0 <- l + 327680 n=128
+            fill A1 <- l + 344064 n=128
+            fill A0 <- l + 360448 n=128
+            fill A1 <- l + 376832 n=128
+            fill A0 <- l + 393216 n=128
+            fill A1 <- l + 409600 n=128
+            fill A0 <- l + 425984 n=128
+            fill A1 <- l + 442368 n=128
+            fill A0 <- l + 458752 n=128
+            fill A1 <- l + 475136 n=128
+            fill A0 <- l + 491520 n=128
+            fill A1 <- l + 507904 n=128
+            fill A0 <- l + 524288 n=128
+            fill A1 <- l + 540672 n=128
+            fill A0 <- l + 557056 n=128
+            fill A1 <- l + 573440 n=128
+            fill A0 <- l + 589824 n=128
+            fill A1 <- l + 606208 n=128
+            fill A0 <- l + 622592 n=128
+            fill A1 <- l + 638976 n=128
+            fill A0 <- l + 655360 n=128
+            fill A1 <- l + 671744 n=128
+            fill A0 <- l + 688128 n=128
+            fill A1 <- l + 704512 n=128
+            fill A0 <- l + 720896 n=128
+            fill A1 <- l + 737280 n=128
+            fill A0 <- l + 753664 n=128
+            fill A1 <- l + 770048 n=128
+            fill A0 <- l + 786432 n=128
+            fill A1 <- l + 802816 n=128
+            fill A0 <- l + 819200 n=128
+            fill A1 <- l + 835584 n=128
+            fill A0 <- l + 851968 n=128
+            fill A1 <- l + 868352 n=128
+            fill A0 <- l + 884736 n=128
+            fill A1 <- l + 901120 n=128
+            fill A0 <- l + 917504 n=128
+            fill A1 <- l + 933888 n=128
+            fill A0 <- l + 950272 n=128
+            fill A1 <- l + 966656 n=128
+            fill A0 <- l + 983040 n=128
+            fill A1 <- l + 999424 n=128
+            fill A0 <- l + 1015808 n=128
+            fill A1 <- l + 1032192 n=128
+        t = move posted
+            copy w(x + 3145728, (16384, 32)) -> w(y + 3145728, (16384, 32))
+            copy w(x + 3670016, (16384, 32)) -> w(y + 3670016, (16384, 32))
+        wait moves t

@@ -1,0 +1,15 @@
+target ktpu.v9
+
+fn t_57d795c00e3cb978fb71c4ab6845fc0ab9e4aa960e75f9877f74c082fe09f7d7.l2(x: f16[1970, 224] @dram, q: mx7a[2000, 224] @dram(gm=50, nk=1))
+    h1 = buffer  : f16[1280] @dram
+    quant q[0 : +200] <- x[0 : +197, 0 : +208] status=h1[0 : +128] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1
+    quant q[200 : +200] <- x[197 : +197, 0 : +208] status=h1[128 : +128] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1
+    quant q[400 : +200] <- x[394 : +197, 0 : +208] status=h1[256 : +128] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1
+    quant q[600 : +200] <- x[591 : +197, 0 : +208] status=h1[384 : +128] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1
+    quant q[800 : +200] <- x[788 : +197, 0 : +208] status=h1[512 : +128] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1
+    quant q[1000 : +200] <- x[985 : +197, 0 : +208] status=h1[640 : +128] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1
+    quant q[1200 : +200] <- x[1182 : +197, 0 : +208] status=h1[768 : +128] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1
+    quant q[1400 : +200] <- x[1379 : +197, 0 : +208] status=h1[896 : +128] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1
+    quant q[1600 : +200] <- x[1576 : +197, 0 : +208] status=h1[1024 : +128] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1
+    quant q[1800 : +200] <- x[1773 : +197, 0 : +208] status=h1[1152 : +128] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1
+    quant_check h1

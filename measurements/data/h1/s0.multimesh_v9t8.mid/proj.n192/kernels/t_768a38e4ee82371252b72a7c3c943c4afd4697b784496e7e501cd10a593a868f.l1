@@ -1,0 +1,5 @@
+target ktpu.v9 vregs=128 vcopies=2
+
+fn t_768a38e4ee82371252b72a7c3c943c4afd4697b784496e7e501cd10a593a868f.l1(x: f16[192, 768] @dram, q: mx7b[192, 768] @dram(gn=16, nk=1))
+    move
+        quant w(x+0, (3, 98304), (24, 64), (64, 1536), (2, 32)) -> w(q+0, (1152, 128)) bpack

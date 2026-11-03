@@ -1,0 +1,2266 @@
+target ktpu.v9
+
+image cp(x, y)
+    desc a0 = x walk=(32, 256)
+    desc a1 = y walk=(32, 256)
+    vfill a0 -> l1[0]
+    vsync drain on=fill
+    vdrain a1 <- l1[0]
+    vsync fe on=drain
+    halt
+
+image load(n, x)
+    desc a0 = x walk=(32, 64)
+    ainc a0 += 2048
+    seti s0 = n
+    loop s0
+        vfill a0 -> l1[0] rel
+        vsync fe on=fill
+    halt
+
+fn p16_00_vc_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[0] @dram)
+    node 0
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+
+fn p16_000_vc_now.l1(x: f16[4096] @dram, y: f16[12288] @dram, seen: f16[16] @dram, slots: u64[0] @dram)
+    node 0
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        r5 = load y + 8192 + 0
+        store seen + 16 <- r5
+        r5 = load y + 8192 + 8184
+        store seen + 24 <- r5
+        move
+            copy w(y + 8192, (256, 32)) -> w(y + 16384, (256, 32))
+
+fn p16_00000_vc_now.l1(x: f16[4096] @dram, y: f16[20480] @dram, seen: f16[32] @dram, slots: u64[0] @dram)
+    node 0
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        r5 = load y + 8192 + 0
+        store seen + 16 <- r5
+        r5 = load y + 8192 + 8184
+        store seen + 24 <- r5
+        move
+            copy w(y + 8192, (256, 32)) -> w(y + 16384, (256, 32))
+        r5 = load y + 16384 + 0
+        store seen + 32 <- r5
+        r5 = load y + 16384 + 8184
+        store seen + 40 <- r5
+        move
+            copy w(y + 16384, (256, 32)) -> w(y + 24576, (256, 32))
+        r5 = load y + 24576 + 0
+        store seen + 48 <- r5
+        r5 = load y + 24576 + 8184
+        store seen + 56 <- r5
+        move
+            copy w(y + 24576, (256, 32)) -> w(y + 32768, (256, 32))
+
+fn p16_000000000_vc_now.l1(x: f16[4096] @dram, y: f16[36864] @dram, seen: f16[64] @dram, slots: u64[0] @dram)
+    node 0
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        r5 = load y + 8192 + 0
+        store seen + 16 <- r5
+        r5 = load y + 8192 + 8184
+        store seen + 24 <- r5
+        move
+            copy w(y + 8192, (256, 32)) -> w(y + 16384, (256, 32))
+        r5 = load y + 16384 + 0
+        store seen + 32 <- r5
+        r5 = load y + 16384 + 8184
+        store seen + 40 <- r5
+        move
+            copy w(y + 16384, (256, 32)) -> w(y + 24576, (256, 32))
+        r5 = load y + 24576 + 0
+        store seen + 48 <- r5
+        r5 = load y + 24576 + 8184
+        store seen + 56 <- r5
+        move
+            copy w(y + 24576, (256, 32)) -> w(y + 32768, (256, 32))
+        r5 = load y + 32768 + 0
+        store seen + 64 <- r5
+        r5 = load y + 32768 + 8184
+        store seen + 72 <- r5
+        move
+            copy w(y + 32768, (256, 32)) -> w(y + 40960, (256, 32))
+        r5 = load y + 40960 + 0
+        store seen + 80 <- r5
+        r5 = load y + 40960 + 8184
+        store seen + 88 <- r5
+        move
+            copy w(y + 40960, (256, 32)) -> w(y + 49152, (256, 32))
+        r5 = load y + 49152 + 0
+        store seen + 96 <- r5
+        r5 = load y + 49152 + 8184
+        store seen + 104 <- r5
+        move
+            copy w(y + 49152, (256, 32)) -> w(y + 57344, (256, 32))
+        r5 = load y + 57344 + 0
+        store seen + 112 <- r5
+        r5 = load y + 57344 + 8184
+        store seen + 120 <- r5
+        move
+            copy w(y + 57344, (256, 32)) -> w(y + 65536, (256, 32))
+
+fn p16_00_mover_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[0] @dram)
+    node 0
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+
+fn p16_000_mover_now.l1(x: f16[4096] @dram, y: f16[12288] @dram, seen: f16[16] @dram, slots: u64[0] @dram)
+    node 0
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        r5 = load y + 8192 + 0
+        store seen + 16 <- r5
+        r5 = load y + 8192 + 8184
+        store seen + 24 <- r5
+        move
+            copy w(y + 8192, (256, 32)) -> w(y + 16384, (256, 32))
+
+fn p16_00000_mover_now.l1(x: f16[4096] @dram, y: f16[20480] @dram, seen: f16[32] @dram, slots: u64[0] @dram)
+    node 0
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        r5 = load y + 8192 + 0
+        store seen + 16 <- r5
+        r5 = load y + 8192 + 8184
+        store seen + 24 <- r5
+        move
+            copy w(y + 8192, (256, 32)) -> w(y + 16384, (256, 32))
+        r5 = load y + 16384 + 0
+        store seen + 32 <- r5
+        r5 = load y + 16384 + 8184
+        store seen + 40 <- r5
+        move
+            copy w(y + 16384, (256, 32)) -> w(y + 24576, (256, 32))
+        r5 = load y + 24576 + 0
+        store seen + 48 <- r5
+        r5 = load y + 24576 + 8184
+        store seen + 56 <- r5
+        move
+            copy w(y + 24576, (256, 32)) -> w(y + 32768, (256, 32))
+
+fn p16_000000000_mover_now.l1(x: f16[4096] @dram, y: f16[36864] @dram, seen: f16[64] @dram, slots: u64[0] @dram)
+    node 0
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        r5 = load y + 8192 + 0
+        store seen + 16 <- r5
+        r5 = load y + 8192 + 8184
+        store seen + 24 <- r5
+        move
+            copy w(y + 8192, (256, 32)) -> w(y + 16384, (256, 32))
+        r5 = load y + 16384 + 0
+        store seen + 32 <- r5
+        r5 = load y + 16384 + 8184
+        store seen + 40 <- r5
+        move
+            copy w(y + 16384, (256, 32)) -> w(y + 24576, (256, 32))
+        r5 = load y + 24576 + 0
+        store seen + 48 <- r5
+        r5 = load y + 24576 + 8184
+        store seen + 56 <- r5
+        move
+            copy w(y + 24576, (256, 32)) -> w(y + 32768, (256, 32))
+        r5 = load y + 32768 + 0
+        store seen + 64 <- r5
+        r5 = load y + 32768 + 8184
+        store seen + 72 <- r5
+        move
+            copy w(y + 32768, (256, 32)) -> w(y + 40960, (256, 32))
+        r5 = load y + 40960 + 0
+        store seen + 80 <- r5
+        r5 = load y + 40960 + 8184
+        store seen + 88 <- r5
+        move
+            copy w(y + 40960, (256, 32)) -> w(y + 49152, (256, 32))
+        r5 = load y + 49152 + 0
+        store seen + 96 <- r5
+        r5 = load y + 49152 + 8184
+        store seen + 104 <- r5
+        move
+            copy w(y + 49152, (256, 32)) -> w(y + 57344, (256, 32))
+        r5 = load y + 57344 + 0
+        store seen + 112 <- r5
+        r5 = load y + 57344 + 8184
+        store seen + 120 <- r5
+        move
+            copy w(y + 57344, (256, 32)) -> w(y + 65536, (256, 32))
+
+fn p16_00_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[0] @dram)
+    node 0
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+
+fn p16_000_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[12288] @dram, seen: f16[16] @dram, slots: u64[0] @dram)
+    node 0
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        r5 = load y + 8192 + 0
+        store seen + 16 <- r5
+        r5 = load y + 8192 + 8184
+        store seen + 24 <- r5
+        move
+            copy w(y + 8192, (256, 32)) -> w(y + 16384, (256, 32))
+
+fn p16_00000_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[20480] @dram, seen: f16[32] @dram, slots: u64[0] @dram)
+    node 0
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        r5 = load y + 8192 + 0
+        store seen + 16 <- r5
+        r5 = load y + 8192 + 8184
+        store seen + 24 <- r5
+        move
+            copy w(y + 8192, (256, 32)) -> w(y + 16384, (256, 32))
+        r5 = load y + 16384 + 0
+        store seen + 32 <- r5
+        r5 = load y + 16384 + 8184
+        store seen + 40 <- r5
+        move
+            copy w(y + 16384, (256, 32)) -> w(y + 24576, (256, 32))
+        r5 = load y + 24576 + 0
+        store seen + 48 <- r5
+        r5 = load y + 24576 + 8184
+        store seen + 56 <- r5
+        move
+            copy w(y + 24576, (256, 32)) -> w(y + 32768, (256, 32))
+
+fn p16_000000000_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[36864] @dram, seen: f16[64] @dram, slots: u64[0] @dram)
+    node 0
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        r5 = load y + 8192 + 0
+        store seen + 16 <- r5
+        r5 = load y + 8192 + 8184
+        store seen + 24 <- r5
+        move
+            copy w(y + 8192, (256, 32)) -> w(y + 16384, (256, 32))
+        r5 = load y + 16384 + 0
+        store seen + 32 <- r5
+        r5 = load y + 16384 + 8184
+        store seen + 40 <- r5
+        move
+            copy w(y + 16384, (256, 32)) -> w(y + 24576, (256, 32))
+        r5 = load y + 24576 + 0
+        store seen + 48 <- r5
+        r5 = load y + 24576 + 8184
+        store seen + 56 <- r5
+        move
+            copy w(y + 24576, (256, 32)) -> w(y + 32768, (256, 32))
+        r5 = load y + 32768 + 0
+        store seen + 64 <- r5
+        r5 = load y + 32768 + 8184
+        store seen + 72 <- r5
+        move
+            copy w(y + 32768, (256, 32)) -> w(y + 40960, (256, 32))
+        r5 = load y + 40960 + 0
+        store seen + 80 <- r5
+        r5 = load y + 40960 + 8184
+        store seen + 88 <- r5
+        move
+            copy w(y + 40960, (256, 32)) -> w(y + 49152, (256, 32))
+        r5 = load y + 49152 + 0
+        store seen + 96 <- r5
+        r5 = load y + 49152 + 8184
+        store seen + 104 <- r5
+        move
+            copy w(y + 49152, (256, 32)) -> w(y + 57344, (256, 32))
+        r5 = load y + 57344 + 0
+        store seen + 112 <- r5
+        r5 = load y + 57344 + 8184
+        store seen + 120 <- r5
+        move
+            copy w(y + 57344, (256, 32)) -> w(y + 65536, (256, 32))
+
+fn p16_11_vc_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[0] @dram)
+    node 1
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+
+fn p16_11_mover_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[0] @dram)
+    node 1
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+
+fn p16_11_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[0] @dram)
+    node 1
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+
+fn p16_22_vc_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[0] @dram)
+    node 2
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+
+fn p16_22_mover_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[0] @dram)
+    node 2
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+
+fn p16_22_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[0] @dram)
+    node 2
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+
+fn p16_33_vc_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[0] @dram)
+    node 3
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+
+fn p16_33_mover_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[0] @dram)
+    node 3
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+
+fn p16_33_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[0] @dram)
+    node 3
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+
+fn p16_01_vc_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_01_mover_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_01_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_02_vc_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_02_mover_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_02_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_03_vc_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_03_mover_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_03_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_10_vc_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=1 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=0 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_10_mover_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=1 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        ring mesh=0 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_10_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=1 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        ring mesh=0 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_12_vc_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 1
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=1 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_12_mover_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 1
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=1 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_12_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 1
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=1 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_13_vc_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 1
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=1 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_13_mover_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 1
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=1 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_13_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 1
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=1 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_20_vc_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=2 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=0 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_20_mover_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=2 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        ring mesh=0 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_20_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=2 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        ring mesh=0 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_21_vc_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=2 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_21_mover_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=2 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_21_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=2 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_23_vc_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 2
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=2 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_23_mover_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 2
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=2 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_23_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 2
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=2 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_30_vc_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=3 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=0 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_30_mover_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=3 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        ring mesh=0 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_30_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=3 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        ring mesh=0 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_31_vc_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=3 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_31_mover_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=3 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_31_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=3 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_32_vc_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=3 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_32_mover_now.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=3 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        move
+            copy w(x, (256, 32)) -> w(y, (256, 32))
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_32_mg_now.l1(x: mx7a[64, 64] @dram(gm=16, nk=2), w: mx7b[64, 64] @dram(gn=16, nk=2), y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=3 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        send mg[0]
+            fill A0 <- x n=32
+            fill B0 <- w n=32
+            gemm 16x16x2 a=A0 b=B0 acc=0
+            drain y n=256
+        wait mg[0]
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_012_vc_now.l1(x: f16[4096] @dram, y: f16[12288] @dram, seen: f16[16] @dram, slots: u64[3] @dram)
+    node 0
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=2 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 8192 + 0
+        store seen + 16 <- r5
+        r5 = load y + 8192 + 8184
+        store seen + 24 <- r5
+        move
+            copy w(y + 8192, (256, 32)) -> w(y + 16384, (256, 32))
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p16_01230_vc_now.l1(x: f16[4096] @dram, y: f16[20480] @dram, seen: f16[32] @dram, slots: u64[4] @dram)
+    node 0
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=1 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r5 = load y + 24576 + 0
+        store seen + 48 <- r5
+        r5 = load y + 24576 + 8184
+        store seen + 56 <- r5
+        move
+            copy w(y + 24576, (256, 32)) -> w(y + 32768, (256, 32))
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=2 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 8192 + 0
+        store seen + 16 <- r5
+        r5 = load y + 8192 + 8184
+        store seen + 24 <- r5
+        move
+            copy w(y + 8192, (256, 32)) -> w(y + 16384, (256, 32))
+        ring mesh=3 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        r5 = load y + 16384 + 0
+        store seen + 32 <- r5
+        r5 = load y + 16384 + 8184
+        store seen + 40 <- r5
+        move
+            copy w(y + 16384, (256, 32)) -> w(y + 24576, (256, 32))
+        ring mesh=0 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+
+fn p16_012301230_vc_now.l1(x: f16[4096] @dram, y: f16[36864] @dram, seen: f16[64] @dram, slots: u64[4] @dram)
+    node 0
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=1 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r5 = load y + 24576 + 0
+        store seen + 48 <- r5
+        r5 = load y + 24576 + 8184
+        store seen + 56 <- r5
+        move
+            copy w(y + 24576, (256, 32)) -> w(y + 32768, (256, 32))
+        ring mesh=1 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r5 = load y + 57344 + 0
+        store seen + 112 <- r5
+        r5 = load y + 57344 + 8184
+        store seen + 120 <- r5
+        move
+            copy w(y + 57344, (256, 32)) -> w(y + 65536, (256, 32))
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=2 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r5 = load y + 32768 + 0
+        store seen + 64 <- r5
+        r5 = load y + 32768 + 8184
+        store seen + 72 <- r5
+        move
+            copy w(y + 32768, (256, 32)) -> w(y + 40960, (256, 32))
+        ring mesh=2 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 8192 + 0
+        store seen + 16 <- r5
+        r5 = load y + 8192 + 8184
+        store seen + 24 <- r5
+        move
+            copy w(y + 8192, (256, 32)) -> w(y + 16384, (256, 32))
+        ring mesh=3 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r5 = load y + 40960 + 0
+        store seen + 80 <- r5
+        r5 = load y + 40960 + 8184
+        store seen + 88 <- r5
+        move
+            copy w(y + 40960, (256, 32)) -> w(y + 49152, (256, 32))
+        ring mesh=3 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        r5 = load y + 16384 + 0
+        store seen + 32 <- r5
+        r5 = load y + 16384 + 8184
+        store seen + 40 <- r5
+        move
+            copy w(y + 16384, (256, 32)) -> w(y + 24576, (256, 32))
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r5 = load y + 49152 + 0
+        store seen + 96 <- r5
+        r5 = load y + 49152 + 8184
+        store seen + 104 <- r5
+        move
+            copy w(y + 49152, (256, 32)) -> w(y + 57344, (256, 32))
+        ring mesh=0 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+
+fn p16_321_vc_now.l1(x: f16[4096] @dram, y: f16[12288] @dram, seen: f16[16] @dram, slots: u64[3] @dram)
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 8192 + 0
+        store seen + 16 <- r5
+        r5 = load y + 8192 + 8184
+        store seen + 24 <- r5
+        move
+            copy w(y + 8192, (256, 32)) -> w(y + 16384, (256, 32))
+        ring mesh=3 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=1 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 3
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p16_32103_vc_now.l1(x: f16[4096] @dram, y: f16[20480] @dram, seen: f16[32] @dram, slots: u64[4] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        r5 = load y + 16384 + 0
+        store seen + 32 <- r5
+        r5 = load y + 16384 + 8184
+        store seen + 40 <- r5
+        move
+            copy w(y + 16384, (256, 32)) -> w(y + 24576, (256, 32))
+        ring mesh=3 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 8192 + 0
+        store seen + 16 <- r5
+        r5 = load y + 8192 + 8184
+        store seen + 24 <- r5
+        move
+            copy w(y + 8192, (256, 32)) -> w(y + 16384, (256, 32))
+        ring mesh=0 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=1 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 3
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=2 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r5 = load y + 24576 + 0
+        store seen + 48 <- r5
+        r5 = load y + 24576 + 8184
+        store seen + 56 <- r5
+        move
+            copy w(y + 24576, (256, 32)) -> w(y + 32768, (256, 32))
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+
+fn p16_321032103_vc_now.l1(x: f16[4096] @dram, y: f16[36864] @dram, seen: f16[64] @dram, slots: u64[4] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        r5 = load y + 16384 + 0
+        store seen + 32 <- r5
+        r5 = load y + 16384 + 8184
+        store seen + 40 <- r5
+        move
+            copy w(y + 16384, (256, 32)) -> w(y + 24576, (256, 32))
+        ring mesh=3 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r5 = load y + 49152 + 0
+        store seen + 96 <- r5
+        r5 = load y + 49152 + 8184
+        store seen + 104 <- r5
+        move
+            copy w(y + 49152, (256, 32)) -> w(y + 57344, (256, 32))
+        ring mesh=3 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 8192 + 0
+        store seen + 16 <- r5
+        r5 = load y + 8192 + 8184
+        store seen + 24 <- r5
+        move
+            copy w(y + 8192, (256, 32)) -> w(y + 16384, (256, 32))
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r5 = load y + 40960 + 0
+        store seen + 80 <- r5
+        r5 = load y + 40960 + 8184
+        store seen + 88 <- r5
+        move
+            copy w(y + 40960, (256, 32)) -> w(y + 49152, (256, 32))
+        ring mesh=0 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=1 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r5 = load y + 32768 + 0
+        store seen + 64 <- r5
+        r5 = load y + 32768 + 8184
+        store seen + 72 <- r5
+        move
+            copy w(y + 32768, (256, 32)) -> w(y + 40960, (256, 32))
+        ring mesh=1 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 3
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=2 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r5 = load y + 24576 + 0
+        store seen + 48 <- r5
+        r5 = load y + 24576 + 8184
+        store seen + 56 <- r5
+        move
+            copy w(y + 24576, (256, 32)) -> w(y + 32768, (256, 32))
+        ring mesh=2 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r5 = load y + 57344 + 0
+        store seen + 112 <- r5
+        r5 = load y + 57344 + 8184
+        store seen + 120 <- r5
+        move
+            copy w(y + 57344, (256, 32)) -> w(y + 65536, (256, 32))
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+
+fn p16_01_vc_loaded.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, l: f16[4194304] @dram, slots: u64[2] @dram)
+    node 0
+        send vc[1]
+            run load(4096, l)
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        wait vc[1]
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        send vc[1]
+            run load(4096, l)
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=0 slot=2 amount=1
+        wait vc[1]
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_02_vc_loaded.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, l: f16[4194304] @dram, slots: u64[2] @dram)
+    node 0
+        send vc[1]
+            run load(4096, l)
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        wait vc[1]
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        send vc[1]
+            run load(4096, l)
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=0 slot=2 amount=1
+        wait vc[1]
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_03_vc_loaded.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, l: f16[4194304] @dram, slots: u64[2] @dram)
+    node 0
+        send vc[1]
+            run load(4096, l)
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        wait vc[1]
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        send vc[1]
+            run load(4096, l)
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=0 slot=2 amount=1
+        wait vc[1]
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_01_vc_preready.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        settle 20000
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_02_vc_preready.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        settle 20000
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_03_vc_preready.l1(x: f16[4096] @dram, y: f16[8192] @dram, seen: f16[8] @dram, slots: u64[2] @dram)
+    node 0
+        send vc[0]
+            run cp(x, y)
+        wait vc[0]
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        settle 20000
+        wait slot 1 n=1 consume
+        r5 = load y + 0 + 0
+        store seen + 0 <- r5
+        r5 = load y + 0 + 8184
+        store seen + 8 <- r5
+        move
+            copy w(y + 0, (256, 32)) -> w(y + 8192, (256, 32))
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_01_none_empty.l1(unused: u64[4] @dram, slots: u64[2] @dram)
+    node 0
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_02_none_empty.l1(unused: u64[4] @dram, slots: u64[2] @dram)
+    node 0
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_03_none_empty.l1(unused: u64[4] @dram, slots: u64[2] @dram)
+    node 0
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_10_none_empty.l1(unused: u64[4] @dram, slots: u64[2] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_12_none_empty.l1(unused: u64[4] @dram, slots: u64[2] @dram)
+    node 1
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_13_none_empty.l1(unused: u64[4] @dram, slots: u64[2] @dram)
+    node 1
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_20_none_empty.l1(unused: u64[4] @dram, slots: u64[2] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_21_none_empty.l1(unused: u64[4] @dram, slots: u64[2] @dram)
+    node 1
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_23_none_empty.l1(unused: u64[4] @dram, slots: u64[2] @dram)
+    node 2
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_30_none_empty.l1(unused: u64[4] @dram, slots: u64[2] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_31_none_empty.l1(unused: u64[4] @dram, slots: u64[2] @dram)
+    node 1
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_32_none_empty.l1(unused: u64[4] @dram, slots: u64[2] @dram)
+    node 2
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn p16_012_none_empty.l1(unused: u64[4] @dram, slots: u64[3] @dram)
+    node 0
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+
+fn p16_01230_none_empty.l1(unused: u64[4] @dram, slots: u64[4] @dram)
+    node 0
+        ring mesh=1 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+
+fn p16_012301230_none_empty.l1(unused: u64[4] @dram, slots: u64[4] @dram)
+    node 0
+        ring mesh=1 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=1 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=2 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=3 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        ring mesh=0 slot=1 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 24 <- r14
+
+fn p16_start_host.l1(x: f16[16384] @dram, y: f16[16384] @dram)
+    node 0
+        send vc[0]
+            run cp(x + 0, y + 0)
+        wait vc[0]
+    node 1
+        send vc[0]
+            run cp(x + 8192, y + 8192)
+        wait vc[0]
+    node 2
+        send vc[0]
+            run cp(x + 16384, y + 16384)
+        wait vc[0]
+    node 3
+        send vc[0]
+            run cp(x + 24576, y + 24576)
+        wait vc[0]
+
+fn p16_start_go0.l1(x: f16[16384] @dram, y: f16[16384] @dram, slots: u64[4] @dram)
+    node 0
+        wait slot 3 n=3 consume
+        ring mesh=1 slot=3 amount=1
+        ring mesh=2 slot=3 amount=1
+        ring mesh=3 slot=3 amount=1
+        send vc[0]
+            run cp(x + 0, y + 0)
+        wait vc[0]
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=3 amount=1
+        wait slot 3 n=1 consume
+        send vc[0]
+            run cp(x + 8192, y + 8192)
+        wait vc[0]
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        ring mesh=0 slot=3 amount=1
+        wait slot 3 n=1 consume
+        send vc[0]
+            run cp(x + 16384, y + 16384)
+        wait vc[0]
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 3
+        ring mesh=0 slot=3 amount=1
+        wait slot 3 n=1 consume
+        send vc[0]
+            run cp(x + 24576, y + 24576)
+        wait vc[0]
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 24 <- r14
+
+fn p16_start_go1.l1(x: f16[16384] @dram, y: f16[16384] @dram, slots: u64[4] @dram)
+    node 0
+        ring mesh=1 slot=3 amount=1
+        wait slot 3 n=1 consume
+        send vc[0]
+            run cp(x + 0, y + 0)
+        wait vc[0]
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        wait slot 3 n=3 consume
+        ring mesh=0 slot=3 amount=1
+        ring mesh=2 slot=3 amount=1
+        ring mesh=3 slot=3 amount=1
+        send vc[0]
+            run cp(x + 8192, y + 8192)
+        wait vc[0]
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        ring mesh=1 slot=3 amount=1
+        wait slot 3 n=1 consume
+        send vc[0]
+            run cp(x + 16384, y + 16384)
+        wait vc[0]
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 3
+        ring mesh=1 slot=3 amount=1
+        wait slot 3 n=1 consume
+        send vc[0]
+            run cp(x + 24576, y + 24576)
+        wait vc[0]
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 24 <- r14
+
+fn p16_start_go2.l1(x: f16[16384] @dram, y: f16[16384] @dram, slots: u64[4] @dram)
+    node 0
+        ring mesh=2 slot=3 amount=1
+        wait slot 3 n=1 consume
+        send vc[0]
+            run cp(x + 0, y + 0)
+        wait vc[0]
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=2 slot=3 amount=1
+        wait slot 3 n=1 consume
+        send vc[0]
+            run cp(x + 8192, y + 8192)
+        wait vc[0]
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        wait slot 3 n=3 consume
+        ring mesh=0 slot=3 amount=1
+        ring mesh=1 slot=3 amount=1
+        ring mesh=3 slot=3 amount=1
+        send vc[0]
+            run cp(x + 16384, y + 16384)
+        wait vc[0]
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 3
+        ring mesh=2 slot=3 amount=1
+        wait slot 3 n=1 consume
+        send vc[0]
+            run cp(x + 24576, y + 24576)
+        wait vc[0]
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 24 <- r14
+
+fn p16_start_go3.l1(x: f16[16384] @dram, y: f16[16384] @dram, slots: u64[4] @dram)
+    node 0
+        ring mesh=3 slot=3 amount=1
+        wait slot 3 n=1 consume
+        send vc[0]
+            run cp(x + 0, y + 0)
+        wait vc[0]
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=3 slot=3 amount=1
+        wait slot 3 n=1 consume
+        send vc[0]
+            run cp(x + 8192, y + 8192)
+        wait vc[0]
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 8 <- r14
+    node 2
+        ring mesh=3 slot=3 amount=1
+        wait slot 3 n=1 consume
+        send vc[0]
+            run cp(x + 16384, y + 16384)
+        wait vc[0]
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 16 <- r14
+    node 3
+        wait slot 3 n=3 consume
+        ring mesh=0 slot=3 amount=1
+        ring mesh=1 slot=3 amount=1
+        ring mesh=2 slot=3 amount=1
+        send vc[0]
+            run cp(x + 24576, y + 24576)
+        wait vc[0]
+        ctrl il_select <- 3
+        r14 = ctrl sig
+        store slots + 24 <- r14

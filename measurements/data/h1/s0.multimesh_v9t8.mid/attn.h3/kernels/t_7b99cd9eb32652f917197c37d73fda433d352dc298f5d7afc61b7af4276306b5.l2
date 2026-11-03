@@ -1,0 +1,4 @@
+target ktpu.v9
+
+fn t_7b99cd9eb32652f917197c37d73fda433d352dc298f5d7afc61b7af4276306b5.l2(p_x: f16[7092, 16] @dram, q: mx7b[192, 224] @dram(gn=16, nk=1))
+    quant q <- p_x finite_batch=4 overlap=1 classifier_overlap=0 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 read_map=((113472, 384, 0, 37824, ((3, 64), (64, 1), (197, 576)), ((3, 12608), (64, 197), (197, 1))), (37824, 0, 0, 39936, ((192, 197), (197, 1)), ((192, 208), (197, 1)))) read_shape=(208, 0, 0, 64, 208) read_batch=(3, 64)

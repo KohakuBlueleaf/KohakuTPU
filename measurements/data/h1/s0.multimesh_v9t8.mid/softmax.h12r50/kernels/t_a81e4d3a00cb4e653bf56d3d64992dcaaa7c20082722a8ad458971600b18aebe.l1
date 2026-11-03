@@ -1,0 +1,958 @@
+target ktpu.v9 vregs=128 vcopies=2
+
+image t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_clear_0()
+    vsync fe on=math
+    getstk s14
+    vmov v31, k0
+    vsync fe on=math
+    halt
+
+image t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_0(src0, dst0, trips)
+    desc a0=src0 walk=(32, 1)
+    desc a1=dst0 walk=(32, 4)
+    seti s2 = 65536.0
+    seti s3 = 16.0
+    ainc a1 += 0
+    vsync fe on=fill
+    vsync fe on=unpack
+    vsel v0[0], k1, k0, k0 vl=16
+    vmov v0[1], v0[0] vl=16
+    vmov v0[2], v0[0] vl=16
+    vmov v0[3], v0[0] vl=16
+    vmov v0[4], v0[0] vl=16
+    vmov v0[5], v0[0] vl=16
+    vmov v0[6], v0[0] vl=16
+    vmov v0[7], v0[0] vl=16
+    vsync pack on=drain
+    vmul v1, v0, k0
+    vexp2d v3, v1, k0
+    vpack v0 -> l1[256] mx7b
+    vsync drain on=pack
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 6528
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 6528
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 6528
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 128
+    vdrain a1 <- l1[256] rel
+    ainc a1 += 0
+    vdrain a1 <- l1[256] rel
+    vsync fe on=drain
+    vsync fe on=math
+    getstk s14
+    vmax v31, v31, s14
+    vsync fe on=math
+    halt
+
+image t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_1(src0, dst0, src1, dst1, trips)
+    desc a0=src0 walk=(32, 1)
+    desc a2=dst0 walk=(32, 4)
+    desc a1=src1 walk=(32, 1)
+    desc a3=dst1 walk=(32, 4)
+    seti s2 = 65536.0
+    seti s3 = 16.0
+    ainc a2 += 0
+    ainc a3 += 0
+    vsync fe on=fill
+    vsync fe on=unpack
+    vsel v0[0], k1, k0, k0 vl=16
+    vmov v0[1], v0[0] vl=16
+    vmov v0[2], v0[0] vl=16
+    vmov v0[3], v0[0] vl=16
+    vmov v0[4], v0[0] vl=16
+    vmov v0[5], v0[0] vl=16
+    vmov v0[6], v0[0] vl=16
+    vmov v0[7], v0[0] vl=16
+    vsync fe on=fill
+    vsync fe on=unpack
+    vsel v4[0], k1, k0, k0 vl=16
+    vmov v4[1], v4[0] vl=16
+    vmov v4[2], v4[0] vl=16
+    vmov v4[3], v4[0] vl=16
+    vmov v4[4], v4[0] vl=16
+    vmov v4[5], v4[0] vl=16
+    vmov v4[6], v4[0] vl=16
+    vmov v4[7], v4[0] vl=16
+    vsync pack on=drain
+    vmul v1, v0, k0
+    vmul v5, v4, k0
+    vexp2d v3, v1, k0
+    vexp2d v7, v5, k0
+    vpack v0 -> l1[256] mx7b
+    vpack v4 -> l1[260] mx7b
+    vsync drain on=pack
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 6528
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 6528
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 6528
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 6528
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 6528
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 6528
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 6528
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 6528
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 6528
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 0
+    vdrain a2 <- l1[256] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 6528
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 6528
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 6528
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 6528
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 6528
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 6528
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 6528
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 6528
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 6528
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 0
+    vdrain a3 <- l1[260] rel
+    vsync fe on=drain
+    vsync fe on=math
+    getstk s14
+    vmax v31, v31, s14
+    vsync fe on=math
+    halt
+
+image t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_2(src0, dst0, src1, dst1, src2, dst2, src3, dst3, trips)
+    desc a0=src0 walk=(32, 2)
+    desc a4=dst0 walk=(32, 4)
+    desc a1=src1 walk=(32, 2)
+    desc a5=dst1 walk=(32, 4)
+    desc a2=src2 walk=(32, 2)
+    desc a6=dst2 walk=(32, 4)
+    desc a3=src3 walk=(32, 2)
+    desc a7=dst3 walk=(32, 4)
+    seti s2 = 65536.0
+    seti s3 = 16.0
+    ainc a4 += 14336
+    ainc a5 += 14336
+    ainc a6 += 14336
+    ainc a7 += 14336
+    ainc a0 += 31616
+    vfill a0 -> l1[0] rel
+    seti s0 = trips+-1
+    loop s0
+        vsync fe on=fill
+        vunpk v32 <- l1[0] f16 n=2
+        vsync fe on=unpack
+        ainc a1 += 31616
+        vfill a1 -> l1[128] rel
+        vsel v0[2], k1, k0, k0 vl=16
+        vsel v0[0 :], k1, v32[0 :], k0 vl=32
+        vmov v0[3], v0[2] vl=16
+        vmov v0[4], v0[2] vl=16
+        vmov v0[5], v0[2] vl=16
+        vmov v0[6], v0[2] vl=16
+        vmov v0[7], v0[2] vl=16
+        vsync fe on=fill
+        vunpk v32 <- l1[128] f16 n=2
+        vsync fe on=unpack
+        ainc a2 += 31616
+        vfill a2 -> l1[0] rel
+        vsel v4[2], k1, k0, k0 vl=16
+        vsel v4[0 :], k1, v32[0 :], k0 vl=32
+        vmov v4[3], v4[2] vl=16
+        vmov v4[4], v4[2] vl=16
+        vmov v4[5], v4[2] vl=16
+        vmov v4[6], v4[2] vl=16
+        vmov v4[7], v4[2] vl=16
+        vsync fe on=fill
+        vunpk v32 <- l1[0] f16 n=2
+        vsync fe on=unpack
+        ainc a3 += 31616
+        vfill a3 -> l1[128] rel
+        vsel v8[2], k1, k0, k0 vl=16
+        vsel v8[0 :], k1, v32[0 :], k0 vl=32
+        vmov v8[3], v8[2] vl=16
+        vmov v8[4], v8[2] vl=16
+        vmov v8[5], v8[2] vl=16
+        vmov v8[6], v8[2] vl=16
+        vmov v8[7], v8[2] vl=16
+        vsync fe on=fill
+        vunpk v32 <- l1[128] f16 n=2
+        vsync fe on=unpack
+        vsel v12[2], k1, k0, k0 vl=16
+        vsel v12[0 :], k1, v32[0 :], k0 vl=32
+        vmov v12[3], v12[2] vl=16
+        vmov v12[4], v12[2] vl=16
+        vmov v12[5], v12[2] vl=16
+        vmov v12[6], v12[2] vl=16
+        vmov v12[7], v12[2] vl=16
+        ainc a0 += 31616
+        vfill a0 -> l1[0] rel
+        vsync pack on=drain
+        vmul v1, v0, k0
+        vpack v0 -> l1[256] mx7b
+        vmul v5, v4, k0
+        vmul v9, v8, k0
+        vpack v4 -> l1[260] mx7b
+        vmul v13, v12, k0
+        vexp2d v3, v1, k0
+        vpack v8 -> l1[264] mx7b
+        vexp2d v7, v5, k0
+        vexp2d v11, v9, k0
+        vpack v12 -> l1[268] mx7b
+        vexp2d v15, v13, k0
+        vsync drain on=pack
+        ainc a4 += 14336
+        vdrain a4 <- l1[256] rel
+        ainc a5 += 14336
+        vdrain a5 <- l1[260] rel
+        ainc a6 += 14336
+        vdrain a6 <- l1[264] rel
+        ainc a7 += 14336
+        vdrain a7 <- l1[268] rel
+    vsync fe on=fill
+    vunpk v32 <- l1[0] f16 n=2
+    vsync fe on=unpack
+    ainc a1 += 31616
+    vfill a1 -> l1[128] rel
+    vsel v0[2], k1, k0, k0 vl=16
+    vsel v0[0 :], k1, v32[0 :], k0 vl=32
+    vmov v0[3], v0[2] vl=16
+    vmov v0[4], v0[2] vl=16
+    vmov v0[5], v0[2] vl=16
+    vmov v0[6], v0[2] vl=16
+    vmov v0[7], v0[2] vl=16
+    vsync fe on=fill
+    vunpk v32 <- l1[128] f16 n=2
+    vsync fe on=unpack
+    ainc a2 += 31616
+    vfill a2 -> l1[0] rel
+    vsel v4[2], k1, k0, k0 vl=16
+    vsel v4[0 :], k1, v32[0 :], k0 vl=32
+    vmov v4[3], v4[2] vl=16
+    vmov v4[4], v4[2] vl=16
+    vmov v4[5], v4[2] vl=16
+    vmov v4[6], v4[2] vl=16
+    vmov v4[7], v4[2] vl=16
+    vsync fe on=fill
+    vunpk v32 <- l1[0] f16 n=2
+    vsync fe on=unpack
+    ainc a3 += 31616
+    vfill a3 -> l1[128] rel
+    vsel v8[2], k1, k0, k0 vl=16
+    vsel v8[0 :], k1, v32[0 :], k0 vl=32
+    vmov v8[3], v8[2] vl=16
+    vmov v8[4], v8[2] vl=16
+    vmov v8[5], v8[2] vl=16
+    vmov v8[6], v8[2] vl=16
+    vmov v8[7], v8[2] vl=16
+    vsync fe on=fill
+    vunpk v32 <- l1[128] f16 n=2
+    vsync fe on=unpack
+    vsel v12[2], k1, k0, k0 vl=16
+    vsel v12[0 :], k1, v32[0 :], k0 vl=32
+    vmov v12[3], v12[2] vl=16
+    vmov v12[4], v12[2] vl=16
+    vmov v12[5], v12[2] vl=16
+    vmov v12[6], v12[2] vl=16
+    vmov v12[7], v12[2] vl=16
+    vsync pack on=drain
+    vmul v1, v0, k0
+    vpack v0 -> l1[256] mx7b
+    vmul v5, v4, k0
+    vmul v9, v8, k0
+    vpack v4 -> l1[260] mx7b
+    vmul v13, v12, k0
+    vexp2d v3, v1, k0
+    vpack v8 -> l1[264] mx7b
+    vexp2d v7, v5, k0
+    vexp2d v11, v9, k0
+    vpack v12 -> l1[268] mx7b
+    vexp2d v15, v13, k0
+    vsync drain on=pack
+    ainc a4 += 14336
+    vdrain a4 <- l1[256] rel
+    ainc a5 += 14336
+    vdrain a5 <- l1[260] rel
+    ainc a6 += 14336
+    vdrain a6 <- l1[264] rel
+    ainc a7 += 14336
+    vdrain a7 <- l1[268] rel
+    vsync fe on=drain
+    vsync fe on=math
+    getstk s14
+    vmax v31, v31, s14
+    vsync fe on=math
+    halt
+
+image t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(src0, dst0, src1, dst1, src2, dst2, src3, dst3, trips)
+    desc a0=src0 walk=((32, 2), (128, 4))
+    desc a4=dst0 walk=(32, 4)
+    desc a1=src1 walk=((32, 2), (128, 4))
+    desc a5=dst1 walk=(32, 4)
+    desc a2=src2 walk=((32, 2), (128, 4))
+    desc a6=dst2 walk=(32, 4)
+    desc a3=src3 walk=((32, 2), (128, 4))
+    desc a7=dst3 walk=(32, 4)
+    seti s2 = 65536.0
+    seti s3 = 16.0
+    ainc a4 += 128
+    ainc a5 += 128
+    ainc a6 += 128
+    ainc a7 += 128
+    ainc a0 += 512
+    vfill a0 -> l1[0] rel
+    seti s0 = trips+-1
+    loop s0
+        vsync fe on=fill
+        vunpk v32 <- l1[0] f16 n=8
+        vsync fe on=unpack
+        ainc a1 += 512
+        vfill a1 -> l1[128] rel
+        vsel v0[0 :], k1, v32[0 :], k0 vl=128
+        vsync fe on=fill
+        vunpk v32 <- l1[128] f16 n=8
+        vsync fe on=unpack
+        ainc a2 += 512
+        vfill a2 -> l1[0] rel
+        vsel v4[0 :], k1, v32[0 :], k0 vl=128
+        vsync fe on=fill
+        vunpk v32 <- l1[0] f16 n=8
+        vsync fe on=unpack
+        ainc a3 += 512
+        vfill a3 -> l1[128] rel
+        vsel v8[0 :], k1, v32[0 :], k0 vl=128
+        vsync fe on=fill
+        vunpk v32 <- l1[128] f16 n=8
+        vsync fe on=unpack
+        vsel v12[0 :], k1, v32[0 :], k0 vl=128
+        ainc a0 += 512
+        vfill a0 -> l1[0] rel
+        vsync pack on=drain
+        vmul v1, v0, k0
+        vpack v0 -> l1[256] mx7b
+        vmul v5, v4, k0
+        vmul v9, v8, k0
+        vpack v4 -> l1[260] mx7b
+        vmul v13, v12, k0
+        vexp2d v3, v1, k0
+        vpack v8 -> l1[264] mx7b
+        vexp2d v7, v5, k0
+        vexp2d v11, v9, k0
+        vpack v12 -> l1[268] mx7b
+        vexp2d v15, v13, k0
+        vsync drain on=pack
+        ainc a4 += 128
+        vdrain a4 <- l1[256] rel
+        ainc a5 += 128
+        vdrain a5 <- l1[260] rel
+        ainc a6 += 128
+        vdrain a6 <- l1[264] rel
+        ainc a7 += 128
+        vdrain a7 <- l1[268] rel
+    vsync fe on=fill
+    vunpk v32 <- l1[0] f16 n=8
+    vsync fe on=unpack
+    ainc a1 += 512
+    vfill a1 -> l1[128] rel
+    vsel v0[0 :], k1, v32[0 :], k0 vl=128
+    vsync fe on=fill
+    vunpk v32 <- l1[128] f16 n=8
+    vsync fe on=unpack
+    ainc a2 += 512
+    vfill a2 -> l1[0] rel
+    vsel v4[0 :], k1, v32[0 :], k0 vl=128
+    vsync fe on=fill
+    vunpk v32 <- l1[0] f16 n=8
+    vsync fe on=unpack
+    ainc a3 += 512
+    vfill a3 -> l1[128] rel
+    vsel v8[0 :], k1, v32[0 :], k0 vl=128
+    vsync fe on=fill
+    vunpk v32 <- l1[128] f16 n=8
+    vsync fe on=unpack
+    vsel v12[0 :], k1, v32[0 :], k0 vl=128
+    vsync pack on=drain
+    vmul v1, v0, k0
+    vpack v0 -> l1[256] mx7b
+    vmul v5, v4, k0
+    vmul v9, v8, k0
+    vpack v4 -> l1[260] mx7b
+    vmul v13, v12, k0
+    vexp2d v3, v1, k0
+    vpack v8 -> l1[264] mx7b
+    vexp2d v7, v5, k0
+    vexp2d v11, v9, k0
+    vpack v12 -> l1[268] mx7b
+    vexp2d v15, v13, k0
+    vsync drain on=pack
+    ainc a4 += 128
+    vdrain a4 <- l1[256] rel
+    ainc a5 += 128
+    vdrain a5 <- l1[260] rel
+    ainc a6 += 128
+    vdrain a6 <- l1[264] rel
+    ainc a7 += 128
+    vdrain a7 <- l1[268] rel
+    vsync fe on=drain
+    vsync fe on=math
+    getstk s14
+    vmax v31, v31, s14
+    vsync fe on=math
+    halt
+
+image t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(src0, dst0, trips)
+    desc a0=src0 walk=((32, 2), (128, 4))
+    desc a1=dst0 walk=(32, 4)
+    seti s2 = 65536.0
+    seti s3 = 16.0
+    ainc a1 += 0
+    ainc a0 += 0
+    vfill a0 -> l1[0] rel
+    vsync fe on=fill
+    vunpk v32 <- l1[0] f16 n=8
+    vsync fe on=unpack
+    vsel v0[0 :], k1, v32[0 :], k0 vl=128
+    vsync pack on=drain
+    vmul v1, v0, k0
+    vexp2d v3, v1, k0
+    vpack v0 -> l1[256] mx7b
+    vsync drain on=pack
+    ainc a1 += 0
+    vdrain a1 <- l1[256] rel
+    vsync fe on=drain
+    vsync fe on=math
+    getstk s14
+    vmax v31, v31, s14
+    vsync fe on=math
+    halt
+
+image t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_5(src0, dst0, src1, dst1, src2, dst2, trips)
+    desc a0=src0 walk=((32, 2), (128, 4))
+    desc a3=dst0 walk=(32, 4)
+    desc a1=src1 walk=((32, 2), (128, 4))
+    desc a4=dst1 walk=(32, 4)
+    desc a2=src2 walk=((32, 2), (128, 4))
+    desc a5=dst2 walk=(32, 4)
+    seti s2 = 65536.0
+    seti s3 = 16.0
+    ainc a3 += 0
+    ainc a4 += 0
+    ainc a5 += 0
+    ainc a0 += 0
+    vfill a0 -> l1[0] rel
+    vsync fe on=fill
+    vunpk v32 <- l1[0] f16 n=8
+    vsync fe on=unpack
+    ainc a1 += 0
+    vfill a1 -> l1[128] rel
+    vsel v0[0 :], k1, v32[0 :], k0 vl=128
+    vsync fe on=fill
+    vunpk v32 <- l1[128] f16 n=8
+    vsync fe on=unpack
+    ainc a2 += 0
+    vfill a2 -> l1[0] rel
+    vsel v4[0 :], k1, v32[0 :], k0 vl=128
+    vsync fe on=fill
+    vunpk v32 <- l1[0] f16 n=8
+    vsync fe on=unpack
+    vsel v8[0 :], k1, v32[0 :], k0 vl=128
+    vsync pack on=drain
+    vmul v1, v0, k0
+    vpack v0 -> l1[256] mx7b
+    vmul v5, v4, k0
+    vmul v9, v8, k0
+    vpack v4 -> l1[260] mx7b
+    vexp2d v3, v1, k0
+    vexp2d v7, v5, k0
+    vpack v8 -> l1[264] mx7b
+    vexp2d v11, v9, k0
+    vsync drain on=pack
+    ainc a3 += 0
+    vdrain a3 <- l1[256] rel
+    ainc a4 += 0
+    vdrain a4 <- l1[260] rel
+    ainc a5 += 0
+    vdrain a5 <- l1[264] rel
+    vsync fe on=drain
+    vsync fe on=math
+    getstk s14
+    vmax v31, v31, s14
+    vsync fe on=math
+    halt
+
+image t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_6(src0, dst0, src1, dst1, trips)
+    desc a0=src0 walk=((32, 2), (128, 4))
+    desc a2=dst0 walk=(32, 4)
+    desc a1=src1 walk=((32, 2), (128, 4))
+    desc a3=dst1 walk=(32, 4)
+    seti s2 = 65536.0
+    seti s3 = 16.0
+    ainc a2 += 0
+    ainc a3 += 0
+    ainc a0 += 0
+    vfill a0 -> l1[0] rel
+    vsync fe on=fill
+    vunpk v32 <- l1[0] f16 n=8
+    vsync fe on=unpack
+    ainc a1 += 0
+    vfill a1 -> l1[128] rel
+    vsel v0[0 :], k1, v32[0 :], k0 vl=128
+    vsync fe on=fill
+    vunpk v32 <- l1[128] f16 n=8
+    vsync fe on=unpack
+    vsel v4[0 :], k1, v32[0 :], k0 vl=128
+    vsync pack on=drain
+    vmul v1, v0, k0
+    vmul v5, v4, k0
+    vexp2d v3, v1, k0
+    vexp2d v7, v5, k0
+    vpack v0 -> l1[256] mx7b
+    vpack v4 -> l1[260] mx7b
+    vsync drain on=pack
+    ainc a2 += 0
+    vdrain a2 <- l1[256] rel
+    ainc a3 += 0
+    vdrain a3 <- l1[260] rel
+    vsync fe on=drain
+    vsync fe on=math
+    getstk s14
+    vmax v31, v31, s14
+    vsync fe on=math
+    halt
+
+image t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_status_0(status)
+    desc a2=status walk=(32, 4)
+    vpack v31 -> l1[384] f16 n=4
+    vsync fe on=pack
+    vdrain a2 <- l1[384]
+    vsync fe on=drain
+    halt
+
+fn t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.l1(p_x: f16[11856, 16] @dram, q: mx7b[2688, 64] @dram(gn=56, nk=1), __mx7_status_0: f16[128] @dram)
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_clear_0()
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_clear_0()
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_0(p_x+0, q+149760, 1)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+182464, q+83328, p_x+184000, q+83712, p_x+185536, q+84096, p_x+187072, q+84480, 3)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_1(p_x+0, q+6400, p_x+0, q+78080, 1)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_6(p_x+188608, q+84864, p_x+189120, q+84992, 1)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_2(p_x+31488, q+6272, p_x+126336, q+49280, p_x+221184, q+92288, p_x+316032, q+135296, 3)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+196096, q+86016, p_x+202240, q+87552, p_x+208384, q+89088, p_x+214528, q+90624, 12)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_2(p_x+31552, q+13440, p_x+126400, q+56448, p_x+221248, q+99456, p_x+316096, q+142464, 3)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+220672, q+92160, 1)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+6400, q+0, p_x+12544, q+1536, p_x+18688, q+3072, p_x+24832, q+4608, 12)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+196160, q+93184, p_x+202304, q+94720, p_x+208448, q+96256, p_x+214592, q+97792, 12)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+30976, q+6144, 1)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+220736, q+99328, 1)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+6464, q+7168, p_x+12608, q+8704, p_x+18752, q+10240, p_x+24896, q+11776, 12)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+227712, q+100352, p_x+233856, q+101888, p_x+240000, q+103424, p_x+246144, q+104960, 12)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+31040, q+13312, 1)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+252288, q+106496, 1)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+38016, q+14336, p_x+44160, q+15872, p_x+50304, q+17408, p_x+56448, q+18944, 12)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+227776, q+107520, p_x+233920, q+109056, p_x+240064, q+110592, p_x+246208, q+112128, 12)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+62592, q+20480, 1)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+252352, q+113664, 1)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+38080, q+21504, p_x+44224, q+23040, p_x+50368, q+24576, p_x+56512, q+26112, 12)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+259328, q+114688, p_x+265472, q+116224, p_x+271616, q+117760, p_x+277760, q+119296, 12)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+62656, q+27648, 1)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+283904, q+120832, 1)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+69632, q+28672, p_x+75776, q+30208, p_x+81920, q+31744, p_x+88064, q+33280, 12)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+259392, q+121856, p_x+265536, q+123392, p_x+271680, q+124928, p_x+277824, q+126464, 12)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+94208, q+34816, 1)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+283968, q+128000, 1)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+69696, q+35840, p_x+75840, q+37376, p_x+81984, q+38912, p_x+88128, q+40448, 12)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+290944, q+129024, p_x+297088, q+130560, p_x+303232, q+132096, p_x+309376, q+133632, 12)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+94272, q+41984, 1)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+315520, q+135168, 1)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+101248, q+43008, p_x+107392, q+44544, p_x+113536, q+46080, p_x+119680, q+47616, 12)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+291008, q+136192, p_x+297152, q+137728, p_x+303296, q+139264, p_x+309440, q+140800, 12)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+125824, q+49152, 1)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+315584, q+142336, 1)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+101312, q+50176, p_x+107456, q+51712, p_x+113600, q+53248, p_x+119744, q+54784, 12)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+322560, q+143360, p_x+328704, q+144896, p_x+334848, q+146432, p_x+340992, q+147968, 12)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+125888, q+56320, 1)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+347136, q+149504, 1)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+132864, q+57344, p_x+139008, q+58880, p_x+145152, q+60416, p_x+151296, q+61952, 12)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+322624, q+150528, p_x+328768, q+152064, p_x+334912, q+153600, p_x+341056, q+155136, 12)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+157440, q+63488, 1)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+347200, q+156672, 1)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+132928, q+64512, p_x+139072, q+66048, p_x+145216, q+67584, p_x+151360, q+69120, 12)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+354176, q+157696, p_x+360320, q+159232, p_x+366464, q+160768, p_x+372608, q+162304, 12)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+157504, q+70656, 1)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+378752, q+163840, 1)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+164480, q+71680, p_x+170624, q+73216, p_x+176768, q+74752, p_x+182912, q+76288, 12)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+354240, q+164864, p_x+360384, q+166400, p_x+366528, q+167936, p_x+372672, q+169472, 12)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+189056, q+77824, 1)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_4(p_x+378816, q+171008, 1)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_3(p_x+164544, q+78848, p_x+168640, q+79872, p_x+172736, q+80896, p_x+176832, q+81920, 8)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_pack_0_5(p_x+180928, q+82944, p_x+181440, q+83072, p_x+181952, q+83200, 1)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_status_0(__mx7_status_0+0)
+    send vc[1]
+        run t_a81e4d3a00cb4e653bf56d3d64992dcaaa7c20082722a8ad458971600b18aebe.read_status_0(__mx7_status_0+128)
+    barrier
+    r14 = load __mx7_status_0+0
+    assert_zero r14 code=1
+    r14 = load __mx7_status_0+128
+    assert_zero r14 code=1
+    barrier

@@ -1,0 +1,30 @@
+target ktpu.v9
+
+fn t_d7f6ffaf0d36352790e950acd8cfcc4bcc56106f0221e6e77f79b6b033170164.l2(a: mx7a[1200, 64] @dram(gm=50, nk=1), b: mx7b[1344, 64] @dram(gn=8, nk=1), out: f16[1200, 224] @dram)
+    h1 = buffer  : f16[1600, 32] @stage(tile=50x8)
+    for k1 in 0..11 pipe=2
+        par u1 in 0..4 on mg[u1]
+            for k2 in 0..1
+                when (k1*4 + u1 + k2*4) < 42
+                    acc1 = zero  : f32[200, 32] @acc
+                    for k3 in 0..2
+                        a1 = fill a[((k1*4 + u1 + k2*4) / 7)*200 + (((k1*4 + u1 + k2*4) % 7) / 7)*200 : +200, k3*32 : +32]  : mx7a[200, 32] @A
+                        b1 = fill b[((k1*4 + u1 + k2*4) / 7)*224 + (((k1*4 + u1 + k2*4) % 7) % 7)*32 : +32, k3*32 : +32]  : mx7b[32, 32] @B
+                        acc1 = gemm a1, b1, acc1  : f32[200, 32] @acc
+                    drain acc1 -> h1[(k1 % 2)*800 + u1*200 + k2*800 : +200, 0 : +32]
+        par c1 in 0..4 on vc[any]
+            when (k1*4 + c1) < 42
+                for t1 in 0..12
+                    xl1 = load h1[(k1 % 2)*800 + c1*200 + t1*16 : +16, 0 : +32]  : f16[16, 32] @l1(gt4)
+                    v1 = unpack xl1             : f32[16, 32] @reg(gt4)
+                    e1 = mul v1, 0.125          : f32[16, 32] @reg(gt4)
+                    p1 = pack e1                : f16[16, 32] @l1(gt4)
+                    store out[((k1*4 + c1) / 7)*200 + (((k1*4 + c1) % 7) / 7)*200 + t1*16 : +16, (((k1*4 + c1) % 7) % 7)*32 : +32] <- p1
+        par c2 in 0..4 on vc[any]
+            when (k1*4 + c2) < 42
+                for t2 in 0..1
+                    xl2 = load h1[(k1 % 2)*800 + c2*200 + t2*8 + 192 : +8, 0 : +32]  : f16[8, 32] @l1(gt4)
+                    v2 = unpack xl2             : f32[8, 32] @reg(gt4)
+                    e2 = mul v2, 0.125          : f32[8, 32] @reg(gt4)
+                    p2 = pack e2                : f16[8, 32] @l1(gt4)
+                    store out[((k1*4 + c2) / 7)*200 + (((k1*4 + c2) % 7) / 7)*200 + t2*8 + 192 : +8, (((k1*4 + c2) % 7) % 7)*32 : +32] <- p2

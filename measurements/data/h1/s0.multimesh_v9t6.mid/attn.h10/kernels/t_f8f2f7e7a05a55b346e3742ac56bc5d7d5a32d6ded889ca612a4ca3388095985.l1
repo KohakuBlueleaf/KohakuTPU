@@ -1,0 +1,691 @@
+target ktpu.v9 vregs=128 vcopies=2
+
+image t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc0_0(p_a0, p_a1)
+    desc a0=p_a0 walk=((32, 48), (1536, 2))
+    desc a1=p_a1 walk=((32, 12), (3840, 8))
+    ainc a0 += 3072
+    ainc a1 += 30720
+    vfill a0 -> l1[0] rel
+    seti s15 = 6
+    loop s15
+        vbar
+        vsync fill on=unpack
+        vfill a0 -> l1[96] rel
+        vunpk v0 <- l1[0] gt4
+        vunpk v1 <- l1[8] gt4
+        vunpk v2 <- l1[16] gt4
+        vunpk v3 <- l1[24] gt4
+        vunpk v4 <- l1[32] gt4
+        vunpk v5 <- l1[40] gt4
+        vsync pack on=drain slack=1
+        vpack v0 -> l1[192] f16 walk=(12, 1)
+        vpack v1 -> l1[194] f16 walk=(12, 1)
+        vpack v2 -> l1[196] f16 walk=(12, 1)
+        vpack v3 -> l1[198] f16 walk=(12, 1)
+        vpack v4 -> l1[200] f16 walk=(12, 1)
+        vpack v5 -> l1[202] f16 walk=(12, 1)
+        vunpk v0 <- l1[48] gt4
+        vunpk v1 <- l1[56] gt4
+        vunpk v2 <- l1[64] gt4
+        vunpk v3 <- l1[72] gt4
+        vunpk v4 <- l1[80] gt4
+        vunpk v5 <- l1[88] gt4
+        vpack v0 -> l1[240] f16 walk=(12, 1)
+        vpack v1 -> l1[242] f16 walk=(12, 1)
+        vpack v2 -> l1[244] f16 walk=(12, 1)
+        vpack v3 -> l1[246] f16 walk=(12, 1)
+        vpack v4 -> l1[248] f16 walk=(12, 1)
+        vpack v5 -> l1[250] f16 walk=(12, 1)
+        vsync drain on=pack
+        vdrain a1 <- l1[192] rel
+        vbar
+        vsync fill on=unpack
+        vfill a0 -> l1[0] rel
+        vunpk v0 <- l1[96] gt4
+        vunpk v1 <- l1[104] gt4
+        vunpk v2 <- l1[112] gt4
+        vunpk v3 <- l1[120] gt4
+        vunpk v4 <- l1[128] gt4
+        vunpk v5 <- l1[136] gt4
+        vsync pack on=drain slack=1
+        vpack v0 -> l1[288] f16 walk=(12, 1)
+        vpack v1 -> l1[290] f16 walk=(12, 1)
+        vpack v2 -> l1[292] f16 walk=(12, 1)
+        vpack v3 -> l1[294] f16 walk=(12, 1)
+        vpack v4 -> l1[296] f16 walk=(12, 1)
+        vpack v5 -> l1[298] f16 walk=(12, 1)
+        vunpk v0 <- l1[144] gt4
+        vunpk v1 <- l1[152] gt4
+        vunpk v2 <- l1[160] gt4
+        vunpk v3 <- l1[168] gt4
+        vunpk v4 <- l1[176] gt4
+        vunpk v5 <- l1[184] gt4
+        vpack v0 -> l1[336] f16 walk=(12, 1)
+        vpack v1 -> l1[338] f16 walk=(12, 1)
+        vpack v2 -> l1[340] f16 walk=(12, 1)
+        vpack v3 -> l1[342] f16 walk=(12, 1)
+        vpack v4 -> l1[344] f16 walk=(12, 1)
+        vpack v5 -> l1[346] f16 walk=(12, 1)
+        vsync drain on=pack
+        vdrain a1 <- l1[288] rel
+    vbar
+    vunpk v0 <- l1[0] gt4
+    vunpk v1 <- l1[8] gt4
+    vunpk v2 <- l1[16] gt4
+    vunpk v3 <- l1[24] gt4
+    vunpk v4 <- l1[32] gt4
+    vunpk v5 <- l1[40] gt4
+    vsync pack on=drain slack=1
+    vpack v0 -> l1[192] f16 walk=(12, 1)
+    vpack v1 -> l1[194] f16 walk=(12, 1)
+    vpack v2 -> l1[196] f16 walk=(12, 1)
+    vpack v3 -> l1[198] f16 walk=(12, 1)
+    vpack v4 -> l1[200] f16 walk=(12, 1)
+    vpack v5 -> l1[202] f16 walk=(12, 1)
+    vunpk v0 <- l1[48] gt4
+    vunpk v1 <- l1[56] gt4
+    vunpk v2 <- l1[64] gt4
+    vunpk v3 <- l1[72] gt4
+    vunpk v4 <- l1[80] gt4
+    vunpk v5 <- l1[88] gt4
+    vpack v0 -> l1[240] f16 walk=(12, 1)
+    vpack v1 -> l1[242] f16 walk=(12, 1)
+    vpack v2 -> l1[244] f16 walk=(12, 1)
+    vpack v3 -> l1[246] f16 walk=(12, 1)
+    vpack v4 -> l1[248] f16 walk=(12, 1)
+    vpack v5 -> l1[250] f16 walk=(12, 1)
+    vsync drain on=pack
+    vdrain a1 <- l1[192] rel
+    halt
+
+image t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc1_1(p_a0, p_a1)
+    desc a0=p_a0 walk=((32, 48), (1536, 2))
+    desc a1=p_a1 walk=((32, 12), (3840, 8))
+    ainc a0 += 3072
+    ainc a1 += 30720
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[0] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[96] rel
+    seti s15 = 5
+    loop s15
+        vsync unpack on=fill slack=1
+        vunpk v0 <- l1[0] gt4
+        vunpk v1 <- l1[8] gt4
+        vunpk v2 <- l1[16] gt4
+        vsync pack on=drain slack=1
+        vpack v0 -> l1[192] f16 walk=(12, 1)
+        vunpk v3 <- l1[24] gt4
+        vpack v1 -> l1[194] f16 walk=(12, 1)
+        vunpk v4 <- l1[32] gt4
+        vpack v2 -> l1[196] f16 walk=(12, 1)
+        vunpk v5 <- l1[40] gt4
+        vpack v3 -> l1[198] f16 walk=(12, 1)
+        vunpk v6 <- l1[48] gt4
+        vpack v4 -> l1[200] f16 walk=(12, 1)
+        vunpk v7 <- l1[56] gt4
+        vpack v5 -> l1[202] f16 walk=(12, 1)
+        vunpk v8 <- l1[64] gt4
+        vpack v6 -> l1[240] f16 walk=(12, 1)
+        vunpk v9 <- l1[72] gt4
+        vpack v7 -> l1[242] f16 walk=(12, 1)
+        vunpk v10 <- l1[80] gt4
+        vpack v8 -> l1[244] f16 walk=(12, 1)
+        vunpk v11 <- l1[88] gt4
+        vpack v9 -> l1[246] f16 walk=(12, 1)
+        vpack v10 -> l1[248] f16 walk=(12, 1)
+        vsync fill on=unpack slack=0
+        vfill a0 -> l1[0] rel
+        vpack v11 -> l1[250] f16 walk=(12, 1)
+        vsync drain on=pack slack=0
+        vdrain a1 <- l1[192] rel
+        vsync unpack on=fill slack=1
+        vunpk v12 <- l1[96] gt4
+        vunpk v13 <- l1[104] gt4
+        vunpk v14 <- l1[112] gt4
+        vsync pack on=drain slack=1
+        vpack v12 -> l1[288] f16 walk=(12, 1)
+        vunpk v15 <- l1[120] gt4
+        vpack v13 -> l1[290] f16 walk=(12, 1)
+        vunpk v16 <- l1[128] gt4
+        vpack v14 -> l1[292] f16 walk=(12, 1)
+        vunpk v17 <- l1[136] gt4
+        vpack v15 -> l1[294] f16 walk=(12, 1)
+        vunpk v18 <- l1[144] gt4
+        vpack v16 -> l1[296] f16 walk=(12, 1)
+        vunpk v19 <- l1[152] gt4
+        vpack v17 -> l1[298] f16 walk=(12, 1)
+        vunpk v20 <- l1[160] gt4
+        vpack v18 -> l1[336] f16 walk=(12, 1)
+        vunpk v21 <- l1[168] gt4
+        vpack v19 -> l1[338] f16 walk=(12, 1)
+        vunpk v22 <- l1[176] gt4
+        vpack v20 -> l1[340] f16 walk=(12, 1)
+        vunpk v23 <- l1[184] gt4
+        vpack v21 -> l1[342] f16 walk=(12, 1)
+        vpack v22 -> l1[344] f16 walk=(12, 1)
+        vsync fill on=unpack slack=0
+        vfill a0 -> l1[96] rel
+        vpack v23 -> l1[346] f16 walk=(12, 1)
+        vsync drain on=pack slack=0
+        vdrain a1 <- l1[288] rel
+    vsync unpack on=fill slack=1
+    vunpk v0 <- l1[0] gt4
+    vunpk v1 <- l1[8] gt4
+    vunpk v2 <- l1[16] gt4
+    vsync pack on=drain slack=1
+    vpack v0 -> l1[192] f16 walk=(12, 1)
+    vunpk v3 <- l1[24] gt4
+    vpack v1 -> l1[194] f16 walk=(12, 1)
+    vunpk v4 <- l1[32] gt4
+    vpack v2 -> l1[196] f16 walk=(12, 1)
+    vunpk v5 <- l1[40] gt4
+    vpack v3 -> l1[198] f16 walk=(12, 1)
+    vunpk v6 <- l1[48] gt4
+    vpack v4 -> l1[200] f16 walk=(12, 1)
+    vunpk v7 <- l1[56] gt4
+    vpack v5 -> l1[202] f16 walk=(12, 1)
+    vunpk v8 <- l1[64] gt4
+    vpack v6 -> l1[240] f16 walk=(12, 1)
+    vunpk v9 <- l1[72] gt4
+    vpack v7 -> l1[242] f16 walk=(12, 1)
+    vunpk v10 <- l1[80] gt4
+    vpack v8 -> l1[244] f16 walk=(12, 1)
+    vunpk v11 <- l1[88] gt4
+    vpack v9 -> l1[246] f16 walk=(12, 1)
+    vpack v10 -> l1[248] f16 walk=(12, 1)
+    vpack v11 -> l1[250] f16 walk=(12, 1)
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[192] rel
+    vsync unpack on=fill slack=0
+    vunpk v12 <- l1[96] gt4
+    vunpk v13 <- l1[104] gt4
+    vunpk v14 <- l1[112] gt4
+    vsync pack on=drain slack=1
+    vpack v12 -> l1[288] f16 walk=(12, 1)
+    vunpk v15 <- l1[120] gt4
+    vpack v13 -> l1[290] f16 walk=(12, 1)
+    vunpk v16 <- l1[128] gt4
+    vpack v14 -> l1[292] f16 walk=(12, 1)
+    vunpk v17 <- l1[136] gt4
+    vpack v15 -> l1[294] f16 walk=(12, 1)
+    vunpk v18 <- l1[144] gt4
+    vpack v16 -> l1[296] f16 walk=(12, 1)
+    vunpk v19 <- l1[152] gt4
+    vpack v17 -> l1[298] f16 walk=(12, 1)
+    vunpk v20 <- l1[160] gt4
+    vpack v18 -> l1[336] f16 walk=(12, 1)
+    vunpk v21 <- l1[168] gt4
+    vpack v19 -> l1[338] f16 walk=(12, 1)
+    vunpk v22 <- l1[176] gt4
+    vpack v20 -> l1[340] f16 walk=(12, 1)
+    vunpk v23 <- l1[184] gt4
+    vpack v21 -> l1[342] f16 walk=(12, 1)
+    vpack v22 -> l1[344] f16 walk=(12, 1)
+    vpack v23 -> l1[346] f16 walk=(12, 1)
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[288] rel
+    halt
+
+fn t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985.l1(a: mx7a[200, 768] @dram(gm=50, nk=2), b: mx7b[1920, 768] @dram(gn=48, nk=2), out: f16[200, 1920] @dram, h1: f16[200, 1920] @dram(tile=50x48))
+    send mg[0]
+        fill A0 <- a+0 n=100
+        fill B0 <- b+0 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=0
+        fill A1 <- a+12800 n=100
+        fill B1 <- b+12288 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+25600 n=100
+        fill B0 <- b+24576 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+38400 n=100
+        fill B1 <- b+36864 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+51200 n=100
+        fill B0 <- b+49152 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+64000 n=100
+        fill B1 <- b+61440 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+76800 n=100
+        fill B0 <- b+73728 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+89600 n=100
+        fill B1 <- b+86016 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+102400 n=100
+        fill B0 <- b+98304 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+115200 n=100
+        fill B1 <- b+110592 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+128000 n=100
+        fill B0 <- b+122880 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+140800 n=100
+        fill B1 <- b+135168 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1 emit=h1+0
+    send mg[1]
+        fill A0 <- a+0 n=100
+        fill B0 <- b+147456 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=0
+        fill A1 <- a+12800 n=100
+        fill B1 <- b+159744 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+25600 n=100
+        fill B0 <- b+172032 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+38400 n=100
+        fill B1 <- b+184320 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+51200 n=100
+        fill B0 <- b+196608 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+64000 n=100
+        fill B1 <- b+208896 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+76800 n=100
+        fill B0 <- b+221184 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+89600 n=100
+        fill B1 <- b+233472 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+102400 n=100
+        fill B0 <- b+245760 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+115200 n=100
+        fill B1 <- b+258048 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+128000 n=100
+        fill B0 <- b+270336 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+140800 n=100
+        fill B1 <- b+282624 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1 emit=h1+76800
+    send mg[0]
+        fill A0 <- a+0 n=100
+        fill B0 <- b+294912 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=0
+        fill A1 <- a+12800 n=100
+        fill B1 <- b+307200 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+25600 n=100
+        fill B0 <- b+319488 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+38400 n=100
+        fill B1 <- b+331776 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+51200 n=100
+        fill B0 <- b+344064 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+64000 n=100
+        fill B1 <- b+356352 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+76800 n=100
+        fill B0 <- b+368640 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+89600 n=100
+        fill B1 <- b+380928 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+102400 n=100
+        fill B0 <- b+393216 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+115200 n=100
+        fill B1 <- b+405504 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+128000 n=100
+        fill B0 <- b+417792 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+140800 n=100
+        fill B1 <- b+430080 n=96
+        drain h1+0 fused n=2400
+        gemm 50x48x2 a=A1 b=B1 acc=1 emit=h1+153600
+    send mg[1]
+        fill A0 <- a+0 n=100
+        fill B0 <- b+442368 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=0
+        fill A1 <- a+12800 n=100
+        fill B1 <- b+454656 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+25600 n=100
+        fill B0 <- b+466944 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+38400 n=100
+        fill B1 <- b+479232 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+51200 n=100
+        fill B0 <- b+491520 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+64000 n=100
+        fill B1 <- b+503808 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+76800 n=100
+        fill B0 <- b+516096 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+89600 n=100
+        fill B1 <- b+528384 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+102400 n=100
+        fill B0 <- b+540672 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+115200 n=100
+        fill B1 <- b+552960 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+128000 n=100
+        fill B0 <- b+565248 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+140800 n=100
+        fill B1 <- b+577536 n=96
+        drain h1+76800 fused n=2400
+        gemm 50x48x2 a=A1 b=B1 acc=1 emit=h1+230400
+    send mg[0]
+        fill A0 <- a+0 n=100
+        fill B0 <- b+589824 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=0
+        fill A1 <- a+12800 n=100
+        fill B1 <- b+602112 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+25600 n=100
+        fill B0 <- b+614400 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+38400 n=100
+        fill B1 <- b+626688 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+51200 n=100
+        fill B0 <- b+638976 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+64000 n=100
+        fill B1 <- b+651264 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+76800 n=100
+        fill B0 <- b+663552 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+89600 n=100
+        fill B1 <- b+675840 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+102400 n=100
+        fill B0 <- b+688128 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+115200 n=100
+        fill B1 <- b+700416 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+128000 n=100
+        fill B0 <- b+712704 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+140800 n=100
+        fill B1 <- b+724992 n=96
+        drain h1+153600 fused n=2400
+        gemm 50x48x2 a=A1 b=B1 acc=1 emit=h1+307200
+    send mg[1]
+        fill A0 <- a+0 n=100
+        fill B0 <- b+737280 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=0
+        fill A1 <- a+12800 n=100
+        fill B1 <- b+749568 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+25600 n=100
+        fill B0 <- b+761856 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+38400 n=100
+        fill B1 <- b+774144 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+51200 n=100
+        fill B0 <- b+786432 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+64000 n=100
+        fill B1 <- b+798720 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+76800 n=100
+        fill B0 <- b+811008 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+89600 n=100
+        fill B1 <- b+823296 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+102400 n=100
+        fill B0 <- b+835584 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+115200 n=100
+        fill B1 <- b+847872 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+128000 n=100
+        fill B0 <- b+860160 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+140800 n=100
+        fill B1 <- b+872448 n=96
+        drain h1+230400 fused n=2400
+        gemm 50x48x2 a=A1 b=B1 acc=1 emit=h1+384000
+    send mg[0]
+        fill A0 <- a+0 n=100
+        fill B0 <- b+884736 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=0
+        fill A1 <- a+12800 n=100
+        fill B1 <- b+897024 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+25600 n=100
+        fill B0 <- b+909312 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+38400 n=100
+        fill B1 <- b+921600 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+51200 n=100
+        fill B0 <- b+933888 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+64000 n=100
+        fill B1 <- b+946176 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+76800 n=100
+        fill B0 <- b+958464 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+89600 n=100
+        fill B1 <- b+970752 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+102400 n=100
+        fill B0 <- b+983040 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+115200 n=100
+        fill B1 <- b+995328 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+128000 n=100
+        fill B0 <- b+1007616 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+140800 n=100
+        fill B1 <- b+1019904 n=96
+        drain h1+307200 fused n=2400
+        gemm 50x48x2 a=A1 b=B1 acc=1 emit=h1+460800
+    send mg[1]
+        fill A0 <- a+0 n=100
+        fill B0 <- b+1032192 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=0
+        fill A1 <- a+12800 n=100
+        fill B1 <- b+1044480 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+25600 n=100
+        fill B0 <- b+1056768 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+38400 n=100
+        fill B1 <- b+1069056 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+51200 n=100
+        fill B0 <- b+1081344 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+64000 n=100
+        fill B1 <- b+1093632 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+76800 n=100
+        fill B0 <- b+1105920 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+89600 n=100
+        fill B1 <- b+1118208 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+102400 n=100
+        fill B0 <- b+1130496 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+115200 n=100
+        fill B1 <- b+1142784 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+128000 n=100
+        fill B0 <- b+1155072 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+140800 n=100
+        fill B1 <- b+1167360 n=96
+        drain h1+384000 fused n=2400
+        gemm 50x48x2 a=A1 b=B1 acc=1 emit=h1+537600
+    send mg[0]
+        fill A0 <- a+0 n=100
+        fill B0 <- b+1179648 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=0
+        fill A1 <- a+12800 n=100
+        fill B1 <- b+1191936 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+25600 n=100
+        fill B0 <- b+1204224 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+38400 n=100
+        fill B1 <- b+1216512 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+51200 n=100
+        fill B0 <- b+1228800 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+64000 n=100
+        fill B1 <- b+1241088 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+76800 n=100
+        fill B0 <- b+1253376 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+89600 n=100
+        fill B1 <- b+1265664 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+102400 n=100
+        fill B0 <- b+1277952 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+115200 n=100
+        fill B1 <- b+1290240 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+128000 n=100
+        fill B0 <- b+1302528 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+140800 n=100
+        fill B1 <- b+1314816 n=96
+        drain h1+460800 fused n=2400
+        gemm 50x48x2 a=A1 b=B1 acc=1 emit=h1+614400
+        drain h1+614400 fused n=2400
+    send mg[1]
+        fill A0 <- a+0 n=100
+        fill B0 <- b+1327104 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=0
+        fill A1 <- a+12800 n=100
+        fill B1 <- b+1339392 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+25600 n=100
+        fill B0 <- b+1351680 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+38400 n=100
+        fill B1 <- b+1363968 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+51200 n=100
+        fill B0 <- b+1376256 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+64000 n=100
+        fill B1 <- b+1388544 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+76800 n=100
+        fill B0 <- b+1400832 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+89600 n=100
+        fill B1 <- b+1413120 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+102400 n=100
+        fill B0 <- b+1425408 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+115200 n=100
+        fill B1 <- b+1437696 n=96
+        gemm 50x48x2 a=A1 b=B1 acc=1
+        fill A0 <- a+128000 n=100
+        fill B0 <- b+1449984 n=96
+        gemm 50x48x2 a=A0 b=B0 acc=1
+        fill A1 <- a+140800 n=100
+        fill B1 <- b+1462272 n=96
+        drain h1+537600 fused n=2400
+        gemm 50x48x2 a=A1 b=B1 acc=1 emit=h1+691200
+        drain h1+691200 fused n=2400
+    k0_mg0 = mark mg[0]
+    k0_mg1 = mark mg[1]
+    wait mg[0] upto=k0_mg0
+    send vc[0]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc0_0(h1+0, out+0)
+    send vc[1]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc1_1(h1+39936, out+399360)
+    k1_vc0 = mark vc[0]
+    k1_vc1 = mark vc[1]
+    wait mg[1] upto=k0_mg1
+    wait vc[0] upto=k1_vc0
+    wait vc[1] upto=k1_vc1
+    send vc[0]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc0_0(h1+76800, out+384)
+    send vc[1]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc1_1(h1+116736, out+399744)
+    k2_vc0 = mark vc[0]
+    k2_vc1 = mark vc[1]
+    wait vc[0] upto=k2_vc0
+    wait vc[1] upto=k2_vc1
+    send vc[0]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc0_0(h1+153600, out+768)
+    send vc[1]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc1_1(h1+193536, out+400128)
+    k3_vc0 = mark vc[0]
+    k3_vc1 = mark vc[1]
+    wait vc[0] upto=k3_vc0
+    wait vc[1] upto=k3_vc1
+    send vc[0]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc0_0(h1+230400, out+1152)
+    send vc[1]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc1_1(h1+270336, out+400512)
+    k4_vc0 = mark vc[0]
+    k4_vc1 = mark vc[1]
+    wait vc[0] upto=k4_vc0
+    wait vc[1] upto=k4_vc1
+    send vc[0]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc0_0(h1+307200, out+1536)
+    send vc[1]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc1_1(h1+347136, out+400896)
+    k5_vc0 = mark vc[0]
+    k5_vc1 = mark vc[1]
+    wait vc[0] upto=k5_vc0
+    wait vc[1] upto=k5_vc1
+    send vc[0]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc0_0(h1+384000, out+1920)
+    send vc[1]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc1_1(h1+423936, out+401280)
+    k6_vc0 = mark vc[0]
+    k6_vc1 = mark vc[1]
+    wait vc[0] upto=k6_vc0
+    wait vc[1] upto=k6_vc1
+    send vc[0]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc0_0(h1+460800, out+2304)
+    send vc[1]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc1_1(h1+500736, out+401664)
+    k7_vc0 = mark vc[0]
+    k7_vc1 = mark vc[1]
+    wait vc[0] upto=k7_vc0
+    wait vc[1] upto=k7_vc1
+    send vc[0]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc0_0(h1+537600, out+2688)
+    send vc[1]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc1_1(h1+577536, out+402048)
+    k8_vc0 = mark vc[0]
+    k8_vc1 = mark vc[1]
+    wait vc[0] upto=k8_vc0
+    wait vc[1] upto=k8_vc1
+    send vc[0]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc0_0(h1+614400, out+3072)
+    send vc[1]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc1_1(h1+654336, out+402432)
+    k9_vc0 = mark vc[0]
+    k9_vc1 = mark vc[1]
+    wait vc[0] upto=k9_vc0
+    wait vc[1] upto=k9_vc1
+    send vc[0]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc0_0(h1+691200, out+3456)
+    send vc[1]
+        run t_f8f2f7e7a05a55b346e3742ac56bc5d7d5a32d6ded889ca612a4ca3388095985_n0_vc1_1(h1+731136, out+402816)
+    barrier

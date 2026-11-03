@@ -1,0 +1,363 @@
+target ktpu.v9
+
+image cp(x, y)
+    desc a0 = x walk=(32, 128)
+    desc a1 = y walk=(32, 128)
+    vfill a0 -> l1[0]
+    vsync drain on=fill
+    vdrain a1 <- l1[0]
+    vsync fe on=drain
+    halt
+
+image dbl(x, y)
+    desc a0 = x walk=(32, 64)
+    desc a1 = y walk=(32, 64)
+    vfill a0 -> l1[0]
+    vsync unpack on=fill
+    for j in 0..8
+        vunpk v{j} <- l1[j*8] f16
+    for j in 0..8
+        vadd v{8 + j}, v{j}, v{j}
+    for j in 0..8
+        vpack v{8 + j} -> l1[64 + j*8] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[64]
+    vsync fe on=drain
+    halt
+
+image twice(x, y)
+    desc a0 = x walk=(32, 128)
+    desc a1 = y walk=(32, 128)
+    vfill a0 -> l1[0]
+    vsync unpack on=fill
+    for j in 0..16
+        vunpk v{j} <- l1[j*8] f16
+    for j in 0..16
+        vadd v{j}, v{j}, v{j}
+    for j in 0..16
+        vpack v{j} -> l1[256 + j*8] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[256]
+    vsync fe on=drain
+    halt
+
+image sum(p, q, y)
+    desc a0 = p walk=(32, 128)
+    desc a1 = q walk=(32, 128)
+    desc a2 = y walk=(32, 128)
+    vfill a0 -> l1[0]
+    vfill a1 -> l1[128]
+    vsync unpack on=fill
+    for j in 0..16
+        vunpk v{j} <- l1[j*8] f16
+    for j in 0..16
+        vunpk v{16 + j} <- l1[128 + j*8] f16
+    for j in 0..16
+        vadd v{j}, v{j}, v{16 + j}
+    for j in 0..16
+        vpack v{j} -> l1[256 + j*8] f16
+    vsync drain on=pack
+    vdrain a2 <- l1[256]
+    vsync fe on=drain
+    halt
+
+image take_128_0(y)
+    desc a0 = y walk=(32, 128)
+    vwait drain rx n=128
+    vdrain a0 <- l1[0]
+    vsync fe on=drain
+    halt
+
+fn c1_vc_0123.l1(x0: f16[2048] @dram, y0: f16[2048] @dram, d0: f16[1024] @dram, x1: f16[2048] @dram, y1: f16[2048] @dram, d1: f16[1024] @dram, x2: f16[2048] @dram, y2: f16[2048] @dram, d2: f16[1024] @dram, x3: f16[2048] @dram, y3: f16[2048] @dram, d3: f16[1024] @dram)
+    node 0
+        send vc[0]
+            run cp(x0, y0)
+        send vc[1]
+            run dbl(x0, d0)
+        wait vc[0]
+        wait vc[1]
+    node 1
+        send vc[0]
+            run cp(x1, y1)
+        send vc[1]
+            run dbl(x1, d1)
+        wait vc[0]
+        wait vc[1]
+    node 2
+        send vc[0]
+            run cp(x2, y2)
+        send vc[1]
+            run dbl(x2, d2)
+        wait vc[0]
+        wait vc[1]
+    node 3
+        send vc[0]
+            run cp(x3, y3)
+        send vc[1]
+            run dbl(x3, d3)
+        wait vc[0]
+        wait vc[1]
+
+fn c1_mgvc_0123.l1(a0: mx7a[64, 256] @dram(gm=16, nk=2), w0: mx7b[32, 256] @dram(gn=8, nk=2), q0: f16[64, 32] @dram(tile=16x8), a1: mx7a[64, 256] @dram(gm=16, nk=2), w1: mx7b[32, 256] @dram(gn=8, nk=2), q1: f16[64, 32] @dram(tile=16x8), a2: mx7a[64, 256] @dram(gm=16, nk=2), w2: mx7b[32, 256] @dram(gn=8, nk=2), q2: f16[64, 32] @dram(tile=16x8), a3: mx7a[64, 256] @dram(gm=16, nk=2), w3: mx7b[32, 256] @dram(gn=8, nk=2), q3: f16[64, 32] @dram(tile=16x8))
+    node 0
+        send mg[0]
+            fill A0 <- a0 + 0 n=32
+            fill B0 <- w0 + 0 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=0
+            fill A1 <- a0 + 4096 n=32
+            fill B1 <- w0 + 2048 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            fill A0 <- a0 + 8192 n=32
+            fill B0 <- w0 + 4096 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=1
+            fill A1 <- a0 + 12288 n=32
+            fill B1 <- w0 + 6144 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            drain n=128 to=vc[1] l1=0 count
+        send vc[1]
+            run take_128_0(q0)
+        wait vc[1]
+        wait mg[0]
+    node 1
+        send mg[0]
+            fill A0 <- a1 + 0 n=32
+            fill B0 <- w1 + 0 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=0
+            fill A1 <- a1 + 4096 n=32
+            fill B1 <- w1 + 2048 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            fill A0 <- a1 + 8192 n=32
+            fill B0 <- w1 + 4096 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=1
+            fill A1 <- a1 + 12288 n=32
+            fill B1 <- w1 + 6144 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            drain n=128 to=vc[1] l1=0 count
+        send vc[1]
+            run take_128_0(q1)
+        wait vc[1]
+        wait mg[0]
+    node 2
+        send mg[0]
+            fill A0 <- a2 + 0 n=32
+            fill B0 <- w2 + 0 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=0
+            fill A1 <- a2 + 4096 n=32
+            fill B1 <- w2 + 2048 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            fill A0 <- a2 + 8192 n=32
+            fill B0 <- w2 + 4096 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=1
+            fill A1 <- a2 + 12288 n=32
+            fill B1 <- w2 + 6144 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            drain n=128 to=vc[1] l1=0 count
+        send vc[1]
+            run take_128_0(q2)
+        wait vc[1]
+        wait mg[0]
+    node 3
+        send mg[0]
+            fill A0 <- a3 + 0 n=32
+            fill B0 <- w3 + 0 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=0
+            fill A1 <- a3 + 4096 n=32
+            fill B1 <- w3 + 2048 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            fill A0 <- a3 + 8192 n=32
+            fill B0 <- w3 + 4096 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=1
+            fill A1 <- a3 + 12288 n=32
+            fill B1 <- w3 + 6144 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            drain n=128 to=vc[1] l1=0 count
+        send vc[1]
+            run take_128_0(q3)
+        wait vc[1]
+        wait mg[0]
+
+fn c1_chain_0123.l1(a0: mx7a[64, 256] @dram(gm=16, nk=2), w0: mx7b[32, 256] @dram(gn=8, nk=2), v0: mx7b[32, 256] @dram(gn=8, nk=2), e0: f16[64, 32] @dram(tile=16x8), h0: f16[64, 32] @dram(tile=16x8), q0: f16[64, 32] @dram(tile=16x8), s0: f16[64, 32] @dram(tile=16x8), r0: f16[64, 32] @dram(tile=16x8), z0: f16[64, 32] @dram(tile=16x8), a1: mx7a[64, 256] @dram(gm=16, nk=2), w1: mx7b[32, 256] @dram(gn=8, nk=2), v1: mx7b[32, 256] @dram(gn=8, nk=2), e1: f16[64, 32] @dram(tile=16x8), h1: f16[64, 32] @dram(tile=16x8), q1: f16[64, 32] @dram(tile=16x8), s1: f16[64, 32] @dram(tile=16x8), r1: f16[64, 32] @dram(tile=16x8), z1: f16[64, 32] @dram(tile=16x8), a2: mx7a[64, 256] @dram(gm=16, nk=2), w2: mx7b[32, 256] @dram(gn=8, nk=2), v2: mx7b[32, 256] @dram(gn=8, nk=2), e2: f16[64, 32] @dram(tile=16x8), h2: f16[64, 32] @dram(tile=16x8), q2: f16[64, 32] @dram(tile=16x8), s2: f16[64, 32] @dram(tile=16x8), r2: f16[64, 32] @dram(tile=16x8), z2: f16[64, 32] @dram(tile=16x8), a3: mx7a[64, 256] @dram(gm=16, nk=2), w3: mx7b[32, 256] @dram(gn=8, nk=2), v3: mx7b[32, 256] @dram(gn=8, nk=2), e3: f16[64, 32] @dram(tile=16x8), h3: f16[64, 32] @dram(tile=16x8), q3: f16[64, 32] @dram(tile=16x8), s3: f16[64, 32] @dram(tile=16x8), r3: f16[64, 32] @dram(tile=16x8), z3: f16[64, 32] @dram(tile=16x8))
+    node 0
+        send vc[0]
+            run twice(e0, h0)
+        wait vc[0]
+        send mg[0]
+            fill A0 <- a0 + 0 n=32
+            fill B0 <- w0 + 0 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=0
+            fill A1 <- a0 + 4096 n=32
+            fill B1 <- w0 + 2048 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            fill A0 <- a0 + 8192 n=32
+            fill B0 <- w0 + 4096 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=1
+            fill A1 <- a0 + 12288 n=32
+            fill B1 <- w0 + 6144 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            drain n=128 to=vc[1] l1=0 count
+        send vc[1]
+            run take_128_0(q0)
+        wait vc[1]
+        wait mg[0]
+        send vc[0]
+            run sum(q0, h0, s0)
+        wait vc[0]
+        send mg[0]
+            fill A0 <- a0 + 0 n=32
+            fill B0 <- v0 + 0 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=0
+            fill A1 <- a0 + 4096 n=32
+            fill B1 <- v0 + 2048 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            fill A0 <- a0 + 8192 n=32
+            fill B0 <- v0 + 4096 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=1
+            fill A1 <- a0 + 12288 n=32
+            fill B1 <- v0 + 6144 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            drain n=128 to=vc[1] l1=0 count
+        send vc[1]
+            run take_128_0(r0)
+        wait vc[1]
+        wait mg[0]
+        send vc[0]
+            run sum(s0, r0, z0)
+        wait vc[0]
+    node 1
+        send vc[0]
+            run twice(e1, h1)
+        wait vc[0]
+        send mg[0]
+            fill A0 <- a1 + 0 n=32
+            fill B0 <- w1 + 0 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=0
+            fill A1 <- a1 + 4096 n=32
+            fill B1 <- w1 + 2048 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            fill A0 <- a1 + 8192 n=32
+            fill B0 <- w1 + 4096 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=1
+            fill A1 <- a1 + 12288 n=32
+            fill B1 <- w1 + 6144 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            drain n=128 to=vc[1] l1=0 count
+        send vc[1]
+            run take_128_0(q1)
+        wait vc[1]
+        wait mg[0]
+        send vc[0]
+            run sum(q1, h1, s1)
+        wait vc[0]
+        send mg[0]
+            fill A0 <- a1 + 0 n=32
+            fill B0 <- v1 + 0 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=0
+            fill A1 <- a1 + 4096 n=32
+            fill B1 <- v1 + 2048 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            fill A0 <- a1 + 8192 n=32
+            fill B0 <- v1 + 4096 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=1
+            fill A1 <- a1 + 12288 n=32
+            fill B1 <- v1 + 6144 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            drain n=128 to=vc[1] l1=0 count
+        send vc[1]
+            run take_128_0(r1)
+        wait vc[1]
+        wait mg[0]
+        send vc[0]
+            run sum(s1, r1, z1)
+        wait vc[0]
+    node 2
+        send vc[0]
+            run twice(e2, h2)
+        wait vc[0]
+        send mg[0]
+            fill A0 <- a2 + 0 n=32
+            fill B0 <- w2 + 0 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=0
+            fill A1 <- a2 + 4096 n=32
+            fill B1 <- w2 + 2048 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            fill A0 <- a2 + 8192 n=32
+            fill B0 <- w2 + 4096 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=1
+            fill A1 <- a2 + 12288 n=32
+            fill B1 <- w2 + 6144 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            drain n=128 to=vc[1] l1=0 count
+        send vc[1]
+            run take_128_0(q2)
+        wait vc[1]
+        wait mg[0]
+        send vc[0]
+            run sum(q2, h2, s2)
+        wait vc[0]
+        send mg[0]
+            fill A0 <- a2 + 0 n=32
+            fill B0 <- v2 + 0 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=0
+            fill A1 <- a2 + 4096 n=32
+            fill B1 <- v2 + 2048 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            fill A0 <- a2 + 8192 n=32
+            fill B0 <- v2 + 4096 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=1
+            fill A1 <- a2 + 12288 n=32
+            fill B1 <- v2 + 6144 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            drain n=128 to=vc[1] l1=0 count
+        send vc[1]
+            run take_128_0(r2)
+        wait vc[1]
+        wait mg[0]
+        send vc[0]
+            run sum(s2, r2, z2)
+        wait vc[0]
+    node 3
+        send vc[0]
+            run twice(e3, h3)
+        wait vc[0]
+        send mg[0]
+            fill A0 <- a3 + 0 n=32
+            fill B0 <- w3 + 0 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=0
+            fill A1 <- a3 + 4096 n=32
+            fill B1 <- w3 + 2048 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            fill A0 <- a3 + 8192 n=32
+            fill B0 <- w3 + 4096 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=1
+            fill A1 <- a3 + 12288 n=32
+            fill B1 <- w3 + 6144 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            drain n=128 to=vc[1] l1=0 count
+        send vc[1]
+            run take_128_0(q3)
+        wait vc[1]
+        wait mg[0]
+        send vc[0]
+            run sum(q3, h3, s3)
+        wait vc[0]
+        send mg[0]
+            fill A0 <- a3 + 0 n=32
+            fill B0 <- v3 + 0 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=0
+            fill A1 <- a3 + 4096 n=32
+            fill B1 <- v3 + 2048 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            fill A0 <- a3 + 8192 n=32
+            fill B0 <- v3 + 4096 n=16
+            gemm 16x8x2 a=A0 b=B0 acc=1
+            fill A1 <- a3 + 12288 n=32
+            fill B1 <- v3 + 6144 n=16
+            gemm 16x8x2 a=A1 b=B1 acc=1
+            drain n=128 to=vc[1] l1=0 count
+        send vc[1]
+            run take_128_0(r3)
+        wait vc[1]
+        wait mg[0]
+        send vc[0]
+            run sum(s3, r3, z3)
+        wait vc[0]

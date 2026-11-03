@@ -1,0 +1,560 @@
+target ktpu.v9 vregs=128 vcopies=2
+
+image t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(p_a0, p_a1)
+    desc a0=p_a0 walk=((32, 8), (256, 4))
+    desc a1=p_a1 walk=((32, 2), (448, 16))
+    ainc a0 += 1024
+    ainc a1 += 7168
+    seti s0 = 0.125
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[0] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[32] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[128] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[160] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[192] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[224] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[256] rel
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[288] rel
+    vsync unpack on=fill slack=7
+    vunpk v0 <- l1[0] gt4
+    vunpk v1 <- l1[8] gt4
+    vunpk v2 <- l1[16] gt4
+    vmul v3, v0, s0
+    vunpk v4 <- l1[24] gt4
+    vmul v5, v1, s0
+    vmul v6, v2, s0
+    vsync fill on=unpack slack=0
+    vfill a0 -> l1[0] rel
+    vmul v7, v4, s0
+    vsync pack on=drain slack=63
+    vpack v3 -> l1[64] f16 walk=(2, 1)
+    vpack v5 -> l1[72] f16 walk=(2, 1)
+    vpack v6 -> l1[80] f16 walk=(2, 1)
+    vsync unpack on=fill slack=7
+    vunpk v0 <- l1[32] gt4
+    vpack v7 -> l1[88] f16 walk=(2, 1)
+    vunpk v1 <- l1[40] gt4
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[64] rel
+    vunpk v2 <- l1[48] gt4
+    vmul v8, v0, s0
+    vunpk v4 <- l1[56] gt4
+    vmul v9, v1, s0
+    vmul v10, v2, s0
+    vsync fill on=unpack slack=0
+    vfill a0 -> l1[32] rel
+    vmul v11, v4, s0
+    vsync pack on=drain slack=63
+    vpack v8 -> l1[96] f16 walk=(2, 1)
+    vpack v9 -> l1[104] f16 walk=(2, 1)
+    vpack v10 -> l1[112] f16 walk=(2, 1)
+    vsync unpack on=fill slack=7
+    vunpk v0 <- l1[128] gt4
+    vpack v11 -> l1[120] f16 walk=(2, 1)
+    vunpk v1 <- l1[136] gt4
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[96] rel
+    vunpk v2 <- l1[144] gt4
+    vmul v12, v0, s0
+    vunpk v4 <- l1[152] gt4
+    vmul v13, v1, s0
+    vmul v14, v2, s0
+    vsync fill on=unpack slack=0
+    vfill a0 -> l1[128] rel
+    vmul v15, v4, s0
+    vsync pack on=drain slack=63
+    vpack v12 -> l1[320] f16 walk=(2, 1)
+    vpack v13 -> l1[328] f16 walk=(2, 1)
+    vpack v14 -> l1[336] f16 walk=(2, 1)
+    vsync unpack on=fill slack=7
+    vunpk v0 <- l1[160] gt4
+    vpack v15 -> l1[344] f16 walk=(2, 1)
+    vunpk v1 <- l1[168] gt4
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[320] rel
+    vunpk v2 <- l1[176] gt4
+    vmul v16, v0, s0
+    vunpk v4 <- l1[184] gt4
+    vmul v17, v1, s0
+    vmul v18, v2, s0
+    vsync fill on=unpack slack=0
+    vfill a0 -> l1[160] rel
+    vmul v19, v4, s0
+    vsync pack on=drain slack=63
+    vpack v16 -> l1[352] f16 walk=(2, 1)
+    vpack v17 -> l1[360] f16 walk=(2, 1)
+    vpack v18 -> l1[368] f16 walk=(2, 1)
+    vsync unpack on=fill slack=7
+    vunpk v0 <- l1[192] gt4
+    vpack v19 -> l1[376] f16 walk=(2, 1)
+    vunpk v1 <- l1[200] gt4
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[352] rel
+    vunpk v2 <- l1[208] gt4
+    vmul v20, v0, s0
+    vunpk v4 <- l1[216] gt4
+    vmul v21, v1, s0
+    vmul v22, v2, s0
+    vmul v23, v4, s0
+    vsync pack on=drain slack=63
+    vpack v20 -> l1[384] f16 walk=(2, 1)
+    vpack v21 -> l1[392] f16 walk=(2, 1)
+    vpack v22 -> l1[400] f16 walk=(2, 1)
+    vsync unpack on=fill slack=6
+    vunpk v0 <- l1[224] gt4
+    vpack v23 -> l1[408] f16 walk=(2, 1)
+    vunpk v1 <- l1[232] gt4
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[384] rel
+    vunpk v2 <- l1[240] gt4
+    vmul v24, v0, s0
+    vunpk v4 <- l1[248] gt4
+    vmul v25, v1, s0
+    vmul v26, v2, s0
+    vmul v27, v4, s0
+    vsync pack on=drain slack=63
+    vpack v24 -> l1[416] f16 walk=(2, 1)
+    vpack v25 -> l1[424] f16 walk=(2, 1)
+    vpack v26 -> l1[432] f16 walk=(2, 1)
+    vsync unpack on=fill slack=5
+    vunpk v0 <- l1[256] gt4
+    vpack v27 -> l1[440] f16 walk=(2, 1)
+    vunpk v1 <- l1[264] gt4
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[416] rel
+    vunpk v2 <- l1[272] gt4
+    vmul v28, v0, s0
+    vunpk v4 <- l1[280] gt4
+    vmul v29, v1, s0
+    vmul v30, v2, s0
+    vmul v31, v4, s0
+    vsync pack on=drain slack=63
+    vpack v28 -> l1[448] f16 walk=(2, 1)
+    vpack v29 -> l1[456] f16 walk=(2, 1)
+    vpack v30 -> l1[464] f16 walk=(2, 1)
+    vsync unpack on=fill slack=4
+    vunpk v0 <- l1[288] gt4
+    vpack v31 -> l1[472] f16 walk=(2, 1)
+    vunpk v1 <- l1[296] gt4
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[448] rel
+    vunpk v2 <- l1[304] gt4
+    vmul v32, v0, s0
+    vunpk v4 <- l1[312] gt4
+    vmul v33, v1, s0
+    vmul v34, v2, s0
+    vmul v35, v4, s0
+    vsync pack on=drain slack=63
+    vpack v32 -> l1[480] f16 walk=(2, 1)
+    vpack v33 -> l1[488] f16 walk=(2, 1)
+    vpack v34 -> l1[496] f16 walk=(2, 1)
+    vsync unpack on=fill slack=3
+    vunpk v0 <- l1[0] gt4
+    vpack v35 -> l1[504] f16 walk=(2, 1)
+    vunpk v1 <- l1[8] gt4
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[480] rel
+    vunpk v2 <- l1[16] gt4
+    vmul v3, v0, s0
+    vunpk v4 <- l1[24] gt4
+    vmul v5, v1, s0
+    vmul v6, v2, s0
+    vmul v7, v4, s0
+    vsync pack on=drain slack=7
+    vpack v3 -> l1[64] f16 walk=(2, 1)
+    vpack v5 -> l1[72] f16 walk=(2, 1)
+    vpack v6 -> l1[80] f16 walk=(2, 1)
+    vsync unpack on=fill slack=2
+    vunpk v0 <- l1[32] gt4
+    vpack v7 -> l1[88] f16 walk=(2, 1)
+    vunpk v1 <- l1[40] gt4
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[64] rel
+    vunpk v2 <- l1[48] gt4
+    vmul v8, v0, s0
+    vunpk v4 <- l1[56] gt4
+    vmul v9, v1, s0
+    vmul v10, v2, s0
+    vmul v11, v4, s0
+    vsync pack on=drain slack=7
+    vpack v8 -> l1[96] f16 walk=(2, 1)
+    vpack v9 -> l1[104] f16 walk=(2, 1)
+    vpack v10 -> l1[112] f16 walk=(2, 1)
+    vsync unpack on=fill slack=1
+    vunpk v0 <- l1[128] gt4
+    vpack v11 -> l1[120] f16 walk=(2, 1)
+    vunpk v1 <- l1[136] gt4
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[96] rel
+    vunpk v2 <- l1[144] gt4
+    vmul v12, v0, s0
+    vunpk v4 <- l1[152] gt4
+    vmul v13, v1, s0
+    vmul v14, v2, s0
+    vmul v15, v4, s0
+    vsync pack on=drain slack=7
+    vpack v12 -> l1[320] f16 walk=(2, 1)
+    vpack v13 -> l1[328] f16 walk=(2, 1)
+    vpack v14 -> l1[336] f16 walk=(2, 1)
+    vsync unpack on=fill slack=0
+    vunpk v0 <- l1[160] gt4
+    vpack v15 -> l1[344] f16 walk=(2, 1)
+    vunpk v1 <- l1[168] gt4
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[320] rel
+    vunpk v2 <- l1[176] gt4
+    vmul v16, v0, s0
+    vunpk v4 <- l1[184] gt4
+    vmul v17, v1, s0
+    vmul v18, v2, s0
+    vmul v19, v4, s0
+    vsync pack on=drain slack=7
+    vpack v16 -> l1[352] f16 walk=(2, 1)
+    vpack v17 -> l1[360] f16 walk=(2, 1)
+    vpack v18 -> l1[368] f16 walk=(2, 1)
+    vpack v19 -> l1[376] f16 walk=(2, 1)
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[352] rel
+    halt
+
+image t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(p_a0, p_a1)
+    desc a0=p_a0 walk=(32, 8)
+    desc a1=p_a1 walk=((32, 2), (448, 4))
+    ainc a0 += 256
+    ainc a1 += 1792
+    seti s0 = 0.125
+    vfill a0 -> l1[0] rel
+    seti s15 = 1
+    loop s15
+        vbar
+        vsync fill on=unpack
+        vfill a0 -> l1[8] rel
+        vunpk v0 <- l1[0] gt4
+        vmul v0, v0, s0
+        vsync pack on=drain slack=1
+        vpack v0 -> l1[16] f16 walk=(2, 1)
+        vsync drain on=pack
+        vdrain a1 <- l1[16] rel
+        vbar
+        vunpk v0 <- l1[8] gt4
+        vmul v0, v0, s0
+        vsync pack on=drain slack=1
+        vpack v0 -> l1[24] f16 walk=(2, 1)
+        vsync drain on=pack
+        vdrain a1 <- l1[24] rel
+    halt
+
+fn t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f.l1(a: mx7a[600, 64] @dram(gm=50, nk=2), b: mx7b[672, 64] @dram(gn=8, nk=2), out: f16[600, 224] @dram, h1: f16[800, 32] @stage(tile=50x8))
+    send mg[0]
+        fill A0 <- a+0 n=100
+        fill B0 <- b+0 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+0
+        drain h1+0 fused n=400
+    send mg[1]
+        fill A0 <- a+0 n=100
+        fill B0 <- b+2048 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+12800
+        drain h1+12800 fused n=400
+    k0_mg0 = mark mg[0]
+    k0_mg1 = mark mg[1]
+    send mg[0]
+        fill A0 <- a+0 n=100
+        fill B0 <- b+4096 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+25600
+        drain h1+25600 fused n=400
+    send mg[1]
+        fill A0 <- a+0 n=100
+        fill B0 <- b+6144 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+38400
+        drain h1+38400 fused n=400
+    k3_mg0 = mark mg[0]
+    k3_mg1 = mark mg[1]
+    wait mg[0] upto=k0_mg0
+    wait mg[1] upto=k0_mg1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+0, out+0)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+12800, out+64)
+    k1_vc0 = mark vc[0]
+    k1_vc1 = mark vc[1]
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+12288, out+86016)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+25088, out+86080)
+    k2_vc0 = mark vc[0]
+    k2_vc1 = mark vc[1]
+    wait mg[0] upto=k3_mg0
+    wait mg[1] upto=k3_mg1
+    wait vc[0] upto=k1_vc0
+    wait vc[1] upto=k1_vc1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+25600, out+128)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+38400, out+192)
+    k4_vc0 = mark vc[0]
+    k4_vc1 = mark vc[1]
+    wait vc[0] upto=k2_vc0
+    wait vc[1] upto=k2_vc1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+37888, out+86144)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+50688, out+86208)
+    k5_vc0 = mark vc[0]
+    k5_vc1 = mark vc[1]
+    send mg[0]
+        fill A0 <- a+0 n=100
+        fill B0 <- b+8192 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+0
+        drain h1+0 fused n=400
+    send mg[1]
+        fill A0 <- a+0 n=100
+        fill B0 <- b+10240 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+12800
+        drain h1+12800 fused n=400
+    k6_mg0 = mark mg[0]
+    k6_mg1 = mark mg[1]
+    wait vc[0] upto=k4_vc0
+    wait vc[1] upto=k4_vc1
+    wait mg[0] upto=k6_mg0
+    wait mg[1] upto=k6_mg1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+0, out+256)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+12800, out+320)
+    k7_vc0 = mark vc[0]
+    k7_vc1 = mark vc[1]
+    wait vc[0] upto=k5_vc0
+    wait vc[1] upto=k5_vc1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+12288, out+86272)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+25088, out+86336)
+    k8_vc0 = mark vc[0]
+    k8_vc1 = mark vc[1]
+    send mg[0]
+        fill A0 <- a+0 n=100
+        fill B0 <- b+12288 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+25600
+        drain h1+25600 fused n=400
+    send mg[1]
+        fill A0 <- a+12800 n=100
+        fill B0 <- b+14336 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+38400
+        drain h1+38400 fused n=400
+    k9_mg0 = mark mg[0]
+    k9_mg1 = mark mg[1]
+    wait vc[0] upto=k7_vc0
+    wait vc[1] upto=k7_vc1
+    wait mg[0] upto=k9_mg0
+    wait mg[1] upto=k9_mg1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+25600, out+384)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+38400, out+89600)
+    k10_vc1 = mark vc[1]
+    wait vc[0] upto=k8_vc0
+    wait vc[1] upto=k8_vc1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+37888, out+86400)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+50688, out+175616)
+    k11_vc0 = mark vc[0]
+    k11_vc1 = mark vc[1]
+    send mg[0]
+        fill A0 <- a+12800 n=100
+        fill B0 <- b+16384 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+0
+        drain h1+0 fused n=400
+    send mg[1]
+        fill A0 <- a+12800 n=100
+        fill B0 <- b+18432 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+12800
+        drain h1+12800 fused n=400
+    k12_mg0 = mark mg[0]
+    k12_mg1 = mark mg[1]
+    wait vc[1] upto=k10_vc1
+    wait mg[0] upto=k12_mg0
+    wait mg[1] upto=k12_mg1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+0, out+89664)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+12800, out+89728)
+    k13_vc0 = mark vc[0]
+    k13_vc1 = mark vc[1]
+    wait vc[1] upto=k11_vc1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+12288, out+175680)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+25088, out+175744)
+    k14_vc0 = mark vc[0]
+    k14_vc1 = mark vc[1]
+    wait vc[0] upto=k11_vc0
+    send mg[0]
+        fill A0 <- a+12800 n=100
+        fill B0 <- b+20480 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+25600
+        drain h1+25600 fused n=400
+    send mg[1]
+        fill A0 <- a+12800 n=100
+        fill B0 <- b+22528 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+38400
+        drain h1+38400 fused n=400
+    k15_mg0 = mark mg[0]
+    k15_mg1 = mark mg[1]
+    wait vc[0] upto=k13_vc0
+    wait vc[1] upto=k13_vc1
+    wait mg[0] upto=k15_mg0
+    wait mg[1] upto=k15_mg1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+25600, out+89792)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+38400, out+89856)
+    k16_vc0 = mark vc[0]
+    k16_vc1 = mark vc[1]
+    wait vc[0] upto=k14_vc0
+    wait vc[1] upto=k14_vc1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+37888, out+175808)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+50688, out+175872)
+    k17_vc0 = mark vc[0]
+    k17_vc1 = mark vc[1]
+    send mg[0]
+        fill A0 <- a+12800 n=100
+        fill B0 <- b+24576 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+0
+        drain h1+0 fused n=400
+    send mg[1]
+        fill A0 <- a+12800 n=100
+        fill B0 <- b+26624 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+12800
+        drain h1+12800 fused n=400
+    k18_mg0 = mark mg[0]
+    k18_mg1 = mark mg[1]
+    wait vc[0] upto=k16_vc0
+    wait vc[1] upto=k16_vc1
+    wait mg[0] upto=k18_mg0
+    wait mg[1] upto=k18_mg1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+0, out+89920)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+12800, out+89984)
+    wait vc[0] upto=k17_vc0
+    wait vc[1] upto=k17_vc1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+12288, out+175936)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+25088, out+176000)
+    k20_vc0 = mark vc[0]
+    k20_vc1 = mark vc[1]
+    send mg[0]
+        fill A0 <- a+25600 n=100
+        fill B0 <- b+28672 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+25600
+        drain h1+25600 fused n=400
+    send mg[1]
+        fill A0 <- a+25600 n=100
+        fill B0 <- b+30720 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+38400
+        drain h1+38400 fused n=400
+    k21_mg0 = mark mg[0]
+    k21_mg1 = mark mg[1]
+    wait mg[0] upto=k21_mg0
+    wait mg[1] upto=k21_mg1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+25600, out+179200)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+38400, out+179264)
+    k22_vc0 = mark vc[0]
+    k22_vc1 = mark vc[1]
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+37888, out+265216)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+50688, out+265280)
+    k23_vc0 = mark vc[0]
+    k23_vc1 = mark vc[1]
+    wait vc[0] upto=k20_vc0
+    wait vc[1] upto=k20_vc1
+    send mg[0]
+        fill A0 <- a+25600 n=100
+        fill B0 <- b+32768 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+0
+        drain h1+0 fused n=400
+    send mg[1]
+        fill A0 <- a+25600 n=100
+        fill B0 <- b+34816 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+12800
+        drain h1+12800 fused n=400
+    k24_mg0 = mark mg[0]
+    k24_mg1 = mark mg[1]
+    wait vc[0] upto=k22_vc0
+    wait vc[1] upto=k22_vc1
+    wait mg[0] upto=k24_mg0
+    wait mg[1] upto=k24_mg1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+0, out+179328)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+12800, out+179392)
+    k25_vc0 = mark vc[0]
+    k25_vc1 = mark vc[1]
+    wait vc[0] upto=k23_vc0
+    wait vc[1] upto=k23_vc1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+12288, out+265344)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+25088, out+265408)
+    k26_vc0 = mark vc[0]
+    k26_vc1 = mark vc[1]
+    send mg[0]
+        fill A0 <- a+25600 n=100
+        fill B0 <- b+36864 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+25600
+        drain h1+25600 fused n=400
+    send mg[1]
+        fill A0 <- a+25600 n=100
+        fill B0 <- b+38912 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+38400
+        drain h1+38400 fused n=400
+    k27_mg0 = mark mg[0]
+    k27_mg1 = mark mg[1]
+    wait vc[0] upto=k25_vc0
+    wait vc[1] upto=k25_vc1
+    wait mg[0] upto=k27_mg0
+    wait mg[1] upto=k27_mg1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+25600, out+179456)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+38400, out+179520)
+    k28_vc0 = mark vc[0]
+    k28_vc1 = mark vc[1]
+    wait vc[0] upto=k26_vc0
+    wait vc[1] upto=k26_vc1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+37888, out+265472)
+    send vc[1]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+50688, out+265536)
+    k29_vc0 = mark vc[0]
+    k29_vc1 = mark vc[1]
+    send mg[0]
+        fill A0 <- a+25600 n=100
+        fill B0 <- b+40960 n=16
+        gemm 50x8x2 a=A0 b=B0 acc=0 emit=h1+0
+        drain h1+0 fused n=400
+    k30_mg0 = mark mg[0]
+    wait vc[0] upto=k28_vc0
+    wait vc[1] upto=k28_vc1
+    wait mg[0] upto=k30_mg0
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_0(h1+0, out+179584)
+    wait vc[0] upto=k29_vc0
+    wait vc[1] upto=k29_vc1
+    send vc[0]
+        run t_32d878ed23f9a1db283d685ff129e1f7b59c0227da22aaa92e0eb867cb90d74f_n0_vc0_1(h1+12288, out+265600)
+    barrier

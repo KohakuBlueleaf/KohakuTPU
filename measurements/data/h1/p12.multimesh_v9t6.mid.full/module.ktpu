@@ -1,0 +1,2477 @@
+target ktpu.v9
+
+image put_512_8_2048(n, src, dst)
+    desc a0 = src walk=(32, 128)
+    desc a1 = dst walk=((32, 16), (2048, 8))
+    ainc a0 += 4096
+    ainc a1 += 16384
+    seti s0 = n
+    loop s0
+        vfill a0 -> l1[0] rel
+        vsync drain on=fill
+        vdrain a1 <- l1[0] rel
+        vsync fill on=drain
+    halt
+
+image get_256(n, src, v)
+    desc a0 = src walk=(32, 256)
+    desc a1 = v walk=(32, 256)
+    ainc a0 += 8192
+    seti s0 = n
+    loop s0
+        vfill a0 -> l1[0] rel
+        vsync fe on=fill
+    vdrain a1 <- l1[0]
+    vsync fe on=drain
+    halt
+
+image get_128(n, src, v)
+    desc a0 = src walk=(32, 128)
+    desc a1 = v walk=(32, 128)
+    ainc a0 += 4096
+    seti s0 = n
+    loop s0
+        vfill a0 -> l1[0] rel
+        vsync fe on=fill
+    vdrain a1 <- l1[0]
+    vsync fe on=drain
+    halt
+
+image put_512_16_2048(n, src, dst)
+    desc a0 = src walk=(32, 256)
+    desc a1 = dst walk=((32, 16), (2048, 16))
+    ainc a0 += 8192
+    ainc a1 += 32768
+    seti s0 = n
+    loop s0
+        vfill a0 -> l1[0] rel
+        vsync drain on=fill
+        vdrain a1 <- l1[0] rel
+        vsync fill on=drain
+    halt
+
+image put_768_10_3072(n, src, dst)
+    desc a0 = src walk=(32, 240)
+    desc a1 = dst walk=((32, 24), (3072, 10))
+    ainc a0 += 7680
+    ainc a1 += 30720
+    seti s0 = n
+    loop s0
+        vfill a0 -> l1[0] rel
+        vsync drain on=fill
+        vdrain a1 <- l1[0] rel
+        vsync fill on=drain
+    halt
+
+image get_64(n, src, v)
+    desc a0 = src walk=(32, 64)
+    desc a1 = v walk=(32, 64)
+    ainc a0 += 2048
+    seti s0 = n
+    loop s0
+        vfill a0 -> l1[0] rel
+        vsync fe on=fill
+    vdrain a1 <- l1[0]
+    vsync fe on=drain
+    halt
+
+image put_3072_2_12288(n, src, dst)
+    desc a0 = src walk=(32, 192)
+    desc a1 = dst walk=((32, 96), (12288, 2))
+    ainc a0 += 6144
+    ainc a1 += 24576
+    seti s0 = n
+    loop s0
+        vfill a0 -> l1[0] rel
+        vsync drain on=fill
+        vdrain a1 <- l1[0] rel
+        vsync fill on=drain
+    halt
+
+image put_4096_2_16384(n, src, dst)
+    desc a0 = src walk=(32, 256)
+    desc a1 = dst walk=((32, 128), (16384, 2))
+    ainc a0 += 8192
+    ainc a1 += 32768
+    seti s0 = n
+    loop s0
+        vfill a0 -> l1[0] rel
+        vsync drain on=fill
+        vdrain a1 <- l1[0] rel
+        vsync fill on=drain
+    halt
+
+image put_8192_1_32768(n, src, dst)
+    desc a0 = src walk=(32, 256)
+    desc a1 = dst walk=((32, 256), (32768, 1))
+    ainc a0 += 8192
+    ainc a1 += 32768
+    seti s0 = n
+    loop s0
+        vfill a0 -> l1[0] rel
+        vsync drain on=fill
+        vdrain a1 <- l1[0] rel
+        vsync fill on=drain
+    halt
+
+fn p12_8x512_r1_rows_o0.l1(x: f16[8192] @dram, y: f16[8192] @dram, v: f16[4096] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_8_2048(1, x + 0, y + 0)
+        wait vc[0]
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 4096, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 8192, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 12288, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+
+fn p12_8x512_r2_rows_o0.l1(x: f16[8192] @dram, y: f16[8192] @dram, v: f16[8192] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_8_2048(1, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(1, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 4096, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(1, y + 8192, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 8192, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 12288, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+
+fn p12_8x512_r2_all_o0.l1(x: f16[8192] @dram, y: f16[8192] @dram, v: f16[8192] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_8_2048(1, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 4096, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2, y + 0, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 8192, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 12288, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+
+fn p12_8x512_r4_rows_o0.l1(x: f16[8192] @dram, y: f16[8192] @dram, v: f16[8192] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_8_2048(1, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_128(1, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 4096, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_128(1, y + 4096, v + 4096)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 8192, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_128(1, y + 8192, v + 8192)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 12288, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_128(1, y + 12288, v + 12288)
+        wait vc[0]
+
+fn p12_8x512_r4_all_o0.l1(x: f16[8192] @dram, y: f16[8192] @dram, v: f16[16384] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_8_2048(1, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 4096, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2, y + 0, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 8192, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2, y + 0, v + 16384)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 12288, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2, y + 0, v + 24576)
+        wait vc[0]
+
+fn p12_32x512_r1_rows_o0.l1(x: f16[32768] @dram, y: f16[32768] @dram, v: f16[4096] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_16_2048(2, x + 0, y + 0)
+        wait vc[0]
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(2, x + 16384, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(2, x + 32768, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(2, x + 49152, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+
+fn p12_32x512_r2_rows_o0.l1(x: f16[32768] @dram, y: f16[32768] @dram, v: f16[8192] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_16_2048(2, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(4, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(2, x + 16384, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(4, y + 32768, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(2, x + 32768, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(2, x + 49152, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+
+fn p12_32x512_r2_all_o0.l1(x: f16[32768] @dram, y: f16[32768] @dram, v: f16[8192] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_16_2048(2, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(2, x + 16384, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8, y + 0, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(2, x + 32768, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(2, x + 49152, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+
+fn p12_32x512_r4_rows_o0.l1(x: f16[32768] @dram, y: f16[32768] @dram, v: f16[16384] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_16_2048(2, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(2, x + 16384, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2, y + 16384, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(2, x + 32768, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2, y + 32768, v + 16384)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(2, x + 49152, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2, y + 49152, v + 24576)
+        wait vc[0]
+
+fn p12_32x512_r4_all_o0.l1(x: f16[32768] @dram, y: f16[32768] @dram, v: f16[16384] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_16_2048(2, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(2, x + 16384, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8, y + 0, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(2, x + 32768, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8, y + 0, v + 16384)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(2, x + 49152, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8, y + 0, v + 24576)
+        wait vc[0]
+
+fn p12_128x512_r1_rows_o0.l1(x: f16[131072] @dram, y: f16[131072] @dram, v: f16[4096] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_16_2048(8, x + 0, y + 0)
+        wait vc[0]
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(32, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(8, x + 65536, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(8, x + 131072, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(8, x + 196608, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+
+fn p12_128x512_r2_rows_o0.l1(x: f16[131072] @dram, y: f16[131072] @dram, v: f16[8192] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_16_2048(8, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(16, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(8, x + 65536, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(16, y + 131072, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(8, x + 131072, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(8, x + 196608, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+
+fn p12_128x512_r2_all_o0.l1(x: f16[131072] @dram, y: f16[131072] @dram, v: f16[8192] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_16_2048(8, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(32, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(8, x + 65536, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(32, y + 0, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(8, x + 131072, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(8, x + 196608, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+
+fn p12_128x512_r4_rows_o0.l1(x: f16[131072] @dram, y: f16[131072] @dram, v: f16[16384] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_16_2048(8, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(8, x + 65536, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8, y + 65536, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(8, x + 131072, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8, y + 131072, v + 16384)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(8, x + 196608, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8, y + 196608, v + 24576)
+        wait vc[0]
+
+fn p12_128x512_r4_all_o0.l1(x: f16[131072] @dram, y: f16[131072] @dram, v: f16[16384] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_16_2048(8, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(32, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(8, x + 65536, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(32, y + 0, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(8, x + 131072, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(32, y + 0, v + 16384)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(8, x + 196608, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(32, y + 0, v + 24576)
+        wait vc[0]
+
+fn p12_200x768_r1_rows_o0.l1(x: f16[307200] @dram, y: f16[307200] @dram, v: f16[4096] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_768_10_3072(20, x + 0, y + 0)
+        wait vc[0]
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(75, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 153600, y + 768)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 307200, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 460800, y + 2304)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+
+fn p12_200x768_r2_rows_o0.l1(x: f16[307200] @dram, y: f16[307200] @dram, v: f16[4096] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_768_10_3072(20, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_128(75, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 153600, y + 768)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_128(75, y + 307200, v + 4096)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 307200, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 460800, y + 2304)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+
+fn p12_200x768_r2_all_o0.l1(x: f16[307200] @dram, y: f16[307200] @dram, v: f16[8192] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_768_10_3072(20, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(75, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 153600, y + 768)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(75, y + 0, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 307200, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 460800, y + 2304)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+
+fn p12_200x768_r4_rows_o0.l1(x: f16[307200] @dram, y: f16[307200] @dram, v: f16[4096] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_768_10_3072(20, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 153600, y + 768)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 153600, v + 2048)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 307200, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 307200, v + 4096)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 460800, y + 2304)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 460800, v + 6144)
+        wait vc[0]
+
+fn p12_200x768_r4_all_o0.l1(x: f16[307200] @dram, y: f16[307200] @dram, v: f16[16384] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_768_10_3072(20, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(75, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 153600, y + 768)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(75, y + 0, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 307200, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(75, y + 0, v + 16384)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 460800, y + 2304)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(75, y + 0, v + 24576)
+        wait vc[0]
+
+fn p12_200x3072_r1_rows_o0.l1(x: f16[1228800] @dram, y: f16[1228800] @dram, v: f16[4096] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_3072_2_12288(100, x + 0, y + 0)
+        wait vc[0]
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(300, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(100, x + 614400, y + 3072)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(100, x + 1228800, y + 6144)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(100, x + 1843200, y + 9216)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+
+fn p12_200x3072_r2_rows_o0.l1(x: f16[1228800] @dram, y: f16[1228800] @dram, v: f16[8192] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_3072_2_12288(100, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(150, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(100, x + 614400, y + 3072)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(150, y + 1228800, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(100, x + 1228800, y + 6144)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(100, x + 1843200, y + 9216)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+
+fn p12_200x3072_r2_all_o0.l1(x: f16[1228800] @dram, y: f16[1228800] @dram, v: f16[8192] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_3072_2_12288(100, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(300, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(100, x + 614400, y + 3072)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(300, y + 0, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(100, x + 1228800, y + 6144)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(100, x + 1843200, y + 9216)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+
+fn p12_200x3072_r4_rows_o0.l1(x: f16[1228800] @dram, y: f16[1228800] @dram, v: f16[16384] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_3072_2_12288(100, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(75, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(100, x + 614400, y + 3072)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(75, y + 614400, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(100, x + 1228800, y + 6144)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(75, y + 1228800, v + 16384)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(100, x + 1843200, y + 9216)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(75, y + 1843200, v + 24576)
+        wait vc[0]
+
+fn p12_200x3072_r4_all_o0.l1(x: f16[1228800] @dram, y: f16[1228800] @dram, v: f16[16384] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_3072_2_12288(100, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(300, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(100, x + 614400, y + 3072)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(300, y + 0, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(100, x + 1228800, y + 6144)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(300, y + 0, v + 16384)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(100, x + 1843200, y + 9216)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(300, y + 0, v + 24576)
+        wait vc[0]
+
+fn p12_1024x4096_r1_rows_o0.l1(x: f16[8388608] @dram, y: f16[8388608] @dram, v: f16[4096] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_4096_2_16384(512, x + 0, y + 0)
+        wait vc[0]
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2048, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(512, x + 4194304, y + 4096)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(512, x + 8388608, y + 8192)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(512, x + 12582912, y + 12288)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+
+fn p12_1024x4096_r2_rows_o0.l1(x: f16[8388608] @dram, y: f16[8388608] @dram, v: f16[8192] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_4096_2_16384(512, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(1024, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(512, x + 4194304, y + 4096)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(1024, y + 8388608, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(512, x + 8388608, y + 8192)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(512, x + 12582912, y + 12288)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+
+fn p12_1024x4096_r2_all_o0.l1(x: f16[8388608] @dram, y: f16[8388608] @dram, v: f16[8192] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_4096_2_16384(512, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2048, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(512, x + 4194304, y + 4096)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2048, y + 0, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(512, x + 8388608, y + 8192)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(512, x + 12582912, y + 12288)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+
+fn p12_1024x4096_r4_rows_o0.l1(x: f16[8388608] @dram, y: f16[8388608] @dram, v: f16[16384] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_4096_2_16384(512, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(512, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(512, x + 4194304, y + 4096)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(512, y + 4194304, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(512, x + 8388608, y + 8192)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(512, y + 8388608, v + 16384)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(512, x + 12582912, y + 12288)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(512, y + 12582912, v + 24576)
+        wait vc[0]
+
+fn p12_1024x4096_r4_all_o0.l1(x: f16[8388608] @dram, y: f16[8388608] @dram, v: f16[16384] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_4096_2_16384(512, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2048, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(512, x + 4194304, y + 4096)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2048, y + 0, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(512, x + 8388608, y + 8192)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2048, y + 0, v + 16384)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(512, x + 12582912, y + 12288)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2048, y + 0, v + 24576)
+        wait vc[0]
+
+fn p12_8192x8192_r1_rows_o0.l1(x: f16[134217728] @dram, y: f16[134217728] @dram, v: f16[4096] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_8192_1_32768(8192, x + 0, y + 0)
+        wait vc[0]
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(32768, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(8192, x + 67108864, y + 8192)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(8192, x + 134217728, y + 16384)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(8192, x + 201326592, y + 24576)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+
+fn p12_8192x8192_r2_rows_o0.l1(x: f16[134217728] @dram, y: f16[134217728] @dram, v: f16[8192] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_8192_1_32768(8192, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(16384, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(8192, x + 67108864, y + 8192)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(16384, y + 134217728, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(8192, x + 134217728, y + 16384)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(8192, x + 201326592, y + 24576)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+
+fn p12_8192x8192_r2_all_o0.l1(x: f16[134217728] @dram, y: f16[134217728] @dram, v: f16[8192] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_8192_1_32768(8192, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(32768, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(8192, x + 67108864, y + 8192)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(32768, y + 0, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(8192, x + 134217728, y + 16384)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(8192, x + 201326592, y + 24576)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+
+fn p12_8192x8192_r4_rows_o0.l1(x: f16[134217728] @dram, y: f16[134217728] @dram, v: f16[16384] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_8192_1_32768(8192, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8192, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(8192, x + 67108864, y + 8192)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8192, y + 67108864, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(8192, x + 134217728, y + 16384)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8192, y + 134217728, v + 16384)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(8192, x + 201326592, y + 24576)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8192, y + 201326592, v + 24576)
+        wait vc[0]
+
+fn p12_8192x8192_r4_all_o0.l1(x: f16[134217728] @dram, y: f16[134217728] @dram, v: f16[16384] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_8192_1_32768(8192, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(32768, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(8192, x + 67108864, y + 8192)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(32768, y + 0, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(8192, x + 134217728, y + 16384)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(32768, y + 0, v + 16384)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(8192, x + 201326592, y + 24576)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(32768, y + 0, v + 24576)
+        wait vc[0]
+
+fn p12_200x768_r4_rows_o64.l1(x: f16[307200] @dram, y: f16[307232] @dram, v: f16[4096] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_768_10_3072(20, x + 0, y + 64)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 64, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 153600, y + 832)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 153664, v + 2048)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 307200, y + 1600)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 307264, v + 4096)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 460800, y + 2368)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 460864, v + 6144)
+        wait vc[0]
+
+fn p12_200x768_r4_rows_o128.l1(x: f16[307200] @dram, y: f16[307264] @dram, v: f16[4096] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_768_10_3072(20, x + 0, y + 128)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 128, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 153600, y + 896)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 153728, v + 2048)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 307200, y + 1664)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 307328, v + 4096)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 460800, y + 2432)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 460928, v + 6144)
+        wait vc[0]
+
+fn p12_200x768_r4_rows_o192.l1(x: f16[307200] @dram, y: f16[307296] @dram, v: f16[4096] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_768_10_3072(20, x + 0, y + 192)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 192, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 153600, y + 960)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 153792, v + 2048)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 307200, y + 1728)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 307392, v + 4096)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 460800, y + 2496)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 460992, v + 6144)
+        wait vc[0]
+
+fn p12_200x768_r4_rows_o16384.l1(x: f16[307200] @dram, y: f16[315392] @dram, v: f16[4096] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_768_10_3072(20, x + 0, y + 16384)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 16384, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 153600, y + 17152)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 169984, v + 2048)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 307200, y + 17920)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 323584, v + 4096)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 460800, y + 18688)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 477184, v + 6144)
+        wait vc[0]
+
+fn p12_200x768_r4_rows_o32768.l1(x: f16[307200] @dram, y: f16[323584] @dram, v: f16[4096] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_768_10_3072(20, x + 0, y + 32768)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 32768, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 153600, y + 33536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 186368, v + 2048)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 307200, y + 34304)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 339968, v + 4096)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 460800, y + 35072)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 493568, v + 6144)
+        wait vc[0]
+
+fn p12_200x768_r4_rows_o49152.l1(x: f16[307200] @dram, y: f16[331776] @dram, v: f16[4096] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_768_10_3072(20, x + 0, y + 49152)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 49152, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 153600, y + 49920)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 202752, v + 2048)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 307200, y + 50688)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 356352, v + 4096)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(20, x + 460800, y + 51456)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 509952, v + 6144)
+        wait vc[0]
+
+fn p12_8x512_r4_rows_o0_staggered.l1(x: f16[8192] @dram, y: f16[8192] @dram, v: f16[8192] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_8_2048(1, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_128(1, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 4096, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_128(1, y + 4096, v + 4096)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 8192, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_128(1, y + 8192, v + 8192)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_8_2048(1, x + 12288, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_128(1, y + 12288, v + 12288)
+        wait vc[0]
+
+fn p12_32x512_r4_rows_o0_staggered.l1(x: f16[32768] @dram, y: f16[32768] @dram, v: f16[16384] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_16_2048(2, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(2, x + 16384, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2, y + 16384, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(1, x + 40960, y + 33792)
+            run put_512_16_2048(1, x + 32768, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2, y + 32768, v + 16384)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(1, x + 57344, y + 34304)
+            run put_512_16_2048(1, x + 49152, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(2, y + 49152, v + 24576)
+        wait vc[0]
+
+fn p12_128x512_r4_rows_o0_staggered.l1(x: f16[131072] @dram, y: f16[131072] @dram, v: f16[16384] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_512_16_2048(8, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(6, x + 81920, y + 66048)
+            run put_512_16_2048(2, x + 65536, y + 512)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8, y + 65536, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(4, x + 163840, y + 132096)
+            run put_512_16_2048(4, x + 131072, y + 1024)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8, y + 131072, v + 16384)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_512_16_2048(2, x + 245760, y + 198144)
+            run put_512_16_2048(6, x + 196608, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8, y + 196608, v + 24576)
+        wait vc[0]
+
+fn p12_200x768_r4_rows_o0_staggered.l1(x: f16[307200] @dram, y: f16[307200] @dram, v: f16[4096] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_768_10_3072(20, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(15, x + 192000, y + 154368)
+            run put_768_10_3072(5, x + 153600, y + 768)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 153600, v + 2048)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(10, x + 384000, y + 308736)
+            run put_768_10_3072(10, x + 307200, y + 1536)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 307200, v + 4096)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_768_10_3072(5, x + 576000, y + 463104)
+            run put_768_10_3072(15, x + 460800, y + 2304)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_64(75, y + 460800, v + 6144)
+        wait vc[0]
+
+fn p12_200x3072_r4_rows_o0_staggered.l1(x: f16[1228800] @dram, y: f16[1228800] @dram, v: f16[16384] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_3072_2_12288(100, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(75, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(75, x + 768000, y + 617472)
+            run put_3072_2_12288(25, x + 614400, y + 3072)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(75, y + 614400, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(50, x + 1536000, y + 1234944)
+            run put_3072_2_12288(50, x + 1228800, y + 6144)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(75, y + 1228800, v + 16384)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_3072_2_12288(25, x + 2304000, y + 1852416)
+            run put_3072_2_12288(75, x + 1843200, y + 9216)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(75, y + 1843200, v + 24576)
+        wait vc[0]
+
+fn p12_1024x4096_r4_rows_o0_staggered.l1(x: f16[8388608] @dram, y: f16[8388608] @dram, v: f16[16384] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_4096_2_16384(512, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(512, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(384, x + 5242880, y + 4198400)
+            run put_4096_2_16384(128, x + 4194304, y + 4096)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(512, y + 4194304, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(256, x + 10485760, y + 8396800)
+            run put_4096_2_16384(256, x + 8388608, y + 8192)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(512, y + 8388608, v + 16384)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_4096_2_16384(128, x + 15728640, y + 12595200)
+            run put_4096_2_16384(384, x + 12582912, y + 12288)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(512, y + 12582912, v + 24576)
+        wait vc[0]
+
+fn p12_8192x8192_r4_rows_o0_staggered.l1(x: f16[134217728] @dram, y: f16[134217728] @dram, v: f16[16384] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        send vc[0]
+            run put_8192_1_32768(8192, x + 0, y + 0)
+        wait vc[0]
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8192, y + 0, v + 0)
+        wait vc[0]
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(6144, x + 83886080, y + 67117056)
+            run put_8192_1_32768(2048, x + 67108864, y + 8192)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8192, y + 67108864, v + 8192)
+        wait vc[0]
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(4096, x + 167772160, y + 134234112)
+            run put_8192_1_32768(4096, x + 134217728, y + 16384)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8192, y + 134217728, v + 16384)
+        wait vc[0]
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        send vc[0]
+            run put_8192_1_32768(2048, x + 251658240, y + 201351168)
+            run put_8192_1_32768(6144, x + 201326592, y + 24576)
+        wait vc[0]
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        send vc[0]
+            run get_256(8192, y + 201326592, v + 24576)
+        wait vc[0]

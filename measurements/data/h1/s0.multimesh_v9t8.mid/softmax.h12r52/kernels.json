@@ -1,0 +1,30 @@
+{
+ "t_588af6482f9b711302c297102c49040611d7a3d21a8ca570718b2809570c5ed1": {
+  "signature": "in0: f16[624, 224] @dram, in1: f16[224] @dram, out: f16[624, 224] @dram",
+  "g1": [],
+  "cases": [
+   "softmax.h12r52"
+  ]
+ },
+ "t_6d41e20866f4a5ff6fd5f41d0d66e551706553eff8324df246a925e20f7c069e": {
+  "signature": "a: mx7a[624, 64] @dram(gm=13, nk=1), b: mx7b[2688, 64] @dram(gn=56, nk=1), out: f16[624, 224] @dram",
+  "g1": [],
+  "cases": [
+   "softmax.h12r52"
+  ]
+ },
+ "t_827f099f802761faac360cfec3d367995b8b2f4775c15ba66911add994a660c2": {
+  "signature": "p_x: f16[11952, 16] @dram, q: mx7b[2688, 64] @dram(gn=56, nk=1)",
+  "g1": [],
+  "cases": [
+   "softmax.h12r52"
+  ]
+ },
+ "t_9d242621804540159b5ffebe420a265681af0794ceef79770baaa02e813d2044": {
+  "signature": "p_x: f16[11952, 16] @dram, q: mx7a[624, 64] @dram(gm=13, nk=1)",
+  "g1": [],
+  "cases": [
+   "softmax.h12r52"
+  ]
+ }
+}

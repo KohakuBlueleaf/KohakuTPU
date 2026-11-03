@@ -1,0 +1,22 @@
+target ktpu.v9
+
+fn t_ebe1f5d01c7244ab97492632b4c0a03ca184c9fcd1a5e717326edf9476d15386.l2(a: mx7a[2000, 64] @dram(gm=50, nk=1), b: mx7b[2240, 64] @dram(gn=56, nk=1), out: f16[2000, 224] @dram)
+    h1 = buffer  : f16[1600, 224] @stage(tile=50x56)
+    for k1 in 0..3 pipe=2
+        par u1 in 0..4 on mg[u1]
+            for k2 in 0..1
+                when (k1*4 + u1 + k2*4) < 10
+                    acc1 = zero  : f32[200, 224] @acc
+                    for k3 in 0..2
+                        a1 = fill a[k1*800 + u1*200 + k2*800 : +200, k3*32 : +32]  : mx7a[200, 32] @A
+                        b1 = fill b[k1*896 + u1*224 + k2*896 : +224, k3*32 : +32]  : mx7b[224, 32] @B
+                        acc1 = gemm a1, b1, acc1  : f32[200, 224] @acc
+                    drain acc1 -> h1[(k1 % 2)*800 + u1*200 + k2*800 : +200, 0 : +224]
+        par c1 in 0..4 on vc[any]
+            when (k1*4 + c1) < 10
+                for t1 in 0..25
+                    xl1 = load h1[(k1 % 2)*800 + c1*200 + t1*8 : +8, 0 : +224]  : f16[8, 224] @l1(gt4)
+                    v1 = unpack xl1             : f32[8, 224] @reg(gt4)
+                    e1 = mul v1, 0.125          : f32[8, 224] @reg(gt4)
+                    p1 = pack e1                : f16[8, 224] @l1(gt4)
+                    store out[k1*800 + c1*200 + t1*8 : +8, 0 : +224] <- p1

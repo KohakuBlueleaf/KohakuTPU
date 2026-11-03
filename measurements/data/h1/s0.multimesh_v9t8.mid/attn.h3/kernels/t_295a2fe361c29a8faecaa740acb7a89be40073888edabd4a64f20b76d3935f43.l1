@@ -1,0 +1,1061 @@
+target ktpu.v9 vregs=128 vcopies=2
+
+image t_295a2fe361c29a8faecaa740acb7a89be40073888edabd4a64f20b76d3935f43_n0_vc0_0(p_a0, p_a1, p_a2, p_a3)
+    desc a0=p_a0 walk=(32, 56)
+    desc a1=p_a1 walk=(32, 56)
+    desc a2=p_a2 walk=(32, 14)
+    desc a3=p_a3 walk=(32, 14)
+    ainc a0 += 1792
+    ainc a1 += 1792
+    seti s0 = -65504.0
+    seti s1 = 1.4426950408889634
+    seti s2 = -127.0
+    seti s3 = 128.0
+    vfill a2 -> l1[498]
+    vbar
+    vunpk v0 <- l1[498] f16 walk=(0, 1)
+    vunpk v1 <- l1[500] f16 walk=(0, 1)
+    vunpk v2 <- l1[502] f16 walk=(0, 1)
+    vunpk v3 <- l1[504] f16 walk=(0, 1)
+    vunpk v4 <- l1[506] f16 walk=(0, 1)
+    vunpk v5 <- l1[508] f16 walk=(0, 1)
+    vunpk v6 <- l1[510] f16 walk=(0, 1)
+    vfill a3 -> l1[484]
+    vbar
+    vunpk v7 <- l1[484] f16 walk=(0, 1)
+    vunpk v8 <- l1[486] f16 walk=(0, 1)
+    vunpk v9 <- l1[488] f16 walk=(0, 1)
+    vunpk v10 <- l1[490] f16 walk=(0, 1)
+    vunpk v11 <- l1[492] f16 walk=(0, 1)
+    vunpk v12 <- l1[494] f16 walk=(0, 1)
+    vunpk v13 <- l1[496] f16 walk=(0, 1)
+    vsync fe on=unpack
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[0] rel
+    vsync unpack on=fill slack=0
+    vunpk v14[1 :] <- l1[0] f16 walk=(14, 1) n=8
+    vunpk v16[1 :] <- l1[2] f16 walk=(14, 1) n=8
+    vunpk v17[1 :] <- l1[4] f16 walk=(14, 1) n=8
+    vsel v18[1 :], v14[1 :], s0, v0
+    vunpk v19[1 :] <- l1[6] f16 walk=(14, 1) n=8
+    vsel v20, v16[1 :], s0, v1
+    vunpk v21[1 :] <- l1[8] f16 walk=(14, 1) n=8
+    vsel v22[1 :], v17[1 :], s0, v2
+    vunpk v23[1 :] <- l1[10] f16 walk=(14, 1) n=8
+    vsel v24, v19[1 :], s0, v3
+    vunpk v25[1 :] <- l1[12] f16 walk=(14, 1) n=8
+    vsel v26[1 :], v21[1 :], s0, v4
+    vsel v27, v23[1 :], s0, v5
+    vsel v28, v25[1 :], s0, v6
+    vmax v29[1 :], v18[1 :], v20
+    vmax v18, v22[1 :], v24
+    vmax v20[1 :], v26[1 :], v27
+    vmax v15[1 :], v29[1 :], v18
+    vmax v18, v20[1 :], v28
+    vmax v26, v15[1 :], v18
+    vmax v15[0 :], v26[0 :], v26[4 :] vl=64
+    vmax v15[0 :], v15[0 :], xor(v15, 8) vl=64
+    vmax v15[0 :], v15[0 :], xor(v15, 4) vl=64
+    vmax v15[0 :], v15[0 :], xor(v15, 2) vl=64
+    vmax v15[0 :], v15[0 :], xor(v15, 1) vl=64
+    vmov v15[4 :], v15[0 :] vl=64
+    vmul v24, v15, k2
+    vadd v27, v14[1 :], v24
+    vadd v14, v16[1 :], v24
+    vadd v16, v17[1 :], v24
+    vmul v17, v27, s1
+    vmul v27, v14, s1
+    vmul v14, v16, s1
+    vmax v16, v17, s2
+    vmax v17, v27, s2
+    vadd v27, v19[1 :], v24
+    vcmplt p1, v16, s3
+    vmax v19, v14, s2
+    vmul v14, v27, s1
+    vadd v16, v16, v16 unless=p1
+    vcmplt p1, v17, s3
+    vadd v27, v21[1 :], v24
+    vmax v21, v14, s2
+    vadd v17, v17, v17 unless=p1
+    vcmplt p1, v19, s3
+    vmul v14, v27, s1
+    vadd v27, v23[1 :], v24
+    vadd v19, v19, v19 unless=p1
+    vcmplt p1, v21, s3
+    vmax v23, v14, s2
+    vmul v14, v27, s1
+    vadd v27, v25[1 :], v24
+    vadd v21, v21, v21 unless=p1
+    vcmplt p1, v23, s3
+    vmax v24, v14, s2
+    vmul v14, v27, s1
+    vadd v23, v23, v23 unless=p1
+    vcmplt p1, v24, s3
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[56] rel
+    vmax v25, v14, s2
+    vexp2 v14[1 :], v16
+    vadd v24, v24, v24 unless=p1
+    vcmplt p1, v25, s3
+    vexp2 v16[1 :], v17
+    vexp2 v17[1 :], v19
+    vexp2 v19[1 :], v21
+    vexp2 v21[1 :], v23
+    vexp2 v37[1 :], v24
+    vadd v25, v25, v25 unless=p1
+    vsel v23[1 :], v14[1 :], k0, v0
+    vsel v24, v16[1 :], k0, v1
+    vexp2 v38[1 :], v25
+    vsel v25[1 :], v17[1 :], k0, v2
+    vsel v27, v19[1 :], k0, v3
+    vsel v28[1 :], v21[1 :], k0, v4
+    vsel v29, v37[1 :], k0, v5
+    vsel v39, v38[1 :], k0, v6
+    vadd v40[1 :], v23[1 :], v24
+    vadd v23, v25[1 :], v27
+    vadd v24[1 :], v28[1 :], v29
+    vadd v27[1 :], v40[1 :], v23
+    vsync unpack on=fill slack=0
+    vunpk v28[1 :] <- l1[56] f16 walk=(14, 1) n=8
+    vadd v23, v24[1 :], v39
+    vunpk v29[1 :] <- l1[58] f16 walk=(14, 1) n=8
+    vunpk v24[1 :] <- l1[60] f16 walk=(14, 1) n=8
+    vsel v39[1 :], v28[1 :], s0, v0
+    vunpk v40[1 :] <- l1[62] f16 walk=(14, 1) n=8
+    vsel v41, v29[1 :], s0, v1
+    vunpk v42[1 :] <- l1[64] f16 walk=(14, 1) n=8
+    vsel v43[1 :], v24[1 :], s0, v2
+    vunpk v44[1 :] <- l1[66] f16 walk=(14, 1) n=8
+    vsel v45, v40[1 :], s0, v3
+    vunpk v46[1 :] <- l1[68] f16 walk=(14, 1) n=8
+    vsel v47[1 :], v42[1 :], s0, v4
+    vsel v48, v44[1 :], s0, v5
+    vsel v49, v46[1 :], s0, v6
+    vmax v50[1 :], v39[1 :], v41
+    vmax v39, v43[1 :], v45
+    vmax v41[1 :], v47[1 :], v48
+    vadd v43, v27[1 :], v23
+    vmax v23[1 :], v50[1 :], v39
+    vmax v27, v41[1 :], v49
+    vadd v39[0 :], v43[0 :], v43[4 :] vl=64
+    vmax v18, v23[1 :], v27
+    vadd v39[0 :], v39[0 :], xor(v39, 8) vl=64
+    vmax v20[0 :], v18[0 :], v18[4 :] vl=64
+    vadd v39[0 :], v39[0 :], xor(v39, 4) vl=64
+    vmax v20[0 :], v20[0 :], xor(v20, 8) vl=64
+    vadd v39[0 :], v39[0 :], xor(v39, 2) vl=64
+    vmax v20[0 :], v20[0 :], xor(v20, 4) vl=64
+    vadd v39[0 :], v39[0 :], xor(v39, 1) vl=64
+    vmax v20[0 :], v20[0 :], xor(v20, 2) vl=64
+    vmov v39[4 :], v39[0 :] vl=64
+    vmax v20[0 :], v20[0 :], xor(v20, 1) vl=64
+    vinv v41, v39
+    vmov v20[4 :], v20[0 :] vl=64
+    vmul v39[1 :], v14[1 :], v41
+    vmul v43[1 :], v16[1 :], v41
+    vmul v14, v20, k2
+    vmul v45[1 :], v17[1 :], v41
+    vmul v47[1 :], v19[1 :], v41
+    vadd v15, v28[1 :], v14
+    vadd v16, v29[1 :], v14
+    vadd v17, v24[1 :], v14
+    vmul v18, v15, s1
+    vmul v15, v16, s1
+    vmul v16, v17, s1
+    vmax v17, v18, s2
+    vmax v18, v15, s2
+    vadd v15, v40[1 :], v14
+    vcmplt p2, v17, s3
+    vmax v19, v16, s2
+    vmul v16, v15, s1
+    vadd v17, v17, v17 unless=p2
+    vcmplt p2, v18, s3
+    vadd v15, v42[1 :], v14
+    vmax v20, v16, s2
+    vadd v18, v18, v18 unless=p2
+    vcmplt p2, v19, s3
+    vmul v16, v15, s1
+    vadd v15, v44[1 :], v14
+    vadd v19, v19, v19 unless=p2
+    vcmplt p2, v20, s3
+    vmax v22, v16, s2
+    vmul v16, v15, s1
+    vadd v15, v46[1 :], v14
+    vadd v20, v20, v20 unless=p2
+    vcmplt p2, v22, s3
+    vmax v14, v16, s2
+    vmul v16, v15, s1
+    vadd v22, v22, v22 unless=p2
+    vcmplt p2, v14, s3
+    vsync fill on=unpack slack=7
+    vfill a0 -> l1[0] rel
+    vmax v15, v16, s2
+    vexp2 v40[1 :], v17
+    vadd v14, v14, v14 unless=p2
+    vcmplt p2, v15, s3
+    vexp2 v42[1 :], v18
+    vexp2 v44[1 :], v19
+    vexp2 v46[1 :], v20
+    vexp2 v48[1 :], v22
+    vexp2 v58[1 :], v14
+    vadd v15, v15, v15 unless=p2
+    vsel v14[1 :], v40[1 :], k0, v0
+    vsel v16, v42[1 :], k0, v1
+    vexp2 v59[1 :], v15
+    vsel v15[1 :], v44[1 :], k0, v2
+    vsel v17, v46[1 :], k0, v3
+    vsel v18[1 :], v48[1 :], k0, v4
+    vsel v19, v58[1 :], k0, v5
+    vsel v20, v59[1 :], k0, v6
+    vadd v22[1 :], v14[1 :], v16
+    vadd v16, v15[1 :], v17
+    vadd v17[1 :], v18[1 :], v19
+    vmul v49[1 :], v21[1 :], v41
+    vadd v50[1 :], v22[1 :], v16
+    seti s15 = 37
+    loop s15
+        vsync unpack on=fill slack=0
+        vunpk v14[1 :] <- l1[0] f16 walk=(14, 1) n=8
+        vadd v15, v17[1 :], v20
+        vunpk v16[1 :] <- l1[2] f16 walk=(14, 1) n=8
+        vunpk v17[1 :] <- l1[4] f16 walk=(14, 1) n=8
+        vsel v18[1 :], v14[1 :], s0, v0
+        vunpk v19[1 :] <- l1[6] f16 walk=(14, 1) n=8
+        vsel v20, v16[1 :], s0, v1
+        vunpk v21[1 :] <- l1[8] f16 walk=(14, 1) n=8
+        vsel v22[1 :], v17[1 :], s0, v2
+        vunpk v23[1 :] <- l1[10] f16 walk=(14, 1) n=8
+        vsel v24, v19[1 :], s0, v3
+        vunpk v25[1 :] <- l1[12] f16 walk=(14, 1) n=8
+        vsel v26[1 :], v21[1 :], s0, v4
+        vsel v27, v23[1 :], s0, v5
+        vsel v28, v25[1 :], s0, v6
+        vmax v29[1 :], v18[1 :], v20
+        vmax v18, v22[1 :], v24
+        vmax v20[1 :], v26[1 :], v27
+        vadd v22, v50[1 :], v15
+        vmax v15[1 :], v29[1 :], v18
+        vmax v18, v20[1 :], v28
+        vadd v20[0 :], v22[0 :], v22[4 :] vl=64
+        vmul v22[1 :], v37[1 :], v41
+        vmul v24[1 :], v38[1 :], v41
+        vmax v26, v15[1 :], v18
+        vadd v20[0 :], v20[0 :], xor(v20, 8) vl=64
+        vsel v30, v39[1 :], k0, v7
+        vsel v31, v43[1 :], k0, v8
+        vmax v15[0 :], v26[0 :], v26[4 :] vl=64
+        vadd v20[0 :], v20[0 :], xor(v20, 4) vl=64
+        vsel v32, v45[1 :], k0, v9
+        vsync pack on=drain slack=1
+        vpack v30 -> l1[112] f16 walk=(14, 1)
+        vsel v33, v47[1 :], k0, v10
+        vpack v31 -> l1[114] f16 walk=(14, 1)
+        vmax v15[0 :], v15[0 :], xor(v15, 8) vl=64
+        vadd v20[0 :], v20[0 :], xor(v20, 2) vl=64
+        vsel v34, v49[1 :], k0, v11
+        vpack v32 -> l1[116] f16 walk=(14, 1)
+        vsel v35, v22[1 :], k0, v12
+        vpack v33 -> l1[118] f16 walk=(14, 1)
+        vmax v15[0 :], v15[0 :], xor(v15, 4) vl=64
+        vadd v20[0 :], v20[0 :], xor(v20, 1) vl=64
+        vsel v36, v24[1 :], k0, v13
+        vpack v34 -> l1[120] f16 walk=(14, 1)
+        vpack v35 -> l1[122] f16 walk=(14, 1)
+        vmax v15[0 :], v15[0 :], xor(v15, 2) vl=64
+        vmov v20[4 :], v20[0 :] vl=64
+        vpack v36 -> l1[124] f16 walk=(14, 1)
+        vsync drain on=pack slack=0
+        vdrain a1 <- l1[112] rel
+        vmax v15[0 :], v15[0 :], xor(v15, 1) vl=64
+        vinv v18, v20
+        vmov v15[4 :], v15[0 :] vl=64
+        vmul v20[1 :], v40[1 :], v18
+        vmul v22[1 :], v42[1 :], v18
+        vmul v24, v15, k2
+        vmul v15[1 :], v44[1 :], v18
+        vmul v26[1 :], v46[1 :], v18
+        vadd v27, v14[1 :], v24
+        vadd v14, v16[1 :], v24
+        vadd v16, v17[1 :], v24
+        vmul v17, v27, s1
+        vmul v27, v14, s1
+        vmul v14, v16, s1
+        vmax v16, v17, s2
+        vmax v17, v27, s2
+        vadd v27, v19[1 :], v24
+        vcmplt p1, v16, s3
+        vmax v19, v14, s2
+        vmul v14, v27, s1
+        vadd v16, v16, v16 unless=p1
+        vcmplt p1, v17, s3
+        vadd v27, v21[1 :], v24
+        vmax v21, v14, s2
+        vadd v17, v17, v17 unless=p1
+        vcmplt p1, v19, s3
+        vmul v14, v27, s1
+        vadd v27, v23[1 :], v24
+        vadd v19, v19, v19 unless=p1
+        vcmplt p1, v21, s3
+        vmax v23, v14, s2
+        vmul v14, v27, s1
+        vadd v27, v25[1 :], v24
+        vadd v21, v21, v21 unless=p1
+        vcmplt p1, v23, s3
+        vmax v24, v14, s2
+        vmul v14, v27, s1
+        vadd v23, v23, v23 unless=p1
+        vcmplt p1, v24, s3
+        vsync fill on=unpack slack=7
+        vfill a0 -> l1[56] rel
+        vmax v25, v14, s2
+        vexp2 v14[1 :], v16
+        vadd v24, v24, v24 unless=p1
+        vcmplt p1, v25, s3
+        vexp2 v16[1 :], v17
+        vexp2 v17[1 :], v19
+        vexp2 v19[1 :], v21
+        vexp2 v21[1 :], v23
+        vexp2 v37[1 :], v24
+        vadd v25, v25, v25 unless=p1
+        vsel v23[1 :], v14[1 :], k0, v0
+        vsel v24, v16[1 :], k0, v1
+        vexp2 v38[1 :], v25
+        vsel v25[1 :], v17[1 :], k0, v2
+        vsel v27, v19[1 :], k0, v3
+        vsel v28[1 :], v21[1 :], k0, v4
+        vsel v29, v37[1 :], k0, v5
+        vsel v39, v38[1 :], k0, v6
+        vadd v40[1 :], v23[1 :], v24
+        vadd v23, v25[1 :], v27
+        vadd v24[1 :], v28[1 :], v29
+        vmul v25[1 :], v48[1 :], v18
+        vadd v27[1 :], v40[1 :], v23
+        vsync unpack on=fill slack=0
+        vunpk v28[1 :] <- l1[56] f16 walk=(14, 1) n=8
+        vadd v23, v24[1 :], v39
+        vunpk v29[1 :] <- l1[58] f16 walk=(14, 1) n=8
+        vunpk v24[1 :] <- l1[60] f16 walk=(14, 1) n=8
+        vsel v39[1 :], v28[1 :], s0, v0
+        vunpk v40[1 :] <- l1[62] f16 walk=(14, 1) n=8
+        vsel v41, v29[1 :], s0, v1
+        vunpk v42[1 :] <- l1[64] f16 walk=(14, 1) n=8
+        vsel v43[1 :], v24[1 :], s0, v2
+        vunpk v44[1 :] <- l1[66] f16 walk=(14, 1) n=8
+        vsel v45, v40[1 :], s0, v3
+        vunpk v46[1 :] <- l1[68] f16 walk=(14, 1) n=8
+        vsel v47[1 :], v42[1 :], s0, v4
+        vsel v48, v44[1 :], s0, v5
+        vsel v49, v46[1 :], s0, v6
+        vmax v50[1 :], v39[1 :], v41
+        vmax v39, v43[1 :], v45
+        vmax v41[1 :], v47[1 :], v48
+        vadd v43, v27[1 :], v23
+        vmax v23[1 :], v50[1 :], v39
+        vmax v27, v41[1 :], v49
+        vadd v39[0 :], v43[0 :], v43[4 :] vl=64
+        vmul v41[1 :], v58[1 :], v18
+        vmul v43[1 :], v59[1 :], v18
+        vmax v18, v23[1 :], v27
+        vadd v39[0 :], v39[0 :], xor(v39, 8) vl=64
+        vsel v51, v20[1 :], k0, v7
+        vsel v52, v22[1 :], k0, v8
+        vmax v20[0 :], v18[0 :], v18[4 :] vl=64
+        vadd v39[0 :], v39[0 :], xor(v39, 4) vl=64
+        vsel v53, v15[1 :], k0, v9
+        vsync pack on=drain slack=1
+        vpack v51 -> l1[168] f16 walk=(14, 1)
+        vsel v54, v26[1 :], k0, v10
+        vpack v52 -> l1[170] f16 walk=(14, 1)
+        vmax v20[0 :], v20[0 :], xor(v20, 8) vl=64
+        vadd v39[0 :], v39[0 :], xor(v39, 2) vl=64
+        vsel v55, v25[1 :], k0, v11
+        vpack v53 -> l1[172] f16 walk=(14, 1)
+        vsel v56, v41[1 :], k0, v12
+        vpack v54 -> l1[174] f16 walk=(14, 1)
+        vmax v20[0 :], v20[0 :], xor(v20, 4) vl=64
+        vadd v39[0 :], v39[0 :], xor(v39, 1) vl=64
+        vsel v57, v43[1 :], k0, v13
+        vpack v55 -> l1[176] f16 walk=(14, 1)
+        vpack v56 -> l1[178] f16 walk=(14, 1)
+        vmax v20[0 :], v20[0 :], xor(v20, 2) vl=64
+        vmov v39[4 :], v39[0 :] vl=64
+        vpack v57 -> l1[180] f16 walk=(14, 1)
+        vsync drain on=pack slack=0
+        vdrain a1 <- l1[168] rel
+        vmax v20[0 :], v20[0 :], xor(v20, 1) vl=64
+        vinv v41, v39
+        vmov v20[4 :], v20[0 :] vl=64
+        vmul v39[1 :], v14[1 :], v41
+        vmul v43[1 :], v16[1 :], v41
+        vmul v14, v20, k2
+        vmul v45[1 :], v17[1 :], v41
+        vmul v47[1 :], v19[1 :], v41
+        vadd v15, v28[1 :], v14
+        vadd v16, v29[1 :], v14
+        vadd v17, v24[1 :], v14
+        vmul v18, v15, s1
+        vmul v15, v16, s1
+        vmul v16, v17, s1
+        vmax v17, v18, s2
+        vmax v18, v15, s2
+        vadd v15, v40[1 :], v14
+        vcmplt p2, v17, s3
+        vmax v19, v16, s2
+        vmul v16, v15, s1
+        vadd v17, v17, v17 unless=p2
+        vcmplt p2, v18, s3
+        vadd v15, v42[1 :], v14
+        vmax v20, v16, s2
+        vadd v18, v18, v18 unless=p2
+        vcmplt p2, v19, s3
+        vmul v16, v15, s1
+        vadd v15, v44[1 :], v14
+        vadd v19, v19, v19 unless=p2
+        vcmplt p2, v20, s3
+        vmax v22, v16, s2
+        vmul v16, v15, s1
+        vadd v15, v46[1 :], v14
+        vadd v20, v20, v20 unless=p2
+        vcmplt p2, v22, s3
+        vmax v14, v16, s2
+        vmul v16, v15, s1
+        vadd v22, v22, v22 unless=p2
+        vcmplt p2, v14, s3
+        vsync fill on=unpack slack=7
+        vfill a0 -> l1[0] rel
+        vmax v15, v16, s2
+        vexp2 v40[1 :], v17
+        vadd v14, v14, v14 unless=p2
+        vcmplt p2, v15, s3
+        vexp2 v42[1 :], v18
+        vexp2 v44[1 :], v19
+        vexp2 v46[1 :], v20
+        vexp2 v48[1 :], v22
+        vexp2 v58[1 :], v14
+        vadd v15, v15, v15 unless=p2
+        vsel v14[1 :], v40[1 :], k0, v0
+        vsel v16, v42[1 :], k0, v1
+        vexp2 v59[1 :], v15
+        vsel v15[1 :], v44[1 :], k0, v2
+        vsel v17, v46[1 :], k0, v3
+        vsel v18[1 :], v48[1 :], k0, v4
+        vsel v19, v58[1 :], k0, v5
+        vsel v20, v59[1 :], k0, v6
+        vadd v22[1 :], v14[1 :], v16
+        vadd v16, v15[1 :], v17
+        vadd v17[1 :], v18[1 :], v19
+        vmul v49[1 :], v21[1 :], v41
+        vadd v50[1 :], v22[1 :], v16
+    halt
+
+image t_295a2fe361c29a8faecaa740acb7a89be40073888edabd4a64f20b76d3935f43_n0_vc1_1(p_a0, p_a1, p_a2, p_a3)
+    desc a0=p_a0 walk=(32, 56)
+    desc a1=p_a1 walk=(32, 56)
+    desc a2=p_a2 walk=(32, 14)
+    desc a3=p_a3 walk=(32, 14)
+    ainc a0 += 1792
+    ainc a1 += 1792
+    seti s0 = -65504.0
+    seti s1 = 1.4426950408889634
+    seti s2 = -127.0
+    seti s3 = 128.0
+    vfill a2 -> l1[498]
+    vbar
+    vunpk v0 <- l1[498] f16 walk=(0, 1)
+    vunpk v1 <- l1[500] f16 walk=(0, 1)
+    vunpk v2 <- l1[502] f16 walk=(0, 1)
+    vunpk v3 <- l1[504] f16 walk=(0, 1)
+    vunpk v4 <- l1[506] f16 walk=(0, 1)
+    vunpk v5 <- l1[508] f16 walk=(0, 1)
+    vunpk v6 <- l1[510] f16 walk=(0, 1)
+    vfill a3 -> l1[484]
+    vbar
+    vunpk v7 <- l1[484] f16 walk=(0, 1)
+    vunpk v8 <- l1[486] f16 walk=(0, 1)
+    vunpk v9 <- l1[488] f16 walk=(0, 1)
+    vunpk v10 <- l1[490] f16 walk=(0, 1)
+    vunpk v11 <- l1[492] f16 walk=(0, 1)
+    vunpk v12 <- l1[494] f16 walk=(0, 1)
+    vunpk v13 <- l1[496] f16 walk=(0, 1)
+    vsync fe on=unpack
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[0] rel
+    vsync unpack on=fill slack=0
+    vunpk v14[1 :] <- l1[0] f16 walk=(14, 1) n=8
+    vunpk v16[1 :] <- l1[2] f16 walk=(14, 1) n=8
+    vunpk v17[1 :] <- l1[4] f16 walk=(14, 1) n=8
+    vsel v18[1 :], v14[1 :], s0, v0
+    vunpk v19[1 :] <- l1[6] f16 walk=(14, 1) n=8
+    vsel v20, v16[1 :], s0, v1
+    vunpk v21[1 :] <- l1[8] f16 walk=(14, 1) n=8
+    vsel v22[1 :], v17[1 :], s0, v2
+    vunpk v23[1 :] <- l1[10] f16 walk=(14, 1) n=8
+    vsel v24, v19[1 :], s0, v3
+    vunpk v25[1 :] <- l1[12] f16 walk=(14, 1) n=8
+    vsel v26[1 :], v21[1 :], s0, v4
+    vsel v27, v23[1 :], s0, v5
+    vsel v28, v25[1 :], s0, v6
+    vmax v29[1 :], v18[1 :], v20
+    vmax v18, v22[1 :], v24
+    vmax v20[1 :], v26[1 :], v27
+    vmax v15[1 :], v29[1 :], v18
+    vmax v18, v20[1 :], v28
+    vmax v26, v15[1 :], v18
+    vmax v15[0 :], v26[0 :], v26[4 :] vl=64
+    vmax v15[0 :], v15[0 :], xor(v15, 8) vl=64
+    vmax v15[0 :], v15[0 :], xor(v15, 4) vl=64
+    vmax v15[0 :], v15[0 :], xor(v15, 2) vl=64
+    vmax v15[0 :], v15[0 :], xor(v15, 1) vl=64
+    vmov v15[4 :], v15[0 :] vl=64
+    vmul v24, v15, k2
+    vadd v27, v14[1 :], v24
+    vadd v14, v16[1 :], v24
+    vadd v16, v17[1 :], v24
+    vmul v17, v27, s1
+    vmul v27, v14, s1
+    vmul v14, v16, s1
+    vmax v16, v17, s2
+    vmax v17, v27, s2
+    vadd v27, v19[1 :], v24
+    vcmplt p1, v16, s3
+    vmax v19, v14, s2
+    vmul v14, v27, s1
+    vadd v16, v16, v16 unless=p1
+    vcmplt p1, v17, s3
+    vadd v27, v21[1 :], v24
+    vmax v21, v14, s2
+    vadd v17, v17, v17 unless=p1
+    vcmplt p1, v19, s3
+    vmul v14, v27, s1
+    vadd v27, v23[1 :], v24
+    vadd v19, v19, v19 unless=p1
+    vcmplt p1, v21, s3
+    vmax v23, v14, s2
+    vmul v14, v27, s1
+    vadd v27, v25[1 :], v24
+    vadd v21, v21, v21 unless=p1
+    vcmplt p1, v23, s3
+    vmax v24, v14, s2
+    vmul v14, v27, s1
+    vadd v23, v23, v23 unless=p1
+    vcmplt p1, v24, s3
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[56] rel
+    vmax v25, v14, s2
+    vexp2 v14[1 :], v16
+    vadd v24, v24, v24 unless=p1
+    vcmplt p1, v25, s3
+    vexp2 v16[1 :], v17
+    vexp2 v17[1 :], v19
+    vexp2 v19[1 :], v21
+    vexp2 v21[1 :], v23
+    vexp2 v37[1 :], v24
+    vadd v25, v25, v25 unless=p1
+    vsel v23[1 :], v14[1 :], k0, v0
+    vsel v24, v16[1 :], k0, v1
+    vexp2 v38[1 :], v25
+    vsel v25[1 :], v17[1 :], k0, v2
+    vsel v27, v19[1 :], k0, v3
+    vsel v28[1 :], v21[1 :], k0, v4
+    vsel v29, v37[1 :], k0, v5
+    vsel v39, v38[1 :], k0, v6
+    vadd v40[1 :], v23[1 :], v24
+    vadd v23, v25[1 :], v27
+    vadd v24[1 :], v28[1 :], v29
+    vadd v27[1 :], v40[1 :], v23
+    vsync unpack on=fill slack=0
+    vunpk v28[1 :] <- l1[56] f16 walk=(14, 1) n=8
+    vadd v23, v24[1 :], v39
+    vunpk v29[1 :] <- l1[58] f16 walk=(14, 1) n=8
+    vunpk v24[1 :] <- l1[60] f16 walk=(14, 1) n=8
+    vsel v39[1 :], v28[1 :], s0, v0
+    vunpk v40[1 :] <- l1[62] f16 walk=(14, 1) n=8
+    vsel v41, v29[1 :], s0, v1
+    vunpk v42[1 :] <- l1[64] f16 walk=(14, 1) n=8
+    vsel v43[1 :], v24[1 :], s0, v2
+    vunpk v44[1 :] <- l1[66] f16 walk=(14, 1) n=8
+    vsel v45, v40[1 :], s0, v3
+    vunpk v46[1 :] <- l1[68] f16 walk=(14, 1) n=8
+    vsel v47[1 :], v42[1 :], s0, v4
+    vsel v48, v44[1 :], s0, v5
+    vsel v49, v46[1 :], s0, v6
+    vmax v50[1 :], v39[1 :], v41
+    vmax v39, v43[1 :], v45
+    vmax v41[1 :], v47[1 :], v48
+    vadd v43, v27[1 :], v23
+    vmax v23[1 :], v50[1 :], v39
+    vmax v27, v41[1 :], v49
+    vadd v39[0 :], v43[0 :], v43[4 :] vl=64
+    vmax v18, v23[1 :], v27
+    vadd v39[0 :], v39[0 :], xor(v39, 8) vl=64
+    vmax v20[0 :], v18[0 :], v18[4 :] vl=64
+    vadd v39[0 :], v39[0 :], xor(v39, 4) vl=64
+    vmax v20[0 :], v20[0 :], xor(v20, 8) vl=64
+    vadd v39[0 :], v39[0 :], xor(v39, 2) vl=64
+    vmax v20[0 :], v20[0 :], xor(v20, 4) vl=64
+    vadd v39[0 :], v39[0 :], xor(v39, 1) vl=64
+    vmax v20[0 :], v20[0 :], xor(v20, 2) vl=64
+    vmov v39[4 :], v39[0 :] vl=64
+    vmax v20[0 :], v20[0 :], xor(v20, 1) vl=64
+    vinv v41, v39
+    vmov v20[4 :], v20[0 :] vl=64
+    vmul v39[1 :], v14[1 :], v41
+    vmul v43[1 :], v16[1 :], v41
+    vmul v14, v20, k2
+    vmul v45[1 :], v17[1 :], v41
+    vmul v47[1 :], v19[1 :], v41
+    vadd v15, v28[1 :], v14
+    vadd v16, v29[1 :], v14
+    vadd v17, v24[1 :], v14
+    vmul v18, v15, s1
+    vmul v15, v16, s1
+    vmul v16, v17, s1
+    vmax v17, v18, s2
+    vmax v18, v15, s2
+    vadd v15, v40[1 :], v14
+    vcmplt p2, v17, s3
+    vmax v19, v16, s2
+    vmul v16, v15, s1
+    vadd v17, v17, v17 unless=p2
+    vcmplt p2, v18, s3
+    vadd v15, v42[1 :], v14
+    vmax v20, v16, s2
+    vadd v18, v18, v18 unless=p2
+    vcmplt p2, v19, s3
+    vmul v16, v15, s1
+    vadd v15, v44[1 :], v14
+    vadd v19, v19, v19 unless=p2
+    vcmplt p2, v20, s3
+    vmax v22, v16, s2
+    vmul v16, v15, s1
+    vadd v15, v46[1 :], v14
+    vadd v20, v20, v20 unless=p2
+    vcmplt p2, v22, s3
+    vmax v14, v16, s2
+    vmul v16, v15, s1
+    vadd v22, v22, v22 unless=p2
+    vcmplt p2, v14, s3
+    vsync fill on=unpack slack=7
+    vfill a0 -> l1[0] rel
+    vmax v15, v16, s2
+    vexp2 v40[1 :], v17
+    vadd v14, v14, v14 unless=p2
+    vcmplt p2, v15, s3
+    vexp2 v42[1 :], v18
+    vexp2 v44[1 :], v19
+    vexp2 v46[1 :], v20
+    vexp2 v48[1 :], v22
+    vexp2 v58[1 :], v14
+    vadd v15, v15, v15 unless=p2
+    vsel v14[1 :], v40[1 :], k0, v0
+    vsel v16, v42[1 :], k0, v1
+    vexp2 v59[1 :], v15
+    vsel v15[1 :], v44[1 :], k0, v2
+    vsel v17, v46[1 :], k0, v3
+    vsel v18[1 :], v48[1 :], k0, v4
+    vsel v19, v58[1 :], k0, v5
+    vsel v20, v59[1 :], k0, v6
+    vadd v22[1 :], v14[1 :], v16
+    vadd v16, v15[1 :], v17
+    vadd v17[1 :], v18[1 :], v19
+    vmul v49[1 :], v21[1 :], v41
+    vadd v50[1 :], v22[1 :], v16
+    seti s15 = 36
+    loop s15
+        vsync unpack on=fill slack=0
+        vunpk v14[1 :] <- l1[0] f16 walk=(14, 1) n=8
+        vadd v15, v17[1 :], v20
+        vunpk v16[1 :] <- l1[2] f16 walk=(14, 1) n=8
+        vunpk v17[1 :] <- l1[4] f16 walk=(14, 1) n=8
+        vsel v18[1 :], v14[1 :], s0, v0
+        vunpk v19[1 :] <- l1[6] f16 walk=(14, 1) n=8
+        vsel v20, v16[1 :], s0, v1
+        vunpk v21[1 :] <- l1[8] f16 walk=(14, 1) n=8
+        vsel v22[1 :], v17[1 :], s0, v2
+        vunpk v23[1 :] <- l1[10] f16 walk=(14, 1) n=8
+        vsel v24, v19[1 :], s0, v3
+        vunpk v25[1 :] <- l1[12] f16 walk=(14, 1) n=8
+        vsel v26[1 :], v21[1 :], s0, v4
+        vsel v27, v23[1 :], s0, v5
+        vsel v28, v25[1 :], s0, v6
+        vmax v29[1 :], v18[1 :], v20
+        vmax v18, v22[1 :], v24
+        vmax v20[1 :], v26[1 :], v27
+        vadd v22, v50[1 :], v15
+        vmax v15[1 :], v29[1 :], v18
+        vmax v18, v20[1 :], v28
+        vadd v20[0 :], v22[0 :], v22[4 :] vl=64
+        vmul v22[1 :], v37[1 :], v41
+        vmul v24[1 :], v38[1 :], v41
+        vmax v26, v15[1 :], v18
+        vadd v20[0 :], v20[0 :], xor(v20, 8) vl=64
+        vsel v30, v39[1 :], k0, v7
+        vsel v31, v43[1 :], k0, v8
+        vmax v15[0 :], v26[0 :], v26[4 :] vl=64
+        vadd v20[0 :], v20[0 :], xor(v20, 4) vl=64
+        vsel v32, v45[1 :], k0, v9
+        vsync pack on=drain slack=1
+        vpack v30 -> l1[112] f16 walk=(14, 1)
+        vsel v33, v47[1 :], k0, v10
+        vpack v31 -> l1[114] f16 walk=(14, 1)
+        vmax v15[0 :], v15[0 :], xor(v15, 8) vl=64
+        vadd v20[0 :], v20[0 :], xor(v20, 2) vl=64
+        vsel v34, v49[1 :], k0, v11
+        vpack v32 -> l1[116] f16 walk=(14, 1)
+        vsel v35, v22[1 :], k0, v12
+        vpack v33 -> l1[118] f16 walk=(14, 1)
+        vmax v15[0 :], v15[0 :], xor(v15, 4) vl=64
+        vadd v20[0 :], v20[0 :], xor(v20, 1) vl=64
+        vsel v36, v24[1 :], k0, v13
+        vpack v34 -> l1[120] f16 walk=(14, 1)
+        vpack v35 -> l1[122] f16 walk=(14, 1)
+        vmax v15[0 :], v15[0 :], xor(v15, 2) vl=64
+        vmov v20[4 :], v20[0 :] vl=64
+        vpack v36 -> l1[124] f16 walk=(14, 1)
+        vsync drain on=pack slack=0
+        vdrain a1 <- l1[112] rel
+        vmax v15[0 :], v15[0 :], xor(v15, 1) vl=64
+        vinv v18, v20
+        vmov v15[4 :], v15[0 :] vl=64
+        vmul v20[1 :], v40[1 :], v18
+        vmul v22[1 :], v42[1 :], v18
+        vmul v24, v15, k2
+        vmul v15[1 :], v44[1 :], v18
+        vmul v26[1 :], v46[1 :], v18
+        vadd v27, v14[1 :], v24
+        vadd v14, v16[1 :], v24
+        vadd v16, v17[1 :], v24
+        vmul v17, v27, s1
+        vmul v27, v14, s1
+        vmul v14, v16, s1
+        vmax v16, v17, s2
+        vmax v17, v27, s2
+        vadd v27, v19[1 :], v24
+        vcmplt p1, v16, s3
+        vmax v19, v14, s2
+        vmul v14, v27, s1
+        vadd v16, v16, v16 unless=p1
+        vcmplt p1, v17, s3
+        vadd v27, v21[1 :], v24
+        vmax v21, v14, s2
+        vadd v17, v17, v17 unless=p1
+        vcmplt p1, v19, s3
+        vmul v14, v27, s1
+        vadd v27, v23[1 :], v24
+        vadd v19, v19, v19 unless=p1
+        vcmplt p1, v21, s3
+        vmax v23, v14, s2
+        vmul v14, v27, s1
+        vadd v27, v25[1 :], v24
+        vadd v21, v21, v21 unless=p1
+        vcmplt p1, v23, s3
+        vmax v24, v14, s2
+        vmul v14, v27, s1
+        vadd v23, v23, v23 unless=p1
+        vcmplt p1, v24, s3
+        vsync fill on=unpack slack=7
+        vfill a0 -> l1[56] rel
+        vmax v25, v14, s2
+        vexp2 v14[1 :], v16
+        vadd v24, v24, v24 unless=p1
+        vcmplt p1, v25, s3
+        vexp2 v16[1 :], v17
+        vexp2 v17[1 :], v19
+        vexp2 v19[1 :], v21
+        vexp2 v21[1 :], v23
+        vexp2 v37[1 :], v24
+        vadd v25, v25, v25 unless=p1
+        vsel v23[1 :], v14[1 :], k0, v0
+        vsel v24, v16[1 :], k0, v1
+        vexp2 v38[1 :], v25
+        vsel v25[1 :], v17[1 :], k0, v2
+        vsel v27, v19[1 :], k0, v3
+        vsel v28[1 :], v21[1 :], k0, v4
+        vsel v29, v37[1 :], k0, v5
+        vsel v39, v38[1 :], k0, v6
+        vadd v40[1 :], v23[1 :], v24
+        vadd v23, v25[1 :], v27
+        vadd v24[1 :], v28[1 :], v29
+        vmul v25[1 :], v48[1 :], v18
+        vadd v27[1 :], v40[1 :], v23
+        vsync unpack on=fill slack=0
+        vunpk v28[1 :] <- l1[56] f16 walk=(14, 1) n=8
+        vadd v23, v24[1 :], v39
+        vunpk v29[1 :] <- l1[58] f16 walk=(14, 1) n=8
+        vunpk v24[1 :] <- l1[60] f16 walk=(14, 1) n=8
+        vsel v39[1 :], v28[1 :], s0, v0
+        vunpk v40[1 :] <- l1[62] f16 walk=(14, 1) n=8
+        vsel v41, v29[1 :], s0, v1
+        vunpk v42[1 :] <- l1[64] f16 walk=(14, 1) n=8
+        vsel v43[1 :], v24[1 :], s0, v2
+        vunpk v44[1 :] <- l1[66] f16 walk=(14, 1) n=8
+        vsel v45, v40[1 :], s0, v3
+        vunpk v46[1 :] <- l1[68] f16 walk=(14, 1) n=8
+        vsel v47[1 :], v42[1 :], s0, v4
+        vsel v48, v44[1 :], s0, v5
+        vsel v49, v46[1 :], s0, v6
+        vmax v50[1 :], v39[1 :], v41
+        vmax v39, v43[1 :], v45
+        vmax v41[1 :], v47[1 :], v48
+        vadd v43, v27[1 :], v23
+        vmax v23[1 :], v50[1 :], v39
+        vmax v27, v41[1 :], v49
+        vadd v39[0 :], v43[0 :], v43[4 :] vl=64
+        vmul v41[1 :], v58[1 :], v18
+        vmul v43[1 :], v59[1 :], v18
+        vmax v18, v23[1 :], v27
+        vadd v39[0 :], v39[0 :], xor(v39, 8) vl=64
+        vsel v51, v20[1 :], k0, v7
+        vsel v52, v22[1 :], k0, v8
+        vmax v20[0 :], v18[0 :], v18[4 :] vl=64
+        vadd v39[0 :], v39[0 :], xor(v39, 4) vl=64
+        vsel v53, v15[1 :], k0, v9
+        vsync pack on=drain slack=1
+        vpack v51 -> l1[168] f16 walk=(14, 1)
+        vsel v54, v26[1 :], k0, v10
+        vpack v52 -> l1[170] f16 walk=(14, 1)
+        vmax v20[0 :], v20[0 :], xor(v20, 8) vl=64
+        vadd v39[0 :], v39[0 :], xor(v39, 2) vl=64
+        vsel v55, v25[1 :], k0, v11
+        vpack v53 -> l1[172] f16 walk=(14, 1)
+        vsel v56, v41[1 :], k0, v12
+        vpack v54 -> l1[174] f16 walk=(14, 1)
+        vmax v20[0 :], v20[0 :], xor(v20, 4) vl=64
+        vadd v39[0 :], v39[0 :], xor(v39, 1) vl=64
+        vsel v57, v43[1 :], k0, v13
+        vpack v55 -> l1[176] f16 walk=(14, 1)
+        vpack v56 -> l1[178] f16 walk=(14, 1)
+        vmax v20[0 :], v20[0 :], xor(v20, 2) vl=64
+        vmov v39[4 :], v39[0 :] vl=64
+        vpack v57 -> l1[180] f16 walk=(14, 1)
+        vsync drain on=pack slack=0
+        vdrain a1 <- l1[168] rel
+        vmax v20[0 :], v20[0 :], xor(v20, 1) vl=64
+        vinv v41, v39
+        vmov v20[4 :], v20[0 :] vl=64
+        vmul v39[1 :], v14[1 :], v41
+        vmul v43[1 :], v16[1 :], v41
+        vmul v14, v20, k2
+        vmul v45[1 :], v17[1 :], v41
+        vmul v47[1 :], v19[1 :], v41
+        vadd v15, v28[1 :], v14
+        vadd v16, v29[1 :], v14
+        vadd v17, v24[1 :], v14
+        vmul v18, v15, s1
+        vmul v15, v16, s1
+        vmul v16, v17, s1
+        vmax v17, v18, s2
+        vmax v18, v15, s2
+        vadd v15, v40[1 :], v14
+        vcmplt p2, v17, s3
+        vmax v19, v16, s2
+        vmul v16, v15, s1
+        vadd v17, v17, v17 unless=p2
+        vcmplt p2, v18, s3
+        vadd v15, v42[1 :], v14
+        vmax v20, v16, s2
+        vadd v18, v18, v18 unless=p2
+        vcmplt p2, v19, s3
+        vmul v16, v15, s1
+        vadd v15, v44[1 :], v14
+        vadd v19, v19, v19 unless=p2
+        vcmplt p2, v20, s3
+        vmax v22, v16, s2
+        vmul v16, v15, s1
+        vadd v15, v46[1 :], v14
+        vadd v20, v20, v20 unless=p2
+        vcmplt p2, v22, s3
+        vmax v14, v16, s2
+        vmul v16, v15, s1
+        vadd v22, v22, v22 unless=p2
+        vcmplt p2, v14, s3
+        vsync fill on=unpack slack=7
+        vfill a0 -> l1[0] rel
+        vmax v15, v16, s2
+        vexp2 v40[1 :], v17
+        vadd v14, v14, v14 unless=p2
+        vcmplt p2, v15, s3
+        vexp2 v42[1 :], v18
+        vexp2 v44[1 :], v19
+        vexp2 v46[1 :], v20
+        vexp2 v48[1 :], v22
+        vexp2 v58[1 :], v14
+        vadd v15, v15, v15 unless=p2
+        vsel v14[1 :], v40[1 :], k0, v0
+        vsel v16, v42[1 :], k0, v1
+        vexp2 v59[1 :], v15
+        vsel v15[1 :], v44[1 :], k0, v2
+        vsel v17, v46[1 :], k0, v3
+        vsel v18[1 :], v48[1 :], k0, v4
+        vsel v19, v58[1 :], k0, v5
+        vsel v20, v59[1 :], k0, v6
+        vadd v22[1 :], v14[1 :], v16
+        vadd v16, v15[1 :], v17
+        vadd v17[1 :], v18[1 :], v19
+        vmul v49[1 :], v21[1 :], v41
+        vadd v50[1 :], v22[1 :], v16
+    halt
+
+image t_295a2fe361c29a8faecaa740acb7a89be40073888edabd4a64f20b76d3935f43_n0_vc0_2(p_a0, p_a1, p_a2, p_a3)
+    desc a0=p_a0 walk=(32, 56)
+    desc a1=p_a1 walk=(32, 56)
+    desc a2=p_a2 walk=(32, 14)
+    desc a3=p_a3 walk=(32, 14)
+    seti s0 = -65504.0
+    seti s1 = 1.4426950408889634
+    seti s2 = -127.0
+    seti s3 = 128.0
+    vfill a2 -> l1[498]
+    vbar
+    vunpk v0 <- l1[498] f16 walk=(0, 1)
+    vunpk v1 <- l1[500] f16 walk=(0, 1)
+    vunpk v2 <- l1[502] f16 walk=(0, 1)
+    vunpk v3 <- l1[504] f16 walk=(0, 1)
+    vunpk v4 <- l1[506] f16 walk=(0, 1)
+    vunpk v5 <- l1[508] f16 walk=(0, 1)
+    vunpk v6 <- l1[510] f16 walk=(0, 1)
+    vfill a3 -> l1[484]
+    vbar
+    vunpk v7 <- l1[484] f16 walk=(0, 1)
+    vunpk v8 <- l1[486] f16 walk=(0, 1)
+    vunpk v9 <- l1[488] f16 walk=(0, 1)
+    vunpk v10 <- l1[490] f16 walk=(0, 1)
+    vunpk v11 <- l1[492] f16 walk=(0, 1)
+    vunpk v12 <- l1[494] f16 walk=(0, 1)
+    vunpk v13 <- l1[496] f16 walk=(0, 1)
+    vsync fe on=unpack
+    vsync fill on=unpack slack=63
+    vfill a0 -> l1[0] rel
+    vsync unpack on=fill slack=0
+    vunpk v14[1 :] <- l1[0] f16 walk=(14, 1) n=8
+    vunpk v16[1 :] <- l1[2] f16 walk=(14, 1) n=8
+    vunpk v18[1 :] <- l1[4] f16 walk=(14, 1) n=8
+    vsel v19[1 :], v14[1 :], s0, v0
+    vunpk v20[1 :] <- l1[6] f16 walk=(14, 1) n=8
+    vsel v21, v16[1 :], s0, v1
+    vunpk v22[1 :] <- l1[8] f16 walk=(14, 1) n=8
+    vsel v23[1 :], v18[1 :], s0, v2
+    vunpk v24[1 :] <- l1[10] f16 walk=(14, 1) n=8
+    vsel v25, v20[1 :], s0, v3
+    vunpk v26[1 :] <- l1[12] f16 walk=(14, 1) n=8
+    vsel v27[1 :], v22[1 :], s0, v4
+    vsel v28, v24[1 :], s0, v5
+    vsel v29, v26[1 :], s0, v6
+    vmax v30[1 :], v19[1 :], v21
+    vmax v19, v23[1 :], v25
+    vmax v21[1 :], v27[1 :], v28
+    vmax v25[1 :], v30[1 :], v19
+    vmax v19, v21[1 :], v29
+    vmax v17, v25[1 :], v19
+    vmax v21[0 :], v17[0 :], v17[4 :] vl=64
+    vmax v21[0 :], v21[0 :], xor(v21, 8) vl=64
+    vmax v21[0 :], v21[0 :], xor(v21, 4) vl=64
+    vmax v21[0 :], v21[0 :], xor(v21, 2) vl=64
+    vmax v21[0 :], v21[0 :], xor(v21, 1) vl=64
+    vmov v21[4 :], v21[0 :] vl=64
+    vmul v15, v21, k2
+    vadd v17, v14[1 :], v15
+    vadd v14, v16[1 :], v15
+    vadd v16, v18[1 :], v15
+    vmul v18, v17, s1
+    vmul v17, v14, s1
+    vmul v14, v16, s1
+    vmax v16, v18, s2
+    vmax v18, v17, s2
+    vadd v17, v20[1 :], v15
+    vmax v19, v14, s2
+    vcmplt p1, v16, s3
+    vmul v14, v17, s1
+    vadd v17, v22[1 :], v15
+    vadd v16, v16, v16 unless=p1
+    vcmplt p1, v18, s3
+    vmax v20, v14, s2
+    vmul v14, v17, s1
+    vadd v17, v24[1 :], v15
+    vadd v18, v18, v18 unless=p1
+    vcmplt p1, v19, s3
+    vmax v21, v14, s2
+    vmul v14, v17, s1
+    vadd v17, v26[1 :], v15
+    vadd v19, v19, v19 unless=p1
+    vcmplt p1, v20, s3
+    vmax v15, v14, s2
+    vmul v14, v17, s1
+    vexp2 v47[1 :], v16
+    vadd v20, v20, v20 unless=p1
+    vcmplt p1, v21, s3
+    vmax v17, v14, s2
+    vexp2 v49[1 :], v18
+    vexp2 v51[1 :], v19
+    vadd v21, v21, v21 unless=p1
+    vcmplt p1, v15, s3
+    vexp2 v55[1 :], v20
+    vsel v14[1 :], v47[1 :], k0, v0
+    vexp2 v57[1 :], v21
+    vadd v15, v15, v15 unless=p1
+    vcmplt p1, v17, s3
+    vsel v16[1 :], v51[1 :], k0, v2
+    vsel v18[1 :], v57[1 :], k0, v4
+    vexp2 v58[1 :], v15
+    vadd v17, v17, v17 unless=p1
+    vsel v15, v49[1 :], k0, v1
+    vsel v19, v58[1 :], k0, v5
+    vexp2 v59[1 :], v17
+    vsel v17, v55[1 :], k0, v3
+    vadd v21[1 :], v14[1 :], v15
+    vadd v15[1 :], v18[1 :], v19
+    vsel v20, v59[1 :], k0, v6
+    vadd v22, v16[1 :], v17
+    vadd v14, v15[1 :], v20
+    vadd v17[1 :], v21[1 :], v22
+    vadd v16, v17[1 :], v14
+    vadd v75[0 :], v16[0 :], v16[4 :] vl=64
+    vadd v75[0 :], v75[0 :], xor(v75, 8) vl=64
+    vadd v75[0 :], v75[0 :], xor(v75, 4) vl=64
+    vadd v75[0 :], v75[0 :], xor(v75, 2) vl=64
+    vadd v75[0 :], v75[0 :], xor(v75, 1) vl=64
+    vmov v75[4 :], v75[0 :] vl=64
+    vinv v15, v75
+    vmul v19[1 :], v47[1 :], v15
+    vmul v23[1 :], v49[1 :], v15
+    vmul v17[1 :], v51[1 :], v15
+    vmul v27[1 :], v55[1 :], v15
+    vmul v28[1 :], v57[1 :], v15
+    vmul v29[1 :], v58[1 :], v15
+    vmul v30[1 :], v59[1 :], v15
+    vsel v31, v19[1 :], k0, v7
+    vsync pack on=drain slack=63
+    vpack v31 -> l1[112] f16 walk=(14, 1)
+    vsel v35, v27[1 :], k0, v10
+    vsel v36, v28[1 :], k0, v11
+    vsel v37, v29[1 :], k0, v12
+    vpack v35 -> l1[118] f16 walk=(14, 1)
+    vpack v36 -> l1[120] f16 walk=(14, 1)
+    vpack v37 -> l1[122] f16 walk=(14, 1)
+    vsel v63, v30[1 :], k0, v13
+    vsel v64, v17[1 :], k0, v9
+    vpack v63 -> l1[124] f16 walk=(14, 1)
+    vpack v64 -> l1[116] f16 walk=(14, 1)
+    vsel v78, v23[1 :], k0, v8
+    vpack v78 -> l1[114] f16 walk=(14, 1)
+    vsync drain on=pack slack=0
+    vdrain a1 <- l1[112] rel
+    halt
+
+fn t_295a2fe361c29a8faecaa740acb7a89be40073888edabd4a64f20b76d3935f43.l1(in0: f16[591, 224] @dram, in1: f16[224] @dram, in2: f16[224] @dram, out: f16[591, 224] @dram, h1: f16[4, 224] @dram, h2: f16[4, 224] @dram)
+    send vc[0]
+        run t_295a2fe361c29a8faecaa740acb7a89be40073888edabd4a64f20b76d3935f43_n0_vc0_0(in0+0, out+0, in1+0, in2+0)
+    send vc[1]
+        run t_295a2fe361c29a8faecaa740acb7a89be40073888edabd4a64f20b76d3935f43_n0_vc1_1(in0+132608, out+132608, in1+0, in2+0)
+    send vc[0]
+        run t_295a2fe361c29a8faecaa740acb7a89be40073888edabd4a64f20b76d3935f43_n0_vc0_2(in0+261632, out+261632, in1+0, in2+0)
+    mv2 = move posted
+        fill w(h1+0, (56, 32)) value=0
+        copy w(in0+263424, (42, 32)) -> w(h1+0, (42, 32))
+    wait moves mv2
+    send vc[0]
+        run t_295a2fe361c29a8faecaa740acb7a89be40073888edabd4a64f20b76d3935f43_n0_vc0_2(h1+0, h2+0, in1+0, in2+0)
+    k3_vc0 = mark vc[0]
+    wait vc[0] upto=k3_vc0
+    move
+        copy w(h2+0, (42, 32)) -> w(out+263424, (42, 32))

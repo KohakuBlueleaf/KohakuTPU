@@ -1,0 +1,38 @@
+{
+ "t_2dff8204e977346514dadce7816e5c43bb201d9e0e14b0b8539a2caec0351118": {
+  "signature": "a: mx7a[200, 3072] @dram(gm=50, nk=2), b: mx7b[768, 3072] @dram(gn=48, nk=2), in1: f16[200, 768] @dram, in2: f16[768] @dram, out: f16[200, 768] @dram",
+  "g1": [
+   "t_2dff8204e977346514dadce7816e5c43bb201d9e0e14b0b8539a2caec0351118"
+  ],
+  "cases": [
+   "fc2.n768"
+  ]
+ },
+ "t_4b046040c5ec4bc31bc1b02f8fd48d0dcd89550d933a1efd80cc5b8dc7656ad5": {
+  "signature": "x: f16[768, 3072] @dram, q: mx7b[768, 3072] @dram(gn=48, nk=2)",
+  "g1": [
+   "t_4b046040c5ec4bc31bc1b02f8fd48d0dcd89550d933a1efd80cc5b8dc7656ad5"
+  ],
+  "cases": [
+   "fc2.n768"
+  ]
+ },
+ "t_688bf32206607a38901aea5e411672f108435f5bb50d4cff03d1d37418fd8e09": {
+  "signature": "src: f16[9456, 16] @dram, dst: f16[9600, 16] @dram",
+  "g1": [
+   "t_688bf32206607a38901aea5e411672f108435f5bb50d4cff03d1d37418fd8e09"
+  ],
+  "cases": [
+   "fc2.n768"
+  ]
+ },
+ "t_a54a79b633aaf2b7f72783c3e08bf9d0449f45b21c4796ee82ac802578993a55": {
+  "signature": "x: f16[197, 3072] @dram, q: mx7a[200, 3072] @dram(gm=50, nk=2)",
+  "g1": [
+   "t_a54a79b633aaf2b7f72783c3e08bf9d0449f45b21c4796ee82ac802578993a55"
+  ],
+  "cases": [
+   "fc2.n768"
+  ]
+ }
+}

@@ -1,0 +1,56 @@
+target ktpu.v9
+
+image cp(x, y)
+    desc a0 = x walk=(32, 128)
+    desc a1 = y walk=(32, 128)
+    vfill a0 -> l1[0]
+    vsync drain on=fill
+    vdrain a1 <- l1[0]
+    vsync fe on=drain
+    halt
+
+image dbl(x, y)
+    desc a0 = x walk=(32, 64)
+    desc a1 = y walk=(32, 64)
+    vfill a0 -> l1[0]
+    vsync unpack on=fill
+    for j in 0..8
+        vunpk v{j} <- l1[j*8] f16
+    for j in 0..8
+        vadd v{8 + j}, v{j}, v{j}
+    for j in 0..8
+        vpack v{8 + j} -> l1[64 + j*8] f16
+    vsync drain on=pack
+    vdrain a1 <- l1[64]
+    vsync fe on=drain
+    halt
+
+fn c1_vc_0123.l1(x0: f16[2048] @dram, y0: f16[2048] @dram, d0: f16[1024] @dram, x1: f16[2048] @dram, y1: f16[2048] @dram, d1: f16[1024] @dram, x2: f16[2048] @dram, y2: f16[2048] @dram, d2: f16[1024] @dram, x3: f16[2048] @dram, y3: f16[2048] @dram, d3: f16[1024] @dram)
+    node 0
+        send vc[0]
+            run cp(x0, y0)
+        send vc[1]
+            run dbl(x0, d0)
+        wait vc[0]
+        wait vc[1]
+    node 1
+        send vc[0]
+            run cp(x1, y1)
+        send vc[1]
+            run dbl(x1, d1)
+        wait vc[0]
+        wait vc[1]
+    node 2
+        send vc[0]
+            run cp(x2, y2)
+        send vc[1]
+            run dbl(x2, d2)
+        wait vc[0]
+        wait vc[1]
+    node 3
+        send vc[0]
+            run cp(x3, y3)
+        send vc[1]
+            run dbl(x3, d3)
+        wait vc[0]
+        wait vc[1]

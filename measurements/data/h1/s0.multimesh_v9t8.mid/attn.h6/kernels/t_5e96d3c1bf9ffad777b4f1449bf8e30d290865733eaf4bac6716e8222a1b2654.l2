@@ -1,0 +1,62 @@
+target ktpu.v9
+
+fn t_5e96d3c1bf9ffad777b4f1449bf8e30d290865733eaf4bac6716e8222a1b2654.l2(in0: f16[1182, 224] @dram, in1: f16[224] @dram, out: f16[1182, 224] @dram)
+    h1 = buffer  : f16[4, 224] @dram
+    h2 = buffer  : f16[4, 224] @dram
+    par c1 in 0..2 on vc[c1]
+        xl1 = load in1[0 : +224]  : f16[4, 224] @l1(gt4)
+        v1 = unpack xl1           : f32[4, 224] @reg(gt4)
+        for t1 in 0..((c1 + 2) / 2) + 73 - ((c1 + 1) / 2)
+            xl2 = load in0[c1*584 + ((c1 + 1) / 2)*8 + t1*8 : +8, 0 : +224]  : f16[8, 224] @l1(gt4)
+            v2 = unpack xl2                     : f32[8, 224] @reg(gt4)
+            o1 = sel v1, v2, -65504.0           : f32[8, 224] @reg(gt4)
+            s1 = rmax o1                        : f32[8] @reg
+            e1 = mul s1, -1.0                   : f32[8] @reg
+            e2 = add v2, e1[:, *]               : f32[8, 224] @reg(gt4)
+            e3 = mul e2, 1.4426950408889634     : f32[8, 224] @reg(gt4)
+            e4 = exp2 e3                        : f32[8, 224] @reg(gt4)
+            o2 = sel v1, e4, 0.0                : f32[8, 224] @reg(gt4)
+            s2 = rsum o2                        : f32[8] @reg
+            e5 = inv s2                         : f32[8] @reg
+            e6 = mul e4, e5[:, *]               : f32[8, 224] @reg(gt4)
+            p1 = pack e6                        : f16[8, 224] @l1(gt4)
+            store out[c1*584 + ((c1 + 1) / 2)*8 + t1*8 : +8, 0 : +224] <- p1
+    par c2 in 0..1 on vc[c2]
+        xl3 = load in1[0 : +224]  : f16[4, 224] @l1(gt4)
+        v3 = unpack xl3           : f32[4, 224] @reg(gt4)
+        for t2 in 0..1
+            xl4 = load in0[t2*4 + 1176 : +4, 0 : +224]  : f16[4, 224] @l1(gt4)
+            v4 = unpack xl4                     : f32[4, 224] @reg(gt4)
+            o3 = sel v3, v4, -65504.0           : f32[4, 224] @reg(gt4)
+            s3 = rmax o3                        : f32[4] @reg
+            e7 = mul s3, -1.0                   : f32[4] @reg
+            e8 = add v4, e7[:, *]               : f32[4, 224] @reg(gt4)
+            e9 = mul e8, 1.4426950408889634     : f32[4, 224] @reg(gt4)
+            e10 = exp2 e9                       : f32[4, 224] @reg(gt4)
+            o4 = sel v3, e10, 0.0               : f32[4, 224] @reg(gt4)
+            s4 = rsum o4                        : f32[4] @reg
+            e11 = inv s4                        : f32[4] @reg
+            e12 = mul e10, e11[:, *]            : f32[4, 224] @reg(gt4)
+            p2 = pack e12                       : f16[4, 224] @l1(gt4)
+            store out[t2*4 + 1176 : +4, 0 : +224] <- p2
+    fill h1 value=0
+    copy h1[0 : +2] <- in0[1180 : +2, 0 : +224]
+    par c3 in 0..1 on vc[c3]
+        xl5 = load in1[0 : +224]  : f16[4, 224] @l1(gt4)
+        v5 = unpack xl5           : f32[4, 224] @reg(gt4)
+        for t3 in 0..1
+            xl6 = load h1[t3*4 : +4, 0 : +224]  : f16[4, 224] @l1(gt4)
+            v6 = unpack xl6                     : f32[4, 224] @reg(gt4)
+            o5 = sel v5, v6, -65504.0           : f32[4, 224] @reg(gt4)
+            s5 = rmax o5                        : f32[4] @reg
+            e13 = mul s5, -1.0                  : f32[4] @reg
+            e14 = add v6, e13[:, *]             : f32[4, 224] @reg(gt4)
+            e15 = mul e14, 1.4426950408889634   : f32[4, 224] @reg(gt4)
+            e16 = exp2 e15                      : f32[4, 224] @reg(gt4)
+            o6 = sel v5, e16, 0.0               : f32[4, 224] @reg(gt4)
+            s6 = rsum o6                        : f32[4] @reg
+            e17 = inv s6                        : f32[4] @reg
+            e18 = mul e16, e17[:, *]            : f32[4, 224] @reg(gt4)
+            p3 = pack e18                       : f16[4, 224] @l1(gt4)
+            store h2[t3*4 : +4, 0 : +224] <- p3
+    copy out[1180 : +2, 0 : +224] <- h2[0 : +2]

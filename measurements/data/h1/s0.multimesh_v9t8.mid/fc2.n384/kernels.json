@@ -1,0 +1,32 @@
+{
+ "t_2234798b71399c35f765595494dbdb89baf6cec6271054d4361813ea8fdf977d": {
+  "signature": "src: f16[4728, 16] @dram, dst: f16[4800, 16] @dram",
+  "g1": [],
+  "cases": [
+   "fc2.n384"
+  ]
+ },
+ "t_61587bf24fe9e930050ed30059d8438c388c3866ad297d721374b64b5de71a41": {
+  "signature": "x: f16[197, 3072] @dram, q: mx7a[200, 3072] @dram(gm=50, nk=1)",
+  "g1": [
+   "t_61587bf24fe9e930050ed30059d8438c388c3866ad297d721374b64b5de71a41"
+  ],
+  "cases": [
+   "fc2.n384"
+  ]
+ },
+ "t_a287423112ff3d0b103b3ae9205be5270724da25303a1e19d82705e96d5e6a7e": {
+  "signature": "a: mx7a[200, 3072] @dram(gm=50, nk=1), b: mx7b[384, 3072] @dram(gn=24, nk=1), in1: f16[200, 384] @dram, in2: f16[384] @dram, out: f16[200, 384] @dram",
+  "g1": [],
+  "cases": [
+   "fc2.n384"
+  ]
+ },
+ "t_e5d6131ebe22b3bd5a1f92bd8e5eff3257912566f5c665f27fd76a41e2f4b12f": {
+  "signature": "x: f16[384, 3072] @dram, q: mx7b[384, 3072] @dram(gn=24, nk=1)",
+  "g1": [],
+  "cases": [
+   "fc2.n384"
+  ]
+ }
+}

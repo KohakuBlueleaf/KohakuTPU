@@ -1,0 +1,4 @@
+target ktpu.v9
+
+fn t_5747663ba14bd913125feda2f9ba9f081e1ad69cd2da193af52e303dd9a3b77d.l2(x: f16[197, 1536] @dram, q: mx7a[200, 1536] @dram(gm=50, nk=2))
+    quant q[0 : +200] <- x[0 : +197, 0 : +1536] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1

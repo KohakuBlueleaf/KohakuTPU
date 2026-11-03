@@ -1,0 +1,31 @@
+target ktpu.v9
+
+fn t_47375c51de20af8d724397f0e17ce95a6ecb3dab2152a572e85c957eb41dbb3c.l2(a: mx7a[200, 768] @dram(gm=50, nk=2), b: mx7b[576, 768] @dram(gn=24, nk=2), in1: f16[576] @dram, out: f16[200, 576] @dram)
+    h1 = buffer  : f16[800, 96] @stage(tile=50x24)
+    for k1 in 0..3 pipe=2
+        par u1 in 0..2 on mg[u1]
+            for k2 in 0..1
+                acc1 = zero  : f32[200, 96] @acc
+                for k3 in 0..12
+                    a1 = fill a[((k1*2 + u1 + k2*2) / 6)*200 + (((k1*2 + u1 + k2*2) % 6) / 6)*200 : +200, k3*64 : +64]  : mx7a[200, 64] @A
+                    b1 = fill b[(((k1*2 + u1 + k2*2) % 6) % 6)*96 : +96, k3*64 : +64]  : mx7b[96, 64] @B
+                    acc1 = gemm a1, b1, acc1    : f32[200, 96] @acc
+                drain acc1 -> h1[(k1 % 2)*400 + u1*200 + k2*400 : +200, 0 : +96]
+        par c1 in 0..2 on vc[c1]
+            xl1 = load in1[(((k1*2 + c1) % 6) % 6)*96 : +96]  : f16[4, 96] @l1(gt4)
+            v1 = unpack xl1                     : f32[4, 96] @reg(gt4)
+            for t1 in 0..12
+                xl2 = load h1[(k1 % 2)*400 + c1*200 + t1*16 : +16, 0 : +96]  : f16[16, 96] @l1(gt4)
+                v2 = unpack xl2                 : f32[16, 96] @reg(gt4)
+                e1 = add v2, v1                 : f32[16, 96] @reg(gt4)
+                p1 = pack e1                    : f16[16, 96] @l1(gt4)
+                store out[((k1*2 + c1) / 6)*200 + (((k1*2 + c1) % 6) / 6)*200 + t1*16 : +16, (((k1*2 + c1) % 6) % 6)*96 : +96] <- p1
+        par c2 in 0..2 on vc[c2]
+            xl3 = load in1[(((k1*2 + c2) % 6) % 6)*96 : +96]  : f16[4, 96] @l1(gt4)
+            v3 = unpack xl3                     : f32[4, 96] @reg(gt4)
+            for t2 in 0..1
+                xl4 = load h1[(k1 % 2)*400 + c2*200 + t2*8 + 192 : +8, 0 : +96]  : f16[8, 96] @l1(gt4)
+                v4 = unpack xl4                 : f32[8, 96] @reg(gt4)
+                e2 = add v4, v3                 : f32[8, 96] @reg(gt4)
+                p2 = pack e2                    : f16[8, 96] @l1(gt4)
+                store out[((k1*2 + c2) / 6)*200 + (((k1*2 + c2) % 6) / 6)*200 + t2*8 + 192 : +8, (((k1*2 + c2) % 6) % 6)*96 : +96] <- p2

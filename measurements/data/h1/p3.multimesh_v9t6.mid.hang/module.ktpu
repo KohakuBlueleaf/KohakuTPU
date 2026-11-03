@@ -1,0 +1,1297 @@
+target ktpu.v9
+
+fn p3_alltoall_fenced_k2.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        ring mesh=1 slot=3 amount=1
+        ring mesh=2 slot=3 amount=1
+        ring mesh=3 slot=3 amount=1
+        wait slot 3 n=3 consume
+        r1 = add r1, 2
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1
+        ring mesh=2 slot=3 amount=1
+        ring mesh=3 slot=3 amount=1
+        wait slot 3 n=3 consume
+        r1 = add r1, 2
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1
+        ring mesh=1 slot=3 amount=1
+        ring mesh=3 slot=3 amount=1
+        wait slot 3 n=3 consume
+        r1 = add r1, 2
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1
+        ring mesh=1 slot=3 amount=1
+        ring mesh=2 slot=3 amount=1
+        wait slot 3 n=3 consume
+        r1 = add r1, 2
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_alltoall_fenced_k16.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        ring mesh=1 slot=3 amount=1
+        ring mesh=2 slot=3 amount=1
+        ring mesh=3 slot=3 amount=1
+        wait slot 3 n=3 consume
+        r1 = add r1, 2
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=0 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1
+        ring mesh=2 slot=3 amount=1
+        ring mesh=3 slot=3 amount=1
+        wait slot 3 n=3 consume
+        r1 = add r1, 2
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=3 slot=2 amount=1
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1
+        ring mesh=1 slot=3 amount=1
+        ring mesh=3 slot=3 amount=1
+        wait slot 3 n=3 consume
+        r1 = add r1, 2
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=0 slot=2 amount=1
+        ring mesh=1 slot=2 amount=1
+        ring mesh=2 slot=2 amount=1
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1
+        ring mesh=1 slot=3 amount=1
+        ring mesh=2 slot=3 amount=1
+        wait slot 3 n=3 consume
+        r1 = add r1, 2
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_alltoall_plain_k2.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=1 slot=2 amount=1 plain
+        ring mesh=2 slot=2 amount=1 plain
+        ring mesh=3 slot=2 amount=1 plain
+        wait slot 2 n=3 consume
+        ring mesh=1 slot=3 amount=1 plain
+        ring mesh=2 slot=3 amount=1 plain
+        ring mesh=3 slot=3 amount=1 plain
+        wait slot 3 n=3 consume
+        r1 = add r1, 2
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=0 slot=2 amount=1 plain
+        ring mesh=2 slot=2 amount=1 plain
+        ring mesh=3 slot=2 amount=1 plain
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1 plain
+        ring mesh=2 slot=3 amount=1 plain
+        ring mesh=3 slot=3 amount=1 plain
+        wait slot 3 n=3 consume
+        r1 = add r1, 2
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=0 slot=2 amount=1 plain
+        ring mesh=1 slot=2 amount=1 plain
+        ring mesh=3 slot=2 amount=1 plain
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1 plain
+        ring mesh=1 slot=3 amount=1 plain
+        ring mesh=3 slot=3 amount=1 plain
+        wait slot 3 n=3 consume
+        r1 = add r1, 2
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=0 slot=2 amount=1 plain
+        ring mesh=1 slot=2 amount=1 plain
+        ring mesh=2 slot=2 amount=1 plain
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1 plain
+        ring mesh=1 slot=3 amount=1 plain
+        ring mesh=2 slot=3 amount=1 plain
+        wait slot 3 n=3 consume
+        r1 = add r1, 2
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_alltoall_plain_k16.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=1 slot=2 amount=1 plain
+        ring mesh=2 slot=2 amount=1 plain
+        ring mesh=3 slot=2 amount=1 plain
+        wait slot 2 n=3 consume
+        ring mesh=1 slot=3 amount=1 plain
+        ring mesh=2 slot=3 amount=1 plain
+        ring mesh=3 slot=3 amount=1 plain
+        wait slot 3 n=3 consume
+        r1 = add r1, 2
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=0 slot=2 amount=1 plain
+        ring mesh=2 slot=2 amount=1 plain
+        ring mesh=3 slot=2 amount=1 plain
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1 plain
+        ring mesh=2 slot=3 amount=1 plain
+        ring mesh=3 slot=3 amount=1 plain
+        wait slot 3 n=3 consume
+        r1 = add r1, 2
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=0 slot=2 amount=1 plain
+        ring mesh=1 slot=2 amount=1 plain
+        ring mesh=3 slot=2 amount=1 plain
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1 plain
+        ring mesh=1 slot=3 amount=1 plain
+        ring mesh=3 slot=3 amount=1 plain
+        wait slot 3 n=3 consume
+        r1 = add r1, 2
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=0 slot=2 amount=1 plain
+        ring mesh=1 slot=2 amount=1 plain
+        ring mesh=2 slot=2 amount=1 plain
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1 plain
+        ring mesh=1 slot=3 amount=1 plain
+        ring mesh=2 slot=3 amount=1 plain
+        wait slot 3 n=3 consume
+        r1 = add r1, 2
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_chain_fenced_k2.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        wait slot 2 n=1 consume
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ring mesh=0 slot=3 amount=1
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        wait slot 2 n=1 consume
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ring mesh=1 slot=3 amount=1
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        wait slot 2 n=1 consume
+        ring mesh=2 slot=3 amount=1
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_chain_fenced_k16.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        wait slot 2 n=1 consume
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ring mesh=0 slot=3 amount=1
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        wait slot 2 n=1 consume
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        ring mesh=1 slot=3 amount=1
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        wait slot 2 n=1 consume
+        ring mesh=2 slot=3 amount=1
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_chain_plain_k2.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=1 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        wait slot 2 n=1 consume
+        ring mesh=2 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        ring mesh=0 slot=3 amount=1 plain
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        wait slot 2 n=1 consume
+        ring mesh=3 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        ring mesh=1 slot=3 amount=1 plain
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        wait slot 2 n=1 consume
+        ring mesh=2 slot=3 amount=1 plain
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_chain_plain_k16.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=1 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        wait slot 2 n=1 consume
+        ring mesh=2 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        ring mesh=0 slot=3 amount=1 plain
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        wait slot 2 n=1 consume
+        ring mesh=3 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        ring mesh=1 slot=3 amount=1 plain
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        wait slot 2 n=1 consume
+        ring mesh=2 slot=3 amount=1 plain
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_gather0_fenced_k2.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 2
+        label trip
+        wait slot 2 n=3 consume
+        ring mesh=1 slot=3 amount=1
+        ring mesh=2 slot=3 amount=1
+        ring mesh=3 slot=3 amount=1
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_gather0_fenced_k16.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 16
+        label trip
+        wait slot 2 n=3 consume
+        ring mesh=1 slot=3 amount=1
+        ring mesh=2 slot=3 amount=1
+        ring mesh=3 slot=3 amount=1
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=0 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_gather0_plain_k2.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 2
+        label trip
+        wait slot 2 n=3 consume
+        ring mesh=1 slot=3 amount=1 plain
+        ring mesh=2 slot=3 amount=1 plain
+        ring mesh=3 slot=3 amount=1 plain
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=0 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=0 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=0 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_gather0_plain_k16.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 16
+        label trip
+        wait slot 2 n=3 consume
+        ring mesh=1 slot=3 amount=1 plain
+        ring mesh=2 slot=3 amount=1 plain
+        ring mesh=3 slot=3 amount=1 plain
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=0 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=0 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=0 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_gather1_fenced_k2.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1
+        ring mesh=2 slot=3 amount=1
+        ring mesh=3 slot=3 amount=1
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_gather1_fenced_k16.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1
+        ring mesh=2 slot=3 amount=1
+        ring mesh=3 slot=3 amount=1
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=1 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_gather1_plain_k2.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=1 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1 plain
+        ring mesh=2 slot=3 amount=1 plain
+        ring mesh=3 slot=3 amount=1 plain
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=1 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=1 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_gather1_plain_k16.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=1 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1 plain
+        ring mesh=2 slot=3 amount=1 plain
+        ring mesh=3 slot=3 amount=1 plain
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=1 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=1 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_gather2_fenced_k2.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1
+        ring mesh=1 slot=3 amount=1
+        ring mesh=3 slot=3 amount=1
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_gather2_fenced_k16.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1
+        ring mesh=1 slot=3 amount=1
+        ring mesh=3 slot=3 amount=1
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=2 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_gather2_plain_k2.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=2 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=2 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1 plain
+        ring mesh=1 slot=3 amount=1 plain
+        ring mesh=3 slot=3 amount=1 plain
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=2 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_gather2_plain_k16.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=2 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=2 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1 plain
+        ring mesh=1 slot=3 amount=1 plain
+        ring mesh=3 slot=3 amount=1 plain
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=2 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_gather3_fenced_k2.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1
+        ring mesh=1 slot=3 amount=1
+        ring mesh=2 slot=3 amount=1
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_gather3_fenced_k16.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=3 slot=2 amount=1
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1
+        ring mesh=1 slot=3 amount=1
+        ring mesh=2 slot=3 amount=1
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_gather3_plain_k2.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=3 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=3 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        ring mesh=3 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 2
+        label trip
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1 plain
+        ring mesh=1 slot=3 amount=1 plain
+        ring mesh=2 slot=3 amount=1 plain
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1
+
+fn p3_gather3_plain_k16.l1(count: u64[4] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ring mesh=1 slot=1 amount=1
+        ring mesh=2 slot=1 amount=1
+        ring mesh=3 slot=1 amount=1
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=3 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 0 <- r1
+    node 1
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=3 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 8 <- r1
+    node 2
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        ring mesh=3 slot=2 amount=1 plain
+        wait slot 3 n=1 consume
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 16 <- r1
+    node 3
+        ring mesh=0 slot=1 amount=1
+        wait slot 1 n=1 consume
+        r1 = set 0
+        r2 = set 16
+        label trip
+        wait slot 2 n=3 consume
+        ring mesh=0 slot=3 amount=1 plain
+        ring mesh=1 slot=3 amount=1 plain
+        ring mesh=2 slot=3 amount=1 plain
+        r1 = add r1, 1
+        goto trip if r1 < r2
+        store count + 24 <- r1

@@ -1,0 +1,531 @@
+target ktpu.v9
+
+fn q0_empty_0.l1(unused: u64[4] @dram)
+    node 0
+
+fn q0_empty_1.l1(unused: u64[4] @dram)
+    node 1
+
+fn q0_empty_2.l1(unused: u64[4] @dram)
+    node 2
+
+fn q0_empty_3.l1(unused: u64[4] @dram)
+    node 3
+
+fn q0_empty_0123.l1(unused: u64[4] @dram)
+    node 0
+    node 1
+    node 2
+    node 3
+
+fn q0_copy_0.l1(x: f16[2048] @dram, y: f16[2048] @dram)
+    node 0
+        move
+            copy w(x, (128, 32)) -> w(y, (128, 32))
+
+fn q0_copy_1.l1(x: f16[2048] @dram, y: f16[2048] @dram)
+    node 1
+        move
+            copy w(x, (128, 32)) -> w(y, (128, 32))
+
+fn q0_copy_2.l1(x: f16[2048] @dram, y: f16[2048] @dram)
+    node 2
+        move
+            copy w(x, (128, 32)) -> w(y, (128, 32))
+
+fn q0_copy_3.l1(x: f16[2048] @dram, y: f16[2048] @dram)
+    node 3
+        move
+            copy w(x, (128, 32)) -> w(y, (128, 32))
+
+fn q0_ring_01_a1.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 0
+        ring mesh=1 slot=1 amount=1
+    node 1
+        wait slot 1 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+
+fn q0_ring_01_a3.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 0
+        ring mesh=1 slot=1 amount=3
+    node 1
+        wait slot 1 n=3 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+
+fn q0_ring_02_a1.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 0
+        ring mesh=2 slot=1 amount=1
+    node 2
+        wait slot 1 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+
+fn q0_ring_02_a3.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 0
+        ring mesh=2 slot=1 amount=3
+    node 2
+        wait slot 1 n=3 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+
+fn q0_ring_03_a1.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 0
+        ring mesh=3 slot=1 amount=1
+    node 3
+        wait slot 1 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+
+fn q0_ring_03_a3.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 0
+        ring mesh=3 slot=1 amount=3
+    node 3
+        wait slot 1 n=3 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+
+fn q0_ring_10_a1.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=1
+
+fn q0_ring_10_a3.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        ring mesh=0 slot=1 amount=3
+
+fn q0_ring_12_a1.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 1
+        ring mesh=2 slot=1 amount=1
+    node 2
+        wait slot 1 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+
+fn q0_ring_12_a3.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 1
+        ring mesh=2 slot=1 amount=3
+    node 2
+        wait slot 1 n=3 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+
+fn q0_ring_13_a1.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 1
+        ring mesh=3 slot=1 amount=1
+    node 3
+        wait slot 1 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+
+fn q0_ring_13_a3.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 1
+        ring mesh=3 slot=1 amount=3
+    node 3
+        wait slot 1 n=3 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+
+fn q0_ring_20_a1.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=1
+
+fn q0_ring_20_a3.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=0 slot=1 amount=3
+
+fn q0_ring_21_a1.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 1
+        wait slot 1 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=1 slot=1 amount=1
+
+fn q0_ring_21_a3.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 1
+        wait slot 1 n=3 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        ring mesh=1 slot=1 amount=3
+
+fn q0_ring_23_a1.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 2
+        ring mesh=3 slot=1 amount=1
+    node 3
+        wait slot 1 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+
+fn q0_ring_23_a3.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 2
+        ring mesh=3 slot=1 amount=3
+    node 3
+        wait slot 1 n=3 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+
+fn q0_ring_30_a1.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=1
+
+fn q0_ring_30_a3.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 0
+        wait slot 1 n=3 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=0 slot=1 amount=3
+
+fn q0_ring_31_a1.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 1
+        wait slot 1 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=1 slot=1 amount=1
+
+fn q0_ring_31_a3.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 1
+        wait slot 1 n=3 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=1 slot=1 amount=3
+
+fn q0_ring_32_a1.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 2
+        wait slot 1 n=1 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=2 slot=1 amount=1
+
+fn q0_ring_32_a3.l1(unused: u64[4] @dram, slots: u64[1] @dram)
+    node 2
+        wait slot 1 n=3 consume
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        ring mesh=2 slot=1 amount=3
+
+fn q0_dep_01.l1(x: f16[2048] @dram, y: f16[2048] @dram, z: f16[2048] @dram, seen: u64[2] @dram, slots: u64[2] @dram)
+    node 0
+        settle 20000
+        move
+            copy w(x, (128, 32)) -> w(y, (128, 32))
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 0
+        store seen + 0 <- r5
+        r5 = load y + 4088
+        store seen + 8 <- r5
+        move
+            copy w(y, (128, 32)) -> w(z, (128, 32))
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn q0_dep_02.l1(x: f16[2048] @dram, y: f16[2048] @dram, z: f16[2048] @dram, seen: u64[2] @dram, slots: u64[2] @dram)
+    node 0
+        settle 20000
+        move
+            copy w(x, (128, 32)) -> w(y, (128, 32))
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 0
+        store seen + 0 <- r5
+        r5 = load y + 4088
+        store seen + 8 <- r5
+        move
+            copy w(y, (128, 32)) -> w(z, (128, 32))
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn q0_dep_03.l1(x: f16[2048] @dram, y: f16[2048] @dram, z: f16[2048] @dram, seen: u64[2] @dram, slots: u64[2] @dram)
+    node 0
+        settle 20000
+        move
+            copy w(x, (128, 32)) -> w(y, (128, 32))
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        r5 = load y + 0
+        store seen + 0 <- r5
+        r5 = load y + 4088
+        store seen + 8 <- r5
+        move
+            copy w(y, (128, 32)) -> w(z, (128, 32))
+        ring mesh=0 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn q0_dep_10.l1(x: f16[2048] @dram, y: f16[2048] @dram, z: f16[2048] @dram, seen: u64[2] @dram, slots: u64[2] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        r5 = load y + 0
+        store seen + 0 <- r5
+        r5 = load y + 4088
+        store seen + 8 <- r5
+        move
+            copy w(y, (128, 32)) -> w(z, (128, 32))
+        ring mesh=1 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 1
+        settle 20000
+        move
+            copy w(x, (128, 32)) -> w(y, (128, 32))
+        ring mesh=0 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn q0_dep_12.l1(x: f16[2048] @dram, y: f16[2048] @dram, z: f16[2048] @dram, seen: u64[2] @dram, slots: u64[2] @dram)
+    node 1
+        settle 20000
+        move
+            copy w(x, (128, 32)) -> w(y, (128, 32))
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 0
+        store seen + 0 <- r5
+        r5 = load y + 4088
+        store seen + 8 <- r5
+        move
+            copy w(y, (128, 32)) -> w(z, (128, 32))
+        ring mesh=1 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn q0_dep_13.l1(x: f16[2048] @dram, y: f16[2048] @dram, z: f16[2048] @dram, seen: u64[2] @dram, slots: u64[2] @dram)
+    node 1
+        settle 20000
+        move
+            copy w(x, (128, 32)) -> w(y, (128, 32))
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        r5 = load y + 0
+        store seen + 0 <- r5
+        r5 = load y + 4088
+        store seen + 8 <- r5
+        move
+            copy w(y, (128, 32)) -> w(z, (128, 32))
+        ring mesh=1 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn q0_dep_20.l1(x: f16[2048] @dram, y: f16[2048] @dram, z: f16[2048] @dram, seen: u64[2] @dram, slots: u64[2] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        r5 = load y + 0
+        store seen + 0 <- r5
+        r5 = load y + 4088
+        store seen + 8 <- r5
+        move
+            copy w(y, (128, 32)) -> w(z, (128, 32))
+        ring mesh=2 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        settle 20000
+        move
+            copy w(x, (128, 32)) -> w(y, (128, 32))
+        ring mesh=0 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn q0_dep_21.l1(x: f16[2048] @dram, y: f16[2048] @dram, z: f16[2048] @dram, seen: u64[2] @dram, slots: u64[2] @dram)
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 0
+        store seen + 0 <- r5
+        r5 = load y + 4088
+        store seen + 8 <- r5
+        move
+            copy w(y, (128, 32)) -> w(z, (128, 32))
+        ring mesh=2 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 2
+        settle 20000
+        move
+            copy w(x, (128, 32)) -> w(y, (128, 32))
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn q0_dep_23.l1(x: f16[2048] @dram, y: f16[2048] @dram, z: f16[2048] @dram, seen: u64[2] @dram, slots: u64[2] @dram)
+    node 2
+        settle 20000
+        move
+            copy w(x, (128, 32)) -> w(y, (128, 32))
+        ring mesh=3 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        wait slot 1 n=1 consume
+        r5 = load y + 0
+        store seen + 0 <- r5
+        r5 = load y + 4088
+        store seen + 8 <- r5
+        move
+            copy w(y, (128, 32)) -> w(z, (128, 32))
+        ring mesh=2 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn q0_dep_30.l1(x: f16[2048] @dram, y: f16[2048] @dram, z: f16[2048] @dram, seen: u64[2] @dram, slots: u64[2] @dram)
+    node 0
+        wait slot 1 n=1 consume
+        r5 = load y + 0
+        store seen + 0 <- r5
+        r5 = load y + 4088
+        store seen + 8 <- r5
+        move
+            copy w(y, (128, 32)) -> w(z, (128, 32))
+        ring mesh=3 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        settle 20000
+        move
+            copy w(x, (128, 32)) -> w(y, (128, 32))
+        ring mesh=0 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn q0_dep_31.l1(x: f16[2048] @dram, y: f16[2048] @dram, z: f16[2048] @dram, seen: u64[2] @dram, slots: u64[2] @dram)
+    node 1
+        wait slot 1 n=1 consume
+        r5 = load y + 0
+        store seen + 0 <- r5
+        r5 = load y + 4088
+        store seen + 8 <- r5
+        move
+            copy w(y, (128, 32)) -> w(z, (128, 32))
+        ring mesh=3 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        settle 20000
+        move
+            copy w(x, (128, 32)) -> w(y, (128, 32))
+        ring mesh=1 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14
+
+fn q0_dep_32.l1(x: f16[2048] @dram, y: f16[2048] @dram, z: f16[2048] @dram, seen: u64[2] @dram, slots: u64[2] @dram)
+    node 2
+        wait slot 1 n=1 consume
+        r5 = load y + 0
+        store seen + 0 <- r5
+        r5 = load y + 4088
+        store seen + 8 <- r5
+        move
+            copy w(y, (128, 32)) -> w(z, (128, 32))
+        ring mesh=3 slot=2 amount=1
+        ctrl il_select <- 1
+        r14 = ctrl sig
+        store slots + 0 <- r14
+    node 3
+        settle 20000
+        move
+            copy w(x, (128, 32)) -> w(y, (128, 32))
+        ring mesh=2 slot=1 amount=1
+        wait slot 2 n=1 consume
+        ctrl il_select <- 2
+        r14 = ctrl sig
+        store slots + 8 <- r14

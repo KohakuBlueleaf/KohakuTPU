@@ -1,0 +1,4 @@
+target ktpu.v9
+
+fn t_aae9409082d2a46861e49bd7ce21f28426c2bdc35b6767e42c7bd527f7725f1b.l2(src: f16[7880, 16] @dram, dst: f16[7880, 16] @dram)
+    copy dst <- src

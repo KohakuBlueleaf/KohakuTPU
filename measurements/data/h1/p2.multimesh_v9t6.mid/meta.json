@@ -1,0 +1,301 @@
+{
+ "args": {
+  "board": "multimesh_v9t6",
+  "profile": "mid",
+  "nodes": "0,1,2,3",
+  "gen": "p2",
+  "module": "None",
+  "outputs": "",
+  "level": "l1",
+  "reps": "20",
+  "flags": "0",
+  "faults": "True",
+  "measure": "True",
+  "seed": "7",
+  "only": "",
+  "transport": "xdma",
+  "check": "warn",
+  "out": "measurements/data/h1/p2.multimesh_v9t6.mid"
+ },
+ "session": "ff7037e661734de79cacc269fbf1f964",
+ "board": "multimesh_v9t6",
+ "profile": "mid",
+ "sysnodes": [
+  0,
+  1,
+  2,
+  3
+ ],
+ "boot_flags": {
+  "0": 0,
+  "1": 0,
+  "2": 0,
+  "3": 0
+ },
+ "firmware": {
+  "path": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+  "bytes": 241728,
+  "mtime": 1793652746.296582
+ },
+ "commit": {
+  "head": "7d2c37255006c0d2a8a0a161e1090e9ccd77a5b0",
+  "dirty": true,
+  "changed": " 10 files changed, 254 insertions(+), 150 deletions(-)",
+  "copied": "2026-11-03T16:06:42Z"
+ },
+ "knobs": {
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "clocks": {
+  "0": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "1": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "2": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "3": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  }
+ },
+ "checker": {
+  "captured": {
+   "structural": "PASS",
+   "precision": "NONE",
+   "reasons": []
+  },
+  "wrong_word": {
+   "structural": "FAIL",
+   "precision": "NONE",
+   "reasons": [
+    "output y"
+   ]
+  },
+  "missing_output": {
+   "structural": "FAIL",
+   "precision": "NONE",
+   "reasons": [
+    "output y"
+   ]
+  },
+  "wrong_epoch": {
+   "structural": "FAIL",
+   "precision": "NONE",
+   "reasons": [
+    "output y"
+   ]
+  },
+  "wrong_source": {
+   "structural": "FAIL",
+   "precision": "NONE",
+   "reasons": [
+    "output y"
+   ]
+  },
+  "duplicate": {
+   "structural": "FAIL",
+   "precision": "NONE",
+   "reasons": [
+    "output y"
+   ]
+  },
+  "canary": {
+   "structural": "FAIL",
+   "precision": "NONE",
+   "reasons": [
+    "redzone y: [33]"
+   ]
+  },
+  "ledger_extra_ring": {
+   "structural": "FAIL",
+   "precision": "NONE",
+   "reasons": [
+    "die 0 bells_from1: 2, ledger 1"
+   ]
+  },
+  "ledger_missing_ring": {
+   "structural": "FAIL",
+   "precision": "NONE",
+   "reasons": [
+    "die 1 bells_sent: 0, ledger 1"
+   ]
+  },
+  "ledger_wrong_source": {
+   "structural": "FAIL",
+   "precision": "NONE",
+   "reasons": [
+    "die 0 bells_from1: 0, ledger 1",
+    "die 0 bells_from2: 1, ledger 0"
+   ]
+  },
+  "slot_residue": {
+   "structural": "FAIL",
+   "precision": "NONE",
+   "reasons": [
+    "sysnode 0 slot 3: read slot 3, left 1"
+   ]
+  },
+  "numeric_nonfinite": {
+   "structural": "FAIL",
+   "precision": "UNRESOLVED",
+   "reasons": [
+    "output v"
+   ]
+  },
+  "numeric_rerounded": {
+   "structural": "PASS",
+   "precision": "UNRESOLVED",
+   "reasons": []
+  }
+ },
+ "timebase": {
+  "0": {
+   "cycles": 4717400191,
+   "first": [
+    4717398949,
+    4717401209
+   ],
+   "lo": -1018,
+   "hi": 1242,
+   "ns": [
+    230784945570104,
+    230784945575895
+   ]
+  },
+  "1": {
+   "cycles": 4712103648,
+   "first": [
+    4717402400,
+    4717404189
+   ],
+   "lo": -5300541,
+   "hi": -5298752,
+   "ns": [
+    230784945586605,
+    230784945590933
+   ]
+  },
+  "2": {
+   "cycles": 3141280440,
+   "first": [
+    4717405195,
+    4717406954
+   ],
+   "lo": -1576126514,
+   "hi": -1576124755,
+   "ns": [
+    230784945600251,
+    230784945604719
+   ]
+  },
+  "3": {
+   "cycles": 1568312129,
+   "first": [
+    4717407773,
+    4717409352
+   ],
+   "lo": -3149097223,
+   "hi": -3149095644,
+   "ns": [
+    230784945612904,
+    230784945617122
+   ]
+  }
+ },
+ "started": 1793722798.0477045,
+ "timebase_after": {
+  "0": {
+   "cycles": 21343059170,
+   "first": [
+    21343058343,
+    21343059931
+   ],
+   "lo": -761,
+   "hi": 827,
+   "ns": [
+    230868073628402,
+    230868073632279
+   ]
+  },
+  "1": {
+   "cycles": 21337761769,
+   "first": [
+    21343060748,
+    21343062156
+   ],
+   "lo": -5300387,
+   "hi": -5298979,
+   "ns": [
+    230868073640154,
+    230868073643470
+   ]
+  },
+  "2": {
+   "cycles": 19766938093,
+   "first": [
+    21343062951,
+    21343064458
+   ],
+   "lo": -1576126365,
+   "hi": -1576124858,
+   "ns": [
+    230868073651245,
+    230868073654992
+   ]
+  },
+  "3": {
+   "cycles": 18193969527,
+   "first": [
+    21343065222,
+    21343066750
+   ],
+   "lo": -3149097223,
+   "hi": -3149095695,
+   "ns": [
+    230868073662476,
+    230868073666464
+   ]
+  }
+ },
+ "drift": {
+  "0": {
+   "lo": -2003,
+   "hi": 1845,
+   "over": 16625657134
+  },
+  "1": {
+   "lo": -1635,
+   "hi": 1562,
+   "over": 16625656559
+  },
+  "2": {
+   "lo": -1610,
+   "hi": 1656,
+   "over": 16625655997
+  },
+  "3": {
+   "lo": -1579,
+   "hi": 1528,
+   "over": 16625655870
+  }
+ },
+ "ended": 1793722881.1757598
+}

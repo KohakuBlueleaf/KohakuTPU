@@ -1,0 +1,187 @@
+{
+ "args": {
+  "board": "multimesh_v9t6",
+  "profile": "mid",
+  "device": "card",
+  "transport": "xdma",
+  "sysnode": "0",
+  "only": "^attn.h10$",
+  "reps": "1,8,64",
+  "replays": "20",
+  "seed": "7",
+  "measure": "True",
+  "library": "build/perf/h1lib/multimesh_v9t6",
+  "out": "measurements/data/h1/s0.multimesh_v9t6.mid/attn.h10"
+ },
+ "board": "multimesh_v9t6",
+ "profile": "mid",
+ "sysnode": 0,
+ "opened": [
+  0
+ ],
+ "commit": {
+  "head": "7d2c37255006c0d2a8a0a161e1090e9ccd77a5b0",
+  "dirty": true,
+  "changed": " 10 files changed, 253 insertions(+), 150 deletions(-)",
+  "copied": "2026-11-03T14:20:26Z"
+ },
+ "knobs": {
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "firmware": {
+  "path": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+  "bytes": 241728,
+  "mtime": 1793652746.296582
+ },
+ "clocks": {
+  "0": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "1": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "2": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "3": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  }
+ },
+ "timebase": {
+  "0": {
+   "cycles": 4262143,
+   "first": [
+    4261152,
+    4262938
+   ],
+   "lo": -795,
+   "hi": 991,
+   "ns": [
+    224125147432307,
+    224125147436665
+   ]
+  }
+ },
+ "started": 1793716138.2495248,
+ "timebase_after": {
+  "0": {
+   "cycles": 12583052096,
+   "first": [
+    12583050565,
+    12583052885
+   ],
+   "lo": -789,
+   "hi": 1531,
+   "ns": [
+    224188039946170,
+    224188039950658
+   ]
+  }
+ },
+ "drift": {
+  "0": {
+   "lo": -1780,
+   "hi": 2326,
+   "over": 12578787627
+  }
+ },
+ "ended": 1793716201.1420484,
+ "counters": {
+  "runs": 3941,
+  "cycles": 3257962351,
+  "bytes_in": 237353152,
+  "bytes_out": 18407680,
+  "library_hits": 3527,
+  "class_hits": 0,
+  "exact_hits": 3527,
+  "library_misses": 0,
+  "compile_calls": 0,
+  "compile_seconds": 0.0,
+  "kernel_reuses": 3510,
+  "f001_split": 0
+ },
+ "launches": 3941,
+ "kernels": 17,
+ "compiles": [
+  [
+   "quant_0f17611ff1",
+   1.142
+  ],
+  [
+   "mm_78d549e348",
+   0.252
+  ],
+  [
+   "rows_1bf3030a11",
+   0.619
+  ],
+  [
+   "quant_d80685e597",
+   0.132
+  ],
+  [
+   "quant_4c257bc223",
+   0.143
+  ],
+  [
+   "mm_3aec19bc42",
+   0.221
+  ],
+  [
+   "walk_4c7790c1b6",
+   0.004
+  ],
+  [
+   "rows_d9c7abcafe",
+   3.918
+  ],
+  [
+   "quant_3acf97507b",
+   0.447
+  ],
+  [
+   "quant_373851ea43",
+   0.307
+  ],
+  [
+   "mm_bb69e43602",
+   0.174
+  ],
+  [
+   "walk_4947574ce6",
+   0.004
+  ],
+  [
+   "walk_6ced5ffb0f",
+   0.004
+  ],
+  [
+   "copy_d326bb044e",
+   0.003
+  ],
+  [
+   "rows_22498b6d11",
+   4.008
+  ],
+  [
+   "quant_9dd982cf53",
+   0.566
+  ]
+ ]
+}

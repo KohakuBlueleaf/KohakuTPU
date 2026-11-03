@@ -1,0 +1,4 @@
+target ktpu.v9
+
+fn t_2ba47711e372496e609f9e9fb618aaa3185c03f928615c315be7d88c0f1bcae4.l2(src: f16[8736, 16] @dram, dst: f16[8400, 16] @dram)
+    copy dst <- src walk=((12, 23296), (700, 32)) at=0 dwalk=((8400, 32),) dat=0
