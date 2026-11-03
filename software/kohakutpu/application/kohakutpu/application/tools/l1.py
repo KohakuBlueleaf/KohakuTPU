@@ -12,6 +12,7 @@ a test calls :func:`run` with its own inputs and checks the outputs.
 """
 
 import argparse
+import hashlib
 import json
 import pathlib
 import sys
@@ -38,6 +39,76 @@ def raw(b: Buffer, x) -> bytes:
     return b.pack(x)
 
 
+#: The byte every output is painted with before a run: an output a unit never
+#: wrote reads back as this, never as an earlier run's result.
+POISON = 0xA5
+
+#: What a result keeps of each sysnode's `card.run` result.
+KEPT = ("cycles", "phases", "steps", "fault")
+
+
+def place(card, layout, inputs: dict, outputs=(), node: int | None = None) -> dict:
+    """Each parameter of `layout` placed on `card` (staging: its `node` layout key,
+    else `node`): `inputs` written, `outputs` left unwritten, the rest zero."""
+    binds = {}
+    for p, b in layout:
+        at = b.layout["node"] if b.layout["node"] is not None else node
+        if p in outputs:
+            binds[p] = card.place(b.nbytes, b.space, at)
+            continue
+        data = raw(b, inputs[p]) if p in inputs else bytes(b.nbytes)
+        binds[p] = card.put(np.frombuffer(data, np.uint8), b.space, at)
+    return binds
+
+
+def paint(card, binds: dict, outs) -> None:
+    """Every output of `outs` (``[(param, Buffer)]``) painted with POISON."""
+    for p, b in outs:
+        card.write(binds[p], bytes([POISON]) * b.nbytes)
+
+
+def sysnodes(res: dict, node: int) -> dict:
+    """Each sysnode's `KEPT` of a `card.run` result; a one-package run's is `node`'s."""
+    per = res.get("nodes", {node: res})
+    return {n: {k: r[k] for k in KEPT if k in r} for n, r in per.items()}
+
+
+def digest(out: dict) -> str:
+    """sha1 of the outputs' bytes, in name order."""
+    h = hashlib.sha1()
+    for k in sorted(out):
+        h.update(np.ascontiguousarray(out[k]).tobytes())
+    return h.hexdigest()[:12]
+
+
+def deviation(got, ref) -> tuple:
+    """|got - ref| elementwise, and that over the reference's largest magnitude."""
+    got = np.asarray(got, np.float64).ravel()
+    ref = np.asarray(ref, np.float64).ravel()[: got.size]
+    a = np.abs(got - ref)
+    return a, a / max(np.abs(ref).max(), 1e-30)
+
+
+def score(out: dict, want: dict) -> dict:
+    """Relative error of every output against the reference: p50, p99, max."""
+    e = np.concatenate([deviation(out[k], ref)[1] for k, ref in want.items()])
+    return {
+        "p50": float(np.percentile(e, 50)),
+        "p99": float(np.percentile(e, 99)),
+        "max": float(e.max()),
+    }
+
+
+def errors(got, ref) -> dict:
+    """One output's absolute and relative (`deviation`) error: max, mean, median."""
+    stats = (("max", np.max), ("mean", np.mean), ("median", np.median))
+    return {
+        f"{kind}_{name}": float(f(e))
+        for kind, e in zip(("abs", "rel"), deviation(got, ref))
+        for name, f in stats
+    }
+
+
 def run(
     card,
     name: str,
@@ -50,7 +121,8 @@ def run(
     `inputs` (param -> array or bytes; the rest zero), the same memory each
     time: an example reruns to the same result. `run` goes to every
     `card.run` (``trace``, ``flags``). Returns ``{"out": {param: array or
-    bytes}, "cycles", "cold", "nodes", "phases", "pkg"}``, on a debug card
+    bytes}, "cycles", "cold", "nodes", "phases", "pkg"}`` (``"nodes"``: each
+    sysnode's `KEPT`, `sysnodes`), on a debug card
     the last run's decoded records under ``"debug"``, and with ``dump`` its
     buffer dumps under ``"dump"``; the buffers are freed."""
     m = examples.load(examples.example(name))
@@ -73,11 +145,8 @@ def run_compiled(card, compiled, inputs: dict, reps: int = 2, **run) -> dict:
 
 def _run(card, m, fn, inputs, reps, run, programs) -> dict:
     """`programs(binds)`: what the card runs."""
-    binds, layout = {}, bufs(m, fn, card.machine_json)
-    for p, b in layout:
-        data = raw(b, inputs[p]) if p in inputs else bytes(b.nbytes)
-        node = b.layout.get("node")
-        binds[p] = card.put(np.frombuffer(data, np.uint8), b.space, node)
+    layout = bufs(m, fn, card.machine_json)
+    binds = place(card, layout, inputs)
     run = dict(run or {})
     if run.get("dump") is True:
         # Every parameter, by name (DBG.DUMP.001).
@@ -96,7 +165,7 @@ def _run(card, m, fn, inputs, reps, run, programs) -> dict:
         "out": out,
         "cycles": last["cycles"],
         "cold": got[0]["cycles"],
-        "nodes": {n: r["cycles"] for n, r in last.get("nodes", {}).items()},
+        "nodes": sysnodes(last, card.nodes[0]),
         "phases": last.get("phases", {}),
         "debug": last.get("debug"),
         "dump": last.get("dump"),
@@ -105,9 +174,11 @@ def _run(card, m, fn, inputs, reps, run, programs) -> dict:
 
 
 def seeded(b: Buffer, rng):
-    """CLI inputs: normal values in a float buffer, small integers otherwise."""
+    """Seeded inputs: a float buffer uniform in +-1/sqrt(fan-in), its last axis (a
+    linear layer's initial weights), small integers otherwise."""
     if b.dtype.startswith("mx7") or b.dtype in ("f16", "f32"):
-        return rng.standard_normal(b.host_shape).astype(b.host_dtype)
+        bound = 1 / np.sqrt(b.host_shape[-1])
+        return rng.uniform(-bound, bound, b.host_shape).astype(b.host_dtype)
     return rng.integers(0, 8, b.host_shape).astype(b.host_dtype)
 
 

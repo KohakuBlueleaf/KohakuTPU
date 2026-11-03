@@ -1,0 +1,31 @@
+# C4's release-frontier witness (h_ir IR-02). Sysnode 0's vc[0] copies x0 to a and
+# its vc[1] copies x1 to b; sysnode 1 reads both and writes y = a + b. Distinct
+# inputs matter: a shared input would make the ring wait for both producers through
+# the scheduler's read/write conflicts. Correct emission waits for BOTH vc[0] and
+# vc[1] before sysnode 0's ring.
+target ktpu.v9
+
+fn release_frontier.l2(x0: f16[8, 128] @dram, x1: f16[8, 128] @dram, a: f16[8, 128] @dram, b: f16[8, 128] @dram, y: f16[8, 128] @dram)
+    par n in 0..1 on node[n]
+        par u in 0..1 on vc[u]
+            for t in 0..2
+                xl = load x0[t*4 : +4, :] : f16[4, 128] @l1
+                v = unpack xl : f32[4, 128] @reg
+                ol = pack v : f16[4, 128] @l1
+                store a[t*4 : +4, :] <- ol
+        par u in 1..2 on vc[u]
+            for t in 0..2
+                xl = load x1[t*4 : +4, :] : f16[4, 128] @l1
+                v = unpack xl : f32[4, 128] @reg
+                ol = pack v : f16[4, 128] @l1
+                store b[t*4 : +4, :] <- ol
+    par n in 1..2 on node[n]
+        par u in 0..1 on vc[u]
+            for t in 0..2
+                al = load a[t*4 : +4, :] : f16[4, 128] @l1
+                bl = load b[t*4 : +4, :] : f16[4, 128] @l1
+                av = unpack al : f32[4, 128] @reg
+                bv = unpack bl : f32[4, 128] @reg
+                v = add av, bv : f32[4, 128] @reg
+                ol = pack v : f16[4, 128] @l1
+                store y[t*4 : +4, :] <- ol

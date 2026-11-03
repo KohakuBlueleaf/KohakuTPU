@@ -11,6 +11,8 @@ Steps, in session order (docs/workflow/bringup.md):
     cpu         cpuprobe on each node through its load window (sysnode CPU)
     boot        the dispatcher on each node, its queue ready, one NOP
     rung NAME   one workload (WORKLOADS) on node --nodes[0], scored
+    rounds N    --workload on every --nodes node at once, N times at --profile
+                (every die checked), each unit scored and digested every round
     ladder DOM  one clock domain of every --nodes node stepped together by --inc
                 from --start until every unit has failed once, then by --fine
                 inside each unit's last-pass..first-fail gap, every unit at each
@@ -23,13 +25,13 @@ Steps, in session order (docs/workflow/bringup.md):
                 after every step. A transport fault stops it: the link is then
                 wedged and only a reprogram clears it.
 
-`--build MODEL` runs any step on a Verilated card instead of JTAG (the same
-load-window path), so every step is rehearsed before silicon. Results go to
+`--transport xdma` reaches the card over PCIe instead of JTAG. `--build MODEL`
+runs any step on a Verilated card instead (the same load-window path), so
+every step is rehearsed before silicon. Results go to
 build/bringup/<board>/ as JSON.
 """
 
 import argparse
-import hashlib
 import importlib.util
 import json
 import pathlib
@@ -46,8 +48,21 @@ from kohakuaccel.driver.transport.jtag import JtagTransport
 from kohakuaccel.driver.transport.rebase import UnitGlobal
 from kohakuaccel.driver.transport.simdram import DramMap
 from kohakuaccel.driver.transport.verilator import VerilatorTransport
-from kohakutpu.application.runtime.card import ARENA, SiliconCard
-from kohakutpu.application.tools.l1 import bufs, raw
+from kohakutpu.application.runtime.card import (
+    ARENA,
+    TRANSPORTS,
+    SiliconCard,
+    clocks_at,
+    open_transport,
+)
+from kohakutpu.application.tools.l1 import (
+    POISON,
+    bufs,
+    digest,
+    paint,
+    place,
+    score,
+)
 from kohakutpu.driver.clock.card import CardClocks, load_board
 from kohakutpu.driver.host import Card, Mesh, board_map
 from kohakutpu.language import examples
@@ -166,35 +181,13 @@ def example_in(space: str, name: str) -> str:
     return str(out)
 
 
-def score(out: dict, want: dict) -> dict:
-    """Relative error of every output against the reference: p50, p99, max."""
-    errs = []
-    for k, ref in want.items():
-        got = np.asarray(out[k], np.float64).ravel()
-        ref = np.asarray(ref, np.float64).ravel()[: got.size]
-        scale = max(np.abs(ref).max(), 1e-30)
-        errs.append(np.abs(got - ref) / scale)
-    e = np.concatenate(errs)
-    return {
-        "p50": float(np.percentile(e, 50)),
-        "p99": float(np.percentile(e, 99)),
-        "max": float(e.max()),
-    }
-
-
-def digest(out: dict) -> str:
-    h = hashlib.sha1()
-    for k in sorted(out):
-        h.update(np.ascontiguousarray(out[k]).tobytes())
-    return h.hexdigest()[:12]
-
-
 # ---- the transport
 def transport(a):
-    """JTAG, or a fresh Verilated card: a fresh model is a freshly programmed
-    device, so its wizards go to the idle profile first, as the card's do."""
+    """`--transport` (JTAG or XDMA), or a fresh Verilated card: a fresh model is a
+    freshly programmed device, so its wizards go to the idle profile first, as the
+    card's do."""
     if not a.build:
-        return JtagTransport()
+        return open_transport(a.transport)
     t = VerilatorTransport(a.build)
     b = load_board(a.board)
     CardClocks(t, b).set_all(b.get("idle_profile", "low"))
@@ -563,11 +556,6 @@ def step_boot(a) -> int:
     return 0
 
 
-#: The byte every output is painted with before a run: an output a unit never
-#: wrote reads back as this, never as an earlier run's result.
-POISON = 0xA5
-
-
 def rung_setup(
     card, name: str, seed: int, space: str = "dram", node: int | None = None
 ) -> dict:
@@ -583,14 +571,8 @@ def rung_setup(
     m = examples.load(examples.example(example_in(space, example)))
     fn = m.names()[0]
     held = card.mark()
-    binds, layout = {}, bufs(m, fn, card.machine_json)
-    for p, b in layout:
-        at = b.layout["node"] if b.layout["node"] is not None else node
-        if p in want:
-            binds[p] = card.place(b.nbytes, b.space, at)
-            continue
-        data = raw(b, ins[p]) if p in ins else bytes(b.nbytes)
-        binds[p] = card.put(np.frombuffer(data, np.uint8), b.space, at)
+    layout = bufs(m, fn, card.machine_json)
+    binds = place(card, layout, ins, want, node)
     progs = kernel.compile(
         kernel.on_mesh(m, fn, node), fn, card.machine, level="l1"
     ).programs(binds)
@@ -612,8 +594,7 @@ def run_units(card, ss: dict) -> dict:
     once; each unit's part of the outputs scored on its own, keyed
     ``n<node>.<unit>``."""
     for s in ss.values():
-        for p, b in s["outs"]:
-            card.write(s["binds"][p], bytes([POISON]) * b.nbytes)
+        paint(card, s["binds"], s["outs"])
     res = card.run({n: s["prog"] for n, s in ss.items()}, faults=True)
     got = {}
     for n, s in ss.items():
@@ -638,8 +619,7 @@ def run_units(card, ss: dict) -> dict:
 def rung_run(card, s: dict) -> dict:
     """One run of a placed workload: outputs painted with POISON, run, outputs
     read back and scored."""
-    for p, b in s["outs"]:
-        card.write(s["binds"][p], bytes([POISON]) * b.nbytes)
+    paint(card, s["binds"], s["outs"])
     res = card.run(s["prog"])
     out = {p: b.unpack(card.get(s["binds"][p], b.nbytes)) for p, b in s["outs"]}
     return {"cycles": res["cycles"], "digest": digest(out), **score(out, s["want"])}
@@ -681,6 +661,46 @@ def step_rung(a) -> int:
         print(f"{a.what} ({r['example']}): {x}")
     print(f"identical across runs: {r['same']}; {'ok' if r['ok'] else 'CHECK'}")
     return 0 if r["ok"] else 1
+
+
+def step_rounds(a) -> int:
+    """`what` rounds of --workload on every --nodes sysnode at once (`run_units`),
+    every die checked at --profile first; a round with a hang restarts the
+    firmware. Saved with each unit's tally: its digests by count, its hangs."""
+    nodes = nodes_of(a)
+    b = load_board(a.board)
+    profile = a.profile or b.get("idle_profile", "low")
+    t = transport(a)
+    clocks = clocks_at(t, b, profile, range(b["meshes"]))
+    card = open_card(a, t, nodes, profile)
+    card.timeout = a.wait
+    ss = {n: rung_setup(card, a.workload, a.seed, a.space, node=n) for n in nodes}
+    rounds = []
+    try:
+        for k in range(int(a.what)):
+            units = run_units(card, ss)
+            rounds.append(units)
+            if any("hang" in r for r in units.values()):
+                print(f"round {k}: a hang, restarting", flush=True)
+                card.restart()
+    finally:
+        for s in ss.values():
+            card.release(s["held"])
+        card.close()
+        tally = {}
+        for units in rounds:
+            for u, r in units.items():
+                got = tally.setdefault(u, {"digests": {}, "hangs": 0, "max": 0.0})
+                if "hang" in r:
+                    got["hangs"] += 1
+                    continue
+                got["digests"][r["digest"]] = got["digests"].get(r["digest"], 0) + 1
+                got["max"] = max(got["max"], r["max"])
+        name = f"rounds_{a.workload}_n{'_'.join(map(str, nodes))}"
+        save(a, name, dict(profile=profile, clocks=clocks, tally=tally, rounds=rounds))
+    for u, got in tally.items():
+        print(f"{u}: {got}")
+    return 0
 
 
 def step_ladder(a) -> int:
@@ -805,6 +825,7 @@ STEPS = {
     "cpu": step_cpu,
     "boot": step_boot,
     "rung": step_rung,
+    "rounds": step_rounds,
     "ladder": step_ladder,
     "line": step_line,
     "xmove": step_xmove,
@@ -817,7 +838,14 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("step", choices=sorted(STEPS))
     ap.add_argument(
-        "what", nargs="?", default="", help="rung: a workload; ladder: a domain"
+        "what",
+        nargs="?",
+        default="",
+        help="rung: a workload; ladder: a domain; rounds: how many",
+    )
+    ap.add_argument("--transport", choices=TRANSPORTS, default="jtag")
+    ap.add_argument(
+        "--workload", choices=sorted(WORKLOADS), default="twin", help="rounds"
     )
     ap.add_argument("--board", required=True, help="RUL.011: named board")
     ap.add_argument("--nodes", default="0")
@@ -848,7 +876,7 @@ def main() -> int:
         "--wait",
         type=float,
         default=30.0,
-        help="xmove: seconds before a stall is called",
+        help="xmove, rounds: seconds before a stall is called",
     )
     ap.add_argument(
         "--probe",

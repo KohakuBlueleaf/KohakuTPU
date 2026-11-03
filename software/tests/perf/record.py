@@ -16,13 +16,13 @@ import pathlib
 import pstats
 import runpy
 import signal
-import struct
 import sys
 import time
 import traceback
 
 import zoo
 from examples.tinygrad import mnist_models
+from h import meta
 
 from kohakuaccel.driver.node.queue import layout as QL
 from kohakutpu.application.ktpugrad.device import KTPUAllocator, KTPUGraph
@@ -30,6 +30,8 @@ from kohakutpu.application.runtime import card as C
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import generated, packages, rows
 from kohakutpu.application.runtime.card import NodeCard
+from kohakutpu.application.runtime.card.common import MEASURE_FIRMWARE
+from kohakutpu.application.runtime.card.measure import Ring
 from kohakutpu.stack import rs
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -37,7 +39,6 @@ TRACES = ROOT / "build" / "perf" / "traces"
 #: ViT's CPU reference logits, one file a configuration (`vit_tiny.py --references`).
 REFERENCES = ROOT / "build" / "perf" / "references"
 EXAMPLES = ROOT / "software" / "kohakutpu" / "application" / "examples" / "tinygrad"
-MEASURE_FIRMWARE = ROOT / "build" / "fw" / "kohakutpu_measure.elf"
 MNIST = (
     "mlp",
     "lenet",
@@ -61,11 +62,6 @@ WORKLOADS = {
     "vitb": ("vit_tiny.py", ["--batch", "1", "--inputs", "10", "--width", "768"]),
     "nodes": ("nodes_measure.py", ["--batch", "1", "--inputs", "8"]),
 }
-#: Where the measure image finds its ring, and a ring slot: run, start, cycles, MVSTAT,
-#: units, then per unit its coordinate, CU_COUNTERS and CU_DBG (interp.c `measure`).
-RING_OFF = 0xFC000
-RING_BYTES = 256
-RING_SLOTS = 1 << 15
 
 
 class Ended(BaseException):
@@ -315,55 +311,6 @@ def graphs_kept() -> list:
     return graphs
 
 
-def ring_open(device, ring: dict) -> None:
-    """Give each node's measure image a ring in DRAM."""
-    card = device.card
-    for n, q in card.queues.items():
-        at = card.memory.alloc(RING_SLOTS * RING_BYTES, owner=f"measure:{n}")
-        q.size = RING_OFF
-        card.mem.write64(q.base + RING_OFF, at)
-        card.mem.write64(q.base + RING_OFF + 8, RING_SLOTS)
-        card.mem.write64(q.base + RING_OFF + 16, 0)
-        ring[n] = at
-
-
-def ring_rows(device, ring: dict) -> list[dict]:
-    """The ring's records, one a run, in node order."""
-    card = device.card
-    rows_ = []
-    for n, at in ring.items():
-        count = card.mem.read64(card.queues[n].base + RING_OFF + 16)
-        kept = min(count, RING_SLOTS)
-        for i in range(kept):
-            raw = card.mem.read_block(at + i * RING_BYTES, RING_BYTES)
-            w = struct.unpack("<32Q", raw)
-            units = []
-            for u in range(min(w[4], 8)):
-                coord, counters, dbg = w[5 + 3 * u : 8 + 3 * u]
-                units.append(
-                    dict(
-                        x=coord & 0xFF,
-                        y=(coord >> 8) & 0xFF,
-                        type=coord >> 32,
-                        retired=counters >> 32,
-                        busy=counters & 0xFFFFFFFF,
-                        dbg_hi=dbg >> 32,
-                        dbg_lo=dbg & 0xFFFFFFFF,
-                    )
-                )
-            rows_.append(
-                dict(
-                    node=n,
-                    run=w[0],
-                    start=w[1],
-                    cycles=w[2],
-                    moves=w[3] & 0xFFFFFFF,
-                    units=units,
-                )
-            )
-    return rows_
-
-
 def card_rows(runs, records: list[dict], ring: list[int] | None) -> list[dict]:
     """One row a run, from `runs` (each with name, kind, wall) and the card's
     `records`, one a collection. An eager list (`list_index` n > 1, its runs not a
@@ -411,7 +358,7 @@ def card_rows(runs, records: list[dict], ring: list[int] | None) -> list[dict]:
 def on_card(out: pathlib.Path, measure: bool, traced: bool):
     """Each run's card record in run order; the call given back writes them. `traced`
     boots the debug image, whose step records come back with each result."""
-    records, devices, ring = [], [], {}
+    records, devices, rings = [], [], []
     result = NodeCard._result
     collect = NodeCard.collect
     card_submit = NodeCard.submit
@@ -433,11 +380,11 @@ def on_card(out: pathlib.Path, measure: bool, traced: bool):
         init(self, *args, **kw)
         devices.append(self)
         if measure:
-            ring_open(self, ring)
+            rings.append(Ring(self.card))
 
     def write():
         device = devices[-1]
-        slots = ring_rows(device, ring) if measure else None
+        slots = rings[-1].rows() if measure else None
         cycles = [r["cycles"] for r in slots] if slots is not None else None
         rows_ = card_rows(device.runs, records, cycles)
         text = "\n".join(json.dumps(r) for r in rows_)
@@ -569,11 +516,7 @@ def main() -> int:
             profile=os.environ.get("KOHAKUTPU_PROFILE"),
             # Which paths ran: every stack knob this process saw, and the four dies'
             # clocks as `bringup read-clocks` read them before the run.
-            knobs={
-                k: v
-                for k, v in sorted(os.environ.items())
-                if k.startswith(("KTPU_", "KOHAKUTPU_"))
-            },
+            knobs=meta.knobs(),
             clocks=json.loads(os.environ.get("PERF_CLOCKS", "null")),
             check=output_check(report),
             profiled=[prof.first, prof.last] if prof.reached else None,

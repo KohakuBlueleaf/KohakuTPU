@@ -54,6 +54,7 @@ from kohakutpu.application.runtime.card.collection import Collection
 from kohakutpu.application.runtime.card.common import (
     _UNSET,
     ARENA,
+    BOOT_FLAGS,
     DBG_LASTS,
     DEBUG_FIRMWARE,
     DEBUG_RECORDS,
@@ -70,6 +71,7 @@ from kohakutpu.application.runtime.card.common import (
     enumerated,
     firmware_wait_seconds,
     node_queue,
+    parse_boot_flags,
     parse_resident_mode,
     report,
 )
@@ -87,7 +89,7 @@ from kohakutpu.language.config import ENV
 from kohakutpu.language.dsl.kernel import _MUTANT
 from kohakutpu.stack.rs import _rs
 
-F_TIMING, F_STEPS = 2, 8
+F_TIMING, F_STEPS = BOOT_FLAGS["TIMING"], BOOT_FLAGS["STEPS"]
 
 
 class NodeCard(Recording, Submission, Collection):
@@ -140,6 +142,7 @@ class NodeCard(Recording, Submission, Collection):
         nodes: tuple[int, ...] = (0,),
         fw=None,
         steps=False,
+        boot_flags: dict[int, int] | None = None,
         machine=None,
         timeout: float = 300.0,
         check: str = "refuse",
@@ -246,8 +249,15 @@ class NodeCard(Recording, Submission, Collection):
             },
             paint=self.mem.write_block if self.paint else None,
         )
-        # Timing comes from run records; PKGT text is opt-in via FLAGS_ENV.
-        flags = (F_STEPS if steps else 0) | int(ENV.get(FLAGS_ENV, "0"), 0)
+        # Timing comes from run records; PKGT text is opt-in per sysnode by
+        # `boot_flags` ({sysnode: KA_BOOT_F_*}), else FLAGS_ENV.
+        #: Each sysnode's boot flags.
+        self.boot_flags = {
+            n: (F_STEPS if steps else 0) | f
+            for n, f in (
+                boot_flags or parse_boot_flags(ENV.get(FLAGS_ENV, "0"), nodes)
+            ).items()
+        }
         # The firmware's wait bound, from seconds at the profile's sysnode clock
         # (RUL.033), inside the host's own wait (DBG.SESS.003).
         hz = sys_hz or self.board["profiles"][self.board["idle_profile"]]["sys"] * 1e6
@@ -291,7 +301,7 @@ class NodeCard(Recording, Submission, Collection):
                 queue=q.base,
                 mesh=i,
                 scan=mesh.caps.grid_hi + 1,
-                flags=flags,
+                flags=self.boot_flags[i],
                 timeout=bound(seconds, hz / 1e6),
             )
             q.native_run = native_run
@@ -603,6 +613,23 @@ def open_transport(kind: str = "jtag"):
     raise ValueError(f"transport {kind!r}: one of {TRANSPORTS}")
 
 
+def clocks_at(t, board: dict, want: str, dies) -> dict:
+    """Each of `dies`' wizard rates and lock, read through `t`; raises
+    :class:`ClockMismatch` when one is off profile `want`."""
+    clocks, rates = CardClocks(t, board), board["profiles"][want]
+    got = {}
+    for n in dies:
+        m = clocks.mesh(n)
+        got[n] = dict(m.read_all(), locked=m.locked())
+        off = {k: (got[n][k], v) for k, v in rates.items() if abs(got[n][k] - v) > 1e-6}
+        if off:
+            raise ClockMismatch(
+                f"die {n} is not at profile {want!r}: (now, want) {off}; "
+                f"set the clocks first (CardClocks.set_all({want!r}))"
+            )
+    return got
+
+
 class SiliconCard(NodeCard):
     """The card itself: `transport` (an instance, or a `TRANSPORTS` name;
     JTAG by default) for everything; a wait polls back to back for `spin`
@@ -637,19 +664,11 @@ class SiliconCard(NodeCard):
         b = load_board(board)
         want = b.get("idle_profile", "low") if profile == "idle" else profile
         if want is not None:
-            clocks = CardClocks(t, b)
-            for n in kw.get("nodes", (0,)):
-                got = clocks.mesh(n).read_all()
-                rates = b["profiles"][want]
-                off = {
-                    k: (got[k], v) for k, v in rates.items() if abs(got[k] - v) > 1e-6
-                }
-                if off:
-                    t.close()
-                    raise ClockMismatch(
-                        f"node {n} is not at profile {want!r}: (now, want) {off}; "
-                        f"set the clocks first (CardClocks.set_all({want!r}))"
-                    )
+            try:
+                clocks_at(t, b, want, kw.get("nodes", (0,)))
+            except ClockMismatch:
+                t.close()
+                raise
         nap = 0.0 if idle else poll
         idle = idle or (lambda: time.sleep(poll))
         # The sysnode clock the firmware counts its waits in.
@@ -711,6 +730,7 @@ __all__ = [
     "SiliconCard",
     "VerilatorCard",
     "boards",
+    "clocks_at",
     "counters",
     "node_queue",
     "open_transport",

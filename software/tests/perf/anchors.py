@@ -87,6 +87,7 @@ def main():
                     cycles=got["cycles"],
                     cold=got["cold"],
                     phases=got["phases"],
+                    sysnodes=got["nodes"],
                 )
             except Exception as error:  # noqa: BLE001
                 row = dict(name=fn, error=repr(error)[:300])

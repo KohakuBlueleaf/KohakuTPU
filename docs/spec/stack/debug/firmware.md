@@ -94,7 +94,7 @@ Parameters named here: `node.imem_bytes` [32768], `node.spad_bytes` [32768],
 ### 1.6 Boot block flags
 
 - **DBG.BOOT.001** `silicon` Boot block word 7 holds the flags; `TIMING` is 2, and the card runtime always sets it. (code: fw/kohakuaccel/include/ka/boot/args.h:15-16; rt/card.py:66, 193-197, 219-221; doc: docs/spec/node-queue.md:63; evidence: LOG:89, the `TIMING` line)
-- **DBG.BOOT.004** `unproven` The other flags are `SERIAL` 1, `NOFETCH` 4, `STEPS` 8, `NOENGINE` 16. The card runtime sets `STEPS` when built with `steps=True` and ORs in `KOHAKUTPU_BOOT_FLAGS`. (code: fw/kohakuaccel/include/ka/boot/args.h:12-22; rt/card.py:66-69, 193-197; doc: docs/spec/node-queue.md:63; evidence: the logged runs set neither)
+- **DBG.BOOT.004** `unproven` The other flags are `SERIAL` 1, `NOFETCH` 4, `STEPS` 8, `NOENGINE` 16. The card runtime sets `STEPS` when built with `steps=True` and ORs in each sysnode's flags: `boot_flags={sysnode: flags}`, else `KOHAKUTPU_BOOT_FLAGS`, one value for every sysnode or `N:V,N:V`, a value a number or names joined by `+` (`STEPS+TIMING`; `parse_boot_flags`). (code: fw/kohakuaccel/include/ka/boot/args.h:12-22; rt/card.py:66-69, 193-197; doc: docs/spec/node-queue.md:63; evidence: the logged runs set neither)
 - **DBG.BOOT.002** `unproven` `STEPS` prints the per-step trace (DBG.RPT.010); `SERIAL` turns off round-robin dispatch groups; `NOFETCH` sends every word through the mailbox; `NOENGINE` keeps every package on the firmware path. (code: fw/kohakuaccel/package/interp.c:1511, 1530-1532; doc: docs/spec/node-queue.md:63)
 - **DBG.BOOT.003** `unproven` No boot block field or firmware-line word names which debug features an image has. (code: fw/kohakuaccel/include/ka/boot/args.h:24-35; fw/kohakuaccel/queue/service.c:25-31)
 

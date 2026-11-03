@@ -30,6 +30,7 @@ import time
 
 # processor host-control registers, mirrored at their own offsets
 R_BOOT, R_PC, R_STATUS, R_EXIT, R_HALTPC, R_STDIN = 0x00, 0x08, 0x18, 0x20, 0x28, 0x40
+R_CYCLES = 0x30
 # the window's own
 R_LOADC, R_LOADD, R_CONS = 0x80, 0x88, 0x90
 REGION_IMEM, REGION_SPAD = 0, 1
@@ -190,6 +191,10 @@ class LoadWindow:
 
     def status(self) -> int:
         return self.t.read64(self.base + R_STATUS)
+
+    def cycles(self) -> int:
+        """HR_CYCLES: the core's cycle count since its last boot pulse."""
+        return self.t.read64(self.base + R_CYCLES)
 
     def exited(self) -> int | None:
         """The core's exit code once it has exited (STATUS bit 3), else None."""

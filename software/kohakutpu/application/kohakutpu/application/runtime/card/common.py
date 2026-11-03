@@ -20,6 +20,9 @@ FIRMWARE = ROOT / "build/fw/kohakutpu_node.elf"
 #: The debug image (RUL.073): trace and failure records in a debug region.
 DEBUG_FIRMWARE = ROOT / "build/fw/kohakutpu_debug.elf"
 
+#: The measure image (KA_MEASURE, no package copy): a record a run in `measure.Ring`.
+MEASURE_FIRMWARE = ROOT / "build/fw/kohakutpu_measure.elf"
+
 #: Records the debug region's ring holds (64 bytes each).
 DEBUG_RECORDS = 512
 
@@ -41,9 +44,18 @@ RING = 64
 #: Distinct program sets whose static-checker verdicts a card caches (`verify`).
 CHECKED_KEPT = 4096
 
-#: Boot flags OR'ed into every node's (KA_BOOT_F_*: 1 serial, 4 no fetch,
-#: 16 no dispatch engine, 32 no queue entry read ahead).
+#: Each sysnode's boot flags, as `parse_boot_flags` reads them.
 FLAGS_ENV = "KOHAKUTPU_BOOT_FLAGS"
+
+#: KA_BOOT_F_* by name (ka/boot/args.h).
+BOOT_FLAGS = {
+    "SERIAL": 1,
+    "TIMING": 2,
+    "NOFETCH": 4,
+    "STEPS": 8,
+    "NOENGINE": 16,
+    "SERIALQ": 32,
+}
 
 #: "0": every package carries its vector images whole (no residency).
 RESIDENT_ENV = "KOHAKUTPU_RESIDENT"
@@ -90,6 +102,21 @@ def parse_resident_mode(value: str | ResidentMode | None) -> ResidentMode:
     if value == "0" or (value != "1" and mutant == "app.resident/only_one_resides"):
         return ResidentMode.OFF
     return ResidentMode.ON
+
+
+def parse_boot_flags(text: str, nodes) -> dict[int, int]:
+    """`text` as each of `nodes`' boot flags: one value for all, or `N:V,N:V` (a
+    sysnode not named gets 0); a value is a number or `BOOT_FLAGS` names joined by +."""
+
+    def value(v: str) -> int:
+        if v[:1].isalpha():
+            return sum(BOOT_FLAGS[k] for k in v.split("+"))
+        return int(v, 0)
+
+    if ":" not in text:
+        return dict.fromkeys(nodes, value(text))
+    given = dict(part.split(":") for part in text.split(","))
+    return {n: value(given.get(str(n), "0")) for n in nodes}
 
 
 def firmware_wait_seconds(host_timeout: float, requested: float | None) -> float:

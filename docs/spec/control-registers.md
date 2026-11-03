@@ -697,14 +697,14 @@ Reads, by `AUX_STATW` index:
 |---|---|
 | `0` | Capability word, and **zero while disabled** — reading zero here is how a driver learns the interlink is absent or off. `[15:0]` = `0x494C` (`'IL'`); `[19:16]` = 2; `[21:20]` = the live mesh id; `[23:22]` = 0; `[27:24]` = 4; `[31:28]` = 1; `[63:32]` = 0. The three constant nibbles are unnamed in the source and are not interpreted here. |
 | `1` | `[7:0]` sticky fault register |
-| `2`–`5` | Per-destination-mesh doorbell counters: `[15:0]` received, `[31:16]` sent |
-| `6`, `7` | Link 0 transmit and receive beat counters |
-| `8`, `9` | Link 1 transmit and receive beat counters |
-| `10`, `11` | Link 0 and link 1 stall counters |
-| `12` | Forwarded-packet counter |
+| `2`–`5` | Doorbells from source mesh 0–3: `[31:0]` rings received from that mesh, `[47:32]` the last ring's transaction tag (`mag_ilink.v:304-307`, `:897-898`) |
+| `6`, `7` | Link 0 transmit / receive: `[31:0]` packets, `[63:32]` beats (`mag_link.v:261-262`) |
+| `8`, `9` | Link 1 transmit / receive, same layout |
+| `10`, `11` | Link 0 / link 1: `[31:0]` credit-stalled cycles, `[63:32]` idle cycles (`mag_link.v:263`) |
+| `12` | `[31:0]` forwarded packets, `[63:32]` cycles a forward was blocked (`mag_switch.v:359`) |
 | `13` | `[31:0]` link 0 credit state, `[63:32]` link 1 |
-| `14` | Doorbells sent |
-| `15` | Local-egress block counter |
+| `14` | `[31:0]` doorbells sent by this mesh |
+| `15` | `[31:0]` cycles local egress was blocked (`mag_switch.v:360`) |
 
 Fault register bits:
 
