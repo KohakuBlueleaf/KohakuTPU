@@ -1,0 +1,28 @@
+# Silicon flaw F-003: node 0 rings node 1's signal slot 3 eight times back to
+# back, twice what the interlink queues (node.ring_depth 4); node 1 waits for
+# all eight, then copies x to y on its core.
+target ktpu.v9
+
+image copy(words, src, dst)
+    desc a0 = src walk=(32, words)
+    desc a1 = dst walk=(32, words)
+    vfill a0 -> l1[0]
+    vsync drain on=fill
+    vdrain a1 <- l1[0]
+    halt
+
+fn ringstress.l1(x: f16[2048] @dram, y: f16[2048] @dram)
+    node 0
+        ring mesh=1 slot=3 amount=1
+        ring mesh=1 slot=3 amount=1
+        ring mesh=1 slot=3 amount=1
+        ring mesh=1 slot=3 amount=1
+        ring mesh=1 slot=3 amount=1
+        ring mesh=1 slot=3 amount=1
+        ring mesh=1 slot=3 amount=1
+        ring mesh=1 slot=3 amount=1
+    node 1
+        wait slot 3 n=8 consume
+        send vc[0]
+            run copy(128, x, y)
+        wait vc[0]

@@ -370,7 +370,7 @@
     "spad_bytes": 32768
    },
    "sections": {
-    ".text": 32320,
+    ".text": 32160,
     ".bootargs": 320,
     ".rodata": 1768,
     ".data": 8,
@@ -666,7 +666,7 @@
     "unit": "dispatch engine (dispatch_engine.v)",
     "summary": "An engine RING writes the interlink with no check for room, so a ring past the interlink's queue is dropped and its receiver waits forever.",
     "witness": "tests/sysnode/dispatch_engine_tb.v: six RINGs issue against an interlink queue of four",
-    "handling": "ka-package engine.rs rings_overflow, replay.rs (RUL.046)",
+    "handling": "ka-package engine.rs lowered (every RING a step), replay.rs (RUL.046); firmware de_step and OS k_de_stream ring through the room wait",
     "fix": "Hold a RING entry while the interlink reports node.ring_depth rings queued, and let the firmware read the interlink's queued count."
    },
    "F-004": {

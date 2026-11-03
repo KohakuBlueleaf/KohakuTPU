@@ -170,6 +170,8 @@ uint64_t k_req_id(void);
 void k_rpc(unsigned node, unsigned type, uint64_t *p, unsigned np);
 void k_reply(unsigned node, uint64_t req, int64_t status, uint64_t value);
 void k_ring(unsigned node, unsigned slot, unsigned amount, int fence);
+/* A ring of interlink value `value`, once fewer than HW_RING_DEPTH are queued. */
+void k_ring_word(uint64_t value);
 void k_rings_drain(void); /* every ring queued has left */
 
 /* ---- channels ---- */

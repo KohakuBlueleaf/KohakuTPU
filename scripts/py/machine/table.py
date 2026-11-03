@@ -9,7 +9,7 @@ import json
 import re
 
 from .read.image import ROOT as ROOT_PATH
-from .read.image import _firmware_build, rel
+from .read.image import _firmware_build, flaw_line, rel
 
 #: CU_SIGNAL codes, CU_CAPS fields and mover modes are RTL decodes with no
 #: parameter; the rows below cite the decoding lines.
@@ -100,7 +100,10 @@ def die_target(img):
     """The IR target the die's programs are written for (RUL.010): `ktpu.`
     and the image's generation, the `vN` of its build's design name."""
     name, src = img.config("design_name")
-    gen = re.search(r"_(v\d+)", name).group(1)
+    m = re.search(r"_(v\d+)", name)
+    if m is None:
+        raise SystemExit(f"{src}: design name {name!r} names no vN generation")
+    gen = m.group(1)
     return derived(f"ktpu.{gen}", f"ktpu.<vN of {name}>, {src}")
 
 
@@ -937,7 +940,7 @@ MMU = "src/kohakuaccel/pe/rv64-sys/core/rv64_mmu.v"
 def mover_lead(img):
     """F-001 needs the mover's ungated copy pop and the W skid that can take
     a beat the edge after a chained burst starts (`mag.v` g_mvskid)."""
-    ungated, src = img.has_line(
+    ungated, src = flaw_line(
         MOVER, r"assign f_rd = xf \? fd_pop : \(\(wst == W_DATA\) && \(w_kind == K_RD\)"
     )
     skid = img.defines.get("KOHAKU_IL_MVSKID", "0") != "0"
@@ -984,7 +987,7 @@ FLAWS = [
         ),
         "ktpu-l1 lower/image/desc.rs far_splits (L1.VC.010)",
         "OB_HDR and OB_DAT load ltx_dat and pop u_enc only when !ef_empty.",
-        lambda i: i.has_line(ILINK, r"W_FL:\s+ltx_dat <= ef_q;"),
+        lambda i: flaw_line(ILINK, r"W_FL:\s+ltx_dat <= ef_q;"),
     ),
     (
         "F-003",
@@ -998,12 +1001,15 @@ FLAWS = [
             "tests/sysnode/dispatch_engine_tb.v: six RINGs issue against an"
             " interlink queue of four"
         ),
-        "ka-package engine.rs rings_overflow, replay.rs (RUL.046)",
+        (
+            "ka-package engine.rs lowered (every RING a step), replay.rs (RUL.046);"
+            " firmware de_step and OS k_de_stream ring through the room wait"
+        ),
         (
             "Hold a RING entry while the interlink reports node.ring_depth rings"
             " queued, and let the firmware read the interlink's queued count."
         ),
-        lambda i: i.has_line(DISPATCH, r"&& !\(il_class && moving\);"),
+        lambda i: flaw_line(DISPATCH, r"&& !\(il_class && moving\);"),
     ),
     (
         "F-004",
@@ -1018,7 +1024,7 @@ FLAWS = [
         ),
         "ka-package engine.rs Stream::wait; firmware de_wait",
         "Release a WAIT against the issued count, not the counter's sign.",
-        lambda i: i.has_line(DISPATCH, r"wire\s+wait_ok = !behind\[CTR_W-1\];"),
+        lambda i: flaw_line(DISPATCH, r"wire\s+wait_ok = !behind\[CTR_W-1\];"),
     ),
     (
         "F-005",
@@ -1030,7 +1036,7 @@ FLAWS = [
         "software/os/tests/xlat/xlat.c on rv64_node_pair and the kos core model",
         "KohakuAccel OS runs untranslated",
         "Clear resolved_q on the data access's completion.",
-        lambda i: i.has_line(MMU, r"resolved_q <= resolved && same_req;"),
+        lambda i: flaw_line(MMU, r"resolved_q <= resolved && same_req;"),
     ),
     (
         "F-006",
@@ -1042,7 +1048,7 @@ FLAWS = [
         "software/os/tests/sigslot/sigslot.c on rv64_node_pair",
         "KohakuAccel OS hw_slot reads the word once more (include/kos/hw.h)",
         "Register sig_sel beside sig_q and report the registered copy.",
-        lambda i: i.has_line(ILINK, r"assign sig_word = \{.*sig_sel, sig_sweep,"),
+        lambda i: flaw_line(ILINK, r"assign sig_word = \{.*sig_sel, sig_sweep,"),
     ),
     (
         "F-007",
@@ -1057,7 +1063,7 @@ FLAWS = [
             " KohakuAccel OS start.h handshake"
         ),
         "Reset the node-facing interlink state with the processor reset.",
-        lambda i: i.has_line(MAG, r"\) u_il \(", r"\.resetn\(resetn\)"),
+        lambda i: flaw_line(MAG, r"\) u_il \(", r"\.resetn\(resetn\)"),
     ),
 ]
 

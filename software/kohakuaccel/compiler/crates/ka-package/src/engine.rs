@@ -416,14 +416,15 @@ fn lower_steps(pkg: &Package, f: &Facts) -> Result<Package> {
             f.engine_units
         );
     }
-    let low = lowered(pkg, f, false)?;
-    if !f.ring_unheld || !rings_overflow(&low, f) || mutant::on("l0.lower/rings_in_engine") {
-        return Ok(low);
-    }
-    lowered(pkg, f, true)
+    let held = f.ring_unheld && !mutant::on("l0.lower/rings_in_engine");
+    lowered(pkg, f, held)
 }
 
-/// `pkg`'s steps lowered; with `rings_kept` every RING stays a step.
+/// `pkg`'s steps lowered; with `rings_kept` every RING stays a step. With
+/// silicon flaw F-003 an engine RING has no interlink room check, and a wait
+/// between rings says nothing about the interlink's queue, so every RING is a
+/// step: the firmware's room wait counts every ring the node sends against
+/// the interlink's sent count (RUL.046, L0.STEP.032).
 fn lowered(pkg: &Package, f: &Facts, rings_kept: bool) -> Result<Package> {
     let mut st = Stream::new(pkg, f);
     for (i, s) in pkg.steps.iter().enumerate() {
@@ -465,35 +466,6 @@ fn lowered(pkg: &Package, f: &Facts, rings_kept: bool) -> Result<Package> {
         payloads: st.payloads,
         ..pkg.clone()
     })
-}
-
-/// Whether lowered `low` has more than `node.ring_depth` RING entries
-/// between waits (WAIT entries, or a WAIT_BELL / WAIT_SLOT step). An engine
-/// RING has no room check (R-046) and the firmware's count misses engine
-/// rings, so such a package keeps every RING a step, each then waiting for
-/// room on the firmware path (RUL.046, L0.STEP.032).
-fn rings_overflow(low: &Package, f: &Facts) -> bool {
-    let ring = il_code(IL_RING);
-    let mut queued = 0;
-    for s in &low.steps {
-        match s.op {
-            Op::Engine => {
-                for (code, _) in entries(low, s) {
-                    if code == WAIT {
-                        queued = 0;
-                    } else if code == ring {
-                        queued += 1;
-                        if queued > f.ring_depth {
-                            return true;
-                        }
-                    }
-                }
-            }
-            Op::WaitBell | Op::WaitSlot => queued = 0,
-            _ => {}
-        }
-    }
-    false
 }
 
 /// One engine entry for [`stream`]: a register write, or a WAIT on a source
@@ -624,32 +596,70 @@ mod tests {
         assert!(late.iter().any(|&want| !released(3000, want)), "{late:?}");
     }
 
-    /// Rings past the interlink's queue between waits stay firmware steps
-    /// with F-003, and go into the engine without it.
+    /// RING steps of `n` rings, each pair split by `split`, then END.
+    fn rings(n: usize, split: Option<Step>) -> Package {
+        let mut steps = Vec::new();
+        for k in 0..n {
+            if k > 0 {
+                steps.extend(split);
+            }
+            steps.push(Step::new(Op::Ring, 0, 1, 0, 0));
+        }
+        steps.push(Step::new(Op::End, 0, 0, 0, 0));
+        Package {
+            units: vec![Unit {
+                type_code: 0,
+                x: 1,
+                y: 1,
+                mesh: 0,
+                credit: 16,
+                fetch: 0,
+            }],
+            steps,
+            ..Package::default()
+        }
+    }
+
+    fn ring_steps(pkg: &Package, f: &Facts) -> usize {
+        let low = lower(pkg, f).unwrap();
+        low.steps.iter().filter(|s| s.op == Op::Ring).count()
+    }
+
+    /// With F-003 every RING stays a firmware step, however few and however
+    /// many waits sit between them; without it every RING goes into the engine.
     #[test]
     fn rings_leave_the_engine_only_for_f003() {
-        let pkg = Package {
-            steps: (0..6)
-                .map(|_| Step::new(Op::Ring, 0, 1, 0, 0))
-                .chain([Step::new(Op::End, 0, 0, 0, 0)])
-                .collect(),
-            ..Package::default()
-        };
-        let small = Facts {
+        let f = Facts {
             ring_depth: 4,
             ..facts()
         };
-        let rings = |f: &Facts| {
-            let low = lower(&pkg, f).unwrap();
-            low.steps.iter().filter(|s| s.op == Op::Ring).count()
+        let fixed = Facts {
+            ring_unheld: false,
+            ..f.clone()
         };
-        assert_eq!(rings(&small), 6);
-        assert_eq!(
-            rings(&Facts {
-                ring_unheld: false,
-                ..small
-            }),
-            0
-        );
+        let one = rings(1, None);
+        let waited = rings(6, Some(Step::new(Op::Mwait, 0, 1, 0, 0)));
+        let burst = rings(6, None);
+        for pkg in [&one, &waited, &burst] {
+            let n = pkg.steps.iter().filter(|s| s.op == Op::Ring).count();
+            assert_eq!(ring_steps(pkg, &f), n);
+            assert_eq!(ring_steps(pkg, &fixed), 0);
+        }
+    }
+
+    /// The send-time check refuses any engine RING entry with F-003 (RUL.046)
+    /// and takes it without.
+    #[test]
+    fn an_engine_ring_is_refused_only_for_f003() {
+        let f = facts();
+        let fixed = Facts {
+            ring_unheld: false,
+            ..f.clone()
+        };
+        let pkg = rings(1, None);
+        let low = lower(&pkg, &fixed).unwrap();
+        assert!(crate::replay::check(&pkg, &low, &fixed).is_ok());
+        let err = crate::replay::check(&pkg, &low, &f).unwrap_err();
+        assert!(err.to_string().contains("RUL.046"), "{err}");
     }
 }

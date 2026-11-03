@@ -43,12 +43,7 @@ pub(super) fn walk_text(name: &str, off: i64, levels: &[(i64, i64)]) -> String {
 }
 
 /// `(buffer, lo, hi)` bytes a walk touches, its last element `step` long.
-pub(super) fn span_of(
-    name: &str,
-    off: i64,
-    levels: &[(i64, i64)],
-    step: i64,
-) -> (String, i64, i64) {
+pub fn span_of(name: &str, off: i64, levels: &[(i64, i64)], step: i64) -> (String, i64, i64) {
     let (mut lo, mut hi) = (off, off);
     for &(n, s) in levels {
         if s >= 0 {

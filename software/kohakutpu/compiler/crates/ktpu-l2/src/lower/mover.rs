@@ -4,6 +4,7 @@
 //! destination's walk is the iteration order (a scatter's, its source's; a
 //! transform's steps once per converted entry).
 
+mod burst;
 mod lone;
 mod packing;
 pub mod quant_status;
@@ -12,6 +13,7 @@ mod views;
 mod walk;
 mod xform;
 
+pub use burst::burst_safe;
 pub use lone::{lone_copy, vector_copy};
 pub use packing::{composed_fits, quant_backend, vector_quant, Finite};
 pub use tiles::tile_transpose;
@@ -27,8 +29,8 @@ use crate::target::{Target, MOVE_WORDS};
 
 use views::index_list;
 pub use views::{copy_walks, rows_walk, words};
-use walk::{count, span_of, walk_levels, walk_text};
-pub use walk::{cut, merge, run_words, squeeze};
+use walk::{count, walk_levels, walk_text};
+pub use walk::{cut, merge, run_words, span_of, squeeze};
 pub use xform::py_tuple;
 use xform::{convert, gt4_walks};
 
@@ -56,6 +58,34 @@ fn tuple(t: &Term) -> Option<&Vec<Term>> {
     }
 }
 pub const UNIT: &str = "mover";
+
+/// A copy's mover commands: `[(byte offsets, [source, destination] levels)]`.
+pub fn copy_cuts(sl: &Levels, dl: &Levels, doff: i64, tg: &Target) -> Vec<(Vec<i64>, Vec<Levels>)> {
+    // Row compaction cuts own complete DRAM lines, including odd-word rows.
+    let word = tg.word_bytes;
+    let mut limit = MOVE_WORDS;
+    let source = merge(&squeeze(sl));
+    let dest = merge(&squeeze(dl));
+    let line = i64::from(tg.machine.card.dram.line_bytes);
+    if !on("l2.mover/unaligned-row-cut")
+        && source.len() == 2
+        && source[1].1 == word
+        && dest.len() == 1
+        && dest[0].1 == word
+        && doff % line == 0
+    {
+        let row_words = source[1].0;
+        let (mut a, mut b) = (row_words * word, line);
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        let quantum = row_words * (line / a);
+        if quantum <= MOVE_WORDS {
+            limit = MOVE_WORDS / quantum * quantum;
+        }
+    }
+    cut(&[sl.clone(), dl.clone()], limit, None, 0, tg)
+}
 
 /// `[(count, stride)]`, outermost first.
 pub type Levels = Vec<(i64, i64)>;
@@ -378,29 +408,7 @@ fn lower_op(body: &Body, op: &Op, env: &Env, tg: &Target) -> Result<(Vec<String>
                 ],
             ));
         }
-        // Row compaction cuts own complete DRAM lines, including odd-word rows.
-        let mut limit = MOVE_WORDS;
-        let source = merge(&squeeze(&sl));
-        let dest = merge(&squeeze(&dl));
-        let line = i64::from(tg.machine.card.dram.line_bytes);
-        if !on("l2.mover/unaligned-row-cut")
-            && source.len() == 2
-            && source[1].1 == word
-            && dest.len() == 1
-            && dest[0].1 == word
-            && doff % line == 0
-        {
-            let row_words = source[1].0;
-            let (mut a, mut b) = (row_words * word, line);
-            while b != 0 {
-                (a, b) = (b, a % b);
-            }
-            let quantum = row_words * (line / a);
-            if quantum <= MOVE_WORDS {
-                limit = MOVE_WORDS / quantum * quantum;
-            }
-        }
-        let lines = cut(&[sl.clone(), dl.clone()], limit, None, 0, tg)
+        let lines = copy_cuts(&sl, &dl, doff, tg)
             .into_iter()
             .map(|(o, l)| {
                 format!(

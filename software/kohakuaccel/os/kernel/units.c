@@ -528,10 +528,23 @@ UNIT_SMALL int64_t k_de_stream(const uint64_t *entries, unsigned count)
                 room = KOS_DE_QUEUE_DEPTH;
                 continue;
             }
+            if (code == KOS_DE_IL_RING) {
+                /* the engine's RING has no interlink room check (silicon flaw
+                 * F-003): it follows everything queued, through k_ring_word */
+                if ((unsigned)((val >> 8) & 0xff) - KOS_SLOT_USER >= HW_SIG_SLOTS - KOS_SLOT_USER) {
+                    st = KOS_EINVAL;
+                    goto out;
+                }
+                st = de_room_q(faults0, &prog, 0, 0);
+                if (st) {
+                    goto out;
+                }
+                k_ring_word(val);
+                room = KOS_DE_QUEUE_DEPTH;
+                continue;
+            }
             if (code > KOS_DE_MB_GO && code != KOS_DE_WAIT_CODE) {
-                st = code == KOS_DE_IL_RING ?
-                     ((unsigned)((val >> 8) & 0xff) - KOS_SLOT_USER < HW_SIG_SLOTS - KOS_SLOT_USER ? KOS_OK : KOS_EINVAL) :
-                     mv_reg((uint64_t)code - KOS_DE_MV_BASE, val);
+                st = mv_reg((uint64_t)code - KOS_DE_MV_BASE, val);
                 if (st > 0) {
                     /* an indexed GO reads the vector once everything before it
                      * has reached the mover; INDEX then names the kernel's copy */

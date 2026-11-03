@@ -54,16 +54,14 @@ struct Node<'a> {
     regs: [Option<(u64, bool)>; 5],
     mask: u64,
     depth: u64,
-    /// RING entries since the last WAIT (RUL.046).
-    rings: usize,
 }
 
 /// Refuses `low` (L0.DE.040) unless its ENGINE entries carry exactly what
 /// `src`, the bound package it was lowered from, dispatches and fetches,
 /// each unit's runs waited for as L0.STEP.045 bounds them, and every WAIT
-/// names a unit of the package or the mover; refuses (RUL.046) more than
-/// `node.ring_depth` RING entries between waits. A package without ENGINE
-/// steps is not checked.
+/// names a unit of the package or the mover; refuses (RUL.046) any RING
+/// entry with silicon flaw F-003. A package without ENGINE steps is not
+/// checked.
 pub fn check(src: &Package, low: &Package, f: &Facts) -> Result<()> {
     if mutant::on("l0.check/off") || !low.steps.iter().any(|s| s.op == Op::Engine) {
         return Ok(());
@@ -78,7 +76,6 @@ pub fn check(src: &Package, low: &Package, f: &Facts) -> Result<()> {
         regs: [None; 5],
         mask: (1u64 << f.counter_bits) - 1,
         depth: f.inst_depth,
-        rings: 0,
     };
     for s in &src.steps {
         let u = s.unit as usize;
@@ -111,10 +108,6 @@ pub fn check(src: &Package, low: &Package, f: &Facts) -> Result<()> {
     }
     for (i, s) in low.steps.iter().enumerate() {
         if s.op != Op::Engine {
-            // A firmware-path wait (L0.STEP.034, L0.STEP.035) holds too.
-            if matches!(s.op, Op::WaitBell | Op::WaitSlot) {
-                node.rings = 0;
-            }
             continue;
         }
         let words = s.count.div_ceil(3);
@@ -144,7 +137,6 @@ impl Node<'_> {
         }
         match code {
             C_WAIT => {
-                self.rings = 0;
                 let src = (value >> 56) & 0x1F;
                 if (src as usize) < self.sent.len() {
                     self.waited[src as usize] = Some(value & self.mask);
@@ -161,13 +153,10 @@ impl Node<'_> {
                 self.waited.iter_mut().for_each(|w| *w = None);
             }
             C_RING => {
-                self.rings += 1;
-                if f.ring_unheld && self.rings > f.ring_depth {
+                if f.ring_unheld {
                     return refuse!(
                         "RUL.046",
-                        "RING entry {} since the last wait; the interlink queues {}",
-                        self.rings,
-                        f.ring_depth
+                        "an engine RING entry: with F-003 the engine has no interlink room check"
                     );
                 }
             }

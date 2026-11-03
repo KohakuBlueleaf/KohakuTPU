@@ -1,0 +1,2 @@
+fn overlap.l2(x: f16[512, 16] @dram)
+    copy x <- x walk=((256, 64),) dwalk=((256, 32),)

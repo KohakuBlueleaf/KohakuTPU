@@ -1,0 +1,8 @@
+# LeNet's 32 rows of 25 words into rows 26 words apart: no one-word run, yet at
+# a page offset of 104 words row 4 writes 24 + 1, a one-beat burst chained off
+# the burst before (silicon flaw F-001). On a machine with the flaw the copy
+# runs on the vector cores (L2.MOV.020).
+target ktpu.v9
+
+fn pagetail.l2(x: f16[800, 16] @dram, y: f16[832, 16] @dram)
+    copy y <- x walk=((32, 800), (25, 32)) dwalk=((32, 832), (25, 32))

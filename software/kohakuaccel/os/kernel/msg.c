@@ -22,7 +22,7 @@ static volatile uint64_t *ring_at(unsigned dst_node, unsigned src, unsigned idx)
     return (volatile uint64_t *)(HW_STAGING(kn.mesh_of[dst_node]) + KOS_STG_RING(src) + idx * KOS_MSG_BYTES);
 }
 
-void k_ring(unsigned node, unsigned slot, unsigned amount, int fence)
+void k_ring_word(uint64_t value)
 {
     uint64_t w = hw_sig_word();
     if (((rings_written - HW_SIG_SENT(w)) & 0xffffu) >= HW_RING_DEPTH) {
@@ -31,9 +31,14 @@ void k_ring(unsigned node, unsigned slot, unsigned amount, int fence)
         }
         k_where_back();
     }
-    hw_wr(HW_R_IL + HW_IL_RING, ((uint64_t)(fence != 0) << 32) | ((uint64_t)amount << 16) |
-                                    ((uint64_t)slot << 8) | kn.mesh_of[node]);
+    hw_wr(HW_R_IL + HW_IL_RING, value);
     ++rings_written;
+}
+
+void k_ring(unsigned node, unsigned slot, unsigned amount, int fence)
+{
+    k_ring_word(((uint64_t)(fence != 0) << 32) | ((uint64_t)amount << 16) | ((uint64_t)slot << 8) |
+                kn.mesh_of[node]);
 }
 
 void k_rings_drain(void)

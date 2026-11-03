@@ -1,16 +1,17 @@
 //! Silicon flaw F-001 (`docs/spec/stack/flaws.md`): the mover writes a word
 //! before its data FIFO shows it when a one-beat write burst chains off the
-//! last beat of the burst before. A copy whose write side steps one-word runs
-//! makes such bursts, so on a machine with the flaw it runs on the vector
-//! cores instead (L2.MOV.020): each piece fills its source words into L1 and
-//! drains them along the destination's walk.
+//! last beat of the burst before. A copy some mover command of which is not
+//! proven free of such bursts (`burst::burst_safe`) runs on the vector cores
+//! on a machine with the flaw (L2.MOV.020): each piece fills its source words
+//! into L1 and drains them along the destination's walk.
 
 use super::*;
 use crate::lower::sync::Stage;
 use ktpu_isa::unit::vector::DIM_STRIDE_MAX;
 
-/// Whether copy `op` writes one-word runs on a machine with F-001 and vector
-/// cores; a die without them keeps the copy on the mover (its exposure).
+/// Whether copy `op`, on a machine with F-001 and vector cores, has a mover
+/// command not proven free of a chained one-beat write burst; a die without
+/// vector cores keeps the copy on the mover (its exposure).
 pub fn lone_copy(body: &Body, op: &Op, env: &Env, tg: &Target) -> Result<bool> {
     if op.op != "copy"
         || !tg.mover_lead
@@ -20,8 +21,12 @@ pub fn lone_copy(body: &Body, op: &Op, env: &Env, tg: &Target) -> Result<bool> {
     {
         return Ok(false);
     }
-    let ((_, _, dl), _) = copy_walks(body, &op.st, env, tg)?;
-    Ok(count(&dl) > 1 && run_words(&dl, tg.word_bytes) == 1)
+    let ((_, doff, dl), (_, _, sl)) = copy_walks(body, &op.st, env, tg)?;
+    let line = i64::from(tg.machine.card.dram.line_bytes);
+    let cap = i64::from(tg.machine.mover.burst_max);
+    Ok(copy_cuts(&sl, &dl, doff, tg)
+        .iter()
+        .any(|(o, l)| !burst_safe(doff + o[1], &l[1], tg.word_bytes, line, cap)))
 }
 
 /// `pieces` with every level whose stride a descriptor cannot hold taken

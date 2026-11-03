@@ -29,6 +29,7 @@ extraPaths = [
     # Tools a script reaches by the `sys.path` entry it adds at run time.
     "software/kohakuaccel/os/tools",
     "software/kohakutpu/os/tools/ostpu",
+    "scripts/py",
 ]
 # The sources run on Linux and on Windows: neither platform's stubs hide the other's.
 pythonPlatform = "All"

@@ -10,8 +10,11 @@ handling.
 Every machine file carries a `flaws` section (`docs/spec/stack/machine.md`): one
 entry per flaw id with `present` and the record below. The machine generator
 (`scripts/py/machine/table.py` `FLAWS`) reads `present` from the image itself: the
-RTL line that has the defect and the defines that expose it. An RTL round that
-fixes a flaw changes that line, the next machine file reads `present: false`, and
+RTL line that has the defect and the defines that expose it. The reading is
+positive both ways (`read/image.py` `flaw_line`): the flawed line means present,
+the fixed line recorded beside it means absent, and a file with neither stops the
+generator, since a changed line is not proof of a fix. An RTL round that fixes a
+flaw records its fixed line, the next machine file reads `present: false`, and
 every handling keyed on it turns off with no software change. `present` is in the
 machine's digest, so a fixed image recompiles.
 
@@ -19,9 +22,9 @@ Each handling reads its flaw's `present` and nothing else:
 
 | Flaw | Handling | Reads |
 |---|---|---|
-| F-001 | ktpu-l2 `passes/stage.rs` (L2.PASS.001): a move stepping one-word runs on both sides goes through a contiguous scratch; ktpu-l2 `lower/mover/lone.rs` (L2.MOV.020): a copy writing one-word runs runs on the vector cores. A die without vector cores keeps such a copy on the mover. | `Target::mover_lead` |
+| F-001 | ktpu-l2 `lower/mover/burst.rs` `burst_safe`: a mover command is proven free of a chained one-beat write burst when it writes one word, or when every destination run starts an even word from a write-line-aligned base and holds an even number of words (every burst even at any page offset). ktpu-l2 `lower/mover/lone.rs` (L2.MOV.020): a copy with an unproven command runs on the vector cores; `passes/stage.rs` (L2.PASS.001): a gather or scatter stepping one-word runs on both sides, and a gather of even-word rows into an unproven walk, goes through a contiguous scratch. The runtime refuses a bind off a write line (`device/submission.py` `unaligned`), the base the proof assumes. Still exposed: a die without vector cores keeps an unproven copy on the mover; a gather of odd-word rows into an unproven walk and a scatter of rows the proof does not cover stay on the mover (no e1 kernel has one: all 370 indexed statements have even rows at 64-byte pitches). | `Target::mover_lead`; runtime `burst_line` |
 | F-002 | ktpu-l1 `lower/image/desc.rs` `far_splits` (L1.VC.010) | `CoreFacts::il_tail` |
-| F-003 | ka-package `engine.rs` `rings_overflow`, `replay.rs` (RUL.046) | `Facts::ring_unheld` |
+| F-003 | ka-package `engine.rs` `lowered`: every RING stays a step; `replay.rs` refuses an engine RING entry (RUL.046). The firmware's `de_step` and the OS's `k_de_stream` run every RING through the room wait once the engine's queue has issued (firmware `ring`, OS `k_ring_word`), so one count covers every ring the node sends. | `Facts::ring_unheld`; firmware and OS on every image |
 | F-004 | ka-package `engine.rs` `Stream::wait` | `Facts::wait_window` |
 | F-005, F-006, F-007 | KohakuAccel OS (`software/os`), firmware (F-007) | not machine-keyed |
 
@@ -31,9 +34,16 @@ Each flaw's witness bench asserts the flaw as recorded, so it fails on a
 simulation model that does not show it (the old Verilator FIFO stand-in) and on
 an RTL that fixes it. Each compile-path handling has a test that it fires on a
 machine with its flaw and does not without it: `tests/logic/test_flaws.py`
-(F-001), `tests/logic/test_far_split.py` (F-002), ka-package `engine.rs`
-`rings_leave_the_engine_only_for_f003` and
-`without_f004_a_far_behind_wait_keeps_its_target`.
+(F-001: `lone`, `pagetail`, `oddrows` and the bind refusal), ktpu-l2
+`lower/mover/burst.rs` tests (the proof), `tests/logic/test_far_split.py` (F-002), ka-package `engine.rs`
+`rings_leave_the_engine_only_for_f003`,
+`an_engine_ring_is_refused_only_for_f003` and
+`without_f004_a_far_behind_wait_keeps_its_target`. On the card, F-003's handling
+runs `examples/l1/multinode/ringstress.ktpu` (eight back-to-back rings against a
+queue of four): v9t8 at mid, nodes 0 and 1, 3 of 3 runs counted all eight.
+F-001's handlings on v9t6 at mid, node 0, 5 runs each, every word checked:
+`examples/l2/mover/pagetail.ktpu` all 832 words, `oddrows.ktpu` all 12 rows
+with their tails untouched, `scatter.ktpu` (proven, on the mover) all 64 rows.
 
 ## What each costs
 
@@ -48,7 +58,9 @@ run as not modelled. Measured costs are in `measurements/REPORT.md`.
 
 F-001's vector copy, on the card: `examples/l2/mover/lone.ktpu` (256 words into
 every other word) takes 5,970 cycles on v9t8 at low, against 5,227 for the
-mover copy the flaw corrupts (`measurements/ISSUES.md` row 48). Over a model's warm
+mover copy the flaw corrupts (`measurements/ISSUES.md` row 48); on v9t6 at mid
+the vector copy of N one-word runs costs about 15.8 cycles a word against 13.6
+on the mover, 7% to 15% more from 32 to 1,536 words (row 48). Over a model's warm
 step it is +1.2% on MLP and +0.6% to +0.8% on wide, and −0.7% to −0.8% on Mixer and
 −1.7% to −1.8% on LeNet, where the vector copy is the cheaper one (REPORT, round e1).
 

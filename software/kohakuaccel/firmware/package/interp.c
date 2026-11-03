@@ -1097,7 +1097,8 @@ static int expired(uint64_t t0, unsigned what, uint64_t value)
 }
 
 /* A ring once fewer than KA_IL_RING_DEPTH are queued: a fifth would be dropped.
- * Engine-issued rings are not counted here, so a sent count past ours resyncs. */
+ * Rings another writer issued (a host ENGINE entry on a machine without F-003, an
+ * OS) are not counted here, so a sent count past ours resyncs. */
 static KA_COLD int ring(unsigned mesh, uint32_t slot, uint64_t arg)
 {
     uint64_t t0 = ka_cycles();
@@ -1579,9 +1580,6 @@ static KA_HOT int de_step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, i
         return de_mover((uint32_t)arg, count, (w0 >> 8) & KA_STEP_F_POSTED);
     case KA_OP_MWAIT:
         return de_wait(KA_DE_MOVER, count);
-    case KA_OP_RING:
-        return de_push(KA_DE_IL(KA_IL_RING), (unit & 3) | (uint64_t)(count & 0xff) << 8 |
-                                                 (arg & 0xffff) << 16 | ((arg >> 16) & 1) << 32);
     case KA_OP_ENGINE:
         return de_stream((uint32_t)arg, count);
     case KA_OP_FETCH:
@@ -1595,7 +1593,8 @@ static KA_HOT int de_step(const struct ka_pkg_run *r, uint32_t s, uint64_t w0, i
         return (DE_HELD && de_drain()) ? eng.status : patch(unit, count, arg);
     default:
         /* The rest wait for what the engine holds; a SEND or RECV writes the
-         * mailbox registers the engine's shadow tracks. */
+         * mailbox registers the engine's shadow tracks. A RING is here too:
+         * the engine's has no interlink room check (silicon flaw F-003). */
         if (de_drain() || step(r, s, w0, end)) {
             return eng.status;
         }

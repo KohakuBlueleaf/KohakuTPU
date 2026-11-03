@@ -1,0 +1,8 @@
+# Two-word rows of t gathered into rows three words apart: an odd stride the
+# mover's page cuts can leave a one-beat burst on (silicon flaw F-001). On a
+# machine with the flaw the gather packs into a scratch and the copy out runs
+# on the vector cores (L2.PASS.001, L2.MOV.020).
+target ktpu.v9
+
+fn oddrows.l2(t: f16[64, 32] @dram, idx: u32[16] @dram, y: f16[12, 48] @dram)
+    gather y[:, 0:32] <- t index=idx

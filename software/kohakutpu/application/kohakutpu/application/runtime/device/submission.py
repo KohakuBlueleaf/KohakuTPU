@@ -1,5 +1,6 @@
 """Launches: admission, the submit path, collection."""
 
+import functools
 import json
 import time
 from contextlib import contextmanager
@@ -20,6 +21,19 @@ from kohakutpu.application.runtime.packages import Prebuilt, placed
 from kohakutpu.stack import rs
 from kohakutpu.stack.buffer import Buffer
 from kohakutpu.stack.kernel import arena_name
+
+
+@functools.cache
+def burst_line(machine_json: str) -> int | None:
+    """The base alignment F-001's handling proves mover writes under
+    (L2.MOV.020); None on an image without the flaw."""
+    m = json.loads(machine_json)["machine"]
+    return m["card"]["dram"]["line_bytes"] if m["flaws"]["F-001"]["present"] else None
+
+
+def unaligned(full: dict, line: int | None) -> list[str]:
+    """The bound buffers whose base breaks `line`, the F-001 proof's base."""
+    return [] if line is None else sorted(k for k, v in full.items() if v % line)
 
 
 def _entry(s: Submitted) -> int:
@@ -154,6 +168,8 @@ class Submission(Parts):
         At most `max_inflight` runs
         are held; past that the oldest is collected first, and when memory
         pressure collects the oldest and retries after each completion."""
+        # Deferred members a launch reads go first, recorded first too.
+        launch_boundary.before_submit(self)
         if self._recipe_recording is not None:
             return self._recipe_recording.on_submit(
                 self._submitted, compiled, binds, kind, info
@@ -206,6 +222,12 @@ class Submission(Parts):
             for a in arenas:
                 for p, off in a.get("members", ()):
                     full.setdefault(p, full[arena_name(a)] + off)
+            line = burst_line(self.card.machine_json)
+            if off := unaligned(full, line):
+                raise ValueError(
+                    f"silicon flaw F-001: {compiled.name} binds {off} off a "
+                    f"{line}-byte base, which L2.MOV.020's mover proof assumes"
+                )
             references.extend(self._retain(windowed.values()))
             self._pin_record(full.values())
             t0 = time.monotonic()

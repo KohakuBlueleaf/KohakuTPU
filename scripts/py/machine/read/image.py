@@ -37,6 +37,36 @@ def _lines(path: Path) -> tuple:
     return tuple(path.read_text(encoding="utf-8").splitlines())
 
 
+def _match(lines: tuple, pattern: str, then: str | None):
+    """The first 1-based line matching `pattern` (with the next line matching
+    `then`, when given), or None."""
+    rx, nx = re.compile(pattern), re.compile(then) if then else None
+    for n, line in enumerate(lines, 1):
+        if rx.search(line) and (nx is None or (n < len(lines) and nx.search(lines[n]))):
+            return n
+    return None
+
+
+def flaw_line(
+    path: str, flawed: str, then: str | None = None, fixed: str | None = None
+):
+    """Whether repo file `path` carries a silicon flaw, read positively both
+    ways: its `flawed` line (with `then` on the next line) means present, a
+    recorded `fixed` line means absent. A file with neither changed in a way
+    the generator does not know, so it stops rather than call the flaw fixed."""
+    lines = _lines(ROOT / path)
+    n = _match(lines, flawed, then)
+    if n:
+        return True, f"{path}:{n}"
+    n = _match(lines, fixed, None) if fixed else None
+    if n:
+        return False, f"{path}:{n}"
+    raise SystemExit(
+        f"{path}: neither the flawed line {flawed!r} nor a recorded fix; record the"
+        " fixed line in scripts/py/machine/table.py FLAWS"
+    )
+
+
 def _firmware_build():
     spec = importlib.util.spec_from_file_location(
         "fw_build", FW / "kohakutpu" / "firmware" / "build.py"
@@ -126,18 +156,6 @@ class Image:
             if m:
                 return m, f"{path}:{n}"
         raise SystemExit(f"{path}: no line matches {pattern!r}")
-
-    def has_line(self, path: str, pattern: str, then: str | None = None):
-        """Whether repo file `path` has a line matching `pattern` (with the
-        next line matching `then`, when given): (bool, `path:line` or `path`)."""
-        rx, nx = re.compile(pattern), re.compile(then) if then else None
-        lines = _lines(ROOT / path)
-        for n, line in enumerate(lines, 1):
-            if rx.search(line) and (
-                nx is None or (n < len(lines) and nx.search(lines[n]))
-            ):
-                return True, f"{path}:{n}"
-        return False, f"{path}: no line matches {pattern!r}"
 
     def rtl_width(self, path: str, name: str):
         """Bits of the signal `name` as `path` declares it (`[N:0] name`)."""
