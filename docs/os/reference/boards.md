@@ -98,7 +98,7 @@ Notes on the choices the boards encode:
 
 ## Adding a board
 
-Write the JSON; nothing in the OS changes. `python software/os/tools/boot.py
+Write the JSON; nothing in the OS changes. `python software/kohakuaccel/os/tools/boot.py
 <board> --out DIR` checks it (node count, regions and units fit the boot
 table) and writes the tables. A core-only model for a new shape is built with
 `sim/build.py --nodes N --shared 0|1` ([building.md](../use/building.md)).

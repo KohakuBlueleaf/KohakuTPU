@@ -1040,7 +1040,7 @@ FLAWS = [
             "Under Sv39 a data access presented the cycle after a multi-cycle"
             " access completes takes that access's physical address."
         ),
-        "software/os/tests/xlat/xlat.c on rv64_node_pair and the kos core model",
+        "software/tests/machine/programs/xlat/xlat.c on rv64_node_pair and the kos core model",
         "KohakuAccel OS runs untranslated",
         "Clear resolved_q on the data access's completion.",
         lambda i: flaw_line(MMU, r"resolved_q <= resolved && same_req;"),
@@ -1052,7 +1052,7 @@ FLAWS = [
             "The signal word names a newly selected slot a cycle before its count"
             " follows: the first matching read carries the previous slot's count."
         ),
-        "software/os/tests/sigslot/sigslot.c on rv64_node_pair",
+        "software/tests/machine/programs/sigslot/sigslot.c on rv64_node_pair",
         "KohakuAccel OS hw_slot reads the word once more (include/kos/hw.h)",
         "Register sig_sel beside sig_q and report the registered copy.",
         lambda i: flaw_line(ILINK, r"assign sig_word = \{.*sig_sel, sig_sweep,"),

@@ -28,7 +28,7 @@ LLVM (clang, ld.lld, llvm-objcopy, llvm-objdump, llvm-size) for
 the tools from `$KOS_LLVM`, else `~/micromamba/envs/kos/bin`, else `PATH`.
 
 ```
-python software/os/tools/build.py [IMAGE ...] [--out DIR] [-D NAME=VALUE] [--plain] [--no-memgap] [--list]
+python software/kohakuaccel/os/tools/build.py [IMAGE ...] [--out DIR] [-D NAME=VALUE] [--plain] [--no-memgap] [--list]
 ```
 
 Every image is built with the hot-path definitions (`HOT`,
@@ -71,7 +71,7 @@ A Verilator model of 1–4 system nodes on one interlink chain, no compute
 units — the repository's two-node bench with its top replaced:
 
 ```
-python software/os/sim/build.py --nodes N --shared 0|1 --out DIR [--dram-words W] [-j J]
+python software/kohakuaccel/os/sim/build.py --nodes N --shared 0|1 --out DIR [--dram-words W] [-j J]
 ```
 
 `--shared 0` gives each node its own RAM (`core2`); `--shared 1` puts every
@@ -107,10 +107,10 @@ peers then wait in the start handshake, which the log areas show).
 
 ```
 PYTHONPATH=software/driver:software/language:software/compiler \
-python software/os/tools/run_card.py --board card_v9t6_2n \
+python software/kohakutpu/os/tools/run_card.py --board card_v9t6_2n \
     --model ~/ktpu/build/t2s/vlt_card_v9t6_2n --image ~/kos/out/kos.elf \
     --cmd "hello; units; mg" [--flags engine] [--json out.json]
-python software/os/tools/run_card.py --board card_v9t6_4n --jtag --image ... # silicon
+python software/kohakutpu/os/tools/run_card.py --board card_v9t6_4n --jtag --image ... # silicon
 ```
 
 | option | |

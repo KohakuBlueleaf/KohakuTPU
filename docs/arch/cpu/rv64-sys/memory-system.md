@@ -306,7 +306,7 @@ the contract:
 > `dmem_req_c && mem_started && mem_done`), so `busy` stays register-only;
 > its cost is the one lookup cycle any new translated access waits. Software that runs
 > translated on this core puts an instruction between back-to-back memory
-> accesses (KohakuAccel OS `software/os/tools/memgap.py`). Fetch is not
+> accesses (KohakuAccel OS `software/kohakuaccel/os/tools/memgap.py`). Fetch is not
 > affected: its translation waits two cycles after it requests the port
 > ([below](#fetch-is-translated-through-one-page-register)).
 

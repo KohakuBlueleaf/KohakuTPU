@@ -19,6 +19,7 @@ against a fully-featured one.
 """
 
 import argparse
+import ctypes
 import itertools
 import json
 import os
@@ -412,7 +413,6 @@ FMAX = re.compile(r"^@@@FMAX\s+\S+\s+\S+\s+([\d.]+)", re.MULTILINE)
 def free_gb():
     """Available physical memory in GB, or None if it cannot be read."""
     if os.name == "nt":
-        import ctypes
 
         class MS(ctypes.Structure):
             _fields_ = [

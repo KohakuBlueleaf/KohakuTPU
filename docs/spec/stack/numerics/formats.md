@@ -31,15 +31,15 @@ FP16's range limits.
 
 | parameter | v9t6 | meaning | source |
 |---|---|---|---|
-| `mg.kblock` | 32 | K elements sharing one scale | `software/language/kohakutpu/language/numerics/mxfp7.py:48`; machine file |
+| `mg.kblock` | 32 | K elements sharing one scale | `software/kohakutpu/language/kohakutpu/language/numerics/mxfp7.py:48`; machine file |
 | `mx7.sebits` | 5 | scale exponent bits | `mxfp7.py:43` |
 | `mx7.smbits` | 3 | scale mantissa bits | `mxfp7.py:44` |
 | `mx7.sbias` | 20 | scale exponent bias | `mxfp7.py:45`; `src/kohakutpu/transform/mx_quant.v:47` |
 | `mx7.qmax` | 63 | largest significand magnitude (int7, no -64) | `mxfp7.py:51` |
 | GEMM `anchor` | 40 | the stack's anchor, `2 * mx7.sbias` | `mxfp7.py:46` |
 | `mg.acc_mantissa_bits` | 14 | accumulator mantissa bits (FP22) | `src/kohakutpu/matmul/mx_cluster_cu.v:83` |
-| `vc.sig_bits` | 16 | E8M15 significand bits, implicit one included | `software/language/kohakutpu/language/numerics/e8m15.py:13` |
-| `vc.lanes` | 16 | f16 statistic values a 32-byte word | `software/application/kohakutpu/application/kernels/vector.py:44` |
+| `vc.sig_bits` | 16 | E8M15 significand bits, implicit one included | `software/kohakutpu/language/kohakutpu/language/numerics/e8m15.py:13` |
+| `vc.lanes` | 16 | f16 statistic values a 32-byte word | `software/kohakutpu/application/kohakutpu/application/kernels/vector.py:44` |
 
 ## DRAM formats
 
@@ -47,7 +47,7 @@ FP16's range limits.
 - **NUM.MEM.002** `silicon` An `f16` buffer holds IEEE binary16, little-endian, row-major. (code: `ktpu-l1/src/layout/buffer.rs`; evidence: every v9t6 kernel)
 - **NUM.MEM.003** `RTL` An `f32` buffer holds IEEE binary32. The vector core's F32 converters read it to E8M15 by NUM.E8.004 and write E8M15 zero-extended (exact), so an `f32` written by a lane is an E8M15 value with its low 8 mantissa bits zero. The F32 walk that moves it is NUM.F16.008. (code: `e8m15.py:5-7`; RTL `src/kohakutpu/vector/vec_cvt.v:117-163`, instantiated by `src/kohakutpu/vector2/v2_core.v:834,985-986`; evidence: `tests/vector/vec_cvt_tb.v` (drives `vec_cvt_f32_to_e8` and `vec_cvt_e8_to_f32`, the modules the core instantiates); no f32 walk on silicon)
 - **NUM.MEM.004** `RTL` The tinygrad device computes on the f16 form of an f32 buffer: on the card every float buffer is held as f16, and an operand of a product as MXFP7. (doc: `tinygrad.md:61-63,111-117`; evidence: `k_major_weight`, ...) on the `dev` Verilated card)
-- **NUM.MEM.005** `silicon` An `mx7a` / `mx7b` buffer holds MXFP7 entries (NUM.MX7.005), one byte an element counting the scale bytes; its layout keys are `gm, nk` (A) or `gn, nk` (B). (code: `software/language/kohakutpu/language/dsl/types.py:11,63`; evidence: `mm_` and `quant_` kernels, e.g. `mx7a[6400, 416] @dram(gm=64, nk=1)`)
+- **NUM.MEM.005** `silicon` An `mx7a` / `mx7b` buffer holds MXFP7 entries (NUM.MX7.005), one byte an element counting the scale bytes; its layout keys are `gm, nk` (A) or `gn, nk` (B). (code: `software/kohakutpu/language/kohakutpu/language/dsl/types.py:11,63`; evidence: `mm_` and `quant_` kernels, e.g. `mx7a[6400, 416] @dram(gm=64, nk=1)`)
 - **NUM.MEM.006** `unproven` FP32 is not a matmul operand format: the quantiser reads FP16 only, so an f32 tensor reaches a cluster through its f16 form. (doc: `docs/projects/kohakutpu/number-format.md:308-322`; code: `mxfp7.py:104-116`)
 
 ## FP16 and the vector core's edges
@@ -72,7 +72,7 @@ FP16's range limits.
 - **NUM.E8.006** `unproven` An SRU constant (`KB`, `KC`, `MVAL`, `K0..K3`) is E8M15 rounded to nearest even from the float, a magnitude below 2^-126 a signed zero, 2^128 and up infinite, NaN 0x7FC000. (code: `ktpu-isa/src/numerics.rs`; `ktpu-l1/src/lower/sru.rs`; evidence: no silicon constant-conversion boundary witness; the SRU benches build constants with `scripts/py/sru/e8.py`; see NUM.X01)
 - **NUM.E8.008** `silicon` A lane product of a zero is +0 whatever the signs: `-0 * 1` is +0, measured on the card. (RTL `src/kohakutpu/vector2/v2_alu.v`; evidence: vector `num/e8/NUM.E8.008.mul_zero_sign` on the v9t6 card and the Verilated v9 card `vlt_card_v9_1n_v2`, 2026-10-22)
 - **NUM.E8.009** `RTL` When the FMA's product is zero, the addend passes unchanged, its sign included: `vadd d, a, c` (`a * 1 + c`) with a zero `a` returns `c` bit for bit, so `+0 (a) + -0 (c)` is -0 where IEEE gives +0, and `-0 (a) + +0 (c)` is +0; `vsub d, k0, x` (`0 * 1 + (-x)`) is `-x` for both zeros; `vfma` / `vfnma` with a zero product return the addend. The sum of two zeros therefore takes the sign of operand `c`, not the IEEE rule. (RTL `src/kohakutpu/vector2/v2_alu.v:321-324`; evidence: on `vlt_card_v9t6s_1n`, `reviews/zsign/probe3.log`: `vadd d, k0, x` returns +-0, +-1, -3, +-2^-24, +-65504, +-inf and NaN bit for bit; `vsub d, k0, x` returns -x for each, 0x8000 for +0; `-0 (vsub k0, k0) + x (c)` is x and `x (a) + -0 (c)` with x = +0 is -0)
-- **NUM.E8.007** `RTL` A lane value with `|x|` < 2^14 rounds to the nearest whole number (ties to even) as `(x + 49152) - 49152` (49152 = 1.5 * 2^15); floor, ceil and truncation are built from it with compares. (code: `software/application/kohakutpu/application/kernels/expr.py:19-21,244-256`)
+- **NUM.E8.007** `RTL` A lane value with `|x|` < 2^14 rounds to the nearest whole number (ties to even) as `(x + 49152) - 49152` (49152 = 1.5 * 2^15); floor, ceil and truncation are built from it with compares. (code: `software/kohakutpu/application/kohakutpu/application/kernels/expr.py:19-21,244-256`)
 
 ## MXFP7
 
@@ -102,7 +102,7 @@ FP16's range limits.
 - **NUM.GT4.002** `silicon` The GT4 transform (mover transform id 2, four words in, four out) treats each group of four 32-byte words as a 4x4 array of 64-bit granules and transposes it: out word i granule w = in word w granule i. On four row-major words (4 rows x 16 FP16) it yields the four sub-tiles of columns 4i..4i+3; it is its own inverse. (code: `ktpu-isa/src/unit/mover.rs`; `ktpu-l2/src/lower/mover.rs`; doc: `docs/spec/transform-slot.md:108-110`; evidence: the card-run tally `fn.gt4` 442)
 - **NUM.GT4.003** `silicon` The vector core's GT4 walk applies the same transpose between four L1 words and four chunks; a GT4 register holds 4 rows x 32 columns, row i's columns 16q.. in chunk 4q + i. (code: `ktpu-isa/src/unit/vector/core.rs`; `ktpu-l2/src/lower/vector/`; RTL `v2_core.v:1041-1044`; evidence: the card-run tally `image:vunpk:fmt` gt4 450)
 - **NUM.GT4.004** `unproven` A GT4 walk of a chunk count that is not a multiple of 4 is refused by the encoder and faults F_GT4 (10) in the core. (code: `ktpu-isa/src/unit/vector/core.rs`; RTL `v2_core.v:188,514,517`; evidence: no test drives the fault; `tests/vector2/v2_gt4_tb.v` covers the transpose only)
-- **NUM.STAT.001** `RTL` A statistic (a reduction along rows) is R f16 values, `vc.lanes` [16] a 32-byte word; a kernel that reads or writes one moves 16 rows a trip (the row quantum is 16), its band registers merged lane by lane into one word and broadcast back. (code: `kernels/vector.py:44-56`; `kernels/matmul.py:37-39`; `software/language/kohakutpu/language/dsl/ops.py:431-454`; doc: `tinygrad.md:108`; evidence: layernorm, max_rows, sum_rows] on `vlt_card_v9_1n_v2`; the v9t6 kernels used the earlier `[R, 32]` form, e.g. `rows_61adf15faf` out `f16[64, 32]`)
+- **NUM.STAT.001** `RTL` A statistic (a reduction along rows) is R f16 values, `vc.lanes` [16] a 32-byte word; a kernel that reads or writes one moves 16 rows a trip (the row quantum is 16), its band registers merged lane by lane into one word and broadcast back. (code: `kernels/vector.py:44-56`; `kernels/matmul.py:37-39`; `software/kohakutpu/language/kohakutpu/language/dsl/ops.py:431-454`; doc: `tinygrad.md:108`; evidence: layernorm, max_rows, sum_rows] on `vlt_card_v9_1n_v2`; the v9t6 kernels used the earlier `[R, 32]` form, e.g. `rows_61adf15faf` out `f16[64, 32]`)
 - **NUM.STAT.002** `RTL` A reduction's padding lanes hold its identity: 0 for a sum, -65504 (the lowest f16) for a max. (code: `software/application/kohakutpu/application/ktpugrad/run.py:1427`; doc: `tinygrad.md:108`)
 
 ## SRU row-sum error budget
@@ -164,7 +164,7 @@ they do not upgrade the evidence labels on the numerical format rules above.
   conversions require NUM.MX7.002–003's absolute operand-quantization error even
   when the schedule's original plan kind is `vector` or its AST uses WHERE.
 - `kernels/matmul.py:tile,generate` and
-  `software/rust/crates/ktpu-kernels/src/gen/matmul.rs` partition output M/N
+  `software/kohakutpu/compiler/crates/ktpu-kernels/src/gen/matmul.rs` partition output M/N
   tiles across clusters. Each tile accumulates successive K blocks in FP22,
   not an E8M15 reduction tree. K is padded to a multiple of 32; a launch can
   stream several blocks per K chunk. The cluster drain rounds to f16 before
@@ -226,7 +226,7 @@ to choose or inflate a tolerance.
 - **NUM.TOL.002** `RTL` A cluster product against the MXFP7-quantised reference (`value_fp16(x) @ value_fp16(w).T` in float64): `rel` < 1e-2, also through split K, a drain into the node, data-dependent tiles and shared fills. (`mxfp7.py:163-172`; evidence: those tests on `vlt_card_v9_1n_v2`)
 - **NUM.TOL.003** `RTL` A product whose activation is re-quantised between layers (on a core, or through layers with nothing in memory), against the quantised reference of the f16-rounded intermediates: `rel` < 2e-2. (evidence: test_l2_mlp_quantises_its_activation_on_the_core, test_l2_mlp_with_nothing_in_memory_between_layers)
 - **NUM.TOL.004** `RTL` Vector-only paths against float64 numpy: silu 2e-3, add 1e-3, softmax 2e-3 (4e-3 on cluster scores), layernorm 4e-3, leaky ReLU 1e-3 (the `leaky` example, which the `select` pass turns into a max: no compare runs); a tile drained into the cores then silu, 2e-3 against silu of the f16-rounded quantised product. (`ktpu-l2/src/passes/select.rs`; evidence: those tests on `vlt_card_v9_1n_v2`)
-- **NUM.TOL.005** `RTL` DSL examples on the card against their references (operands quantised by `_mx`): linear and splitk 2e-2; mlp, swiglu, attention, heads 3e-2. (code: `software/language/kohakutpu/language/examples/dsl/__init__.py:122-214`)
+- **NUM.TOL.005** `RTL` DSL examples on the card against their references (operands quantised by `_mx`): linear and splitk 2e-2; mlp, swiglu, attention, heads 3e-2. (code: `software/kohakutpu/language/kohakutpu/language/examples/dsl/__init__.py:122-214`)
 - **NUM.TOL.006** `RTL` Data movement, quantiser bytes and GT4 are bit-exact. (evidence: test_l1 mover tests and test_l2_mover_quantises_and_tiles)
 - **NUM.TOL.007** `RTL` tinygrad device programs other than products, against float64 numpy of the f16 inputs: `rel` < 2e-2. (doc: `tinygrad.md:121-127`)
 - **NUM.TOL.008** `unproven` tinygrad products against float64 numpy of the unquantised f16 inputs: `rel` < 2e-2. Four cases miss on the Verilated card: k10 0.0239, n10 0.0216, n10_out, n84_epilogue 0.0221. (evidence: 76 of 80 cases pass on the current tree)

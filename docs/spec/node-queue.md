@@ -21,8 +21,8 @@ submissions and reads completions. **Both sides poll** — the host the completi
 tail, the firmware the submission tail; nothing in the protocol needs an
 interrupt.
 
-The firmware side is `software/firmware/kohakuaccel/queue/service.c` with the
-layout in `software/firmware/kohakuaccel/include/ka/queue/layout.h`; the host
+The firmware side is `software/kohakuaccel/firmware/queue/service.c` with the
+layout in `software/kohakuaccel/firmware/include/ka/queue/layout.h`; the host
 side is `software/driver/kohakuaccel/driver/node/queue/` (`NodeQueue`), with
 the layout in `layout.py`.
 

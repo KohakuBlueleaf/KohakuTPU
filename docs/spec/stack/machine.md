@@ -71,7 +71,7 @@ constant stays under hold on every machine file.
 | `mover` | index list, loop levels, burst, FIFO, configuration queue, fault code width, gather row limit, modes | `mm_mover.v`, `mx_tdesc.v` |
 | `node` | processor memories and scratchpad base, uncached alias bit, control region, console FIFO, RX queue, dispatch engine depth and counters, completion queue, ring depth, mover register span and room writes | `rv64_syscore.v`, `rv64_noc_mbox.v`, `rv64_load_win.v`, `sysnode.v`, `dispatch_engine.v`, firmware headers |
 | `il` | the interlink's signal slots and meshes | `mag_ilink.v` |
-| `fw` | image, parts, unit classes, memory budget and use, unit / buffer limits, enumeration wait, region heaps, boot, queue and package formats (package copy limit), status, wait and signal codes | `software/firmware/build.py`, headers, `package/interp.c`, `build/fw/<image>.size` |
+| `fw` | image, parts, unit classes, memory budget and use, unit / buffer limits, enumeration wait, region heaps, boot, queue and package formats (package copy limit), status, wait and signal codes | `software/kohakutpu/firmware/build.py`, headers, `package/interp.c`, `build/fw/<image>.size` |
 
 ## DRAM write-line isolation
 

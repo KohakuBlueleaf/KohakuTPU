@@ -24,10 +24,10 @@ the relocation count). One compile therefore serves every call of a kernel at
 a shape; the relocation table is host metadata, not firmware work.
 
 The writer is `software/rust/crates/ktpu-l0/src/` (`format/`, `build/`); the reader that runs on the node is
-`software/firmware/kohakuaccel/package/interp.c`, with the offsets in
-`software/firmware/kohakuaccel/include/ka/package/format.h`; a reference
+`software/kohakuaccel/firmware/package/interp.c`, with the offsets in
+`software/kohakuaccel/firmware/include/ka/package/format.h`; a reference
 interpreter for package construction is
-`software/simulation/kohakuaccel/simulation/package.py`. How a package reaches a node is
+`software/kohakuaccel/simulation/kohakuaccel/simulation/package.py`. How a package reaches a node is
 [node-queue.md](node-queue.md).
 
 ## 1. Layout
@@ -417,7 +417,7 @@ and patches the fields §2 names; it reads nothing else.
 ### 5.2 Unit classes — Convention
 
 The node looks up each unit's `CU_TYPE` in a table of **unit classes** the
-firmware image carries (`software/firmware/kohakuaccel/include/ka/unit/unit.h`):
+firmware image carries (`software/kohakuaccel/firmware/include/ka/unit/unit.h`):
 a name, an optional credit bound, how to read a completion's code (§4.2 is the
 default) and how to describe a fault. A type with no class gets the framework's
 generic reading. KohakuTPU registers `MG` and `VC`

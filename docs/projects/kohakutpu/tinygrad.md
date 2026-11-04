@@ -212,7 +212,7 @@ rounding.
 
 ## 6. Training on the card
 
-`ktpugrad.nn` (`software/application/kohakutpu/application/ktpugrad/nn.py`):
+`ktpugrad.nn` (`software/kohakutpu/application/kohakutpu/application/ktpugrad/nn.py`):
 
 - `place(module, device="KTPU", dtype=half)` moves every tensor of a
   tinygrad module (`get_state_dict`) to the card, floats cast to f16;
@@ -252,5 +252,5 @@ reads, outputs are new KTPU Tensors written row-major; calling it returns
 the output of a one-output kernel, `.outputs(...)` every output. The ViT
 example runs its attention this way: the DSL `attention` kernel with
 `heads=B*H` takes every (image, head) pair of a layer in one call
-(`software/application/examples/tinygrad/vit_mnist.py`,
-`software/application/examples/dsl/custom_kernels.py`).
+(`software/kohakutpu/application/examples/tinygrad/vit_mnist.py`,
+`software/kohakutpu/application/examples/dsl/custom_kernels.py`).

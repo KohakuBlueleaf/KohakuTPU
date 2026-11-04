@@ -1,5 +1,5 @@
 //! The node on the abstract machine: a package's steps under the firmware's
-//! dispatch rules (`firmware/kohakuaccel/dispatch/engine.c`).
+//! dispatch rules (`software/kohakuaccel/firmware/dispatch/engine.c`).
 //!
 //! * A word goes to a unit only while the unit holds fewer than its credit
 //!   in flight (sent less completed); a unit with a fetch port takes its

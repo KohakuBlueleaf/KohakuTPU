@@ -22,7 +22,7 @@ KohakuTPU's L1 body text is in
 [../projects/kohakutpu/ir/ktpu.md](../projects/kohakutpu/ir/ktpu.md), its ops in
 `ktpu-isa` and its lowering in `ktpu-l1::lower`.
 
-Code: `software/rust/crates/ktpu-l0/src/program.rs` (`Program`).
+Code: `software/kohakuaccel/compiler/crates/ka-package/src/program.rs` (`Program`).
 
 ## 1. A program
 

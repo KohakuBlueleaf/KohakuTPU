@@ -1,7 +1,7 @@
 # Configurable kernel hot paths
 
 The kernel and machine layer have build definitions for their hot paths.
-`software/os/tools/build.py` defines every one listed below (`HOT` in build.py);
+`software/kohakuaccel/os/tools/build.py` defines every one listed below (`HOT` in build.py);
 `--plain` builds the comparison implementation without them, and `-D NAME`
 adds one to a plain build. Definitions apply to the complete image, including
 user code. Silicon with all of them (v9t6 card, 4 nodes, 100/200): system call

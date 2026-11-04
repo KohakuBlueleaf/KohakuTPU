@@ -43,7 +43,7 @@ software/firmware/
     apps/xfprobe/                the transform bank's geometry and fault word
 ```
 
-`python software/firmware/build.py [image]` compiles every source of an image in one
+`python software/kohakutpu/firmware/build.py [image]` compiles every source of an image in one
 call to the WSL `riscv64-unknown-elf` toolchain with
 `-march=rv64ima_zicsr_zifencei -mabi=lp64 -mcmodel=medany -Os -Werror` and
 `-DEXIT_ADDR=0x20000` (the control region's exit register), links against
@@ -74,9 +74,9 @@ without). The ready banner reports the cycle counter at `main` and at ready.
 Images:
 `kohakutpu_node` (the dispatcher with KohakuTPU's units), `kohakuaccel_node`
 (the dispatcher with the generic class only), `memprobe` (a measurement of
-the processor's memory paths, driven by `software/firmware/tools/memprobe.py`)
+the processor's memory paths, driven by `software/kohakutpu/firmware/tools/memprobe.py`)
 and `osprobe` (tasks and heaps checked on the node, driven by
-`software/firmware/tools/os.py`).
+`software/kohakutpu/firmware/tools/os.py`).
 
 ## What happens to a package
 
@@ -132,7 +132,7 @@ go through the processor's **uncached alias**, address bit 38
 (`rv64_syscore.v`, cleared on the way out), so they see what another agent
 wrote with no cache maintenance; staging is uncached anyway. One uncached
 access is one node-port round trip, about 30 processor cycles per 8 bytes on
-the simulated card (`software/firmware/tools/memprobe.py`). Cached DRAM is shared only
+the simulated card (`software/kohakutpu/firmware/tools/memprobe.py`). Cached DRAM is shared only
 with a D-cache flush or invalidate (control region `0x1C8`) around it.
 
 The queue and its indices are always accessed uncached. An uncached store

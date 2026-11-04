@@ -62,8 +62,8 @@ wrong thing about every mesh that differs from the first.
 
 `MachineSpec` therefore holds a `MeshSpec` per mesh — its units, memory ports and
 orchestrator. Runtime addresses come from the schema-derived Rust card view
-(`software/application/kohakutpu/application/runtime/machine.py` and
-`software/rust/crates/ktpu-machine/src/card.rs`).
+(`software/kohakutpu/application/kohakutpu/application/runtime/machine.py` and
+`software/kohakutpu/compiler/crates/ktpu-machine/src/card.rs`).
 
 Two design rules worth copying:
 

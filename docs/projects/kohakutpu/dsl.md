@@ -141,7 +141,7 @@ independent products are one loop. `attention(heads=H)` is built on it: H
 heads (or every (image, head) pair of a batch) in one kernel, each head the
 H-th block of rows of q, k, vt and o.
 
-`software/application/examples/dsl/custom_kernels.py` writes a kernel of its
+`software/kohakutpu/application/examples/dsl/custom_kernels.py` writes a kernel of its
 own (`gated_rmsnorm`), runs it inside a tinygrad program
 ([tinygrad.md](tinygrad.md)) and through the Tensor API ([api.md](api.md)),
 and prints the two multi-node forms' L2.

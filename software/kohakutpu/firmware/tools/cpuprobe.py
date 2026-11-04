@@ -5,7 +5,7 @@
     python software/kohakutpu/firmware/tools/cpuprobe.py --card multimesh_v9t4 --nodes 0,1,2,3 \\
         [--rounds 8] [--seed 0x...] [--transport jtag | --build MODEL]
 
-`reference(rounds, seed)` is the firmware (kohakuaccel/apps/cpuprobe/main.c)
+`reference(rounds, seed)` is the firmware (software/kohakuaccel/firmware/apps/cpuprobe/main.c)
 in Python, check by check; the hashes the processor reports are compared to it.
 `--emit-header` writes the default run's hashes into the firmware's expect.h,
 which is how the bench run checks itself.

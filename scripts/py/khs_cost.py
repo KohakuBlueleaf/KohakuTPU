@@ -22,6 +22,8 @@ import pathlib
 import re
 import sys
 
+from khs_sweep import SWEEPS
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SWEEP = ROOT / "build" / "sweep"
 MODEL = SWEEP / "cost-model.json"
@@ -481,11 +483,6 @@ def failures(sweep_dir):
     A feature the RTL REFUSES is not a hole in the data, it is the answer, and
     a table that silently omits it reads as "not measured yet".
     """
-    try:
-        sys.path.insert(0, str(ROOT / "scripts" / "py"))
-        from khs_sweep import SWEEPS
-    except ImportError:
-        return {}
     man = sweep_dir / "manifest.json"
     tags = set(json.loads(man.read_text())["tags"]) if man.exists() else None
     out = {}

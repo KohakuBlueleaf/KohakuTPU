@@ -23,7 +23,18 @@ import argparse
 import math
 
 import numpy as np
-from vec_tables import F_INV, F_RSQRT, NSEG, Q0, USH, UW, build
+from vec_tables import (
+    CMAX,
+    F_INV,
+    F_RSQRT,
+    NSEG,
+    Q0,
+    USH,
+    UW,
+    build,
+    eval_fixed,
+    fit_quadratic,
+)
 
 #: E8M15, which is `vec_alu.v`'s lane format: sign, 8-bit exponent, 15-bit
 #: significand, no subnormals.
@@ -207,8 +218,6 @@ def sqrt_table():
     coefficient comes to the 22-bit signed field: sqrt is the only seed whose
     output leaves (0.5, 1], and c0 reaches sqrt(2*(1+31/32)) = 1.984.
     """
-    from vec_tables import CMAX, eval_fixed, fit_quadratic
-
     worst, biggest = 0.0, 0
     for idx6 in range(2 * NSEG):
         scale = 2.0 if idx6 >> 5 else 1.0

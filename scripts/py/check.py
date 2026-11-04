@@ -31,6 +31,8 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+import xsim
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 #: The software workspace's members (software/pyproject.toml).
 SOFTWARE_MEMBERS = (
@@ -173,9 +175,6 @@ UNIT = FAST + [
 
 def all_benches():
     """Every bench name `xsim.py` defines, sorted. Read from `xsim.BENCHES`."""
-    sys.path.insert(0, str(ROOT / "scripts" / "py"))
-    import xsim
-
     return sorted(xsim.BENCHES)
 
 
