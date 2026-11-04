@@ -124,7 +124,7 @@ impl Cluster {
             }
             (0 | 1, Data::Words(words)) => {
                 let side = buf as usize;
-                for (i, entry) in words.chunks_exact(ENTRY_WORDS).enumerate() {
+                for (i, entry) in words.as_chunks::<ENTRY_WORDS>().0.iter().enumerate() {
                     let bytes: Vec<u8> = entry.iter().flatten().copied().collect();
                     let slot = (at / ENTRY_WORDS + i) % (2 * BANK_ENTRIES);
                     self.sides[side][slot] = Entry::read(&bytes, buf == 1);
