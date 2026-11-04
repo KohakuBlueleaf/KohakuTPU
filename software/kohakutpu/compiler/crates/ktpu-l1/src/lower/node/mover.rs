@@ -234,7 +234,7 @@ impl<'a> NodeReader<'a> {
                         fp: false,
                     };
                     match flaw::need(&walked(0, n), f) {
-                        flaw::Need::Line => self.f001.line_bases.push(dst as i64),
+                        flaw::Need::Line => self.f001.line_bases.push(dst),
                         flaw::Need::Unproven => {
                             // The same words as walked moves of at most a move each, checked.
                             let most = MOVE_WORDS as i64 * f.word;

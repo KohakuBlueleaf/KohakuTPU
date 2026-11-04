@@ -429,17 +429,17 @@ def case_iso(npe):
         halt.append(hw)
         cause.append(c)
         instret.append(len(trace))
-    return dict(
-        srcs=srcs,
-        dinit=dinit,
-        dfin=dfin,
-        halt=halt,
-        cause=cause,
-        instret=instret,
-        mask=(1 << npe) - 1,
-        check_dram=1,
-        aux=0,
-    )
+    return {
+        "srcs": srcs,
+        "dinit": dinit,
+        "dfin": dfin,
+        "halt": halt,
+        "cause": cause,
+        "instret": instret,
+        "mask": (1 << npe) - 1,
+        "check_dram": 1,
+        "aux": 0,
+    }
 
 
 def case_pp(npe):
@@ -453,17 +453,17 @@ def case_pp(npe):
             srcs.append(pp_responder(partner))
             halt.append(ROUNDS)
             mask |= 1 << core
-    return dict(
-        srcs=srcs,
-        dinit=ramp(),
-        dfin=ramp(),
-        halt=halt,
-        cause=[1] * npe,
-        instret=[0] * npe,
-        mask=mask,
-        check_dram=1,
-        aux=ROUNDS,
-    )
+    return {
+        "srcs": srcs,
+        "dinit": ramp(),
+        "dfin": ramp(),
+        "halt": halt,
+        "cause": [1] * npe,
+        "instret": [0] * npe,
+        "mask": mask,
+        "check_dram": 1,
+        "aux": ROUNDS,
+    }
 
 
 def case_agg(npe):
@@ -479,17 +479,17 @@ def case_agg(npe):
         srcs.append(agg_worker(core))
         halt.append(slice_sum(core))
     halt[0] = sum(slice_sum(c) for c in range(npe)) & MASK32
-    return dict(
-        srcs=srcs,
-        dinit=dinit,
-        dfin=dinit,
-        halt=halt,
-        cause=[1] * npe,
-        instret=[0] * npe,
-        mask=(1 << npe) - 1,
-        check_dram=1,
-        aux=npe - 1,
-    )
+    return {
+        "srcs": srcs,
+        "dinit": dinit,
+        "dfin": dinit,
+        "halt": halt,
+        "cause": [1] * npe,
+        "instret": [0] * npe,
+        "mask": (1 << npe) - 1,
+        "check_dram": 1,
+        "aux": npe - 1,
+    }
 
 
 def case_ho(npe):
@@ -515,17 +515,17 @@ def case_ho(npe):
         else:
             srcs.append(ho_reader(core, core - 1))
             halt.append(sum(new) & MASK32)
-    return dict(
-        srcs=srcs,
-        dinit=dinit,
-        dfin=dfin,
-        halt=halt,
-        cause=[1] * npe,
-        instret=[0] * npe,
-        mask=(1 << npe) - 1,
-        check_dram=1,
-        aux=HO_N,
-    )
+    return {
+        "srcs": srcs,
+        "dinit": dinit,
+        "dfin": dfin,
+        "halt": halt,
+        "cause": [1] * npe,
+        "instret": [0] * npe,
+        "mask": (1 << npe) - 1,
+        "check_dram": 1,
+        "aux": HO_N,
+    }
 
 
 # `iso` is also generated for ONE core, as the uncontended floor every

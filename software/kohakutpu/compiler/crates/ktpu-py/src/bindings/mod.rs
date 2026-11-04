@@ -50,22 +50,15 @@ fn mutated<T: Send>(mutant: Option<&str>, f: impl FnOnce() -> T + Send) -> PyRes
     }
 }
 
+#[cfg(feature = "mutants")]
 pub(crate) fn active_mutant(py: Python<'_>) -> PyResult<Option<String>> {
-    #[cfg(feature = "mutants")]
-    {
-        if let Some(m) = ktpu::mutant::active() {
-            return Ok(Some(m.to_string()));
-        }
-        py.import("kohakutpu.language.dsl.kernel")?
-            .getattr("_MUTANT")?
-            .call_method0("get")?
-            .extract()
+    if let Some(m) = ktpu::mutant::active() {
+        return Ok(Some(m.to_string()));
     }
-    #[cfg(not(feature = "mutants"))]
-    {
-        let _ = py;
-        Ok(None)
-    }
+    py.import("kohakutpu.language.dsl.kernel")?
+        .getattr("_MUTANT")?
+        .call_method0("get")?
+        .extract()
 }
 
 /// A ktpu-l1 refusal as `Refused`, its `clause` set.

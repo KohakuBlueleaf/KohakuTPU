@@ -124,6 +124,10 @@ pub(super) struct Plan {
 
 /// Encoded image words, shared by every run of one encoding.
 pub type ImageWords = Rc<Vec<u64>>;
+/// An image body with its parameters bound, and the descriptors it opens with.
+type Rest = (Rc<Vec<Stmt>>, Descs);
+/// An encoded image's key: its name, bound arguments and splits.
+type EncodedKey = (String, Vec<i128>, Vec<(u32, Split)>);
 
 /// `module`'s images, each encoded once per value of the parameters its
 /// instructions read (L1.IMG.003). `units` resolves unit names.
@@ -136,8 +140,8 @@ pub struct Images<'a> {
     reader: Reader,
     macros: indexmap::IndexMap<String, (Vec<String>, Vec<Stmt>)>,
     plans: HashMap<String, Plan>,
-    rests: HashMap<(String, Vec<i128>), (Rc<Vec<Stmt>>, Descs)>,
-    encoded: HashMap<(String, Vec<i128>, Vec<(u32, Split)>), ImageWords>,
+    rests: HashMap<(String, Vec<i128>), Rest>,
+    encoded: HashMap<EncodedKey, ImageWords>,
 }
 
 impl<'a> Images<'a> {

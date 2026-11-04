@@ -151,7 +151,9 @@ pub fn exp2d(a: u32, b: u32, tau: u32) -> (u32, bool) {
     let special = x.is_nan() || (x > 0.0 && exp_of(a) > 134);
     (
         lane(r),
-        special || (x.abs() < 128.0 && !(r < 2f64.powi(tau as i32))),
+        special
+            || (x.abs() < 128.0
+                && r.partial_cmp(&2f64.powi(tau as i32)) != Some(std::cmp::Ordering::Less)),
     )
 }
 

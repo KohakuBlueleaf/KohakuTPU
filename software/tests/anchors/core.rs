@@ -37,7 +37,7 @@ fn input(seeds: bool) -> Vec<u8> {
     let mut x = 0x9E37_79B9u32;
     for (i, pair) in mem[SPAN..2 * SPAN].chunks_mut(2).enumerate() {
         x = x.wrapping_mul(1664525).wrapping_add(1013904223);
-        let plain = 0x3000 + ((x >> 16) as u16 & 0x1FFF) | ((x >> 8) as u16 & 0x8000);
+        let plain = (0x3000 + ((x >> 16) as u16 & 0x1FFF)) | ((x >> 8) as u16 & 0x8000);
         let v = match (seeds, i % 8 == 7) {
             (true, _) if EXP2_WRAPS.contains(&((i * 8) as u16 & 0x7FFF)) => ONE,
             (true, _) => (i * 8) as u16,

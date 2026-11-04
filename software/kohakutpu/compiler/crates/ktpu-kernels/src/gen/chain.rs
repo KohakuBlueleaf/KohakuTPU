@@ -99,7 +99,10 @@ pub fn kernel(first: Kernel, second: Kernel, from: &str, to: &str, keep: bool) -
     }
     let prefix = (2..)
         .map(|k| format!("c{k}_"))
-        .find(|p| own.iter().all(|n| n == from || !taken.contains(&format!("{p}{n}"))))
+        .find(|p| {
+            own.iter()
+                .all(|n| n == from || !taken.contains(&format!("{p}{n}")))
+        })
         .unwrap_or_default();
     let link = to.to_string();
     let to_name = |n: &str| match n == from {

@@ -113,7 +113,7 @@ impl Sim<'_> {
             "gen" => {
                 let v = self.view(pos[0])?;
                 let seed = int(st.kw("seed").ok_or("gen seed=")?, &self.env)? as u64;
-                let dst = self.from_view(&v)?;
+                let dst = self.walk_of(&v)?;
                 mover::run(&Move::Gen { dst, seed }, self.mem)
             }
             "gather" | "scatter" => self.indexed(st),
@@ -194,7 +194,7 @@ impl Sim<'_> {
         Ok(())
     }
 
-    fn from_view(&self, v: &View) -> R<Walk> {
+    fn walk_of(&self, v: &View) -> R<Walk> {
         v.walk(self.buf(&v.name)?)
     }
 
@@ -206,7 +206,7 @@ impl Sim<'_> {
                 let off = at.map_or(Ok(0), |x| int(x, &self.env))?;
                 walk_term(w, self.buf(&v.name)?.at + off, &self.env)
             }
-            None => self.from_view(&v),
+            None => self.walk_of(&v),
         }
     }
 
@@ -234,7 +234,7 @@ impl Sim<'_> {
         let (to, from) = (self.view(pos[0])?, self.view(pos[2])?);
         let mask = self.view(st.kw("mask").ok_or("tile_transpose mask=")?)?;
         let (y0, x0) = (self.buf(&to.name)?.at, self.buf(&from.name)?.at);
-        let m0 = self.from_view(&mask)?.base;
+        let m0 = self.walk_of(&mask)?.base;
         let arg = |k: &str| int(st.kw(k).ok_or("tile_transpose nb= a= b=")?, &self.env);
         let (nb, a, b) = (arg("nb")?, arg("a")?, arg("b")?);
         let mut set = [[false; 128]; 2];
@@ -311,7 +311,7 @@ impl Sim<'_> {
         let dst = match st.kw("walk") {
             Some(_) => self.side(pos[0], st.kw("walk"), st.kw("at"))?,
             None if v.axes.iter().zip(&b.shape).all(|(a, n)| *a == (0, *n)) => whole(b),
-            None => self.from_view(&v)?,
+            None => self.walk_of(&v)?,
         };
         let value = st.kw("value").ok_or("fill needs value=")?;
         let mv = Move::Fill {
@@ -352,12 +352,12 @@ impl Sim<'_> {
         let mv = if st.op == "gather" {
             Move::Gather {
                 src: at,
-                dst: self.from_view(&dst)?,
+                dst: self.walk_of(&dst)?,
                 index,
             }
         } else {
             Move::Scatter {
-                src: self.from_view(&src)?,
+                src: self.walk_of(&src)?,
                 dst: at,
                 index,
             }

@@ -4,12 +4,17 @@ use super::arena::Arena;
 #[cfg(unix)]
 use super::exchange::posix::Io;
 use super::exchange::QueueLayout;
-use pyo3::exceptions::{PyOSError, PyRuntimeError, PyValueError};
+#[cfg(unix)]
+use pyo3::exceptions::PyOSError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
+use pyo3::types::PyDict;
+#[cfg(unix)]
+use pyo3::types::{PyBytes, PyList, PyTuple};
 use std::collections::BTreeMap;
 
 #[pyclass(module = "kohakutpu.compiler._rs")]
+#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) struct DirectWire {
     queue: Py<PyAny>,
     transport: Py<PyAny>,
@@ -40,6 +45,7 @@ pub(crate) fn bump(dict: &Bound<'_, PyDict>, key: &str, amount: u64) -> PyResult
         .extract()?;
     dict.set_item(key, value + amount)
 }
+#[cfg(unix)]
 fn word(bytes: &[u8], at: usize) -> u64 {
     u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap())
 }
@@ -158,6 +164,11 @@ impl DirectWire {
                         "native host write owner changed or busy",
                     ));
                 }
+                #[cfg(not(unix))]
+                {
+                    let _ = (card, at, raw);
+                    Err(PyRuntimeError::new_err("native host write requires POSIX"))
+                }
                 #[cfg(unix)]
                 {
                     let line = self.layout.line;
@@ -166,15 +177,13 @@ impl DirectWire {
                         .as_ref()
                         .ok_or_else(|| PyRuntimeError::new_err("native direct owner closed"))?;
                     py.detach(|| io.upload(self.dram_offset + at, raw, line))?;
+                    let log = card.getattr("log")?;
+                    if !log.is_none() {
+                        log.cast::<PyList>()?
+                            .append(("write", at, PyBytes::new(py, raw)))?;
+                    }
+                    Ok(())
                 }
-                #[cfg(not(unix))]
-                return Err(PyRuntimeError::new_err("native host write requires POSIX"));
-                let log = card.getattr("log")?;
-                if !log.is_none() {
-                    log.cast::<PyList>()?
-                        .append(("write", at, PyBytes::new(py, raw)))?;
-                }
-                Ok(())
             })();
             self.transport_lock.bind(py).call_method0("release")?;
             result

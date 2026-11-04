@@ -53,8 +53,11 @@ pub fn desc(st: &Stmt, env: &Env) -> R<(u32, Desc)> {
     Ok((ad, d))
 }
 
+/// An image's leading descriptors and its instructions.
+pub type Bound = (Vec<(u32, Desc)>, Vec<Inst>);
+
 /// `(leading descriptors, instructions)` of `image` with its parameters bound.
-pub fn read(image: &Definition, args: &[i64]) -> R<(Vec<(u32, Desc)>, Vec<Inst>)> {
+pub fn read(image: &Definition, args: &[i64]) -> R<Bound> {
     let env: Env = image
         .params
         .iter()

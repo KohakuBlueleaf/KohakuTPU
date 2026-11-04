@@ -456,7 +456,7 @@ pub fn plan(
             tn /= 2;
         }
         if dense {
-            return Ok(legal(tm).last().unwrap_or(tn));
+            return Ok(legal(tm).next_back().unwrap_or(tn));
         }
         while n / tn < knobs.n_tiles && tn / 2 >= kb && n % (tn / 2) == 0 {
             tn /= 2;

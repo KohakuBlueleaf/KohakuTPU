@@ -24,11 +24,11 @@ pub(super) fn lower_band(
     fits: &Fits,
 ) -> VResult<Cand> {
     crate::work::LOWERED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let got = crate::lower::vector::ctx::band::typed::lower_band(
+
+    crate::lower::vector::ctx::band::typed::lower_band(
         body, par, env, name, t, band, remat, ahead, plan, land, hold, pin, fits,
     )
-    .map(|(m, p, a)| (Arc::new(m), p, a));
-    got
+    .map(|(m, p, a)| (Arc::new(m), p, a))
 }
 
 fn rebuilt(event: &Event) -> bool {
@@ -108,8 +108,7 @@ pub(super) fn modulo(
     land: Option<i64>,
     t: &Target,
 ) -> VResult<std::result::Result<Cand, String>> {
-    let got = modulo_module(body, par, env, name, plan, land, t);
-    got
+    modulo_module(body, par, env, name, plan, land, t)
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -692,6 +692,8 @@ impl QueueExchange {
                 .exchange(&self.layout, base, geo, tail, head, stdout, &entry, seconds)
         });
         #[cfg(not(unix))]
+        let _ = (base, tail, head, stdout);
+        #[cfg(not(unix))]
         let out = Outcome {
             error: Some("unsupported transport".into()),
             ..Outcome::default()

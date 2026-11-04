@@ -79,16 +79,16 @@ def main():
     for m in ROW.finditer(out):
         n, cyc, kin, ret, tot, verdict = m.groups()
         rows.append(
-            dict(
-                n=int(n),
-                name=names[int(n)],
-                cycles=int(cyc),
-                kinstr=int(kin),
-                retired=int(ret),
-                total=int(tot),
-                verdict=verdict,
-                note=notes[int(n)],
-            )
+            {
+                "n": int(n),
+                "name": names[int(n)],
+                "cycles": int(cyc),
+                "kinstr": int(kin),
+                "retired": int(ret),
+                "total": int(tot),
+                "verdict": verdict,
+                "note": notes[int(n)],
+            }
         )
 
     passed = "PASS --" in out and "FAIL" not in out

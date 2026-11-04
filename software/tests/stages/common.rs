@@ -72,7 +72,7 @@ fn noise(bytes: &mut [u8]) {
     let mut x = 0x9E37_79B9u32;
     for pair in bytes.chunks_mut(2) {
         x = x.wrapping_mul(1664525).wrapping_add(1013904223);
-        let v = 0x3000 + ((x >> 16) as u16 & 0x1FFF) | ((x >> 8) as u16 & 0x8000);
+        let v = (0x3000 + ((x >> 16) as u16 & 0x1FFF)) | ((x >> 8) as u16 & 0x8000);
         pair.copy_from_slice(&v.to_le_bytes()[..pair.len()]);
     }
 }
@@ -108,7 +108,10 @@ struct Run {
 }
 
 /// Each parameter's place, in order: `(binds, spans, end)`.
-fn laid_out(params: &[&[(String, Term)]]) -> Result<(Binds, Vec<(String, Buf)>, i64), String> {
+/// `(binds, spans, end)` of laid-out parameters.
+type Placed = (Binds, Vec<(String, Buf)>, i64);
+
+fn laid_out(params: &[&[(String, Term)]]) -> Result<Placed, String> {
     let mut binds = Binds::new();
     let mut spans: Vec<(String, Buf)> = Vec::new();
     let mut at = ALIGN;
@@ -568,7 +571,8 @@ pub fn stage_suite(corpus: &[Fixture], stage: Stage, prefixes: &[&str], known: &
         }
         ((f.label.clone(), p), asked)
     });
-    let (pairs, asked): (Vec<(String, Result<Pair, String>)>, Vec<_>) = made.into_iter().unzip();
+    type Made = Vec<(String, Result<Pair, String>)>;
+    let (pairs, asked): (Made, Vec<_>) = made.into_iter().unzip();
     println!(
         "{} fixtures compiled, {:.2} s",
         pairs.len(),

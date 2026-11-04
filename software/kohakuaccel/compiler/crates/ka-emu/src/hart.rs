@@ -124,7 +124,7 @@ impl Hart {
     }
 
     fn load(&mut self, va: u64, bytes: u32, bus: &mut dyn Bus) -> Result<u64, Trap> {
-        if va % u64::from(bytes) != 0 {
+        if !va.is_multiple_of(u64::from(bytes)) {
             return Err(Trap { cause: 4, tval: va });
         }
         let pa = self.translate(va, Access::Load, bus)?;
@@ -132,7 +132,7 @@ impl Hart {
     }
 
     fn store(&mut self, va: u64, bytes: u32, v: u64, bus: &mut dyn Bus) -> Result<(), Trap> {
-        if va % u64::from(bytes) != 0 {
+        if !va.is_multiple_of(u64::from(bytes)) {
             return Err(Trap { cause: 6, tval: va });
         }
         let pa = self.translate(va, Access::Store, bus)?;
@@ -316,7 +316,7 @@ impl Hart {
             }
             0x13 => {
                 let imm = imm_i(i);
-                let sh = (i >> 20 & 0x3F) as u32;
+                let sh = i >> 20 & 0x3F;
                 let v = match f3 {
                     0 => a.wrapping_add(imm),
                     1 => a << sh,
@@ -332,7 +332,7 @@ impl Hart {
             }
             0x1B => {
                 let imm = imm_i(i);
-                let sh = (i >> 20 & 0x1F) as u32;
+                let sh = i >> 20 & 0x1F;
                 let v = match f3 {
                     0 => w(a.wrapping_add(imm)),
                     1 => w(a << sh),

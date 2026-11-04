@@ -630,7 +630,9 @@ def build(simd, outdir, feat, tag, flanes=0):
         "".join(("%0" + str((ww + 3) // 4) + "x\n") % w for w in flat_w)
     )
     (d / "wcounts.hex").write_text(to_hex([len(w) for w in wtr]))
-    (d / "worder.hex").write_text(to_hex([0 if c[0] in UNORDERED else 1 for c in cases]))
+    (d / "worder.hex").write_text(
+        to_hex([0 if c[0] in UNORDERED else 1 for c in cases])
+    )
     (d / "wnames.txt").write_text(
         "".join(
             "%d\t%d\t%s\n" % (c, i, n)

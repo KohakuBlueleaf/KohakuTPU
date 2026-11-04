@@ -187,7 +187,7 @@ pub fn far_splits(r: &Reader, stmts: &[Stmt], descs: &Descs, facts: &CoreFacts) 
             .map(|f| (descs.get(&(ad, f)).copied().unwrap_or(0) & DIM_BOUND_MASK).max(1))
             .product();
         let far = (base >> 26) & 0xFF != 0;
-        if !far || count % facts.packet_beats as u64 != 0 {
+        if !far || !count.is_multiple_of(facts.packet_beats as u64) {
             continue;
         }
         let Some(spare) = (0..facts.descriptors).rev().find(|d| !used.contains(d)) else {

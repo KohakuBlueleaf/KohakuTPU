@@ -51,7 +51,7 @@ fn noise(mem: &mut Dram) {
     let mut x = 0x9E37_79B9u32;
     for pair in mem.bytes.chunks_mut(2) {
         x = x.wrapping_mul(1664525).wrapping_add(1013904223);
-        let v = 0x3000 + ((x >> 16) as u16 & 0x1FFF) | ((x >> 8) as u16 & 0x8000);
+        let v = (0x3000 + ((x >> 16) as u16 & 0x1FFF)) | ((x >> 8) as u16 & 0x8000);
         pair.copy_from_slice(&v.to_le_bytes()[..pair.len()]);
     }
 }

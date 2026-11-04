@@ -612,7 +612,7 @@ pub fn column_tree_kernel(
         mode_py(),
     ];
     if !made.is_empty() {
-        key.push(prepared::made_key(&plans));
+        key.push(prepared::made_key(plans));
     }
     // Two composed row reads, each read twice over by a level, run its stream
     // loop past 128 vector registers (LeNet's [100, 128] backward norm); one,

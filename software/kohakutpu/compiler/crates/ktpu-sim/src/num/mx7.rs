@@ -129,16 +129,16 @@ fn quantise(b: u16, es: i64, m8: i64) -> i8 {
 /// The entry of 4 x 32 FP16 values, lane by lane (the quantiser's block).
 pub fn entry(x: &[[u16; KBLOCK]; LANES]) -> Entry {
     let mut e = Entry::empty();
-    for l in 0..LANES {
-        let peak = x[l]
+    for (l, row) in x.iter().enumerate() {
+        let peak = row
             .iter()
             .map(|b| i64::from(*b & 0x7FFF))
             .max()
             .unwrap_or(0);
         let (es, m8) = scale(peak);
         e.field[l] = (((es + SBIAS) & 0x1F) << 3 | (m8 - 8)) as u8;
-        for k in 0..KBLOCK {
-            e.q[l][k] = quantise(x[l][k], es, m8);
+        for (k, &v) in row.iter().enumerate() {
+            e.q[l][k] = quantise(v, es, m8);
         }
     }
     e
@@ -177,9 +177,9 @@ mod tests {
     fn a_quantised_value_is_near_its_source() {
         let x = sample();
         let e = entry(&x);
-        for l in 0..LANES {
-            for k in 0..KBLOCK {
-                let want = ktpu_isa::numerics::ieee_f16(x[l][k]);
+        for (l, row) in x.iter().enumerate() {
+            for (k, &v) in row.iter().enumerate() {
+                let want = ktpu_isa::numerics::ieee_f16(v);
                 let scale = value(1, e.field[l]);
                 assert!(
                     (value(e.q[l][k], e.field[l]) - want).abs() <= scale,

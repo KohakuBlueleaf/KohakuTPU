@@ -362,6 +362,14 @@ fn walk_words(walk: &[Term]) -> i64 {
     levels(walk).map(|(count, _)| count).product()
 }
 
+/// The words of a walk's contiguous ascending runs.
+fn walk_run(walk: &[Term], word: i64) -> i64 {
+    match levels(walk).last() {
+        Some((count, stride)) if stride == word => count,
+        _ => 1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,13 +393,5 @@ mod tests {
         // x y x y: four descriptor words; x x x x: one.
         let word = Machine::named("multimesh_v9t8").unwrap().vc.word_cycles as i64;
         assert_eq!(priced("y") - priced("x"), 3 * word);
-    }
-}
-
-/// The words of a walk's contiguous ascending runs.
-fn walk_run(walk: &[Term], word: i64) -> i64 {
-    match levels(walk).last() {
-        Some((count, stride)) if stride == word => count,
-        _ => 1,
     }
 }

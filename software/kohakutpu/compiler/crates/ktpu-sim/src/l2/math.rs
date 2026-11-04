@@ -103,7 +103,7 @@ impl Instance {
     fn fits(&self, st: &Stmt, rows: usize, cols: usize) -> R<()> {
         for t in st.positional() {
             if let Ok(Operand::Value(v)) = self.operand(t) {
-                if v.cols != 1 && (rows % v.rows != 0 || v.cols < cols) {
+                if v.cols != 1 && (!rows.is_multiple_of(v.rows) || v.cols < cols) {
                     return Err(format!(
                         "{} {}: {}x{} read as {rows}x{cols}",
                         st.op,
