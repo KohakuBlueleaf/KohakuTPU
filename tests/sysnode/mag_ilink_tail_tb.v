@@ -73,7 +73,9 @@ module mag_ilink_tail_tb;
             enc_data[NF_LA] = last;
             enc_valid = 1'b1;
             @(negedge clk);
-            while (enc_busy) @(negedge clk);
+            while (enc_busy) begin
+                @(negedge clk);
+            end
             enc_valid = 1'b0;
         end
     endtask
@@ -105,8 +107,12 @@ module mag_ilink_tail_tb;
                          i, got[i], want[i]);
             end
         end
-        if (errors == 0) $display("  PASS -- F-002 as recorded");
-        else $display("  FAIL -- %0d errors", errors);
+        if (errors == 0) begin
+            $display("  PASS -- F-002 as recorded");
+        end
+        else begin
+            $display("  FAIL -- %0d errors", errors);
+        end
         $finish;
     end
 

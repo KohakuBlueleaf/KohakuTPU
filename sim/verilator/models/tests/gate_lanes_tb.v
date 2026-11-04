@@ -10,7 +10,9 @@ module gate_lanes_tb;
     localparam integer RW = 7, CW = 3;
 
     reg clk = 1'b0;
-    always #1 clk = ~clk;
+    always begin
+        #1 clk = ~clk;
+    end
 
     reg          rst = 1'b1;
     reg [1:0]    mode = 0, ls_pm = 0, ls_pr = 0, iss_phase = 0, iss_pm = 0, iss_pr = 0;
@@ -56,12 +58,18 @@ module gate_lanes_tb;
 
     always @(posedge clk) begin
         cyc <= cyc + 1;
-        if (!u_g.u_gate.run_l) withheld <= withheld + 1;
-        if (cyc == 20) rst <= 1'b0;
+        if (!u_g.u_gate.run_l) begin
+            withheld <= withheld + 1;
+        end
+        if (cyc == 20) begin
+            rst <= 1'b0;
+        end
         if (left == 0) begin
             busy <= !busy;
             left <= busy ? 1 + ($unsigned($random) % 1500) : 1 + ($unsigned($random) % 80);
-            if (!busy) mode <= $random;
+            if (!busy) begin
+                mode <= $random;
+            end
         end else begin
             left <= left - 1;
         end
@@ -77,7 +85,9 @@ module gate_lanes_tb;
             st_op      <= $random;
             {st_sa, st_sb, st_sc} <= $random;
             red_kind   <= $random;
-            for (k = 0; k < 12; k = k + 1) ls_wdata[k*32 +: 32] <= $random;
+            for (k = 0; k < 12; k = k + 1) begin
+                ls_wdata[k*32 +: 32] <= $random;
+            end
             for (k = 0; k < 3; k = k + 1) begin
                 st_ka[k*32 +: 32] <= $random;
                 st_kb[k*32 +: 32] <= $random;
@@ -87,17 +97,23 @@ module gate_lanes_tb;
             iss_valid <= 1'b0;
             ls_we     <= 1'b0;
             red_init  <= 1'b0;
-            if (($unsigned($random) % 300) == 0) iss_ra <= $random;
+            if (($unsigned($random) % 300) == 0) begin
+                iss_ra <= $random;
+            end
         end
-        if (cyc > 30000 && cyc < 30010) rst <= 1'b1;
-        if (cyc == 30010) rst <= 1'b0;
+        if (cyc > 30000 && cyc < 30010) begin
+            rst <= 1'b1;
+        end
+        if (cyc == 30010) begin
+            rst <= 1'b0;
+        end
     end
 
     always @(negedge clk) begin
         if (cyc > 40 && (rd_r !== rd_g || pb_r !== pb_g || rr_r !== rr_g || rv_r !== rv_g
                          || pe_r !== pe_g || lq_r !== lq_g || wa_r !== wa_g
                          || wf_r !== wf_g || wv_r !== wv_g)) begin
-            if (mism < 3)
+            if (mism < 3) begin
                 $display("  alu14 ref: op %h a %h b %h c %h iv %b out %h q %0d run %b | gated: op %h a %h b %h c %h iv %b out %h q %0d run %b | mode %0d lanes_q %0d",
                          u_ref.g_alu[14].u_alu.op, u_ref.g_alu[14].u_alu.a, u_ref.g_alu[14].u_alu.b,
                          u_ref.g_alu[14].u_alu.c, u_ref.g_alu[14].u_alu.in_valid, u_ref.g_alu[14].u_alu.out,
@@ -106,11 +122,13 @@ module gate_lanes_tb;
                          u_g.u_rtl.g_alu[14].u_alu.c, u_g.u_rtl.g_alu[14].u_alu.in_valid, u_g.u_rtl.g_alu[14].u_alu.out,
                          u_g.u_rtl.g_alu[14].u_alu.u_gate.quiet, u_g.u_rtl.g_alu[14].u_alu.u_gate.run_l,
                          mode, u_g.u_gate.quiet);
-            if (mism < 5)
+            end
+            if (mism < 5) begin
                 $display("MISMATCH cyc=%0d rd %b pb %b rr %b rv %b pe %b lq %b wa %b wf %b wv %b run %b",
                          cyc, rd_r !== rd_g, pb_r !== pb_g, rr_r !== rr_g, rv_r !== rv_g,
                          pe_r !== pe_g, lq_r !== lq_g, wa_r !== wa_g, wf_r !== wf_g,
                          wv_r !== wv_g, u_g.u_gate.run_l);
+            end
             mism <= mism + 1;
         end
         if (cyc == CYCLES) begin

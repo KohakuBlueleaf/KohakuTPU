@@ -8,7 +8,9 @@ module gate_vec_alu_tb;
     localparam integer CYCLES = 200000;
 
     reg clk = 1'b0;
-    always #1 clk = ~clk;
+    always begin
+        #1 clk = ~clk;
+    end
 
     reg        rst = 1'b1, iv = 1'b0;
     reg [4:0]  op = 0;
@@ -43,8 +45,12 @@ module gate_vec_alu_tb;
 
     always @(posedge clk) begin
         cyc <= cyc + 1;
-        if (!u_g.u_gate.run_l) withheld <= withheld + 1;
-        if (cyc == 20) rst <= 1'b0;
+        if (!u_g.u_gate.run_l) begin
+            withheld <= withheld + 1;
+        end
+        if (cyc == 20) begin
+            rst <= 1'b0;
+        end
         if (left == 0) begin
             busy <= !busy;
             left <= busy ? 1 + ($unsigned($random) % 150) : 1 + ($unsigned($random) % 60);
@@ -53,7 +59,9 @@ module gate_vec_alu_tb;
         end
         if (busy) begin
             op <= ($unsigned($random) % 4 == 0) ? $random : 5'd16 + ($unsigned($random) % 4);
-            if ($unsigned($random) % 2) op <= $unsigned($random) % 14;
+            if ($unsigned($random) % 2) begin
+                op <= $unsigned($random) % 14;
+            end
             a  <= operand($random);
             b  <= operand($random);
             c  <= operand($random);
@@ -61,13 +69,19 @@ module gate_vec_alu_tb;
         end else if (($unsigned($random) % 200) == 0) begin
             c[$unsigned($random) % 24] <= ~c[$unsigned($random) % 24];
         end
-        if (cyc > 30000 && cyc < 30010) rst <= 1'b1;
-        if (cyc == 30010) rst <= 1'b0;
+        if (cyc > 30000 && cyc < 30010) begin
+            rst <= 1'b1;
+        end
+        if (cyc == 30010) begin
+            rst <= 1'b0;
+        end
     end
 
     always @(negedge clk) begin
         if (cyc > 40 && (v_ref !== v_g || o_ref !== o_g || p_ref !== p_g)) begin
-            if (mism < 5) $display("MISMATCH cyc=%0d out %h/%h", cyc, o_ref, o_g);
+            if (mism < 5) begin
+                $display("MISMATCH cyc=%0d out %h/%h", cyc, o_ref, o_g);
+            end
             mism <= mism + 1;
         end
         if (cyc == CYCLES) begin

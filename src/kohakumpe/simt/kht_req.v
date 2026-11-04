@@ -84,8 +84,12 @@ module kht_req #(
         w_free_f = 1'b0;
         w_free   = {WSW{1'b0}};
         for (i = WN - 1; i >= 0; i = i - 1) begin
-            if (w_v[i] && (w_ln[i] == rd_line)) rd_hit = 1'b1;
-            if (w_v[i] && (w_ln[i] == wr_line)) wr_hit = 1'b1;
+            if (w_v[i] && (w_ln[i] == rd_line)) begin
+                rd_hit = 1'b1;
+            end
+            if (w_v[i] && (w_ln[i] == wr_line)) begin
+                wr_hit = 1'b1;
+            end
             if (!w_v[i]) begin
                 w_free_f = 1'b1;
                 w_free   = i[WSW-1:0];
@@ -133,13 +137,17 @@ module kht_req #(
             rsp_v      <= 1'b0;
             w_v        <= {WN{1'b0}};
         end else begin
-            if (send_valid && send_ready) send_valid <= 1'b0;
+            if (send_valid && send_ready) begin
+                send_valid <= 1'b0;
+            end
 
             rsp_v    <= rx_rd_resp;
             rsp_tag  <= rx_txn;
             rsp_data <= rx_data;
 
-            if (ack_ok) w_v[ack_i[WSW-1:0]] <= 1'b0;
+            if (ack_ok) begin
+                w_v[ack_i[WSW-1:0]] <= 1'b0;
+            end
 
             case (st)
                 S_IDLE: if (take_rd) begin

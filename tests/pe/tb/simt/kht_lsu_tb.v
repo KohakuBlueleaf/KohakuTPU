@@ -43,7 +43,9 @@ module kht_lsu_tb;
     localparam integer VW = 32 * LANES;
 
     reg clk = 1'b0, resetn = 1'b0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg              req_v = 1'b0;
     wire             req_ready;
@@ -113,7 +115,7 @@ module kht_lsu_tb;
     reg         freeze = 1'b0;
     reg     counting = 1'b0;
     integer n_alloc_h = 0;
-    always @(posedge clk) if (resetn && counting && dut.alloc_h) n_alloc_h = n_alloc_h + 1;
+    always @(posedge clk) begin if (resetn && counting && dut.alloc_h) begin n_alloc_h = n_alloc_h + 1; end end
 
     // The scanned entry is a queued one: the scanner's slot is `sc_off` places
     // behind the head, and that place is inside the queue (or 0 when empty).
@@ -137,8 +139,12 @@ module kht_lsu_tb;
     always @(posedge clk) if (resetn) begin
         if (fill_ctr != fill_seen) begin
             rd_n = rd_n + 1;
-            if (rd_n == 1) rd_t0 = $time / 4;
-            if (rd_n == 2) rd_t1 = $time / 4;
+            if (rd_n == 1) begin
+                rd_t0 = $time / 4;
+            end
+            if (rd_n == 2) begin
+                rd_t1 = $time / 4;
+            end
         end
         fill_seen = fill_ctr;
         if ((dut.alloc_h || dut.alloc_s) && (rd_n < 8)) begin
@@ -149,11 +155,15 @@ module kht_lsu_tb;
         rsp_v <= 1'b0;
         sent = 1'b0;
         if (!resetn) begin
-            for (pi = 0; pi < PS; pi = pi + 1) p_v[pi] <= 1'b0;
+            for (pi = 0; pi < PS; pi = pi + 1) begin
+                p_v[pi] <= 1'b0;
+            end
             w_busy <= 1'b0;
         end else begin
             for (pi = 0; pi < PS; pi = pi + 1) begin
-                if (p_v[pi] && (p_t[pi] > 0)) p_t[pi] <= p_t[pi] - 1;
+                if (p_v[pi] && (p_t[pi] > 0)) begin
+                    p_t[pi] <= p_t[pi] - 1;
+                end
             end
             pk = {$random} % PS;
             for (pj = 0; pj < PS; pj = pj + 1) begin
@@ -173,7 +183,7 @@ module kht_lsu_tb;
                     errors = errors + 1;
                 end
                 pk = -1;
-                for (pi = PS - 1; pi >= 0; pi = pi - 1) if (!p_v[pi]) pk = pi;
+                for (pi = PS - 1; pi >= 0; pi = pi - 1) begin if (!p_v[pi]) begin pk = pi; end end
                 p_v[pk]   <= 1'b1;
                 p_tag[pk] <= rd_tag;
                 p_dat[pk] <= dmem[rd_line % NL];
@@ -273,12 +283,20 @@ module kht_lsu_tb;
                 if (req_mask[l]) begin
                     a = req_addr[32*l +: 32] & 32'h7FFF_FFFF;
                     if (req_st) begin
-                        for (b = 0; b < nb; b = b + 1) refb[a + b] = req_data[32*l + 8*b +: 8];
+                        for (b = 0; b < nb; b = b + 1) begin
+                            refb[a + b] = req_data[32*l + 8*b +: 8];
+                        end
                     end else begin
                         v = 32'd0;
-                        for (b = 0; b < nb; b = b + 1) v = v | (refb[a + b] << (8 * b));
-                        if (req_sx && (nb == 1)) v = {{24{v[7]}}, v[7:0]};
-                        if (req_sx && (nb == 2)) v = {{16{v[15]}}, v[15:0]};
+                        for (b = 0; b < nb; b = b + 1) begin
+                            v = v | (refb[a + b] << (8 * b));
+                        end
+                        if (req_sx && (nb == 1)) begin
+                            v = {{24{v[7]}}, v[7:0]};
+                        end
+                        if (req_sx && (nb == 2)) begin
+                            v = {{16{v[15]}}, v[15:0]};
+                        end
                         ed[32*l +: 32] = v;
                     end
                 end
@@ -290,7 +308,9 @@ module kht_lsu_tb;
             e_data[ewr % ED] = ed;
             ewr = ewr + 1;
             @(negedge clk);
-            while (!req_ready || (ewr - erd > ED - 2)) @(negedge clk);
+            while (!req_ready || (ewr - erd > ED - 2)) begin
+                @(negedge clk);
+            end
             req_v = 1'b1;
             @(negedge clk);
             req_v = 1'b0;
@@ -309,7 +329,9 @@ module kht_lsu_tb;
                 req_data[32*l +: 32] = 32'd0;
                 a = a & 32'h7FFF_FFFF;
                 v = 32'd0;
-                for (b = 0; b < 4; b = b + 1) v = v | (refb[a + b] << (8 * b));
+                for (b = 0; b < 4; b = b + 1) begin
+                    v = v | (refb[a + b] << (8 * b));
+                end
                 ed[32*l +: 32] = v;
             end
             e_wave[ewr % ED] = req_wave;
@@ -319,7 +341,9 @@ module kht_lsu_tb;
             e_data[ewr % ED] = ed;
             ewr = ewr + 1;
             @(negedge clk);
-            while (!req_ready) @(negedge clk);
+            while (!req_ready) begin
+                @(negedge clk);
+            end
             req_v = 1'b1;
             @(negedge clk);
             req_v = 1'b0;
@@ -342,7 +366,12 @@ module kht_lsu_tb;
     task pulse(input integer which);
         begin
             @(negedge clk);
-            if (which) inval = 1'b1; else flush = 1'b1;
+            if (which) begin
+                inval = 1'b1;
+            end
+            else begin
+                flush = 1'b1;
+            end
             @(negedge clk);
             flush = 1'b0;
             inval = 1'b0;
@@ -381,7 +410,9 @@ module kht_lsu_tb;
         for (n = 0; n < NL; n = n + 1) begin
             dmem[n] = {$random, $random, $random, $random, $random, $random, $random, $random};
         end
-        for (n = 0; n < NL * 32; n = n + 1) refb[n] = dmem[n / 32][8 * (n % 32) +: 8];
+        for (n = 0; n < NL * 32; n = n + 1) begin
+            refb[n] = dmem[n / 32][8 * (n % 32) +: 8];
+        end
         repeat (4) @(posedge clk);
         resetn = 1'b1;
         repeat (LINES + 4) @(posedge clk);
@@ -429,13 +460,21 @@ module kht_lsu_tb;
         freeze = 1'b1;
         fill0 = fill_ctr;
         // As many loads as the queue holds, up to four.
-        for (n = 0; n < ((`TB_DEPTH < 4) ? `TB_DEPTH : 4); n = n + 1) issue_at(10 + n, 10 + n, 8);
+        for (n = 0; n < ((`TB_DEPTH < 4) ? `TB_DEPTH : 4); n = n + 1) begin
+            issue_at(10 + n, 10 + n, 8);
+        end
         repeat (80) @(negedge clk);
         checks = checks + 1;
         b = (`TB_SCAN < 1) ? 1 : (`TB_SCAN > `TB_DEPTH) ? `TB_DEPTH : `TB_SCAN;
-        if (`TB_DEPTH < 2) b = 1;
-        if (b > `TB_MSHRS) b = `TB_MSHRS;
-        if (b > 4) b = 4;
+        if (`TB_DEPTH < 2) begin
+            b = 1;
+        end
+        if (b > `TB_MSHRS) begin
+            b = `TB_MSHRS;
+        end
+        if (b > 4) begin
+            b = 4;
+        end
         if ((fill_ctr - fill0) !== b) begin
             $display("  FAIL the scanner asked %0d fills with 4 loads queued, want %0d", fill_ctr - fill0, b);
             errors = errors + 1;
@@ -471,7 +510,9 @@ module kht_lsu_tb;
         drain;
         n_alloc_h = 0;
         counting = 1'b1;
-        for (n = 0; n < 12; n = n + 1) issue_at(16 + n, 16 + n, 8);
+        for (n = 0; n < 12; n = n + 1) begin
+            issue_at(16 + n, 16 + n, 8);
+        end
         drain;
         counting = 1'b0;
         checks = checks + 1;
@@ -488,7 +529,9 @@ module kht_lsu_tb;
                 drain;
                 freeze = 1'b1;
                 rd_n = 0;
-                for (n = 0; n < `TB_MSHRS + 2; n = n + 1) issue_at(12 + n, 12 + n, 8);
+                for (n = 0; n < `TB_MSHRS + 2; n = n + 1) begin
+                    issue_at(12 + n, 12 + n, 8);
+                end
                 repeat (40 + ph) @(negedge clk);
                 freeze = 1'b0;
                 drain;
@@ -510,7 +553,9 @@ module kht_lsu_tb;
         // the core's halt, which flushes behind its last stores.
         for (n = 0; n < 300; n = n + 1) begin
             issue(1, 1, 8'hFF);
-            if (n % 2) issue(1, 1, 8'hFF);
+            if (n % 2) begin
+                issue(1, 1, 8'hFF);
+            end
             pulse(0);
             drain;
             compare_mem("a flush raised under a scatter");
@@ -519,7 +564,9 @@ module kht_lsu_tb;
         // Random traffic, a flush partway, invalidates pulsed into it.
         for (n = 0; n < `TB_N; n = n + 1) begin
             issue(-1, -1, 0);
-            if ((n % 700) == 350) pulse(1);
+            if ((n % 700) == 350) begin
+                pulse(1);
+            end
         end
         drain;
         pulse(0);
@@ -534,8 +581,12 @@ module kht_lsu_tb;
         $display("  kht_lsu: COALESCE %0d MSHRS %0d WB %0d DEPTH %0d -- %0d instructions, %0d accesses, %0d fills",
                  `TB_COAL, `TB_MSHRS, `TB_WB, `TB_DEPTH, ewr, acc_ctr, fill_ctr);
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

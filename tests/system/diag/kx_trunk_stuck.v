@@ -183,7 +183,9 @@ module kx_trunk #(
         key = "g_b[2].g_d[0]";
         stuck_here = 1'b0;
         for (p = 0; p + key.len() <= me.len(); p = p + 1) begin
-            if (me.substr(p, p + key.len() - 1) == key) stuck_here = 1'b1;
+            if (me.substr(p, p + key.len() - 1) == key) begin
+                stuck_here = 1'b1;
+            end
         end
         $display("kx_trunk_stuck: %s %s", me, stuck_here ? "BIT 523 HELD AT 1" : "clean");
     end

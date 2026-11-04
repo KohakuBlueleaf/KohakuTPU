@@ -1235,11 +1235,17 @@ module kht_core #(
                 ast   <= A_IDLE;
                 kill  <= 1'b0;
             end else begin
-                if (s0_v)   wp <= wp_n;
-                if (au_pop) rp <= rp_n;
+                if (s0_v) begin
+                    wp <= wp_n;
+                end
+                if (au_pop) begin
+                    rp <= rp_n;
+                end
                 fn  <= fn  + {{AUW{1'b0}}, s0_v} - {{AUW{1'b0}}, au_pop};
                 cnt <= cnt + {{AUW{1'b0}}, push} - {{AUW{1'b0}}, au_pop};
-                if (au_flt) kill <= 1'b1;
+                if (au_flt) begin
+                    kill <= 1'b1;
+                end
                 case (ast)
                     A_IDLE: if (au_lds_go) begin
                                 ast <= A_LDS;
@@ -1253,7 +1259,9 @@ module kht_core #(
                                     ast <= A_IDLE;
                                 end
                             end
-                    default: if (ld_take) ast <= A_IDLE;
+                    default: if (ld_take) begin
+                        ast <= A_IDLE;
+                    end
                 endcase
             end
         end
@@ -1354,7 +1362,9 @@ module kht_core #(
         assign m_wr_v       = 1'b0;
         assign m_wr_line    = 26'd0;
         assign m_wr_data    = 256'd0;
-        always @(posedge clk) all_dram_q <= 1'b0;
+        always @(posedge clk) begin
+            all_dram_q <= 1'b0;
+        end
     end else begin : g_lsuq
         if (HAS_LDSBANK == 0) begin : g_bad_lds
             kht_core_LSU_DEPTH_requires_LDS_BANKS u_bad ();
@@ -1698,7 +1708,9 @@ module kht_core #(
         end else begin
             case (hst)
                 // The address stage drains into kht_lsu before the flush.
-                H_FLUSH: if (au_idle) hst <= H_RISE;
+                H_FLUSH: if (au_idle) begin
+                    hst <= H_RISE;
+                end
                 H_RISE:  if ((LSUQ != 0) ? lq_busy : l1_flush_busy) begin
                     hst <= H_FALL;
                 end

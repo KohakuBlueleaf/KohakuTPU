@@ -45,7 +45,9 @@ module sru_core_tb;
     end
 
     reg clk = 1'b0, rst = 1'b1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg [3:0]   cop [0:NMAX-1];
     reg [15:0]  cad [0:NMAX-1];
@@ -215,13 +217,17 @@ module sru_core_tb;
                         rs_raddr <= cad[pc];
                         repeat (3) @(posedge clk);
                         if (rs_rdata !== cda[pc][71:0]) begin
-                            if (jerr < 8) $display("  job %0d row %0d: got %h want %h",
-                                                   jobs, cad[pc], rs_rdata, cda[pc][71:0]);
+                            if (jerr < 8) begin
+                                $display("  job %0d row %0d: got %h want %h",
+                                         jobs, cad[pc], rs_rdata, cda[pc][71:0]);
+                            end
                             jerr = jerr + 1;
                         end
                         pc = pc + 1;
                     end
-                    if (cop[pc] == 4'h9) pc = pc + 1;
+                    if (cop[pc] == 4'h9) begin
+                        pc = pc + 1;
+                    end
                     $display("  job %0d: %0d in, %0d out, %0d errors", jobs, na, no, jerr);
                     errs = errs + jerr;
                     jobs = jobs + 1;

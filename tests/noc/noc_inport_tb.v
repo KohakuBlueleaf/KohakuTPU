@@ -47,13 +47,27 @@ module noc_inport_harness #(
             y  = f[DW-PW-1 -: PW];
             rx = (x < LO) ? LO : (x > HI) ? HI : x;
             ry = (y < LO) ? LO : (y > HI) ? HI : y;
-            if (rx != MX)      route = (rx < MX) ? 5'b01000 : 5'b00010;   // west / east
-            else if (ry != MY) route = (ry < MY) ? 5'b00001 : 5'b00100;   // north / south
-            else if (x < MX)   route = 5'b01000;
-            else if (x > MX)   route = 5'b00010;
-            else if (y < MY)   route = 5'b00001;
-            else if (y > MY)   route = 5'b00100;
-            else               route = 5'b10000;                          // local
+            if (rx != MX) begin  // west / east
+                route = (rx < MX) ? 5'b01000 : 5'b00010;
+            end
+            else if (ry != MY) begin  // north / south
+                route = (ry < MY) ? 5'b00001 : 5'b00100;
+            end
+            else if (x < MX) begin
+                route = 5'b01000;
+            end
+            else if (x > MX) begin
+                route = 5'b00010;
+            end
+            else if (y < MY) begin
+                route = 5'b00001;
+            end
+            else if (y > MY) begin
+                route = 5'b00100;
+            end
+            else begin  // local
+                route = 5'b10000;
+            end
         end
     endfunction
 
@@ -95,11 +109,15 @@ module noc_inport_harness #(
                 end else begin
                     if (hd !== q[qh]) begin
                         errs <= errs + 1;
-                        if (errs < 8) $display("  FAIL %0s: flit %0d head %h want %h", MEM, qh, hd, q[qh]);
+                        if (errs < 8) begin
+                            $display("  FAIL %0s: flit %0d head %h want %h", MEM, qh, hd, q[qh]);
+                        end
                     end
                     if (hreq !== route(q[qh])) begin
                         errs <= errs + 1;
-                        if (errs < 8) $display("  FAIL %0s: flit %0d requests %b want %b", MEM, qh, hreq, route(q[qh]));
+                        if (errs < 8) begin
+                            $display("  FAIL %0s: flit %0d requests %b want %b", MEM, qh, hreq, route(q[qh]));
+                        end
                     end
                 end
             end
@@ -119,7 +137,9 @@ endmodule
 
 module noc_inport_tb;
     reg clk = 0, rst = 1, go = 0, drain = 0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     wire [31:0] e0, s0, t0, e1, s1, t1, e2, s2, t2;
     noc_inport_harness #(.MEM("distributed"), .SEED(11)) h0 (.clk(clk), .rst(rst), .go(go), .drain(drain), .errs(e0), .sent(s0), .taken(t0));
@@ -136,7 +156,9 @@ module noc_inport_tb;
         drain = 1;
         repeat (500) @(posedge clk);
         bad = 0;
-        if (e0 != 0 || e1 != 0 || e2 != 0) bad = 1;
+        if (e0 != 0 || e1 != 0 || e2 != 0) begin
+            bad = 1;
+        end
         if (s0 != t0 || s1 != t1 || s2 != t2) begin
             bad = 1;
             $display("  FAIL flits sent and taken differ after the drain");
@@ -148,8 +170,12 @@ module noc_inport_tb;
             bad = 1;
             $display("  FAIL too little traffic to mean anything");
         end
-        if (bad == 0) $display("  PASS -- noc_inport: %0d flits through three FIFO types", s0 + s1 + s2);
-        else          $display("  FAIL -- noc_inport");
+        if (bad == 0) begin
+            $display("  PASS -- noc_inport: %0d flits through three FIFO types", s0 + s1 + s2);
+        end
+        else begin
+            $display("  FAIL -- noc_inport");
+        end
         $finish;
     end
 endmodule

@@ -422,7 +422,9 @@ module vec_cu_tb;
         reg [31:0] m;
         begin
             p = 0;
-            while ((n >> (p + 1)) != 0) p = p + 1;
+            while ((n >> (p + 1)) != 0) begin
+                p = p + 1;
+            end
             m = n << (23 - p);
             f32i = (n == 0) ? 32'd0 : {1'b0, 8'd127 + p[7:0], m[22:0]};
         end
@@ -430,15 +432,23 @@ module vec_cu_tb;
     function [255:0] f32line(input integer i);
         integer e;
         begin
-            for (e = 0; e < 8; e = e + 1) f32line[e*32 +: 32] = f32i(i*8 + e + 1);
+            for (e = 0; e < 8; e = e + 1) begin
+                f32line[e*32 +: 32] = f32i(i*8 + e + 1);
+            end
         end
     endfunction
     // What section 13's kernels leave in L1 word w, given section 12 left pat(512+w).
     function [255:0] l1x(input integer w);
         begin
-            if (w < 16) l1x = f32line(w);
-            else if ((w >= 100) && (w <= 130) && ((w % 2) == 0)) l1x = f32line((w - 100) / 2);
-            else l1x = pat(512 + w);
+            if (w < 16) begin
+                l1x = f32line(w);
+            end
+            else if ((w >= 100) && (w <= 130) && ((w % 2) == 0)) begin
+                l1x = f32line((w - 100) / 2);
+            end
+            else begin
+                l1x = pat(512 + w);
+            end
         end
     endfunction
 
@@ -879,9 +889,15 @@ module vec_cu_tb;
         chk(sig_count, s0 + 24, "kernel A retired");
         chk({31'd0, dbg_fault}, 64'd0, "kernel A must not fault");
         $display("    kernel A retired in %0d cycles", last_sig_arg);
-        for (w = 0; w < 120; w = w + 1) fill_chk(200 + w, 512 + w, "fill across word 256");
-        for (w = 0; w < 20; w = w + 1) fill_chk(w, 640 + 2*w, "strided fill");
-        for (w = 0; w < 191; w = w + 1) fill_chk(320 + w, 700 + w, "long contiguous fill");
+        for (w = 0; w < 120; w = w + 1) begin
+            fill_chk(200 + w, 512 + w, "fill across word 256");
+        end
+        for (w = 0; w < 20; w = w + 1) begin
+            fill_chk(w, 640 + 2*w, "strided fill");
+        end
+        for (w = 0; w < 191; w = w + 1) begin
+            fill_chk(320 + w, 700 + w, "long contiguous fill");
+        end
 
         do_run(9'd110);
         spin = 0;
@@ -892,15 +908,21 @@ module vec_cu_tb;
         chk(sig_count, s0 + 25, "kernel B retired");
         chk({31'd0, dbg_fault}, 64'd0, "kernel B must not fault");
         $display("    kernel B retired in %0d cycles", last_sig_arg);
-        for (w = 0; w < 256; w = w + 1) fill_chk(w, 512 + w, "256-word fill");
+        for (w = 0; w < 256; w = w + 1) begin
+            fill_chk(w, 512 + w, "256-word fill");
+        end
 
         $display("--- 13. a word a cycle: FP32 VLD/VST, strided, bursts, backpressure ---");
         // C runs under link backpressure: an FP32 round trip into a stride-2 L1
         // walk, then a misaligned drain (bursts 5,8,8,8,2) and a stride-64 one
         // (bursts of 1). D, unthrottled, is the rate: 8-word VLD and VST and a
         // 256-word aligned drain, bounded by TB_KD_BOUND.
-        for (w = 0; w < 16; w = w + 1) dram[w] = f32line(w);
-        for (w = 64; w < 240; w = w + 1) dram[w] = 256'd0;
+        for (w = 0; w < 16; w = w + 1) begin
+            dram[w] = f32line(w);
+        end
+        for (w = 64; w < 240; w = w + 1) begin
+            dram[w] = 256'd0;
+        end
         s0 = sig_count;
         put_imem(9'd120, I_VSETI);
         put_imem(9'd121, 32'd128);
@@ -951,7 +973,9 @@ module vec_cu_tb;
         end
         for (w = 0; w < 16; w = w + 1) begin
             chk({63'd0, dram[200 + 2*w] === l1x(100 + w)}, 64'd1, "stride-64 drain");
-            if (w < 15) chk({63'd0, dram[201 + 2*w] === 256'd0}, 64'd1, "stride-64 gaps untouched");
+            if (w < 15) begin
+                chk({63'd0, dram[201 + 2*w] === 256'd0}, 64'd1, "stride-64 gaps untouched");
+            end
         end
 
         bp_on = 0;

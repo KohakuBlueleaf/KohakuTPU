@@ -1158,7 +1158,9 @@ module vec_core #(
     reg [31:0] sprof [0:63];
     integer si;
     initial begin
-        for (si = 0; si < 64; si = si + 1) sprof[si] = 32'd0;
+        for (si = 0; si < 64; si = si + 1) begin
+            sprof[si] = 32'd0;
+        end
     end
     always @(posedge clk) begin
         if (!rst) begin
@@ -1172,15 +1174,25 @@ module vec_core #(
     reg [31:0] pf_walk = 32'd0, pf_blk = 32'd0, pf_oth = 32'd0;
     reg [31:0] pexec [0:31];
     initial begin
-        for (si = 0; si < 32; si = si + 1) pexec[si] = 32'd0;
+        for (si = 0; si < 32; si = si + 1) begin
+            pexec[si] = 32'd0;
+        end
     end
     always @(posedge clk) begin
         if (!rst && (ls_run == LS_FL)) begin
-            if (fill_walk) pf_walk <= pf_walk + 32'd1;
-            else if (run_v && rd_req_valid) pf_blk <= pf_blk + 32'd1;
-            else pf_oth <= pf_oth + 32'd1;
+            if (fill_walk) begin
+                pf_walk <= pf_walk + 32'd1;
+            end
+            else if (run_v && rd_req_valid) begin
+                pf_blk <= pf_blk + 32'd1;
+            end
+            else begin
+                pf_oth <= pf_oth + 32'd1;
+            end
         end
-        if (!rst && (st == S_EXEC)) pexec[d_op] <= pexec[d_op] + 32'd1;
+        if (!rst && (st == S_EXEC)) begin
+            pexec[d_op] <= pexec[d_op] + 32'd1;
+        end
     end
     always @(posedge clk) begin
         if (!rst && fill_emit) begin
@@ -1200,27 +1212,57 @@ module vec_core #(
     reg [31:0] pu_ls = 32'd0, pu_ovl = 32'd0, pu_ldgap = 32'd0, pu_stgap = 32'd0;
     always @(posedge clk) begin
         if (!rst) begin
-            if (ls_run != LS_IDLE) pu_ls <= pu_ls + 32'd1;
-            if ((ls_run != LS_IDLE) && iss_valid) pu_ovl <= pu_ovl + 32'd1;
-            if ((ls_run == LS_LD) && (ld_left != 0) && wb_ahead) pu_ldgap <= pu_ldgap + 32'd1;
-            if ((ls_run == LS_ST) && (sq_iw != sq_nw) && !sq_iss) pu_stgap <= pu_stgap + 32'd1;
+            if (ls_run != LS_IDLE) begin
+                pu_ls <= pu_ls + 32'd1;
+            end
+            if ((ls_run != LS_IDLE) && iss_valid) begin
+                pu_ovl <= pu_ovl + 32'd1;
+            end
+            if ((ls_run == LS_LD) && (ld_left != 0) && wb_ahead) begin
+                pu_ldgap <= pu_ldgap + 32'd1;
+            end
+            if ((ls_run == LS_ST) && (sq_iw != sq_nw) && !sq_iss) begin
+                pu_stgap <= pu_stgap + 32'd1;
+            end
         end
     end
     reg [5:0]  pu_pst = 6'd0;
     always @(posedge clk) begin
         if (!rst) begin
             pu_pst <= st;
-            if (busy) pu_busy <= pu_busy + 32'd1;
-            if (iss_valid) pu_beat <= pu_beat + 32'd1;
-            if (lw_we) pu_rfls <= pu_rfls + 32'd1;
-            if (sq_iss || (st == S_STR)) pu_rfrd <= pu_rfrd + 32'd1;
-            if (ld_iss || dr_iss) pu_l1r <= pu_l1r + 32'd1;
-            if (l1_we) pu_l1w <= pu_l1w + 32'd1;
-            if (rr_valid) pu_fill <= pu_fill + 32'd1;
-            if (dr_take) pu_drw <= pu_drw + 32'd1;
-            if (dr_blk) pu_drblk <= pu_drblk + 32'd1;
-            if (sq_blk) pu_sqblk <= pu_sqblk + 32'd1;
-            if ((st == S_EXEC) && (pu_pst != S_EXEC)) pu_insn <= pu_insn + 32'd1;
+            if (busy) begin
+                pu_busy <= pu_busy + 32'd1;
+            end
+            if (iss_valid) begin
+                pu_beat <= pu_beat + 32'd1;
+            end
+            if (lw_we) begin
+                pu_rfls <= pu_rfls + 32'd1;
+            end
+            if (sq_iss || (st == S_STR)) begin
+                pu_rfrd <= pu_rfrd + 32'd1;
+            end
+            if (ld_iss || dr_iss) begin
+                pu_l1r <= pu_l1r + 32'd1;
+            end
+            if (l1_we) begin
+                pu_l1w <= pu_l1w + 32'd1;
+            end
+            if (rr_valid) begin
+                pu_fill <= pu_fill + 32'd1;
+            end
+            if (dr_take) begin
+                pu_drw <= pu_drw + 32'd1;
+            end
+            if (dr_blk) begin
+                pu_drblk <= pu_drblk + 32'd1;
+            end
+            if (sq_blk) begin
+                pu_sqblk <= pu_sqblk + 32'd1;
+            end
+            if ((st == S_EXEC) && (pu_pst != S_EXEC)) begin
+                pu_insn <= pu_insn + 32'd1;
+            end
         end
     end
     final begin
@@ -1230,12 +1272,16 @@ module vec_core #(
         $display("VLSENG %m busy %0d overlap %0d ld_wait %0d st_wait %0d",
                  pu_ls, pu_ovl, pu_ldgap, pu_stgap);
         for (si = 0; si < 64; si = si + 1) begin
-            if (sprof[si] != 32'd0) $display("VSTATE %m %0d %0d", si, sprof[si]);
+            if (sprof[si] != 32'd0) begin
+                $display("VSTATE %m %0d %0d", si, sprof[si]);
+            end
         end
         $display("VFILLRUNS %m runs %0d words %0d", pr_runs, pr_words);
         $display("VFILLCYC %m walk %0d blocked %0d other %0d", pf_walk, pf_blk, pf_oth);
         for (si = 0; si < 32; si = si + 1) begin
-            if (pexec[si] != 32'd0) $display("VEXEC %m op %0d %0d", si, pexec[si]);
+            if (pexec[si] != 32'd0) begin
+                $display("VEXEC %m op %0d %0d", si, pexec[si]);
+            end
         end
     end
 `endif

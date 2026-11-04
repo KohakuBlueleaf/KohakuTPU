@@ -59,7 +59,7 @@ module clk_wiz_model #(
     reg [3:0]  wstrb_r;
     wire [31:0] wmask = {{8{wstrb_r[3]}}, {8{wstrb_r[2]}}, {8{wstrb_r[1]}}, {8{wstrb_r[0]}}};
     integer i;
-    initial for (i = 0; i < 256; i = i + 1) mem[i] = 32'd0;
+    initial for (i = 0; i < 256; i = i + 1) begin mem[i] = 32'd0; end
 
     assign s_awready = !aw_got && !bvalid_r;
     assign s_wready  = !w_got  && !bvalid_r;
@@ -77,7 +77,9 @@ module clk_wiz_model #(
             mem[8'h8B] <= DIV0[31:24];
             divclk <= D; mult <= M; div <= DIV0;
         end else begin
-            if (lock_cnt != 16'd0) lock_cnt <= lock_cnt - 16'd1;
+            if (lock_cnt != 16'd0) begin
+                lock_cnt <= lock_cnt - 16'd1;
+            end
             if (s_awvalid && s_awready) begin aw_got <= 1'b1; waddr <= s_awaddr[9:2]; end
             if (s_wvalid  && s_wready)  begin w_got  <= 1'b1; wdata_r <= s_wdata; wstrb_r <= s_wstrb; end
             if (aw_got && w_got && !bvalid_r) begin
@@ -95,7 +97,9 @@ module clk_wiz_model #(
                     mem[waddr] <= (mem[waddr] & ~wmask) | (wdata_r & wmask);
                 end
             end
-            if (bvalid_r && s_bready) bvalid_r <= 1'b0;
+            if (bvalid_r && s_bready) begin
+                bvalid_r <= 1'b0;
+            end
         end
     end
 
@@ -112,11 +116,13 @@ module clk_wiz_model #(
         end else begin
             if (s_arvalid && s_arready) begin
                 rvalid_r <= 1'b1;
-                rdata_r  <= raddr == 8'h01 ? {31'd0, locked} :
-                            is_duty(raddr) ? 32'd0 :
-                            raddr == 8'h97 ? 32'd0 : mem[raddr];
+                rdata_r  <= raddr == 8'h01 ? {31'd0, locked}
+                            : is_duty(raddr) ? 32'd0
+                            : raddr == 8'h97 ? 32'd0 : mem[raddr];
             end
-            if (rvalid_r && s_rready) rvalid_r <= 1'b0;
+            if (rvalid_r && s_rready) begin
+                rvalid_r <= 1'b0;
+            end
         end
     end
 endmodule

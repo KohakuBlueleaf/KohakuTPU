@@ -29,7 +29,9 @@ module sru_plane_tb;
     localparam integer QMAX = 1 << 20;
 
     reg clk = 1'b0, rst = 1'b1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg [23:0] ma [0:NMAX-1];
     reg [23:0] mb [0:NMAX-1];
@@ -78,9 +80,15 @@ module sru_plane_tb;
         $fclose(fd);
         nf = 0;
         // one string per kind: a ternary of unequal literals pads with NULs
-        if (HAS_FN == 0)   fname = $sformatf("%s/fn_nofn.hex", `SRU_DIR);
-        else if (ROM != 0) fname = $sformatf("%s/fn_rom.hex", `SRU_DIR);
-        else               fname = $sformatf("%s/fn_ram.hex", `SRU_DIR);
+        if (HAS_FN == 0) begin
+            fname = $sformatf("%s/fn_nofn.hex", `SRU_DIR);
+        end
+        else if (ROM != 0) begin
+            fname = $sformatf("%s/fn_rom.hex", `SRU_DIR);
+        end
+        else begin
+            fname = $sformatf("%s/fn_ram.hex", `SRU_DIR);
+        end
         fd = $fopen(fname, "r");
         if (fd == 0) begin
             $display("FAIL sru_plane: no function vectors -- run scripts/py/sru/fn_vectors.py");
@@ -168,10 +176,16 @@ module sru_plane_tb;
     // function ops in flight: issued (registered) and not yet out
     wire fn_in  = in_valid && op;
     reg  fn_out;
-    always @(*) fn_out = out_valid && qo[n_out];
+    always @(*) begin
+        fn_out = out_valid && qo[n_out];
+    end
     always @(posedge clk) begin
-        if (rst) fly <= 0;
-        else     fly <= fly + (fn_in ? 1 : 0) - (fn_out ? 1 : 0);
+        if (rst) begin
+            fly <= 0;
+        end
+        else begin
+            fly <= fly + (fn_in ? 1 : 0) - (fn_out ? 1 : 0);
+        end
     end
 
     always @(posedge clk) begin

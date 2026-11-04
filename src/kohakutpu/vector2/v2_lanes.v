@@ -162,8 +162,9 @@ module v2_lanes #(
 `ifndef SYNTHESIS
         // v2_core's contract: no bank is asked for more reads than it has copies.
         always @(posedge clk) begin
-            if (!rst && ((nP && rP >= NC) || (nC && rC >= NC) || (nB && rB >= NC)))
+            if (!rst && ((nP && rP >= NC) || (nC && rC >= NC) || (nB && rB >= NC))) begin
                 $display("V2_RF_PORTS_EXCEEDED %m t=%0t", $time);
+            end
         end
 `endif
     end

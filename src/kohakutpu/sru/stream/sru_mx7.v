@@ -77,7 +77,9 @@ module sru_mx7 #(
         .rd_en(1'b1), .rd_addr({dsel, dcnt}), .rd_data(top)
     );
     always @(posedge clk) begin
-        for (r = 0; r < 4; r = r + 1) wp1[r] <= wpk[r];
+        for (r = 0; r < 4; r = r + 1) begin
+            wp1[r] <= wpk[r];
+        end
         st1  <= (fpos == 3'd0);
         end1 <= (fpos == 3'd7);
         b1   <= fsel;
@@ -231,7 +233,9 @@ module sru_mx7 #(
         qh1 <= dcnt[0];               // second half of an output word
         qw1 <= dcnt[2:1];
         qb1 <= b_layout;
-        for (r = 0; r < 4; r = r + 1) qf1[r] <= sfld[dsel][r];
+        for (r = 0; r < 4; r = r + 1) begin
+            qf1[r] <= sfld[dsel][r];
+        end
         for (s = 0; s < 16; s = s + 1) begin
             hh     = top[s*16 +: 16];
             qs[s] <= (hh[14:10] == 5'd0) ? {1'b0, hh[9:0]} : {1'b1, hh[9:0]};
@@ -254,18 +258,26 @@ module sru_mx7 #(
     if (MUL_DSP != 0) begin : g_dsp
         (* use_dsp = "yes" *) reg [23:0] pmd [0:15];
         always @(posedge clk) begin
-            for (s = 0; s < 16; s = s + 1) pmd[s] <= qs[s] * qr[s];
+            for (s = 0; s < 16; s = s + 1) begin
+                pmd[s] <= qs[s] * qr[s];
+            end
         end
         always @(*) begin
-            for (s = 0; s < 16; s = s + 1) pm[s] = pmd[s];
+            for (s = 0; s < 16; s = s + 1) begin
+                pm[s] = pmd[s];
+            end
         end
     end else begin : g_lut
         (* use_dsp = "no" *) reg [23:0] pml [0:15];
         always @(posedge clk) begin
-            for (s = 0; s < 16; s = s + 1) pml[s] <= qs[s] * qr[s];
+            for (s = 0; s < 16; s = s + 1) begin
+                pml[s] <= qs[s] * qr[s];
+            end
         end
         always @(*) begin
-            for (s = 0; s < 16; s = s + 1) pm[s] = pml[s];
+            for (s = 0; s < 16; s = s + 1) begin
+                pm[s] = pml[s];
+            end
         end
     end
     endgenerate
@@ -278,7 +290,9 @@ module sru_mx7 #(
         qh2 <= qh1;
         qw2 <= qw1;
         qb2 <= qb1;
-        for (r = 0; r < 4; r = r + 1) qf2[r] <= qf1[r];
+        for (r = 0; r < 4; r = r + 1) begin
+            qf2[r] <= qf1[r];
+        end
         for (s = 0; s < 16; s = s + 1) begin
             pu[s]   <= qt[s][2:0];
             pz[s]   <= (qs[s] == 11'd0) || (!qt[s][7] && (|qt[s][6:3]));
@@ -302,7 +316,9 @@ module sru_mx7 #(
         qh3 <= qh2;
         qw3 <= qw2;
         qb3 <= qb2;
-        for (r = 0; r < 4; r = r + 1) qf3[r] <= qf2[r];
+        for (r = 0; r < 4; r = r + 1) begin
+            qf3[r] <= qf2[r];
+        end
         for (s = 0; s < 16; s = s + 1) begin
             x8 = pm[s][22:15] >> pu[s];
             sm = {1'b0, x8[7:1]} + {7'd0, x8[0]};

@@ -68,7 +68,9 @@ module fold_repro_tb;
     reg clk = 0, rstn = 0, a_set = 0, b_set = 0, acc = 0, dn = 0;
     reg [1:0] a_id = 0, b_id = 0;
     wire b_val, rdy;
-    always #5 clk = ~clk;
+    always begin
+        #5 clk = ~clk;
+    end
     fold_repro dut (.clk(clk), .rstn(rstn), .a_set(a_set), .b_set(b_set), .a_id(a_id),
                     .b_id_in(b_id), .acc(acc), .dn(dn), .b_val_o(b_val), .rdy_o(rdy));
     initial begin
@@ -82,8 +84,12 @@ module fold_repro_tb;
         @(negedge clk) dn = 1;
         @(negedge clk) dn = 0;
         @(negedge clk);
-        if (b_val === 1'b0) $display("PASS -- b_val retired on the remote take");
-        else                $display("FAIL -- b_val stuck at %b after the remote take (rdy was dropped)", b_val);
+        if (b_val === 1'b0) begin
+            $display("PASS -- b_val retired on the remote take");
+        end
+        else begin
+            $display("FAIL -- b_val stuck at %b after the remote take (rdy was dropped)", b_val);
+        end
         $finish;
     end
 endmodule

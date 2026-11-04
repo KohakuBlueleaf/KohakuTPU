@@ -74,7 +74,9 @@ module vec_replay_tb;
         end else begin
             // A response the link refuses is HELD, not dropped: a long program
             // keeps the instruction FIFO full and `in_busy` high for whole RUNs.
-            if (!(mem_valid && in_busy)) mem_valid <= 1'b0;
+            if (!(mem_valid && in_busy)) begin
+                mem_valid <= 1'b0;
+            end
             if (out_valid) begin
                 case (o_type)
                     T_MEM_RD_REQ: begin
@@ -167,7 +169,9 @@ module vec_replay_tb;
     reg [1023:0] f_prog, f_mem, f_out;
     integer n, i, spin;
     integer clk_n = 0, t_go = 0, t_done = 0;
-    always @(posedge clk) clk_n <= clk_n + 1;
+    always @(posedge clk) begin
+        clk_n <= clk_n + 1;
+    end
     // A wedged unit stalls `send_cu` on `in_busy` forever; report where it stopped.
     always @(posedge clk) begin
         if (t_go != 0 && t_done == 0 && clk_n - t_go > 4000000) begin
@@ -184,22 +188,30 @@ module vec_replay_tb;
 
     initial begin
         agent_valid = 1'b0;
-        for (i = 0; i < MAXP; i = i + 1) prog[i] = {256{1'b1}};
+        for (i = 0; i < MAXP; i = i + 1) begin
+            prog[i] = {256{1'b1}};
+        end
         if (!$value$plusargs("prog=%s", f_prog) || !$value$plusargs("mem=%s", f_mem)
             || !$value$plusargs("out=%s", f_out)) begin
             $display("@@@ need +prog= +mem= +out=");
             $finish;
         end
-        if (!$value$plusargs("memwait=%d", memwait)) memwait = 3;
+        if (!$value$plusargs("memwait=%d", memwait)) begin
+            memwait = 3;
+        end
         $readmemh(f_prog, prog);
         $readmemh(f_mem, dram);
         n = 0;
-        while (n < MAXP && prog[n] !== {256{1'b1}}) n = n + 1;
+        while (n < MAXP && prog[n] !== {256{1'b1}}) begin
+            n = n + 1;
+        end
         repeat (10) @(negedge clk);
         resetn = 1'b1;
         repeat (10) @(negedge clk);
         t_go = clk_n;
-        for (i = 0; i < n; i = i + 1) send_cu(prog[i]);
+        for (i = 0; i < n; i = i + 1) begin
+            send_cu(prog[i]);
+        end
         spin = 0;
         while (sig_count < n && spin < 2000000) begin
             @(negedge clk);
@@ -213,8 +225,9 @@ module vec_replay_tb;
         // First payload offered to the last completion, in core clocks.
         $display("@@@ ELAPSED %0d", t_done - t_go);
         // The four predicate registers as the lanes hold them after the run.
-        for (i = 0; i < 4; i = i + 1)
+        for (i = 0; i < 4; i = i + 1) begin
             $display("@@@ PREG %0d %032h", i, dut.u_core.u_lanes.preg[i]);
+        end
 `ifdef VEC_CORE_V2
         $display("@@@ STICKY %04h", dut.u_core.u_lanes.sticky);
 `endif

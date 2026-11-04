@@ -14,7 +14,9 @@ module cu_ack_fence_tb;
     localparam [3:0] T_CU_INST = 4'h5, T_CU_SIGNAL = 4'h6;
 
     reg clk = 0, resetn = 0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg  [FW-1:0] in_data = 0;
     reg           in_valid = 0;
@@ -49,8 +51,12 @@ module cu_ack_fence_tb;
     always @(posedge clk) begin
         cyc <= cyc + 1;
         if (out_valid) begin
-            if (out_data[FW-17 -: 4] == T_WR_REQ  && t_req < 0) t_req = cyc;
-            if (out_data[FW-17 -: 4] == T_CU_SIGNAL && t_sig < 0) t_sig = cyc;
+            if (out_data[FW-17 -: 4] == T_WR_REQ  && t_req < 0) begin
+                t_req = cyc;
+            end
+            if (out_data[FW-17 -: 4] == T_CU_SIGNAL && t_sig < 0) begin
+                t_sig = cyc;
+            end
         end
     end
 
@@ -93,8 +99,12 @@ module cu_ack_fence_tb;
         end
         if (recv_valid) begin errors = errors + 1; $display("FAIL: the ACK reached the datapath"); end
         $display("  req %0d  ack %0d  signal %0d  (FENCE=%0d)", t_req, t_ack, t_sig, `FENCE);
-        if (errors == 0) $display("PASS -- cu_ack_fence: signal waits for the write ACK");
-        else $display("FAIL -- cu_ack_fence: %0d error(s)", errors);
+        if (errors == 0) begin
+            $display("PASS -- cu_ack_fence: signal waits for the write ACK");
+        end
+        else begin
+            $display("FAIL -- cu_ack_fence: %0d error(s)", errors);
+        end
         $finish;
     end
 endmodule

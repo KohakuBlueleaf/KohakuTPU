@@ -1062,17 +1062,25 @@ module rv64_core #(
     reg [31:0] prof_bub = 32'd0;
     integer pi;
     initial begin
-        for (pi = 0; pi < 8192; pi = pi + 1) prof[pi] = 32'd0;
+        for (pi = 0; pi < 8192; pi = pi + 1) begin
+            prof[pi] = 32'd0;
+        end
     end
     always @(posedge clk) begin
         if (resetn && !halted) begin
-            if (e_valid) prof[e_pc[14:2]] <= prof[e_pc[14:2]] + 32'd1;
-            else prof_bub <= prof_bub + 32'd1;
+            if (e_valid) begin
+                prof[e_pc[14:2]] <= prof[e_pc[14:2]] + 32'd1;
+            end
+            else begin
+                prof_bub <= prof_bub + 32'd1;
+            end
         end
     end
     final begin
         for (pi = 0; pi < 8192; pi = pi + 1) begin
-            if (prof[pi] != 32'd0) $display("PROF %m %h %0d", pi * 4, prof[pi]);
+            if (prof[pi] != 32'd0) begin
+                $display("PROF %m %h %0d", pi * 4, prof[pi]);
+            end
         end
         $display("PROFBUBBLE %m %0d", prof_bub);
     end

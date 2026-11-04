@@ -292,7 +292,9 @@ module mag_mem_port_tb;
     reg          rcap = 1'b0;
     integer      nr = 0, t_first, t_last, n_rresp = 0;
     always @(posedge clk) begin
-        if (rstn && out_valid && !out_busy && (o_ty == 4'h2)) n_rresp = n_rresp + 1;
+        if (rstn && out_valid && !out_busy && (o_ty == 4'h2)) begin
+            n_rresp = n_rresp + 1;
+        end
     end
     reg [7:0]    r_tag  [0:2047];
     reg [1:0]    r_q    [0:2047];
@@ -306,7 +308,9 @@ module mag_mem_port_tb;
             r_q[nr]    = out_data[FW-4*PW-15 -: 2];
             r_dx[nr]   = o_dx;
             r_data[nr] = out_data[255:0];
-            if (nr == 0) t_first = cyc;
+            if (nr == 0) begin
+                t_first = cyc;
+            end
             t_last = cyc;
             nr = nr + 1;
         end
@@ -361,7 +365,9 @@ module mag_mem_port_tb;
 
     integer n_nx = 0;
     always @(posedge clk) begin
-        if (rstn && dut.take_nx) n_nx = n_nx + 1;
+        if (rstn && dut.take_nx) begin
+            n_nx = n_nx + 1;
+        end
     end
 
     function [255:0] peek(input [AW-1:0] a);

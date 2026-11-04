@@ -65,9 +65,7 @@ module vec_lanes #(
     output wire          wb_fire,
     output wire [3:0]    wb_vreg
 );
-    localparam integer W = 1 + 2 + 1 + 2 + 2 + RW + 384 + RW + 1 + 1
-                         + 1 + 2 + 4*RW + 2 + 2 + CW + 1 + 1 + 16
-                         + 20 + 3*8 + 3*96 + 1 + 3 + 2;
+    localparam integer W = 1 + 2 + 1 + 2 + 2 + RW + 384 + RW + 1 + 1 + 1 + 2 + 4*RW + 2 + 2 + CW + 1 + 1 + 16 + 20 + 3*8 + 3*96 + 1 + 3 + 2;
 
     wire gclk;
     vlt_qgate #(.W(W), .SETTLE(255)) u_gate (

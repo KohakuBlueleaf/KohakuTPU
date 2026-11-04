@@ -18,7 +18,9 @@ module sru_cu_tb;
     localparam [3:0] SX = 4'd3, SY = 4'd3, BX = 4'd1, BY = 4'd1;
 
     reg clk = 1'b0, resetn = 1'b0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     // ---- the command file ----
     reg [3:0]   cop [0:NMAX-1];
@@ -42,7 +44,9 @@ module sru_cu_tb;
             got = $fscanf(fd, "%h %h %h\n", t_op, t_ad, t_da);
             if (got == 3) begin
                 cop[n] = t_op; cad[n] = t_ad; cda[n] = t_da;
-                if (t_op == 4'h0) mem[t_ad[17:0]] = t_da;
+                if (t_op == 4'h0) begin
+                    mem[t_ad[17:0]] = t_da;
+                end
                 n = n + 1;
             end
         end
@@ -84,7 +88,9 @@ module sru_cu_tb;
         end else begin
             if (in_v && !in_busy) begin
                 in_v <= 1'b0;
-                if (in_d[FW-17 -: 4] == T_SIG && in_d[255:248] == 8'h05) granted = granted + in_d[231:216];
+                if (in_d[FW-17 -: 4] == T_SIG && in_d[255:248] == 8'h05) begin
+                    granted = granted + in_d[231:216];
+                end
             end
             if ((!in_v || !in_busy) && sq_r < sq_w) begin
                 in_d <= sq[sq_r % 16384];
@@ -128,13 +134,19 @@ module sru_cu_tb;
                     rq_n = (out_d[199:192] == 8'd0) ? 1 : out_d[199:192];
                     if (out_d[FW-21 -: 2] != 2'd2) begin
                         rq_need = tb_nw - (out_d[FW-22] ? pos_b : pos_a);
-                        if (rq_need > RUN_MIN) rq_need = RUN_MIN;
+                        if (rq_need > RUN_MIN) begin
+                            rq_need = RUN_MIN;
+                        end
                         if (rq_n < rq_need) begin
                             $display("  ERROR a %0d-word run where %0d are due", rq_n, rq_need);
                             run_err = run_err + 1;
                         end
-                        if (out_d[FW-22]) pos_b = (pos_b + rq_n) % tb_nw;
-                        else pos_a = (pos_a + rq_n) % tb_nw;
+                        if (out_d[FW-22]) begin
+                            pos_b = (pos_b + rq_n) % tb_nw;
+                        end
+                        else begin
+                            pos_a = (pos_a + rq_n) % tb_nw;
+                        end
                     end
                     // STREAM, 1-word entries: answer `count` words in order
                     for (i = 0; i < ((out_d[199:192] == 8'd0) ? 1 : out_d[199:192]); i = i + 1) begin
@@ -217,7 +229,9 @@ module sru_cu_tb;
                 sq[sq_w % 16384] = {SX, SY, BX, BY, T_INST, 8'h00, 1'b1, 3'b000, cda[pc]};
                 sq_w = sq_w + 1;
                 want_done = want_done + 1;
-                if (cda[pc][255:252] == 4'd1 && cda[pc][251:244] == 8'd0) tb_nw = cda[pc][11:0];
+                if (cda[pc][255:252] == 4'd1 && cda[pc][251:244] == 8'd0) begin
+                    tb_nw = cda[pc][11:0];
+                end
                 if (cda[pc][255:252] == 4'd3) begin
                     pos_a = 0;
                     pos_b = 0;
@@ -229,8 +243,12 @@ module sru_cu_tb;
                     k = k + 1;
                     if (pq_i < pq_n && credit_p >= 1) begin
                         b = pq_n - pq_i;
-                        if (b > 8) b = 8;
-                        if (b > credit_p) b = credit_p;
+                        if (b > 8) begin
+                            b = 8;
+                        end
+                        if (b > credit_p) begin
+                            b = credit_p;
+                        end
                         sq[sq_w % 16384] = flit(T_CU_DATA, 8'h00, 1'b0, 2'd0,
                                                {8'd0, 16'd0, b[7:0] - 8'd1, 8'h02, 8'd0, 208'd0});
                         sq_w = sq_w + 1;
@@ -255,12 +273,16 @@ module sru_cu_tb;
         k = 0;
         for (pc = 0; pc < n; pc = pc + 1) begin
             if (cop[pc] == 4'h3 && mem[cad[pc][17:0]] !== cda[pc]) begin
-                if (errs < 6) $display("  mem %h: got %h\n                want %h", cad[pc], mem[cad[pc][17:0]], cda[pc]);
+                if (errs < 6) begin
+                    $display("  mem %h: got %h\n                want %h", cad[pc], mem[cad[pc][17:0]], cda[pc]);
+                end
                 errs = errs + 1;
             end
             if (cop[pc] == 4'h4) begin
                 if (k >= peer_n || peer_got[k] !== cda[pc]) begin
-                    if (peer_err < 4) $display("  peer %0d: got %h\n             want %h", k, peer_got[k], cda[pc]);
+                    if (peer_err < 4) begin
+                        $display("  peer %0d: got %h\n             want %h", k, peer_got[k], cda[pc]);
+                    end
                     peer_err = peer_err + 1;
                 end
                 k = k + 1;

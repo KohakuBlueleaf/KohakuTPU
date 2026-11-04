@@ -271,21 +271,33 @@ module kht_sys_tb;
         pc_cyc = pc_cyc + 1;
         if (dut.u_pe.u_core.go) begin
             pc_go = pc_go + 1;
-            if (dut.u_pe.u_core.is_flt) pc_flt = pc_flt + 1;
-            if (dut.u_pe.u_core.per_lane) pc_mem = pc_mem + 1;
+            if (dut.u_pe.u_core.is_flt) begin
+                pc_flt = pc_flt + 1;
+            end
+            if (dut.u_pe.u_core.per_lane) begin
+                pc_mem = pc_mem + 1;
+            end
         end
         else if (dut.u_pe.u_core.lsu_busy) begin
-            if (dut.u_pe.u_core.l1_stall) pc_miss = pc_miss + 1;
-            else pc_lsu = pc_lsu + 1;
+            if (dut.u_pe.u_core.l1_stall) begin
+                pc_miss = pc_miss + 1;
+            end
+            else begin
+                pc_lsu = pc_lsu + 1;
+            end
         end
-        else if ((dut.u_pe.u_core.live != 0) && (dut.u_pe.u_core.rdy == 0))
+        else if ((dut.u_pe.u_core.live != 0) && (dut.u_pe.u_core.rdy == 0)) begin
             pc_fwait = pc_fwait + 1;
-        else if (dut.u_pe.u_core.f_soon || dut.u_pe.u_core.fpass_hold)
+        end
+        else if (dut.u_pe.u_core.f_soon || dut.u_pe.u_core.fpass_hold) begin
             pc_fhold = pc_fhold + 1;
-        else if (dut.u_pe.u_core.hold)
+        end
+        else if (dut.u_pe.u_core.hold) begin
             pc_haz = pc_haz + 1;
-        else
+        end
+        else begin
             pc_rest = pc_rest + 1;
+        end
     end
 
     reg [31:0] dinit [0:DWORDS-1];

@@ -13,7 +13,9 @@ module v2_agu_tb;
     localparam integer NWALK = 3000;       // walks per walker
 
     reg clk = 0, rst = 1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg              wr_en = 0;
     reg  [2:0]       wr_ad = 0, wr_fld = 0;
@@ -67,7 +69,9 @@ module v2_agu_tb;
             checks = checks + 1;
             if (got !== want) begin
                 errs = errs + 1;
-                if (errs <= 12) $display("  FAIL cyc %0d walker %0d %0s got %h want %h", cyc, ww, what, got, want);
+                if (errs <= 12) begin
+                    $display("  FAIL cyc %0d walker %0d %0s got %h want %h", cyc, ww, what, got, want);
+                end
             end
         end
     endtask
@@ -95,7 +99,9 @@ module v2_agu_tb;
     end
     always @(posedge clk) begin
         if (!rst && wr_en) begin
-            if (wr_fld == 3'd0) h_base[wr_ad] <= wr_val;
+            if (wr_fld == 3'd0) begin
+                h_base[wr_ad] <= wr_val;
+            end
             else if (wr_fld <= 3'd4) begin
                 h_str[wr_ad][wr_fld - 3'd1] <= wr_val[33:16];
                 h_bnd[wr_ad][wr_fld - 3'd1] <= wr_val[15:0];
@@ -164,7 +170,9 @@ module v2_agu_tb;
             off = {want_off[1], want_off[0]};
             // ---- a table word rewritten at random, running walkers or not
             wr_en = 0;
-            if (($random & 7) == 0) drive_wr($random & 7, {$random} % 5);
+            if (($random & 7) == 0) begin
+                drive_wr($random & 7, {$random} % 5);
+            end
             // a start reads the table as it stands before this edge's write
             for (w = 1; w >= 0; w = w - 1) begin
                 if (want_start[w] && !(w == 0 && want_start[1])) begin
@@ -189,7 +197,9 @@ module v2_agu_tb;
                     for (d = 0; d < 4; d = d + 1) begin
                         if (fl && r_idx[w][d] == bnd1(r_bnd[w][d])) begin
                             r_idx[w][d] = 0;
-                            if (d < 3) r_idx[w][d+1] = r_idx[w][d+1] + 1;
+                            if (d < 3) begin
+                                r_idx[w][d+1] = r_idx[w][d+1] + 1;
+                            end
                             else begin r_run[w] = 0; r_done[w] = r_done[w] + 1; end
                         end else begin
                             fl = 0;
@@ -200,7 +210,9 @@ module v2_agu_tb;
             for (w = 1; w >= 0; w = w - 1) begin
                 if (want_start[w] && !(w == 0 && want_start[1])) begin
                     r_run[w] = 1; r_age[w] = 0;
-                    for (d = 0; d < 4; d = d + 1) r_idx[w][d] = 0;
+                    for (d = 0; d < 4; d = d + 1) begin
+                        r_idx[w][d] = 0;
+                    end
                 end
             end
         end
@@ -209,8 +221,12 @@ module v2_agu_tb;
             errs = errs + 1;
             $display("  FAIL only %0d / %0d walks finished", r_done[0], r_done[1]);
         end
-        if (errs == 0) $display("  PASS -- v2_agu: %0d walks per walker, %0d checks", NWALK, checks);
-        else           $display("  FAIL -- v2_agu: %0d errors of %0d checks", errs, checks);
+        if (errs == 0) begin
+            $display("  PASS -- v2_agu: %0d walks per walker, %0d checks", NWALK, checks);
+        end
+        else begin
+            $display("  FAIL -- v2_agu: %0d errors of %0d checks", errs, checks);
+        end
         $finish;
     end
 endmodule

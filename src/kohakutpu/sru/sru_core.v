@@ -128,9 +128,9 @@ module sru_core #(
     wire        op_we   = cfg_we && (cfg_addr[7:6] == 2'b01);
 
     // ======================================================== sequencer state
-    localparam [3:0] S_IDLE = 4'd0, S_SR = 4'd1, S_LOAD = 4'd2, S_FIN = 4'd3,
-                     S_PASS = 4'd4, S_ISSUE = 4'd5, S_NEXT = 4'd6, S_PWAIT = 4'd7,
-                     S_STORE = 4'd8, S_DRAIN = 4'd9;
+    localparam [3:0] S_IDLE = 4'd0, S_SR = 4'd1, S_LOAD = 4'd2, S_FIN = 4'd3;
+    localparam [3:0] S_PASS = 4'd4, S_ISSUE = 4'd5, S_NEXT = 4'd6;
+    localparam [3:0] S_PWAIT = 4'd7, S_STORE = 4'd8, S_DRAIN = 4'd9;
     reg  [3:0]  st;
     reg  [15:0] g;                     // sub-row the chain is on
     reg  [1:0]  p;                     // its pass
@@ -267,7 +267,12 @@ module sru_core #(
                             ? c_mval : xa3[q*24 +: 24];
         end
         b4 <= xb3;
-        if (rst) m4 <= 5'd0; else m4 <= im3;
+        if (rst) begin
+            m4 <= 5'd0;
+        end
+        else begin
+            m4 <= im3;
+        end
     end
 
     // ======================================================== the chain
@@ -477,10 +482,15 @@ module sru_core #(
         fa_b  <= fsrc[f_b];
         fa_c  <= fsrc[f_c];
         fa_op <= f_op;
-        if (rst) fa_vr <= 1'b0; else fa_vr <= fa_v;
+        if (rst) begin
+            fa_vr <= 1'b0;
+        end
+        else begin
+            fa_vr <= fa_v;
+        end
     end
-    localparam [4:0] F_MOV = 5'd0, F_ADD = 5'd3, F_SUB = 5'd4, F_MUL = 5'd5,
-                     F_MAX = 5'd8, F_MIN = 5'd9, F_RCP = 5'd10, F_RSQ = 5'd11;
+    localparam [4:0] F_MOV = 5'd0, F_ADD = 5'd3, F_SUB = 5'd4, F_MUL = 5'd5;
+    localparam [4:0] F_MAX = 5'd8, F_MIN = 5'd9, F_RCP = 5'd10, F_RSQ = 5'd11;
     localparam [23:0] E8_ONE = 24'h3F8000;
     // RCP / RSQRT run on lane 0's mantissa ROM; a build without it moves A
     wire        f_rcp = (fa_op == F_RCP) || (fa_op == F_RSQ);
@@ -495,7 +505,12 @@ module sru_core #(
     reg         sel_v;
     reg  [23:0] sel_o;
     always @(posedge clk) begin
-        if (rst) sel_v <= 1'b0; else sel_v <= fa_vr && f_sel;
+        if (rst) begin
+            sel_v <= 1'b0;
+        end
+        else begin
+            sel_v <= fa_vr && f_sel;
+        end
         sel_o <= (sel_w[22:15] == 8'd0) ? 24'd0 : sel_w;
     end
 
@@ -554,16 +569,24 @@ module sru_core #(
             // ---- statistics landing, in sub-row order ----
             if (r1_ovalid) begin
                 for (q = 0; q < 4; q = q + 1) begin
-                    if (g1[0]) st1_1[q] <= f16e8k(r1_out[q*58 +: 16], F16_IEEE);
-                    else       st1_0[q] <= f16e8k(r1_out[q*58 +: 16], F16_IEEE);
+                    if (g1[0]) begin
+                        st1_1[q] <= f16e8k(r1_out[q*58 +: 16], F16_IEEE);
+                    end
+                    else begin
+                        st1_0[q] <= f16e8k(r1_out[q*58 +: 16], F16_IEEE);
+                    end
                 end
                 st1_rdy[g1[0]] <= 1'b1;
                 g1 <= g1 + 16'd1;
             end
             if (s2_ov) begin
                 for (q = 0; q < 4; q = q + 1) begin
-                    if (r2_par) st2_1[q] <= s2_rows[q*24 +: 24];
-                    else        st2_0[q] <= s2_rows[q*24 +: 24];
+                    if (r2_par) begin
+                        st2_1[q] <= s2_rows[q*24 +: 24];
+                    end
+                    else begin
+                        st2_0[q] <= s2_rows[q*24 +: 24];
+                    end
                 end
                 st2_rdy[r2_par] <= 1'b1;
             end
@@ -589,18 +612,24 @@ module sru_core #(
             infl_par1 <= infl_par1 + ((issue && par) ? 12'd1 : 12'd0)
                        - ((m7[0] && m7[2]) ? 12'd1 : 12'd0);
             res <= res + ((issue && emit_p) ? 1 : 0) - (pop ? (mx ? 2 : 1) : 0);
-            if (push) owp <= owp + 1'b1;
+            if (push) begin
+                owp <= owp + 1'b1;
+            end
             occ <= occ + (push ? 1'b1 : 1'b0) - (pop ? 1'b1 : 1'b0);
-            if (pop)  orp <= orp + 1'b1;
+            if (pop) begin
+                orp <= orp + 1'b1;
+            end
 
             // ---- finalise ----
-            if (fa_v) fr <= fr + 3'd1;
+            if (fa_v) begin
+                fr <= fr + 3'd1;
+            end
             if (fo_v) begin
                 case (f_dst)
-                    2'd0: if (par) W1[fw[1:0]][23:0]  <= fo; else W0[fw[1:0]][23:0]  <= fo;
-                    2'd1: if (par) W1[fw[1:0]][47:24] <= fo; else W0[fw[1:0]][47:24] <= fo;
-                    2'd2: if (par) W1[fw[1:0]][71:48] <= fo; else W0[fw[1:0]][71:48] <= fo;
-                    default: if (par) T1[fw[1:0]] <= fo; else T0[fw[1:0]] <= fo;
+                    2'd0: if (par) begin W1[fw[1:0]][23:0]  <= fo; end else begin W0[fw[1:0]][23:0]  <= fo; end
+                    2'd1: if (par) begin W1[fw[1:0]][47:24] <= fo; end else begin W0[fw[1:0]][47:24] <= fo; end
+                    2'd2: if (par) begin W1[fw[1:0]][71:48] <= fo; end else begin W0[fw[1:0]][71:48] <= fo; end
+                    default: if (par) begin T1[fw[1:0]] <= fo; end else begin T0[fw[1:0]] <= fo; end
                 endcase
                 fw <= fw + 3'd1;
             end
@@ -634,7 +663,12 @@ module sru_core #(
                     // rows rowg..rowg+3; each answers 3 cycles after its address
                     rs_ra <= rowg[8:0] + {6'd0, ld};
                     if (ld >= 3'd3) begin
-                        if (par) W1[ld - 3'd3] <= rs_q; else W0[ld - 3'd3] <= rs_q;
+                        if (par) begin
+                            W1[ld - 3'd3] <= rs_q;
+                        end
+                        else begin
+                            W0[ld - 3'd3] <= rs_q;
+                        end
                     end
                     ld <= ld + 3'd1;
                     if (ld == 3'd6) begin
@@ -694,8 +728,12 @@ module sru_core #(
                 end
                 S_PWAIT: if (!fbusy) begin
                     // the finalise consumed this sub-row's statistics
-                    if ((p == 2'd0 && c_buf) || !c_buf) st1_rdy[par] <= 1'b0;
-                    if (`SRU_P_R2EN(p)) st2_rdy[par] <= 1'b0;
+                    if ((p == 2'd0 && c_buf) || !c_buf) begin
+                        st1_rdy[par] <= 1'b0;
+                    end
+                    if (`SRU_P_R2EN(p)) begin
+                        st2_rdy[par] <= 1'b0;
+                    end
                     if (fin_then_pass) begin
                         p  <= p + 2'd1;
                         st <= S_PASS;
@@ -710,7 +748,9 @@ module sru_core #(
                     rs_wd  <= par ? W1[ld[1:0]] : W0[ld[1:0]];
                     ld <= ld + 3'd1;
                     if (ld == 3'd3) begin
-                        if (c_buf) filled[par] <= 1'b0;
+                        if (c_buf) begin
+                            filled[par] <= 1'b0;
+                        end
                         g  <= g + 16'd1;
                         st <= S_SR;
                     end
@@ -732,8 +772,12 @@ module sru_core #(
     always @(posedge clk) begin
         st_tq <= st;
         tcyc  <= rst ? 32'd0 : tcyc + 32'd1;
-        if (!rst && st != st_tq) $display("SRUST %0d %m st %0d g %0d p %0d", tcyc, st, g, p);
-        if (!rst && fill_take && wf == c_nw - 12'd1) $display("SRUFL %0d %m g %0d", tcyc, gf);
+        if (!rst && st != st_tq) begin
+            $display("SRUST %0d %m st %0d g %0d p %0d", tcyc, st, g, p);
+        end
+        if (!rst && fill_take && wf == c_nw - 12'd1) begin
+            $display("SRUFL %0d %m g %0d", tcyc, gf);
+        end
     end
 `endif
 

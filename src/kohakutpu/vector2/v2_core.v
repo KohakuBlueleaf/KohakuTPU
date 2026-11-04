@@ -503,36 +503,62 @@ module v2_core #(
             if (cd_err) begin
                 fe_fault = F_CUDATA;
             end else if (is_math) begin
-                if ((d_sa == 2'd2) || (d_sb == 2'd2) || (d_sc == 2'd2)) fe_fault = F_SRC;
-                else fe_ok = !mq_fd;
+                if ((d_sa == 2'd2) || (d_sb == 2'd2) || (d_sc == 2'd2)) begin
+                    fe_fault = F_SRC;
+                end
+                else begin
+                    fe_ok = !mq_fd;
+                end
             end else begin
                 case (d_op)
                     O_VCFG:   if ((d_csel == 4'd10) && ({1'b0, d_cpay[22:16]} >= VLMAX))
                                   fe_fault = F_VL;
-                              else fe_ok = 1'b1;
-                    O_VUNPK:  if (d_mode == 2'd3) fe_fault = F_MODE;
-                              else if (gt4_bad) fe_fault = F_GT4;
-                              else fe_ok = !uq_f;
-                    O_VPACK:  if ((d_mode == MD_MX7) && mx_bad) fe_fault = F_MODE;
-                              else if (gt4_bad) fe_fault = F_GT4;
-                              else fe_ok = !pq_f;
-                    O_VSYNC:  if (d_wt > W_D || (d_ext && d_wt == W_MK)) fe_fault = F_SYNC;
-                              else case (d_wt)
-                                  W_FE: fe_ok = d_old && sl_ok_q;
-                                  W_U:  fe_ok = !uq_f;
-                                  W_M:  fe_ok = !mq_fd;
-                                  W_P:  fe_ok = !pq_f;
-                                  W_MK: fe_ok = 1'b1;
-                                  W_D:  fe_ok = !dq_f;
-                                  default: fe_ok = !fq_f;
-                              endcase
+                              else begin
+                                  fe_ok = 1'b1;
+                              end
+                    O_VUNPK:  if (d_mode == 2'd3) begin
+                        fe_fault = F_MODE;
+                    end
+                              else if (gt4_bad) begin
+                                  fe_fault = F_GT4;
+                              end
+                              else begin
+                                  fe_ok = !uq_f;
+                              end
+                    O_VPACK:  if ((d_mode == MD_MX7) && mx_bad) begin
+                        fe_fault = F_MODE;
+                    end
+                              else if (gt4_bad) begin
+                                  fe_fault = F_GT4;
+                              end
+                              else begin
+                                  fe_ok = !pq_f;
+                              end
+                    O_VSYNC:  if (d_wt > W_D || (d_ext && d_wt == W_MK)) begin
+                        fe_fault = F_SYNC;
+                    end
+                              else begin
+                                  case (d_wt)
+                                      W_FE: fe_ok = d_old && sl_ok_q;
+                                      W_U:  fe_ok = !uq_f;
+                                      W_M:  fe_ok = !mq_fd;
+                                      W_P:  fe_ok = !pq_f;
+                                      W_MK: fe_ok = 1'b1;
+                                      W_D:  fe_ok = !dq_f;
+                                      default: fe_ok = !fq_f;
+                                  endcase
+                              end
                     O_VBAR:   fe_ok = !uq_f;
                     O_VSKIPZ: fe_ok = d_old;
-                    O_VSETVL: if (d_old && sl_vl_q) fe_fault = F_VL;
-                              else fe_ok = d_old;
+                    O_VSETVL: if (d_old && sl_vl_q) begin
+                        fe_fault = F_VL;
+                    end
+                              else begin
+                                  fe_ok = d_old;
+                              end
                     // The immediate is the word after; it must be on im_q.
                     O_VSETI:  fe_ok = d_old && sl_ok_q;
-                    O_VLOOP:  if (lp_act) fe_fault = F_LOOP; else fe_ok = 1'b1;
+                    O_VLOOP:  if (lp_act) begin fe_fault = F_LOOP; end else begin fe_ok = 1'b1; end
                     O_VFILL:  fe_ok = !fq_f;
                     O_VDRAIN, O_VPOST: fe_ok = !dq_f;
                     O_VHALT:  fe_ok = d_old && sl_ok_q;
@@ -555,10 +581,18 @@ module v2_core #(
     wire [PCW-1:0] f_next = lp_back ? lp_top : f_inc;
 
     always @(*) begin
-        if (!run) im_addr = start_pc;
-        else if (redirect) im_addr = redir_pc;
-        else if (adv) im_addr = f_next;
-        else im_addr = f_pc;
+        if (!run) begin
+            im_addr = start_pc;
+        end
+        else if (redirect) begin
+            im_addr = redir_pc;
+        end
+        else if (adv) begin
+            im_addr = f_next;
+        end
+        else begin
+            im_addr = f_pc;
+        end
     end
 
     // ================================================== the engines' state
@@ -1015,8 +1049,9 @@ module v2_core #(
 `ifndef SYNTHESIS
     // u_pgt takes one word a cycle: a plain pack word beside an MX7 word is lost.
     always @(posedge clk) begin
-        if (!erst && p_v5 && !m_tag5[4] && mx_v)
+        if (!erst && p_v5 && !m_tag5[4] && mx_v) begin
             $display("V2_PACK_COLLIDE %m t=%0t: plain pack word beside an MX7 word", $time);
+        end
     end
 `endif
     generate
@@ -1228,8 +1263,12 @@ module v2_core #(
                 post_valid <= 1'b0;
             end
             dr_v <= dr_blk ? {(DR_TAP+1){1'b0}} : {dr_v[DR_TAP-1:0], dr_iss};
-            if (rd_req_valid && rd_req_ready) rd_req_valid <= 1'b0;
-            if (wr_req_valid && wr_req_ready) wr_req_valid <= 1'b0;
+            if (rd_req_valid && rd_req_ready) begin
+                rd_req_valid <= 1'b0;
+            end
+            if (wr_req_valid && wr_req_ready) begin
+                wr_req_valid <= 1'b0;
+            end
             fill_out <= fill_out + (fill_emit ? {8'd0, run_cnt} : 16'd0)
                                  - (rr_valid ? 16'd1 : 16'd0);
             // ---- fill engine
@@ -1277,7 +1316,9 @@ module v2_core #(
                         rd_req_cnt   <= run_cnt;
                         run_v        <= 1'b0;
                     end
-                    if (a_done_fl) f_st <= E_IDLE;
+                    if (a_done_fl) begin
+                        f_st <= E_IDLE;
+                    end
                 end
                 default: f_st <= E_IDLE;
             endcase
@@ -1332,7 +1373,9 @@ module v2_core #(
                         dd_l1        <= dd_l1 + 1'b1;
                         d_left       <= d_left - 9'd1;
                     end
-                    if (a_done_dr) d_st <= E_IDLE;
+                    if (a_done_dr) begin
+                        d_st <= E_IDLE;
+                    end
                 end
                 default: d_st <= E_IDLE;
             endcase
@@ -1371,7 +1414,9 @@ module v2_core #(
     wire m_rel_c = m_end && (e_sc == SRC_V);
     wire p_rel   = p_endw;
     reg  [RW-1:0] p_rel_vs;
-    always @(*) p_rel_vs = pe_vs;
+    always @(*) begin
+        p_rel_vs = pe_vs;
+    end
     wire [RW-1:0] u_ret_vs = uw_wa[RA-1:3];
     wire i_wmc = wb_last && wb_wr;
 
@@ -1393,7 +1438,9 @@ module v2_core #(
             sb_i  <= {RW{1'b0}};
         end else if (!sb_ok) begin
             sb_i <= sb_i + 1'b1;
-            if (sb_i == NR - 1) sb_ok <= 1'b1;
+            if (sb_i == NR - 1) begin
+                sb_ok <= 1'b1;
+            end
         end
     end
 
@@ -1482,10 +1529,15 @@ module v2_core #(
             if (erst) begin
                 n_disp[ii] <= 16'd0; n_done[ii] <= 16'd0; n_out[ii] <= 8'd0;
             end else begin
-                if (k_disp[ii]) n_disp[ii] <= n_disp[ii] + 16'd1;
-                if (k_done[ii]) n_done[ii] <= n_done[ii] + 16'd1;
-                if (k_disp[ii] != k_done[ii])
+                if (k_disp[ii]) begin
+                    n_disp[ii] <= n_disp[ii] + 16'd1;
+                end
+                if (k_done[ii]) begin
+                    n_done[ii] <= n_done[ii] + 16'd1;
+                end
+                if (k_disp[ii] != k_done[ii]) begin
                     n_out[ii] <= k_disp[ii] ? n_out[ii] + 8'd1 : n_out[ii] - 8'd1;
+                end
             end
         end
         n_out[7] <= 8'd0;
@@ -1497,12 +1549,18 @@ module v2_core #(
             n_disp[K_RX] <= 16'd0; n_done[K_RX] <= 16'd0;
             n_disp[K_CR] <= 16'd0; n_done[K_CR] <= 16'd0;
         end else begin
-            if (fe_ok && (d_op == O_VSYNC) && d_ext && (d_on4 == K_RX))
+            if (fe_ok && (d_op == O_VSYNC) && d_ext && (d_on4 == K_RX)) begin
                 n_disp[K_RX] <= n_disp[K_RX] + d_cnt;
-            if (fe_ok && (d_op == O_VSYNC) && d_ext && (d_on4 == K_CR))
+            end
+            if (fe_ok && (d_op == O_VSYNC) && d_ext && (d_on4 == K_CR)) begin
                 n_disp[K_CR] <= n_disp[K_CR] + d_cnt;
-            if (cd_land) n_done[K_RX] <= n_done[K_RX] + 16'd1;
-            if (cr_valid) n_done[K_CR] <= n_done[K_CR] + cr_amt;
+            end
+            if (cd_land) begin
+                n_done[K_RX] <= n_done[K_RX] + 16'd1;
+            end
+            if (cr_valid) begin
+                n_done[K_CR] <= n_done[K_CR] + cr_amt;
+            end
         end
     end
 
@@ -1675,7 +1733,9 @@ module v2_core #(
             kreg[0] <= 24'h000000; kreg[1] <= E8_ONE;
             kreg[2] <= 24'hBF8000; kreg[3] <= 24'h000000;
         end else begin
-            if (busy) cycles <= cycles + 32'd1;
+            if (busy) begin
+                cycles <= cycles + 32'd1;
+            end
             if (!run) begin
                 f_pc <= start_pc;
                 d_v  <= 1'b0;
@@ -1683,7 +1743,9 @@ module v2_core #(
                 if (start) begin
                     run <= 1'b1; f_v <= 1'b1; busy <= 1'b1; halted <= 1'b0; fault <= 1'b0;
                     cycles <= 32'd0; lp_act <= 1'b0; srst <= 1'b1;
-                    for (ii = 0; ii < 8; ii = ii + 1) a_off[ii] <= {AW{1'b0}};
+                    for (ii = 0; ii < 8; ii = ii + 1) begin
+                        a_off[ii] <= {AW{1'b0}};
+                    end
                     if (cd_err) begin
                         cd_err <= 1'b0; fault_code <= F_CUDATA;
                         run <= 1'b0; busy <= 1'b0; fault <= 1'b1;
@@ -1701,8 +1763,12 @@ module v2_core #(
                     d_pc <= f_pc;
                     // VSETI consumes the word after it as its immediate.
                     d_v  <= f_v && !(fe_ok && d_v && (d_op == O_VSETI));
-                    if (lp_back) lp_cnt <= lp_cnt - 24'd1;
-                    if (lp_exit) lp_act <= 1'b0;
+                    if (lp_back) begin
+                        lp_cnt <= lp_cnt - 24'd1;
+                    end
+                    if (lp_exit) begin
+                        lp_act <= 1'b0;
+                    end
                 end
                 if (fe_ok) begin
                     case (d_op)
@@ -1726,14 +1792,22 @@ module v2_core #(
                             end
                             default: ;
                         endcase
-                        O_VUNPK: if (d_rel) c_uptr <= c_uptr + c_uinc;
-                        O_VPACK: if (d_rel) c_pptr <= c_pptr + c_pinc;
+                        O_VUNPK: if (d_rel) begin
+                            c_uptr <= c_uptr + c_uinc;
+                        end
+                        O_VPACK: if (d_rel) begin
+                            c_pptr <= c_pptr + c_pinc;
+                        end
                         O_VFILL, O_VDRAIN: if (ir[26]) begin
                             a_off[d_ad] <= a_off[d_ad] + {{(AW-18){a_inc[d_ad][17]}}, a_inc[d_ad]};
                         end
                         O_VSETVL: vl <= sreg[d_va[3:0]][7:0];
-                        O_VSETI: if (ir[0]) kreg[3] <= im_q[23:0];
-                                 else sreg[d_vd[3:0]] <= im_q[23:0];
+                        O_VSETI: if (ir[0]) begin
+                            kreg[3] <= im_q[23:0];
+                        end
+                                 else begin
+                                     sreg[d_vd[3:0]] <= im_q[23:0];
+                                 end
                         O_VLOOP: begin
                             lp_act <= 1'b1;
                             lp_cnt <= sreg[d_va[3:0]];
@@ -1747,7 +1821,9 @@ module v2_core #(
                     endcase
                 end
             end
-            if (cd_fault) cd_err <= 1'b1;
+            if (cd_fault) begin
+                cd_err <= 1'b1;
+            end
         end
     end
 
@@ -1767,7 +1843,9 @@ module v2_core #(
     reg [4:0]  lanes_now;
     always @(*) begin
         lanes_now = 5'd0;
-        for (pi = 0; pi < 16; pi = pi + 1) lanes_now = lanes_now + {4'd0, iss_tm[pi]};
+        for (pi = 0; pi < 16; pi = pi + 1) begin
+            lanes_now = lanes_now + {4'd0, iss_tm[pi]};
+        end
     end
     always @(posedge clk) begin
         if (!rst && busy) begin
@@ -1776,44 +1854,104 @@ module v2_core #(
                 pc_beats <= pc_beats + 1;
                 pc_lanes <= pc_lanes + lanes_now;
             end
-            if (fe_ok) pc_insn <= pc_insn + 1;
-            if (m_act) pc_m_act <= pc_m_act + 1;
-            else if (mq_e && !mh_v) pc_m_empty <= pc_m_empty + 1;
-            else if (h_sync) pc_m_sync <= pc_m_sync + 1;
-            else pc_m_haz <= pc_m_haz + 1;
+            if (fe_ok) begin
+                pc_insn <= pc_insn + 1;
+            end
+            if (m_act) begin
+                pc_m_act <= pc_m_act + 1;
+            end
+            else if (mq_e && !mh_v) begin
+                pc_m_empty <= pc_m_empty + 1;
+            end
+            else if (h_sync) begin
+                pc_m_sync <= pc_m_sync + 1;
+            end
+            else begin
+                pc_m_haz <= pc_m_haz + 1;
+            end
             if (u_act) begin
                 pc_u_act <= pc_u_act + 1;
-                if (!u_room) pc_u_room <= pc_u_room + 1;
-            end else if (!uq_e && uh_sync) pc_u_sync <= pc_u_sync + 1;
-            if (!uf_e && !uf_pop) pc_u_wbblk <= pc_u_wbblk + 1;
+                if (!u_room) begin
+                    pc_u_room <= pc_u_room + 1;
+                end
+            end else if (!uq_e && uh_sync) begin
+                pc_u_sync <= pc_u_sync + 1;
+            end
+            if (!uf_e && !uf_pop) begin
+                pc_u_wbblk <= pc_u_wbblk + 1;
+            end
             if (p_act) begin
                 pc_p_act <= pc_p_act + 1;
-                if (!p_room) pc_p_room <= pc_p_room + 1;
-            end else if (!pq_e && ph_sync) pc_p_sync <= pc_p_sync + 1;
-            else if (!pq_e && p_haz) pc_p_haz <= pc_p_haz + 1;
-            if (!pf_e && !pf_pop) pc_p_l1blk <= pc_p_l1blk + 1;
-            if (f_st != E_IDLE) pc_a_act <= pc_a_act + 1;
-            if (d_st != E_IDLE) pc_a_dact <= pc_a_dact + 1;
-            if (!fq_e && fh_sync && f_st == E_IDLE) pc_a_fsync <= pc_a_fsync + 1;
-            if (!dq_e && dh_sync && d_st == E_IDLE) pc_a_dsync <= pc_a_dsync + 1;
-            if (dr_blk) pc_a_drblk <= pc_a_drblk + 1;
-            if (dr_want && !dr_gnt) pc_a_drarb <= pc_a_drarb + 1;
-            if (d_v && !fe_ok) begin
-                if (is_math && mq_fd) pc_d_mq <= pc_d_mq + 1;
-                else if (is_math) pc_d_sbm <= pc_d_sbm + 1;
-                else if (d_op == O_VUNPK && uq_f) pc_d_uq <= pc_d_uq + 1;
-                else if (d_op == O_VUNPK) pc_d_sbu <= pc_d_sbu + 1;
-                else if (d_op == O_VPACK) pc_d_pq <= pc_d_pq + 1;
-                else if (d_op == O_VFILL || d_op == O_VDRAIN) pc_d_aq <= pc_d_aq + 1;
-                else if (d_op == O_VSETI) pc_d_seti <= pc_d_seti + 1;
-                else pc_d_fe <= pc_d_fe + 1;
+                if (!p_room) begin
+                    pc_p_room <= pc_p_room + 1;
+                end
+            end else if (!pq_e && ph_sync) begin
+                pc_p_sync <= pc_p_sync + 1;
             end
-            if (!d_v) pc_d_idle <= pc_d_idle + 1;
-            if (redirect) pc_redir <= pc_redir + 1;
+            else if (!pq_e && p_haz) begin
+                pc_p_haz <= pc_p_haz + 1;
+            end
+            if (!pf_e && !pf_pop) begin
+                pc_p_l1blk <= pc_p_l1blk + 1;
+            end
+            if (f_st != E_IDLE) begin
+                pc_a_act <= pc_a_act + 1;
+            end
+            if (d_st != E_IDLE) begin
+                pc_a_dact <= pc_a_dact + 1;
+            end
+            if (!fq_e && fh_sync && f_st == E_IDLE) begin
+                pc_a_fsync <= pc_a_fsync + 1;
+            end
+            if (!dq_e && dh_sync && d_st == E_IDLE) begin
+                pc_a_dsync <= pc_a_dsync + 1;
+            end
+            if (dr_blk) begin
+                pc_a_drblk <= pc_a_drblk + 1;
+            end
+            if (dr_want && !dr_gnt) begin
+                pc_a_drarb <= pc_a_drarb + 1;
+            end
+            if (d_v && !fe_ok) begin
+                if (is_math && mq_fd) begin
+                    pc_d_mq <= pc_d_mq + 1;
+                end
+                else if (is_math) begin
+                    pc_d_sbm <= pc_d_sbm + 1;
+                end
+                else if (d_op == O_VUNPK && uq_f) begin
+                    pc_d_uq <= pc_d_uq + 1;
+                end
+                else if (d_op == O_VUNPK) begin
+                    pc_d_sbu <= pc_d_sbu + 1;
+                end
+                else if (d_op == O_VPACK) begin
+                    pc_d_pq <= pc_d_pq + 1;
+                end
+                else if (d_op == O_VFILL || d_op == O_VDRAIN) begin
+                    pc_d_aq <= pc_d_aq + 1;
+                end
+                else if (d_op == O_VSETI) begin
+                    pc_d_seti <= pc_d_seti + 1;
+                end
+                else begin
+                    pc_d_fe <= pc_d_fe + 1;
+                end
+            end
+            if (!d_v) begin
+                pc_d_idle <= pc_d_idle + 1;
+            end
+            if (redirect) begin
+                pc_redir <= pc_redir + 1;
+            end
             pc_l1r <= pc_l1r + (u_rd ? 1 : 0) + (dr_iss ? 1 : 0);
             pc_l1w <= pc_l1w + (l1_we[0] ? 1 : 0) + (l1_we[1] ? 1 : 0);
-            if (rr_valid) pc_fill <= pc_fill + 1;
-            if (dr_take) pc_drw <= pc_drw + 1;
+            if (rr_valid) begin
+                pc_fill <= pc_fill + 1;
+            end
+            if (dr_take) begin
+                pc_drw <= pc_drw + 1;
+            end
         end
     end
     // The modulo-2^SBW counts need fewer than 2^(SBW-1) outstanding of a kind.
@@ -1875,10 +2013,16 @@ module v2_core #(
                          u_mrac.sh[pi], u_mrad.sh[pi], u_mrbc.sh[pi], u_mrbd.sh[pi],
                          u_mrcc.sh[pi], u_mrcd.sh[pi], u_prc.sh[pi], u_prd.sh[pi]);
         end
-        if (mh_v) $display("V2HEAD_M aop %0d vd %0d va %0d vb %0d vc %0d s %0d%0d%0d haz %0d",
-                            h_aop, h_vd, h_va, h_vb, h_vc, h_sa, h_sb, h_sc, h_haz);
-        if (!uq_e) $display("V2HEAD_U sync %0d vd %0d", uh_sync, uh_vd);
-        if (!pq_e) $display("V2HEAD_P sync %0d vs %0d haz %0d", ph_sync, ph_vs, p_haz);
+        if (mh_v) begin
+            $display("V2HEAD_M aop %0d vd %0d va %0d vb %0d vc %0d s %0d%0d%0d haz %0d",
+                     h_aop, h_vd, h_va, h_vb, h_vc, h_sa, h_sb, h_sc, h_haz);
+        end
+        if (!uq_e) begin
+            $display("V2HEAD_U sync %0d vd %0d", uh_sync, uh_vd);
+        end
+        if (!pq_e) begin
+            $display("V2HEAD_P sync %0d vs %0d haz %0d", ph_sync, ph_vs, p_haz);
+        end
         $display("V2FE d_v %0d op %0d pc %0d", d_v, d_op, d_pc);
         // Each all_idle term (1 = idle): a VHALT that never retires names its engine.
         $display("V2IDLE %m run %0d mq %0d uq %0d pq %0d fq %0d dq %0d m %0d u %0d p %0d f_st %0d d_st %0d pipe %0d uf %0d pf %0d u_occ %0d p_occ %0d ug %0d pg %0d mx %0d fill_out %0d wr_req %0d ft %0d iss %0d post %0d",

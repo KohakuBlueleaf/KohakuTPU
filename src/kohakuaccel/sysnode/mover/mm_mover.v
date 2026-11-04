@@ -245,10 +245,16 @@ module mm_mover #(
             cq_cnt <= {(CQA+1){1'b0}}; cq_ovf <= 1'b0; a_en <= 1'b0;
         end else begin
             a_en <= cq_pop;
-            if (cq_push) cq_wp <= cq_wp + 1'b1;
-            if (cq_pop)  cq_rp <= cq_rp + 1'b1;
+            if (cq_push) begin
+                cq_wp <= cq_wp + 1'b1;
+            end
+            if (cq_pop) begin
+                cq_rp <= cq_rp + 1'b1;
+            end
             cq_cnt <= cq_cnt + {{CQA{1'b0}}, cq_push} - {{CQA{1'b0}}, cq_pop};
-            if (cfg_en_q && cq_full) cq_ovf <= 1'b1;
+            if (cfg_en_q && cq_full) begin
+                cq_ovf <= 1'b1;
+            end
         end
     end
     wire [7:0] reg_sel = {a_addr[7:3], 3'b000};

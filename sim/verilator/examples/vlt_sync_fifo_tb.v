@@ -21,7 +21,9 @@ module vlt_sync_fifo_tb;
 
     reg clk = 1'b0;
     reg rst = 1'b1;
-    always #2.5 clk = ~clk;
+    always begin
+        #2.5 clk = ~clk;
+    end
 
     reg  [DW-1:0] wr_data = 0;
     reg           wr_en   = 1'b0;
@@ -67,8 +69,9 @@ module vlt_sync_fifo_tb;
             if (!rd_busy && reader_on(tick) && got < N) begin
                 if (rd_data !== got[DW-1:0]) begin
                     errors = errors + 1;
-                    if (errors < 8)
+                    if (errors < 8) begin
                         $display("  FAIL word %0d: got %h want %h", got, rd_data, got[DW-1:0]);
+                    end
                 end
                 got   = got + 1;
                 rd_en = 1'b1;
@@ -78,7 +81,9 @@ module vlt_sync_fifo_tb;
             // Occupancy is REPORTED, never asserted on: fwft holds words in
             // output stages beyond FIFO_WRITE_DEPTH, so the real cell legitimately
             // shows more in flight than the array is deep.
-            if (level > max_level) max_level = level;
+            if (level > max_level) begin
+                max_level = level;
+            end
         end
 
         // First-word latency, with a pop issued on the edge before the word
@@ -117,8 +122,12 @@ module vlt_sync_fifo_tb;
         $display("========================================");
         $display("  first word after %0d edges", lat);
         $display("  peak occupancy %0d of %0d", max_level, DEPTH);
-        if (errors == 0) $display("  PASS -- %0d words through, 0 errors", got);
-        else             $display("  FAIL -- %0d words through, %0d errors", got, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d words through, 0 errors", got);
+        end
+        else begin
+            $display("  FAIL -- %0d words through, %0d errors", got, errors);
+        end
         $display("========================================");
         $finish;
     end

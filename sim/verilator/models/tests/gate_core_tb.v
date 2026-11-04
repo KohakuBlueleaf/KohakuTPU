@@ -8,7 +8,9 @@ module gate_core_tb;
     localparam integer CYCLES = 200000;
 
     reg clk = 1'b0;
-    always #1 clk = ~clk;
+    always begin
+        #1 clk = ~clk;
+    end
 
     reg         rst = 1'b1, en = 1'b1, iv = 1'b0, fs = 1'b0;
     reg [895:0] a = 0, b = 0;
@@ -30,8 +32,12 @@ module gate_core_tb;
 
     always @(posedge clk) begin
         cyc <= cyc + 1;
-        if (!u_g.u_gate.run_l) withheld <= withheld + 1;
-        if (cyc == 20) rst <= 1'b0;
+        if (!u_g.u_gate.run_l) begin
+            withheld <= withheld + 1;
+        end
+        if (cyc == 20) begin
+            rst <= 1'b0;
+        end
         if (left == 0) begin
             busy <= !busy;
             left <= busy ? 1 + ($unsigned($random) % 150) : 1 + ($unsigned($random) % 60);
@@ -49,13 +55,19 @@ module gate_core_tb;
         end else if (($unsigned($random) % 200) == 0) begin
             a[$unsigned($random) % 896] <= ~a[$unsigned($random) % 896];
         end
-        if (cyc > 30000 && cyc < 30010) rst <= 1'b1;
-        if (cyc == 30010) rst <= 1'b0;
+        if (cyc > 30000 && cyc < 30010) begin
+            rst <= 1'b1;
+        end
+        if (cyc == 30010) begin
+            rst <= 1'b0;
+        end
     end
 
     always @(negedge clk) begin
         if (cyc > 40 && (p_ref !== p_g || v_ref !== v_g || f_ref !== f_g)) begin
-            if (mism < 5) $display("MISMATCH cyc=%0d valid %b/%b", cyc, v_ref, v_g);
+            if (mism < 5) begin
+                $display("MISMATCH cyc=%0d valid %b/%b", cyc, v_ref, v_g);
+            end
             mism <= mism + 1;
         end
         if (cyc == CYCLES) begin

@@ -21,7 +21,9 @@ module dispatch_engine_tb;
     localparam integer N     = 3000;
 
     reg clk = 1'b0;
-    always #5 clk = ~clk;
+    always begin
+        #5 clk = ~clk;
+    end
     reg resetn = 1'b0;
 
     reg        enq_en = 1'b0;
@@ -82,7 +84,9 @@ module dispatch_engine_tb;
     task fail(input [8*48-1:0] what);
         begin
             errors = errors + 1;
-            if (errors <= 10) $display("ERROR @%0t %0s", $time, what);
+            if (errors <= 10) begin
+                $display("ERROR @%0t %0s", $time, what);
+            end
         end
     endtask
 
@@ -112,47 +116,70 @@ module dispatch_engine_tb;
     always @(posedge clk) if (resetn) begin
         // writes in order, behind their waits
         if (t_en) begin
-            if (t_hold) fail("write while the controller holds the port");
+            if (t_hold) begin
+                fail("write while the controller holds the port");
+            end
             while (sb_i < sb_n && sb_code[sb_i] == 6'd32) begin
-                if (!met(sb_data[sb_i])) fail("write issued before its WAIT was met");
+                if (!met(sb_data[sb_i])) begin
+                    fail("write issued before its WAIT was met");
+                end
                 sb_i = sb_i + 1;
             end
-            if (sb_i >= sb_n) fail("write with nothing queued");
+            if (sb_i >= sb_n) begin
+                fail("write with nothing queued");
+            end
             else begin
-                if (sb_code[sb_i][4:0] != t_code || sb_data[sb_i] != t_data)
+                if (sb_code[sb_i][4:0] != t_code || sb_data[sb_i] != t_data) begin
                     fail("write out of order or with the wrong data");
+                end
                 sb_i = sb_i + 1;
             end
-            if (t_code >= 5'd8 && t_code < 5'd24 && !room)
+            if (t_code >= 5'd8 && t_code < 5'd24 && !room) begin
                 fail("mover-window write with no queue room");
-            if (t_code >= 5'd24 && (mv_busy_r || dr_mvgo || mv_queued != mv_done))
+            end
+            if (t_code >= 5'd24 && (mv_busy_r || dr_mvgo || mv_queued != mv_done)) begin
                 fail("interlink write while a move runs or is queued");
+            end
         end
         // The mover's config queue: room comes and goes.
         room <= ($urandom % 5 != 0);
-        if (sig_v && (sig_claim !== claim_m)) fail("claim differs from the model");
+        if (sig_v && (sig_claim !== claim_m)) begin
+            fail("claim differs from the model");
+        end
         if (sig_v && claim_m) begin
 `ifdef NEG_WAIT
             neg_tick = neg_tick + 1;
-            if (neg_tick[0]) cnt_m[{sig_y[1:0], sig_x[1:0]}] = cnt_m[{sig_y[1:0], sig_x[1:0]}] + 1;
+            if (neg_tick[0]) begin
+                cnt_m[{sig_y[1:0], sig_x[1:0]}] = cnt_m[{sig_y[1:0], sig_x[1:0]}] + 1;
+            end
 `else
             cnt_m[{sig_y[1:0], sig_x[1:0]}] = cnt_m[{sig_y[1:0], sig_x[1:0]}] + 1;
 `endif
         end
 
-        if (t_en && t_code == 5'd26) rings = rings + 1;
+        if (t_en && t_code == 5'd26) begin
+            rings = rings + 1;
+        end
         // the mailbox: a commit reaches it a cycle after issue
         dr_go <= t_en && t_code == 5'd5;
-        if (offered && ($urandom % 3 == 0)) offered <= 1'b0;
+        if (offered && ($urandom % 3 == 0)) begin
+            offered <= 1'b0;
+        end
         if (dr_go) begin
-            if (offered) fail("mailbox commit while a flit is offered: lost");
-            else offered <= 1'b1;
+            if (offered) begin
+                fail("mailbox commit while a flit is offered: lost");
+            end
+            else begin
+                offered <= 1'b1;
+            end
         end
 
         // the mover: a GO reaches its queue a cycle after issue; queued moves
         // run one after another, 2..17 cycles each
         dr_mvgo <= t_en && t_code == 5'd8 && t_data[16];
-        if (dr_mvgo) mv_queued <= mv_queued + 1'b1;
+        if (dr_mvgo) begin
+            mv_queued <= mv_queued + 1'b1;
+        end
         if (!mv_busy_r && (mv_queued != mv_started)) begin
             mv_busy_r  <= 1'b1;
             mv_left    <= 5'd2 + ($urandom % 16);
@@ -163,7 +190,9 @@ module dispatch_engine_tb;
                 mv_busy_r <= 1'b0;
                 mv_done   <= mv_done + 1'b1;
             end
-            else mv_left <= mv_left - 1'b1;
+            else begin
+                mv_left <= mv_left - 1'b1;
+            end
         end
     end
 
@@ -191,14 +220,19 @@ module dispatch_engine_tb;
     endtask
 
     initial begin
-        for (k = 0; k < NCTR; k = k + 1) cnt_m[k] = 0;
+        for (k = 0; k < NCTR; k = k + 1) begin
+            cnt_m[k] = 0;
+        end
         repeat (4) @(negedge clk);
         resetn = 1'b1;
         @(negedge clk);
-        if (rd_data[63:48] != 16'hDE01) fail("STAT magic");
+        if (rd_data[63:48] != 16'hDE01) begin
+            fail("STAT magic");
+        end
 
-        for (k = 0; k < NCTR; k = k + 1)
+        for (k = 0; k < NCTR; k = k + 1) begin
             cfg(2'd2, {32'd0, 1'b1, 11'd0, k[3:0], 4'd0, 2'd0, k[3:2], 6'd0, k[1:0]});
+        end
         map_on = 1'b1;
 
         // overflow: a disabled engine keeps DEPTH + 1, the next push is lost
@@ -210,11 +244,17 @@ module dispatch_engine_tb;
         end
         enq_en = 1'b0;
         @(negedge clk);
-        if (rd_data[15:0] != DEPTH + 1) fail("used after filling");
-        if (!rd_data[35]) fail("overflow flag");
+        if (rd_data[15:0] != DEPTH + 1) begin
+            fail("used after filling");
+        end
+        if (!rd_data[35]) begin
+            fail("overflow flag");
+        end
         cfg(2'd1, 64'd2);
         repeat (NCTR + 2) @(negedge clk);
-        if (rd_data[15:0] != 0 || rd_data[35]) fail("clear");
+        if (rd_data[15:0] != 0 || rd_data[35]) begin
+            fail("clear");
+        end
 
         cfg(2'd1, 64'd3);
         en_m = 1'b1;
@@ -224,11 +264,15 @@ module dispatch_engine_tb;
         fork
             begin : feed
                 for (i = 0; i < N; i = i + 1) begin
-                    while (rd_data[15:0] >= DEPTH + 1) @(negedge clk);
+                    while (rd_data[15:0] >= DEPTH + 1) begin
+                        @(negedge clk);
+                    end
                     if ($urandom % 10 < 3) begin
                         if ($urandom % 5 == 0) begin
                             want = gos_enq - ($urandom % 2);
-                            if (want < 0) want = 0;
+                            if (want < 0) begin
+                                want = 0;
+                            end
                             d = {3'd0, 5'd16, 56'd0} | (want & 12'hfff);
                         end
                         else begin
@@ -247,13 +291,19 @@ module dispatch_engine_tb;
                         d = {$urandom, $urandom};
                         if (c == 6'd8) begin
                             d[16] = ($urandom % 3 == 0);
-                            if (d[16]) gos_enq = gos_enq + 1;
+                            if (d[16]) begin
+                                gos_enq = gos_enq + 1;
+                            end
                         end
                         push(c, d);
                     end
-                    if ($urandom % 4 == 0) @(negedge clk);
+                    if ($urandom % 4 == 0) begin
+                        @(negedge clk);
+                    end
                 end
-                while (rd_data[15:0] >= DEPTH + 1) @(negedge clk);
+                while (rd_data[15:0] >= DEPTH + 1) begin
+                    @(negedge clk);
+                end
                 push(6'd1, 64'hFEED);
             end
             begin : signals
@@ -287,17 +337,23 @@ module dispatch_engine_tb;
         join
 
         repeat (30) @(negedge clk);
-        if (rd_data[15:0] != 0) fail("queue not empty at the end");
+        if (rd_data[15:0] != 0) begin
+            fail("queue not empty at the end");
+        end
         for (k = 0; k < NCTR; k = k + 1) begin
             rd_addr = 5'd16 + k;
             #1;
 `ifndef NEG_WAIT
-            if (rd_data[CTR_W-1:0] != (cnt_m[k] & 12'hfff)) fail("counter read back");
+            if (rd_data[CTR_W-1:0] != (cnt_m[k] & 12'hfff)) begin
+                fail("counter read back");
+            end
 `endif
         end
         rd_addr = 5'd1;
         #1;
-        if (rd_data[32 +: CTR_W] != (gos_enq & 12'hfff)) fail("moves started");
+        if (rd_data[32 +: CTR_W] != (gos_enq & 12'hfff)) begin
+            fail("moves started");
+        end
         rd_addr = 5'd0;
         // Silicon flaw F-004 (docs/spec/stack/flaws.md), asserted as recorded:
         // a WAIT whose target is half the counter's range behind its count
@@ -307,25 +363,37 @@ module dispatch_engine_tb;
         push(6'd32, {3'd0, 5'd0, 56'd0} | ((cnt_m[0] - (1 << (CTR_W - 1))) & 12'hfff));
         push(6'd1, 64'hF004);
         repeat (200) @(negedge clk);
-        if (rd_data[15:0] != 2) fail("F-004: a far-behind WAIT no longer holds");
+        if (rd_data[15:0] != 2) begin
+            fail("F-004: a far-behind WAIT no longer holds");
+        end
         cfg(2'd1, 64'd3);
         sb_i = sb_n;
         repeat (NCTR + 2) @(negedge clk);
         rd_addr = 5'd16;
         #1;
-        if (rd_data != 0) fail("counter after clear");
+        if (rd_data != 0) begin
+            fail("counter after clear");
+        end
 
         // Silicon flaw F-003, asserted as recorded: the engine has no interlink
         // room input, so six RINGs issue against a queue of four never drained.
         rd_addr = 5'd0;
         rings = 0;
-        for (i = 0; i < 6; i = i + 1) push(6'd26, 64'd1);
+        for (i = 0; i < 6; i = i + 1) begin
+            push(6'd26, 64'd1);
+        end
         repeat (50) @(negedge clk);
-        if (rings != 6) fail("F-003: RINGs past the interlink's queue were held");
+        if (rings != 6) begin
+            fail("F-003: RINGs past the interlink's queue were held");
+        end
 
         $display("@@@ entries %0d, cycles %0d, moves %0d, counts u0 %0d", sb_n, cyc, gos_enq, cnt_m[0]);
-        if (errors == 0) $display("PASS dispatch_engine");
-        else $display("FAIL dispatch_engine: %0d errors", errors);
+        if (errors == 0) begin
+            $display("PASS dispatch_engine");
+        end
+        else begin
+            $display("FAIL dispatch_engine: %0d errors", errors);
+        end
         $finish;
     end
 endmodule

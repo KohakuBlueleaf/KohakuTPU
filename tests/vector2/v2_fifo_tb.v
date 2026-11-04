@@ -12,7 +12,9 @@ module v2_fifo_tb;
     localparam integer N = 40000;          // cycles
 
     reg clk = 0, rst = 1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg          push = 0, pop = 0;
     reg  [W-1:0] din = 0;
@@ -34,14 +36,18 @@ module v2_fifo_tb;
             checks = checks + 1;
             if (got !== want) begin
                 errs = errs + 1;
-                if (errs <= 10) $display("  FAIL cyc %0d %0s got %h want %h (count %0d)", cyc, what, got, want, qn);
+                if (errs <= 10) begin
+                    $display("  FAIL cyc %0d %0s got %h want %h (count %0d)", cyc, what, got, want, qn);
+                end
             end
         end
     endtask
 
     initial begin
         qn = 0; errs = 0; checks = 0;
-        for (i = 0; i <= D; i = i + 1) seen[i] = 0;
+        for (i = 0; i <= D; i = i + 1) begin
+            seen[i] = 0;
+        end
         repeat (4) @(posedge clk);
         rst = 0;
         for (cyc = 0; cyc < N; cyc = cyc + 1) begin
@@ -66,7 +72,9 @@ module v2_fifo_tb;
             @(posedge clk);
             #0;
             if (pop) begin
-                for (i = 0; i < D - 1; i = i + 1) q[i] = q[i + 1];
+                for (i = 0; i < D - 1; i = i + 1) begin
+                    q[i] = q[i + 1];
+                end
                 qn = qn - 1;
             end
             if (push) begin
@@ -82,8 +90,12 @@ module v2_fifo_tb;
             end
         end
         $display("  count levels 0..%0d reached %0d/%0d/%0d/... cycles", D, seen[0], seen[1], seen[2]);
-        if (errs == 0) $display("  PASS -- v2_fifo OREG 0 and 1: %0d checks", checks);
-        else           $display("  FAIL -- v2_fifo: %0d errors of %0d checks", errs, checks);
+        if (errs == 0) begin
+            $display("  PASS -- v2_fifo OREG 0 and 1: %0d checks", checks);
+        end
+        else begin
+            $display("  FAIL -- v2_fifo: %0d errors of %0d checks", errs, checks);
+        end
         $finish;
     end
 endmodule

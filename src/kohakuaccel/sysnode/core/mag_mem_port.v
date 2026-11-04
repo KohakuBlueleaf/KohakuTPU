@@ -816,9 +816,15 @@ module mag_mem_port #(
     reg [31:0] pt_rb = 32'd0, pt_wb = 32'd0, pt_out = 32'd0;
     always @(posedge clk) begin
         if (resetn) begin
-            if (m_rvalid && m_rready) pt_rb <= pt_rb + 32'd1;
-            if (m_wvalid && m_wready) pt_wb <= pt_wb + 32'd1;
-            if (mem_out_valid && !mem_out_busy) pt_out <= pt_out + 32'd1;
+            if (m_rvalid && m_rready) begin
+                pt_rb <= pt_rb + 32'd1;
+            end
+            if (m_wvalid && m_wready) begin
+                pt_wb <= pt_wb + 32'd1;
+            end
+            if (mem_out_valid && !mem_out_busy) begin
+                pt_out <= pt_out + 32'd1;
+            end
         end
     end
     final $display("PORTRES %0d,%0d cycles %0d r_beats %0d w_beats %0d out_flits %0d", MEM_X,

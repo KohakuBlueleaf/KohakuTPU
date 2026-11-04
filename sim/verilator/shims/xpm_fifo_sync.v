@@ -50,14 +50,18 @@ module xpm_fifo_sync #(
     localparam integer AW = $clog2(FIFO_WRITE_DEPTH);
 
     initial begin
-        if (READ_MODE != "fwft")
+        if (READ_MODE != "fwft") begin
             $fatal(1, "xpm_fifo_sync shim: READ_MODE=%s not modelled", READ_MODE);
-        if (FIFO_READ_LATENCY != 0)
+        end
+        if (FIFO_READ_LATENCY != 0) begin
             $fatal(1, "xpm_fifo_sync shim: FIFO_READ_LATENCY=%0d not modelled", FIFO_READ_LATENCY);
-        if (ECC_MODE != "no_ecc")
+        end
+        if (ECC_MODE != "no_ecc") begin
             $fatal(1, "xpm_fifo_sync shim: ECC_MODE=%s not modelled", ECC_MODE);
-        if (USE_ADV_FEATURES != 13'b0)
+        end
+        if (USE_ADV_FEATURES != 13'b0) begin
             $fatal(1, "xpm_fifo_sync shim: USE_ADV_FEATURES=%b not modelled", USE_ADV_FEATURES);
+        end
     end
 
     // The array plus XPM's two fwft output stages (xpm_fifo.sv gen_fwft, READ_MODE
@@ -117,7 +121,9 @@ module xpm_fifo_sync #(
                 s1   <= mem[rptr];
                 rptr <= (rptr == FIFO_WRITE_DEPTH - 1) ? 32'd0 : rptr + 32'd1;
             end
-            if (regout) s2 <= s1;
+            if (regout) begin
+                s2 <= s1;
+            end
             cnt <= cnt + (do_wr ? 32'd1 : 32'd0) - (ram_rd ? 32'd1 : 32'd0);
             st  <= nst;
             emp <= ((st == S2) && rd_en) || ((st != S1) && emp);
@@ -127,7 +133,9 @@ module xpm_fifo_sync #(
     // XPM holds rst_busy for a few cycles after reset; sync_fifo.v registers it
     // into its own rst_busy_q, so a one-cycle model is enough to keep that path.
     reg busy = 1'b1;
-    always @(posedge wr_clk) busy <= rst;
+    always @(posedge wr_clk) begin
+        busy <= rst;
+    end
 
     assign full  = (cnt == FIFO_WRITE_DEPTH);
     assign empty = emp;

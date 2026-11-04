@@ -65,14 +65,18 @@ module xpm_memory_tdpram #(
     localparam         RFB   = (WRITE_MODE_B == "read_first");
 
     initial begin
-        if (ECC_MODE != "no_ecc")
+        if (ECC_MODE != "no_ecc") begin
             $fatal(1, "xpm_memory_tdpram shim: ECC_MODE=%s not modelled", ECC_MODE);
-        if ((WRITE_MODE_A != "no_change" && !RFA) || (WRITE_MODE_B != "no_change" && !RFB))
+        end
+        if ((WRITE_MODE_A != "no_change" && !RFA) || (WRITE_MODE_B != "no_change" && !RFB)) begin
             $fatal(1, "xpm_memory_tdpram shim: WRITE_MODE no_change or read_first only");
-        if (READ_LATENCY_A < 1 || READ_LATENCY_A > 2 || READ_LATENCY_B < 1 || READ_LATENCY_B > 2)
+        end
+        if (READ_LATENCY_A < 1 || READ_LATENCY_A > 2 || READ_LATENCY_B < 1 || READ_LATENCY_B > 2) begin
             $fatal(1, "xpm_memory_tdpram shim: READ_LATENCY must be 1 or 2");
-        if (USE_MEM_INIT != 0 || MEMORY_INIT_FILE != "none")
+        end
+        if (USE_MEM_INIT != 0 || MEMORY_INIT_FILE != "none") begin
             $fatal(1, "xpm_memory_tdpram shim: memory init not modelled");
+        end
     end
 
     reg [WRITE_DATA_WIDTH_A-1:0] mem [0:DEPTH-1];
@@ -83,32 +87,46 @@ module xpm_memory_tdpram #(
     always @(posedge clka) begin
         if (ena) begin
             if (|wea) begin
-                for (i = 0; i < NB; i = i + 1)
-                    if (wea[i])
+                for (i = 0; i < NB; i = i + 1) begin
+                    if (wea[i]) begin
                         mem[addra][i*BYTE_WRITE_WIDTH_A +: BYTE_WRITE_WIDTH_A]
                             <= dina[i*BYTE_WRITE_WIDTH_A +: BYTE_WRITE_WIDTH_A];
+                    end
+                end
             end
-            if (!(|wea) || RFA)
+            if (!(|wea) || RFA) begin
                 da1 <= (rsta && READ_LATENCY_A == 1) ? {READ_DATA_WIDTH_A{1'b0}} : mem[addra];
+            end
         end
-        if (rsta)        da2 <= {READ_DATA_WIDTH_A{1'b0}};
-        else if (regcea) da2 <= da1;
+        if (rsta) begin
+            da2 <= {READ_DATA_WIDTH_A{1'b0}};
+        end
+        else if (regcea) begin
+            da2 <= da1;
+        end
     end
     assign douta = (READ_LATENCY_A == 2) ? da2 : da1;
 
     always @(posedge clkb) begin
         if (enb) begin
             if (|web) begin
-                for (i = 0; i < NB; i = i + 1)
-                    if (web[i])
+                for (i = 0; i < NB; i = i + 1) begin
+                    if (web[i]) begin
                         mem[addrb][i*BYTE_WRITE_WIDTH_B +: BYTE_WRITE_WIDTH_B]
                             <= dinb[i*BYTE_WRITE_WIDTH_B +: BYTE_WRITE_WIDTH_B];
+                    end
+                end
             end
-            if (!(|web) || RFB)
+            if (!(|web) || RFB) begin
                 db1 <= (rstb && READ_LATENCY_B == 1) ? {READ_DATA_WIDTH_B{1'b0}} : mem[addrb];
+            end
         end
-        if (rstb)        db2 <= {READ_DATA_WIDTH_B{1'b0}};
-        else if (regceb) db2 <= db1;
+        if (rstb) begin
+            db2 <= {READ_DATA_WIDTH_B{1'b0}};
+        end
+        else if (regceb) begin
+            db2 <= db1;
+        end
     end
     assign doutb = (READ_LATENCY_B == 2) ? db2 : db1;
 

@@ -15,7 +15,9 @@ module sru_unpack_tb;
     localparam integer IEEE = 1;
 `endif
     reg clk = 1'b0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg [255:0] vin  [0:4095];
     reg [383:0] want [0:4095];
@@ -28,8 +30,12 @@ module sru_unpack_tb;
     sru_unpack #(.IEEE(IEEE)) dut (.clk(clk), .in_data(din), .out_data(dout));
 
     initial begin
-        if (IEEE != 0) fd = $fopen($sformatf("%s/unpack.hex", `SRU_DIR), "r");
-        else           fd = $fopen($sformatf("%s/unpack_acc.hex", `SRU_DIR), "r");
+        if (IEEE != 0) begin
+            fd = $fopen($sformatf("%s/unpack.hex", `SRU_DIR), "r");
+        end
+        else begin
+            fd = $fopen($sformatf("%s/unpack_acc.hex", `SRU_DIR), "r");
+        end
         if (fd == 0) begin
             $display("FAIL sru_unpack: no vector file -- run scripts/py/sru/unpack_vectors.py");
             $finish;
@@ -52,7 +58,9 @@ module sru_unpack_tb;
             @(posedge clk);
             #1;
             if (dout !== want[i]) begin
-                if (errs < 6) $display("  MISMATCH word %0d\n    got  %h\n    want %h", i, dout, want[i]);
+                if (errs < 6) begin
+                    $display("  MISMATCH word %0d\n    got  %h\n    want %h", i, dout, want[i]);
+                end
                 errs = errs + 1;
             end
         end

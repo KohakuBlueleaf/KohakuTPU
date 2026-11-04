@@ -40,8 +40,12 @@ module v2_fifo #(
                 h0 <= (push && count == 1) ? din : c1;
                 h1 <= (push && count == 2) ? din : c2;
             end else begin
-                if (push && count == 0) h0 <= din;
-                if (push && count == 1) h1 <= din;
+                if (push && count == 0) begin
+                    h0 <= din;
+                end
+                if (push && count == 1) begin
+                    h1 <= din;
+                end
             end
         end
         assign dout  = h0;
@@ -59,8 +63,12 @@ module v2_fifo #(
             rp <= {AW{1'b0}};
             count <= {(AW+1){1'b0}};
         end else begin
-            if (push) wp <= wp + 1'b1;
-            if (pop)  rp <= rp + 1'b1;
+            if (push) begin
+                wp <= wp + 1'b1;
+            end
+            if (pop) begin
+                rp <= rp + 1'b1;
+            end
             count <= count + (push ? 1'b1 : 1'b0) - (pop ? 1'b1 : 1'b0);
         end
     end

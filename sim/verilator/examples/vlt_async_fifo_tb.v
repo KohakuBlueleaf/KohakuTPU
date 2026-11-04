@@ -23,8 +23,12 @@ module vlt_async_fifo_tb;
     reg wr_rst = 1'b1;
 
     // 7ns vs 11ns: non-harmonic on purpose, so the crossing is a real one.
-    always #3.5 wr_clk = ~wr_clk;
-    always #5.5 rd_clk = ~rd_clk;
+    always begin
+        #3.5 wr_clk = ~wr_clk;
+    end
+    always begin
+        #5.5 rd_clk = ~rd_clk;
+    end
 
     reg  [DW-1:0] wr_data = {DW{1'b0}};
     reg           wr_en   = 1'b0;
@@ -71,7 +75,9 @@ module vlt_async_fifo_tb;
                 wr_data = sent[DW-1:0];
                 wr_en   = 1'b1;
                 sent    = sent + 1;
-                if (sent - got > max_level) max_level = sent - got;
+                if (sent - got > max_level) begin
+                    max_level = sent - got;
+                end
             end
             else begin
                 wr_en = 1'b0;
@@ -101,8 +107,9 @@ module vlt_async_fifo_tb;
             if (!rd_empty && rtick > 64 && pace(rtick + 7)) begin
                 if (rd_data !== got[DW-1:0]) begin
                     errors = errors + 1;
-                    if (errors < 8)
+                    if (errors < 8) begin
                         $display("  FAIL word %0d: got %h want %h", got, rd_data, got[DW-1:0]);
+                    end
                 end
                 got   = got + 1;
                 rd_en = 1'b1;
@@ -115,7 +122,9 @@ module vlt_async_fifo_tb;
         rd_en = 1'b0;
 
         wait (probe_t > 0.0);
-        while (rd_empty) @(negedge rd_clk);
+        while (rd_empty) begin
+            @(negedge rd_clk);
+        end
         if (rd_data !== 32'hA5A5_0001) begin
             errors = errors + 1;
             $display("  FAIL first word %h", rd_data);
@@ -131,8 +140,12 @@ module vlt_async_fifo_tb;
         // REPORTED, not asserted: peak in flight must MATCH the real cell, which
         // is what catches a shim that is a word or two shallow.
         $display("  peak occupancy %0d of %0d", max_level, DEPTH);
-        if (errors == 0) $display("  PASS -- %0d words crossed, 0 errors", got);
-        else             $display("  FAIL -- %0d words crossed, %0d errors", got, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d words crossed, 0 errors", got);
+        end
+        else begin
+            $display("  FAIL -- %0d words crossed, %0d errors", got, errors);
+        end
         $display("========================================");
         $finish;
     end

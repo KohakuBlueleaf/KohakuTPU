@@ -19,7 +19,9 @@ module sru_red_tb;
     localparam integer RMAX = 20000;
 
     reg clk = 1'b0, rst = 1'b1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg [383:0]  wd   [0:WMAX-1];
     reg          wf   [0:WMAX-1];
@@ -45,7 +47,9 @@ module sru_red_tb;
             if (got == 18) begin
                 wf[nw] = tf[0];
                 wl[nw] = tl[0];
-                for (i = 0; i < 16; i = i + 1) wd[nw][i*24 +: 24] = t[i];
+                for (i = 0; i < 16; i = i + 1) begin
+                    wd[nw][i*24 +: 24] = t[i];
+                end
                 nw = nw + 1;
             end
         end

@@ -88,7 +88,9 @@ module mm_mover_wskid_tb;
     // R passes one cycle in `period`, at `phase`: words reach the data FIFO at
     // every spacing against the write engine's bursts.
     integer period = 1, phase = 0, cyc = 0;
-    always @(posedge clk) cyc <= cyc + 1;
+    always @(posedge clk) begin
+        cyc <= cyc + 1;
+    end
     wire r_ok = (cyc % period) == phase;
     assign m_rvalid = rvalid && r_ok;
     assign rready   = m_rready && r_ok;
@@ -172,42 +174,44 @@ module mm_mover_wskid_tb;
 
         // N contiguous words to every GAP-th destination word, each its own
         // burst, under every R spacing.
-        for (period = 1; period <= 6; period = period + 1)
-        for (phase = 0; phase < period; phase = phase + 1)
-        for (gap = 2; gap <= 3; gap = gap + 1) begin
-            // A word left in the FIFO shifts every later move: reset per case.
-            resetn = 0;
-            repeat (4) @(negedge clk);
-            resetn = 1;
-            repeat (4) @(negedge clk);
-            errs0 = errors;
-            for (i = 0; i < N * 3; i = i + 1) begin
-                u_ram.mem[(DST >> 5) + i] = {8{32'hDEAD_0000}} | i;
-            end
-            hdr(1'b0, SRC, 3'd1);
-            dim(1'b0, 3'd0, N[15:0], 32'sd32);
-            hdr(1'b1, DST, 3'd1);
-            dim(1'b1, 3'd0, N[15:0], 32 * gap);
-            go;
-            for (i = 0; i < N; i = i + 1) begin
-                chk(u_ram.mem[(DST >> 5) + i * gap], {8{32'h5000_0000 | i}}, i);
-                for (k = 1; k < gap; k = k + 1) begin
-                    chk(u_ram.mem[(DST >> 5) + i * gap + k],
-                        {8{32'hDEAD_0000}} | (i * gap + k), i * gap + k);
-                end
-            end
-            $display("--- R 1 in %0d phase %0d, destination stride %0d: %0d wrong",
-                     period, phase, gap, errors - errs0);
-            // ISSUES 48: at one word every 3 cycles each chained burst writes
-            // the word before its own, so word i holds word i-1 for i >= 1.
-            if (period == 3) begin
-                checks = checks + 1;
-                if (errors - errs0 == N - 1) begin
-                    errors = errs0;
-                end
-                else begin
-                    errors = errs0 + 1;
-                    $display("  FAIL the recorded shift is not %0d words", N - 1);
+        for (period = 1; period <= 6; period = period + 1) begin
+            for (phase = 0; phase < period; phase = phase + 1) begin
+                for (gap = 2; gap <= 3; gap = gap + 1) begin
+                    // A word left in the FIFO shifts every later move: reset per case.
+                    resetn = 0;
+                    repeat (4) @(negedge clk);
+                    resetn = 1;
+                    repeat (4) @(negedge clk);
+                    errs0 = errors;
+                    for (i = 0; i < N * 3; i = i + 1) begin
+                        u_ram.mem[(DST >> 5) + i] = {8{32'hDEAD_0000}} | i;
+                    end
+                    hdr(1'b0, SRC, 3'd1);
+                    dim(1'b0, 3'd0, N[15:0], 32'sd32);
+                    hdr(1'b1, DST, 3'd1);
+                    dim(1'b1, 3'd0, N[15:0], 32 * gap);
+                    go;
+                    for (i = 0; i < N; i = i + 1) begin
+                        chk(u_ram.mem[(DST >> 5) + i * gap], {8{32'h5000_0000 | i}}, i);
+                        for (k = 1; k < gap; k = k + 1) begin
+                            chk(u_ram.mem[(DST >> 5) + i * gap + k],
+                                {8{32'hDEAD_0000}} | (i * gap + k), i * gap + k);
+                        end
+                    end
+                    $display("--- R 1 in %0d phase %0d, destination stride %0d: %0d wrong",
+                             period, phase, gap, errors - errs0);
+                    // ISSUES 48: at one word every 3 cycles each chained burst writes
+                    // the word before its own, so word i holds word i-1 for i >= 1.
+                    if (period == 3) begin
+                        checks = checks + 1;
+                        if (errors - errs0 == N - 1) begin
+                            errors = errs0;
+                        end
+                        else begin
+                            errors = errs0 + 1;
+                            $display("  FAIL the recorded shift is not %0d words", N - 1);
+                        end
+                    end
                 end
             end
         end

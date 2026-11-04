@@ -170,8 +170,12 @@ module InPortSwitch #(
             hcnt <= 2'd0; hwr <= 1'b0; hrd <= 1'b0;
         end else begin
             hcnt <= hcnt + {1'b0, load} - {1'b0, taken};
-            if (load)  hwr <= !hwr;
-            if (taken) hrd <= !hrd;
+            if (load) begin
+                hwr <= !hwr;
+            end
+            if (taken) begin
+                hrd <= !hrd;
+            end
         end
     end
 

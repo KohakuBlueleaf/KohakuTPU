@@ -7,13 +7,19 @@
 
 module kohaku_irq_req_tb;
     reg sclk = 0, dclk = 0;
-    always #3.7 sclk = ~sclk;          // the node's clock
-    always #2.0 dclk = ~dclk;          // the PCIe core's user clock
+    always begin  // the node's clock
+        #3.7 sclk = ~sclk;
+    end
+    always begin  // the PCIe core's user clock
+        #2.0 dclk = ~dclk;
+    end
 
     reg drst = 1;
     reg evt = 0;
     reg [2:0] pipe = 3'd0;              // the long route: three registers
-    always @(posedge sclk) pipe <= {pipe[1:0], evt};
+    always @(posedge sclk) begin
+        pipe <= {pipe[1:0], evt};
+    end
 
     wire req;
     reg  ack = 0;
@@ -25,10 +31,14 @@ module kohaku_irq_req_tb;
     always @(posedge dclk) begin
         req_q <= req;
         ack   <= 1'b0;
-        if (req && !req_q) reqs = reqs + 1;
+        if (req && !req_q) begin
+            reqs = reqs + 1;
+        end
         if (req) begin
             held = held + 1;
-            if (held == 4) ack <= 1'b1;
+            if (held == 4) begin
+                ack <= 1'b1;
+            end
         end else begin
             held = 0;
         end
@@ -82,8 +92,12 @@ module kohaku_irq_req_tb;
             $display("FAIL a request still up after its ack");
         end
 
-        if (errors == 0) $display("PASS kohaku_irq_req: %0d requests", reqs);
-        else $display("FAIL kohaku_irq_req: %0d errors", errors);
+        if (errors == 0) begin
+            $display("PASS kohaku_irq_req: %0d requests", reqs);
+        end
+        else begin
+            $display("FAIL kohaku_irq_req: %0d errors", errors);
+        end
         $finish;
     end
 endmodule

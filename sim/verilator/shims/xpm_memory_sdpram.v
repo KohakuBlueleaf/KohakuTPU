@@ -57,14 +57,18 @@ module xpm_memory_sdpram #(
     // the run; simulating it as though it were `read_first` would produce a
     // plausible waveform that does not match silicon.
     initial begin
-        if (ECC_MODE != "no_ecc")
+        if (ECC_MODE != "no_ecc") begin
             $fatal(1, "xpm_memory_sdpram shim: ECC_MODE=%s not modelled", ECC_MODE);
-        if (WRITE_MODE_B != "read_first")
+        end
+        if (WRITE_MODE_B != "read_first") begin
             $fatal(1, "xpm_memory_sdpram shim: WRITE_MODE_B=%s not modelled", WRITE_MODE_B);
-        if (USE_MEM_INIT != 0 || MEMORY_INIT_FILE != "none")
+        end
+        if (USE_MEM_INIT != 0 || MEMORY_INIT_FILE != "none") begin
             $fatal(1, "xpm_memory_sdpram shim: memory init not modelled");
-        if (READ_LATENCY_B > 8)
+        end
+        if (READ_LATENCY_B > 8) begin
             $fatal(1, "xpm_memory_sdpram shim: READ_LATENCY_B=%0d not modelled", READ_LATENCY_B);
+        end
     end
 
     reg [WRITE_DATA_WIDTH_A-1:0] mem [0:DEPTH-1];
@@ -94,8 +98,12 @@ module xpm_memory_sdpram #(
         else begin : g_lat
             reg [READ_DATA_WIDTH_B-1:0] q1;
             always @(posedge clkb) begin
-                if (rstb)     q1 <= {READ_DATA_WIDTH_B{1'b0}};
-                else if (enb) q1 <= mem[addrb];
+                if (rstb) begin
+                    q1 <= {READ_DATA_WIDTH_B{1'b0}};
+                end
+                else if (enb) begin
+                    q1 <= mem[addrb];
+                end
             end
             if (READ_LATENCY_B == 1) begin : g_lat1
                 assign doutb = q1;
@@ -108,10 +116,14 @@ module xpm_memory_sdpram #(
                 integer s;
                 always @(posedge clkb) begin
                     if (rstb) begin
-                        for (s = 1; s < READ_LATENCY_B; s = s + 1) qn[s] <= {READ_DATA_WIDTH_B{1'b0}};
+                        for (s = 1; s < READ_LATENCY_B; s = s + 1) begin
+                            qn[s] <= {READ_DATA_WIDTH_B{1'b0}};
+                        end
                     end else if (regceb) begin
                         qn[1] <= q1;
-                        for (s = 2; s < READ_LATENCY_B; s = s + 1) qn[s] <= qn[s-1];
+                        for (s = 2; s < READ_LATENCY_B; s = s + 1) begin
+                            qn[s] <= qn[s-1];
+                        end
                     end
                 end
                 assign doutb = qn[READ_LATENCY_B-1];

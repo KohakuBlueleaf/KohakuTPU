@@ -593,26 +593,46 @@ module vec_cu #(
         if (u_resetn) begin
             pq_cyc <= pq_cyc + 32'd1;
             if (rd_req_valid && !rd_req_ready && !rd_go) begin
-                if (send_valid && !send_ready) pq_link <= pq_link + 32'd1;
-                else if (fq_full) pq_fq <= pq_fq + 32'd1;
-                else pq_busy <= pq_busy + 32'd1;
+                if (send_valid && !send_ready) begin
+                    pq_link <= pq_link + 32'd1;
+                end
+                else if (fq_full) begin
+                    pq_fq <= pq_fq + 32'd1;
+                end
+                else begin
+                    pq_busy <= pq_busy + 32'd1;
+                end
             end
-            if (rd_req_valid && !rd_req_ready && (pq_t0 == 32'd0)) pq_t0 <= pq_cyc;
+            if (rd_req_valid && !rd_req_ready && (pq_t0 == 32'd0)) begin
+                pq_t0 <= pq_cyc;
+            end
             if (rd_req_ready) begin
                 pq_t0 <= 32'd0;
                 pq_n  <= pq_n + 32'd1;
-                if (pq_n < 32'd12) $display("VCUREQ %m t %0d wait %0d fq %0d", pq_cyc,
-                                            pq_cyc - pq_t0, fq_wp - fq_rp);
+                if (pq_n < 32'd12) begin
+                    $display("VCUREQ %m t %0d wait %0d fq %0d", pq_cyc,
+                             pq_cyc - pq_t0, fq_wp - fq_rp);
+                end
             end
-            if (send_valid && send_ready) pq_out <= pq_out + 32'd1;
-            if (recv_valid && recv_ready) pq_in <= pq_in + 32'd1;
+            if (send_valid && send_ready) begin
+                pq_out <= pq_out + 32'd1;
+            end
+            if (recv_valid && recv_ready) begin
+                pq_in <= pq_in + 32'd1;
+            end
             pq_h  <= halted;
             pq_rw <= (cst == C_RUNW);
-            if (start && (pq_runs < 32'd4096)) $display("VRUN %m start %0d", pq_cyc);
-            if (halted && !pq_h && (pq_runs < 32'd4096)) $display("VRUN %m halt %0d", pq_cyc);
+            if (start && (pq_runs < 32'd4096)) begin
+                $display("VRUN %m start %0d", pq_cyc);
+            end
+            if (halted && !pq_h && (pq_runs < 32'd4096)) begin
+                $display("VRUN %m halt %0d", pq_cyc);
+            end
             if (exec_done && pq_rw) begin
                 pq_runs <= pq_runs + 32'd1;
-                if (pq_runs < 32'd4096) $display("VRUN %m done %0d", pq_cyc);
+                if (pq_runs < 32'd4096) begin
+                    $display("VRUN %m done %0d", pq_cyc);
+                end
             end
         end
     end

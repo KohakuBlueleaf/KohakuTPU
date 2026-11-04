@@ -9,7 +9,9 @@ module kht_score_tb;
     localparam integer WID   = 4;
 
     reg clk = 1'b0, resetn = 1'b0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg  [WID-1:0] chk_wave, set_wave, clr_wave;
     reg  [4:0]     chk_rs1, chk_rs2, chk_rd, set_rd, clr_rd;
@@ -32,7 +34,9 @@ module kht_score_tb;
     reg want_hit, want_any;
 
     initial begin
-        for (i = 0; i < WAVES; i = i + 1) ref_p[i] = 32'd0;
+        for (i = 0; i < WAVES; i = i + 1) begin
+            ref_p[i] = 32'd0;
+        end
         set_v = 0; clr_v = 0; chk_use = 0;
         chk_wave = 0; chk_rs1 = 0; chk_rs2 = 0; chk_rd = 0;
         set_wave = 0; set_rd = 0; clr_wave = 0; clr_rd = 0;
@@ -57,8 +61,12 @@ module kht_score_tb;
             clr_rd   = (($random & 3) == 0) ? $random : {$random} % 6;
             // A correct core never sets a pending bit or sets and clears one bit
             // together; the stimulus obeys the same rule the asserts state.
-            if (set_v && ref_p[set_wave][set_rd]) set_v = 0;
-            if (set_v && clr_v && (set_wave == clr_wave) && (set_rd == clr_rd)) clr_v = 0;
+            if (set_v && ref_p[set_wave][set_rd]) begin
+                set_v = 0;
+            end
+            if (set_v && clr_v && (set_wave == clr_wave) && (set_rd == clr_rd)) begin
+                clr_v = 0;
+            end
             #0.5;
             want_hit = (chk_use[0] && chk_rs1 != 0 && ref_p[chk_wave][chk_rs1])
                     || (chk_use[1] && chk_rs2 != 0 && ref_p[chk_wave][chk_rs2])
@@ -67,39 +75,55 @@ module kht_score_tb;
             hits = hits + want_hit;
             if (hit !== want_hit) begin
                 errors = errors + 1;
-                if (errors < 10) $display("  FAIL hit %b want %b (wave %0d rs %0d/%0d rd %0d use %b)",
-                                          hit, want_hit, chk_wave, chk_rs1, chk_rs2, chk_rd, chk_use);
+                if (errors < 10) begin
+                    $display("  FAIL hit %b want %b (wave %0d rs %0d/%0d rd %0d use %b)",
+                             hit, want_hit, chk_wave, chk_rs1, chk_rs2, chk_rd, chk_use);
+                end
             end
             for (i = 0; i < WAVES; i = i + 1) begin
                 if (woke[i] !== (clr_v && clr_wave == i)) begin
                     errors = errors + 1;
-                    if (errors < 10) $display("  FAIL woke[%0d] %b", i, woke[i]);
+                    if (errors < 10) begin
+                        $display("  FAIL woke[%0d] %b", i, woke[i]);
+                    end
                 end
                 if (wpend[i] !== (ref_p[i] != 0)) begin
                     errors = errors + 1;
-                    if (errors < 10) $display("  FAIL wpend[%0d] %b", i, wpend[i]);
+                    if (errors < 10) begin
+                        $display("  FAIL wpend[%0d] %b", i, wpend[i]);
+                    end
                 end
             end
             @(posedge clk);
-            if (clr_v) ref_p[clr_wave][clr_rd] = 1'b0;
-            if (set_v && set_rd != 0) ref_p[set_wave][set_rd] = 1'b1;
+            if (clr_v) begin
+                ref_p[clr_wave][clr_rd] = 1'b0;
+            end
+            if (set_v && set_rd != 0) begin
+                ref_p[set_wave][set_rd] = 1'b1;
+            end
             #1;
             want_any = 0;
-            for (i = 0; i < WAVES; i = i + 1) if (ref_p[i] != 0) want_any = 1;
+            for (i = 0; i < WAVES; i = i + 1) begin if (ref_p[i] != 0) begin want_any = 1; end end
             @(posedge clk);
             #0.5;
             checks = checks + 1;
             if (any !== want_any) begin
                 errors = errors + 1;
-                if (errors < 10) $display("  FAIL any %b want %b", any, want_any);
+                if (errors < 10) begin
+                    $display("  FAIL any %b want %b", any, want_any);
+                end
             end
             set_v = 0; clr_v = 0;
         end
 
         $display("    %0d checks found a pending register", hits);
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

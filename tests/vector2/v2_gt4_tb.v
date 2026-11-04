@@ -8,7 +8,9 @@
 module v2_gt4_tb;
     localparam integer N = 6000;            // input words
     reg clk = 0, rst = 1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg  [255:0] wd   [0:N-1];
     reg          wg   [0:N-1];              // word belongs to a GT4 group
@@ -34,7 +36,9 @@ module v2_gt4_tb;
         while (i < N) begin
             if ((($random & 3) != 0) && (i + 4 <= N)) begin
                 for (w = 0; w < 4; w = w + 1) begin
-                    for (k = 0; k < 8; k = k + 1) wd[i+w][k*32 +: 32] = $random;
+                    for (k = 0; k < 8; k = k + 1) begin
+                        wd[i+w][k*32 +: 32] = $random;
+                    end
                     wg[i+w] = 1'b1;
                 end
                 for (gr = 0; gr < 4; gr = gr + 1) begin
@@ -45,7 +49,9 @@ module v2_gt4_tb;
                 end
                 i = i + 4;
             end else begin
-                for (k = 0; k < 8; k = k + 1) wd[i][k*32 +: 32] = $random;
+                for (k = 0; k < 8; k = k + 1) begin
+                    wd[i][k*32 +: 32] = $random;
+                end
                 wg[i]   = 1'b0;
                 want[i] = wd[i];
                 wtag[i] = i;
@@ -80,7 +86,9 @@ module v2_gt4_tb;
             n_out <= 0; errs <= 0;
         end else if (out_valid) begin
             if (out_data !== want[n_out] || out_tag !== wtag[n_out]) begin
-                if (errs < 8) $display("MISMATCH out %0d tag %0d want tag %0d", n_out, out_tag, wtag[n_out]);
+                if (errs < 8) begin
+                    $display("MISMATCH out %0d tag %0d want tag %0d", n_out, out_tag, wtag[n_out]);
+                end
                 errs <= errs + 1;
             end
             n_out <= n_out + 1;
@@ -92,10 +100,12 @@ module v2_gt4_tb;
         rst = 0;
         wait (n_out == N || $time > 200000);
         repeat (4) @(posedge clk);
-        if (n_out == N && errs == 0 && !busy)
+        if (n_out == N && errs == 0 && !busy) begin
             $display("@@@ PASS v2_gt4 %0d words", N);
-        else
+        end
+        else begin
             $display("@@@ FAIL v2_gt4 out %0d of %0d errors %0d busy %0d", n_out, N, errs, busy);
+        end
         $finish;
     end
 endmodule

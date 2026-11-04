@@ -20,7 +20,9 @@ module kht_req_tb;
     localparam [3:0] T_RD = 4'h0, T_WR = 4'h1, T_WD = 4'h4;
 
     reg clk = 1'b0, resetn = 1'b0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg          rd_v = 0, wr_v = 0;
     reg  [25:0]  rd_line = 0, wr_line = 0;
@@ -52,7 +54,9 @@ module kht_req_tb;
     task fail(input [8*72-1:0] what);
         begin
             errors = errors + 1;
-            if (errors < 12) $display("  FAIL %0t %0s", $time, what);
+            if (errors < 12) begin
+                $display("  FAIL %0t %0s", $time, what);
+            end
         end
     endtask
 
@@ -72,7 +76,9 @@ module kht_req_tb;
     wire        f_lst = send_flit[259];
     wire [25:0] f_ln  = send_flit[255-9 -: 26];
 
-    always @(posedge clk) now <= now + 1;
+    always @(posedge clk) begin
+        now <= now + 1;
+    end
 
     // ---- the network side: take flits, check them, schedule answers ----
     integer t, j;
@@ -85,31 +91,47 @@ module kht_req_tb;
         if (send_valid && send_ready) begin
             checks = checks + 1;
             if (want_data) begin
-                if (f_ty != T_WD || f_txn != data_txn || !f_lst) fail("write data does not follow its descriptor");
+                if (f_ty != T_WD || f_txn != data_txn || !f_lst) begin
+                    fail("write data does not follow its descriptor");
+                end
                 want_data = 0;
             end
             else if (f_ty == T_WR) begin
-                if (m_open[f_txn]) fail("write txn reused while open");
-                for (j = 0; j < 256; j = j + 1)
-                    if (m_open[j] && m_line[j] == f_ln) fail("two open writes carry one line");
+                if (m_open[f_txn]) begin
+                    fail("write txn reused while open");
+                end
+                for (j = 0; j < 256; j = j + 1) begin
+                    if (m_open[j] && m_line[j] == f_ln) begin
+                        fail("two open writes carry one line");
+                    end
+                end
                 m_open[f_txn] = 1'b1;
                 m_line[f_txn] = f_ln;
                 m_due[f_txn]  = now + 4 + ({$random} % 120);
                 n_open = n_open + 1;
-                if (n_open > peak) peak = n_open;
-                if (n_open > WN) fail("more writes un-acknowledged than WR_OUT");
+                if (n_open > peak) begin
+                    peak = n_open;
+                end
+                if (n_open > WN) begin
+                    fail("more writes un-acknowledged than WR_OUT");
+                end
                 want_data = 1;
                 data_txn  = f_txn;
                 wr_sent   = wr_sent + 1;
             end
             else if (f_ty == T_RD) begin
-                for (j = 0; j < 256; j = j + 1)
-                    if (m_open[j] && m_line[j] == f_ln) fail("fill sent while a write of its line is un-acknowledged");
+                for (j = 0; j < 256; j = j + 1) begin
+                    if (m_open[j] && m_line[j] == f_ln) begin
+                        fail("fill sent while a write of its line is un-acknowledged");
+                    end
+                end
                 rd_pend[f_txn] = 1'b1;
                 rd_due[f_txn]  = now + 4 + ({$random} % 40);
                 rd_sent = rd_sent + 1;
             end
-            else fail("unknown flit type");
+            else begin
+                fail("unknown flit type");
+            end
         end
 
         // One answer a cycle, the earliest due first in index order.
@@ -141,7 +163,9 @@ module kht_req_tb;
         cnt_out = cnt_out + (wr_v && wr_ready) - rx_wr_ack;
         #0.1;
         checks = checks + 1;
-        if (wr_out != cnt_out) fail("wr_out does not count the open writes");
+        if (wr_out != cnt_out) begin
+            fail("wr_out does not count the open writes");
+        end
     end
 
     // ---- the LSU side: random reads and writes over a small pool of lines ----
@@ -178,15 +202,27 @@ module kht_req_tb;
         wait ((n_rd >= NREQ && n_wr >= NREQ) || now > 2000000);
         repeat (200) @(posedge clk);
         checks = checks + 4;
-        if (n_rd < NREQ || n_wr < NREQ) fail("requests never taken");
-        if (wr_acked != wr_sent) fail("writes never acknowledged");
-        if (rd_answered != rd_sent) fail("fills never answered");
-        if (peak != WN) fail("WR_OUT writes were never in flight at once");
+        if (n_rd < NREQ || n_wr < NREQ) begin
+            fail("requests never taken");
+        end
+        if (wr_acked != wr_sent) begin
+            fail("writes never acknowledged");
+        end
+        if (rd_answered != rd_sent) begin
+            fail("fills never answered");
+        end
+        if (peak != WN) begin
+            fail("WR_OUT writes were never in flight at once");
+        end
         $display("    %0d fills, %0d writes, peak %0d un-acknowledged (WR_OUT %0d)",
                  rd_sent, wr_sent, peak, WN);
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

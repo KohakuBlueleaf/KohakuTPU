@@ -11,7 +11,9 @@ module gate_v2_lanes_tb;
     localparam integer RW = 5, RA = RW + 3;
 
     reg clk = 1'b0;
-    always #1 clk = ~clk;
+    always begin
+        #1 clk = ~clk;
+    end
 
     reg          rst = 1'b1;
     reg          iss_valid = 0, iss_last = 0, iss_xc = 0, iss_wr = 0, iss_cmp = 0;
@@ -55,8 +57,12 @@ module gate_v2_lanes_tb;
 
     always @(posedge clk) begin
         cyc <= cyc + 1;
-        if (!u_g4.u_gate.run_l) withheld <= withheld + 1;
-        if (cyc == 20) rst <= 1'b0;
+        if (!u_g4.u_gate.run_l) begin
+            withheld <= withheld + 1;
+        end
+        if (cyc == 20) begin
+            rst <= 1'b0;
+        end
         if (left == 0) begin
             busy <= !busy;
             left <= busy ? 1 + ($unsigned($random) % 1500) : 1 + ($unsigned($random) % 80);
@@ -74,7 +80,9 @@ module gate_v2_lanes_tb;
             {iss_sa, iss_sb, iss_sc, iss_pr, iss_pm, iss_xm, iss_xk} <= $random;
             iss_ka <= $random; iss_kb <= $random; iss_kc <= $random;
             iss_tmask <= ($unsigned($random) % 3) ? 16'hFFFF : $random;
-            for (k = 0; k < 12; k = k + 1) uw_wd[k*32 +: 32] <= $random;
+            for (k = 0; k < 12; k = k + 1) begin
+                uw_wd[k*32 +: 32] <= $random;
+            end
         end else begin
             iss_valid <= 1'b0;
             uw_we     <= 1'b0;
@@ -89,15 +97,20 @@ module gate_v2_lanes_tb;
                 endcase
             end
         end
-        if (cyc > 30000 && cyc < 30010) rst <= 1'b1;
-        if (cyc == 30010) rst <= 1'b0;
+        if (cyc > 30000 && cyc < 30010) begin
+            rst <= 1'b1;
+        end
+        if (cyc == 30010) begin
+            rst <= 1'b0;
+        end
     end
 
     always @(negedge clk) begin
         if (cyc > 40 && (o4_r !== o4_g || o2_r !== o2_g)) begin
-            if (mism < 5)
+            if (mism < 5) begin
                 $display("MISMATCH cyc=%0d c4 %b c2 %b run4 %b run2 %b", cyc,
                          o4_r !== o4_g, o2_r !== o2_g, u_g4.u_gate.run_l, u_g2.u_gate.run_l);
+            end
             mism <= mism + 1;
         end
         if (cyc == CYCLES) begin

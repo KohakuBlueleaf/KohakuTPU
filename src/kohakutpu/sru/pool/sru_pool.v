@@ -147,7 +147,9 @@ module sru_pool #(
     always @(posedge clk) begin
         if (ws) begin
             msrl[0] <= take_meta;
-            for (q = 1; q < 32; q = q + 1) msrl[q] <= msrl[q-1];
+            for (q = 1; q < 32; q = q + 1) begin
+                msrl[q] <= msrl[q-1];
+            end
         end
         if (rst) begin
             mvl <= 32'd0;
@@ -203,7 +205,9 @@ module sru_pool #(
             xcnt <= 5'd0;
         end else begin
             wsd <= {wsd[2:0], ws};
-            if (wsd[3]) xcnt <= xcnt + 5'd1;
+            if (wsd[3]) begin
+                xcnt <= xcnt + 5'd1;
+            end
         end
     end
     wire       xsh  = wsd[3];
@@ -220,7 +224,12 @@ module sru_pool #(
         ow4 <= ow3;
         e4  <= e3;
         l4  <= l3;
-        if (rst) mt4 <= 14'd0; else mt4 <= mt3;
+        if (rst) begin
+            mt4 <= 14'd0;
+        end
+        else begin
+            mt4 <= mt3;
+        end
     end
     wire        k4    = (HAS_FN != 0) & `SRU_O_KIND(ow4);
     wire [1:0]  asel4 = `SRU_O_A(ow4);
@@ -242,7 +251,9 @@ module sru_pool #(
             always @(posedge clk) begin
                 if (xsh) begin
                     xs[0] <= x4[(gl + F*ge)*24 +: 24];
-                    for (q = 1; q < 32; q = q + 1) xs[q] <= xs[q-1];
+                    for (q = 1; q < 32; q = q + 1) begin
+                        xs[q] <= xs[q-1];
+                    end
                 end
             end
             assign xq[ge] = xs[xa3];
@@ -251,7 +262,9 @@ module sru_pool #(
                 always @(posedge clk) begin
                     if (xsh) begin
                         bs[0] <= b4[(gl + F*ge)*24 +: 24];
-                        for (q = 1; q < 32; q = q + 1) bs[q] <= bs[q-1];
+                        for (q = 1; q < 32; q = q + 1) begin
+                            bs[q] <= bs[q-1];
+                        end
                     end
                 end
                 assign bq[ge] = bs[xa3];
@@ -265,7 +278,9 @@ module sru_pool #(
         (* shreg_extract = "no" *) reg [23:0] xr, br, h0r, h1r, rbr, rcr;
         always @(posedge clk) begin
             h0[0] <= lo[gl];
-            for (q = 1; q < 32; q = q + 1) h0[q] <= h0[q-1];
+            for (q = 1; q < 32; q = q + 1) begin
+                h0[q] <= h0[q-1];
+            end
             // c3 -> c4
             xr  <= xq[e3];
             br  <= bq[e3];
@@ -277,11 +292,15 @@ module sru_pool #(
             (* srl_style = "srl" *) reg [23:0] h1 [0:31];
             always @(posedge clk) begin
                 h1[0] <= lo[gl];
-                for (q = 1; q < 32; q = q + 1) h1[q] <= h1[q-1];
+                for (q = 1; q < 32; q = q + 1) begin
+                    h1[q] <= h1[q-1];
+                end
                 h1r <= h1[d1_3];
             end
         end else begin : g_noh1
-            always @(*) h1r = h0r;
+            always @(*) begin
+                h1r = h0r;
+            end
         end
         assign xr4[gl] = xr;
 
@@ -376,7 +395,12 @@ module sru_pool #(
     // the direct issue's result: lane 0, OUT_AT cycles on
     reg [OUT_AT-1:0] dvl;
     always @(posedge clk) begin
-        if (rst) dvl <= {OUT_AT{1'b0}}; else dvl <= {dvl[OUT_AT-2:0], dir_valid};
+        if (rst) begin
+            dvl <= {OUT_AT{1'b0}};
+        end
+        else begin
+            dvl <= {dvl[OUT_AT-2:0], dir_valid};
+        end
     end
     assign dir_ov  = dvl[OUT_AT-1];
     assign dir_out = lo[0];
@@ -387,8 +411,15 @@ module sru_pool #(
     reg [OUT_AT-1:0] ovl;
     always @(posedge clk) begin
         od[5] <= {l4, e4, mt4[3:0]};
-        for (q = 6; q <= OUT_AT + 4; q = q + 1) od[q] <= od[q-1];
-        if (rst) ovl <= {OUT_AT{1'b0}}; else ovl <= {ovl[OUT_AT-2:0], mt4[13]};
+        for (q = 6; q <= OUT_AT + 4; q = q + 1) begin
+            od[q] <= od[q-1];
+        end
+        if (rst) begin
+            ovl <= {OUT_AT{1'b0}};
+        end
+        else begin
+            ovl <= {ovl[OUT_AT-2:0], mt4[13]};
+        end
     end
     wire [MW+4:0] o20  = od[OUT_AT + 4];
     wire          ol20 = o20[MW+4];

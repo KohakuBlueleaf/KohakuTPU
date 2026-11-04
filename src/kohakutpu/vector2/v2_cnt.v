@@ -71,10 +71,12 @@ module v2_cnt #(
     // The counts as the core sees them, for the core's end-of-run checks.
     reg [W-1:0] sh [0:N-1];
     integer si;
-    initial for (si = 0; si < N; si = si + 1) sh[si] = {W{1'b0}};
+    initial for (si = 0; si < N; si = si + 1) begin sh[si] = {W{1'b0}}; end
     always @(posedge clk) begin
         if (PRIM == "ff" && rst) begin
-            for (si = 0; si < N; si = si + 1) sh[si] <= {W{1'b0}};
+            for (si = 0; si < N; si = si + 1) begin
+                sh[si] <= {W{1'b0}};
+            end
         end else if (PRIM != "ff" && clr) begin
             sh[clr_a] <= {W{1'b0}};
         end else if (inc) begin

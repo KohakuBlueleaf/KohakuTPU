@@ -269,14 +269,20 @@ module mx_quant #(
             pkw_d0    <= pkw;
             pkw_d     <= pkw_d0;
             if ((DBUF != 0) && to_drain) begin
-                for (ci = 0; ci < 128; ci = ci + 1) srcp[ci] <= src[ci];
+                for (ci = 0; ci < 128; ci = ci + 1) begin
+                    srcp[ci] <= src[ci];
+                end
             end
             if (pk == PK_IDLE) begin
                 // full is set with the last beat; its fold lands a cycle later
-                if (full) pk <= PK_DRAIN;
+                if (full) begin
+                    pk <= PK_DRAIN;
+                end
             end else if (pk == PK_DRAIN) begin
                 // one cycle for the last beat's fold to land in `acc`
-                for (ci = 0; ci < 8; ci = ci + 1) accp[ci] <= acc[ci];
+                for (ci = 0; ci < 8; ci = ci + 1) begin
+                    accp[ci] <= acc[ci];
+                end
                 pk <= PK_NORM;
             end else if (pk == PK_NORM) begin
                 // Renormalise a subnormal peak into [1024,2048).

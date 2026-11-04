@@ -117,18 +117,28 @@ module mm_fill_rate_tb;
             first_mag <= 0; last_mag <= 0; w_beats <= 0; w_first <= 0; w_last <= 0;
         end else begin
             if (mag_go) begin
-                if (mag_sent == 0) first_mag <= cyc;
+                if (mag_sent == 0) begin
+                    first_mag <= cyc;
+                end
                 mag_sent <= mag_sent + 1;
                 last_mag <= cyc;
             end
             if (w_go) begin
-                if (w_beats == 0) w_first <= cyc;
+                if (w_beats == 0) begin
+                    w_first <= cyc;
+                end
                 w_beats <= w_beats + 1;
                 w_last <= cyc;
             end
-            if (dut.mag_ov && dut.mag_ob) mag_held <= mag_held + 1;
-            if (dut.u_cluster.noc_in_valid && !dut.u_cluster.noc_in_busy) cu_took <= cu_took + 1;
-            if (dut.u_cluster.noc_in_valid && dut.u_cluster.noc_in_busy) cu_held <= cu_held + 1;
+            if (dut.mag_ov && dut.mag_ob) begin
+                mag_held <= mag_held + 1;
+            end
+            if (dut.u_cluster.noc_in_valid && !dut.u_cluster.noc_in_busy) begin
+                cu_took <= cu_took + 1;
+            end
+            if (dut.u_cluster.noc_in_valid && dut.u_cluster.noc_in_busy) begin
+                cu_held <= cu_held + 1;
+            end
         end
     end
 
@@ -281,8 +291,12 @@ module mm_fill_rate_tb;
         repeat (50) @(negedge clk);
         timed_drain(40'h1_0000);
 
-        if (errors == 0) $display("PASS -- fill and drain at their bounds");
-        else $display("FAIL -- %0d errors", errors);
+        if (errors == 0) begin
+            $display("PASS -- fill and drain at their bounds");
+        end
+        else begin
+            $display("FAIL -- %0d errors", errors);
+        end
         $finish;
     end
 endmodule

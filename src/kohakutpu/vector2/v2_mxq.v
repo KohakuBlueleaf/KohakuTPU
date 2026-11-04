@@ -263,7 +263,9 @@ module v2_mxq #(
     end
 
     always @(posedge clk) begin
-        if (q2_last) e_sf <= {sfield[0], sfield[1], sfield[2], sfield[3]};
+        if (q2_last) begin
+            e_sf <= {sfield[0], sfield[1], sfield[2], sfield[3]};
+        end
     end
 
     always @(posedge clk) begin
@@ -275,7 +277,9 @@ module v2_mxq #(
                 e_act <= 1'b1; e_w <= 2'd0;
             end else if (e_act) begin
                 e_w <= e_w + 2'd1;
-                if (e_w == 2'd3) e_act <= 1'b0;
+                if (e_w == 2'd3) begin
+                    e_act <= 1'b0;
+                end
             end
         end
         out_word <= nw_v;

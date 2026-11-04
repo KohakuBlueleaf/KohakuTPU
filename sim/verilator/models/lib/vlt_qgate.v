@@ -35,7 +35,9 @@ module vlt_qgate #(
     wire run_c = !(same && idle && (quiet == ST[7:0]));
 
     always_latch begin
-        if (!clk) run_l = run_c;
+        if (!clk) begin
+            run_l = run_c;
+        end
     end
 
     always @(posedge clk) begin

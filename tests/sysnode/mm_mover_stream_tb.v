@@ -26,9 +26,13 @@ module mm_mover_stream_tb;
     localparam integer  NBIG  = 1024;
 
     reg clk = 1'b0, resetn = 1'b0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
     integer cyc = 0;
-    always @(posedge clk) cyc <= cyc + 1;
+    always @(posedge clk) begin
+        cyc <= cyc + 1;
+    end
 
     // ---------------------------------------------------------------- DUT
     reg         cfg_en = 1'b0;
@@ -288,11 +292,15 @@ module mm_mover_stream_tb;
         if (resetn) begin
             if (pa_aw && !(awvalid && (awaddr == pa_awaddr) && (awlen == pa_awlen))) begin
                 n_proto = n_proto + 1;
-                if (n_proto <= 8) $display("  ERROR AW changed before acceptance at cycle %0d", cyc);
+                if (n_proto <= 8) begin
+                    $display("  ERROR AW changed before acceptance at cycle %0d", cyc);
+                end
             end
             if (pa_ar && !(arvalid && (araddr == pa_araddr) && (arlen == pa_arlen))) begin
                 n_proto = n_proto + 1;
-                if (n_proto <= 8) $display("  ERROR AR changed before acceptance at cycle %0d", cyc);
+                if (n_proto <= 8) begin
+                    $display("  ERROR AR changed before acceptance at cycle %0d", cyc);
+                end
             end
             if (pa_w && !(wvalid && (wdata === pa_wdata) && (wlast == pa_wlast))) begin
                 n_proto = n_proto + 1;
@@ -314,12 +322,16 @@ module mm_mover_stream_tb;
             if (awvalid && awready
                 && (({1'b0, awaddr[11:5]} + {1'b0, awlen} + 9'd1) > 9'd128)) begin
                 n_proto = n_proto + 1;
-                if (n_proto <= 8) $display("  ERROR AW crosses 4 KB: %h len %0d", awaddr, awlen);
+                if (n_proto <= 8) begin
+                    $display("  ERROR AW crosses 4 KB: %h len %0d", awaddr, awlen);
+                end
             end
             if (arvalid && arready
                 && (({1'b0, araddr[11:5]} + {1'b0, arlen} + 9'd1) > 9'd128)) begin
                 n_proto = n_proto + 1;
-                if (n_proto <= 8) $display("  ERROR AR crosses 4 KB: %h len %0d", araddr, arlen);
+                if (n_proto <= 8) begin
+                    $display("  ERROR AR crosses 4 KB: %h len %0d", araddr, arlen);
+                end
             end
             // A pop the FIFO cannot honour: the beat repeats the word presented
             // and the counters lose one the FIFO still holds.
@@ -349,8 +361,12 @@ module mm_mover_stream_tb;
                 end
             end
             // Bubbles inside a burst: legal AXI, counted for the report.
-            if (w_open && !wvalid) n_bub = n_bub + 1;
-            if (wvalid && wready) w_open <= !wlast;
+            if (w_open && !wvalid) begin
+                n_bub = n_bub + 1;
+            end
+            if (wvalid && wready) begin
+                w_open <= !wlast;
+            end
             pa_aw <= awvalid && !awready; pa_awaddr <= awaddr; pa_awlen <= awlen;
             pa_ar <= arvalid && !arready; pa_araddr <= araddr; pa_arlen <= arlen;
             pa_w  <= wvalid && !wready;   pa_wdata  <= wdata;  pa_wlast <= wlast;
@@ -389,7 +405,9 @@ module mm_mover_stream_tb;
     task wr(input [7:0] ad, input [63:0] d);
         begin
             @(negedge clk);
-            while (!cfg_room) @(negedge clk);
+            while (!cfg_room) begin
+                @(negedge clk);
+            end
             cfg_en = 1'b1; cfg_addr = ad; cfg_data = d;
             @(negedge clk);
             cfg_en = 1'b0;
@@ -467,7 +485,9 @@ module mm_mover_stream_tb;
     // An index list of `n` entries at `ib`, u32 or fp32.
     task put_index(input [AW-1:0] ib, input integer r, input integer v, input fp);
         begin
-            if ((r % 8) == 0) mem[widx(ib) + r / 8] = {DW{1'b0}};
+            if ((r % 8) == 0) begin
+                mem[widx(ib) + r / 8] = {DW{1'b0}};
+            end
             mem[widx(ib) + r / 8][(r % 8) * 32 +: 32] = fp ? f32(v) : v;
         end
     endtask
@@ -559,7 +579,9 @@ module mm_mover_stream_tb;
     task big_scatter(input integer n);
         integer r, j, t;
         begin
-            for (r = 0; r < n; r = r + 1) perm[r] = r;
+            for (r = 0; r < n; r = r + 1) begin
+                perm[r] = r;
+            end
             for (r = n - 1; r > 0; r = r - 1) begin
                 j = rnd(r + 1);
                 t = perm[r]; perm[r] = perm[j]; perm[j] = t;
@@ -663,7 +685,9 @@ module mm_mover_stream_tb;
         c1 = n_dbad;
         short_batch(1, 1'b0);
         idle_clean("canary");
-        if (n_dbad != c1) $display("  FAIL the canary gather is wrong: a word was left behind");
+        if (n_dbad != c1) begin
+            $display("  FAIL the canary gather is wrong: a word was left behind");
+        end
 
         errors = errors + n_dbad + n_werr + n_proto + n_uf + n_offer;
         $display("    %0d R beats, %0d W beats, %0d W bubbles inside bursts", n_rbeat, n_wbeat, n_bub);
@@ -671,8 +695,12 @@ module mm_mover_stream_tb;
                  n_dbad, n_werr, n_offer);
         $display("    %0d empty-FIFO pops, %0d protocol errors", n_uf, n_proto);
         $display("========================================");
-        if (errors == 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else             $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

@@ -73,7 +73,9 @@ module mx_acu_pump_oreg_pair #(
             end
             anchor = 8'd112 + ($random(seed) & 8'h0F);
             single = ($random(seed) & 7) == 0;
-            for (j = 0; j < TW / 32; j = j + 1) peer_in[j*32 +: 32] = $random(seed);
+            for (j = 0; j < TW / 32; j = j + 1) begin
+                peer_in[j*32 +: 32] = $random(seed);
+            end
         end
     endtask
 
@@ -91,11 +93,15 @@ module mx_acu_pump_oreg_pair #(
             // prefer an address whose contract window ends exactly now
             pick = -1;
             for (k = 0; k < NA; k = k + 1) begin
-                if (pick < 0 && opened[k] && cyc - last[k] == REUSE) pick = k;
+                if (pick < 0 && opened[k] && cyc - last[k] == REUSE) begin
+                    pick = k;
+                end
             end
             if (pick < 0 && ($random(seed) & 1)) begin
                 k = {$random(seed)} % NA;
-                if (cyc - last[k] >= REUSE) pick = k;
+                if (cyc - last[k] >= REUSE) begin
+                    pick = k;
+                end
             end
             if (pick >= 0 && cmds < N) begin
                 cmd_valid = 1;
@@ -116,11 +122,15 @@ module mx_acu_pump_oreg_pair #(
                     endcase
                 end
                 le = (op == 3'd1) && ($random(seed) & 1);
-                if (cyc - last[pick] == REUSE) tight = tight + 1;
+                if (cyc - last[pick] == REUSE) begin
+                    tight = tight + 1;
+                end
                 last[pick] = cyc;
                 cmds = cmds + 1;
             end
-            if (cmds >= N && !b0 && !b1) done = 1;
+            if (cmds >= N && !b0 && !b1) begin
+                done = 1;
+            end
         end
     end
 
@@ -128,13 +138,17 @@ module mx_acu_pump_oreg_pair #(
 
     always @(posedge clk) begin
         if (go && !rst) begin
-            if (ev0) emits = emits + 1;
+            if (ev0) begin
+                emits = emits + 1;
+            end
             if ((pv0 !== pv1) || (ev0 !== ev1) || (b0 !== b1)
                 || (pv0 && (po0 !== po1)) || (ev0 && (eo0 !== eo1))) begin
                 errs = errs + 1;
-                if (errs <= 6) $display("  FAIL %0s cyc %0d: peer %b/%b emit %b/%b busy %b/%b data peer %0s emit %0s",
-                                        PRIM, cyc, pv0, pv1, ev0, ev1, b0, b1,
-                                        (po0 === po1) ? "same" : "DIFF", (eo0 === eo1) ? "same" : "DIFF");
+                if (errs <= 6) begin
+                    $display("  FAIL %0s cyc %0d: peer %b/%b emit %b/%b busy %b/%b data peer %0s emit %0s",
+                             PRIM, cyc, pv0, pv1, ev0, ev1, b0, b1,
+                             (po0 === po1) ? "same" : "DIFF", (eo0 === eo1) ? "same" : "DIFF");
+                end
             end
         end
     end
@@ -142,7 +156,9 @@ endmodule
 
 module mx_acu_pump_oreg_tb;
     reg clk = 0, rst = 1, go = 0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     wire [31:0] eb, cb, tb, mb, eu, cu, tu, mu;
     wire        db, du;
@@ -160,10 +176,12 @@ module mx_acu_pump_oreg_tb;
         repeat (40) @(posedge clk);
         $display("  block: %0d commands, %0d at exactly REUSE_MIN, %0d emits, %0d mismatches", cb, tb, mb, eb);
         $display("  ultra: %0d commands, %0d at exactly REUSE_MIN, %0d emits, %0d mismatches", cu, tu, mu, eu);
-        if (eb == 0 && eu == 0 && tb > 1000 && tu > 1000 && mb > 1000 && mu > 1000)
+        if (eb == 0 && eu == 0 && tb > 1000 && tu > 1000 && mb > 1000 && mu > 1000) begin
             $display("  PASS -- mx_acu_fp_pump TILE_OREG 1 == 0 in lockstep");
-        else
+        end
+        else begin
             $display("  FAIL -- mx_acu_fp_pump TILE_OREG differential");
+        end
         $finish;
     end
     initial begin

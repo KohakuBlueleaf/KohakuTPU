@@ -292,8 +292,8 @@ module sru_cu #(
     reg  [7:0]   cd_left;
 
     // ================================================ the controller
-    localparam [2:0] I_IDLE = 3'd0, I_RET = 3'd1, I_LOAD = 3'd2, I_RUN = 3'd3,
-                     I_STORE = 3'd4, I_POST = 3'd5;
+    localparam [2:0] I_IDLE = 3'd0, I_RET = 3'd1, I_LOAD = 3'd2, I_RUN = 3'd3;
+    localparam [2:0] I_STORE = 3'd4, I_POST = 3'd5;
     reg  [2:0]   ist;
     reg  [2:0]   a_taken;
     reg          post_a;
@@ -321,9 +321,15 @@ module sru_cu #(
             exec_done  <= 1'b0;
             cfg_we <= 1'b0; tab_we <= 1'b0; cc_we <= 1'b0; rs_we <= 1'b0; start <= 1'b0;
             af_we <= 1'b0; bf_we <= 1'b0;
-            if (busy) cycles <= cycles + 32'd1;
-            if (send_valid && send_ready) send_valid <= 1'b0;
-            if (post_valid && post_ready) post_valid <= 1'b0;
+            if (busy) begin
+                cycles <= cycles + 32'd1;
+            end
+            if (send_valid && send_ready) begin
+                send_valid <= 1'b0;
+            end
+            if (post_valid && post_ready) begin
+                post_valid <= 1'b0;
+            end
 
             // ---- inbound ----
             if (r_rd) begin
@@ -372,8 +378,12 @@ module sru_cu #(
                 end else begin
                     af_we <= 1'b1;
                     af_wd <= rpay;
-                    if (cd_left == 8'd0) cd_st <= 1'b0;
-                    else cd_left <= cd_left - 8'd1;
+                    if (cd_left == 8'd0) begin
+                        cd_st <= 1'b0;
+                    end
+                    else begin
+                        cd_left <= cd_left - 8'd1;
+                    end
                 end
             end
 
@@ -386,7 +396,9 @@ module sru_cu #(
                      - ((oe_hdr && j_peer) ? {12'd0, oe_blen} : 16'd0);
             if (a_pop && !j_amem) begin
                 a_taken <= a_taken + 3'd1;
-                if (a_taken == 3'd7) post_a <= 1'b1;
+                if (a_taken == 3'd7) begin
+                    post_a <= 1'b1;
+                end
             end
             if (post_a && !post_valid && (ist != I_POST)) begin
                 post_valid <= (cr_left != 24'd0);
@@ -406,7 +418,9 @@ module sru_cu #(
                     wa_g    <= wa_g - 16'd1;
                     wa_row  <= wa_row + {19'd0, j_astr, 5'd0};
                     wa_addr <= wa_row + {19'd0, j_astr, 5'd0};
-                    if (wa_g == 16'd0) wa_on <= 1'b0;
+                    if (wa_g == 16'd0) begin
+                        wa_on <= 1'b0;
+                    end
                 end else begin
                     wa_left <= wa_left - wa_run;
                     a_need  <= need(wa_left - wa_run);
@@ -421,7 +435,9 @@ module sru_cu #(
                     wb_g    <= wb_g - 16'd1;
                     wb_row  <= wb_row + {19'd0, j_bstr, 5'd0};
                     wb_addr <= wb_row + {19'd0, j_bstr, 5'd0};
-                    if (wb_g == 16'd0) wb_on <= 1'b0;
+                    if (wb_g == 16'd0) begin
+                        wb_on <= 1'b0;
+                    end
                 end else begin
                     wb_left <= wb_left - wb_run;
                     b_need  <= need(wb_left - wb_run);
@@ -463,7 +479,9 @@ module sru_cu #(
                     oe_blen <= blen(oe_room - 12'd1);
                     oe_ptr  <= oe_ptr + 40'd32;
                 end
-                if (oe_left == 4'd1) xs <= X_IDLE;
+                if (oe_left == 4'd1) begin
+                    xs <= X_IDLE;
+                end
             end else if (ws_on && xs == X_IDLE && tx_ok) begin
                 case (ws_ph)
                     2'd0: begin rs_raddr <= ws_row; ws_ph <= 2'd1; end
@@ -482,7 +500,9 @@ module sru_cu #(
                         ws_addr <= ws_addr + 40'd32;
                         ws_left <= ws_left - 12'd1;
                         ws_ph   <= 2'd0;
-                        if (ws_left == 12'd1) ws_on <= 1'b0;
+                        if (ws_left == 12'd1) begin
+                            ws_on <= 1'b0;
+                        end
                     end
                 endcase
             end
@@ -496,8 +516,12 @@ module sru_cu #(
                             cfg_we    <= 1'b1;
                             cfg_addr  <= inst_flit[251:244];
                             cfg_wdata <= inst_flit[31:0];
-                            if (inst_flit[251:244] == 8'd0) cfg[0] <= inst_flit[31:0];
-                            if (inst_flit[251:244] == 8'd1) cfg[1] <= inst_flit[31:0];
+                            if (inst_flit[251:244] == 8'd0) begin
+                                cfg[0] <= inst_flit[31:0];
+                            end
+                            if (inst_flit[251:244] == 8'd1) begin
+                                cfg[1] <= inst_flit[31:0];
+                            end
                             ist <= I_RET;
                         end
                         C_LOAD: begin
@@ -578,8 +602,12 @@ module sru_cu #(
                     exec_result <= cycles;
                     ist <= I_IDLE;
                 end
-                I_STORE: if (!ws_on && !send_valid) ist <= I_RET;
-                I_POST: if (!post_valid) ist <= I_RET;
+                I_STORE: if (!ws_on && !send_valid) begin
+                    ist <= I_RET;
+                end
+                I_POST: if (!post_valid) begin
+                    ist <= I_RET;
+                end
                 default: ist <= I_IDLE;
             endcase
         end
@@ -590,19 +618,25 @@ module sru_cu #(
     reg [31:0] tr_cyc = 32'd0;
     always @(posedge clk) begin
         tr_cyc <= tr_cyc + 32'd1;
-        if (noc_in_valid && !noc_in_busy)
+        if (noc_in_valid && !noc_in_busy) begin
             $display("  SRU(%0d,%0d) %0d in type %h", POS_X, POS_Y, tr_cyc,
                      noc_in_data[FLIT_WIDTH-4*POS_WIDTH-1 -: 4]);
-        if (inst_valid && inst_ready)
+        end
+        if (inst_valid && inst_ready) begin
             $display("  SRU(%0d,%0d) %0d take op %0d", POS_X, POS_Y, tr_cyc, i_op);
-        if (exec_done)
+        end
+        if (exec_done) begin
             $display("  SRU(%0d,%0d) %0d retire", POS_X, POS_Y, tr_cyc);
-        if (xs == X_IDLE && tx_ok && wa_go)
+        end
+        if (xs == X_IDLE && tx_ok && wa_go) begin
             $display("  SRU(%0d,%0d) %0d rdA %0d room %0d", POS_X, POS_Y, tr_cyc, wa_run, a_room);
-        if (r_rd)
+        end
+        if (r_rd) begin
             $display("  SRU(%0d,%0d) %0d resp", POS_X, POS_Y, tr_cyc);
-        if (oe_hdr)
+        end
+        if (oe_hdr) begin
             $display("  SRU(%0d,%0d) %0d wr %0d", POS_X, POS_Y, tr_cyc, oe_blen);
+        end
     end
 `endif
 

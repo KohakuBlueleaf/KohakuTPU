@@ -59,14 +59,18 @@ module xpm_fifo_async #(
     localparam integer INV = 0, S2 = 1, S1 = 2, BOTH = 3;
 
     initial begin
-        if (READ_MODE != "fwft")
+        if (READ_MODE != "fwft") begin
             $fatal(1, "xpm_fifo_async shim: READ_MODE=%s not modelled", READ_MODE);
-        if (FIFO_READ_LATENCY != 0)
+        end
+        if (FIFO_READ_LATENCY != 0) begin
             $fatal(1, "xpm_fifo_async shim: FIFO_READ_LATENCY=%0d not modelled", FIFO_READ_LATENCY);
-        if (ECC_MODE != "no_ecc")
+        end
+        if (ECC_MODE != "no_ecc") begin
             $fatal(1, "xpm_fifo_async shim: ECC_MODE=%s not modelled", ECC_MODE);
-        if (USE_ADV_FEATURES != 13'b0)
+        end
+        if (USE_ADV_FEATURES != 13'b0) begin
             $fatal(1, "xpm_fifo_async shim: USE_ADV_FEATURES=%b not modelled", USE_ADV_FEATURES);
+        end
     end
 
     function automatic [AW:0] bin2gray(input [AW:0] b);
@@ -79,8 +83,9 @@ module xpm_fifo_async #(
         integer k;
         begin
             gray2bin[AW] = g[AW];
-            for (k = AW - 1; k >= 0; k = k - 1)
+            for (k = AW - 1; k >= 0; k = k - 1) begin
                 gray2bin[k] = gray2bin[k+1] ^ g[k];
+            end
         end
     endfunction
 
@@ -157,7 +162,9 @@ module xpm_fifo_async #(
                 rbin  <= rbin + 1'b1;
                 rgray <= bin2gray(rbin + 1'b1);
             end
-            if (regout) s2 <= s1;
+            if (regout) begin
+                s2 <= s1;
+            end
             wbin_rd   <= gray2bin(wgray_rd);
             ram_empty <= (wbin_rd == rbin) || ((wbin_rd == rbin + 1'b1) && do_rd);
             st        <= nst;
@@ -166,18 +173,30 @@ module xpm_fifo_async #(
     end
 
     always @(posedge rd_clk) begin
-        if (rst) for (i = 0; i < CDC_SYNC_STAGES; i = i + 1) wg_meta[i] <= {AW+1{1'b0}};
+        if (rst) begin
+            for (i = 0; i < CDC_SYNC_STAGES; i = i + 1) begin
+                wg_meta[i] <= {AW+1{1'b0}};
+            end
+        end
         else begin
             wg_meta[0] <= wgray;
-            for (i = 1; i < CDC_SYNC_STAGES; i = i + 1) wg_meta[i] <= wg_meta[i-1];
+            for (i = 1; i < CDC_SYNC_STAGES; i = i + 1) begin
+                wg_meta[i] <= wg_meta[i-1];
+            end
         end
     end
 
     always @(posedge wr_clk) begin
-        if (rst) for (i = 0; i < CDC_SYNC_STAGES; i = i + 1) rg_meta[i] <= {AW+1{1'b0}};
+        if (rst) begin
+            for (i = 0; i < CDC_SYNC_STAGES; i = i + 1) begin
+                rg_meta[i] <= {AW+1{1'b0}};
+            end
+        end
         else begin
             rg_meta[0] <= rgray;
-            for (i = 1; i < CDC_SYNC_STAGES; i = i + 1) rg_meta[i] <= rg_meta[i-1];
+            for (i = 1; i < CDC_SYNC_STAGES; i = i + 1) begin
+                rg_meta[i] <= rg_meta[i-1];
+            end
         end
     end
 
@@ -187,8 +206,12 @@ module xpm_fifo_async #(
 
     reg wbusy = 1'b1;
     reg rbusy = 1'b1;
-    always @(posedge wr_clk) wbusy <= rst;
-    always @(posedge rd_clk) rbusy <= rst;
+    always @(posedge wr_clk) begin
+        wbusy <= rst;
+    end
+    always @(posedge rd_clk) begin
+        rbusy <= rst;
+    end
 
     assign wr_rst_busy = wbusy;
     assign rd_rst_busy = rbusy;

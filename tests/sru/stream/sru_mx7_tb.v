@@ -24,7 +24,9 @@ module sru_mx7_tb;
     localparam integer NMAX = 40000;
 
     reg clk = 1'b0, rst = 1'b1;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     reg [255:0] win  [0:NMAX-1];
     reg         wfst [0:NMAX-1];

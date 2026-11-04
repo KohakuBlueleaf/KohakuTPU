@@ -116,9 +116,15 @@ module mag_dram_port_tb #(
     end
     always @(posedge s_aclk) begin
         for (mi = 0; mi < N; mi = mi + 1) begin
-            if (q_valid[mi] && q_ready[mi]) q_cnt[mi] <= q_cnt[mi] + 1;
-            if (w_valid[mi] && w_ready[mi]) w_cnt[mi] <= w_cnt[mi] + 1;
-            if (b_valid[mi]) b_cnt[mi] <= b_cnt[mi] + 1;
+            if (q_valid[mi] && q_ready[mi]) begin
+                q_cnt[mi] <= q_cnt[mi] + 1;
+            end
+            if (w_valid[mi] && w_ready[mi]) begin
+                w_cnt[mi] <= w_cnt[mi] + 1;
+            end
+            if (b_valid[mi]) begin
+                b_cnt[mi] <= b_cnt[mi] + 1;
+            end
             if (r_valid[mi] && r_ready[mi]) begin
                 r_cnt[mi]  <= r_cnt[mi] + 1;
                 r_cap[mi]  <= r_data[mi*SW +: SW];
@@ -137,7 +143,9 @@ module mag_dram_port_tb #(
             q_write[p] = wr;
             q_valid[p] = 1'b1;
             c0 = q_cnt[p];
-            while (q_cnt[p] == c0) @(negedge s_aclk);
+            while (q_cnt[p] == c0) begin
+                @(negedge s_aclk);
+            end
             q_valid[p] = 1'b0;
         end
     endtask
@@ -151,11 +159,19 @@ module mag_dram_port_tb #(
             r_ready[p] = 1'b1;
             for (i = 0; i < beats; i = i + 1) begin
                 c0 = r_cnt[p];
-                while (r_cnt[p] == c0) @(negedge s_aclk);
-                if (i == beats - 1) r_ready[p] = 1'b0;
+                while (r_cnt[p] == c0) begin
+                    @(negedge s_aclk);
+                end
+                if (i == beats - 1) begin
+                    r_ready[p] = 1'b0;
+                end
                 checks = checks + 1;
-                if (r_cap[p] !== golden[word + i]) fail(what);
-                if (r_lcap[p] !== (i == beats - 1)) fail("rlast misplaced");
+                if (r_cap[p] !== golden[word + i]) begin
+                    fail(what);
+                end
+                if (r_lcap[p] !== (i == beats - 1)) begin
+                    fail("rlast misplaced");
+                end
             end
         end
     endtask
@@ -184,10 +200,14 @@ module mag_dram_port_tb #(
                 w_data[p*SW +: SW] = d;
                 w_valid[p] = 1'b1;
                 c0 = w_cnt[p];
-                while (w_cnt[p] == c0) @(negedge s_aclk);
+                while (w_cnt[p] == c0) begin
+                    @(negedge s_aclk);
+                end
             end
             w_valid[p] = 1'b0;
-            while (b_cnt[p] == b0) @(negedge s_aclk);
+            while (b_cnt[p] == b0) begin
+                @(negedge s_aclk);
+            end
         end
     endtask
 

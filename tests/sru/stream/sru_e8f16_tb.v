@@ -51,7 +51,9 @@ module sru_e8f16_tb;
             din = vin[i];
             #1;
             if (dout !== want[i]) begin
-                if (errs < 6) $display("  MISMATCH word %0d\n    in   %h\n    got  %h\n    want %h", i, vin[i], dout, want[i]);
+                if (errs < 6) begin
+                    $display("  MISMATCH word %0d\n    in   %h\n    got  %h\n    want %h", i, vin[i], dout, want[i]);
+                end
                 errs = errs + 1;
             end
         end

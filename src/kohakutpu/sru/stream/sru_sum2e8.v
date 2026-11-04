@@ -59,13 +59,17 @@ module sru_sum2e8 (
     integer    k, b;
     always @(*) begin
         y = mag1;
-        for (k = 1; k < 48; k = k * 2) y = y | (y >> k);
+        for (k = 1; k < 48; k = k * 2) begin
+            y = y | (y >> k);
+        end
     end
     reg [5:0] pe;
     always @(*) begin
         pe = 6'd0;
         for (b = 0; b < 48; b = b + 1) begin
-            if (y[b] & ~((b == 47) ? 1'b0 : y[b+1])) pe = b;
+            if (y[b] & ~((b == 47) ? 1'b0 : y[b+1])) begin
+                pe = b;
+            end
         end
     end
     always @(posedge clk) begin

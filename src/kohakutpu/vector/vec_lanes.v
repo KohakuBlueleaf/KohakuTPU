@@ -176,7 +176,9 @@ module vec_lanes #(
     wire [RW-1:0] rd_c_addr = (ls_ractive && ls_rsel) ? ls_raddr : iss_rc;
     // READ_LAT 1: the data answers last cycle's address, so its select lags too.
     reg rsel_q;
-    always @(posedge clk) rsel_q <= ls_ractive && ls_rsel;
+    always @(posedge clk) begin
+        rsel_q <= ls_ractive && ls_rsel;
+    end
     assign ls_rdata = rsel_q ? rf_c : rf_a;
 
     genvar s;

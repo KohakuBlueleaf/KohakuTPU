@@ -433,7 +433,9 @@ module v2_alu #(
     // EXP2D: floor(b), beside the range reduction. Inside [1, 256) the integer
     // part is sig >> (142 - e_b); a negative b with a fraction floors one lower.
     reg  [23:0] rbD_r;
-    always @(posedge clk) rbD_r <= s1_b;
+    always @(posedge clk) begin
+        rbD_r <= s1_b;
+    end
     wire [23:0] rbD   = (PIPE_MUX != 0) ? rbD_r : s1_b;
     wire [7:0]  fb_e  = rbD[22:15];
     wire [7:0]  fb_d  = 8'd142 - fb_e;

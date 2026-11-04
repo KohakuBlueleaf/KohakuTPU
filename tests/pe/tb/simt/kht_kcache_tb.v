@@ -9,7 +9,9 @@ module kht_kcache_tb;
     localparam integer LINES = 8;
 
     reg clk = 1'b0, resetn = 1'b0;
-    always #2 clk = ~clk;
+    always begin
+        #2 clk = ~clk;
+    end
 
     integer errors = 0, checks = 0, hits = 0, fills = 0, probes = 0;
 
@@ -82,8 +84,9 @@ module kht_kcache_tb;
                 hits   = hits + 1;
                 if (rd_data !== mem_word(a)) begin
                     errors = errors + 1;
-                    if (errors < 10)
+                    if (errors < 10) begin
                         $display("  FAIL hit at %08x: %08x want %08x", a, rd_data, mem_word(a));
+                    end
                 end
             end
             @(posedge clk);
@@ -95,7 +98,9 @@ module kht_kcache_tb;
         reg h;
         integer guard;
         begin
-            while (!miss_ready) @(posedge clk);
+            while (!miss_ready) begin
+                @(posedge clk);
+            end
             miss_req  = 1'b1;
             miss_addr = a;
             @(posedge clk);
@@ -138,7 +143,9 @@ module kht_kcache_tb;
                 $display("  FAIL hit during or right after the reset sweep");
             end
         end
-        while (busy) @(posedge clk);
+        while (busy) begin
+            @(posedge clk);
+        end
 
         addr[0] = 32'h8000_0020;
         addr[1] = 32'h8000_0020 + 32 * LINES;
@@ -183,7 +190,9 @@ module kht_kcache_tb;
 
         $display("--- invalidate drops every line, during the sweep too ---");
         fill(32'h8000_0100);
-        while (!miss_ready) @(posedge clk);
+        while (!miss_ready) begin
+            @(posedge clk);
+        end
         inval = 1'b1;
         @(posedge clk);
         #1;
@@ -201,14 +210,20 @@ module kht_kcache_tb;
             checks = checks + 1;
             if (h) begin
                 errors = errors + 1;
-                if (errors < 10) $display("  FAIL %08x hit after invalidate", 32'h8000_0000 + 4 * i);
+                if (errors < 10) begin
+                    $display("  FAIL %08x hit after invalidate", 32'h8000_0000 + 4 * i);
+                end
             end
         end
 
         $display("    %0d hits checked, %0d fills, %0d lookups during fills", hits, fills, probes);
         $display("========================================");
-        if (errors == 0 && checks > 0) $display("  PASS -- %0d checks, 0 errors", checks);
-        else $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        if (errors == 0 && checks > 0) begin
+            $display("  PASS -- %0d checks, 0 errors", checks);
+        end
+        else begin
+            $display("  FAIL -- %0d checks, %0d errors", checks, errors);
+        end
         $display("========================================");
         $finish;
     end

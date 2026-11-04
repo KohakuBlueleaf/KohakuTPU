@@ -142,8 +142,12 @@ module kht_lsu #(
             q_tl <= {QW{1'b0}};
             q_n  <= {(QW+1){1'b0}};
         end else begin
-            if (q_push) q_tl <= nextp(q_tl);
-            if (pop)    q_hd <= nextp(q_hd);
+            if (q_push) begin
+                q_tl <= nextp(q_tl);
+            end
+            if (pop) begin
+                q_hd <= nextp(q_hd);
+            end
             q_n <= q_n + {{QW{1'b0}}, q_push} - {{QW{1'b0}}, pop};
         end
     end
@@ -195,10 +199,15 @@ module kht_lsu #(
         fb_req  = {1'b0, {FBW{1'b0}}};
         fb_any  = 1'b0;
         for (ff = MSHRS - 1; ff >= 0; ff = ff - 1) begin
-            if (fb_st[ff] == F_FREE) fb_free = {1'b1, ff[FBW-1:0]};
-            if ((fb_st[ff] == F_REQ) && !(rq_v && (rq_fb == ff[FBW-1:0])))
+            if (fb_st[ff] == F_FREE) begin
+                fb_free = {1'b1, ff[FBW-1:0]};
+            end
+            if ((fb_st[ff] == F_REQ) && !(rq_v && (rq_fb == ff[FBW-1:0]))) begin
                 fb_req = {1'b1, ff[FBW-1:0]};
-            if (fb_st[ff] != F_FREE) fb_any  = 1'b1;
+            end
+            if (fb_st[ff] != F_FREE) begin
+                fb_any  = 1'b1;
+            end
         end
     end
 
@@ -243,7 +252,9 @@ module kht_lsu #(
     always @(*) begin
         lead = {LNW{1'b0}};
         for (li = LANES - 1; li >= 0; li = li - 1) begin
-            if (todo[li]) lead = li[LNW-1:0];
+            if (todo[li]) begin
+                lead = li[LNW-1:0];
+            end
         end
     end
     wire [25:0] lead_line = h_addr[32*lead + 5 +: 26];
@@ -268,8 +279,12 @@ module kht_lsu #(
         cfb   = {1'b0, {FBW{1'b0}}};
         sc_fb = {1'b0, {FBW{1'b0}}};
         for (fi = MSHRS - 1; fi >= 0; fi = fi - 1) begin
-            if ((fb_st[fi] != F_FREE) && (fb_line[fi] == cur_line)) cfb   = {1'b1, fi[FBW-1:0]};
-            if ((fb_st[fi] != F_FREE) && (fb_line[fi] == c_line))   sc_fb = {1'b1, fi[FBW-1:0]};
+            if ((fb_st[fi] != F_FREE) && (fb_line[fi] == cur_line)) begin
+                cfb   = {1'b1, fi[FBW-1:0]};
+            end
+            if ((fb_st[fi] != F_FREE) && (fb_line[fi] == c_line)) begin
+                sc_fb = {1'b1, fi[FBW-1:0]};
+            end
         end
     end
     wire         h_hit    = tag_h[TW-1] && (tag_h[TAGW-1:0] == cur_line[25:IDX]);
@@ -347,7 +362,9 @@ module kht_lsu #(
     always @(*) begin
         sk_nx = LANES;
         for (sk = LANES - 1; sk >= 0; sk = sk - 1) begin
-            if ((sk > sc_lane) && (s_addr[32*sk + 5 +: 26] != sc_line)) sk_nx = sk;
+            if ((sk > sc_lane) && (s_addr[32*sk + 5 +: 26] != sc_line)) begin
+                sk_nx = sk;
+            end
         end
     end
     wire [LNW:0] sc_step = (SKIP != 0) ? sk_nx : ({1'b0, sc_lane} + 1'b1);
@@ -440,15 +457,21 @@ module kht_lsu #(
                 fb_dirty[k] <= 1'b0;
             end
         end else begin
-            if (ret_v && ret_ready) ret_v <= 1'b0;
-            if (wr_v && wr_ready)   wr_v  <= 1'b0;
+            if (ret_v && ret_ready) begin
+                ret_v <= 1'b0;
+            end
+            if (wr_v && wr_ready) begin
+                wr_v  <= 1'b0;
+            end
             if (flush || inval) begin
                 fl_pend  <= 1'b1;
                 fl_inval <= fl_inval || inval;
             end
 
             // ---- fill buffers ----
-            if (rd_v && rd_ready) fb_st[rq_fb] <= F_WAIT;
+            if (rd_v && rd_ready) begin
+                fb_st[rq_fb] <= F_WAIT;
+            end
             if (!rq_v || rd_ready) begin
                 rq_v  <= fb_req[FBW] && !rd_block;
                 rq_fb <= fb_req[FBW-1:0];
@@ -484,7 +507,9 @@ module kht_lsu #(
                     sc_ptr  <= nextp(q_hd);
                 end else begin
                     sc_lane <= sc_step[LNW-1:0];
-                    if (pop) sc_off <= sc_off - 1'b1;
+                    if (pop) begin
+                        sc_off <= sc_off - 1'b1;
+                    end
                 end
             end else if (pop) begin
                 if (sc_off == 0) begin
@@ -592,7 +617,9 @@ module kht_lsu #(
 
                 I_CLR: begin
                     scan <= scan + 1'b1;
-                    if (scan == LINES - 1) ist <= I_IDLE;
+                    if (scan == LINES - 1) begin
+                        ist <= I_IDLE;
+                    end
                 end
 
                 I_SRD: ist <= I_SSEND;

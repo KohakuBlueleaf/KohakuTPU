@@ -10,7 +10,9 @@ module gate_acu_tb;
     localparam integer TW = 16 * 22;
 
     reg clk = 1'b0;
-    always #1 clk = ~clk;
+    always begin
+        #1 clk = ~clk;
+    end
 
     reg          rst = 1'b1, en = 1'b1, cmd = 1'b0;
     reg [383:0]  part = 0;
@@ -43,8 +45,12 @@ module gate_acu_tb;
 
     always @(posedge clk) begin
         cyc <= cyc + 1;
-        if (!u_g.u_gate.run_l) withheld <= withheld + 1;
-        if (cyc == 20) rst <= 1'b0;
+        if (!u_g.u_gate.run_l) begin
+            withheld <= withheld + 1;
+        end
+        if (cyc == 20) begin
+            rst <= 1'b0;
+        end
         if (left == 0) begin
             busy <= !busy;
             left <= busy ? 1 + ($unsigned($random) % 150) : 1 + ($unsigned($random) % 60);
@@ -57,21 +63,33 @@ module gate_acu_tb;
             addr   <= addr + 4'd1;
             sa     <= $random; sb <= $random;
             anchor <= $random;
-            for (k = 0; k < 12; k = k + 1) part[k*32 +: 32] <= $random;
-            for (k = 0; k < 11; k = k + 1) peer[k*32 +: 32] <= $random;
+            for (k = 0; k < 12; k = k + 1) begin
+                part[k*32 +: 32] <= $random;
+            end
+            for (k = 0; k < 11; k = k + 1) begin
+                peer[k*32 +: 32] <= $random;
+            end
         end else begin
             cmd <= 1'b0;
-            if (($unsigned($random) % 200) == 0) part[$unsigned($random) % 384] <= $random;
+            if (($unsigned($random) % 200) == 0) begin
+                part[$unsigned($random) % 384] <= $random;
+            end
         end
-        if (cyc > 30000 && cyc < 30010) rst <= 1'b1;
-        if (cyc == 30010) rst <= 1'b0;
+        if (cyc > 30000 && cyc < 30010) begin
+            rst <= 1'b1;
+        end
+        if (cyc == 30010) begin
+            rst <= 1'b0;
+        end
     end
 
     always @(negedge clk) begin
         if (cyc > 40 && (po_ref !== po_g || pv_ref !== pv_g || eo_ref !== eo_g
                          || ev_ref !== ev_g || b_ref !== b_g)) begin
-            if (mism < 5) $display("MISMATCH cyc=%0d emit %b/%b peer %b/%b busy %b/%b", cyc,
-                                   ev_ref, ev_g, pv_ref, pv_g, b_ref, b_g);
+            if (mism < 5) begin
+                $display("MISMATCH cyc=%0d emit %b/%b peer %b/%b busy %b/%b", cyc,
+                         ev_ref, ev_g, pv_ref, pv_g, b_ref, b_g);
+            end
             mism <= mism + 1;
         end
         if (cyc == CYCLES) begin

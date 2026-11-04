@@ -982,8 +982,12 @@ module kht_unit #(
                     q_wr  <= {QW{1'b0}};
                     q_rd  <= {QW{1'b0}};
                 end else begin
-                    if (fwb_v) q_wr <= q_wr + 1'b1;
-                    if (q_pop) q_rd <= q_rd + 1'b1;
+                    if (fwb_v) begin
+                        q_wr <= q_wr + 1'b1;
+                    end
+                    if (q_pop) begin
+                        q_rd <= q_rd + 1'b1;
+                    end
                     q_cnt <= q_cnt + {{QW{1'b0}}, fwb_v} - {{QW{1'b0}}, q_pop};
                 end
             end
@@ -1006,7 +1010,9 @@ module kht_unit #(
                 for (pc = 1; pc <= FLAT; pc = pc + 1) begin
                     infl = infl + fsh_v[pc];
                 end
-                if (FRES_REG != 0) infl = infl + fwb_v;
+                if (FRES_REG != 0) begin
+                    infl = infl + fwb_v;
+                end
             end
             wire [QW+2:0] owed = q_cnt + infl
                                + (m_long ? PMAX : 0) + (w_long ? PMAX : 0);

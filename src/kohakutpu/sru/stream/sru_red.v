@@ -109,14 +109,22 @@ module sru_red #(
                 anan = 1'b0; apinf = 1'b0; aninf = 1'b0;
                 for (i = 0; i < 4; i = i + 1) begin
                     if (w[i][22:15] == 8'hFF) begin
-                        if (w[i][14:0] != 15'd0) anan = 1'b1;
-                        else if (w[i][23]) aninf = 1'b1;
-                        else apinf = 1'b1;
+                        if (w[i][14:0] != 15'd0) begin
+                            anan = 1'b1;
+                        end
+                        else if (w[i][23]) begin
+                            aninf = 1'b1;
+                        end
+                        else begin
+                            apinf = 1'b1;
+                        end
                     end
                 end
             end
             always @(posedge clk) begin
-                for (i = 0; i < 4; i = i + 1) x[i] <= w[i];
+                for (i = 0; i < 4; i = i + 1) begin
+                    x[i] <= w[i];
+                end
                 em1 <= et;
                 sp1 <= (anan | (apinf & aninf)) ? 2'd1 : apinf ? 2'd2 : aninf ? 2'd3 : 2'd0;
             end
@@ -131,7 +139,9 @@ module sru_red #(
                     EM  <= emn;
                 end
                 gr2 <= f[0] ? 8'd0 : (emn - EM);
-                for (i = 0; i < 4; i = i + 1) x2[i] <= x[i];
+                for (i = 0; i < 4; i = i + 1) begin
+                    x2[i] <= x[i];
+                end
                 sp2 <= sp1;
             end
 
