@@ -13,7 +13,6 @@
   "entry": "reset",
   "memwait": 0,
   "bench": "vec2_replay",
-  "tool": "scripts/py/measure/vc_timing.py",
   "probes": [
     {
       "kind": "math_math",

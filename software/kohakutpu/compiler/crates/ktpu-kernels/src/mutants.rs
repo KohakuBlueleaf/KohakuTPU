@@ -30,7 +30,7 @@ pub const NAMES: &[&str] = &[
     crate::gen::reductions::EMITTER_MUTANTS[2].0,
 ];
 
-/// Mutants no spec vector names, witnessed by this crate's own tests: the
+/// Mutants local to this crate: the
 /// unit facts read as the constants they replaced; a statistic packed in
 /// the [R, 32] form RUL.030 refuses; a reduction read twice taken twice;
 /// the contraction knobs unrecorded; the reductions as separate launches;

@@ -34,8 +34,7 @@ repository's `rv64_node_pair` bench and the `core2` model. 4 of 18 differ:
 | store `77` to DRAM[5]; load DRAM[3] | **`77`** | `7003` |
 
 with a `nop` or an ALU instruction between the two accesses every case
-matches. The same source through the memory-gap pass: 0 of 18 differ
-(`tests/host/test_xlat.py` asserts 4 and 0).
+matches. The same source through the memory-gap pass: 0 of 18 differ.
 
 **RTL.** `rv64_mmu.v:200` registers `resolved_q <= resolved && same_req`;
 in the last cycle of access A the port still carries A, so in the next cycle
@@ -65,7 +64,7 @@ slot and carries **the previously selected slot's count**.
 three times; B alternately selects slot 0 (count 0) and slot 5 (count 3)
 64 times. On `rv64_node_pair` and `core2` alike: the field matched on the
 first read all 64 times; the count in that word was wrong 64 of 64 times;
-the next word's count was wrong 0 of 64 (`tests/host/test_sigslot.py`).
+the next word's count was wrong 0 of 64.
 
 **RTL.** `mag_ilink.v:993` writes the select `sig_sel`; `mag_ilink.v:280`
 reads `sig_q <= sig_mem[sig_sel]`; `mag_ilink.v:295-296` builds the word

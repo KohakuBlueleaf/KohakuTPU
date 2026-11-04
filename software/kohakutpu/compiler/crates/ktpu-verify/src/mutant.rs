@@ -1,5 +1,4 @@
-//! The spec vectors' checker mutants (the spec runners,
-//! `l1.py`, `@mutant`): with the `mutants` feature a thread-local switch
+//! The checker mutants: with the `mutants` feature a thread-local switch
 //! names the one active mutant and each mutated point asks [`on`]; without
 //! it [`on`] is `false` and the points compile out.
 

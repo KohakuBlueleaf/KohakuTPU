@@ -7,7 +7,7 @@
 #include <kos/kds.h>
 
 #ifndef KDS_MUT
-#define KDS_MUT 0 /* a mutant build for the checks: tests/host/test_kds.py */
+#define KDS_MUT 0 /* a mutant build of the dispatcher */
 #endif
 
 #define KDS_CHAN       0x4B445300u              /* every server's request channel */

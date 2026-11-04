@@ -1,5 +1,5 @@
-//! Classed mover kernels (`kernels/convert.py`, `transpose.py`, `matmul.py`
-//! under a shape class): a copy, a walk, a transpose and a packing whose
+//! Classed mover kernels (conversions, transposes and packings under a
+//! shape class): a copy, a walk, a transpose and a packing whose
 //! counts are node loops.
 
 use super::{Classed, Ports, ShapeClass};

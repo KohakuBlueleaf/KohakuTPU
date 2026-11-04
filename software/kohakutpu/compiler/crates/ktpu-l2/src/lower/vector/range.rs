@@ -36,8 +36,7 @@ pub enum Ranges {
 
 impl Ranges {
     /// The search's default: the fastest setting, sound at every output
-    /// for every input (the cycle measurements,
-    /// `scripts/py/measure/exp2_model.py`).
+    /// for every input.
     pub const DEFAULT: Ranges = Ranges::RowMax;
 
     pub fn parse(s: &str) -> Option<Ranges> {

@@ -10,9 +10,7 @@ MXFP7 itself is defined in [../numerics/formats.md](../numerics/formats.md).
 Paths are relative to the repository root. `tally` is the statement
 tally of the 455 kernels the v9t6 card ran; the silicon mover statements were
 confirmed in the kernel sources of the v9t6 run (`move` / `move posted` blocks
-of `copy`, `fill`, `quant`, `gt4`). Verilated card tests are in
-`software/application/tests/test_l1_examples.py` (`test_l1`); RTL testbenches
-are `tests/sysnode/mm_mover_tb.v` (`mm_mover_tb`) and
+of `copy`, `fill`, `quant`, `gt4`). RTL testbenches are `tests/sysnode/mm_mover_tb.v` (`mm_mover_tb`) and
 `tests/sysnode/mm_xform_tb.v` (`mm_xform_tb`), cited by section.
 
 ## 1. Parameters
@@ -46,7 +44,7 @@ are `tests/sysnode/mm_mover_tb.v` (`mm_mover_tb`) and
 - **ISA.MV.022** `unproven` A level count field of 0 levels walks one element; 7 walks six levels. (code: src/kohakuaccel/sysnode/mover/mx_tdesc.v:116-121; evidence: none; the stack writes 1..6, ktpu-isa/src/unit/mover.rs)
 - **ISA.MV.023** `silicon` The stack writes every base and stride as a multiple of `die.word_bytes`, on both walkers. (code: ktpu-isa/src/unit/mover.rs; software/driver/kohakuaccel/driver/device/mover.py:64-66; evidence: every silicon move)
 - **ISA.MV.024** `RTL` A destination element whose address is not word aligned faults F_ALIGN (6). That the elements before it are written is ISA.MV.029. (code: src/kohakuaccel/sysnode/mover/mm_mover.v:265,432,964,1018-1019; evidence: mm_mover_tb section 6 (:361-371), a one-element move)
-- **ISA.MV.025** `unproven` A misaligned source address is not checked by the mover. (code: src/kohakuaccel/sysnode/mover/mm_mover.v:428-440; software/driver/tests/test_mover.py:144-145; evidence: none)
+- **ISA.MV.025** `unproven` A misaligned source address is not checked by the mover. (code: src/kohakuaccel/sysnode/mover/mm_mover.v:428-440; evidence: none)
 - **ISA.MV.026** `RTL` Bound axes: each level may add its axis step to axis 1 or 2; an element is inside when, for each axis whose window extent is nonzero, 0 <= axis base + sum of i_k * astep_k < extent. An extent of 0 disables the axis. (code: src/kohakuaccel/sysnode/mover/mx_tdesc.v:7-13,286-292; evidence: test_l1 test_pad (:59), test_mask (:65); mm_mover_tb section 2 (:268))
 - **ISA.MV.027** `RTL` A source element outside its window issues no read and supplies the immediate, replicated by element width (ISA.MV.041); a destination element outside its window is not written, and the walk still steps. (code: src/kohakuaccel/sysnode/mover/mm_mover.v:6-7,428-440; doc: docs/spec/instruction-encoding.md:189-193; evidence: test_l1 test_pad (:59) (fp16 1.0 pairs padded), test_mask (:65))
 - **ISA.MV.028** `unproven` A level's count of 0 reads as 1. (code: src/kohakuaccel/sysnode/mover/mx_tdesc.v:48,75-77; evidence: none; the stack writes counts of at least 1)
@@ -77,7 +75,7 @@ are `tests/sysnode/mm_mover_tb.v` (`mm_mover_tb`) and
 - **ISA.MV.050** `RTL` An index list is INDEX.count 32-bit indices, eight to a word, index r in bits [32(r mod 8)+31 : 32(r mod 8)] of word r div 8, loaded whole before the first row. (code: src/kohakuaccel/sysnode/mover/mm_mover.v:323-341,349-350,917-944; doc: docs/spec/control-registers.md:619-622,635-636; evidence: test_l1 test_gather (:89), test_scatter (:409))
 - **ISA.MV.051** `RTL` CTRL[17] clear reads the indices as u32; set reads them as fp32, each of which must be +0, -0 or a positive integer below 2^31, else fault F_INDEX (10) when its row is reached, after the rows before it are written. (code: src/kohakuaccel/sysnode/mover/mm_mover.v:190-191,409-418,964-971,1034-1041; doc: docs/spec/control-registers.md:642-647; evidence: test_l1 test_gather (:89) (u32 and fp32); mm_mover_tb sections 10, 11 (:494, :525, :580))
 - **ISA.MV.052** `unproven` An index count above `mover.max_index` faults F_IDXLEN (1) at GO. (code: src/kohakuaccel/sysnode/mover/mm_mover.v:899-900; evidence: none)
-- **ISA.MV.053** `unproven` The stack writes an index count of at least 1 and row words of at least 1, and cuts a gather or scatter past one move's index list or row words into several moves. (code: ktpu-l1/src/lower/node/mover.rs; ktpu-isa/src/unit/mover.rs; ktpu-l2/src/lower/mover.rs; evidence: none on silicon or RTL; a software test checks the cut, ktpu-l2/tests/ported.rs)
+- **ISA.MV.053** `unproven` The stack writes an index count of at least 1 and row words of at least 1, and cuts a gather or scatter past one move's index list or row words into several moves. (code: ktpu-l1/src/lower/node/mover.rs; ktpu-isa/src/unit/mover.rs; ktpu-l2/src/lower/mover.rs; evidence: none on silicon or RTL)
 - **ISA.MV.054** `unproven` Index list base must be 32-byte aligned; the mover reads from the base's word. (code: src/kohakuaccel/sysnode/mover/mm_mover.v:336-340,905; ktpu-isa/src/unit/mover.rs; evidence: none for a misaligned base)
 
 ## 6. The transform slot

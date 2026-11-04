@@ -42,9 +42,8 @@ that cannot fuse. A realised tensor is one generated kernel:
 - **a product** `x @ w.T` / `kp.linear(x, w, b)` with its epilogue (bias,
   activation, residual) on the vector cores beside the clusters.
 
-`kp.set_fusion(False)` runs one kernel an op (to compare); the API test
-counts kernels (`software/application/tests/api/test_tensor.py`: a 4-op
-chain is 1 kernel, 4 unfused).
+`kp.set_fusion(False)` runs one kernel an op (to compare): a 4-op chain
+is 1 kernel, 4 unfused.
 
 ## 2. Forms
 
@@ -89,7 +88,7 @@ read-back strips any padded-rows form.
 
 ## 5. Measured
 
-`software/application/tests/api/test_tensor.py` (19 cases on
+19 cases on
 `build/v9f/vlt_card_v9_1n_v2`, rel err against float64 numpy under 2e-2;
 softmax 2.0e-4 in 1 kernel, layernorm 2.8e-4 in 1 kernel, linear + gelu
 3.9e-4 in quant, quant, mm).

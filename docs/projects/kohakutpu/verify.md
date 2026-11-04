@@ -413,8 +413,5 @@ does not report them. The vector lowering places compiled values to avoid them
 - The Rust compile pipeline schedules and verifies every compiled package.
 - `VerilatorCard(check="refuse")` and `tools.l1 --check` gate the compiled
   verdict; the runtime accepts only prebuilt Rust packages.
-- `software/rust/crates/ktpu-verify/tests/` covers findings, machine facts,
-  frozen verdicts and bank lint. `software/compiler/tests/test_verify.py`
-  checks that Rust finding clause identities survive the Python gate.
 - The checker tracks dependencies, counters and accesses. It does not compute
   tensor values and is not a behaviour-model oracle.

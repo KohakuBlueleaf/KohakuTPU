@@ -18,7 +18,7 @@ serde_json.workspace = true
 sha2.workspace = true
 
 [features]
-# The spec vectors' checker mutants (src/mutant.rs).
+# The checker mutants (src/mutant.rs).
 mutants = []
 
 [dev-dependencies]

@@ -1,4 +1,4 @@
-//! Form conversions on the card (`kernels/convert.py`): a copy, a walk or
+//! Form conversions on the card: a copy, a walk or
 //! a fill by the mover, an element type to another.
 
 use super::{cdiv, vector, Hw};

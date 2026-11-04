@@ -112,9 +112,8 @@ any node may send to it, and any thread on that node may receive from it.
   after a message, so data written before a send is visible after the
   matching receive.
 
-`tests/host/test_core.py::test_channel_flow_control` pushes 240 messages
-(`pipeline 80` on core4s: 80 items through three 64-entry queues) and
-checks that every one arrives and the checksum holds.
+`pipeline 80` on core4s pushes 240 messages (80 items through three
+64-entry queues); every one arrives and the checksum holds.
 
 ## Barriers
 

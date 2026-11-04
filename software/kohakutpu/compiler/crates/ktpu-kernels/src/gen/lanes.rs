@@ -1,4 +1,4 @@
-//! Element-granular relayouts (`kernels/lanes.py`, TG.RUN.008): f16
+//! Element-granular relayouts (TG.RUN.008): f16
 //! elements walked into any other order, exact.
 //!
 //! A destination word's lanes group into taps: the lanes reading one

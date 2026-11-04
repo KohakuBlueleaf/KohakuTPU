@@ -53,7 +53,7 @@ instruction window), L0 data 3056 B, kernel data 19 520 B, user text
 | define | what |
 |---|---|
 | `KOS_PROF` | the kernel stamps the cycle counter along its trap path and sums the stages of one selected system call (`KOS_I_PROF`, the `kprof` app); kernel text +448 B |
-| `KDS_MUT=n` | a mutant of the dispatcher or L0 for `test_kds.py` (n = 1–8, [dispatcher](../reference/dispatcher.md)) |
+| `KDS_MUT=n` | a mutant of the dispatcher or L0 (n = 1–8, [dispatcher](../reference/dispatcher.md)) |
 
 ### The memory-gap pass
 
@@ -150,26 +150,3 @@ groups: `lat ring sc amo trap itext` for `m0`, `walk` for `m0w`:
 ```
 python run_core.py --board core4s --model ~/kos/build/core4s --image ~/kos/out/m0.elf --cmd "lat ring sc amo trap itext"
 ```
-
-`tests/xlat` (the Sv39 back-to-back cases) and `tests/sigslot` (the slot
-read) are built by their tests and also run on the repository's
-`rv64_node_pair` bench.
-
-## Host tests
-
-```
-cd software/os/tests/host && KOS_BUILD=~/kos/build KOS_OUT=~/kos/out pytest --rootdir . -n 1
-```
-
-| file | needs | cases |
-|---|---|---|
-| `test_core.py` | core models `core2`, `core4s`, `core3s` in `$KOS_BUILD`; images in `$KOS_OUT` | every app on core4s, each paired with a knob; the message-only apps on core2; the non-TPU board; channel flow control; landing zones with `pt_dram`; two boots in one model; log areas; the progress word of a held node; `bench` |
-| `test_card.py` | card models in `$KOS_CARD_MODELS` (default `~/ktpu/build`); `KOS_DRIVER_PATH` for `run_card.py` | 1 die: `units`, `mg` (mailbox and engine), `mover`; 2 dies (only with `KOS_SLOW=1`, about 2 minutes each): remote units, remote `mg`, mover into the other die's landing zone |
-| `test_kds.py` | the core models; the card models and driver path for the unit cases; the LLVM toolchain (it builds the mutant images with `-D KDS_MUT=<n>`) | the dispatcher apps on `core2` and `core4s` (chain and reduction with and without `-u`, refusals, the arenas with first and best fit, one home per node, `kdsbench`); each mutant fails the app that witnesses its property (predecessors ignored, DEPs dropped, free extents never merged, predecessor order unchecked, L0 `QUERY` without the in-leaf page; on the 1-die card model: patches with the user address, no release, no acquire); `kdsmg` on 1 die (plain, `-e`, `-u`) and, with `KOS_SLOW=1`, on 2 dies |
-| `test_prof.py` | `core2`; the LLVM toolchain (it builds a `-D KOS_PROF` image) | `kprof 32`: every selection profiles exactly its calls, the null call's kernel stages fit inside the round trip the caller timed; the plain kernel refuses `KOS_I_PROF` |
-| `test_xlat.py` | `core2` | the Sv39 cases differ (4) without the memory-gap pass and do not (0) with it; the pass's output shape |
-| `test_sigslot.py` | `core2` | the first sig word naming a slot carries the previous slot's count; the next one is right |
-
-Each case is one short command on a fresh model and finishes in under a
-minute; a full run of the default set takes about 15 minutes (`-n 1`; the
-models are single-threaded and share the machine).

@@ -90,15 +90,3 @@ ordered. The application defaults to `KTPU_PIPE_OVERLAP=1`; the low-level DSL
 default is off. Batch and overlap settings are part of the kernel cache key
 and captured graph. Libraries must match the settings and source revision.
 
-## Witnesses
-
-`test_pipe_general_padding.py::test_class_batched_padding_bytes_and_mutant`
-combines class generation, two batches, nk=2, partial rows, empty rows, a
-16-column tail and full extra padded K chunks. It compares MX7B packed bytes
-to the independent reference, checks output guards and poisons every invalid
-source word with signaling NaNs. The nonzero-padding mutant must fail the
-byte witness. It also executes the logical-only arbitrary-walk staging path.
-
-`test_pipe_batch.py` witnesses classifier bytes and nonfinite rejection.
-`test_pipe_overlap.py` witnesses output-slot retirement: removing its wait
-is rejected statically and corrupts a bounded model execution.

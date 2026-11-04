@@ -41,8 +41,6 @@ software/firmware/
   kohakutpu/                     the project
     units/                       'MG' and 'VC' unit classes
     apps/xfprobe/                the transform bank's geometry and fault word
-  tests/                         host/heap_trace.c: heap.c natively, for
-                                 software/driver/tests/test_node_heap.py
 ```
 
 `python software/firmware/build.py [image]` compiles every source of an image in one
@@ -228,9 +226,7 @@ staging; what each covers is the host's choice through the queue's `HEAP`
 entry. One `osprobe` churn op with its table check costs about 3,800 cycles at
 12 live blocks on the card model, so the node runs a short churn and the long
 traces run natively. `kohakuaccel.driver.node.heap` is the same policy in
-Python; `software/driver/tests/test_node_heap.py` runs `heap.c` natively
-on random traces and requires the two to agree on every status, address and
-table.
+Python.
 
 ## Finding the units
 

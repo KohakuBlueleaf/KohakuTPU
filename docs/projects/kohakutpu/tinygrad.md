@@ -132,7 +132,7 @@ over one range of a product of two reads, any layout, any epilogue) and
 | move | one read stored as it is, walked in whole 32-byte words: slices, row flips, permutes keeping the innermost axis, row broadcasts, windows | one mover copy with signed walks |
 | transpose | one read whose innermost axis moved (`x.T`, NHWC <-> NCHW), the new innermost side whole 16-element words; the other side too, or read 16-padded where the extra lanes stay inside its buffer (a narrow channel count of a product held in padded rows) | mover GT4, a 4 x 4 transpose in each 16-lane chunk (`xlane` + lane masks), GT4, a mover copy (the padded rows dropped) -- exact |
 | flip | one read walking its innermost axis backwards, rows of whole words | mover walks words last to first, `xlane(v, 15)` reverses lanes |
-| gather | any other single read into an f16 output (a transpose or flip of rows not of whole words, odd permutes, strided slices, any window) | one kernel of `kernels/relayout.py`'s forms (exact; `forms.relayout`): both walks whole words, one mover walk; the output's innermost axis contiguous in the source too, runs -- each cut into segments of at most one vector-core row of words, a segment's source words one gathered row (bursts), rotated by its lane rotation and masked in a core, its whole lines scattered back (segments sharing a line in turn); a broadcast, each value a row of copies first (a statistic broadcast), then runs; strided with another axis contiguous, a transpose (runs into whole-word sides, `kernels/transpose.py`'s 16 x 16 exchange, runs out). Any other pair, the lane relayout (`kernels/lanes.py`): taps of one source word at one lane rotation, a class's words gathered and scattered per tap. Into a window or at an offset, what the output's words hold between its elements is kept |
+| gather | any other single read into an f16 output (a transpose or flip of rows not of whole words, odd permutes, strided slices, any window) | one kernel of the relayout forms (exact; `forms.relayout`): both walks whole words, one mover walk; the output's innermost axis contiguous in the source too, runs -- each cut into segments of at most one vector-core row of words, a segment's source words one gathered row (bursts), rotated by its lane rotation and masked in a core, its whole lines scattered back (segments sharing a line in turn); a broadcast, each value a row of copies first (a statistic broadcast), then runs; strided with another axis contiguous, a transpose (runs into whole-word sides, the transpose's 16 x 16 exchange, runs out). Any other pair, the lane relayout: taps of one source word at one lane rotation, a class's words gathered and scattered per tap. Into a window or at an offset, what the output's words hold between its elements is kept |
 | boxes | a `where` on index tables (pad, cat, stack): the kept ranges cut where any table changes | each box with the tables constant: a fill, a move, or a rows kernel into a window -- no read leaves its buffer |
 | materialise / narrow | several reduction range sets; more than 7 reads | an inner part first into a temporary; a sub-expression first |
 | flat | elementwise math with every read at the output's index or one value (a statistic is its f16 values) | one pass of 128-value rows; a one-value read is its word, the value broadcast to every lane (`unpack lane=`) |
@@ -150,11 +150,10 @@ at its padded width, or an MXFP7 packing of them, reads them where they are.
 
 ## 4. Coverage
 
-`software/application/tests/ktpugrad/test_tinygrad.py` (program cases,
-an assign read back in the same realize, a bridged kernel, a kernel of 12
-reads, convolution and pool gradients, refusals; `test_train.py` the
-optimizer and a module step; all on
-`build/v9f/vlt_card_v9_1n_v2`; data movement bit-exact; MATMUL products
+Program cases, an assign read back in the same realize, a bridged kernel, a
+kernel of 12 reads, convolution and pool gradients, refusals, the optimizer
+and a module step, all on
+`build/v9f/vlt_card_v9_1n_v2`: data movement bit-exact; MATMUL products
 within 1e-2 of the quantised host reference, whose quantisation loss against
 float64 numpy is < `MXFP7_BOUND = 20*u + 34*u^2 = 0.18631495504963153`,
 `u = (1 + 2^-3)/(2*(2^6 - 1)) + 2^-12`; other non-exact cases < 2e-2).
@@ -185,22 +184,10 @@ whole of those cases' distance from float64).
 | reductions | along rows, down columns, several axes (`sum((0, 2))`, `max((1, 3))`), narrow rows (16 wide), rows of 32 x an odd number (1,184, 2,400), rows 6,144 / 20,480 / 40,960 wide (a capped trip, halves, quarters), down rows of 120, a channel's sum over batch and image (batch 8 and 64), batch-norm statistics, `softmax` / `log_softmax` / `layernorm` / `std`, cross entropy |
 | movement | slices (any stride), `flip` of any axis, `.T` and any `permute` of any shape (rows not of whole words gathered), `pad` (any value), `cat` / `stack`, `expand`, reshapes that divide (nested: a head split of a merged range) |
 | matmul | `x @ w.T` (native), `x @ w` with w [K, N], `x.T @ y`, batched, K and N of any size (10, 84), several column blocks, a product written permuted, fused bias / activation epilogues, an epilogue reading a product or a dense operand of 84 columns |
-| windows | `conv2d` (padding 0 / 1 / 2, one or several input channels), both its gradients, `avg_pool2d` and its gradient, through a SiLU (`test_window.py` plans a conv -> GroupNorm -> SiLU -> pool -> LayerNorm step without a card) |
+| windows | `conv2d` (padding 0 / 1 / 2, one or several input channels), both its gradients, `avg_pool2d` and its gradient, through a SiLU |
 | training | `assign` read back in the same realize; backward of linear / relu / cross entropy; `Adam16` steps |
 | wide kernels | more than 8 buffers (tinygrad cuts at 8; folded tables split by the runner) |
 
-Off the card, `software/application/tests/ktpugrad/test_compile.py` runs
-every function the models use over shapes and axes (unary and binary ops
-over nine shapes, broadcasts, eight reductions over seven shapes and their
-axes, norms, movement, matmuls, eight convolution configurations with
-stride, dilation and groups, a transposed convolution, pools, attention,
-gradients) on an offline device (`runtime.device` kind `offline`):
-`test_compiles` takes each case's kernels through planning, generation,
-L2 -> L1 -> L0, scheduling and the static verifier; `test_plans_compute`
-computes every plan by its numpy meaning (`ktpugrad.reference`, no kernel)
-against tinygrad on the CPU, within 3% of the result's largest magnitude.
-Compiled-package value witnesses run on the card or Verilated card through
-`software/tests/spec/runners/target/num.py` and the application card tests.
 No tensor-computing behaviour model serves as an oracle.
 
 **Refusal clause:** TG.PLAN.010 identifies an unsupported plan, including
@@ -254,10 +241,8 @@ with Context(TRAINING=1):
     Tensor.realize(loss, *opt.schedule_step())   # the loss read before the step writes
 ```
 
-`software/application/tests/ktpugrad/test_train.py` checks the compensated
-weights against the same updates accumulated exactly (within 3 ulp, while
-the uncompensated ones lose most of the movement) and one backward step of
-an `nn.Linear` module on the card.
+The compensated weights match the same updates accumulated exactly
+(within 3 ulp, while the uncompensated ones lose most of the movement).
 
 ## 7. Your own kernel in a tinygrad program
 

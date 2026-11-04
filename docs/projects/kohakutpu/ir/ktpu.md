@@ -21,12 +21,10 @@ batches of work on named units ([l2-program.md](../../../spec/l2-program.md),
 runner loads the file, binds buffers to addresses and runs.
 
 Code: `software/language/kohakutpu/language/` (`text/` the syntax and
-modules, `l1/ops.py` the vector core's math facts, `numerics/`, `examples/`);
+modules, `numerics/`, `examples/`);
 `software/rust/crates/ktpu-l1/src/` (`lower/node/` for L1 bodies,
 `lower/image/` for V2 IMEM words, `layout/` for memory layouts),
 `ktpu-isa` for encodings, and `ktpu-l0` for packages.
-Tests: Rust crate clause and frozen-golden tests, Python binding tests, `software/application/tests/test_l1_examples.py`
-(every example on the Verilated card).
 
 ## 1. A body
 
@@ -199,9 +197,7 @@ Hand-written L2 (`l2/`), compiled to L1 by §9's pipeline:
 seeded inputs and reports cycles and lane beats;
 `python -m kohakutpu.application.tools.measure --build MODEL --nodes ... --out
 DIR` runs every example of that node count, hand L1 and compiled L2, checks
-each against numpy and writes `report.json` / `report.md`. `KTPU_CARD1=MODEL
-KTPU_CARD2=MODEL2 pytest software/application/tests/test_l1_examples.py` is
-the card test (each example under a minute). `python -m
+each against numpy and writes `report.json` / `report.md`. `python -m
 kohakutpu.application.tools.core EXAMPLE IMAGE ...` runs one image on the V2
 core alone.
 

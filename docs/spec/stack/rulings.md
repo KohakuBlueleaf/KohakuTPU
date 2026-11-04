@@ -96,7 +96,6 @@ settles.
 
 ## Evidence to establish in 2p.4
 
-- **RUL.066** `unproven` test_tensor.py has no run on the current tree: 2p.4 rewrites the test_tensor.py cases as tier 1 card value tests per API clause; until they pass, tt:: citations are not evidence and API clauses stay unproven. (test to add; from: api/tensor.md #7; l1/program.md #11; l2/program.md #9; ruling R-066)
 - **RUL.067** `unproven` Recorded runs name the v9f model build: Every recorded result names its build or card image; the 2p.4 tier 1 runs replace the v9f records, and the example-only clauses are unproven until a tier 1 test covers each. (test to add; from: api/tinygrad.md #10; dsl/graph.md #7; api/tensor.md #7; ruling R-067)
 - **RUL.068** `unproven` No witness of unpack lane=: A tier 1 test computes x * t.sum() with t a computed tensor, checks its L2 dump holds unpack .. lane= and checks the values against numpy. (test to add; from: dsl/graph.md #9; ruling R-068)
 - **RUL.069** `unproven` Compare and predicated ops are not run by the compare test: 2p.4 adds tier 1 tests per compare op (vcmpgt, vcmplt, vcmpeq) and per predicate mode (unless=, P0..P3) with the select pass off, and the max form stays as its own test. (test to add; from: isa/vector.md #10; ruling R-069)
@@ -137,7 +136,7 @@ settles.
 
 ## All-zero MX blocks in K pairs (lead ruling, 2026-10-29)
 
-- **RUL.099** `RTL` Every all-zero MXFP7 block feeding an `nk` >= 2 accumulator carries the E=0 scale field (NUM.MX7.008, NUM.ACC.008). Mover QUANT cannot give it, so: an L2 `quant` into an `nk` >= 2 destination without `backend=` lowers through `vector_mx7` (refused by the board's policy when it does not allow it); `backend=mover_quant` into an `nk` >= 2 destination is refused (L2.MOV.018); and a contraction plans `nk` = 1 where its quantiser is mover QUANT under pairing `unpaired`, or keeps `nk` = 2 with vector quantisation under pairing `vector` (`ktpu_machine::Pairing`, default `PAIRING`; the `matmul.plan` argument `pairing`, Python `KTPU_MX7_PAIRING`). L2.MOV.010.quant_and_gt4 runs under this ruling with `nk=1` destinations (`ktpu_l2::spec::SUPERSEDED`). (code: `ktpu-machine/src/pairing.rs`; `ktpu-l2/src/lower/mover/packing.rs` `quant_backend`; `ktpu-kernels/src/gen/matmul.rs` `plan`; evidence: L2.MOV.018 vectors; `test_zero_block_model.py`)
+- **RUL.099** `RTL` Every all-zero MXFP7 block feeding an `nk` >= 2 accumulator carries the E=0 scale field (NUM.MX7.008, NUM.ACC.008). Mover QUANT cannot give it, so: an L2 `quant` into an `nk` >= 2 destination without `backend=` lowers through `vector_mx7` (refused by the board's policy when it does not allow it); `backend=mover_quant` into an `nk` >= 2 destination is refused (L2.MOV.018); and a contraction plans `nk` = 1 where its quantiser is mover QUANT under pairing `unpaired`, or keeps `nk` = 2 with vector quantisation under pairing `vector` (`ktpu_machine::Pairing`, default `PAIRING`; the `matmul.plan` argument `pairing`, Python `KTPU_MX7_PAIRING`). L2.MOV.010.quant_and_gt4 runs under this ruling with `nk=1` destinations (`ktpu_l2::spec::SUPERSEDED`). (code: `ktpu-machine/src/pairing.rs`; `ktpu-l2/src/lower/mover/packing.rs` `quant_backend`; `ktpu-kernels/src/gen/matmul.rs` `plan`; evidence: L2.MOV.018 vectors)
 
 ## SRU accumulation precision (lead ruling, 2026-10-24)
 

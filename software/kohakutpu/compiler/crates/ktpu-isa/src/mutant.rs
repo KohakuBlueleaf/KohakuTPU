@@ -116,7 +116,7 @@ pub const NAMES: &[&str] = &[
     "machine/fact_read",
 ];
 
-/// Mutants no spec vector names, witnessed by this crate's own tests: a
+/// Mutants local to this crate: a
 /// field value too wide for its field wraps instead of being refused; the
 /// decoder leaves a walk's `reg` without its bits past 5.
 pub const LOCAL: &[&str] = &["isa.layout/fit_wraps", "isa.vector/rejoin_walk"];

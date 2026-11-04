@@ -6,7 +6,7 @@
 
 `template_verify(..., mode="proof")` returns either `PROVEN` with an argument certificate or `REFUSED` with the property, reason and a counterexample when available. `mode="sample"` is separate and returns coverage points, not a universal proof. It checks every corner, boundary-adjacent faces (minimum plus one, maximum minus one and one where in range), and a digest-seeded interior sample. A sampling budget that cannot cover required points refuses rather than dropping them. Each point runs twice. The digest seeds sampling; it is not an assumption of the proof.
 
-The mutation witness is `ktpu/tests/template_verification.rs`. A vector core advances its unpack pointer by half its local memory on each trip. Even trip counts leave a final unpack disjoint from an outstanding fill; an odd trip count makes them overlap. Counts two and four pass even when the fill-to-unpack synchronization edge is absent. The adjacent binding three exposes a real checker race. Restoring that edge makes all three bindings pass.
+A vector core advances its unpack pointer by half its local memory on each trip. Even trip counts leave a final unpack disjoint from an outstanding fill; an odd trip count makes them overlap. Counts two and four pass even when the fill-to-unpack synchronization edge is absent. The adjacent binding three exposes a real checker race. Restoring that edge makes all three bindings pass.
 
 ## Parameter confinement
 
@@ -46,7 +46,7 @@ For **one ordinary GO stream**, excluding transforms and scatter, its source DIM
 
 This is a conservative all-integer enclosure and congruence proof, not sampling, an exact optimization of correlated products, or a general pairwise-overlap solver. The certificate records the destination base, count/stride intervals, address enclosure, maximum visit product and theorem. A failed summary records its reason and retains exact enumeration. Multiple GO streams, transforms and scatter require ordinary line checking at every remaining assignment; an excessive enumeration product still refuses. When every mesh has the static execution witness, `simulation_bindings` is one even when `checker_bindings` is larger; without it both counts include every quotient assignment. No loop-period reduction is implemented.
 
-`ktpu/tests/template_mover_proof.rs` witnesses this boundary. `verify.template/mover-no-summary` loses the cap-one proof of a large safe walk. `verify.template/mover-no-guards` incorrectly accepts interior misalignment, a second partial-line owner, zero counts, negative destinations and excessive visit products. `verify.template/mover-no-projection` repeats invariant simulation at every assignment and is detected by the simulation-count witness, with bound bytes still equal to the full path.
+`verify.template/mover-no-summary` loses the cap-one proof of a large safe walk. `verify.template/mover-no-guards` incorrectly accepts interior misalignment, a second partial-line owner, zero counts, negative destinations and excessive visit products. `verify.template/mover-no-projection` repeats invariant simulation at every assignment and is detected by the simulation-count witness, with bound bytes still equal to the full path.
 
 Overlapping affine access intervals require simultaneous inequalities (`a_start < b_end` and `b_start < a_end`); safe corners do not prove those inequalities infeasible. For multiple potentially conflicting access sites, this implementation decides such hazards by full integer enumeration within budget, **not** a symbolic linear solver or compressed periodic-loop proof. A single-owner mover summary cannot discharge vector-core fill/unpack hazards. Larger unsupported domains are deliberately `REFUSED`. The two-parameter witness has fill offset `64 + 16*x + 48*y`, unpack offset 128, and `x,y in [0,2]`: only the interior `(1,1)` overlaps. The odd-trip witness is rejected at three without consulting sampling. The `verify.template/no-residues` mutant drops interior representatives and is killed by that witness; `verify.template/repeat-data` is killed by the REPEAT confinement-boundary witness.
 
@@ -60,7 +60,7 @@ The graph-based `ClassLibrary` retains byte equality to direct compilation. Chec
 
 ## Reference capture coverage
 
-Offline rebuilds of the reference captures classify all 50 stored production class templates at cap 2048. Exact fallbacks are not relabelled as proven templates. Per-template argument certificates and refusals are emitted by `scripts/py/templates/proof_measure.py`; `scripts/py/templates/prebuild.py --capture FILE` rebuilds the specified capture without retracing.
+Offline rebuilds of the reference captures classify all 50 stored production class templates at cap 2048. Exact fallbacks are not relabelled as proven templates. Per-template argument certificates and refusals are emitted by the proof mode; `scripts/py/templates/prebuild.py --capture FILE` rebuilds the specified capture without retracing.
 
 | capture | class templates | PROVEN | REFUSED | captured sources with a proven candidate | captured launches with a proven candidate |
 |---|---:|---:|---:|---:|---:|

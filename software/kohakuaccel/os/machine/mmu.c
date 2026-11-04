@@ -220,7 +220,7 @@ uint64_t mmu_query(uint64_t va)
         return 0;
     }
 #if defined(KDS_MUT) && KDS_MUT == 8
-    return *e; /* mutant: the leaf's own page number (tests/host/test_kds.py) */
+    return *e; /* mutant: the leaf's own page number */
 #endif
     return *e + (((va >> 12) & ((1UL << (9 * level)) - 1)) << 10);
 }

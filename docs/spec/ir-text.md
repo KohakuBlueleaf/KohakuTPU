@@ -117,7 +117,5 @@ and is conformant when it reads the examples of
 
 ## 4. Gates
 
-`software/language/tests/test_syntax.py` (the grammar, canonical text, each
-kind of wrong text refused at its line), and the Rust L1 tests under
-`software/rust/crates/ktpu-l1/tests/`: `spec_image.rs`, `spec_build.rs`,
-`clauses.rs` and `parse_grammars.rs` (the L1 bodies).
+The stage suites under `software/tests/stages/` (the L1 bodies through
+L1 -> L0 and the L1 schedule).

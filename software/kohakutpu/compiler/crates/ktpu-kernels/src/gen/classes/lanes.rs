@@ -1,5 +1,4 @@
-//! One lanes class: padded duplicate members and fixed tap instructions
-//! (`classes/lanes.py`).
+//! One lanes class: padded duplicate members and fixed tap instructions.
 
 use super::{core_trips, trip_row, Classed, Cores};
 use crate::gen::lanes::{entries, rows, Class, Plan, Rows, ROWS};

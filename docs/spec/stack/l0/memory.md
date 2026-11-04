@@ -23,8 +23,7 @@ and no buffer or relocation table.
 
 - **L0.MEM.007** `frozen` Handle translation preserves view offsets, refuses
   stale generations and does not alter the source package. Vector:
-  `RUL.023.handles`; mutant: `memory/identity-translation`. Ordinary and template
-  binding tests: `compiler/tests/package/test_handle_bind.py`.
+  `RUL.023.handles`; mutant: `memory/identity-translation`.
 
 ## Exact extents
 
@@ -60,8 +59,7 @@ exceeds their logical width.
   publication quarantines spans and refuses further runtime submissions. Device
   close first shuts down the card, then revokes all reservations, including
   recording pins. If card shutdown fails, reservations remain. Vector:
-  `L0.BIND.027.teardown`; mutant: `memory/no-teardown`; failed-wait and partial
-  publication tests: `application/tests/runtime/test_lifetime.py`.
+  `L0.BIND.027.teardown`; mutant: `memory/no-teardown`.
 - **L0.MEM.003** `frozen` Allocation pressure collects oldest first, retrying
   after each completion. `max_inflight` is positive or `None`; reaching it
   collects oldest first. Host reads/writes drain work. Vector:
@@ -91,11 +89,7 @@ exceeds their logical width.
   recording and in-flight pins independently delay physical reclamation.
   Replay still requires two byte-identical event logs and equal storage/core
   states; no address fields are ignored or rewritten during comparison.
-  Model test `ktpugrad/test_memory_jit.py` compares changing-input outputs with
-  NumPy. Offline `ktpugrad/test_fragmented_jit.py` requires replay after unrelated
-  allocation/free patterns and checks graph destruction. Runtime
-  `test_placement.py` covers generations, staging, live forms, independent logs
-  and queued reuse. Tier-0 `L0.MEM.005.jit_drop` kills `memory/no-jit-drop`;
+  Tier-0 `L0.MEM.005.jit_drop` kills `memory/no-jit-drop`;
   tier-1 `L0.MEM.005.jit_card` uses the session's device, fragments its heap,
   checks exact NumPy values and kills both `memory/no-jit-replay` and
   `memory/no-stable-placement`. A one-kernel graph may execute directly instead

@@ -86,26 +86,16 @@ continues returning an issued ticket, which still requires a wait.
 
 ## Measurements and witnesses
 
-`tools/hotpaths/measure.py` builds cumulative variants and saves each image,
-section sizes, console output and JSON measurements under its output directory.
-`tools/hotpaths/costs.py` reports linked machine/kernel/library text totals and
-trap prologues. `kprof` measures the instrumented C path, not the assembly leaf
+`kprof` measures the instrumented C path, not the assembly leaf
 path. `khot.self_cycles` measures a SELF call between user CSR timestamps;
 `bench.syscall` additionally includes loop and user-code fetch costs.
 
 `khot` checks register preservation, stale translation rejection, blocked
 receive wakeups, FIFO order/counts and leaf results. `khot 8` on a shared-memory
 board exercises a kernel copy beyond the first 4-KB page of a superpage.
-`KOS_HOT_MUT` selects the mutation witnessed by a corresponding host test.
 `kevent`, run after a completed unit workload, checks record contents, count
 clamping, unaligned page crossings, EFAULT with a copied prefix, caller-register
 preservation and channel-triggered wake. It reports `kevent.copy_cycles`.
-`tools/hotpaths/witness.py batch|event` runs one model and requires a specific
-semantic failure from mutant 7 (missing final batch instruction) or 9 (fault
-record replaced by retired count), rather than accepting any nonzero exit.
-`measure.py --build-only` compiles without consuming a model run; variants 10,
-11, 12 and 13 successively include the base optimized set, compact translation,
-assembly EVENT and active-waiter tracking.
 
 `mg [unit]` and `kdsmg rounds [unit] [-flags]` accept an optional unit index to
 bound a card-model measurement; omitting it includes all MG units.

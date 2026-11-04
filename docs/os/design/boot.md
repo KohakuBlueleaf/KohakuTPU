@@ -120,7 +120,7 @@ and node 0 knows every other node has reached the same point.
 
 `run_core.py --boots 2` boots an image twice in one model with the
 interlink, staging and DRAM kept between the boots, as a card is from one
-run to the next; `tests/host/test_core.py::test_second_boot` runs it.
+run to the next.
 
 ## The log area and the progress word
 
