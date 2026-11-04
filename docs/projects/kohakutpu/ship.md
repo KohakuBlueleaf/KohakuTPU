@@ -93,7 +93,7 @@ the device model (banks 61–63 are SLR0, 64–67 SLR1, 68–71 SLR2, 72–74 SL
 
 The block design names the controller by the die it is in — `ddr4_<slr>` — and
 the board's numbering appears in exactly one line of the build
-(`DDR_PORT_OF_SLR` in `scripts/tcl/v8t2/00_config.tcl`), where the cell meets
+(`DDR_PORT_OF_SLR` in `scripts/tcl/v8t3/00_config.tcl`), where the cell meets
 its board port. The synthesis analysis re-derives the table from the package
 pins and fails the build if the two disagree.
 

@@ -1,7 +1,7 @@
 // The mover commanded THE WAY SILICON COMMANDS IT: through the station bus's
 // 32-bit control port, at the real window base.
 
-// scripts/tcl/v6/40_bus.tcl:141 puts an axi_dwidth_converter SI=32 MI=64 in
+// The v6 bus puts an axi_dwidth_converter SI=32 MI=64 in
 // front of every mesh's S_AXI_CTRL, because the station emits only 32 or FW.
 // So a host `write64` reaches noc_orchestrator as one of three shapes, and
 // which one depends on whether the upsizer packed. Every bench before this
@@ -16,7 +16,7 @@
 //              that as 8 beats of 32 bits, and the upsizer makes 4 beats of
 //              64 -- one strobed, three not.
 
-// scripts/tcl/v6/50_addr_lit.tcl gives segment XLT = base, so the mesh sees
+// The v6 address map gives segment XLT = base, so the mesh sees
 // 0x800000 + 0x800 + offset. Driven in full here: `is_aux` compares
 // waddr[15:0], and the window is 64 KiB aligned, so the decode is part of
 // what this proves.

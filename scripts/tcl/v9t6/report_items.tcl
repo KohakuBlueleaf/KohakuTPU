@@ -1,5 +1,5 @@
 # The per-item report after v9t6's implementation (v9t6_impl.tcl sources it
-# after 80_report): v9t5/report_items.tcl's flow on this image's checkpoints,
+# after 80_report): the per-item report on this image's checkpoints,
 # items against REPORT_BASE.
 #   vivado -mode batch -source scripts/tcl/v9t6/report_items.tcl   (alone)
 set here_ri [file dirname [file normalize [info script]]]

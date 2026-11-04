@@ -18,8 +18,8 @@ tags:
 > neither.
 
 **Status: the flow is written and verified to the block-design level; no
-image is built.** The flow is `scripts/tcl/v8/` behind
-`scripts/tcl/multimesh_v8_bd.tcl`, every knob in `v8/00_config.tcl`, written
+image is built.** The flow is the staged one in `scripts/tcl/v8t3/` behind
+`scripts/tcl/multimesh_v8t3_bd.tcl`, every knob in `00_config.tcl`, written
 to be run **once**: nothing is placed until every check in §5 has passed on
 the synthesised netlist.
 
@@ -116,13 +116,13 @@ in the home field: page `p` (16 KB) → home `p mod 4`, in-channel page `p div 4
 
 Three checks, none of which trusts the other:
 
-1. `v8/check_map.tcl` — the *intended* tables: prints every station segment and
+1. the map check — the *intended* tables: prints every station segment and
    walks the rotation over the 16 GB, before anything is built;
-2. `v8/75_verify_bd.tcl` — the *built* block design: every segment offset and
+2. `v8t3/75_verify_bd.tcl` — the *built* block design: every segment offset and
    range read back from the BD, every station port on its intended endpoint,
    the literals equal to the intended tables, every clock and reset pin driven
    by what §2 says;
-3. `v8/70_analyze.tcl` — the *synthesised* netlist: clocks on every pin
+3. `v8t3/70_analyze.tcl` — the *synthesised* netlist: clocks on every pin
    re-read, the reset audit, pblock coverage, and the address map read back
    again from the BD with the netlist open.
 
@@ -229,9 +229,9 @@ seven resets, none reaching a register on another clock; the JTAG NMU carries
 no asynchronous FIFO; `jtag_ctrl/aclk` is the system clock.
 
 Build, one Vivado at a time and never a block-design build beside another
-session: `multimesh_v8t2_bd.tcl -tclargs rebuild` (block design),
-`v8t2/75_verify_bd.tcl`, `multimesh_v8t2_bd.tcl -tclargs synth` (OOC IP,
-`synth_1`, `70_analyze`), `v8t2_impl.tcl` (`impl_1` to `write_bitstream`, then
+session: `multimesh_<ver>_bd.tcl -tclargs rebuild` (block design),
+`v8t3/75_verify_bd.tcl`, `multimesh_<ver>_bd.tcl -tclargs synth` (OOC IP,
+`synth_1`, `70_analyze`), `<ver>_impl.tcl` (`impl_1` to `write_bitstream`, then
 `80_report`). `scripts/ps1/probe_status.ps1` follows the project through every
 stage, including the block-design build before a run directory exists; give
 the synth and impl sessions `-log <project dir>/build.log` and `impl.log`, the

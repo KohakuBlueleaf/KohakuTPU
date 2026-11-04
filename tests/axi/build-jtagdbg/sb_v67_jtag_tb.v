@@ -2,7 +2,7 @@
 // 64-bit AXI4 manager on S00 driving the silicon-observed access shapes.
 //
 // What this bench carries that sb_line4_tb does NOT:
-//   1. AW=43 and the real SEG_* table from scripts/tcl/v6/50_addr_lit.tcl
+//   1. AW=43 and the real v6 SEG_* table
 //      (SEG_OVERRIDE=1), instead of the uniform 64 KB map at AW=40.
 //   2. The AXI4-Lite truncation sb_bd_line4 applies to ports 2 and 3 of every
 //      station: awlen/awsize/wlast/arlen/arsize are DROPPED at the port, rlast

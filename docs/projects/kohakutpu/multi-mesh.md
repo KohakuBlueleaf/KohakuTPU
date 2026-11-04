@@ -31,7 +31,7 @@ This page is specific on purpose.
 ## 0. v8t and v9: one memory, several nodes
 
 From v8t on, every die's node reaches DRAM through the partitioned Xache
-(`scripts/tcl/v8t/00_config.tcl`, [pxache](../kohakuaxi/pxache.md)): one flat
+(`scripts/tcl/v8t3/00_config.tcl`, [pxache](../kohakuaxi/pxache.md)): one flat
 16 GB, interleaved over the four channels at 16 KB, every node master reaching
 every home. Sections 1 to 8 describe the per-mesh memory of the earlier cards;
 on these cards:

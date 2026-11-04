@@ -13,8 +13,7 @@
 # With V8_BASE (`-tclargs base FILE`) naming an earlier run's
 # *_classes_merged.txt, every merged class is set against that run in
 # *_classes_diff.txt (design and clock names normalised v8tN -> vN).
-#   vivado -mode batch -source scripts/tcl/v8t5_paths.tcl ?-tclargs margin 0.75?
-#   vivado -mode batch -source scripts/tcl/v8t5_routed_paths.tcl -tclargs margin 0.5
+#   vivado -mode batch -source scripts/tcl/v8t3/87_synth_paths.tcl ?-tclargs margin 0.75?
 
 if {![info exists V8_PATH_MARGIN]} { set V8_PATH_MARGIN 1.0 }
 if {[set i [lsearch $argv margin]] >= 0} { set V8_PATH_MARGIN [lindex $argv [expr {$i + 1}]] }

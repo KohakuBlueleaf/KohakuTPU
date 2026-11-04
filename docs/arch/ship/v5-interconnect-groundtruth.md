@@ -12,9 +12,8 @@ tags:
 # multimesh v5 interconnect and address map — a historical record
 
 > **This page is a record of a superseded design. It is not the shipping
-> interconnect.** It describes the vendor SmartConnect tree that
-> `scripts/tcl/multimesh_v5_bd.tcl` builds, captured *before* work started on
-> replacing it. What replaced it is the **station bus** — one **station** per
+> interconnect.** It describes the vendor SmartConnect tree of the v5 image.
+> The current interconnect is the **station bus** — one **station** per
 > SLR, arranged as a line with two link ports each and no root — in
 > [projects/kohakuaxi](../../projects/kohakuaxi/station-bus.md). Read this page
 > to know what that bus was measured against, not to know what the machine does

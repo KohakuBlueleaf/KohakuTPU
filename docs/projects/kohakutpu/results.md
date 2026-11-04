@@ -894,7 +894,7 @@ each wants one more register: the master's landing pick and the home's take.
 
 ### 5.8 v8t5 — every path under a nanosecond at synthesis, by class
 
-`scripts/tcl/v8t5_paths.tcl` (`v8t3/87_synth_paths.tcl`) opens the
+`scripts/tcl/v8t3/87_synth_paths.tcl` opens the
 synthesised project read-only beside the implementation and collects every
 setup endpoint with less than `V8_PATH_MARGIN` (1.0 ns) of slack, one path per
 endpoint: a row each in `build/multimesh_v8t5_synth_paths.tsv`, then the same
@@ -1086,10 +1086,10 @@ loses four fetch slots.
 The implementation run's own reports (`impl_1/*_routed.rpt`,
 `*_utilization_placed.rpt`, `runme.log`), the ship flow's routed reports in
 `build/multimesh_v8t5_impl_*.rpt`, and two read-only opens of the routed
-checkpoint: `scripts/tcl/v8t5_routed_paths.tcl` (the §5.8 census on the
+checkpoint: the §5.8 census (`scripts/tcl/v8t3/87_synth_paths.tcl` on the
 routed design, margin 0.5 ns: 172,417 endpoints in 22,878 classes, 8,183 of
 them failing, in `build/multimesh_v8t5_routed_*`) and
-`scripts/tcl/v8t5_routed_nets.tcl` (`report_cdc`). Fully routed, 0 nets with
+`report_cdc`. Fully routed, 0 nets with
 routing errors; hold met at +0.002 ns; pulse width met; DRC with no critical
 warning.
 
@@ -1269,7 +1269,7 @@ class and slack unchanged. The Xache in v8t6 is the v8t5 netlist with the
 
 The same sources as §5.10 for the v8t6 project (`impl_1/*_routed.rpt`,
 `runme.log`, `build/multimesh_v8t6_impl_*.rpt`) and the routed census
-`scripts/tcl/v8t6_routed_paths.tcl` (margin 0.5 ns: 149,500 endpoints in
+(`scripts/tcl/v8t3/87_synth_paths.tcl`, margin 0.5 ns: 149,500 endpoints in
 20,236 classes, 6,749 of them failing, `build/multimesh_v8t6_routed_*`),
 which now sets every merged class against the v8t5 census as well
 (`scripts/tcl/v8t3/87_synth_paths.tcl` `V8_BASE`, the result in
