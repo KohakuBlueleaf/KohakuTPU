@@ -240,20 +240,17 @@ explicit about which couplings are cut and which are still open.
 
 > **The separation is by directory, not by repository.** Framework and projects
 > share one tree, one test suite and one build flow, and two checks measure the
-> split rather than assuming it: `software/tests/test_imports.py` for the
+> split rather than assuming it: `software/tests/static/test_imports.py` for the
 > software half, and `scripts/py/deps.py` for the RTL, which reads
 > instantiations rather than build lists — so adding a file to a list cannot
 > hide an edge. A second project would sit beside `kohakutpu/` rather than
 > forking anything.
 >
-> `src/kohakumpe/simd/` is what the rule produced. The SIMD unit needed E8M15
-> float arithmetic and reached into `src/kohakutpu/vector/` for it, so every
-> build list carrying the SIMD unit carried the reference accelerator with it.
-> Moving the *arithmetic* into the framework would have been worse — it would
-> put one project's number format in the framework — and the float tier does
-> not separate from the int tier at any seam that already exists. So the whole
-> unit went to a project, where project→project is the allowed direction, and
-> `SIMD_EN` became a slot. The framework's rv32 is the base core bit for bit.
+> `src/kohakumpe/simd/` shows the rule. The SIMD unit's float arithmetic is
+> one project's number format, so it cannot live in the framework, and the float
+> tier does not separate from the int tier at any existing seam. The whole unit
+> is therefore a project (project→project is the allowed direction), `SIMD_EN`
+> is a slot, and the framework's rv32 is the base core bit for bit.
 
 **KohakuTPU is one project built on this framework** — an MXFP7 tensor
 accelerator. It appears throughout these pages as a worked example and is always

@@ -22,7 +22,7 @@
 //
 // ACC_MW sets the mantissa: 16 is FP24, 14 is FP22, 12 is FP20. E7 is fixed;
 // range is not the tunable. MW=14 measures identically to MW=16 and costs less,
-// so it is the default -- see docs/compute/accumulator.md.
+// so it is the default -- see docs/projects/kohakutpu/accumulator.md.
 //
 // TIMING: this block sets the CU's critical path. It bound on stage 1 -> stage
 // 2a (val_r -> b_sig) until the normalising shift moved into DSPs; the stage now
@@ -142,7 +142,7 @@ module mx_acu_fp #(
     // A per-tile output scale was evaluated here and CANCELLED: folding the
     // constant into Q on the host is exactly equivalent and free, because a
     // uniform factor lands entirely in MXFP7's block exponents. See
-    // docs/compute/accumulator.md s4.6.
+    // docs/projects/kohakutpu/accumulator.md s4.6.
     wire [3:0] ma [0:3];
     wire [3:0] mb [0:3];
     wire signed [9:0] ea [0:3];
@@ -172,7 +172,7 @@ module mx_acu_fp #(
     // which is one XOR level on a register output. Taking the magnitude AFTER
     // the multiply instead puts a 30-bit two's-complement carry chain between
     // the DSP's output register and the leading-one search -- see
-    // docs/compute/accumulator.md.
+    // docs/projects/kohakutpu/accumulator.md.
     //
     // `r` is a rounding bit, so `v + r` can only reach zero from v = -1: the one
     // case where `s` disagrees with the true sign of the sum. The magnitude is
@@ -378,7 +378,7 @@ module mx_acu_fp #(
     // ================================================ stage 3: read + align
     // ONE bank. Banks existed to close a single-cycle accumulate loop when K was
     // the inner loop; the ISA now sweeps K OUTERMOST
-    // (docs/compute/tensor-isa.md s5.1), so an address recurs only every Gm*Gn
+    // (docs/projects/kohakutpu/isa.md s5.1), so an address recurs only every Gm*Gn
     // cycles -- 64 at the smallest useful tiling -- and read latency is free.
     //
     // READ_LAT=2 uses the block RAM's own output register. Without it the path

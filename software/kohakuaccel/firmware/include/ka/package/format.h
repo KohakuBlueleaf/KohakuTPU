@@ -1,5 +1,5 @@
 /* The work package, as the firmware reads it (docs/spec/package-format.md);
- * kohakuaccel/compiler/package/format.py is the host's copy. */
+ * software/kohakuaccel/compiler/crates/ka-package/src/format/ is the host's copy. */
 #ifndef KA_PACKAGE_FORMAT_H
 #define KA_PACKAGE_FORMAT_H
 

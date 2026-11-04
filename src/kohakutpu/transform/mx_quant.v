@@ -37,7 +37,7 @@
 // buffer wide. The requester holds at most DEPTH entries in here and counts
 // `done` back; `start` never aborts an entry.
 //
-// Timing and area rationale: docs/mas/quantiser-timing.md.
+// Timing and area rationale: docs/arch/sysnode/transform-stage.md.
 
 `default_nettype none
 
@@ -285,7 +285,7 @@ module mx_quant #(
                 // one selected afterwards. Reducing first and renormalising the
                 // winner puts a 15-bit compare in FRONT of an 11-step shift
                 // chain; here the compare runs beside it and adds only a 2:1
-                // mux. See docs/mas/quantiser-timing.md.
+                // mux. See docs/arch/sysnode/transform-stage.md.
                 for (lane = 0; lane < 4; lane = lane + 1) begin
                     for (hh = 0; hh < 2; hh = hh + 1) begin
                         {ef_v, sig_v} = decode(accp[lane*2+hh]);

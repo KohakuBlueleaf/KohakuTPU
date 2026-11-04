@@ -13,7 +13,7 @@
 // the mirror image of the base core's register-file lesson (a 32-entry file in
 // a 1K-deep BRAM is 3.1% depth-utilised and the LUTRAM form ships instead), and
 // it points the opposite way: here the SMALL file may be the wasteful one.
-// docs/arch/pe/performance.md carries the measurement.
+// docs/arch/cpu/rv32-pe/performance.md carries the measurement.
 //
 // NO WRITE-THROUGH BYPASS, deliberately, and it is the one place this file
 // differs from rv_regfile. The scalar file needs one because a write lands at

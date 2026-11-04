@@ -55,7 +55,7 @@ The package is laid out by component, as every project is
 ## What it proves
 
 `kohakuaccel` must not import any project, and a project imports no other
-project. `software/tests/test_imports.py` checks both over every module,
+project. `software/tests/static/test_imports.py` checks both over every module,
 toyaccel's included.
 
 ## The RTL side

@@ -17,7 +17,7 @@
 //   agg   every worker sums its slice and pushes VALUE THEN FLAG to core 0.
 //         The leader polls flags only: one sender's pushes arrive in program
 //         order, so a flag it can see means the value beside it has landed.
-//   ho    the DRAM hand-off of docs/arch/pe/programming.md in its four steps.
+//   ho    the DRAM hand-off of docs/arch/cpu/rv32-pe/programming.md in its four steps.
 //         The reader CACHES the region first, so without the invalidate its
 //         halt word is the stale sum -- and the generator refuses values whose
 //         sums are equal, so that failure cannot pass.

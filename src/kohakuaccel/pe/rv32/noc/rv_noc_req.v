@@ -39,7 +39,7 @@ module rv_noc_req #(
     // translation costs no logic at all.
     parameter [39:0]  DRAM_BASE  = 40'h00_0000_0000,
     parameter integer WR_MAX     = 1,       // un-acknowledged writes allowed
-    // buf_id allocation, published in docs/arch/pe/programming.md as
+    // buf_id allocation, published in docs/arch/cpu/rv32-pe/programming.md as
     // flit-format.md s4.7.1 requires. 3 is reserved to the framework.
     parameter [7:0]   BUF_SPAD   = 8'd0,    // raw 32-byte granules
     parameter [7:0]   BUF_IMEM   = 8'd1,

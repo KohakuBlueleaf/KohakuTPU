@@ -264,7 +264,7 @@ run that discovers, dispatches and grades through the framework's driver and
 `SimMachine` untouched. A ray tracer, a DSP mesh or a CPU mesh is the same: a
 field table, a unit type, and the compiler that emits its words.
 
-The split is enforced rather than intended: `software/tests/test_imports.py`
+The split is enforced rather than intended: `software/tests/static/test_imports.py`
 reads every `kohakuaccel` module's imports and fails on one that names a project
 module — see [software-stack.md](software-stack.md) §6.
 

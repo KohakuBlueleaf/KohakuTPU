@@ -1,5 +1,4 @@
-//! A generator call as the planner goldens record it
-//! (`golden/plan_dump.py`): `{"gen": "<module>.<fn>", "args": {python
+//! A generator call as the planner records it: `{"gen": "<module>.<fn>", "args": {python
 //! keyword: value}}`. An `Operand` is its field dict, an expression its node
 //! table ([`expr::from_table`]), an `Mm` / lanes plan `{"made_by": CALL}`
 //! (the `matmul.plan` / `lanes.plan` call, made again here), tuples lists,

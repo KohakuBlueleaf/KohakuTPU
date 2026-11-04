@@ -1,7 +1,7 @@
 // rv_mem -- the memory stage, and the ONE address decoder the PE has.
 //
 // Four regions, decided by the top four bits of the software address and
-// nothing else (docs/arch/pe/programming.md):
+// nothing else (docs/arch/cpu/rv32-pe/programming.md):
 //
 //   0x1xxx_xxxx  scratchpad    external L1 data. Real SRAM, home of its own
 //                              addresses, always hits, no tags.

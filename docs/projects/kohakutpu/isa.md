@@ -137,15 +137,13 @@ returning `count x 4` responses each tagged `{entry, word}`. The compute unit ha
 no requester and no receive cursor: a response says which L1 slot it belongs to
 and which quarter of it, **so arrival order carries no meaning**.
 
-That tagging is what makes everything else expressible. Previously a response was
-identified only by the order it turned up in, so a second outstanding read had
-nowhere to be named — an earlier attempt to keep several reads in flight could
-not have worked at any depth. It was not a tuning failure; the field did not
-exist.
+That tagging is what makes everything else expressible. A response identified
+only by the order it turns up in leaves a second outstanding read nowhere to be
+named, at any depth.
 
-`FILL` is one state in the sequencer, not three. It used to be
-request → receive → write per entry, which is the shape a per-entry requester
-forces; **the descriptor removed the requester rather than pipelining it.**
+`FILL` is one state in the sequencer, not three (request → receive → write per
+entry, the shape a per-entry requester forces): **the descriptor replaces the
+requester rather than pipelining it.**
 
 Three fields on it are worth naming:
 
@@ -196,7 +194,7 @@ plus a fold on emit.
 It is a loop-order choice with an architectural consequence — it deletes the
 banks, the fold, the zero mask and three quarters of the tile memory
 ([accumulator.md](accumulator.md) §4). What it costs in exchange is that the
-caller now owes a pacing contract that used to be structural.
+caller owes a pacing contract the structure does not enforce.
 
 > Two different loops both mention K and they nest the opposite way. **Across
 > chunks** the driver puts K innermost, so the output tile stays resident. **Within
@@ -355,9 +353,9 @@ the burst leaves its tail in the buffer forever; and **a `DRAIN` is finished whe
 the last write has left the unit**, not when the accumulator stops producing, or
 the completion signal runs ahead of the memory traffic it stands for.
 
-The drain sequencer also does not count cycles. It used to count 10 after issuing
-an emit, and deepening the accumulator pipeline made 10 too few, so it wrote a
-zero result while every unit test still passed.
+The drain sequencer also does not count cycles: a fixed count after an emit is
+too few once the accumulator pipeline deepens, and the result is a zero written
+while every unit test still passes.
 
 ### 5.3 Into another unit: bulk transfer between endpoints
 
@@ -633,12 +631,9 @@ the problem and forces a compiler to cut it into rounds. A
 descriptor moves that loop into hardware. It is the right next step for
 convolution; it is not needed for GEMM, which is why it has not happened.
 
-An earlier design went further still and was abandoned: seven instruction types
-with nested-loop flags, buffer choices and per-instruction start addresses. **The
-reason it collapsed from seven types to three is the most transferable thing in
-this project's ISA history.** That set put the loop structure *inside* one
-instruction, so the controller had to be able to express every access pattern the
-hardware might ever want. The design that replaced it moves the loop up a level:
-the manager sweeps a resident output tile, the driver computes the addresses, and
+**Three instruction types, and the loop structure one level up.** An instruction
+set that puts the loop structure *inside* one instruction (nested-loop flags,
+buffer choices, per-instruction start addresses) makes the controller express
+every access pattern the hardware might ever want. Here the manager sweeps a resident output tile, the driver computes the addresses, and
 an instruction only says how big the sweep is. One `GEMM` flit expands into
 hundreds of accumulator commands without carrying any of them.

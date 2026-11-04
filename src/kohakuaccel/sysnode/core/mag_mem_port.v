@@ -5,7 +5,7 @@
 //
 // WHY THIS IS A MODULE. One read engine serves one run at a time (the next one
 // chained behind it) through one emit buffer, so a port is the unit read
-// concurrency grows by. See docs/mas/spec.md s2.
+// concurrency grows by. See docs/arch/sysnode/README.md s2.
 //
 // A port is therefore the unit the machine grows by: its own intake, read
 // engine, write slots and AXI channel, serving ~2 clusters. It carries NO
@@ -162,7 +162,7 @@ module mag_mem_port #(
     // `ws_len` and the surplus matches nothing, while a dropped one leaves the
     // slot short forever, so it never becomes ready, the source's next
     // descriptor opens a SECOND slot, and its data matches the older one.
-    // docs/noc/spec.md s2.1.
+    // docs/arch/noc/README.md s2.1.
     wire       mi_take = mem_in_valid && !mem_in_busy;
     wire [3:0] mi_ty = `MP_HDR_TY(mem_in_data);
     wire       mi_rd = mi_take && (mi_ty == T_MEM_RD_REQ);
@@ -279,7 +279,7 @@ module mag_mem_port #(
 
     // Entries in a streaming fetch. Contiguous by construction -- the driver
     // stores operands tile-major precisely so a pass's entries are one run
-    // (docs/isa/kernel.md s3).
+    // (docs/projects/kohakutpu/isa.md s3).
     wire [7:0] in_count = (
         in_stream ? ((rq_flit[199 -: 8] == 8'd0) ? 8'd1 : rq_flit[199 -: 8])
         : 8'd1

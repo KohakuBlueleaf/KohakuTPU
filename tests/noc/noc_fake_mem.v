@@ -105,7 +105,7 @@ module noc_fake_mem #(
 
     // THE LINK RETRIES, so this side must HOLD. A flit stays asserted until a
     // cycle in which the receiver is not busy, and the receiver accepts iff
-    // `valid && !busy` -- see noc_outport.v and docs/noc/spec.md s2.1. Driving
+    // `valid && !busy` -- see noc_outport.v and docs/arch/noc/README.md s2.1. Driving
     // `valid` from the PREVIOUS cycle's `busy` destroys any flit that meets a
     // receiver which raised busy in between: nothing re-presents it, and
     // `word`/`left`/`qemit` have already moved on. That is the same defect the

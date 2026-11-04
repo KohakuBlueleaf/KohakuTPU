@@ -106,11 +106,10 @@ Four rules hold across all of them, and each has a specific failure behind it:
    interconnect is permitted to do arbitrary things if you break the first
    rule; some split, some stall, some corrupt.
 
-The reference manager that encoded rules 2 through 4 once —
-`axi4_master.v` — has been **retired to `src/attic/legacy-axi/`**. It kept one
-burst outstanding at a time, which was right for something meant to be read and
-checked and wrong for anything driving real memory latency. The rules did not
-retire with it; every manager in the tree still obeys them.
+The reference manager that encodes rules 2 through 4 once, `axi4_master.v`, is
+in `src/attic/legacy-axi/`: it keeps one burst outstanding at a time, which is
+right for something meant to be read and checked and wrong for anything driving
+real memory latency. Every manager in the tree obeys the rules.
 
 ## The station bus
 
@@ -546,26 +545,20 @@ Three things leak through and are worth knowing:
 | pipelining a bus that crosses a die boundary | [physical](physical/) |
 | credit, and end-to-end flow control **in the mesh** | the fabric's endpoints. The station bus runs its own, separately |
 
-## Where today's source disagrees
+## Where the source lives
 
-Three of the four complaints this page used to carry have been resolved, and
-recording that is as useful as recording what is left.
+`src/kohakuaccel/axi/` holds `simple/`, `station/`, `link/`, `topo/` and `bd/`.
+The two memory models sit in `src/kohakuaccel/verif/` with the other bench-only
+modules; `axi4_master.v` is in `src/attic/legacy-axi/`.
 
-**Resolved.** `src/kohakuaccel/axi/` is no longer four unrelated things in one
-directory: it is now `simple/`, `station/`, `link/`, `topo/` and `bd/`. The two
-memory models have moved to `src/kohakuaccel/verif/` alongside the other
-bench-only modules. The superseded `instruction_receiver.v` is gone, and
-`axi4_master.v` has been retired to `src/attic/legacy-axi/`.
+`main_orch.v` is a host-side driver — a sequencer the host loads and runs over
+JTAG or PCIe, for bring-up and for scripting the host side of a simulation — and
+lives in `verif/`. On-card orchestration (dispatch, completions, the memory
+choreography) lives in the RV64 runtime host inside the system node; `main_orch`
+is only the host's scripted reach into the same MAG control window the debug
+bridge and DMA engine use.
 
-**`main_orch.v`'s place is settled.** It is a host-side driver — a driver-side
-sequencer the host loads and runs over JTAG or PCIe, for bring-up and for
-scripting the host side of a simulation — and `verif/` is the right home for it.
-On-card orchestration (dispatch, completions, the memory choreography) lives in
-the RV64 runtime host inside the system node; `main_orch` is only the host's
-scripted reach into the same MAG control window the debug bridge and DMA engine
-use. "Where does control live" now has a single answer: the runtime host.
-
-**Still true.**
+## Where the source disagrees
 
 **There are two implementations of N-to-1 concentration.**
 `src/kohakuaccel/axi/simple/axi_n1.v` and

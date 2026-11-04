@@ -18,7 +18,7 @@ module noc_orchestrator_tb;
     localparam LO   = 1, HI = 2;          // 2x2 router grid
     localparam WORDS = 5;                 // 288 bits over 64-bit AXI
 
-    // register offsets, from docs/noc/spec.md s10.2
+    // register offsets, from docs/arch/noc/README.md s10.2
     localparam A_CAPS = 16'h0010, A_TX_FLIT0 = 16'h0100, A_TX_KICK = 16'h0140;
     localparam A_TX_STATUS = 16'h0148, A_RX_FLIT0 = 16'h0180;
     localparam A_RX_POP = 16'h01C0, A_RX_STATUS = 16'h01C8, A_NODE = 16'h1000;

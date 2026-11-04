@@ -80,7 +80,7 @@ def slice_base(i):
 def peer_word(core, w, win=0):
     """The software address of another PE's scratchpad word `w`.
 
-    The address IS the routing (docs/arch/pe/programming.md): region, then the
+    The address IS the routing (docs/arch/cpu/rv32-pe/programming.md): region, then the
     destination coordinate, then the window, then the word.
     """
     x, y = PE_XY[core]

@@ -133,12 +133,11 @@ the difference can and cannot have touched.**
 **A feature can be decoded, wired, parameterised and priced in LUT, and still
 not exist.** The instruction is named in the table, a register is written, the
 fault checks are wired, and the parameter appears in a cost report — and none of
-that touches the datapath. Two instances of it have been fixed on this PE: a
-converter group whose registered decode signals had no branch in the result mux,
-so its instructions wrote the *integer* lane's output; and an accumulator whose
-float units were instantiated without connecting their operation port, so the
-tool tied it to opcode zero, a pass-through, and the tier neither multiplied nor
-accumulated.
+that touches the datapath. Two shapes it takes: a converter group whose
+registered decode signals have no branch in the result mux, so its instructions
+write the *integer* lane's output; and float units instantiated without their
+operation port connected, which the tool ties to opcode zero, a pass-through, so
+the tier neither multiplies nor accumulates.
 
 **Follow the signal to the RESULT, not from the instruction.** Three checks find
 the whole class:

@@ -1,5 +1,5 @@
 // InPortSwitch against a queue model, one harness per FIFO memory type. The
-// sender keeps `valid` until a cycle without `busy` (docs/noc/spec.md s2.1);
+// sender keeps `valid` until a cycle without `busy` (docs/arch/noc/README.md s2.1);
 // destinations are random, inside and outside the router grid; grants come at
 // random, only on the requested output. Every accepted flit must leave exactly
 // once, in order, requesting the output its destination routes to, and an

@@ -1,6 +1,6 @@
 // mag_ilink -- everything MAG needs to speak to another mesh, in one place.
 //
-// docs/interlink/transfers.md. Four jobs, and they are together because they
+// docs/arch/ship/interlink.md. Four jobs, and they are together because they
 // share the switch's one local port and the register window that reports them:
 //
 //   1. the mover's writes, split by address. `awaddr[37:36] != my_mesh` becomes

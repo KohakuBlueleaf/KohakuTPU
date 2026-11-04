@@ -144,8 +144,8 @@ transform — see §4.3.
 > **Kind: Addon.** The selection encoding and the delivery shape are Fixed. What
 > the transform *does* is yours.
 
-**A memory request does not select a transform.** `flags[4]` and `flags[5]` used
-to be `QUANT` and `BLAYOUT` and are now reserved and ignored; a requester that
+**A memory request does not select a transform.** `flags[4]` and `flags[5]` are
+reserved and ignored; a requester that
 sets them gets an untransformed read.
 
 The transform slot belongs to the **memory mover**, and selection rides in its
@@ -276,8 +276,7 @@ Facts:
   (§2), and `inst_class` has no consumer.
 
 §5 resolves this in favour of the silicon: the payload is unit-owned and the two
-macros describe a reservation that has been withdrawn. They should be removed
-from `noc_pkt.vh` so the header stops asserting a claim nothing enforces.
+macros describe a reservation nothing enforces; they belong out of `noc_pkt.vh`.
 
 ## 8. Example: how KohakuTPU spends the 256 bits
 

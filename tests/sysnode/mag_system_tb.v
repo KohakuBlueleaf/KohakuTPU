@@ -666,7 +666,7 @@ module mag_system_tb;
     // Written out field by field so it cannot drift from the decode. It did:
     // `n` widened to 16 bits when the resident tile reached 512 sub-tiles, and
     // a concatenation that still spelled it as 8 shifts every field below it.
-    // See docs/isa/cluster.md s2.
+    // See docs/spec/stack/isa/cluster.md s2.
     function [FW-1:0] cu_inst;
         input [3:0]  op;
         input [33:0] adr;

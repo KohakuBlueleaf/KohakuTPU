@@ -145,9 +145,8 @@ shallower sweep would move the cliff down.
 > **Naming, because three names are in circulation.** The RTL parameter is
 > `ACC_MW`; the built default is 14, giving a 22-bit float, which these pages
 > call **FP22**. The compiler's type system names a dtype `ACC24` for `S1E7M16`,
-> the MW=16 variant. Older pages say FP24 for the same thing. They are the same
-> family at different mantissa widths, and where a page says FP24 it was written
-> before MW=14 became the default.
+> the MW=16 variant. FP24 and FP22 are the same family at different mantissa
+> widths; a page that says FP24 means the MW=16 variant.
 
 ---
 
@@ -267,9 +266,9 @@ sync:
   to the chain. The FIFO is 64 deep against a ~19-deep chain and must never fill;
   both overflow and underflow have simulation checks, because a dropped command
   corrupts exactly one output element.
-- **Nothing counts cycles waiting for `emit_valid`.** The CU previously waited a
-  fixed 10, which silently became too short when the pipeline deepened, and the
-  system wrote a zero result while every unit test still passed.
+- **Nothing counts cycles waiting for `emit_valid`.** A fixed wait becomes too
+  short when the pipeline deepens, and the system then writes a zero result while
+  every unit test still passes.
 
 ### 5.1 A variable shift is a multiply, and the DSPs were idle
 

@@ -13,7 +13,7 @@
 // read of it needs an 8:1 32-bit mux -- ~64 LUT, on the load path, in a design
 // whose objective is minimum LUT. Walking a line as eight 32-bit words instead
 // costs 8 cycles per fill against a DRAM latency of hundreds, and costs zero
-// LUT. docs/arch/pe/README.md s5.
+// LUT. docs/arch/cpu/rv32-pe/README.md s5.
 //
 // PRIMITIVE NAMED, NEVER INFERRED. See kohaku_sdpram's header: left to
 // inference, both the resource and the READ LATENCY can move between tool

@@ -2,7 +2,7 @@
 //
 // IT LIVES OUTSIDE THE CORE. `rv64_core` is a physical-address machine and stays
 // one; translation is a property of the system, so it sits between the core's
-// memory port and the node. See .plan/syscore/decisions.md D3. The mesh compute
+// memory port and the node. The mesh compute
 // unit configuration therefore carries none of this and pays nothing for it.
 //
 // AN ENTRY IS 57 BITS BECAUSE THE CARD IS 40-BIT PHYSICAL. Sv39's PPN field is

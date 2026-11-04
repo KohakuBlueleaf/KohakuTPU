@@ -243,27 +243,24 @@ operand, which is where the transpose happens: `lane*8 + (k % 8)` for A,
 `(k % 8)*4 + lane` for B. One circuit serves both, so the driver stores both
 operands in the same shape.
 
-### 5.1 Once per tensor, and there is no longer another option
+### 5.1 Once per tensor
 
 The conversion runs **before any fetch reads the result**, never during one.
 
 | | where | source in memory | cost |
 |---|---|---|---|
-| ~~online~~ | ~~on the read path, per fetch~~ | — | **retired** |
 | pre-converted | a mover pass: mem/L2 → slot → mem/L2 | int7+E5M3, 128 B/entry | once **per tensor** |
 
 An operand is read once per output tile it participates in, so converting once is
-the online cost divided by the number of passes, and it halves the bytes the
-fetch path moves for good. That is the whole argument, and it is why the online
-arrangement was removed rather than kept as an option: a transform on the fetch
-path is paid once per read, and there is no shape at which that is the cheaper
-of the two.
+the cost of converting on every read divided by the number of passes, and it
+halves the bytes the fetch path moves. A transform on the fetch path is paid once
+per read, and there is no shape at which that is the cheaper of the two, so the
+read path has none.
 
-**Nothing on a request selects it any more.** `flags[4]`/`[5]` — the old `QUANT`
-and `BLAYOUT` — are reserved and ignored, and a `FILL` carries no format bit
+**Nothing on a request selects it.** `flags[4]`/`[5]` are reserved and ignored, and a `FILL` carries no format bit
 (its bit 141 is `recv`, [isa.md](isa.md) §5.4). The memory system holds no map of which addresses are which format
-and still must not learn one; what changed is that the driver states the format
-by *scheduling the conversion*, not by flagging the read. A `GEMM` therefore
+and must not learn one; the driver states the format by *scheduling the
+conversion*, not by flagging the read. A `GEMM` therefore
 reads operands that are already in their final format, always.
 
 **The driver never constructs int7+E5M3 itself.** It schedules the mover pass

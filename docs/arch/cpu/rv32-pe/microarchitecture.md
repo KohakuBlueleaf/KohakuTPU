@@ -95,134 +95,16 @@ in isolation. What *is* measured is the assembled unit with the multiplier
 built: **2,586 LUT and 4 DSP48 at 363.5 MHz against a 3.333 ns request**, OOC
 synthesis, not routed — [performance](performance.md).
 
-### Where the result joins, and why that was the risk
+### Where the result joins
 
 The multiply result joins the pipeline through `ex_alu`, which feeds both the
 MEM-stage value and the distance-1 forwarding path, and that path ends at
-`x_op1_reg`. **When the multiplier was designed, `x_op1_reg` was where the
-core's critical path terminated**, so adding a case to that mux was one more
-LUT level in what was then exactly the wrong place.
-
-**That is no longer where the binding path is.** Measured on the shipped RTL at
-a 3.333 ns request, the critical path runs from the memory stage's address
-register into the ID stage's register control, and the forwarding network is
-not on it
-([performance](performance.md#what-this-replaces-and-what-it-does-not)).
-
-The distinction is worth keeping straight, because the two claims have
-different lifetimes. **The design rule stands: do not add a level to a mux that
-feeds the register a critical path terminates at.** What was a statement about
-*this* core's binding path is not, and quoting it as though the mux is the
-critical path today would be wrong.
-
-The alternative, if the mux ever does measure worse, is unchanged: retire the
-product through MEM on its own writeback port, which leaves the distance-1
-forward untouched at the price of one more stall cycle.
-
-The other structural cost is that a multi-cycle unit needs a stall term, and
-**stall terms fan out across the whole front end.** The `FWD_X` measurement
-[below](#hazards) is the calibration for how much widening one costs here, and
-the current critical path is an illustration of the same shape from a different
-source: an address decode reaching a stall term that reaches the front end's
-pipeline registers. The term on it is the memory stage's rather than the
-multiplier's, but the geometry is the one this paragraph is about.
-
-The option not taken is a scoreboard letting the multiply retire out of order:
-the hazard unit is the whole of this core's complexity budget — three sources
-by position, one stall rule, nothing else — and a scoreboard ends that
-invariant for one instruction.
-
-### What the multiplier replaces
-
-A software multiply was measured before the unit existed, on the full-system
-bench (`tests/pe/tools/rv_run.py`, real routers and the real memory agent,
-cycle counts read from the PE's own `CTL_CYCLE` counter). **Both figures
-describe the core without the multiplier:** a 128-element int8 dot product ran
-**8,221 cycles**, and the same kernel with its multiplies costed at one
-instruction each is **1,297** — so 128 software multiplies accounted for 6,924
-cycles, **about 54 cycles each**. That is the *easy* case: int8 operands unroll
-to eight shift-add steps, where a general 32 × 32 `__mulsi3` unrolls to far
-more.
-
-Three stall cycles against roughly 54 is the trade the unit makes.
-
-### Why the same purchase was cheap on the SIMT PE
-
-Worth recording because it generalises past this core. The SIMT PE built the
-same multiply and paid neither of the two costs above:
-
-| the cost, on this core | the same thing on the SIMT PE |
-|---|---|
-| the result mux lengthens the distance-1 forwarding path, which ends at the register the critical path already ends at | **that path does not exist.** With as many resident waves as the pipeline is deep, no two in-flight instructions share a wave, so the design carries no forwarding network and no interlock — there is nothing there to lengthen |
-| a multi-cycle result needs a new stall term, and stall terms fan out | **the flag was already there.** A wave with a float in flight is skipped by the scheduler via one pending bit per wave; a multiply sets and clears the *same* bit and retires through the *same* slot |
-
-There, the multiplier is built at the float tier's own latency on purpose:
-equal latency makes a collision between a float result and a multiply result
-*structurally* impossible rather than arbitrated, because one instruction
-issues per cycle and two results can only want the write port on the same cycle
-if they were issued on the same cycle.
-
-The general rule: **a multi-cycle unit is cheap in a machine that already has a
-way to park an instruction, and expensive in one whose whole complexity budget
-is three positional forwards and one stall rule.**
-
-### Why `div` and `rem` are a different answer
-
-An iterative divider is ~35 cycles and a **33-bit subtract per cycle**, and it
-cannot borrow the one in EX: `sum` is `ex_addr`. Muxing a divider's operands
-into the EX adder puts a mux in front of the effective address, which is the
-one path the whole six-boundary arrangement exists to keep short — the address
-leaves EX combinationally precisely because the data arrays register their
-address input.
-
-**So a divider carries its own 33-bit subtractor, its own remainder shift
-register, its own quotient register, the sign fixups `div`'s
-truncate-toward-zero needs, and the two mandated special cases** (÷0, and
-−2³¹ ÷ −1). **ESTIMATE 200–300 LUT** — reasoned from measured neighbours on
-the same part, not measured — which is half the EX stage's own 489 LUT again,
-for an instruction a controller issues approximately never.
-
-And it is 35 cycles against libgcc's ~60–80. That is a 2× on a rare
-instruction, where the multiplier is an 8–13× on a common one. **Iterative
-division is a trap at this size** — not because it is hard, but because its
-cost is a fixed structure and its benefit is a small multiple on a rare event.
-
-With the multiplier built, divide-by-a-constant strength-reduces to `mulhu` and
-covers the case a controller actually meets: turning a linear index into mesh
-coordinates.
-
-### Why minimal scalar float is the wrong purchase
-
-The tempting shape is to reuse what is already measured. One
-[`khs_f16_lane`](../../../projects/kohakumpe/simd/float.md) — a KohakuMPE unit,
-measured on the same part — a 32-entry float register file in the same LUTRAM
-shape as the integer one (129 LUT), and the two FP32 converters, one of which
-is pure wiring, comes to roughly **900–1,100 LUT and 2 DSP, ESTIMATE**.
-
-Two things make it the wrong purchase anyway, and neither is about the LUT:
-
-- **Fifteen cycles into a three-source in-order forwarding network.** `fadd`
-  would stall EX for fifteen cycles, or need the scoreboard the section above
-  refuses. The SIMD tier does not have this problem because an *accumulating*
-  instruction needs only the accumulator's own busy shadow, where an
-  instruction that writes a register has to be tracked.
-- **It would not be `F`, so no compiler would emit it.** The format that exists
-  is 24 bits with no subnormals, one rounding mode and a documented one-ulp
-  deviation on subtractive alignment. RISC-V's `F` is IEEE-754 binary32 with
-  subnormals, five rounding modes and `fcsr` — and this core has no CSR file at
-  all. A non-conforming float behind a custom major also has nowhere to live:
-  all four custom majors are spoken for ([opcode-map](opcode-map.md)). The
-  core's first design objective is that ordinary compilers work unmodified; a
-  float extension a compiler cannot target defeats it.
-
-`RV32M` is the contrast that makes the point: it needed no custom major at all,
-because RISC-V had already standardised the encoding.
-
-Where a kernel needing float should be is the wide classes' float tier, which
-is built and measured — the format, the lane counts and the accuracy are
-[KohakuMPE's](../../../projects/kohakumpe/README.md) to state. A scalar
-transcendental is the same answer: the SIMD PE's `SIMD_FSFU` is a unit count,
-and each unit is a special-function unit beside its FMA.
+`x_op1_reg`. Adding a case to that mux adds a LUT level on the forwarding path.
+On the shipped RTL at a 3.333 ns request the binding path runs from the memory
+stage's address register into the ID stage's register control, and the
+forwarding network is not on it ([performance](performance.md#the-binding-path-and-the-forwarding-mux)).
+**The design rule: do not add a level to a mux that feeds the register a
+critical path terminates at.**
 
 ## Hazards
 

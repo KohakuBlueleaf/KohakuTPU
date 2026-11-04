@@ -1,5 +1,5 @@
 /* GENERATED from the KohakuTPU compiler (ElementwiseKernel ADD, 128 fp16).
- * Regenerate with scratchpad/gen_art.py. Each row is one CU_INST payload,
+ * Each row is one CU_INST payload,
  * split {arg3,arg2,arg1,arg0} for the SysNode mailbox. */
 #define VADD_NFLIT 26
 #define VADD_SRC0 0x1000UL

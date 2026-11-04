@@ -8,7 +8,7 @@ project. It is in the standard check suite.
 ## The split
 
 Mirrors the software stack exactly (`kohakuaccel` vs `kohakutpu` in every
-`software/` component, enforced there by `software/tests/test_imports.py`):
+`software/` component, enforced there by `software/tests/static/test_imports.py`):
 
 | tree | is |
 |---|---|

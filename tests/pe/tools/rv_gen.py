@@ -4,7 +4,7 @@ Each case becomes tests/pe/build/caseNN/{prog.hex,trace.hex,meta.hex}.  The
 Verilog bench walks them in one simulation, so adding a case is one entry here
 and nothing in the RTL or the bench.
 
-    python tests/pe/rv_gen.py
+    python tests/pe/tools/rv_gen.py
 
 WHY EVERY PROGRAM ZEROES ITS REGISTERS FIRST.  The register file is a RAM with
 no reset, so it survives between cases while the model starts from zero.  The

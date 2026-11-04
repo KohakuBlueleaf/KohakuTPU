@@ -74,7 +74,7 @@ module mag_link #(
     output wire                 i_crd_vc,
     output wire [CN_W-1:0]      i_crd_n,
 
-    // ---- counters, docs/interlink/boundary.md s3 --------------------------
+    // ---- counters, docs/arch/ship/interlink.md s3 --------------------------
     output wire [63:0]          ctr_tx,        // {beats, packets} sent
     output wire [63:0]          ctr_rx,        // {beats, packets} received
     output wire [63:0]          ctr_stall,     // {idle cycles, credit-stalled}

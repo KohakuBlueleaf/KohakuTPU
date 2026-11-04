@@ -2,8 +2,7 @@
 
 The platform's acceptance test, mirroring the software side's
 `test_example_runs_on_the_framework_alone`: a SAXPY compute unit built from
-`templates/cu`, driven by the existing `driver/examples/saxpy` ISA (CU_TYPE
-'SX' — the payload layout in `saxpy_cu.v` is field-for-field `sw/isa.py`).
+`templates/cu` (CU_TYPE 'SX'; the payload layout is the one in `saxpy_cu.v`).
 KohakuTPU is deliberately NOT the example: it is too mature to show the
 minimal path.
 
@@ -11,7 +10,7 @@ minimal path.
 
 | File | What it proves |
 |---|---|
-| `saxpy_cu.v` | The whole unit contract on `noc_cu_base`: the sw ISA decoded, plain reads + one burst write against the memory agent (memory-protocol.md §3.1/§4), tag-framed responses, the ack dropped, fault on a bad opcode, CU_DBG = cumulative elements per `sw/unit.py`. |
+| `saxpy_cu.v` | The whole unit contract on `noc_cu_base`: the SAXPY instruction decoded, plain reads + one burst write against the memory agent (memory-protocol.md §3.1/§4), tag-framed responses, the ack dropped, fault on a bad opcode, CU_DBG = cumulative elements. |
 | `saxpy_cu_tb.v` | xsim bench `saxpy_cu`: unit-level, against a memory model — discovery, a partial-tail-line run (read-modify-write of the tail), n=0, fault, a full 8-beat batch run, CU_DBG. 20 checks + `kh_port_check` clean. |
 | `saxpy_map.txt` | 1 router, 1 MAG port, two `sax` units. |
 | `tokens_saxpy.py` | The project's generator vocabulary: `gen_mesh.py --tokens` maps `sax` to a `saxpy_cu` instance. This file is ALL a project supplies to compose its units into a mesh. |

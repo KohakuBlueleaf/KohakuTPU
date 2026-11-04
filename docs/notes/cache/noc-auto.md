@@ -63,7 +63,7 @@ That makes it a local-port cache, which is much closer to
 
 **Deadlock.** The mesh's freedom from deadlock rests on its routing discipline. A
 router that *generates* a response changes the traffic pattern: a request flit is
-consumed and a response flit is injected, at a point that was previously a pure
+consumed and a response flit is injected, at a point that is otherwise a pure
 forwarder. Any proof of deadlock freedom has to be redone, and the retry-based
 flow control assumes the sender retries against a receiver that is not also a
 source.

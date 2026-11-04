@@ -99,11 +99,11 @@ FP16's range limits.
 ## Layouts: sub-tiles, GT4, statistics
 
 - **NUM.GT4.001** `silicon` A sub-tile word is a 4x4 FP16 block in one 32-byte word, element (i, j) at FP16 index `4i + j`. A drained tile buffer (`tile=(gm, gn)`) holds tiles row-major and sub-tiles row-major inside a tile. (code: `ktpu-l1/src/layout/tensor.rs`; `ktpu-l2/src/lower/memory.rs`; evidence: `mm_` kernels' `h1` buffers read by the cores)
-- **NUM.GT4.002** `silicon` The GT4 transform (mover transform id 2, four words in, four out) treats each group of four 32-byte words as a 4x4 array of 64-bit granules and transposes it: out word i granule w = in word w granule i. On four row-major words (4 rows x 16 FP16) it yields the four sub-tiles of columns 4i..4i+3; it is its own inverse. (code: `ktpu-isa/src/unit/mover.rs`; `ktpu-l2/src/lower/mover.rs`; doc: `docs/spec/transform-slot.md:108-110`; evidence: the card-run tally `fn.gt4` 442)
+- **NUM.GT4.002** `silicon` The GT4 transform (mover transform id 2, four words in, four out) treats each group of four 32-byte words as a 4x4 array of 64-bit granules and transposes it: out word i granule w = in word w granule i. On four row-major words (4 rows x 16 FP16) it yields the four sub-tiles of columns 4i..4i+3; it is its own inverse. (code: `software/kohakuaccel/compiler/crates/ka-isa/src/mover.rs`; `ktpu-l2/src/lower/mover.rs`; doc: `docs/spec/transform-slot.md:108-110`; evidence: the card-run tally `fn.gt4` 442)
 - **NUM.GT4.003** `silicon` The vector core's GT4 walk applies the same transpose between four L1 words and four chunks; a GT4 register holds 4 rows x 32 columns, row i's columns 16q.. in chunk 4q + i. (code: `ktpu-isa/src/unit/vector/core.rs`; `ktpu-l2/src/lower/vector/`; RTL `v2_core.v:1041-1044`; evidence: the card-run tally `image:vunpk:fmt` gt4 450)
 - **NUM.GT4.004** `unproven` A GT4 walk of a chunk count that is not a multiple of 4 is refused by the encoder and faults F_GT4 (10) in the core. (code: `ktpu-isa/src/unit/vector/core.rs`; RTL `v2_core.v:188,514,517`; evidence: no test drives the fault; `tests/vector2/v2_gt4_tb.v` covers the transpose only)
 - **NUM.STAT.001** `RTL` A statistic (a reduction along rows) is R f16 values, `vc.lanes` [16] a 32-byte word; a kernel that reads or writes one moves 16 rows a trip (the row quantum is 16), its band registers merged lane by lane into one word and broadcast back. (code: `kernels/vector.py:44-56`; `kernels/matmul.py:37-39`; `software/kohakutpu/language/kohakutpu/language/dsl/ops.py:431-454`; doc: `tinygrad.md:108`; evidence: layernorm, max_rows, sum_rows] on `vlt_card_v9_1n_v2`; the v9t6 kernels used the earlier `[R, 32]` form, e.g. `rows_61adf15faf` out `f16[64, 32]`)
-- **NUM.STAT.002** `RTL` A reduction's padding lanes hold its identity: 0 for a sum, -65504 (the lowest f16) for a max. (code: `software/application/kohakutpu/application/ktpugrad/run.py:1427`; doc: `tinygrad.md:108`)
+- **NUM.STAT.002** `RTL` A reduction's padding lanes hold its identity: 0 for a sum, -65504 (the lowest f16) for a max. (code: `software/kohakutpu/application/kohakutpu/application/ktpugrad/run/__init__.py:1427`; doc: `tinygrad.md:108`)
 
 ## SRU row-sum error budget
 
@@ -157,7 +157,7 @@ format or one launch. Its initial `vector` plan classification does not rule
 out MXFP7 execution. The following lowering rules describe software structure;
 they do not upgrade the evidence labels on the numerical format rules above.
 
-- `software/application/kohakutpu/application/ktpugrad/run.py:_vector` tries
+- `software/kohakutpu/application/kohakutpu/application/ktpugrad/run/__init__.py:_vector` tries
   `window.tabled`, `_contraction`, and `window.contraction` before rows execution.
   `_window` materializes index windows and channel padding by relayout, then
   calls `_product`. `_product` converts A and B f16 forms to MXFP7. These
@@ -183,7 +183,7 @@ they do not upgrade the evidence labels on the numerical format rules above.
   extent. `ktpu-l2/src/lower/vector/ctx/reduce.rs:reduce` folds column registers
   pairwise in E8M15 and applies its lane-reduction primitive; the alternative
   streaming path uses the SRU and its absolute truncation bound above.
-- `ktpugrad/run.py:_materialise,_split_reduction` can split a multi-axis or
+- `software/kohakutpu/application/kohakutpu/application/ktpugrad/run/__init__.py:_materialise,_split_reduction` can split a multi-axis or
   nested reduction into multiple f16 temporaries. `_narrow` can materialize
   a non-reduction subexpression to f16 to respect the seven-input-view limit.
   Such boundaries must be represented in the error propagation, or the

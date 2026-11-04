@@ -10,7 +10,7 @@
 // the worst case w_hi = w_lo = -64 gives -64*2^20 - 64 = -67,108,928 against a
 // limit of -67,108,864 -- over by exactly 64. At S = 19 the guard is 5 bits,
 // which is cascade depth 32, exactly one K=32 block. See
-// docs/compute/matmul-circuit.md s2.
+// docs/projects/kohakutpu/matmul.md s2.
 //
 // The DSP ALU computes  Z + W + X + Y, and all four slots are used:
 //

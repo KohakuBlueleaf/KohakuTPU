@@ -263,7 +263,7 @@ module saxpy_mesh_tb;
         inst_flit = {16'd0, 4'h5 /*CU_INST*/, txn, last, 3'b000, payload};
     endfunction
 
-    // field-for-field driver/examples/saxpy/sw/isa.py
+    // the saxpy_cu.v instruction layout
     function [255:0] saxpy_inst(input [23:0] n, input [31:0] a_bits,
                                 input [63:0] xa, input [63:0] ya);
         saxpy_inst = {8'h01, n, a_bits, xa, ya, 64'd0};

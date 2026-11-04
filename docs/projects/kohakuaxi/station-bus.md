@@ -492,9 +492,8 @@ throughout, `xcvu13p-fhgb2104-2L-e`, OOC synth.
 | SmartConnect | 3×5 | 512 | 4 | — | 15,183 | 15,659 | 2,938 | 2,048 | 5 |
 | SmartConnect | 1×5 | 512 | 2 | — | 6,714 | 7,378 | 1,860 | 117 | 5 |
 
-Four of those rows are new here — `axi_interconnect` at 3×5 and at 256 bits, in
-both strategies — and they give the crossbar the two slopes §2.6 previously had
-only for SmartConnect.
+The `axi_interconnect` rows at 3×5 and at 256 bits, in both strategies, give the
+crossbar the same two slopes §2.6 has for SmartConnect.
 
 **Marginal slave port**, 5 → 9 at three masters and four clocks, 512-bit:
 
@@ -840,11 +839,10 @@ At the deployed shape — `STNW=2`, `PORTW=2`, `SRCW=2`, `TAGW=4`, `AW=43`:
 | line, FW=512, `LINK_FULL=1` | 645 | 524 | 2,346 | 10.18% |
 | `mag_link_cdc` interlink, for scale | | | 772 | 3.35% |
 
-**A sweep must vary what it claims to vary.** An earlier revision of this table
-printed 642 and 626, from a sweep script that parsed an address-width argument
-and never passed it to `synth_design` — so four `AW` rows were four labels on one
-netlist. The figures above are re-measured at 43. A knob can be reported without
-ever reaching the tool, and nothing in the output says so.
+**A sweep must vary what it claims to vary.** A sweep script that parses an
+argument and never passes it to `synth_design` reports several labels on one
+netlist, and nothing in the output says so; the figures above are measured with
+the knob reaching the tool.
 
 **The routed design confirms the derivation.** §2.9's placement reports actual
 SLL usage per boundary, against 629 derived for this configuration:
@@ -1211,9 +1209,8 @@ that forces two parameters outright and constrains a third:
 | `FW` | **≥ 256** | `sb_nsu` supports `SDW ≤ FW` only, enforced by the elaboration guard at
 `src/kohakuaccel/axi/station/sb_nsu.v:106`, and the widest slave is `mesh_{id}/S_AXI_MEM` at 256 bits |
 
-An earlier revision of this table read `FW ≥ 512`, on the belief that
-`S_AXI_MEM` was a 512-bit slave. It is 256 (`ktpu_ship_*.v`, `DW=256`). Only
-the XDMA master is 512, and a master wider than the flit is the *supported*
+`S_AXI_MEM` is a 256-bit slave (`ktpu_ship_*.v`, `DW=256`); only the XDMA
+master is 512, and a master wider than the flit is the *supported*
 direction — it splits `SUB = MW/FW` ways in `sb_nmu`. So `FW=256` is a legal
 drop-in, which §2.2 prices and the 673-check `SB_FW256` run demonstrates.
 

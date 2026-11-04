@@ -26,7 +26,7 @@
 // per cycle, which is why a store to CTL_INVAL blocks like CTL_FLUSH.
 //
 // FLUSH-ALL WAITS FOR ACKNOWLEDGEMENTS, not for the last beat to be sent. The
-// DRAM hand-off in docs/arch/pe/programming.md is flush, doorbell, invalidate,
+// DRAM hand-off in docs/arch/cpu/rv32-pe/programming.md is flush, doorbell, invalidate,
 // read -- and the doorbell goes to the peer while the writebacks go to the
 // memory agent, two destinations with no ordering between them. Only the write
 // acknowledgement says the data is in memory, so the flush is not finished

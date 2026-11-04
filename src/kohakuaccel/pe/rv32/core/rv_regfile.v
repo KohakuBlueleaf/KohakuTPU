@@ -3,7 +3,7 @@
 // TWO STORAGE VARIANTS BEHIND ONE PARAMETER, and that is the point of the
 // module rather than an afterthought: the register file is the largest single
 // LUT item in a core this small, so whether it should be LUTRAM or block RAM is
-// a number, not an opinion. MEM_PRIM selects it; docs/arch/pe/performance.md
+// a number, not an opinion. MEM_PRIM selects it; docs/arch/cpu/rv32-pe/performance.md
 // carries the verdict.
 //
 // 2R1W is built as TWO MIRRORED 1W1R arrays written identically -- the standard

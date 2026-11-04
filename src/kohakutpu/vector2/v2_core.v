@@ -309,7 +309,7 @@ module v2_core #(
     wire [15:0] d_cnt  = {6'd0, ir[20:11]};
     wire [9:0] d_body = ir[16:7];
     wire [7:0] d_skip = ir[7:0];
-    // VFILL/VDRAIN: exactly vec_core's layout, so hw/vector.py encodes both.
+    // VFILL/VDRAIN: exactly vec_core's layout, so one encoding serves both.
     wire [2:0] d_ad   = ir[23:21];
     wire [13:0] d_l1  = ir[13:0];
 

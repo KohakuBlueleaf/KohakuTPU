@@ -113,9 +113,8 @@ This is the single most load-bearing measurement on the page, because "many
 resident contexts to hide memory latency" is the part of SIMT that sounds
 expensive and is the whole reason the model tolerates a cache miss.
 
-The caveat that used to sit here — *"`WAVES` sizes storage, not issue"* — has
-been lifted: [G7](#g7-the-scheduler-storage-against-issue) builds the scheduler,
-and it is measured as `WAVES` on `kht_core` against this same sweep on
+[G7](#g7-the-scheduler-storage-against-issue) builds the scheduler, and it is
+measured as `WAVES` on `kht_core` against this same sweep on
 `kht_unit`. **G1 remains a storage result**, and that is the point: subtracting
 the two separates what wave contexts cost to *hold* from what they cost to
 *schedule*.

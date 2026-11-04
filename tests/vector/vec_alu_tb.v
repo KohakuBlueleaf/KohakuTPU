@@ -9,7 +9,7 @@
 //   ROUNDED  the FMA and the four seeds, against a double-precision reference
 //            in ULPS OF THE RESULT, reported as a measured maximum rather than
 //            pass/fail. Checks the < 1 ulp claim in
-//            docs/compute/vector-core.md s4.2.
+//            docs/projects/kohakutpu/vector-core.md s4.2.
 //
 // The alignment sweep walks the exponent difference across every
 // barrel-shifter position, which is the only way to reach s == 0 (where P[47]

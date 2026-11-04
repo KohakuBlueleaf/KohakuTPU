@@ -9,7 +9,7 @@
 // DATA_W is 256 to match the NoC flit payload exactly, so nothing in the
 // simulation path has to gear 512 <-> 256. A real DDR4 attachment is 512 bits
 // at the MIG user interface and needs that conversion inside MAG; see
-// docs/mas/spec.md s2.
+// docs/arch/sysnode/README.md s2.
 //
 // PORTS INDEPENDENT CHANNELS OVER ONE ARRAY. A single 256-bit port at 300 MHz
 // is 9.6 GB/s; DDR4-2400 is 19.2 GB/s per channel and a real part has several,

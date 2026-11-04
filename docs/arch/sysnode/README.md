@@ -300,14 +300,8 @@ cost. The breakdown and every caveat are in
   software, is
   [stated separately](control-processor.md#what-the-rv64-configuration-connects).
 
-**Resolved, and kept because the shape of the fix is the useful part:** the
-transform used to be welded into the slot — named directly in two framework
-modules, its compression ratio hardcoded in the node's address arithmetic, its
-selection bits named after one project's number format. The framework now names
-exactly one module, `xform_bank`, geometry is declared by the occupant, and
-`src/templates/transform/xform_bank.v` supplies an identity bank so a
-framework-only build elaborates with no project source at all.
-[integrate/addon-slots](../../integrate/addon-slots.md) has the extraction.
-
-**Also resolved:** the mover's descriptor walker used to live in a project
-package. It is at `src/kohakuaccel/sysnode/mover/mx_tdesc.v` now.
+The transform slot: the framework names exactly one module, `xform_bank`, the
+occupant declares its geometry, and `src/templates/transform/xform_bank.v`
+supplies an identity bank so a framework-only build elaborates with no project
+source at all ([integrate/addon-slots](../../integrate/addon-slots.md)). The
+mover's descriptor walker is `src/kohakuaccel/sysnode/mover/mx_tdesc.v`.

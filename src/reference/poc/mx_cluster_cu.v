@@ -16,7 +16,7 @@
 // The chain eats eight 256-bit operand words per cycle and a port delivers one,
 // so no port count closes an 8x deficit -- REUSE does: a Gm x Gn sub-tile block
 // needs 4(Gm+Gn)/(Gm*Gn) words per cycle, 0.375 at 16x32. See
-// docs/compute/tensor-isa.md s1.
+// docs/projects/kohakutpu/isa.md s1.
 //
 // Instruction, in the CU_INST payload:
 //
@@ -57,7 +57,7 @@
 //                            nonzero is what makes the drain remote -- (0,0) is
 //                            a mesh corner and can hold no endpoint. Zero in
 //                            every encoding written before the interlink, which
-//                            reads as a local drain. docs/interlink/boundary.md
+//                            reads as a local drain. docs/arch/ship/interlink.md
 //
 // One L1 entry is four consecutive 256-bit operand words -- the four K-slices
 // of one row group (A) or column group (B) -- so FILL asks for entries and
@@ -123,7 +123,7 @@ module mx_cluster_cu #(
                      // pairs it with whichever write happens to be open and
                      // silently stores the wrong bytes.
                      T_MEM_WR_DATA = 4'h4,
-                     // 0x8, NOT the 0x4 docs/noc/spec.md names: that is
+                     // 0x8, NOT the 0x4 docs/arch/noc/README.md names: that is
                      // T_MEM_WR_DATA, and a CU_DATA flit reaching MAG would
                      // enter the write queue as data.
                      T_CU_DATA     = 4'h8,
@@ -140,7 +140,7 @@ module mx_cluster_cu #(
 
     // Which buffer of this CU a CU_DATA stream is addressed to. 0 and 1 match
     // `l1_sel`; 2 is the accumulator's resident tile, reached through
-    // OP_ADD_PEER. See docs/isa/cluster.md s9.
+    // OP_ADD_PEER. See docs/spec/stack/isa/cluster.md s9.
     localparam [7:0] BUF_L1A = 8'd0, BUF_L1B = 8'd1, BUF_PEER = 8'd2;
     // One peer sub-tile in the accumulator's internal float, 22 bits x 16 lanes.
     localparam integer PW = 16*(ACC_MW+8);
@@ -229,7 +229,7 @@ module mx_cluster_cu #(
     // PRE-QUANTISED OPERAND: already converted on the way into memory, so the
     // fetch is 4 words instead of 8 FP16 beats and no quantiser pass. A property
     // of the OPERAND carried by the instruction, which keeps memory free of an
-    // address map -- see docs/isa/memory.md s3.
+    // address map -- see docs/projects/kohakutpu/memory.md s3.
     wire        i_preq  = inst_flit[141];
     // L1 IS ADDRESSABLE, not one buffer per side. `eoff` says where a FILL
     // lands, `aoff`/`boff` where a sweep reads, so the driver can fill one half
@@ -246,7 +246,7 @@ module mx_cluster_cu #(
     // bank bit picks the half, rather than widening them and moving every field
     // below -- and 0 is the lower half, so an instruction written before these
     // existed addresses exactly what it did. Fill one bank while the other is
-    // swept: the double buffering docs/isa/cluster.md s4.6 does by address
+    // swept: the double buffering docs/spec/stack/isa/cluster.md s4.6 does by address
     // arithmetic today, with twice the L1 behind it.
     wire        i_abank = inst_flit[114];
     wire        i_bbank = inst_flit[113];
@@ -318,7 +318,7 @@ module mx_cluster_cu #(
     //
     // Nothing needs the product, only whether it reaches 5. Both operands are at
     // least 1, so `Gm*Gn < 5` is exactly (1,<=4), (<=4,1) and (2,2) -- the same
-    // expansion as mx_cluster_mgr's pacing. See docs/compute/accumulator.md s4.
+    // expansion as mx_cluster_mgr's pacing. See docs/projects/kohakutpu/accumulator.md s4.
     wire [7:0] i_gm_w = (i_gm == 8'd0) ? 8'd1 : i_gm;
     wire [7:0] i_gn_w = (i_gn == 8'd0) ? 8'd1 : i_gn;
     wire       i_wide = !(((i_gm_w == 8'd1) && (i_gn_w <= 8'd4))
@@ -382,7 +382,7 @@ module mx_cluster_cu #(
         .drain_take(drain_take),
         .peer_open(peer_open), .peer_cmd(pk_pend), .peer_idx(pk_idx),
         .peer_data({pk_hi, pk_lo}), .peer_ready(peer_ready),
-        // The SEND direction is the node-addressed drain of docs/isa/cluster.md
+        // The SEND direction is the node-addressed drain of docs/spec/stack/isa/cluster.md
         // s10, which is not built yet.
         .peer_out(), .peer_out_valid()
     );
@@ -485,7 +485,7 @@ module mx_cluster_cu #(
     //
     //   [255:248] buf   [247:232] off   [231:224] len   [223:216] flags
     //
-    // ONE STREAM AT A TIME, per docs/isa/cluster.md s9: the mesh interleaves,
+    // ONE STREAM AT A TIME, per docs/spec/stack/isa/cluster.md s9: the mesh interleaves,
     // so two senders into one CU would splice their data flits together. The
     // check below fires if it happens.
     wire [7:0]  cd_dbuf = recv_flit[255 -: 8];
@@ -1030,7 +1030,7 @@ module mx_cluster_cu #(
                     w_st     <= W_REQ;
                 end
                 // One descriptor for the whole run. `len` is beats-minus-one, the
-                // field docs/isa/memory.md s2 records as decoded and ignored --
+                // field docs/projects/kohakutpu/memory.md s2 records as decoded and ignored --
                 // it is honoured now, on both sides.
                 W_REQ: if (w_free) begin
                     w_flit <= { w_ddx, w_ddy,

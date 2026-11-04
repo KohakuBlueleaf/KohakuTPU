@@ -698,7 +698,7 @@ BENCHES = {
             "src/examples/saxpy/saxpy_mesh_tb.v",
         ],
     ),
-    # The example project's RTL half against a memory model: the sw/isa.py
+    # The example project's RTL against a memory model: the saxpy_cu.v
     # encoding, plain reads, a burst write, fault and batch reporting.
     "saxpy_cu": (
         "saxpy_cu_tb",
@@ -2788,7 +2788,7 @@ def main():
 
     # glbl only where it is needed. Adding it everywhere would hold GSR over
     # every XPM cell for the first 100 ns, which is a behaviour change to benches
-    # that pass today -- see the trap in docs/simulation.md s3.
+    # that pass today -- see the trap in docs/workflow/simulate.md s3.
     # An async FIFO is an xpm_cdc, which instantiates glbl. Detected from the
     # source list rather than listed per bench: mag.v now always pulls one in.
     has_cdc = any(("async_fifo.v" in f) or ("kts_afifo.v" in f) for f in files)

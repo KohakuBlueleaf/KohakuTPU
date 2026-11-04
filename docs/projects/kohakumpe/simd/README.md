@@ -174,9 +174,9 @@ answer does not depend on how many units were built.
 | [float](float.md) | one compute format, the groups, elements against units against passes, the rotating accumulator, the four seeds, and **what is not built** |
 | [programming](programming.md) | the instruction set, the encoding, the C intrinsics, and a kernel written twice |
 | [configurations](configurations.md) | which feature mixes are worth building, and why the SIMD PEs of one mesh need not be the same build |
-| [performance](performance.md) | what the unit costs, what it buys in cycles, and which published figures were withdrawn and why |
+| [performance](performance.md) | what the unit costs, what it buys in cycles, and which figures count |
 | [gates](gates.md) | the benches that must pass before a number is quotable, and the ways a number here can look like evidence without being any |
-| [accumulator](accumulator.md) | the integer dot unit and its accumulator, **removed** — what they were and what replaced them |
+| [accumulator](accumulator.md) | dot products: `vmul` then `vredsum`, why there is no dedicated dot path, the reserved VMAC group |
 
 If you have never read a SIMD datapath before, read [lanes](lanes.md) first;
 that page is the machine.

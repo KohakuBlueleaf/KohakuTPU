@@ -1,4 +1,4 @@
-// 5-port mesh router. See docs/noc/spec.md.
+// 5-port mesh router. See docs/arch/noc/README.md.
 //
 // FIFO_DEPTH only has to cover the backpressure round-trip: depth does not
 // prevent deadlock (XY routing does). The generated ship overrides the two

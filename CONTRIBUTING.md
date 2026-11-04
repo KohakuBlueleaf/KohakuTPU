@@ -28,9 +28,9 @@ rather than assuming it, in either direction.
 
 **Membership can drain away without the tier disappearing.** `E2E` — the tier
 meant to run compiler-emitted instructions through the real RTL, and the only one
-that separates a compiler fault from a hardware one — **is the empty list today**.
-It emptied when the package feeding it was retired. `check.py e2e` still exists,
-still runs and still passes, having run nothing of its own. A tier that can empty
+that separates a compiler fault from a hardware one — **is an empty list**:
+nothing feeds it. `check.py e2e` exists, runs and passes, having run nothing of
+its own. A tier that can empty
 out and stay green is a gate reporting success for running nothing, and nothing
 in the runner checks that a tier is non-empty. Treat that as a known defect in
 the suite, not as coverage.
@@ -177,21 +177,18 @@ lines and the count is its length.
 
 **This page states the rules and does not state a total.** A count on a page is a
 claim with an undated timestamp — nothing tells the next reader it has moved, and
-it will have. Three ways it has been wrong here before, and they are the three to
-expect:
+it will have. The three ways a count goes wrong:
 
-- **Scope.** An earlier table measured `src/kohakuaccel`, `src/kohakutpu`,
-  `src/kohakumpe` and `src/templates` and called the result the tree. The
-  unmeasured half held more findings than the reported half — `tests/` alone
-  more than everything counted. **A table that reports a subset and calls it the
-  tree is worse than no table, because it reads as done.**
+- **Scope.** `src/` is not the tree: `tests/` alone holds more findings than
+  `src/kohakuaccel`, `src/kohakutpu`, `src/kohakumpe` and `src/templates`
+  together. **A table that reports a subset and calls it the tree is worse than
+  no table, because it reads as done.**
 - **The checker, not the tree.** `if ((SEED_UNITS != 0)` is a condition broken
-  across lines and was read as a missing body; `always @* begin` opens its block
-  on the header line, but the sensitivity test looked for a `)` that `@*` does
-  not have. Both moved a published number without a line of RTL changing.
+  across lines, not a missing body; `always @* begin` opens its block on the
+  header line with no `)` before it. A checker that misreads either moves the
+  number without a line of RTL changing.
 - **The moment of measurement.** A `--fix` run computes its counts *before* it
-  writes, so a number printed by a fixing pass describes the tree that no longer
-  exists by the time you read it.
+  writes, so a number printed by a fixing pass describes the tree before the fix.
 
 **Read a style count as a claim that needs checking, not as a measurement.**
 
@@ -213,29 +210,24 @@ side is deliberately *not* drift — the bench list changes, and calling that a
 regression is how a ledger becomes something people delete. Take the ledger
 **before** the change; afterwards there is nothing left to compare against.
 
-`--fix-blocks` now reaches six shapes it used to refuse, each because the
-refusal was about a *wrong match* rather than about the rewrite being unsafe:
+`--fix-blocks` rewrites these shapes, each safe because the match is exact:
 
-- **A header whose `)` is matched, not merely trailing.** Testing "starts with
-  `if (` and ends with `)`" corrupted three files — see below — and balancing the
-  paren is what makes the next-line form safe to touch at all.
+- **A header whose `)` is matched, not merely trailing.** Balancing the paren is
+  what makes the next-line form safe to touch at all: a line that only starts
+  with `if (` and ends with `)` can be an expression.
 - **A body that spans lines**, a wrapped `$display` being the common one. The
   span is joined only to *test* balance and re-emitted verbatim.
 - **A body that is itself a complete `if`/`for`/`case`.** `for (..) STMT` and
   `for (..) begin STMT end` are the same statement, so this is
   behaviour-preserving by construction.
 
-  **A trailing `else` belongs to whichever construct can take one, and getting
-  that backwards corrupted four more files.** If the body is an `if`, the `else`
-  is the body's and must be pulled INSIDE the new block — left outside it would
-  re-bind to an enclosing `if`. If the body is a `case`, `for` or `while`, that
-  construct cannot take an `else` at all, so the `else` belongs to the *header
-  being wrapped* and pulling it in orphans it. `khs_unit.v`, `kht_predec.v`,
-  `kht_unit.v` and `mag_link_cdc.v` all broke on the second case in one pass.
-- **A single-statement body WITH an `else` after it.** The old refusal assumed
-  the block had to close as `end else` on one line, and a wrong merge moves a
-  statement between branches. It does not have to: `end` on its own line, then
-  the `else` untouched, is legal and is a pure insertion. Safe only on the
+  **A trailing `else` belongs to whichever construct can take one.** If the body
+  is an `if`, the `else` is the body's and must be pulled INSIDE the new block —
+  left outside it would re-bind to an enclosing `if`. If the body is a `case`,
+  `for` or `while`, that construct cannot take an `else` at all, so the `else`
+  belongs to the *header being wrapped* and pulling it in orphans it.
+- **A single-statement body WITH an `else` after it.** `end` on its own line,
+  then the `else` untouched, is legal and is a pure insertion. Safe only on the
   single-statement path — `_one_statement` has already rejected a body that
   opens a block, so the `else` cannot be the body's, which is exactly the
   dangling-else case the complete-construct path above still refuses.
@@ -244,35 +236,23 @@ refusal was about a *wrong match* rather than about the rewrite being unsafe:
 - **`if (C) A; else B;` on ONE line**, both arms a single simple statement.
   This is most of the benches' spin loops.
 
-Those last three removed most of what was left without a hand edit.
+The `--fix` flags given together are chained, each rewriting the previous one's
+output, and the passes run to a fixpoint: one pass reaches one nesting level, so
+`for (i..) for (j..) x;` needs two.
 
-Two bugs in the driver itself, both of which read as "the fixer refused this
-file" rather than as failures:
+### How F7 and F4 count
 
-- **The `--fix` flags each rewrote the ORIGINAL text and the last one wrote.**
-  `--fix-decls --fix-case` in one invocation wrote the decl result, then
-  overwrote it with a case-only rewrite of the input. They are chained now.
-- **One pass reaches one nesting level.** Wrapping `for (i..) for (j..) x;`
-  leaves the inner `for` bare, so the passes run to a fixpoint.
-
-### Two of these checks have measured the wrong thing, and how is the lesson
-
-**F7 counted the word `begin`, not a block.** The check had been matching every
-`begin` inside a generate *region*, and `noc_l2_adapter.v` wraps its whole body
-in one `generate if (PASS)` — so every `always ... begin` in that file counted as
-an unnamed generate block. Restricting the walk to generate regions was the first
-attempted fix and was not enough.
-
-What it takes to be right: walk the region tracking whether each open block is
-*procedural*, and note that an `always` whose body is
-`if (..) begin .. end else begin .. end` opens **two** blocks at the same level —
-so the `always` must stay "armed" across its whole statement, not just until the
+**F7 counts unnamed generate blocks, not the word `begin`.** A file can wrap its
+whole body in one `generate if (PASS)`, so the walk tracks whether each open
+block is *procedural*. An `always` whose body is
+`if (..) begin .. end else begin .. end` opens **two** blocks at the same level,
+so the `always` stays "armed" across its whole statement, not just until the
 first `begin`. Erring toward procedural undercounts, which is the safe direction.
 
-**F4 was under-specified before it was mis-counted.** The original regex saw only
-the next-line form and missed `if (go) x <= 1'b0;` entirely, which is most of
-them. A rule that does not describe the shape it means will produce a stable,
-confident, wrong number for as long as nobody reads the predicate.
+**F4 matches both forms**: the next-line body and the same-line
+`if (go) x <= 1'b0;`, which is most of them. A rule that does not describe the
+shape it means produces a stable, confident, wrong number for as long as nobody
+reads the predicate.
 
 Three rules are mechanically rewritable:
 
@@ -283,15 +263,11 @@ Three rules are mechanically rewritable:
   end in one `;`, or be a complete `if`/`for`/`case` construct. `if (a) if (b) x;`
   is left alone, and that case is what the narrowness exists for.
 
-  **A `--fix` pass can corrupt source, and this one did.** An earlier version
-  accepted any line that *started* with `if (`/`for (` and *ended* with `)` as a
-  bare header, then wrapped the line below as its body. `if (rd_take) rr_rd <=
-  (rd_sel == N - 1)` matches both tests, so `begin`/`end` landed mid-expression
-  in `mm_xfer.v`, `mag_dram_port.v` and `khs_unit.v`; ~50 of 103 benches went red
-  and every failure traced to those three files. It was caught only because a
-  wrong wrap happens to be a *syntax* error — one that stayed legal would have
-  been silent. Run the suite after every `--fix` pass, and read one file's diff
-  before running it over the tree.
+  **A `--fix` pass can corrupt source.** `if (rd_take) rr_rd <= (rd_sel == N - 1)`
+  starts with `if (` and ends with `)`, so a header test that looks only at the
+  ends wraps an expression. A wrong wrap that is a syntax error is caught; one
+  that stays legal is silent. Run the suite after every `--fix` pass, and read
+  one file's diff before running it over the tree.
 - `--fix-case` (F5) shifts a flat case's whole body one level right, between
   `case` and its **matching** `endcase`. Moving the span together preserves
   relative indentation inside it, so a nested case that was already correct
@@ -299,9 +275,8 @@ Three rules are mechanically rewritable:
 
 Everything else is a human's. Apply a pass, then run
 `check.py full --counts-baseline <ledger>`: the checks *and their numbers* are
-the only thing separating a reformat from a rewrite. A one-character slip during
-this work — a `\` typed for `//` — broke dozens of benches and was invisible
-until the suite ran.
+the only thing separating a reformat from a rewrite: a one-character slip (a `\`
+typed for `//`) breaks dozens of benches and is invisible until the suite runs.
 
 **A file no bench compiles has nothing to catch a bad reformat**, and roughly
 half of `src/reference`, all of `src/attic` and the frozen station-bus copies in
@@ -317,11 +292,10 @@ F6 is the one rule only half of which is checkable. The script sees the trailing
 operator; whether an expression *should* have been broken at all is judgement,
 and `format-example2.v` is where that judgement is shown rather than stated.
 
-### The correction that matters
+### Declarations
 
-An earlier version of this file stated the declaration rule as *"one name per
-`localparam` statement"* and reported a count against it. **The rule was wrong.**
-The hand-formatted half of `format-example.v` keeps multi-name declarations:
+The rule is not *"one name per `localparam` statement"*. The hand-formatted half
+of `format-example.v` keeps multi-name declarations:
 
 ```verilog
 localparam [3:0] A_ADD = 4'd0, A_SUB = 4'd1, A_SLL = 4'd2, A_SLT = 4'd3;
@@ -335,23 +309,15 @@ read as a table and diff as a paragraph, because adding a name in the middle
 re-aligns every line and the diff then touches all of them and says nothing.
 Note that `A_SLTU=` above is already mis-aligned, which is what always happens.
 
-Correcting the rule moved its count down; fixing the F4 checker to catch the
-same-line form (`if (go) lsu_done <= 1'b0;`, which the next-line-only regex
-missed entirely) moved that one up several-fold. **Neither move was a change to
-the tree.** That is the whole argument for reading the predicate before reading
-the number.
+A count moves when its predicate changes even if the tree does not: read the
+predicate before reading the number.
 
-One more: `strip_block_comments` used to delete a multi-line `/* .. */`
-outright, which joined the code above it to the code below and shifted every
-line number after it. Harmless while nothing reported a line; wrong the moment
-`--lines` did. It replaces the comment with its own newlines now.
+`strip_block_comments` replaces a multi-line `/* .. */` with its own newlines,
+so every line number `--lines` reports still points at its source line.
 
-And the F7 walk is the only check that reads WORDS rather than line shapes, so
-it was counting the word `begin` inside a `//` comment sitting in a generate
-region. The two files that reported it were `format-example.v` and
-`format-example2.v` — the normative pair, the only ones whose prose says the
-word. Line comments are blanked before the walk now, and the fix is checked by
-a probe with a real unnamed block beside such a comment: the block is reported,
+The F7 walk is the only check that reads WORDS rather than line shapes, so line
+comments are blanked before it runs; a probe with a real unnamed block beside a
+`//` comment holding the word `begin` witnesses that the block is reported and
 the comment is not. **A check you have not watched fail is an assumption.**
 
 ### F6 is recursive, and applied per term

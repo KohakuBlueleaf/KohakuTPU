@@ -296,9 +296,9 @@ all control reaching a datapath, never the arithmetic.
 | `vec_lanes` | 37,916 LUT / 16,746 FF / 0 BRAM / 48 DSP / 358.4 MHz | **24,683 / 15,032 / 40 tiles / 48 / 358.4** |
 | `vec_cu` | 48,415 LUT / 23,439 FF / 4 BRAM / 51 DSP / 336.8 MHz | **35,629 / 22,145 / 44 tiles / 51 / 358.4** |
 
-**`vec_lanes` −34.9%, `vec_cu` −26.4%**, with Fmax *up* and the worst path no
-longer in the core at all — it is inside the ALU, so the core now sits at the ALU
-floor. BRAM became a counted resource: 44 tiles per core then, **36.5 now**.
+**`vec_lanes` −34.9%, `vec_cu` −26.4%**, with Fmax *up* and the worst path inside
+the ALU rather than the core, so the core sits at the ALU floor. BRAM is a counted
+resource: **36.5 tiles per core**.
 
 Where those tiles are, `vec_core` out of context (`scripts/tcl/ooc_mod.tcl`,
 3.333 ns ask, `MODEL=0`, L1 512 block, register file block; `build/ooc/vec_*`):
@@ -1507,7 +1507,7 @@ endpoints) and −0.666 (248), 10 % of a middle die's failing set at most;
 no pipe or link class is worse than −0.189. The mesh's 10–90 % row span is
 84 / 133 / 93 / 75 rows on dies 0 to 3.
 
-Methodology: TIMING-54 1, TIMING-47 28 (v8t5 32; XDCB-3 is gone, the XDMA
+Methodology: TIMING-54 1, TIMING-47 28 (v8t5 32; no XDCB-3, the XDMA
 clock in one group), TIMING-24 100, TIMING-16 57 (117, every one of them
 on die 1), LUTAR-1 16, TIMING-9 and TIMING-10 one each.
 
@@ -2302,12 +2302,9 @@ real memory agent rather than a stub, which is the stronger test.
   in-context figure as unmeasured rather than unchanged.
 - **`mx_cluster_core` was never synthesised standalone.** Where a figure for it
   appears it was inferred from the cluster minus its parts.
-- **MW=16 has not been synthesised since MW=14 became the default.** Its last
-  figure was 302.3 MHz from a 300 MHz-target run several steps earlier. "Costs
+- **MW=16 is not synthesised on the current block.** Its figure is 302.3 MHz
+  from a 300 MHz-target run on an older block. "Costs
   less and carries more slack" is sound on the evidence that chose the operating
   point and is *not* a claim about what FP24 would measure on today's block.
-- **The online quantisation path no longer exists** and will not be re-run. Its
-  last measurement was 408.6 GFLOP/s at 66.5% on per-row memory ports. The
-  transform slot moved off the fetch path entirely, so a fetch is never
-  transformed; the figure stands as history and is not a number this machine can
-  produce again.
+- **A fetch is never transformed**: the transform slot is on the mover's read
+  return, so there is no online quantisation path to measure.

@@ -1,6 +1,6 @@
 // noc_cu_base -- the part every compute unit needs, regardless of what it computes.
 //
-// docs/noc/spec.md s6 mandates that every CU expose the same two things: an
+// docs/arch/noc/README.md s6 mandates that every CU expose the same two things: an
 // ordered instruction FIFO whose free space is visible, and a fixed four-word
 // control register block. This module implements both, plus the NoC plumbing, and
 // hands the user's compute logic a small handshake:
@@ -125,7 +125,7 @@ module noc_cu_base #(
     // noc_in_valid is low, and the type field is only trustworthy alongside a
     // valid flit. Plain `full` despite the name -- sync_fifo passes
     // USE_ADV_FEATURES(0) -- which is safe only because the link RETRIES.
-    // See docs/noc/spec.md s2.1.
+    // See docs/arch/noc/README.md s2.1.
     // Also held while a CU_CTRL reply is pending.
     reg ctrl_pend;
     assign noc_in_busy = inst_almost | recv_almost | ctrl_pend;

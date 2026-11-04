@@ -65,7 +65,7 @@ module vec_cu #(
     output wire [31:0]            dbg_cycles,
     output wire                   dbg_fault
 );
-    // CU_DATA is 0x8, NOT the 0x4 docs/noc/spec.md s4 still prints: 0x4 is
+    // CU_DATA is 0x8, NOT the 0x4 docs/arch/noc/README.md s4 still prints: 0x4 is
     // MEM_WR_DATA here and in mag_mem_port.v, so a CU_DATA flit carrying it
     // would have entered MAG's write queue as data. noc_pkt.vh records the
     // resolution and is included by nothing, so the value is re-declared here.

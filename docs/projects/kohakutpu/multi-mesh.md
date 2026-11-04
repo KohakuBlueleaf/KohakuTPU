@@ -300,12 +300,10 @@ automatic version — not the other way round.
 The measurement below is the **remote drain path**. It is the only interlink
 figure this project currently stands behind.
 
-> **There is no mover rate to quote.** The one interlink rate ever measured
-> through `mm_mover` predates the mover rebuild — it was taken on an engine that
-> sent one 32-byte word per packet, and the current engine coalesces — so it
-> describes hardware that no longer exists and has been withdrawn rather than
-> carried forward. Nobody has re-measured the mover on today's RTL. A design
-> that needs a mover rate has to measure one.
+> **Mover rates across the interlink** are in `measurements/REPORT.md` (Round h1):
+> a mover on sysnode 0 writes 1 MiB to canonical DRAM in 71.7 k cycles, a mover on
+> sysnodes 1-3 in 424-427 k, because a canonical (mesh-0) write from another
+> sysnode crosses the interlink a word a packet.
 
 **Measured 2026-08-13 on the card**, one cluster on mesh_0 streaming
 remote drains into mesh_2, 128 sub-tiles each. Mesh clock measured at
@@ -351,7 +349,7 @@ Three things this corrects:
   costs more mesh cycles at a faster mesh clock. Any "N% more clock gives N% more
   throughput" estimate is ~85% true at best.
 - **It is not thermal.** The die went 62.9 -> 64.9 C across the whole sweep,
-  nowhere near the 70 C seen previously. There is no SYSMON driver in the repo;
+  well below 70 C. There is no SYSMON driver in the repo;
   read it through the Vivado Tcl socket with
   `get_property TEMPERATURE [get_hw_sysmons]`.
 - **The failure mode is a HANG, not wrong numbers**, unlike the report at

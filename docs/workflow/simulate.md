@@ -319,9 +319,8 @@ Two things about that structure are worth copying and one is worth knowing:
 - **A tier is a set, not a level.** `unit` does not include `fast` in this tree,
   so "the unit tier passed" is not "the linters passed". Whether tiers nest is a
   choice; leaving it implicit is how a gate gets skipped.
-- **The `e2e` tier is currently empty.** The list it draws from lost its contents
-  when the package feeding it was retired, so the tier runs whatever the tiers it
-  composes with run and nothing of its own. It passes. A tier whose membership can
+- **The `e2e` tier is empty.** Nothing feeds the list it draws from, so the tier
+  runs whatever the tiers it composes with run and nothing of its own. It passes. A tier whose membership can
   become empty without the tier disappearing is a gate that reports success for
   running nothing — worth an explicit check that each tier is non-empty.
 

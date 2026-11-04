@@ -107,7 +107,7 @@ module rv_front_tb;
     reg  [255:0]        rx_data = 256'd0;
 
     // Swept by -d RV_WR_MAX=n. Only 1 is SAFE against the real agent
-    // (docs/arch/pe/performance.md); this stub has no slot table, so it can price it.
+    // (docs/arch/cpu/rv32-pe/performance.md); this stub has no slot table, so it can price it.
     rv_noc_req #(.FLIT_WIDTH(FW), .POS_WIDTH(PW), .POS_X(PX), .POS_Y(PY),
                  .MEM_X(MX), .MEM_Y(MY), .DRAM_BASE(DBASE),
                  .WR_MAX(`RV_WR_MAX)) u_req (

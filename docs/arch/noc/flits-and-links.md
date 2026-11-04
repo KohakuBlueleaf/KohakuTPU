@@ -52,8 +52,7 @@ ten codes in use:
 | unit to unit | `CU_DATA` | the two units at either end |
 | error | `ERROR` | the fabric |
 
-One structural fact about the encoding is worth stating because it used to be
-otherwise: **no single bit partitions memory traffic from compute-unit
+One structural fact about the encoding: **no single bit partitions memory traffic from compute-unit
 traffic.** Five memory messages do not fit in four codes, and no cache exists
 that would want to filter on such a bit, so the split is a comparison against a
 threshold rather than a mask.

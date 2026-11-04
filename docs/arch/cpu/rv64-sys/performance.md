@@ -428,14 +428,11 @@ expected to fail routing until a routed run says otherwise. Treat +0.039 ns as
 
 Two things about the result are worth more than the number:
 
-- **The mover cone that failed for the whole of this work is closed.** It was
-  `mm_mover`'s `mode` register → a FIFO-room add and compare → `stall` → the
-  command FIFO's write enable, 12 logic levels, and it accounted for every one
-  of the 123 endpoints that used to fail. Registering the FIFO-room limit
-  against a **config-time constant** — a value that cannot change while a
-  descriptor is running, so a register costs nothing — took the add and the
-  compare out of the path. That was the last failing cone in the node.
-- **The binding path is back inside the processor**, at
+- **The mover's FIFO-room limit is registered against a config-time constant**
+  (a value that cannot change while a descriptor is running, so a register costs
+  nothing), which keeps the add and compare off the `mode` → `stall` → command
+  FIFO write-enable cone. No failing cone remains in the node.
+- **The binding path is inside the processor**, at
   `wb_val_reg → halt_cause_reg`: the writeback value reaching the halt-cause
   register through the forward mux. It passes, and it is the same family as
   every path this core has been optimised out of — *the forward mux reaching

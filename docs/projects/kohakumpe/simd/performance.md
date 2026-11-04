@@ -1,6 +1,6 @@
 ---
 title: SIMD PE performance
-summary: What the vector unit costs and what it buys in cycles, kept apart; how a figure here is obtained and what a flatten setting does to it; the critical path read out; and which previously published figures were withdrawn, with the reason for each.
+summary: What the vector unit costs and what it buys in cycles, kept apart; how a figure here is obtained and what a flatten setting does to it; the critical path read out; and which figures count.
 tags:
   - architecture
   - pe
@@ -12,8 +12,8 @@ tags:
 
 > **Kind: none — this page reports measurements of parts labelled elsewhere.**
 > Cost and benefit here are properties of this project's own configurable unit,
-> not of the framework. The withdrawn-figures section is the page's most
-> transferable content, and it is a measurement convention rather than a result.
+> not of the framework. The figure rules at the end are the page's most
+> transferable content: a measurement convention rather than a result.
 
 Two independent questions, and this page keeps them apart: **what the vector
 unit costs**, which is a synthesis result, and **what it buys**, which is a
@@ -279,21 +279,16 @@ Two structural rewrites were tried on this PE and both made it **larger**:
 **The useful conclusion is that this PE is not carrying obvious fat.** Every
 knob that removes LUT also removes instructions or adds cycles.
 
-## What was withdrawn, and why
+## Which figures count
 
-A number that was true of an older build is not automatically a worse
-measurement of this one — it can be a measurement of a different machine. These
-were dropped rather than updated, and each is listed so that nobody re-derives
-them from an older page.
-
-| withdrawn | why |
-|---|---|
-| **every assembled-PE total taken at `-flatten_hierarchy none`** — and the mesh arithmetic built on them | the ship synthesises at Vivado's default, `rebuilt`, and the gap is configuration-dependent, so it cannot be applied as a correction either. The per-block census taken at `none` is unaffected and still stands — that one *has* to be taken at `none` |
-| **every figure for the integer dot unit, its accumulator, `MULS` and `DOT_DSP`** | that hardware is not built — [accumulator](accumulator.md) |
-| **every float-tier figure taken on the E8M15 datapath**, including both operand-format gates and every total that contains them | it is a different tier: different arithmetic, different converters, different element granularity. The totals are not comparable in either direction |
-| **every accumulator area figure taken before its operation port was connected** | those units were a pass-through, not a fused multiply-add. Any accumulator figure published before the fix priced the wrong thing |
-| **every converter-group figure** | the group had no datapath when it was priced. It has one now and has not been re-measured |
-| **the tier-alone unit-count curve** and the linear fit taken from it | withdrawn for provenance rather than for being wrong: the probe's script and module have both since been renamed, so no run can be tied to the module that exists now |
-| **any total derived by subtracting a probe delta from an assembled build** | arithmetic across two scopes is never a measurement |
-| **a per-block table of the E8M15 multiply-add** — its normaliser, aligner and DSP48 rebuilds | it described a datapath this PE no longer contains |
-| **"the float tier costs *N* LUT and *M* MHz"**, in every form it was written | each rested on one float unit per element being the only expressible build. Both halves of that are gone |
+- **An assembled-PE total is taken at Vivado's default flatten (`rebuilt`)**, as
+  the ship synthesises; the per-block census is taken at `none`. The gap between
+  the two is configuration-dependent, so neither corrects the other.
+- **A figure is tied to the module that exists**: its run names the script and
+  the module it measured. A figure of a datapath the PE does not contain is not
+  a figure of this PE.
+- **A total is never derived by subtracting a probe delta from an assembled
+  build**: arithmetic across two scopes is not a measurement.
+- **A unit is priced only once it has a datapath**: a decoded, wired and
+  parameterised feature with no branch in the result mux prices nothing
+  ([gates](gates.md)).

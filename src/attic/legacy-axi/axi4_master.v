@@ -11,13 +11,13 @@
 //   3. WLAST must be asserted on the last beat of EVERY burst, not just the last
 //      burst of the command.
 //
-// Discipline matches src/kohakuaxi/axi4_ram.v: VALID is never a function of READY,
+// Discipline matches src/kohakuaccel/verif/axi4_ram.v: VALID is never a function of READY,
 // and a burst's length comes from a counter rather than from the data stream.
 //
 // One burst outstanding at a time. That is deliberate for a reference: it makes
 // the FSM readable and provably correct. It is also the main thing to change for
 // MAS, where DRAM latency means single-outstanding leaves most of the bandwidth
-// on the floor -- see docs/noc/spec.md s10.5.
+// on the floor -- see docs/arch/noc/README.md s10.5.
 
 `default_nettype none
 

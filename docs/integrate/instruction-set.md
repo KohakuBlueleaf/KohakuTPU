@@ -312,15 +312,12 @@ The instructive parts:
 - **`FILL` is a descriptor, not a loop.** One instruction becomes one request
   flit, and the memory agent returns the whole run. The unit places words as they
   arrive and counts entries completed; it has no address cursor.
-- **`FILL` used to select a read-path transform, and the bit is now reserved.**
-  It said whether the operand in DRAM was already in the datapath's format or
-  needed converting on the way out. A fetch is never transformed now — the slot
-  moved onto the memory mover's read return, where a conversion is paid once per
-  tensor rather than once per read — so the cluster drives the bit to zero and
-  decodes nothing. **The instructive part survives the change**: the bit was a
-  project's, the module behind it was a project's, and the mechanism carrying
-  both was the framework's. That is still how the mover's `XFORM_ID` works, one
-  layer down.
+- **`FILL`'s transform bit is reserved.** A fetch is never transformed: the
+  transform slot sits on the memory mover's read return, where a conversion is
+  paid once per tensor rather than once per read, so the cluster drives the bit
+  to zero and decodes nothing. The mover's `XFORM_ID` carries the selection: the
+  id and the module behind it are a project's, the mechanism carrying both is the
+  framework's.
 - **`FILL`'s address is SPLIT across two fields**, `[251:218]` and `[68:63]`.
   Widening from 34 bits to 40 that way moved no other field and left every older
   encoding meaning what it meant — and it means a reader must rejoin them, or a

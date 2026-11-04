@@ -4,7 +4,7 @@ The operating system for the system nodes of any KohakuAccel machine: L0
 machine layer (M), one kernel per node (S), user programs (U) with threads
 and shared memory across nodes, and generic dispatch to compute units.
 
-Documentation: [docs/os](../../docs/os/README.md) — architecture, memory,
+Documentation: [docs/os](../../../docs/os/README.md) — architecture, memory,
 boot, the system-call ABI, messaging, dispatch, boards, applications,
 building and running, measured performance, hardware constraints.
 
@@ -29,4 +29,4 @@ python software/kohakutpu/os/tools/run_card.py --board card_v9t6_2n --model ~/kt
 cd software/kohakuaccel/os/tests/host && KOS_BUILD=~/kos/build KOS_OUT=~/kos/out pytest --rootdir . -n 1
 ```
 
-Details of every option: [docs/os/use/building.md](../../docs/os/use/building.md).
+Details of every option: [docs/os/use/building.md](../../../docs/os/use/building.md).

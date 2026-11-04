@@ -5,7 +5,7 @@
     python scripts/py/vec_tables.py --write --split   # the three-ROM form, for an A/B
 
 Four seeds -- exp2, log2, inv, rsqrt -- each a quadratic minimax-ish polynomial
-per segment. See docs/compute/vector-core.md s4.
+per segment. See docs/projects/kohakutpu/vector-core.md s4.
 
 WHY CHEBYSHEV INTERPOLATION AND NOT REMEZ. Interpolating at the three Chebyshev
 nodes of a segment has error  2*(h/4)^3*max|f'''|/6, which is within ~4% of true

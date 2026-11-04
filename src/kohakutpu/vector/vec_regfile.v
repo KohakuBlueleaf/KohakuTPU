@@ -1,6 +1,6 @@
 // One lane's slice of the vector register file: 3 read ports, 1 write port.
 //
-// docs/compute/vector-core.md s8. The file is striped BY LANE -- lane i holds
+// docs/projects/kohakutpu/vector-core.md s8. The file is striped BY LANE -- lane i holds
 // elements i, i+16, i+32 -- so a slice is entirely lane-local and 3R1W is three
 // duplicated single-read arrays rather than a 48-port monolith. Writes go to all
 // three copies; each answers one port.

@@ -323,10 +323,9 @@ Everything downstream of the operands inherits the fix at once: the
 effective address `ea`, the branch comparison, the store data, the AMO's address
 and source operand, the CSR write data, and the multiplier's operands. That is
 the point of doing it here. The AMO sequencer latches its own copies as well
-(`a_addr`, `a_srcq`) because it needs them across state transitions, but it no
-longer *has* to — and a plain load or store, which became multi-cycle only
-because the wrapper can stall it, never had a latch of its own and now does not
-need one.
+(`a_addr`, `a_srcq`) because it needs them across state transitions, though the
+general latch covers it; a plain load or store, multi-cycle because the wrapper
+can stall it, needs no latch of its own.
 
 Without it, a stalled load recomputes its own address from a network that has
 moved, and the symptom is a spurious misalignment fault on an access that was
@@ -336,10 +335,8 @@ aligned when it was issued.
 exactly one cycle.** Any structure that holds an instruction longer than that —
 a multi-cycle unit, a stallable memory, a CSR write — must take a copy on entry,
 and doing it once structurally is cheaper and safer than each unit remembering
-to. This core learned it per-unit first, with the atomics sequencer latching its
-own address and source operand, and the general form arrived when memory became
-able to stall: at that point *every* memory instruction was multi-cycle, and
-there is no per-unit place to put the latch.
+to. Once memory can stall, *every* memory instruction is multi-cycle, and there
+is no per-unit place to put the latch.
 
 ## Two stalls, three flushes, and what each one freezes
 

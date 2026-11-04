@@ -355,7 +355,7 @@ module mx_system_tb;
         // Addresses go through explicitly-sized regs. Writing the expression
         // straight into the concatenation makes it contribute 32 bits, not the
         // 34 the field is, so the payload silently comes out 4 bits short and
-        // every field below it shifts. See docs/simulation.md s3.
+        // every field below it shifts. See docs/workflow/simulate.md s3.
         for (b = 0; b < NBLK; b = b + 1) begin
             adr_a34 = (WA_BASE + b*4) * 32;
             adr_b34 = (WB_BASE + b*4) * 32;

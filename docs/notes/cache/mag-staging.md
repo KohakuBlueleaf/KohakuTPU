@@ -74,10 +74,7 @@ URAM sits in columns spread across the die. A centralised block cannot reach all
 ~290 free URAMs in an SLR at frequency, and the most crowded SLR is at **95.80%
 CLB** (MEASURED), so there is no room to route around it.
 
-**The capacity table this section used to carry is deleted, not corrected.** It
-was arithmetic on the 936-bit line, and the built line is 1,024 bits;
-recomputing it here would be inventing a number rather than measuring one. **The
-shipping configuration is the authority: 4 banks × 16,384 entries = 64 URAM per
+The line is 1,024 bits. **The shipping configuration is the authority: 4 banks × 16,384 entries = 64 URAM per
 memory agent**, set in the build configuration. Take the budget from there and
 the capacity from the RTL.
 

@@ -361,7 +361,7 @@ module mover_cfg32_core #(
     endtask
 
     // ============================================ the driver's seven words
-    // software/driver/kohakuaccel/driver/device/mover.py, for
+    // software/kohakuaccel/driver/kohakuaccel/driver/device/mover.py, for
     //   copy(Walker(0x100000,[(64,32)]), Walker(0x200000,[(64,32)]))
     // with the defaults ewidth=W16, flags=FLAG_WCOAL. Written as literals so
     // this bench states what software emits rather than re-deriving it.

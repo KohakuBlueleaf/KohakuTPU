@@ -24,7 +24,7 @@ side. Only two of them are about your accelerator.
 This page is a guide and a design document in roughly equal parts. The split it
 argues for is the layout of `software/`: `kohakuaccel` is the framework,
 `kohakutpu` and `toyaccel` are projects on top of it, and
-`software/tests/test_imports.py` fails if the framework imports a project. §6
+`software/tests/static/test_imports.py` fails if the framework imports a project. §6
 is the layout and names the couplings that are still uncut.
 
 ---
@@ -318,7 +318,7 @@ the members.
 
 ### The import rules
 
-`software/tests/test_imports.py` reads every module's imports and fails on a
+`software/tests/static/test_imports.py` reads every module's imports and fails on a
 breach:
 
 | component | may import |

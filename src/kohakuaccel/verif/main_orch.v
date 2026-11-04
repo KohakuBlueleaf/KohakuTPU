@@ -3,7 +3,7 @@
 //
 // NOT a NoC node: its reach into the mesh is an AXI write into a MAG control
 // window, which MAG turns into a flit, so dispatch, TLB programming and debug
-// injection share one mechanism. See docs/arch-design.md s6.4.
+// injection share one mechanism. See docs/arch/README.md s6.4.
 //
 // THE DRIVER-SIDE INSTRUCTION SET. The host writes a list of commands, then
 // writes GO:
@@ -87,7 +87,7 @@ module main_orch #(
     // ---- register map (slave side) ---------------------------------------
     // A_CTRL write: [0] GO, a one-cycle pulse. There is NO abort -- the write
     // decode below acts on bit 0 and nothing else, so a running program can
-    // only be stopped by reset. See docs/isa/orchestrator.md.
+    // only be stopped by reset. See docs/arch/sysnode/control-processor.md.
     localparam [15:0] A_CTRL   = 16'h0000,   // read: [0] busy [1] done [2] err
                       A_PC     = 16'h0008,   // read: current command index
                       A_CODE   = 16'h0010,   // read: DONE code

@@ -1,6 +1,5 @@
 // vec_cu replaying compiler-emitted CU_INST payloads (+prog) against a memory
-// image (+mem), writing the memory back to +out; scripts/py/vec_replay.py
-// builds the inputs and checks the result.
+// image (+mem), writing the memory back to +out.
 
 `default_nettype none
 `timescale 1ns/1ps

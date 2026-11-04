@@ -1,5 +1,5 @@
 /* GENERATED from the KohakuTPU compiler cluster ISA (4x32 @ 4x32 -> 4x4).
- * Regenerate with scratchpad/gen_matmul.py. Small-integer operands; golden
+ * Small-integer operands; golden
  * is the offline ClusterUnit's exact output. */
 #define MM_NFLIT 4
 #define MM_A_ADDR 0x1000UL

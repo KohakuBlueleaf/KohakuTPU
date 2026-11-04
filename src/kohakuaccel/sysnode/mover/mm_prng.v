@@ -1,6 +1,6 @@
 // Philox-4x32-10: a counter-based PRNG, one round per cycle.
 //
-// docs/memory-mover/prng.md s3. Counter-based and stateless, so the value is a
+// Counter-based and stateless, so the value is a
 // pure function of (key, counter) -- which is what makes noise independent of
 // how a region was tiled, restartable after a fault, and parallelisable by
 // handing each lane a different counter. A stateful LFSR has none of those and
@@ -15,7 +15,7 @@
 //
 // Philox is chosen over Threefry because the constraint here is FABRIC, not
 // multipliers: the vector core extrapolates to ~37% of an SLR's LUTs against
-// 12.5% of its DSPs (compute/vector-core.md s13). Threefry is the ARX design
+// 12.5% of its DSPs (docs/projects/kohakutpu/vector-core.md s13). Threefry is the ARX design
 // that trades multipliers for rounds, which is why XLA prefers it on TPU.
 
 `default_nettype none

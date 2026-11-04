@@ -44,7 +44,7 @@ fn wide(py: Python<'_>, w: W256) -> PyResult<Bound<'_, PyAny>> {
 /// sru_config(machine_json, mutant=None) -> dict: the SRU configuration map
 /// (`G`, `P`, `O`: field -> [word, low bit, width]; `F`: [low bit, width];
 /// the source and finalise codes) and its depths and pool timing from the
-/// machine's SR facts, under `isa/sru.py`'s names.
+/// machine's SR facts, under the spec's names (ISA.SR.020-033).
 #[pyfunction]
 #[pyo3(signature = (machine_json, mutant=None))]
 fn sru_config<'py>(
@@ -108,7 +108,7 @@ fn sru_config<'py>(
 
 /// sru_words(job_json, f_lanes, h_taps, machine_json, mutant=None) ->
 /// list[(address, value)]: every configuration word of the job
-/// (`{"g", "passes", "ops", "fin"}`, `isa/sru.py`'s `words` inputs), each
+/// (`{"g", "passes", "ops", "fin"}`), each
 /// pass's program scheduled on a pool of `f_lanes` lanes and `h_taps`
 /// result taps with the machine's pool timing.
 #[pyfunction]

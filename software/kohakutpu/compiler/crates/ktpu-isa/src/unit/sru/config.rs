@@ -1,5 +1,5 @@
 //! The SRU configuration map, the pool schedule and E8M15 constants
-//! (`docs/spec/stack/isa/sru.md` ISA.SR.020-033, `isa/sru.py`). A
+//! (`docs/spec/stack/isa/sru.md` ISA.SR.020-033). A
 //! configuration is 32-bit words at 8-bit addresses written by CFG; every
 //! field is (word, low bit, width).
 
@@ -243,7 +243,7 @@ pub fn pack(
     Ok(words)
 }
 
-/// One pool-op entry of a program, `isa/sru.py`'s form: O fields by name,
+/// One pool-op entry of a program: O fields by name,
 /// and the sources `A`, `B`, `C` by name (`"X"`) or as an earlier op's
 /// result (`["H", k]`). A source left out is X (A) or K (B, C).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

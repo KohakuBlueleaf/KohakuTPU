@@ -2,7 +2,7 @@
 //
 //   addr = base + offset + sum_i ( idx_i * stride_i ),   idx_i < bound_i
 //
-// docs/compute/vector-core.md s10 is why this exists at all: reshape, permute,
+// docs/projects/kohakutpu/vector-core.md s10 is why this exists at all: reshape, permute,
 // expand, pad, slice and broadcast are VIEWS, not arithmetic. A permute is a
 // permutation of the stride list, a broadcast is stride 0, pad and slice are a
 // bound and an offset. Without strides every one of them is a physical copy.

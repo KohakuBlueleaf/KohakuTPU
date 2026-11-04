@@ -1,6 +1,6 @@
 // Sixteen ALUs, the register file they read, and the four VMODE topologies.
 //
-// docs/compute/vector-core.md s7.1: a mode is a factorisation W x D = 16.
+// docs/projects/kohakutpu/vector-core.md s7.1: a mode is a factorisation W x D = 16.
 //
 //   FLAT  16 x 1   16 results/cycle     D2  8 x 2   8/cycle
 //   D4     4 x 4    4 results/cycle     TREE 8+4+2+1 + accumulator

@@ -358,7 +358,7 @@ module mx_system32_tb;
         // Addresses go through explicitly-sized regs: writing the expression
         // straight into the concatenation makes it contribute 32 bits, not the
         // 34 the field is, and every field below it shifts. See
-        // docs/simulation.md s3.
+        // docs/workflow/simulate.md s3.
         $display("--- 3. stage the program (%0d instructions) ---", NINST);
         idx = 0;
         for (g = 0; g < GM; g = g + 1) begin

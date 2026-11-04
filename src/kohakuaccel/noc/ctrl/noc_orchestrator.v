@@ -1,4 +1,4 @@
-// Global Orchestrator -- AXI4 slave <-> NoC local port. See docs/noc/spec.md s10.
+// Global Orchestrator -- AXI4 slave <-> NoC local port. See docs/arch/noc/README.md s10.
 //
 // The control plane and the bring-up instrument. It gives a host (XDMA, or
 // jtag_axi during development) three things:
@@ -13,7 +13,7 @@
 // AXI and NoC share one clock (spec s10.6). SmartConnect does the crossing to
 // XDMA/jtag, so there is no CDC in here.
 //
-// The AXI slave FSM is the one from src/kohakuaxi/axi4_ram.v: VALID is never a
+// The AXI slave FSM is the one from src/kohakuaccel/verif/axi4_ram.v: VALID is never a
 // function of READY, the burst counter rather than WLAST ends a burst, and
 // BID/RID echo AWID/ARID.
 

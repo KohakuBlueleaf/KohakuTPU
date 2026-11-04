@@ -130,24 +130,16 @@ under the level count that signals trouble, so the design is not level-bound at
 this request — consistent with 363.5 MHz being a genuine ceiling rather than an
 artefact of a long combinational chain.
 
-#### What this replaces, and what it does not
+#### The binding path and the forwarding mux
 
-The path recorded before the multiplier was the **load-data return** —
-`u_spad/.../CLKBWRCLK -> u_core/u_id/x_op1_reg[16]/D`, at 6 levels: a data
-array's clock-to-out, the cross-port bypass, the sub-word extract, the
-forwarding network, the ID operand register. **That endpoint pair no longer
-appears in the top twelve.** It is superseded, not merely unconfirmed.
-
-It is worth being precise about what that does and does not settle. The
-multiplier's result joins the pipeline through the mux feeding the distance-1
-forwarding path, and
-[microarchitecture](microarchitecture.md#where-the-result-joins-and-why-that-was-the-risk)
-argues that this makes the mux an expensive place to add a case. **That
-reasoning stands; the mux is not where the binding path is.** Adding a level to
-a mux that feeds the register a critical path terminates at is still the wrong
-place to spend one — but on the shipped RTL, at this request, the path that
-binds runs from the address decode into ID's register control, and the
-forwarding network is not on it.
+The load-data return (`u_spad/.../CLKBWRCLK -> u_core/u_id/x_op1_reg[16]/D`, 6
+levels: a data array's clock-to-out, the cross-port bypass, the sub-word extract,
+the forwarding network, the ID operand register) is not in the top twelve paths.
+The multiplier's result joins the pipeline through the mux feeding the distance-1
+forwarding path ([microarchitecture](microarchitecture.md#where-the-result-joins)),
+which makes that mux an expensive place to add a case; on the shipped RTL, at this
+request, the path that binds runs from the address decode into ID's register
+control, and the forwarding network is not on it.
 
 ## Resources
 

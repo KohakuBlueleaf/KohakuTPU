@@ -132,12 +132,12 @@ therefore **bound to one memory port at elaboration**, not at runtime.
 A unit gets one local port unless you deliberately give it two, and the default
 is right far more often than it looks.
 
-KohakuTPU's matmul cluster was originally two endpoints on adjacent routers — a
-manager and an accumulator — and was merged into one. The reasoning generalises:
+KohakuTPU's matmul cluster is one endpoint holding both its manager and its
+accumulator, not two endpoints on adjacent routers. The reasoning generalises:
 
 - **A second port buys no bandwidth if both endpoints load the same direction of
   the link.** The link is full duplex. The manager's fetches and the
-  accumulator's drains were opposite directions of one link, so one port carried
+  accumulator's drains are opposite directions of one link, so one port carries
   both at no contention.
 - **A second port costs a router local**, and locals are the scarce resource. At
   two locals per unit, a given unit count forces a larger grid; at one, it fits a

@@ -1,4 +1,4 @@
-//! The project's address fields (`isa/fields.py`): `ktpu_isa::addresses` as
+//! The project's address fields: `ktpu_isa::addresses` as
 //! the builder's [`Addresses`], by the unit type the builder names a payload
 //! for (`"MG"`, `"VC"`, `"SR"`, `"mover"`).
 

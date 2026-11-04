@@ -235,11 +235,10 @@ SLL usage, post-placement, 7,814 total:
 5. **Only one IO-driven BUFG may feed the MMCMs**, and it needs
    `CLOCK_DEDICATED_ROUTE ANY_CMT_COLUMN` -- five MMCMs across four SLRs exceeds
    `rule_bufg_mmcm_3loads` otherwise. Unrelated to the bus, but it shares SLR1.
-6. **`root_smc` is pblocked to SLR1** with XDMA and JTAG. That was chosen when
-   SLR1 was the most crowded die; after the rebalance it is the emptiest, so a
-   saving there no longer relieves the binding constraint — see §1. The
-   structural point survives the inversion: **the root sits on whichever die
-   also carries the host bridge**, and that die gives up compute to do it.
+6. **`root_smc` is pblocked to SLR1** with XDMA and JTAG. SLR1 is the emptiest
+   die, so a saving there does not relieve the binding constraint — see §1. **The
+   root sits on whichever die also carries the host bridge**, and that die gives
+   up compute to do it.
 
 ## 8. Where a purpose-built bus could win
 

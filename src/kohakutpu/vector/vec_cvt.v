@@ -1,6 +1,6 @@
 // Memory dtype <-> E8M15, the vector core's load and store edges.
 //
-// docs/compute/vector-core.md s1.1 is the argument for E8: an 8-bit exponent
+// docs/projects/kohakutpu/vector-core.md s1.1 is the argument for E8: an 8-bit exponent
 // covers FP32's range exactly, so nothing here range-checks on the way IN.
 // FP32 -> E8M15 keeps the exponent field verbatim; FP16 -> E8M15 is EXACT.
 //

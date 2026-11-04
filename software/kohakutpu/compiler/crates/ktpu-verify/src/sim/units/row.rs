@@ -66,7 +66,7 @@ pub(crate) struct Row {
 }
 
 impl Row {
-    /// Global configuration field `name` (`isa/sru.py` G).
+    /// Global configuration field `name` (ISA.SR.020 G).
     fn field(&self, name: &str) -> i64 {
         let (word, lo, width) = lookup(G, name).expect("a G field");
         let v = self.cfg.get(word as usize).copied().unwrap_or(0);

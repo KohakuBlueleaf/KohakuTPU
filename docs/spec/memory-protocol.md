@@ -527,12 +527,9 @@ move them there; a host that wants bytes in another mesh writes them into that
 mesh's own window. [address-map.md](../address-map.md) has the host-side map and
 the routing prefix that chooses the window.
 
-**Retired:** `addr[ADDR_W-1]` and `addr[ADDR_W-2]` used to mean `QUANT` and
-`BLAYOUT`, converting an upload on the way in, and the window was 32 of 34
-address bits for that reason. That path is gone with the rest of the per-request
-transform selection (§10). A host that wants converted bytes in memory either
-converts them itself or uploads raw and has the mover convert on card, which is
-one descriptor and no host round trip.
+The upload window converts nothing on the way in. A host that wants converted
+bytes in memory either converts them itself or uploads raw and has the mover
+convert on card, which is one descriptor and no host round trip.
 
 ### 9.2 The control window
 
@@ -587,12 +584,10 @@ encapsulated `CU_DATA` cross.
 > **Kind: Addon.** A slot that ships working and exists to be swapped. The
 > interface around it is Fixed; the transform inside it is yours.
 
-**A read request no longer selects a transform.** `flags[4]` (`QUANT`) and
-`flags[5]` (`BLAYOUT`) are **reserved and ignored**; a requester that sets them
-gets an untransformed fetch. The host upload window's `QUANT`/`BLAYOUT` address
-markers (§9.1) are retired with them.
+**A read request does not select a transform.** `flags[4]` and `flags[5]` are
+**reserved and ignored**; a requester that sets them gets an untransformed fetch.
 
-The transform slot moved off the fetch path and belongs to the **memory mover**:
+The transform slot belongs to the **memory mover**, not the fetch path:
 
 ```
    mem / L2 --> [ slot ] --> mem / L2      the mover, once per tensor
@@ -605,9 +600,8 @@ per read, which is what hidden state re-read across passes needs.
 
 Two consequences for a requester:
 
-- **An entry is `entry_words × DATA_W/8` bytes, always.** The old table where
-  `QUANT = 1` implied a 2048-bit source entry is gone; §3.2's `entry_words`
-  rule is now the only one.
+- **An entry is `entry_words × DATA_W/8` bytes, always**, by §3.2's
+  `entry_words` rule.
 - **A single-use operand costs an explicit mover pass.** DRAM traffic is
   unchanged — the same bytes are read once either way — but the conversion is a
   separate move the compiler or the control processor has to schedule.

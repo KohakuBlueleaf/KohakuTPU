@@ -134,16 +134,16 @@ So a cone at ten-plus levels is a defect, a cone at nine is at the line, and
 0.04.** That is why the fixes below are all about removing levels or fanout, and
 why "add a pipeline stage" is the last resort rather than the first.
 
-### Every fix that mattered was the same fix
+### Cones start at flip-flops
 
 **A cone that starts at a block RAM begins a third of its budget in debt.** The
 work is to make cones start at flip-flops, and to stop putting a hold signal in
-series with decisions it only needs to gate. This core reached 182 MHz before
-that work and 394 after it, on **321 LUT fewer** than it started with — breaking
-long combinational cones lets the tool pack simpler logic, and the only thing
-that grew was flip-flops.
+series with decisions it only needs to gate. Built this way the core reaches 394
+MHz, against 182 MHz with the cones below starting mid-logic, on **321 LUT
+fewer** — breaking long combinational cones lets the tool pack simpler logic, and
+only the flip-flop count grows.
 
-| what | where it was | what it became | worth |
+| what | slow placement | placement here | worth |
 |---|---|---|---|
 | decode | between the window and the control registers | on the memory's **write** path (`kht_predec`) | +55 MHz |
 | the instruction itself | a block RAM output | a **fabric register** | +22 MHz |
@@ -371,10 +371,10 @@ and the walk's gate is deliberately `lsu_want` — `lsu_need`'s shallow half —
 because `hold` ORs `warm_stall` and `s_hz` anyway, so `A || (B && !A)` collapses
 and the walk's own gate stays off that cone.
 
-### x_defer is not one signal's job any more
+### x_defer covers three holds
 
-`x_defer` began as *"an LSU walk owes this instruction its data"*. Two more
-things now need exactly the same treatment, and both were found the hard way:
+`x_defer` means *"something owes this instruction before it commits"*, and three
+things do:
 
 ```
    lsu_need   the walk owes it data
@@ -385,9 +385,9 @@ things now need exactly the same treatment, and both were found the hard way:
 > **EVERY CORE-LEVEL HOLD THAT IS NOT `base_hold` MUST DEFER THE COMMIT.**
 > `kht_unit`'s internal `go` deliberately excludes this core's `hold`, so a held
 > instruction is `go` on **every cycle of the hold**. That is idempotent for an
-> integer register write and catastrophic for a float: a held `vfmul` re-launched
-> the lane array every cycle, `f_soon` never cleared, and the whole machine
-> wedged with sixteen waves runnable. `s2v` and `shflxor` are the same class one
+> integer register write and catastrophic for a float: a held `vfmul` would
+> re-launch the lane array every cycle, `f_soon` would never clear, and the
+> machine would wedge with sixteen waves runnable. `s2v` and `shflxor` are the same class one
 > step milder — they would write from the stale read the stall exists to avoid.
 
 The stack has its own version of the same rule. `kht_unit` gates the mask and the
@@ -514,9 +514,9 @@ after, so only the 3:1 select is downstream of the instruction:
    a redux                LNW + 2    + the registered tree leaves and LNW pipelined levels
 ```
 
-The symptom, before the fix, was a divergent shader in which *every* lane took
-the else-branch and `kht_unit` reported an **all-zero active mask** twice:
-`v1_rd` read as zero, so `t_set` was empty and `f_set` was the whole wave.
+With one cycle of hold instead of two, a divergent shader takes the else-branch in *every* lane
+and `kht_unit` reports an **all-zero active mask** twice: `v1_rd` reads as zero,
+so `t_set` is empty and `f_set` is the whole wave.
 
 ```
    split x6, pred = 0000_0000 (stale)
@@ -694,7 +694,7 @@ and only move the write; reading one 512-entry distributed RAM out of a block
 RAM's output already costs 2.15 ns of a 3.34 ns period before the ALU starts. In
 front, each cone starts at a register and neither is close to the limit.
 
-**Forwarding is gone, and that is the point rather than the cost.** At distance 1
+**There is no forwarding, and that is the point rather than the cost.** At distance 1
 the result does not exist yet in *either* arrangement, so the scalar half
 interlocks (`s_hz`) — the same rule the vector half already states. Distance 2
 needs nothing at all, because the file was written at the end of N+1. The forward
@@ -728,10 +728,9 @@ ALU underneath it. The rule:
 
 ### One ALU, and four classes rather than one case
 
-custom-2 and custom-3 used to build a case statement each and mux between them —
-two adders, two shifters, and a mux level after the slowest thing in the cone.
-`kht_predec` maps both encodings onto one 4-bit `sop`, so there is one datapath
-with a muxed operand.
+`kht_predec` maps custom-2 and custom-3 onto one 4-bit `sop`, so there is one
+datapath with a muxed operand, not a case statement each (two adders, two
+shifters) muxed after the slowest thing in the cone.
 
 Writing that datapath as a *single* case statement then cost what merging it
 saved. The reported path was:

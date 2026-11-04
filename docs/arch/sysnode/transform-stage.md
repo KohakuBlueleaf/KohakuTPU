@@ -36,11 +36,10 @@ two named addon slots.
 A compute unit's fetch is never transformed. It reads operands already in their
 final format — written that way by the host, or converted in place by the mover.
 
-Three earlier arrangements are retired: one instance per memory port, a separate
-instance on the host upload window, and a separate engine (`mm_xfer.v`) muxed
-onto the mover's AXI channel. All are gone, and
-[spec/transform-slot](../../spec/transform-slot.md) carries the argument. The
-short version is that a per-port transform is fed from that port's AXI R
+There is one instance, on the mover's read return: not one per memory port, not one
+on the host upload window, and not a separate engine muxed onto the mover's AXI
+channel. [spec/transform-slot](../../spec/transform-slot.md) carries the argument.
+The short version is that a per-port transform is fed from that port's AXI R
 channel, every port master converges onto one DRAM master, and a staged read
 never transforms — so N instances could consume one beat per cycle between them,
 N−1 idle by construction.
@@ -119,13 +118,6 @@ and for the bank's own status.
 > [simd-model](simd-model.md#occupant-registers). The reference occupant needs
 > no registers, which is why the gap has not blocked anything; an occupant that
 > needs a palette would be blocked by it.
-
-> Both of these replaced an earlier shape, and the reason it was chosen is worth
-> keeping: the slot used to be reached by a **separate engine** with no walker,
-> split out because the mover's flow control is one word in per word out and a
-> 2:1 transform breaks that. The cost was a gather pass into staging for any
-> strided source, and an FSM serial enough that no entry's write overlapped the
-> next entry's read.
 
 [simd-model](simd-model.md) states both in full.
 

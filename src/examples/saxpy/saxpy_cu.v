@@ -1,6 +1,5 @@
 // The example project's RTL half: y[0:n] = a*x[0:n] + y[0:n] over float32,
-// one instruction. The software half is driver/examples/saxpy (CU_TYPE 'SX';
-// the payload layout here is field-for-field sw/isa.py). Built from
+// one instruction (CU_TYPE 'SX'; the payload layout is defined here). Built from
 // templates/cu on noc_cu_base; memory access is plain reads and one burst
 // write per memory-protocol.md s3.1/s4, framed by type and tag.
 //
@@ -17,7 +16,7 @@ module saxpy_cu #(
     parameter POS_Y      = 2,
     parameter MEM_X      = 0,           // the memory agent port this unit uses
     parameter MEM_Y      = 1,
-    parameter CU_TYPE    = 16'h5358,    // "SX", matching sw/unit.py
+    parameter CU_TYPE    = 16'h5358,    // "SX"
     parameter CU_VERSION = 8'h01,
     parameter INST_DEPTH = 32
 )(
@@ -101,7 +100,7 @@ module saxpy_cu #(
     reg         fault_q;
     reg [31:0]  fault_code;
     reg [2047:0] xbuf, ybuf;         // flat: variable part-select needs no array
-    reg [31:0]  elements;            // cumulative, CU_DBG low half (sw/unit.py)
+    reg [31:0]  elements;            // cumulative, CU_DBG low half
 
     reg [FLIT_WIDTH-1:0] send_flit;
     reg                  send_valid;
@@ -245,7 +244,7 @@ module saxpy_cu #(
         .inst_flit(inst_flit), .inst_valid(inst_valid), .inst_ready(inst_ready),
         .exec_done(exec_done), .exec_result(exec_result),
         .exec_fault(exec_fault),
-        .dbg_ctr({32'd0, elements}),   // sw/unit.py decode_dbg: elements, low half
+        .dbg_ctr({32'd0, elements}),   // CU_DBG: elements, low half
         .send_flit(send_flit), .send_valid(send_valid), .send_ready(send_ready),
         .recv_flit(recv_flit), .recv_valid(recv_valid),
         .recv_ready(recv_ready_w),

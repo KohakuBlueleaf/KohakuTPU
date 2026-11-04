@@ -4,7 +4,7 @@
 // TWO CYCLES, NOT ONE. The instruction window is block RAM with a registered
 // output, so the address leaves this stage one cycle before the instruction
 // arrives. That is the first of the two extra register boundaries this core
-// has over the textbook five (docs/arch/pe/README.md s3): the address path is
+// has over the textbook five (docs/arch/cpu/rv32-pe/README.md s3): the address path is
 // PC -> mux -> RAM address register and nothing else, which is what lets the
 // fetch loop close at the target period.
 //

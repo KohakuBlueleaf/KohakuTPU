@@ -197,11 +197,10 @@ and a remote flit is `CU_DATA` or `MEM_WR_*`.
 
 Two facts about this table that are easy to get wrong:
 
-- **`CU_DATA` is `0x8`, not `0x4`.** `0x4` is `MEM_WR_DATA`. The two collided in
-  an earlier revision, and a `CU_DATA` flit reaching the memory agent entered its
-  write queue as data — a silent wrong-bytes store. Bit 3 no longer partitions
-  memory traffic from unit traffic: five memory messages do not fit in four
-  codes.
+- **`CU_DATA` is `0x8`, not `0x4`.** `0x4` is `MEM_WR_DATA`; a `CU_DATA` flit
+  reaching the memory agent as `0x4` would enter its write queue as data — a
+  silent wrong-bytes store. No single bit partitions memory traffic from unit
+  traffic: five memory messages do not fit in four codes.
 - **`ERROR` (`0xF`) is declared and unimplemented.** No module produces it and no
   module consumes it. A unit MUST NOT send it and MUST NOT expect one.
 

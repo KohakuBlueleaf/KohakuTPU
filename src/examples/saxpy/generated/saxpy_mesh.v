@@ -44,7 +44,7 @@ module saxpy_mesh #(
     // WIDTH -- 13 RAMB36 per port at any depth to 512 -- so the extra is free.
     // 512 needs the L1 BANK BIT, because aoff/boff are 8-bit fields: the
     // address is the bank concatenated with the offset, and the bank is
-    // CU_INST [114]/[113]/[112] -- docs/isa/cluster.md s4.6. Two banks is the
+    // CU_INST [114]/[113]/[112] -- docs/spec/stack/isa/cluster.md s4.6. Two banks is the
     // ceiling; deeper needs a second bit, which mx_cluster_mgr reports.
     parameter integer GA       = 512,
     parameter integer GB       = 512,

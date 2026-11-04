@@ -5,7 +5,7 @@
 // NoC port delivers one. The gap is closed by REUSE, not bandwidth, which is
 // why L1 exists and why the manager owns it explicitly.
 //
-// See docs/compute/tensor-isa.md. This module is the GEMM half; the FILL half
+// See docs/projects/kohakutpu/isa.md. This module is the GEMM half; the FILL half
 // (tensor descriptors -> memory requests -> L1) is mx_tdesc.v plus the fill
 // engine above it.
 //
@@ -57,7 +57,7 @@ module mx_cluster_mgr #(
     input  wire         gemm_acc,   // add into the resident tile, do not reload
     // WHERE IN L1 THIS SWEEP'S OPERANDS ARE. They make L1 addressable, so the
     // driver can fill one region while another is swept and leave an unchanged
-    // operand in place. See docs/isa/cluster.md s4.6.
+    // operand in place. See docs/spec/stack/isa/cluster.md s4.6.
     input  wire [7:0]   gemm_aoff,
     input  wire [7:0]   gemm_boff,
     // WHICH HALF of L1 this sweep reads. An L1 deeper than an 8-bit offset can
@@ -190,7 +190,7 @@ module mx_cluster_mgr #(
     //   gn_r -> Gm*Gn -> compare 1 / 2 / >=5 -> pace_n     15 levels
     //
     // Both operands are at least 1, so the buckets are small-value tests on the
-    // operands themselves. See docs/compute/accumulator.md s4.
+    // operands themselves. See docs/projects/kohakutpu/accumulator.md s4.
     wire [7:0] gm_w = (gemm_gm == 8'd0) ? 8'd1 : gemm_gm;
     wire [7:0] gn_w = (gemm_gn == 8'd0) ? 8'd1 : gemm_gn;
 
@@ -214,7 +214,7 @@ module mx_cluster_mgr #(
 
     // The offset stays 8 bits and CANNOT carry into the bank: `aoff + gm*nk`
     // beyond 256 wraps inside its own half, which is the same silent wrap the
-    // capacity note in docs/isa/cluster.md s4.7 already describes. Widening the
+    // capacity note in docs/spec/stack/isa/cluster.md s4.7 already describes. Widening the
     // sum here would instead walk a sweep into the other bank's operands.
     wire [7:0] a_off8 = aoff_r + g * nk_r + kb;
     wire [7:0] b_off8 = boff_r + h * nk_r + kb;

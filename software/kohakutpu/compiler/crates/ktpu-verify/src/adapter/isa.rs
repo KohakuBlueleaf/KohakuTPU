@@ -61,7 +61,7 @@ pub const CR: i64 = 1;
 pub const HALT_WORD: u64 = 0x1F << 27;
 
 /// A vector core word's format (`isa/vector.md`), by its ISA name; the 19
-/// math formats (`isa/core.py` OPS) first.
+/// math formats first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum VOp {
     Vmov,
@@ -176,7 +176,7 @@ impl VOp {
         VOPS.iter().find(|&&(_, n)| n == name).map(|&(op, _)| op)
     }
 
-    /// A math format (`isa/core.py` OPS).
+    /// A math format.
     pub fn is_math(self) -> bool {
         (self as usize) <= VOp::Vexp2d as usize
     }

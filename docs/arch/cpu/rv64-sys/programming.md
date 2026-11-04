@@ -311,8 +311,8 @@ Two worked examples. `tests/rv64/mesh_vadd.c` stages a hand-written add kernel
 (the proven `vec_cu_tb.v` one) onto `vec0` and reads `3(i+1)` back. And
 `tests/rv64/mesh_art.c` does the same with **compiler-emitted** flits: the
 KohakuTPU compiler's `ElementwiseKernel` payloads are dropped into
-`vadd_artifact.h`, and the RV64 replays them — the on-chip dispatcher standing in
-for the host that used to stage and kick. Two rules the hardware forces on both:
+`vadd_artifact.h`, and the RV64 replays them — the on-chip dispatcher doing the
+staging and kicking. Two rules the hardware forces on both:
 
 - **Wait for the flit to leave between writes.** `GO` while `STAT[15]` is set is
   dropped (rule 4). Poll `STAT[15]==0`, or wait on each completion, before the

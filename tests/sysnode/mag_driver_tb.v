@@ -202,7 +202,7 @@ module mag_driver_tb;
     // carrying operand AND agent traffic demuxed by flit type, so north, south
     // and east are free. Routing is X-then-Y on CLAMPED coordinates: a flit for
     // (0,1) routes toward router (1,1) and takes the outward hop on arrival.
-    // The last row need not be full. See docs/noc/spec.md s2.
+    // The last row need not be full. See docs/arch/noc/README.md s2.
     localparam integer NROW0 = (NCL >= 4) ? 4 : NCL;      // one MAG port each
     localparam integer NCOL  = (NCL + NROW0 - 1) / NROW0;
     // Tighten: 9 clusters over 4 rows needs 3 columns, and 3 columns need only

@@ -45,7 +45,7 @@ module mx_matmul_cu #(
     parameter integer TAW        = 4,
     // 14 (FP22), not 16: measures identically against FP64 and exact-int, costs
     // less, and carries the slack that takes the CU past 300 MHz. See
-    // docs/compute/accumulator.md.
+    // docs/projects/kohakutpu/accumulator.md.
     parameter integer ACC_MW     = 14,
     parameter integer MODEL      = 0
 )(

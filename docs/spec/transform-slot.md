@@ -118,8 +118,7 @@ Two fields travel together:
 | `XFORM_MODE` | `MODE_W` | **the occupant only** — the agent carries it and never interprets it |
 
 `XFORM_MODE` is opaque. KohakuTPU's occupant uses `mode[0]` as its A/B operand
-packing select — what the protocol used to call `BLAYOUT`. Nothing in the
-framework is named after a number format.
+packing select. Nothing in the framework is named after a number format.
 
 ### Where the fields ride
 
@@ -133,15 +132,14 @@ written with `sel = 0` and ignored on the destination's header.
 | `[58:55]` | `XFORM_MODE` |
 
 No register was spent on them. Of the sixteen 8-byte slots in `0x00`–`0x7F`,
-`mm_mover` decodes nine, and the retired engine's four came back with it, so
-`0x08, 0x48, 0x58, 0x60, 0x68, 0x70, 0x78` are all free.
+`mm_mover` decodes nine, so `0x08, 0x48, 0x58, 0x60, 0x68, 0x70, 0x78` are all
+free.
 
-### What the memory request no longer does
+### What the memory request does not do
 
-`MEM_RD_REQ` `flags[4]` and `flags[5]` were `QUANT` and `BLAYOUT`. **Both are
-now reserved and ignored.** A requester that still sets them gets an
-untransformed fetch, which is the correct answer for every operand now that
-conversion happens before the fetch.
+`MEM_RD_REQ` `flags[4]` and `flags[5]` are **reserved and ignored**. A requester
+that sets them gets an untransformed fetch, which is the correct answer for every
+operand because conversion happens before the fetch.
 
 ## Where a transform's data comes from
 

@@ -85,22 +85,19 @@ counted.
 
 | piece | where | state |
 |---|---|---|
-| free-list arena, coalescing, epochs | `kohakuaccel/memory.py` | best fit |
+| free-list arena, coalescing, epochs | `software/kohakutpu/application/kohakutpu/application/runtime/memory/arena.py` | best fit |
 | fragmentation metric | `Arena.fragmentation` | free bytes not in the largest span |
-| lifetimes and packing | `kohakuaccel/lifetime.py` | temps whose lives miss share bytes |
+| lifetimes and packing | `software/kohakutpu/application/kohakutpu/application/runtime/memory/packing.py` | temps whose lives miss share bytes |
 | alias guard | `lifetime.Writes` | refuses a READ of a span since overwritten |
 | affordability | `Compiled.footprint` | refuses a call no ordering of this arena fits |
 | band-adjacent placement | `lifetime.pack(groups=)` | opt-in; adjacency costs reuse |
 
-## 3. Three failures worth keeping
-
-A lifetime planner for whole forward passes was built once, against the previous
-stack, and reached only from a scratch directory. It is gone with that tree, but
-what it measured is not:
+## 3. Three failure modes of a lifetime planner
 
 - **A plan whose DECLARATION order differs from the runner's ISSUE order verifies
-  clean and reads an address the allocator has given away.** Measured: a per-head
-  transformer block scored 1.38e-01 instead of 1.07e-03, with `verify()` passing.
+  clean and reads an address the allocator has given away**: a per-head
+  transformer block planned that way scores 1.38e-01 instead of 1.07e-03, with
+  `verify()` passing.
 - **Reuse aliasing is the one failure mode of a lifetime allocator, and it is
   completely silent on the machine.**
 - **An unwritten line on this ECC DRAM is an uncorrectable error, not zeros.**

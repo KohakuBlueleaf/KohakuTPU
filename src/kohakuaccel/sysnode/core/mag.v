@@ -16,7 +16,7 @@
 // MAG ever knew about it.
 //
 // MAG is a SLAVE on the main interconnect, not a master; the memory moved one
-// level down, behind an adapter. See docs/arch-design.md s6.4.
+// level down, behind an adapter. See docs/arch/README.md s6.4.
 //
 // SEVERAL MEMORY PORTS, AND THAT IS THE ARCHITECTURE RATHER THAN AN OPTION. A
 // port serves ~2 clusters. A single read engine is what stopped the machine
@@ -30,7 +30,7 @@
 //
 // v1 SCOPE: no cache, no TLB. Addresses are physical, and the memory window is
 // a straight offset into the attached RAM. Both are additive later and neither
-// changes this interface -- docs/mas/spec.md s7a.
+// changes this interface -- docs/arch/sysnode/README.md s7a.
 
 `default_nettype none
 
@@ -262,7 +262,7 @@ module mag #(
     output wire [15:0]           mem_rd_count,
     output wire [15:0]           mem_wr_count,
 
-    // ---- the interlink, docs/interlink/topology.md s1 ---------------------
+    // ---- the interlink, docs/arch/ship/interlink.md s1 ---------------------
     // Present on the module at any ILINK because Verilog has no conditional
     // port. At ILINK=0 every output here is a constant and every input is
     // unread, so synthesis removes them and the generated top does not expose

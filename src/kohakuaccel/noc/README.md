@@ -11,11 +11,11 @@
 | `noc_cu_base.v` | the part every compute unit needs: instruction FIFO, CU_CTRL, completion signalling |
 | `noc_pkt.vh` | packet header layout, single source of truth |
 
-Depends on `src/common/sync_fifo.v`.
+Depends on `src/kohakuaccel/common/sync_fifo.v`.
 
-Protocol and packet format: [`docs/noc/spec.md`](../../docs/noc/spec.md).
-Writing a compute unit: [`docs/noc/cu-framework.md`](../../docs/noc/cu-framework.md).
-Running the testbenches: [`docs/simulation.md`](../../docs/simulation.md).
+Protocol and packet format: [`docs/arch/noc/README.md`](../../../docs/arch/noc/README.md).
+Writing a compute unit: [`docs/arch/noc/compute-unit-port.md`](../../../docs/arch/noc/compute-unit-port.md).
+Running the testbenches: [`docs/workflow/simulate.md`](../../../docs/workflow/simulate.md).
 
 ```powershell
 .\tests\run_noc_sim.ps1

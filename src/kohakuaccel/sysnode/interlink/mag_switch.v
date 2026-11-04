@@ -1,6 +1,6 @@
 // mag_switch -- the three-port switch inside MAG: link0, link1, local.
 //
-// docs/interlink/topology.md s2. A SECOND routing layer, so it needs its own
+// docs/arch/ship/interlink.md s2. A SECOND routing layer, so it needs its own
 // deadlock proof, and the proof is the shape: SLR i holds mesh i (the block
 // design pins it there) and an SLL joins only ADJACENT SLRs, so the three
 // buildable links are

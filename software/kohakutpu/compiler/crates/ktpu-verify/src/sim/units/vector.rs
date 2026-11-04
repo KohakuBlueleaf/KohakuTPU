@@ -63,7 +63,7 @@ fn selected(queue: Option<usize>, q: i64, dualq: bool) -> Option<usize> {
 const QUEUES: &str = "isa.vector/model_queues";
 const WALK: &str = "isa.vector/model_walk";
 
-/// Walk modes (`encode/vector.py`).
+/// Walk modes (`isa/vector.md`).
 const F32: i64 = 2;
 const MX7: i64 = 3;
 

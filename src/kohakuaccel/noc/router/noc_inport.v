@@ -1,7 +1,7 @@
 // Input port: buffers arriving flits, computes the output direction for the one
 // at the head, and offers it to the output ports through a single holding slot.
 //
-// Routing is XY dimension-order on CLAMPED coordinates -- see docs/noc/spec.md s2.
+// Routing is XY dimension-order on CLAMPED coordinates -- see docs/arch/noc/README.md s2.
 // Border PEs live outside the router grid, so a packet for (0,y) cannot literally
 // finish X; it routes toward the adjacent router (GRID_LO,y) and only takes the
 // outward hop on arrival. Pure XY, so the channel dependency graph stays acyclic.
@@ -71,7 +71,7 @@ module InPortSwitch #(
     // `wr_almost` is NOT the margin its name promises: sync_fifo passes
     // USE_ADV_FEATURES(0), so XPM ties prog_full low and wr_almost reduces to
     // wr_busy. What makes plain `full` safe here is the RETRY, not a margin --
-    // see docs/noc/spec.md s2.1. Anything needing a real margin must count for
+    // see docs/arch/noc/README.md s2.1. Anything needing a real margin must count for
     // itself, as MAG does with Q_MARGIN.
     assign port_busy = fifo_almost;
 

@@ -1,5 +1,5 @@
 // Pseudo compute unit -- a test double that conforms to the mandatory CU
-// interface (docs/noc/spec.md s6) without computing anything real.
+// interface (docs/arch/noc/README.md s6) without computing anything real.
 //
 // It exists to close the loop the system actually needs:
 //

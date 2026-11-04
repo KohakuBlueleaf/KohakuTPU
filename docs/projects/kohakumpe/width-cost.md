@@ -21,15 +21,13 @@ GENERATED — do not edit by hand. Rebuild with `python scripts/py/khs_cost.py -
 
 Every figure is out-of-context **synthesis** of one PE on `xcvu13p-fhgb2104-2L-e`, Vivado 2024.2, at a 3.333 ns target, `-flatten_hierarchy rebuilt`, `-directive default`. Nothing here is placed or routed: synthesis estimates are the optimistic end and are **not a closed frequency**.
 
-> **STALE — this checked-in copy predates the current RTL and must be regenerated
-> before any figure below is quoted.** It was produced from a campaign whose
-> configuration strings carry `f16`, `f32`, `simd_fslots` and `dsp_en`. The first
-> three configured an E8M15 float tier with two operand formats, which has been
-> replaced by a binary32-only tier, and none of those parameters exists in
-> `khs_unit` or in `scripts/py/khs_sweep.py` any more. The rows that price them
-> therefore price a feature that is gone, and every absolute total below is a
-> total for a PE that can no longer be built. The delta columns for knobs that
-> *do* survive — `ilanes`, `permu`, `shiftu`, `red`, `fsfu`, `flanes`, `nacc`,
+> **STALE — regenerate before any figure below is quoted.** This copy comes from
+> a campaign whose configuration strings carry `f16`, `f32`, `simd_fslots` and
+> `dsp_en`: an E8M15 float tier with two operand formats. The current `khs_unit`
+> and `scripts/py/khs_sweep.py` have a binary32-only tier and none of those
+> parameters, so their rows price a feature the RTL does not have and every
+> absolute total below is for a PE the current RTL cannot build. The delta columns
+> for the current knobs — `ilanes`, `permu`, `shiftu`, `red`, `fsfu`, `flanes`, `nacc`,
 > `vregs`, `wb`, `vprim`, `rmem`, and the SIMT set — are the right shape but have
 > not been re-taken.
 >

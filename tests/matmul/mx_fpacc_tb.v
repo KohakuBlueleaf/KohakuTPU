@@ -1,7 +1,7 @@
 // Accumulator-float primitives at MW=16 (FP24) against a real-number model.
 //
 // The width sweep lives in mx_acu_fp_tb; this bench pins the arithmetic at one
-// width and checks it hard. See docs/compute/accumulator.md.
+// width and checks it hard. See docs/projects/kohakutpu/accumulator.md.
 //
 // Two claims are being tested, and they are different in kind:
 //

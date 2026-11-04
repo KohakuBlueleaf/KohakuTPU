@@ -7,7 +7,7 @@
 //   2. a conv2d im2col walk       -- 6 dims, two bound axes, real padding
 //
 // If (2) is right then convolution really is a memory request, which is the
-// central claim of docs/compute/tensor-isa.md.
+// central claim of docs/projects/kohakutpu/isa.md.
 
 `default_nettype none
 `timescale 1ns/1ps

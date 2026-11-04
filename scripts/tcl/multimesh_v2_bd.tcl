@@ -100,7 +100,7 @@ set_property -dict [list \
 ] $cwc
 
 # D=4 -> PFD 25 MHz, k=4 -> 200..400 MHz, one step of M = 6.25 MHz.
-# 300 MHz is M=48. docs/clocking.md.
+# 300 MHz is M=48. docs/arch/physical/clocking.md.
 set cwm [create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz clk_wiz_mesh]
 set_property -dict [list \
   CONFIG.PRIM_SOURCE {No_buffer} \

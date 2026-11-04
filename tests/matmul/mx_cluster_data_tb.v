@@ -1,6 +1,6 @@
 // CU_DATA into a cluster: another unit writing L1 and the resident tile.
 //
-// docs/isa/cluster.md s9. Nothing in the machine sends CU_DATA yet, so this
+// docs/spec/stack/isa/cluster.md s9. Nothing in the machine sends CU_DATA yet, so this
 // bench is the sender: it drives flits straight at the CU's NoC local and
 // reads the drain's memory writes back off it.
 //

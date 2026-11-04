@@ -11,7 +11,7 @@
 // Clearing out_valid on `busy` instead destroys the flit -- every receiver
 // refuses while its own busy is high, so one committed against busy at T and
 // presented at T+1 into a receiver busy at T+1 is gone, silently, and invisibly
-// below four clusters because nothing fills. See docs/noc/spec.md s2.1.
+// below four clusters because nothing fills. See docs/arch/noc/README.md s2.1.
 
 module OutPortSwitch #(
     parameter DATA_WIDTH = 288

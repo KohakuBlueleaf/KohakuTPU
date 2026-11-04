@@ -1,5 +1,5 @@
 // The vector ALU: one E8M15 lane, three DSPs, II = 1, latency 14.
-// Design and the three DSP bit maps: docs/compute/vector-core.md s3.1, s3.2, s4.3.
+// Design and the three DSP bit maps: docs/projects/kohakutpu/vector-core.md s3.1, s3.2, s4.3.
 //
 //     S1 E8 M15,  sig = {1'b1, M}  -- 16 bits, ALWAYS normalised
 //     E = 0    zero        E = 255  inf (M==0) / NaN (M!=0)

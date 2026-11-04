@@ -13,7 +13,7 @@
 // The point of having it at all is that the main orchestrator and the host both
 // reach both slaves, which is what the architecture requires: the host must be
 // able to poke a MAG directly for bring-up, and the orchestrator must be able
-// to drive it during a run. See docs/arch-design.md s6.4.
+// to drive it during a run. See docs/arch/README.md s6.4.
 
 `default_nettype none
 

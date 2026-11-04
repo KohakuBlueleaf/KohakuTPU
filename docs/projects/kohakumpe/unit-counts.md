@@ -60,13 +60,12 @@ separate `HAS_SHIFT` / `HAS_PERM` booleans in addition to their widths.
 **Tree W+ — the same, plus RV32IM and three more widths.** Adds `ILANES`,
 `RED_UNITS` and `HAS_SHROUND`, and makes RV32IM unconditional in every RV32 core.
 
-**What has changed since, and therefore what no figure here covers.** The float
-tier was rebuilt from E8M15 into binary32 throughout, which deleted `HAS_F16`,
-`HAS_F32` and both operand converters; `MULS` and `DOT_DSP` were removed; the
-`HAS_SHIFT` / `HAS_PERM` / `HAS_FLOAT` booleans were removed in favour of the
-counts alone; and the converter group `FCVT_UNITS` gained the datapath it had
-been missing. **No absolute total on this page describes a PE that can be built
-from the RTL as it now stands.** What survives is the *shape*: what a marginal
+**How the current RTL differs from both trees.** The float tier is binary32
+throughout, with no `HAS_F16`, `HAS_F32` or operand converters; there is no
+`MULS` or `DOT_DSP`; the counts alone select a feature, with no `HAS_SHIFT` /
+`HAS_PERM` / `HAS_FLOAT` booleans; and the converter group `FCVT_UNITS` has a
+datapath. **No absolute total on this page describes a PE that can be built from
+the current RTL.** What survives is the *shape*: what a marginal
 lane costs, where a width pays and where it does not, and which knobs are not
 levers at all.
 
@@ -229,10 +228,9 @@ named in [§7](#7-what-is-blank-and-why); no cell is inferred or predicted.
 | `SIMD_EN` | 0 — the controller PE alone | 2,661 | −13,021 | 4,140 | 5 | 0 | 79 | 396.5 |
 | **combined** | `PERM_UNITS` 1 + `SHIFT_UNITS` 2 | **13,586** | **−2,096** | 10,313 | 13 | 56 | 139 | 367.8 |
 
-The `HAS_F16` and `HAS_F32` rows price a feature the RTL no longer has: they are
-the cost of carrying a second **memory** format into an E8M15 datapath, and both
-formats and the datapath are gone. They are kept only because they are the
-sharpest measurement of one property — see [§5](#5-simd-against-simt-at-the-same-float-width).
+The `HAS_F16` and `HAS_F32` rows price a feature the current RTL does not have:
+the cost of carrying a second **memory** format into an E8M15 datapath. They stay
+because they are the sharpest measurement of one property — see [§5](#5-simd-against-simt-at-the-same-float-width).
 
 ### 3b. SIMT, against 19,461
 
@@ -267,9 +265,9 @@ sharpest measurement of one property — see [§5](#5-simd-against-simt-at-the-s
 | `HAS_F16` | 0 | 17,479 | **−1,982** | 17,250 | 30.5 | 48 | 192 | 385.2 |
 | `LANES` | 4, with `FLANES` 4 and `MUL_UNITS` 4 | 11,369 | −8,092 | 10,712 | 20.5 | 24 | 168 | 383.4 |
 
-`MUL_UNITS` is gone from the RTL: a thread's ALU is an IM unit, so the multiply
-count is `LANES`. The rows are kept because they are the measurement that
-justified deleting it — the LUT column is flat and only the DSP column moves.
+The RTL has no `MUL_UNITS`: a thread's ALU is an IM unit, so the multiply count
+is `LANES`. These rows, measured with a separate multiply count, show why: the LUT
+column is flat and only the DSP column moves.
 
 ### 3c. Three knobs measured on tree W+
 
@@ -331,10 +329,9 @@ where `LANES` itself moves and the prediction row in
 is `kht_vregfile`'s third read port, which exists only for the FMA's addend, so
 it follows the float count and not the multiplier's.
 
-**The equivalent SIMD form is withdrawn.** It was fitted with a `6 × SIMD` term
-for the integer lane's multipliers, and the parameter that sized them is gone;
-the term describes a lane the RTL no longer builds. The SIMT form survives
-because both of its terms — `FLANES` and `LANES` — are current.
+There is no equivalent SIMD form: the integer lane's multiplier term would need
+a parameter the current RTL does not have. Both SIMT terms — `FLANES` and
+`LANES` — are current.
 
 The per-unit **BRAM and DSP** figures for the float tier are identical on both
 cores, which they must be: both instantiate the same units. A float unit is
@@ -556,7 +553,7 @@ reached 44%.
 | `PERM_UNITS` 4; `LDS_BANKS` and `SHFL_UNITS` beyond the points shown | three points per knob is the density these campaigns ran; the fourth was not measured. |
 | `VREGS` 16 and 32 | not synthesised. That the file grows nearly free is a **prediction** from the 8 → 4 row, not a result. |
 | `NPART`, `VSPAD_ENTRIES`, the instruction, scratchpad and L1 depths, `RECV_DEPTH`, `INST_DEPTH` | memory depths rather than unit counts; unmeasured here. |
-| `HAS_FACC` on the metric-table tree | the accumulator is off in both baselines. Its cost was measured on an earlier tree, before the fix that connected the accumulator's operation port, and was not re-taken. |
+| `HAS_FACC` on the metric-table tree | the accumulator is off in both baselines; its cost with the operation port connected is not measured. |
 | SIMD "how many lanes carry multipliers" | not built. SIMT has exactly this as its lane count; SIMD has no equivalent axis, because every lane carries its own multipliers. |
 | a placed or routed figure for either PE | none exists. Every number here is out-of-context synthesis. |
 

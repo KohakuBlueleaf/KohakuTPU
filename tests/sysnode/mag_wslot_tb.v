@@ -188,7 +188,7 @@ module mag_wslot_tb;
             // meant "one beat", which was harmless only while MAG ignored the
             // field: once burst writes honoured it, every slot sat waiting for
             // a second data flit that never came, the slots filled, and intake
-            // wedged. docs/isa/memory.md s2.
+            // wedged. docs/projects/kohakutpu/memory.md s2.
             wr_req[215 -: 8]  = 8'd0;
             wr_req[207 -: 8]  = 8'd0;    // no QUANT: store the payload as given
         end

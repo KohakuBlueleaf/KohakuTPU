@@ -1,6 +1,6 @@
 // The vector core: sequencer, L1 scratchpad, address generator and lanes.
 //
-// Executes docs/isa/vector.md against vec_lanes. The memory port is ABSTRACT
+// Executes docs/spec/stack/isa/vector.md against vec_lanes. The memory port is ABSTRACT
 // -- a fill request is a contiguous run of 256-bit words tagged with its first
 // L1 word, a drain a stream of words grouped into write bursts -- so the core
 // carries no NoC knowledge; vec_cu.v does the framing.

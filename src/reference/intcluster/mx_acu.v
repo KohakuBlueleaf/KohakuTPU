@@ -15,7 +15,7 @@
 //
 // Accumulation here is EXACT FIXED POINT: a bring-up instrument, checkable
 // against a model bit for bit. The production accumulator is S1E7M<ACC_MW> --
-// see docs/compute/matmul-circuit.md s6.2.
+// see docs/projects/kohakutpu/matmul.md s6.2.
 //
 // The scale here is a PLAIN 8-BIT EXPONENT per row of A and per column of B, so
 // output (i,j) is scaled by 2^(sa[i] + sb[j]). CONTRACT: the caller must choose

@@ -46,10 +46,8 @@ rules and the timing conventions are
 
 One rule is normative rather than incidental: **a beat is never presented in the
 same cycle as `start`.** The engine issues `start` when it issues its read and
-the beats arrive later, so the hazard cannot occur. It used to exist only as a
-workaround duplicated at two call sites, each depending on an undocumented
-internal priority of the plug-in — which is the property that made the old
-arrangement worse than no slot, because it advertised replaceability while
+the beats arrive later, so the hazard cannot occur. A slot whose occupant must
+rely on an undocumented internal priority advertises replaceability while
 requiring the replacement to be bug-compatible.
 
 ### 2. Geometry contract
@@ -61,8 +59,8 @@ The occupant declares:
 
 A transform is not only a function on data — it changes how much data a move
 must read and how far apart entries sit, and the engine needs both before the
-transform has run. KohakuTPU declares 2048 and 4; the literals `2048` and `1024`
-that used to sit in the memory port and the upload window are gone.
+transform has run. KohakuTPU declares 2048 and 4; neither the memory port nor
+the upload window carries a geometry literal.
 
 ### 3. Selection
 
@@ -72,13 +70,9 @@ more slots cost more area and buy a *choice*, not concurrency.
 
 `XFORM_MODE` rides alongside, `MODE_W` wide, and is **opaque**: the framework
 carries it to the occupant and never reads it. KohakuTPU's occupant reads
-`mode[0]` as its A/B packing select — what the protocol used to call `BLAYOUT`
-— and nothing in framework code is named after a number format.
-
-The two retired names are not the same kind of thing, which is worth keeping
-straight: `BLAYOUT` became an occupant's `mode[0]`, while `QUANT` selected the
-transform *from a memory request* and has no successor at all. A request cannot
-select a transform; only a mover descriptor can.
+`mode[0]` as its A/B packing select, and nothing in framework code is named
+after a number format. A memory request cannot select a transform; only a mover
+descriptor can.
 
 The id and mode ride in the mover descriptor's reserved space, not in a flags
 byte that was already full.

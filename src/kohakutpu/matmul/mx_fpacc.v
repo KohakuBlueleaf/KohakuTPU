@@ -9,7 +9,7 @@
 // E7 is fixed and is NOT the thing to trim: the accumulator holds
 // int * 2^(sa+sb), and for FP16 sources that exponent sum spans roughly
 // -48..+30, so an E5 field overflows on ordinary data. Mantissa is the tunable
-// -- see docs/compute/accumulator.md.
+// -- see docs/projects/kohakutpu/accumulator.md.
 //
 // LAYOUT OF THIS FILE
 //
@@ -167,7 +167,7 @@ endmodule
 //
 // IT TAKES A MAGNITUDE, NOT A SIGNED VALUE. The sign travels beside the data and
 // belongs to the caller; taking `|val|` here puts a two's-complement carry chain
-// at the head of the path -- see docs/compute/accumulator.md s4. The ACU forms
+// at the head of the path -- see docs/projects/kohakutpu/accumulator.md s4. The ACU forms
 // the magnitude inside the DSP that was already multiplying by the block scale.
 //
 // THE SHIFT IS A MULTIPLY. Left-justifying `mag` so its leading one sits at bit

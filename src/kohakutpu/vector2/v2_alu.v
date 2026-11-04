@@ -1,6 +1,6 @@
 // The V2 vector ALU: vec_alu plus EXP2D. One E8M15 lane, three DSPs, II = 1,
 // latency 14, or 15 at PIPE_MUX=1 -- v2_lanes' ALAT tracks it.
-// Design and the three DSP bit maps: docs/compute/vector-core.md s3.1, s3.2, s4.3.
+// Design and the three DSP bit maps: docs/projects/kohakutpu/vector-core.md s3.1, s3.2, s4.3.
 //
 // EXP2D(a, b) = exp2(a - floor(b)). floor(b) is an integer, so subtracting it
 // is an add on exp2's exponent base and the polynomial never sees it; the cost

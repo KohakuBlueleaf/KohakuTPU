@@ -131,7 +131,7 @@ class OSCard(OfflineCard):
         fraction=replay_budget.DEFAULT_FRACTION,
         overcommit=False,
     ):
-        """The card contract of runtime/card.py. A resident graph has no
+        """The card contract of software/kohakutpu/application/kohakutpu/application/runtime/card/__init__.py. A resident graph has no
         submission queue and streams nothing, so `depth` and `fraction` are
         validated only: the whole recording is pinned, and its limit is
         `budget` bytes when given (the whole task region under `overcommit`),

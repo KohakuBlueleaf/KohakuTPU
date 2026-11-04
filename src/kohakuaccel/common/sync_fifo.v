@@ -30,7 +30,7 @@ module sync_fifo #(
     //
     // Survivable only because the NoC link RETRIES -- sender holds `valid` until
     // a cycle with `busy` low, receiver accepts exactly then -- which needs no
-    // margin (docs/noc/spec.md s2.1). Anything wanting a real margin must COUNT
+    // margin (docs/arch/noc/README.md s2.1). Anything wanting a real margin must COUNT
     // FOR ITSELF, as MAG does with Q_MARGIN; turning the feature on means
     // editing USE_ADV_FEATURES, and nothing should depend on this bit until it
     // is.

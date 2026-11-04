@@ -3,7 +3,7 @@
 // read through a streamed engine (a word issued a cycle) into the one return
 // path, a staged write as
 // beats of the one W stream), so nothing N-wide exists for staging.
-// docs/mas/dram-port.md. Instantiated by mag.v as u_dram.
+// docs/arch/sysnode/memory-port.md. Instantiated by mag.v as u_dram.
 //
 // THE q CONTRACT: a requester's {valid, write, addr, len} HOLDS unchanged
 // until q_ready. Both arbiters decide on a REGISTERED request vector and

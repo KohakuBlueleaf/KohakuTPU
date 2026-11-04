@@ -1,5 +1,5 @@
 // Bench for the saxpy example: a memory model serving plain reads and burst
-// writes, and an agent driving the sw/isa.py encoding — discovery, a run with
+// writes, and an agent driving the saxpy_cu.v encoding — discovery, a run with
 // a partial tail line, n=0, a fault, a full 8-beat batch run, then CU_DBG.
 // Values are whole-valued float32, the domain the datapath is exact on.
 `timescale 1ns / 1ps
@@ -210,7 +210,7 @@ module saxpy_cu_tb;
                ty, id, last, 3'b000, payload};
     endfunction
 
-    // the sw/isa.py encoding: op, n, a, x_addr, y_addr, byte-aligned
+    // the saxpy_cu.v encoding: op, n, a, x_addr, y_addr, byte-aligned
     function [255:0] saxpy_inst(input [23:0] n, input [31:0] a_bits,
                                 input [63:0] xa, input [63:0] ya);
         saxpy_inst = {8'h01, n, a_bits, xa, ya, 64'd0};

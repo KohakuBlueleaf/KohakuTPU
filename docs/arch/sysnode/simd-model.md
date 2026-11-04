@@ -138,10 +138,8 @@ author has to design around:
 **On the mover's read-return path**, between R and the FIFO. `MODE_XFORM` is
 mover mode 5; there is no second engine and no mux.
 
-> It used to be a separate engine, `mm_xfer.v`, sharing the AXI requester channel
-> through a mux in `mag.v`, split out because the mover's flow control was one
-> 32-byte word in per word out and a 2:1 transform breaks that. That engine is
-> deleted. What replaced the invariant is below.
+> The mover's flow control is not one 32-byte word in per word out, since a 2:1
+> transform breaks that; the invariant it keeps instead is below.
 
 ```
 src walker ─► issue engine ─► AR ─┐
@@ -171,8 +169,8 @@ so entry N's write never overlapped entry N+1's read either.
 
 **Measured, `tests/sysnode/mm_xform_tb.v`:** a 3-entry move from a source strided
 64 bytes within the entry issues **24 individual reads and no staging pass at
-all**, against 3 folded bursts for the contiguous case — 27 ARs across both. The
-gather the old engine needed is gone, not cheaper.
+all**, against 3 folded bursts for the contiguous case — 27 ARs across both. A
+strided source needs no gather pass.
 
 **Measured, out-of-context synthesis on `xcvu13p-fhgb2104-2L-e`, Vivado 2024.2,
 at 3.333 ns, `PORTS=2`, `sysnode` whole** — the hierarchical report of the run

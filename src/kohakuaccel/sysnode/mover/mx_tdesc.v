@@ -1,7 +1,7 @@
 // Tensor descriptor walker: an N-dimensional affine address generator with
 // bound axes. This is the piece that makes a convolution a memory request.
 //
-// See docs/compute/tensor-isa.md s3. A descriptor is a set of nested loops;
+// See docs/projects/kohakutpu/isa.md s3. A descriptor is a set of nested loops;
 // walking it produces one (addr, valid) per step:
 //
 //    addr     = base + SUM over i of  idx[i] * stride[i]

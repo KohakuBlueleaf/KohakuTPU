@@ -228,7 +228,7 @@ instruction does; they are listed so a timing ruling can cite them.
 - Pack read latency: 20 in `ktpu-l2/src/lower/vector/modulo.rs`; none in `ktpu-l1/src/sched/schedule.rs`.
 - Config-word cost: 1 front-end cycle in `ktpu-l1/src/sched/timing.rs`; 4 cycles a change in `ktpu-l1/src/sched/schedule.rs`.
 - Crossbar latency +7 (`ktpu-l2/src/lower/vector/modulo.rs`).
-- `vc.rf_copies` [2] and `vc.regs` [128] on v9t6: the card runtime compiles with the machine file's values (`application/runtime/card.py` `build_facts`). Read copies change bank-conflict stalls only. `vc.rf_banks` [2] is the register file's bank count, a chunk's bank being its index mod 2 (`src/kohakutpu/vector2/v2_lanes.v:3-4,176`).
+- `vc.rf_copies` [2] and `vc.regs` [128] on v9t6: the card runtime compiles with the machine file's values (`software/kohakutpu/application/kohakutpu/application/runtime/card/__init__.py` `build_facts`). Read copies change bank-conflict stalls only. `vc.rf_banks` [2] is the register file's bank count, a chunk's bank being its index mod 2 (`src/kohakutpu/vector2/v2_lanes.v:3-4,176`).
 - `V2_MQ_SKID` 1 on v9t6: the math queue reads full at QD - 2 entries plus a two-entry skid (`src/kohakutpu/vector2/v2_core.v:83-91,396-410`).
 
 ## Rulings
