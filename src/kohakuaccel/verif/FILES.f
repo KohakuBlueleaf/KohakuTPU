@@ -2,6 +2,7 @@ kohakuaccel/verif/axi4_ram.v
 kohakuaccel/verif/axi_ram.v
 kohakuaccel/verif/axi_up32to64.v
 kohakuaccel/verif/axil_ram.v
+kohakuaccel/verif/clk_wiz_model.v
 kohakuaccel/verif/kh_port_check.v
 kohakuaccel/verif/main_orch.v
 kohakuaccel/verif/noc_cluster_2x2.v

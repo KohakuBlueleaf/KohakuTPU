@@ -1,0 +1,10 @@
+kohakutpu/vector2/v2_agu.v
+kohakutpu/vector2/v2_alu.v
+kohakutpu/vector2/v2_cnt.v
+kohakutpu/vector2/v2_core.v
+kohakutpu/vector2/v2_cvt.v
+kohakutpu/vector2/v2_fifo.v
+kohakutpu/vector2/v2_gt4.v
+kohakutpu/vector2/v2_lanes.v
+kohakutpu/vector2/v2_mxq.v
+kohakutpu/vector2/v2_xbar.v
