@@ -102,7 +102,7 @@ the run it comes from.
   [RV64 system core](../rv64-sys/README.md).
 - **It does not divide.** `div` and `rem` fault. An iterative divider is a
   fixed structure bought for a rare instruction —
-  [microarchitecture](microarchitecture.md#why-div-and-rem-are-a-different-answer).
+  [microarchitecture](microarchitecture.md#what-the-microarchitecture-deliberately-does-not-do).
 - **It does not compute in floating point.** There is no float register file to
   name. The float arithmetic in this machine lives in the wide datapaths.
 - **It does not cache anything another agent writes.** Coherence is removed by

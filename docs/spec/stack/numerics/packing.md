@@ -1,3 +1,11 @@
+---
+title: FP16-to-MXFP7 conversion backends
+summary: The machine fact `conversion.fp16_mx7` is a versioned reliability contract, independent of vector-core geometry and mover transform support.
+tags:
+  - spec
+  - stack
+  - numerics
+---
 # FP16-to-MXFP7 conversion backends
 
 The machine fact `conversion.fp16_mx7` is a versioned reliability contract,

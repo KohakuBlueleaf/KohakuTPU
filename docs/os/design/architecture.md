@@ -44,7 +44,7 @@ message) and presents user programs with a model closer to SMP.
 
 ### L0 — the machine layer (M)
 
-`software/os/machine/`. It runs first on every node and stays resident as a
+`software/kohakuaccel/os/machine/`. It runs first on every node and stays resident as a
 service layer under the kernel:
 
 - **Boot.** Checks the boot table (magic, version, node count, region and
@@ -67,7 +67,7 @@ service layer under the kernel:
 
 ### L1 — the kernel (S, untranslated)
 
-`software/os/kernel/`. One instance per node, each managing only its own
+`software/kohakuaccel/os/kernel/`. One instance per node, each managing only its own
 node, talking to the others by messages. The kernel runs with `satp` 0 and
 names physical addresses directly; translation is on only while user code
 runs. The trap entry turns translation off before its first memory access
@@ -99,7 +99,7 @@ lives on.
 
 ### L2 — user (U, Sv39)
 
-`software/os/user/` (`libkos`), `dispatch/` (the dispatcher:
+`software/kohakuaccel/os/user/` (`libkos`), `dispatch/` (the dispatcher:
 [reference/dispatcher.md](../reference/dispatcher.md)), `utils/` (`init`, the
 shell, `ps`, `kstat`), `apps/`. Every node runs the same user image; each node has its own copy of
 its writable data. An application is a `main(argc, argv)` registered by name

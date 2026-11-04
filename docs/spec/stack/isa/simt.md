@@ -1,3 +1,11 @@
+---
+title: ISA: SIMT units
+summary: The SIMT PE (`src/kohakumpe/simt/`, top `kht_pe`) as a unit kind the stack may drive.
+tags:
+  - spec
+  - stack
+  - isa
+---
 # ISA: SIMT units
 
 The SIMT PE (`src/kohakumpe/simt/`, top `kht_pe`) as a unit kind the stack

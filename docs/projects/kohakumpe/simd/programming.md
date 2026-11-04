@@ -31,7 +31,7 @@ and `div`, `divu`, `rem` and `remu` are **not built and fault**. The assembler
 refuses the divide mnemonics outright and the decoder faults the encodings, so a
 divide cannot be assembled or executed by accident. Divide-by-a-constant
 strength-reduces to `mulhu`, which is the case software actually meets;
-[why divide is a different answer](../../../arch/cpu/rv32-pe/microarchitecture.md#why-div-and-rem-are-a-different-answer)
+[why divide is a different answer](../../../arch/cpu/rv32-pe/microarchitecture.md#what-the-microarchitecture-deliberately-does-not-do)
 is the base core's, not this unit's.
 
 ## The state a program can name

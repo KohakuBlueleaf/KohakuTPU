@@ -1,3 +1,10 @@
+---
+title: Silicon flaws
+summary: A silicon flaw is a defect of the RTL an image was built from.
+tags:
+  - spec
+  - stack
+---
 # Silicon flaws
 
 A silicon flaw is a defect of the RTL an image was built from. Each one below is
@@ -33,11 +40,11 @@ Each handling reads its flaw's `present` and nothing else:
 Each flaw's witness bench asserts the flaw as recorded, so it fails on a
 simulation model that does not show it (the old Verilator FIFO stand-in) and on
 an RTL that fixes it. Each compile-path handling has a test that it fires on a
-machine with its flaw and does not without it: `tests/logic/test_flaws.py`
+machine with its flaw and does not without it: `software/tests/logic/test_flaws.py`
 (F-001: `lone`, `pagetail`, `oddrows`, the split backstop, the class loop and
 the per-port bind rule), ktpu-l1 `flaw.rs` tests (the proof and the split,
-word for word), `tests/firmware/host/test_package_chain.py` (F-003's raw
-ENGINE RINGs), `tests/logic/test_far_split.py` (F-002), ka-package `engine.rs`
+word for word), `software/tests/firmware/host/test_package_chain.py` (F-003's raw
+ENGINE RINGs), `software/tests/logic/test_far_split.py` (F-002), ka-package `engine.rs`
 `rings_leave_the_engine_only_for_f003`,
 `an_engine_ring_is_refused_only_for_f003` and
 `without_f004_a_far_behind_wait_keeps_its_target`. On the card, F-003's handling

@@ -431,10 +431,10 @@ Request:
 | `[175:0]` | reserved | 176 | reserved | MUST be 0. |
 
 > **`op` IS NOT UNIVERSALLY HONOURED, and the failure is silent.**
-> `noc_cu_base.v:241` reads `ctrl_req[247 -: 8]` and nothing above it, so a
+> `endpoint/noc_cu_base.v:276` reads `ctrl_req[247 -: 8]` and nothing above it, so a
 > compute unit answers the index whatever `op` says: a write to a plain unit
 > **performs a read and replies with the old value**, and looks exactly like a
-> write that landed. `noc_l2_adapter.v:194`'s `r_op = rt_data[255 -: 8]` is the
+> write that landed. `noc_l2_adapter.v:212`'s `r_op = rt_data[255 -: 8]` is the
 > only place in the tree that decodes `op` today, which is why the L2 adapter's
 > base and enable registers are writable and a unit's `CU_CTRL` block is not.
 >
@@ -505,4 +505,4 @@ can only reassemble one burst at a time if that is the case.
 | `buf_id` allocation lives in an instance | The namespace in §4.7.1 exists as `BUF_L1A` / `BUF_L1B` / `BUF_PEER` localparams inside `src/kohakutpu/matmul/mx_cluster_cu.v`, and as a bare `!= 0` rejection inside `src/kohakutpu/vector/vec_cu.v`. Neither the allocation nor the reservation of index 3 is stated anywhere a second accelerator would look. |
 | `rsvd` semantics undeclared | The remote-mesh marker, the mesh id and the read-response word index all live in `rsvd` and none is declared in `noc_pkt.vh`. |
 | `NOC_MEM_LEN` comment | `noc_pkt.vh` describes `len` as "payload flits minus 1". On a `MEM_RD_REQ` served by the entry read engine it is not read at all. |
-| `CU_CTRL` `op` is honoured by one endpoint | `noc_l2_adapter.v:194` decodes `op` as 0 read / 1 write (`r_op = rt_data[255 -: 8]`); `noc_cu_base.v:241` takes only the index (`ctrl_idx = ctrl_req[247 -: 8]`) and nothing above it, so every compute unit treats a write as a read and replies with the old value. A controller cannot tell the two apart except by comparing the reply against what it wrote. Making `noc_cu_base` honour `op` would give units writable control registers, which is a framework decision nobody has taken. |
+| `CU_CTRL` `op` is honoured by one endpoint | `noc_l2_adapter.v:212` decodes `op` as 0 read / 1 write (`r_op = rt_data[255 -: 8]`); `endpoint/noc_cu_base.v:276` takes only the index (`ctrl_idx = ctrl_req[247 -: 8]`) and nothing above it, so every compute unit treats a write as a read and replies with the old value. A controller cannot tell the two apart except by comparing the reply against what it wrote. Making `noc_cu_base` honour `op` would give units writable control registers, which is a framework decision nobody has taken. |

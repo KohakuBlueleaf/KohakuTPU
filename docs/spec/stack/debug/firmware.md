@@ -1,3 +1,11 @@
+---
+title: DBG: the debug firmware interface
+summary: What the node firmware reports to the host, how the host reads it, and the debug firmware the stack's tier-1 card tests need (tier 1.
+tags:
+  - spec
+  - stack
+  - debug
+---
 # DBG: the debug firmware interface
 
 What the node firmware reports to the host, how the host reads it, and the
@@ -10,8 +18,8 @@ clause there is `unproven` except DBG.CHK.001, the Verilated-card suite that
 exists. Design choices with no spec answer are listed
 under **Conflicts for ruling**, not decided here.
 
-Paths are repo-relative. `fw/` is `software/firmware/`, `drv/` is
-`software/driver/`, `rt/` is `software/application/kohakutpu/application/runtime/`.
+Paths are repo-relative. `fw/` is `software/kohakuaccel/firmware/`, `drv/` is
+`software/kohakuaccel/driver/`, `rt/` is `software/kohakutpu/application/kohakutpu/application/runtime/`.
 `LOG` is the v9t6 card run `lenet_n1_nojit.log` (node 0, 2026-10-21, no JIT):
 `C:\Users\apoll\AppData\Local\Temp\claude\C--Users-apoll-Desktop-vivado-JTAG-DMA-test\c3bc27a6-e85c-44db-a0a8-9a59aa433062\scratchpad\silicon\lenet_n1_nojit.log`.
 `CARD1` is the v9t6 card run of the debug firmware's tier-1 vectors (node 0
@@ -74,7 +82,7 @@ Parameters named here: `node.imem_bytes` [32768], `node.spad_bytes` [32768],
 
 ### 1.4 stdout, stdin and the console tap
 
-- **DBG.OUT.001** `silicon` Once the queue service has started, everything `ka_printf` prints goes through a 64-byte line buffer (flushed at a newline or 64 bytes) into the queue region's stdout ring. The host drains it on every poll and on `read_stdout`. The host's default ring is 4096 bytes. (code: software/kohakuaccel/firmware/lib/stdio/stdio.c:7-31; software/kohakuaccel/firmware/queue/service.c:43-70, 202; software/kohakuaccel/driver/kohakuaccel/driver/node/queue/client.py:86, 297-304, 428-454; doc: docs/spec/node-queue.md:174-182; evidence: LOG:85-90)
+- **DBG.OUT.001** `silicon` Once the queue service has started, everything `ka_printf` prints goes through a 64-byte line buffer (flushed at a newline or 64 bytes) into the queue region's stdout ring. The host drains it on every poll and on `read_stdout`. The host's default ring is 4096 bytes. (code: software/kohakuaccel/firmware/lib/stdio/stdio.c:7-31; software/kohakuaccel/firmware/queue/service.c:48-79, 288; software/kohakuaccel/driver/kohakuaccel/driver/node/queue/client.py:309, 915-916, 1179-1213; doc: docs/spec/node-queue.md:174-182; evidence: LOG:85-90)
 - **DBG.OUT.002** `unproven` A full stdout ring holds the firmware for one boot `timeout`, then drops the bytes and counts them in the line's second word (`SO_WR + 8`). The host reads only the produced count; nothing reads the lost count. (code: software/kohakuaccel/firmware/queue/service.c:43-70; software/kohakuaccel/driver/kohakuaccel/driver/node/queue/client.py:428-448; doc: docs/spec/node-queue.md:180-182)
 - **DBG.OUT.003** `silicon` The queue service prints a ready banner after it sets the state to ready: `[ka] node <mesh> ready: queue <addr> sq <n> cq <n>, <n> units, sig <hex>, classes <names>; boot cycles: main at <c>, ready at <c>`. (code: software/kohakuaccel/firmware/queue/service.c:184-195, 213-214; software/kohakuaccel/driver/kohakuaccel/driver/node/queue/client.py:184-186; evidence: printed at every card boot (service.c unchanged since af7c1bb) and read into the host's console by `wait_ready`; no recorded log holds it)
 - **DBG.OUT.004** `RTL` The load window's console FIFO is drained one byte per read of `CONS` (`{valid[8], byte}`, a write pops). (code: src/kohakuaccel/sysnode/cpu/rv64_load_win.v:88-115; evidence: the `rv64_win_2p2` bench, sim/verilator/harness/rv64_win_main.cpp:62-70, 192-220, passes only on the expected console text)
@@ -101,20 +109,20 @@ Parameters named here: `node.imem_bytes` [32768], `node.spad_bytes` [32768],
 ### 1.7 Firmware images and build
 
 - **DBG.BLD.001** `silicon` The card runs `build/fw/kohakutpu_node.elf`: the dispatcher (boot, os, queue, package, dispatch, unit, apps/dispatcher) with the `MG` and `VC` classes. (code: software/kohakutpu/firmware/build.py:57-69; software/kohakutpu/application/kohakutpu/application/runtime/card/__init__.py:55, 198, 226; evidence: the card runtime loads it at every boot unless given another image (software/kohakutpu/application/kohakutpu/application/runtime/card/__init__.py:198); LOG:1-5 is that runtime's session)
-- **DBG.BLD.002** `unproven` The build defines `-DEXIT_ADDR=0x20000` for every image, `-DCPUPROBE_MESH=1` for `cpuprobe_m1` only, and `-DKA_DEBUG=1 -DKA_DEBUG_LAST=4` for `kohakutpu_debug` only (the debug image: `kohakutpu_node`'s sources, every one `-Os`). Sources compile `-O2`, with `-Os` for `package/`, `os/` and `queue/`; `--toolchain gcc|clang`. The other images are `kohakuaccel_node`, `memprobe`, `xfprobe`, `osprobe`, `cpuprobe`, `cpuprobe_m1`. (code: software/kohakutpu/firmware/build.py:28-45, 57-103, 114-121, 261-289)
+- **DBG.BLD.002** `unproven` The build defines `-DEXIT_ADDR=0x20000` for every image, `-DCPUPROBE_MESH=1` for `cpuprobe_m1` only, and `-DKA_DEBUG=1 -DKA_DEBUG_LAST=4` for `kohakutpu_debug` only (the debug image: `kohakutpu_node`'s sources, every one `-Os`). Sources compile `-O2`, with `-Os` for `package/`, `os/` and `queue/`; `--toolchain gcc|clang`. The other images are `kohakuaccel_node`, `memprobe`, `xfprobe`, `osprobe`, `cpuprobe`, `cpuprobe_m1`. (code: software/kohakutpu/firmware/build.py:29-46, 58-142, 144-167, 325-367)
 - **DBG.BLD.003** `unproven` The build refuses an image whose `.text` exceeds `node.imem_bytes` [32768] or whose `.bootargs + .rodata + .data + .bss + .noinit + .stack` exceeds `node.spad_bytes` [32768] (`DOES NOT FIT`, exit 1). (code: software/kohakutpu/firmware/build.py:124-135, 280-289; software/kohakuaccel/firmware/arch/rv64/node.ld)
 - **DBG.BLD.004** `unproven` The current `kohakutpu_node` build uses 30,048 of 32,768 B of IMEM (`.text`); `kohakutpu_debug` uses 28,640 B and `kohakuaccel_node` 29,024 B of IMEM. (code: build/fw/kohakutpu_node.size:3-9; build/fw/kohakuaccel_node.size:3)
 
 ### 1.8 The host side
 
 - **DBG.HOST.001** `silicon` `NodeQueue.wait` raises `NodeError(completion, read_stdout())` for a final completion whose status is not `OK`. Its message is `Completion.describe()`, then `node said:` and the stdout text. (code: software/kohakuaccel/driver/kohakuaccel/driver/node/queue/client.py:62-73, 326-342; evidence: LOG:84-90)
-- **DBG.HOST.002** `silicon` `Completion.describe` names the status from `layout.STATUS` and a `TIMEOUT`'s detail from `layout.WAITS`. (code: software/kohakuaccel/driver/kohakuaccel/driver/node/queue/client.py:47-54, 59; software/kohakuaccel/driver/kohakuaccel/driver/node/queue/layout.py:47-83; evidence: LOG:84, `TIMEOUT waiting on await`)
+- **DBG.HOST.002** `silicon` `Completion.describe` names the status from `layout.STATUS` and a `TIMEOUT`'s detail from `layout.WAITS`. (code: software/kohakuaccel/driver/kohakuaccel/driver/node/queue/client.py:177-184, 195; software/kohakuaccel/driver/kohakuaccel/driver/node/queue/status.py:6-45; evidence: LOG:84, `TIMEOUT waiting on await`)
 - **DBG.HOST.009** `unproven` `Completion.describe` names a `UNIT_FAULT`'s unit and signal word, and a `MOVER_FAULT`'s code from `mover.FAULTS`. (code: software/kohakuaccel/driver/kohakuaccel/driver/node/queue/client.py:55-58; evidence: no logged unit or mover fault)
 - **DBG.HOST.003** `unproven` `layout.WAITS` names details 1..6 only (5 as `doorbell`); details 7..10 print as bare numbers. (code: software/kohakuaccel/driver/kohakuaccel/driver/node/queue/layout.py:75-83)
 - **DBG.HOST.004** `silicon` The card runtime parses each successful run's stdout `PKGT` line into `phases`. (code: software/kohakutpu/application/kohakutpu/application/runtime/card/__init__.py:437-444; evidence: every logged card run printed a `PKGT` line (`TIMING` always set) and `_result` ran for each of the 2035 successful runs (LOG:5); card.py unchanged since af7c1bb)
-- **DBG.HOST.010** `unproven` The card runtime parses `PKGS` lines into `steps` as `(first, last, cycle, "<op> u<unit> n<count>, ...")` from its own copy of the package. (code: software/kohakutpu/application/kohakutpu/application/runtime/card/__init__.py:445-452; evidence: the logged runs did not set `STEPS`)
+- **DBG.HOST.010** `unproven` The card runtime parses `PKGS` lines into `steps` as `(first, last, cycle, "<op> u<unit> n<count>, ...")` from its own copy of the package. (code: software/kohakutpu/application/kohakutpu/application/runtime/card/collection.py:296-303; evidence: the logged runs did not set `STEPS`)
 - **DBG.HOST.005** `silicon` One boot serves every package of a session: the runtime boots each node once, waits for ready, and submits packages until it stops. (code: software/kohakutpu/application/kohakutpu/application/runtime/card/__init__.py:204-231, 368-399; evidence: LOG:5, 2035 kernel runs in one boot)
-- **DBG.HOST.006** `unproven` With `KOHAKUTPU_KEEP_FAILED=<dir>` the runtime writes a failed package's bytes and bindings to `<dir>/failed_<run>.pkg` and `.json`. (code: software/kohakutpu/application/kohakutpu/application/runtime/card/__init__.py:73, 356-365, 393-397)
+- **DBG.HOST.006** `unproven` With `KOHAKUTPU_KEEP_FAILED=<dir>` the runtime writes a failed package's bytes and bindings to `<dir>/failed_<run>.pkg` and `.json`. (code: software/kohakutpu/application/kohakutpu/application/runtime/card/common.py:64; software/kohakutpu/application/kohakutpu/application/runtime/card/collection.py:42-61, 182, 221; software/kohakutpu/application/kohakutpu/application/runtime/execution.py:120)
 - **DBG.HOST.007** `unproven` The driver decodes each unit kind's `CU_DBG` word: `MG` compute `[63:32]` and memory `[31:0]` cycles, cumulative; `VC` `[31:0]` of the last run; `SR` `[31:0]`, cumulative. (code: software/kohakutpu/driver/kohakutpu/driver/units/__init__.py:20-65)
 - **DBG.HOST.008** `unproven` With `faults=True` a multi-node run reports a node that faults or times out as `{"fault": text}` and still waits for the others; a node report the runtime cannot parse is `garbled node report`. (code: software/kohakutpu/application/kohakutpu/application/runtime/card/__init__.py:400-421)
 
@@ -161,7 +169,7 @@ Offsets below are **node processor control-region offsets**, not host MMIO addre
 | `0x308` | `raw.moves`, `moves.issued`, `moves.done` | MOVES: zero-extended issued GO count in high 32 bits, completions relative to last clear in low 32 bits; each count is modulo `CTR_W` (12 in this engine). Same combinational mux, no CTL write. |
 | `0x380 + 8k` | `counters[k]` | All exposed unit completion counters, up to the engine's 16-register window, read in index order. Same mux; the RAM write enable is `clearing || inc_v` (`dispatch_engine.v:145-152`), independent of read address. Zero counters are meaningful; they are not omitted. No-engine nodes produce no counter values. |
 | `0x20` | `raw.mvstat`, `mover` | MVSTAT: ROOM `[33]`, busy `[32]`, fault code `[31:28]` and its `mover.FAULTS` name, free-running completed moves `[27:0]`. `rv64_syscore.v:774-799` registers the mover output wires in the return mux; it sends no read strobe to the mover. |
-| `0x1d8` | `raw.xfdata` | The transform bank's **currently selected** readback, retained raw because the selector is not readable. With selected word 0 this is bank fault; word 1 is selected occupant geometry. `xform_bank.v:160-169` is a combinational mux; clearing the fault requires `cfg_en` (`:145-154`), which reads do not assert. This is not a busy/grant observation. |
+| `0x1d8` | `raw.xfdata` | The transform bank's **currently selected** readback, retained raw because the selector is not readable. With selected word 0 this is bank fault; word 1 is selected occupant geometry. `kohakutpu/transform/xform_bank.v:160-169` is a combinational mux; clearing the fault requires `cfg_en` (`:145-154`), which reads do not assert. This is not a busy/grant observation. |
 
 For every row, `rv64_syscore.v:632-660` gates queueing, configuration and shared-window arbitration on `ctrl_wr = mem_started && sel_ctrl && m_st_q`. Reads therefore neither clear the engine nor hold its issue path through `cpu_sh`. Engine clear separately resets GO/issue counts and rebases mover completions (`dispatch_engine.v:220-230`), so taking this snapshot after clear is invalid. A node built without an engine returns zero (`rv64_syscore.v:835-840`); test magic before interpreting engine fields. MVSTAT's absolute completion count must not be compared directly to the rebased MOVES count. Issued GOs >= done moves is valid for the vectors' short, non-wrapping, settled move, not a general monotonic assertion across modulo wrap or sequential live reads.
 

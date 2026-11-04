@@ -48,7 +48,7 @@ throughout rather than describing this core in isolation.
 | where the address is computed | EX, consumed in MEM — **it has an address-generation stage** | E, consumed in M — [it does not](#why-there-is-no-address-generation-stage) |
 | load forwarding | distance 3 only, so **two** stall cycles back to back | distance 2 after one bubble, so **one** |
 | predictor | 32-entry BTB, 2-bit counters | [BTB + gshare + a return stack](#why-the-predictor-is-bigger-than-the-rv32-pes-and-differently-shaped) |
-| divide | [refused, and costed](../rv32-pe/microarchitecture.md#why-div-and-rem-are-a-different-answer) | built, 66 cycles |
+| divide | [refused, and costed](../rv32-pe/microarchitecture.md#what-the-microarchitecture-deliberately-does-not-do) | built, 66 cycles |
 | a fault is | the unit's completion — it halts and says why | a trap, or a halt only if no handler is installed |
 | externally written memory | a scratchpad with a **cross-port bypass**, because a doorbell lands in the word a poll loop is reading | none — the doorbell arrives as an interrupt line, not as memory |
 
@@ -688,7 +688,7 @@ negative inputs.
 #### Why the divider is built here and refused on the RV32 PE
 
 The RV32 PE [costs a divider at 200–300 LUT and turns it
-down](../rv32-pe/microarchitecture.md#why-div-and-rem-are-a-different-answer):
+down](../rv32-pe/microarchitecture.md#what-the-microarchitecture-deliberately-does-not-do):
 35 cycles against libgcc's 60–80 is a 2× on an instruction a controller issues
 approximately never, and its cost is a fixed structure rather than a marginal
 one. The reasoning is sound and this core reaches the opposite answer, which is

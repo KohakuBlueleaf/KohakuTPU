@@ -523,7 +523,7 @@ const sllRows = [
   { b: "SLR2 ↔ SLR1", m: "634", pct: "2.75%", out: "363", in: "271" },
   { b: "SLR3 ↔ SLR2", m: "644", pct: "2.80%", out: "364", in: "280" },
   {
-    b: "<i>derived from sb_line4.v:121</i>",
+    b: "<i>derived from axi/topo/sb_line4.v:167-168</i>",
     m: "<i>629</i>",
     pct: "<i>2.73%</i>",
     out: "<i>359</i>",
@@ -792,7 +792,7 @@ const notOwnedRows = [
 
     <BitField
       :fields="reqFlit"
-      caption="REQ, at the deployed shape: FW=256, AW=43, STNW=2, PORTW=2, SRCW=2, TAGW=4, summing to the 357 bits sb_line4.v:140 declares. Widths and the field set are the RTL's; the order is the published field table, and the packing inside the payload bus is not part of the contract — read the ranges as proportions. The header rides sideband alongside the first payload beat, because a separate header flit costs 100% overhead on a single-beat transfer, which is what control traffic is"
+      caption="REQ, at the deployed shape: FW=256, AW=43, STNW=2, PORTW=2, SRCW=2, TAGW=4, summing to the 357 bits axi/topo/sb_line4.v:167 declares. Widths and the field set are the RTL's; the order is the published field table, and the packing inside the payload bus is not part of the contract — read the ranges as proportions. The header rides sideband alongside the first payload beat, because a separate header flit costs 100% overhead on a single-beat transfer, which is what control traffic is"
     />
     <BitField
       :fields="rspFlit"

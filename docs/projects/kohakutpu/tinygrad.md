@@ -31,7 +31,7 @@ from tinygrad import Tensor
 into the environment; then `DEV=KTPU python script.py` runs an unmodified
 tinygrad script on the card (`--remove` takes it out).
 
-Code: `software/application/kohakutpu/application/ktpugrad/` (`seam.py`,
+Code: `software/kohakutpu/application/kohakutpu/application/ktpugrad/` (`seam.py`,
 `device.py`, `lower.py` the plan, `run.py` the runner, `bridge.py`,
 `fold.py` index-only constants, `uops.py`), the generated kernels in
 `application/kernels/` (`vector.py` rows kernels, `matmul.py`, `convert.py`
@@ -198,7 +198,7 @@ on the host (`with Context(DEV="CPU")`) and placed on the card.
 
 ## 5. Models on the simulator
 
-`software/application/examples/tinygrad/`, every model a tinygrad module.
+`software/kohakutpu/application/examples/tinygrad/`, every model a tinygrad module.
 The defaults are short simulator runs; full-size runs are flags.
 
 | script | what | measured on `build/v9f/vlt_card_v9_1n_v2` |

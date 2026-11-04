@@ -10,7 +10,7 @@ tags:
 
 # The dispatcher (kds)
 
-`software/os/dispatch/` (the API in `include/kos/kds.h`). It runs in user
+`software/kohakuaccel/os/dispatch/` (the API in `include/kos/kds.h`). It runs in user
 mode, linked into the image like `libkos`; the kernel gives it the
 primitives listed [below](#kernel-primitives-it-uses), and nothing in it
 knows any unit's instruction set.

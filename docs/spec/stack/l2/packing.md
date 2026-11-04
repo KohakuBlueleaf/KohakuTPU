@@ -1,3 +1,11 @@
+---
+title: Vector packing schedules
+summary: "`quant` converts FP16 rows to MX7A or MX7B entries."
+tags:
+  - spec
+  - stack
+  - l2
+---
 # Vector packing schedules
 
 `quant` converts FP16 rows to MX7A or MX7B entries. The machine's

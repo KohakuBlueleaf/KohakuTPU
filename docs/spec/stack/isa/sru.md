@@ -1,3 +1,11 @@
+---
+title: ISA: the Streaming Row Unit
+summary: The Streaming Row Unit (unit kind `SR`, RTL top `sru_cu` around `sru_core`) as the stack drives it.
+tags:
+  - spec
+  - stack
+  - isa
+---
 # ISA: the Streaming Row Unit
 
 The Streaming Row Unit (unit kind `SR`, RTL top `sru_cu` around `sru_core`)
@@ -12,7 +20,7 @@ is two clusters and two vector cores
 (1,1), (1,2); VC (2,1), (2,2); board `multimesh_v9t6` is four of these
 dies). The only image with
 SRUs is the `4+2s` die of board `sru_v9t7`, which is simulation only (no
-bitstream). RTL evidence is the xsim benches of `scripts/py/xsim.py:2302-2367`
+bitstream). RTL evidence is the xsim benches of `scripts/py/xsim.py:2325-2390`
 (`docs/projects/kohakutpu/sru.md:187-200`); no Verilated-card test runs a
 compiled `send sr[..]` block.
 
@@ -44,18 +52,18 @@ compiled `send sr[..]` block.
 ## Images and profile
 
 - **ISA.SR.001** `unproven` A program sends to `sr[J]` only on a machine with `sr.count` > J. v9t6 has `sr.count` 0; the card enumerates `SR` as an empty list. (code: `ktpu-l1::lower::target`; evidence: none on a card with SRUs)
-- **ISA.SR.002** `unproven` The image with SRUs is the `4+2s` die: SRUs at the vector cores' ports (2,1), (2,2), four clusters, no vector core; board `sru_v9t7` (design `multimesh_v9t7`, bitstream empty, simulation only); the Verilator harnesses `tests/sru/system/card_sru_1n.v`, `card_sru_2n.v` are generated from it. (code: `ktpu-machine::card`; `scripts/py/xsim.py:2361-2367`; evidence: the harnesses exist; no test runs on them)
-- **ISA.SR.003** `unproven` The compiler reads two profile knobs, `sr.profile.F_LANES` and `sr.profile.H_TAPS`, from the machine (`params["SR"]`, from the board's `sru`), defaulting to F_LANES 16, H_TAPS 2. (code: `ktpu-l1::lower::sru`; `ktpu-machine::card`; evidence: none; `tests/sru/sru_core_tb.v` runs jobs scheduled by `_rs.sru_words` from `scripts/py/sru/core_vectors.py:25,68`, which takes the profile from `scripts/py/sru/profiles.py`, not from `ktpu-l1::lower::sru` or the machine)
-- **ISA.SR.004** `RTL` The profiles are `strong` (16 lanes, RAM table with MANT/HALF, 2 taps), `rom` (16 lanes, exp2 ROM, 2 taps), `mid` (8 lanes, RAM table, 1 tap), `spu` (16 FMA lanes, 2 taps), `pack` (no pool, MXFP7 only); every profile has `F16_IEEE` 0. `sru_v9t7` carries `strong`. (code: `scripts/py/sru/profiles.py:8-29`; doc: `sru.md:173-185`; evidence: `tests/sru/sru_core_tb.v` per profile)
+- **ISA.SR.002** `unproven` The image with SRUs is the `4+2s` die: SRUs at the vector cores' ports (2,1), (2,2), four clusters, no vector core; board `sru_v9t7` (design `multimesh_v9t7`, bitstream empty, simulation only); the Verilator harnesses `tests/sru/system/card_sru_1n.v`, `card_sru_2n.v` are generated from it. (code: `ktpu-machine::card`; `scripts/py/xsim.py:2384-2390`; evidence: the harnesses exist; no test runs on them)
+- **ISA.SR.003** `unproven` The compiler reads two profile knobs, `sr.profile.F_LANES` and `sr.profile.H_TAPS`, from the machine (`params["SR"]`, from the board's `sru`), defaulting to F_LANES 16, H_TAPS 2. (code: `ktpu-l1::lower::sru`; `ktpu-machine::card`; evidence: none; `tests/sru/sru_core_tb.v` runs jobs scheduled by `_rs.sru_words` from `scripts/py/sru/core_vectors.py:23,67`, which takes the profile from `scripts/py/sru/profiles.py`, not from `ktpu-l1::lower::sru` or the machine)
+- **ISA.SR.004** `RTL` The profiles are `strong` (16 lanes, RAM table with MANT/HALF, 2 taps), `rom` (16 lanes, exp2 ROM, 2 taps), `mid` (8 lanes, RAM table, 1 tap), `spu` (16 FMA lanes, 2 taps), `pack` (no pool, MXFP7 only); every profile has `F16_IEEE` 0. `sru_v9t7` carries `strong`. (code: `scripts/py/sru/profiles.py:8-89`; doc: `sru.md:173-185`; evidence: `tests/sru/sru_core_tb.v` per profile)
 
 ## Instructions
 
 Each is one 256-bit payload, opcode in [255:252].
 
 - **ISA.SR.010** `RTL` CFG (op 1): `word` [251:244] (an 8-bit configuration address), `value` [31:0]; writes one 32-bit configuration word. (code: `ktpu-isa::unit::sru`; RTL `src/kohakutpu/sru/sru_cu.v:6`; evidence: `tests/sru/sru_cu_tb.v`, encoded independently by `scripts/py/sru/cu_vectors.py:32-33`)
-- **ISA.SR.011** `RTL` LOAD (op 2): `what` [251:250] (0 function table, 1 column constants, 2 row state), `first` [249:240], `addr` [239:200], `words` [199:188] 32-byte words. A table word holds 4 entries (entry k at bits `64k +: 36`), a column-constant word 2 (`128k +: 128`), a row-state word one row. (code: `ktpu-isa::unit::sru`; RTL `sru_cu.v:7-8,23-24`; evidence: `tests/sru/sru_cu_tb.v` (all three targets), `cu_vectors.py:36-43,108-109,133`)
-- **ISA.SR.012** `RTL` RUN (op 3): `amem` [251] (A from memory 1, a COUNT stream 0), `peer` [250] (out to a unit 1, memory 0), `aaddr` [249:210], `astride` [209:194] words, `oaddr` [193:154], `ostride` [153:138], `baddr` [137:98], `bstride` [97:82], `px` [81:78], `py` [77:74], `pbuf` [73:70], `poff` [69:54] granules, `count` [53], `ax` [52:49], `ay` [48:45] (A's producer), `words` [44:21] (the stream's words, NW x NSR). (code: `ktpu-isa::unit::sru`; RTL `sru_cu.v:16-21`; evidence: `tests/sru/sru_cu_tb.v`, `cu_vectors.py:50-60,135,160,188,206`)
-- **ISA.SR.013** `RTL` STORE (op 4): `first` [248:240], `addr` [239:200], `rows` [199:188]; one 32-byte word a row, R0, R1, R2 as f32 in [31:0], [63:32], [95:64]. (code: `ktpu-isa::unit::sru`; RTL `sru_cu.v:11-13`; evidence: `tests/sru/sru_cu_tb.v`, `cu_vectors.py:46-47,189`)
+- **ISA.SR.011** `RTL` LOAD (op 2): `what` [251:250] (0 function table, 1 column constants, 2 row state), `first` [249:240], `addr` [239:200], `words` [199:188] 32-byte words. A table word holds 4 entries (entry k at bits `64k +: 36`), a column-constant word 2 (`128k +: 128`), a row-state word one row. (code: `ktpu-isa::unit::sru`; RTL `sru_cu.v:7-8,23-24`; evidence: `tests/sru/sru_cu_tb.v` (all three targets), `cu_vectors.py:36-43,111-112,136`)
+- **ISA.SR.012** `RTL` RUN (op 3): `amem` [251] (A from memory 1, a COUNT stream 0), `peer` [250] (out to a unit 1, memory 0), `aaddr` [249:210], `astride` [209:194] words, `oaddr` [193:154], `ostride` [153:138], `baddr` [137:98], `bstride` [97:82], `px` [81:78], `py` [77:74], `pbuf` [73:70], `poff` [69:54] granules, `count` [53], `ax` [52:49], `ay` [48:45] (A's producer), `words` [44:21] (the stream's words, NW x NSR). (code: `ktpu-isa::unit::sru`; RTL `sru_cu.v:16-21`; evidence: `tests/sru/sru_cu_tb.v`, `cu_vectors.py:50-60,138,163,191,209`)
+- **ISA.SR.013** `RTL` STORE (op 4): `first` [248:240], `addr` [239:200], `rows` [199:188]; one 32-byte word a row, R0, R1, R2 as f32 in [31:0], [63:32], [95:64]. (code: `ktpu-isa::unit::sru`; RTL `sru_cu.v:11-13`; evidence: `tests/sru/sru_cu_tb.v`, `cu_vectors.py:46-47,192`)
 - **ISA.SR.014** `unproven` POST (op 5): `x` [251:248], `y` [247:244], `n` [15:0]; sends a CREDIT of `n` granules to (x, y). (code: `ktpu-isa::unit::sru`; RTL `sru_cu.v:14`; evidence: no bench vector issues it)
 - **ISA.SR.015** `RTL` The SRU executes its words in order; CFG, LOAD, STORE and POST retire when done; RUN holds the unit until the job is done and its last write has its ack. (code: `ktpu-verify::sim::row`; RTL `sru_cu.v:9-10`; doc: `sru.md:155-161`; evidence: `tests/sru/sru_cu_tb.v`)
 
@@ -91,8 +99,8 @@ RTL's `sru_cfg.vh` from it.
 
 ## Flow control
 
-- **ISA.SR.050** `RTL` RUN with `amem` 0 takes A from a CU_DATA COUNT stream into buffer 0 only: at RUN it posts the producer (`ax`, `ay`) min(`sr.fifo_depth`, `words`) credits, then min(8, the rest) each time 8 words leave the FIFO, so the posts sum to `words`. A RUN whose `words` is not NW x NSR is a verifier finding. (code: `ktpu-verify::sim::row`; RTL `sru_cu.v:26-32,542-545`; evidence: `tests/sru/sru_cu_tb.v`, `cu_vectors.py:188,206`)
-- **ISA.SR.051** `RTL` RUN with `peer` 1 sends output bursts of at most 8 words, never across a sub-row, each once the SRU holds its length in credits, into (`px`, `py`) buffer `pbuf` from granule `poff`, flagged COUNT with `count`. (code: `ktpu-verify::sim::row`; RTL `sru_cu.v:30-32`; evidence: `tests/sru/sru_cu_tb.v`, `cu_vectors.py:188`)
+- **ISA.SR.050** `RTL` RUN with `amem` 0 takes A from a CU_DATA COUNT stream into buffer 0 only: at RUN it posts the producer (`ax`, `ay`) min(`sr.fifo_depth`, `words`) credits, then min(8, the rest) each time 8 words leave the FIFO, so the posts sum to `words`. A RUN whose `words` is not NW x NSR is a verifier finding. (code: `ktpu-verify::sim::row`; RTL `sru_cu.v:26-32,566-569`; evidence: `tests/sru/sru_cu_tb.v`, `cu_vectors.py:191,209`)
+- **ISA.SR.051** `RTL` RUN with `peer` 1 sends output bursts of at most 8 words, never across a sub-row, each once the SRU holds its length in credits, into (`px`, `py`) buffer `pbuf` from granule `poff`, flagged COUNT with `count`. (code: `ktpu-verify::sim::row`; RTL `sru_cu.v:30-32`; evidence: `tests/sru/sru_cu_tb.v`, `cu_vectors.py:191`)
 - **ISA.SR.052** `RTL` Memory reads go out only for FIFO space already reserved, in runs of at most 32 words; input runs at most two sub-rows plus the A FIFO ahead of the output that has left. (RTL `sru_cu.v:26-28`; code: `ktpu-verify::sim::row`; evidence: `tests/sru/sru_cu_tb.v`)
 - **ISA.SR.053** `RTL` At the end of a program every word landed has been taken and every credit received spent. (code: `ktpu-verify::sim::row`; evidence: `tests/sru/sru_cu_tb.v` (posts sum to the stream))
 

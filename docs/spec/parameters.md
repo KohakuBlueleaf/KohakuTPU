@@ -167,6 +167,8 @@ The framework side of every compute unit. Contract:
 | `RECV_DEPTH` | integer | `16` | Receive FIFO depth, in flits. **This is what bounds how far a requester may run ahead**, and therefore how much memory latency it can hide. | Power of two. |
 | `MEM_TYPE` | string | `"distributed"` | Storage primitive for the instruction FIFO. | `"distributed"`, `"block"`, `"ultra"`. |
 | `RECV_MEM` | string | `"distributed"` | Storage primitive for the receive FIFO. Separate knob because the receive queue is the widest structure in the module and the right answer differs from the instruction FIFO's. | `"distributed"`, `"block"`, `"ultra"`. |
+| `ACK_FENCE` | integer | `0` | 1: a `CU_SIGNAL` waits for every local write's `MEM_WR_ACK` (compute-unit-port.md §3.3); 0: `MEM_WR_ACK`s pass to the datapath. | `0`, `1`. |
+| `CREDITS` | integer | `0` | 1: `CREDIT` signals in (`cr_*`) and out (`post_*`), compute-unit-port.md §5.2; 0: a `CREDIT` reaches `recv_*` like any signal and `post_*` is not read. | `0`, `1`. |
 
 `RECV_MEM` cannot weaken backpressure: the full flag is derived from the pointers
 whichever memory backs the data. What it moves is `recv_flit` onto a block-RAM
@@ -448,6 +450,7 @@ when they are reachable.
 | `SPAD_BASE` | 64-bit | `64'h0000_0000_0001_0000` | Physical base of the scratchpad range. | **Must be aligned to and sized by `SPAD_WORDS * 8`.** The decode is a bit test on `pa[ADDR_W-1:$clog2(SPAD_WORDS*8)]`, not a magnitude compare, so a misaligned base decodes a different range than it names. |
 | `CTRL_BASE` | 64-bit | `64'h0000_0000_0002_0000` | Physical base of the 256-byte control region. §6 of [control-registers.md](control-registers.md). | **Must be 256-byte aligned.** The decode is `pa[ADDR_W-1:8]`. |
 | `NODE_BASE` | 64-bit | `64'h0000_0000_1000_0000` | Base of the node range — everything the processor reaches through its AXI master. | **`2**28` exactly.** The decode is `\|pa[ADDR_W-1:28]`, so any address at or above `2**28` is in the node range whatever this parameter says. Changing it does not move the range. |
+| `DE_DEPTH` | integer | `64` | The dispatch engine's queued entries; 0 builds no engine (control `0x200`-`0x3FF` then reads 0, which is how firmware tells). | `0` or a power of two. |
 
 Two consequences a reader implementing against this must know:
 
@@ -546,6 +549,12 @@ The single point where a partition touches everything outside it. Protocol:
 | `STAGE_PIPE` | integer | `1` | Extra register stages on the staging read path, for timing. | `>= 0`. |
 | `STAGE_RLAT` | integer | `0` | `mag_stage`'s `RLAT`; 0 = blocks deep + 1 (2 / 3 / 5 at 4 / 2 / 1 banks of the default store). | 0, or `>= 2`. |
 | `STAGE_AT_PORT` | integer | `0` | Which of the two placements is built: `1` one store on the converged path, `0` a store inside **every** memory engine, none reachable by the mover or the interlink. `1` is the shipping value. See the note under `sysnode` in this section. | 0 or non-zero. |
+| `PORT_OSKID` | integer | `` `KOHAKU_PORT_OSKID `` | Handshake cut: `sb_skid` on each port's flit output (hub decode to emit/ACK). Macro default 0 so synthesis defines reach it under a generated top; a skid costs its channel one cycle of latency and no throughput. | `0`, `1`. |
+| `PORT_LEAN` | integer | `` `KOHAKU_PORT_LEAN `` | Every port FIFO built as `sync_fifo` "lean". Macro default 0. | `0`, `1`. |
+| `PORT_HCOPY` | integer | `` `KOHAKU_PORT_HCOPY `` | `mag_mem_port` `HEAD_COPY`. Macro default 0. | `0`, `1`. |
+| `PORT_ARSKID` | integer | `` `KOHAKU_PORT_ARSKID `` | Handshake cut: `sb_skid` on each port's AR into the converged path. Macro default 0. | `0`, `1`. |
+| `IL_TXSKID` | integer | `` `KOHAKU_IL_TXSKID `` | Handshake cut: `sb_skid` on the interlink's header and data into the switch. Macro default 0. | `0`, `1`. |
+| `IL_MVSKID` | integer | `` `KOHAKU_IL_MVSKID `` | Handshake cut: `sb_skid` on the mover's AW and W into the interlink. Macro default 0. | `0`, `1`. |
 
 Port coordinates are named per port rather than packed into one vector: a packed
 field is one shift away from pointing a whole port at the wrong node, and it
@@ -581,6 +590,8 @@ One memory endpoint and the AXI master behind it.
 | `STAGE_RLAT` | integer | `0` | That store's `RLAT`; 0 = blocks deep + 1. | 0, or `>= 2`. |
 | `RD_BEATS` | integer | `16` | Beats one streamed-read AR carries: the Xache's read slot (`RB_BEATS`). An AR never crosses a 4 KB boundary. | 1–64. |
 | `RD_AHEAD` | integer | `64` | Beats a streamed read may have requested and not yet taken: the read-ahead that hides the memory round trip. `mag` sets it to `DRAM_RD_OUT × 16`, the DRAM port's reads in flight. | `>= RD_BEATS`, `< 240`. |
+| `CTL_MEM_TYPE` | string | `"distributed"` | Memory style of the narrow queues: plain-read context, ready order, posted ACKs. | A `sync_fifo` `MEM_TYPE`. |
+| `HEAD_COPY` | integer | `0` | 1: the write queue's head is decoded from a narrow queue beside it, so the pop reads `2 + 2*POS_WIDTH` registers rather than a 288-bit head, and the ACK queue carries each ACK's header fields. | `0`, `1`. |
 
 How the read engine, plain reads and posted writes share the port is in
 [memory-port.md](../arch/sysnode/memory-port.md).
@@ -608,6 +619,9 @@ Command registers: [control-registers.md](control-registers.md) §3.
 | `MAX_WOUT` | integer | `32` | Writes in flight. | `>= 1`. |
 | `FIFO_D` | integer | `512` | Depth of the staging FIFO between the read return and the write side, in beats. | Must cover every reserved read; under-sizing deadlocks rather than corrupts. |
 | `CMD_D` | integer | `128` | Depth of the internal command queue between the walkers and the AXI side. | `>= 1`. |
+| `XO_D` | integer | `16` | Transform output words held for the write engine (four entries). | At least four entries of `XF_OUT_WORDS`. |
+| `CFGQ_D` | integer | `64` | Depth of the configuration queue a register write lands in. | A power of two. |
+| `CFGQ_MARGIN` | integer | `8` | Writes the dispatch engine can have in flight when it reads `cfg_room`. | Less than `CFGQ_D`. |
 
 ### `mm_prng` — `src/kohakuaccel/sysnode/mover/mm_prng.v`
 
@@ -649,7 +663,7 @@ No master in the framework drives them.
 
 N requesters onto one AXI4 master, packing a narrow internal beat up to a wider
 memory beat across a clock crossing. This is where every internal requester
-converges and where AXI exists exactly once; `mag.v:1000` instantiates it with
+converges and where AXI exists exactly once; `mag.v:1177` instantiates it with
 `N = MP1`.
 
 | Name | Type | Default | Controls | Legal range |
@@ -752,6 +766,8 @@ writes, inbound remote writes, flit encapsulation and injection, and doorbells.
 | `MAX_BEATS` | integer | `32` | Longest packet emitted. | `<= RX_BEATS` at the far end. |
 | `MEM_X` | integer | `0` | The local memory port's X coordinate, used when injecting an inbound flit. | Must match `mag`'s `MEM_X`. |
 | `MEM_Y` | integer | `1` | Its Y coordinate. | Must match `mag`'s `MEM_Y`. |
+| `SIG_SLOTS` | integer | `16` | Signal counters, one per slot, in LUTRAM: a ring's tag selects one. | A power of two. |
+| `SIG_W` | integer | `32` | Width of each signal counter. | `1`-`32`. |
 
 ### `mag_switch` — `src/kohakuaccel/sysnode/interlink/mag_switch.v`
 
@@ -993,6 +1009,7 @@ names — see [transform-slot.md](transform-slot.md).
 | Name | Type | Default | Controls | Legal range |
 |---|---|---|---|---|
 | `SBIAS` | integer | `20` | Scale exponent bias. The scale spans 2⁻²⁰ to 2¹⁰ with an FP16 peak, so 20 centres it on the 5-bit field. | Changing it changes the numeric result and MUST be matched by the consuming datapath and by the driver's software model. |
+| `DBUF` | integer | `1` | 1: the pack works from its own copy of the source, so fill and pack run in parallel; 0: the pack reads the accumulator directly. | `0`, `1`. |
 
 Its entry sizes — 2048 bits in, 1024 bits out — are what the bank declares to
 the agent as `IN_BITS` and `OUT_WORDS`, because the mover has to size both walks

@@ -1,3 +1,10 @@
+---
+title: Configurable kernel hot paths
+summary: The kernel and machine layer have build definitions for their hot paths.
+tags:
+  - os
+  - design
+---
 # Configurable kernel hot paths
 
 The kernel and machine layer have build definitions for their hot paths.

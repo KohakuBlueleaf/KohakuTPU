@@ -1,3 +1,10 @@
+---
+title: Machine files
+summary: A machine file holds every hardware fact the software stack reads for one image.
+tags:
+  - spec
+  - stack
+---
 # Machine files
 
 A machine file holds every hardware fact the software stack reads for one
@@ -24,7 +31,7 @@ and `sources` (each fact's path and where it came from: a repo `file:line`, a
 board key, or a named derivation).
 
 `schema` is the version of the schema definition the file was written for:
-the first 16 hex digits of sha256 over ktpu-machine's `src/schema/*.rs` in
+the first 16 hex digits of sha256 over `software/kohakuaccel/compiler/crates/ka-machine/src/schema/*.rs` in
 file-name order, `//` comments and all whitespace removed, one line per file.
 A field added, removed, renamed or retyped changes it; a comment does not. The
 generator writes it, `--check` fails on a file written for another version,

@@ -1,3 +1,11 @@
+---
+title: Layout preparation inside consumers
+summary: A runtime `forms.Pending` describes a logical FP16 read as a sequence of source and destination walks.
+tags:
+  - spec
+  - stack
+  - l2
+---
 # Layout preparation inside consumers
 
 A runtime `forms.Pending` describes a logical FP16 read as a sequence of source

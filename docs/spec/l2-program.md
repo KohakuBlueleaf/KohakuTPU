@@ -17,7 +17,7 @@ core's local memory, apply hardware ops to register-shaped values, store or
 send the result -- and leaves out only what a compiler can decide without
 changing what is computed.
 
-Code: `software/rust/crates/ktpu-l2/src/`: `ir/` reads typed bodies,
+Code: `software/kohakutpu/compiler/crates/ktpu-l2/src/`: `ir/` reads typed bodies,
 `lower/` lowers views, units and node synchronization, and `passes/`
 implements the L2-to-L2 transformations. KohakuTPU's
 words: [../projects/kohakutpu/ir/ktpu.md](../projects/kohakutpu/ir/ktpu.md) §9.

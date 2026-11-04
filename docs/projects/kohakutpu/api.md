@@ -24,7 +24,7 @@ y.numpy(); kp.runs()                       # the result; each run's cycles
 z = kp.function(my_kernel)(y, eps=1e-6)    # any @kt.kernel on tensors
 ```
 
-Code: `software/application/kohakutpu/application/api/` (`tensor.py` the
+Code: `software/kohakutpu/application/kohakutpu/application/api/` (`tensor.py` the
 graph and its planner, `custom.py` kernels on tensors), the runtime below it
 in `application/runtime/` and `application/kernels/` (the generated kernels).
 

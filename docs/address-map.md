@@ -24,7 +24,7 @@ Four terms are used throughout, defined once here:
 This page is a **fixed protocol**: nothing here is adjustable, and a component
 that decodes differently is not on the framework.
 
-The RTL citations below (`mag.v:667-671` and similar) are pointers into the
+The RTL citations below (`mag.v:787-791` and similar) are pointers into the
 source at the time of writing. Treat the file as authoritative and the line
 number as a hint.
 
@@ -41,7 +41,7 @@ an instruction, and every address a decoder tests is 40 bits:
 ```
 
 `mm_mover.v`'s header states it, and `mag_stage.v:70-76`,
-`mag_stage_port.v:87-88` and `mag_mem_port.v:290-292` all test it
+`mag_stage_port.v:87-88` and `mag_mem_port.v:338-340` all test it
 **absolutely** -- an address carries which mesh it belongs to, no matter who
 issued it or where it arrives.
 
@@ -137,16 +137,18 @@ independent. A write into mesh 2's window carrying `[37:36] = 3` is decoded by
 mesh 2 as remote (`mag_ilink.v:6`, `awaddr[37:36] != my_mesh`) and forwarded over
 the ilink.
 
-**It does not reach the forwarder, though.** `mag.v:667-671` wires
-`mag_ilink`'s AXI slave side to `mv_*` — the **mover's** write channel, and only
-that. `S_AXI_MEM` becomes its own requester on MAG's converged path
-(`mag.v:339`, `:526-537`, slot `UP`) and nothing on that path decodes `[37:36]` for
+**It does not reach the forwarder, though.** `mag_ilink` takes writes from two
+sides only: its AXI slave side, which `mag.v:804-808` wires to `mvs_*` — the
+**mover's** write channel — and its `c_*` side, which `mag.v:798-802` wires to
+the control processor's one-beat stores whose `[37:36]` names another mesh
+(`mag.v:998`). `S_AXI_MEM` is neither: it becomes its own requester on MAG's converged path
+(`mag.v:375`, `:620-636`, slot `UP`) and nothing on that path decodes `[37:36]` for
 forwarding, so a host write carrying another mesh's id reaches `M_AXI_DRAM` with
 its full 40-bit address and lands in **local DRAM above 64 GB**, where nothing
 answers.
 
 The same asymmetry covers the aperture: `[39]` set on a host access does not
-reach the staging store either. Both are the mover's to issue. A host that wants
+reach the staging store either. Neither is the host's to issue. A host that wants
 bytes in another mesh writes them into that mesh's own window; a host that wants
 bytes in staging asks the control processor to move them.
 

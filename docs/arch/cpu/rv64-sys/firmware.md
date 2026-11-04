@@ -18,7 +18,7 @@ compute units itself. The host submits and polls; it never touches a unit.
 ## The tree
 
 ```
-software/firmware/
+software/kohakuaccel/firmware/
   build.py                       images -> build/fw/<image>.elf (+ .map .lst .size)
   tools/                         host drivers: memprobe, os, xfprobe, elf_run, two_node
   kohakuaccel/                   the framework

@@ -948,16 +948,16 @@ the shape §5.9 measures, and the citations below are to that tree.
 
 **AR split**: `s1_rln` captured at the take → the span add, the memory-beat
 round, the beats-left subtract and the `≤ AMB` compare, all combinational on
-the captured length → `src/kohakuaccel/sysnode/core/mag_dram_port.v:285`
+the captured length → `src/kohakuaccel/sysnode/core/mag_dram_port.v:294`
 `rd_push` → `:287` `rd_take` → `:819` `q_ready` →
-`src/kohakuaccel/sysnode/core/mag.v:931` `m_arready = q_ready && ar_r` (and
-`:930` for AW) → the endpoints: `mag.v:556` `mv_arready` →
-`src/kohakuaccel/sysnode/mover/mm_mover.v:523` the AR skid →
+`src/kohakuaccel/sysnode/core/mag.v:1130` `m_arready = q_ready && ar_r` (and
+`:930` for AW) → the endpoints: `mag.v:645` `mv_arready` →
+`src/kohakuaccel/sysnode/mover/mm_mover.v:562` the AR skid →
 `src/kohakuaccel/common/sb_skid.v:34` `out_en`, `:35` `hold_en`, `:64`
-`hold_data` (48 CE pins), `:61` `out_data`; `mag.v:624` `h_arvalid` cleared
-on `m_arready[UP]`; `mag.v:902` `cp_arready` into the node port;
-`src/kohakuaccel/sysnode/interlink/mag_ilink.v:286` `loc_aw`; `mag.v:911`
-`sel_h`/`sel_w`; and back inside the port, `mag_dram_port.v:305` `rd_gnt`,
+`hold_data` (48 CE pins), `:61` `out_data`; `mag.v:706` `h_arvalid` cleared
+on `m_arready[UP]`; `mag.v:1079` `cp_arready` into the node port;
+`src/kohakuaccel/sysnode/interlink/mag_ilink.v:376` `loc_aw`; `mag.v:1110`
+`sel_h`/`sel_w`; and back inside the port, `mag_dram_port.v:314` `rd_gnt`,
 `:315` the capture registers, the split's own counter, `rr_rd`, and the
 arbiter's request vector. In the tree the split's state is four registers
 (`:281`) loaded at the take from a per-requester beat count that is itself a
@@ -987,10 +987,10 @@ In the tree the compare is four 16-bit chunks combined in two levels
 (`:593`–`:598`), every E-level redirect is registered (`:177`, `:666`–`:675`)
 and `pc_next` selects between registers.
 
-**Xache trunk return counters**, `src/kohakuaxi/pxache/lane/kx_trunk.v:245`
-`pb`/`pg`, `:246` `pnext`, `:247`–`:253` the counter on `m_clk`; the
+**Xache trunk return counters**, `src/kohakuaxi/pxache/lane/kx_trunk.v:246`
+`pb`/`pg`, `:248` `pnext`, `:249`–`:255` the counter on `m_clk`; the
 increment/gray LUT that synthesis names `g_pc[k].pg[j]_i_1` is claimed by the
-sending die because `scripts/tcl/v8t3/60_constraints.tcl:116` lists
+sending die because `scripts/tcl/v8t3/60_constraints.tcl:230` lists
 `pb_reg*`/`pg_reg*`/`fok_m_reg*` only and `:127` gives the sender everything
 else. The three patterns at `:116` drop `_reg`.
 
@@ -1000,22 +1000,22 @@ pipe half's `rst` in `xilinx-fpga/xcvu13p/bd/kts_pipe_bd.v` were one
 pblock took it to the landing die; the endpoints are
 `src/kohakutransmit/carrier/kts_pipe.v:52` (the `f_q`/`b_q` reset branch)
 and `src/kohakutransmit/carrier/kts_cdc.v:124` `o_crd_valid`. In the tree
-each half inverts its own reset in a register of its own (`kts_pipe_bd.v:58`,
+each half inverts its own reset in a register of its own (`kts_pipe_bd.v:63`,
 `:81`, `:98`, `:106`).
 
 **Xache write engine → node W queue**, start
-`src/kohakuaxi/pxache/kx_pxache.v:574` `hv_q` (a chain head) → `:1537`
+`src/kohakuaxi/pxache/kx_pxache.v:574` `hv_q` (a chain head) → `:1658`
 `hq_w_v` → `src/kohakuaxi/xache/engine/kx_wr_engine.v:112` `src_wval` →
-`:127` `wr_beat` → `:130` `mw_wrdy` → `kx_pxache.v:1251` `lw_h` → `:1258`
+`:127` `wr_beat` → `:130` `mw_wrdy` → `kx_pxache.v:1356` `lw_h` → `:1387`
 `x_wready` → `src/kohakuaxi/xache/edge/kx_link.v:29` (`SAME`: `s_ready =
 m_ready`, a wire) → the node's `M_AXI_DRAM` wready →
-`mag_dram_port.v:475` the W queue's `rd_en`. The register belongs at
-`kx_pxache.v:1258`.
+`mag_dram_port.v:484` the W queue's `rd_en`. The register belongs at
+`kx_pxache.v:1387`.
 
 **Station 1 → node 1**, start `src/kohakuaccel/common/kohaku_aring.v:96`
 `wr_busy` (the full flag from the crossed read pointer) →
 `src/kohakuaccel/axi/station/sb_nsu.v:591` `m_rready` → the mesh's
-`S_AXI_MEM` rready → `mag.v:608` `m_rready[UP]` → `mag_dram_port.v:665`
+`S_AXI_MEM` rready → `mag.v:690` `m_rready[UP]` → `mag_dram_port.v:679`
 `r_take` → `:630` the R queue's head load. **JTAG → station 1**: the bridge's
 burst length → `src/kohakuaccel/axi/station/sb_nmu.v:335`–`:339` the credit
 and tag compares → `:343` `ar_go` → `:355` `req_push` → `:557` the request
@@ -1186,7 +1186,7 @@ carries (§5.11 measures it):
   unconditionally and every one of them is a copy per bank (`:141`, `:162`),
   as `wide_q` was (`:135`).
 - **Mover walkers' enables**. v8t5: `wa_ext`
-  (`src/kohakuaccel/sysnode/mover/mm_mover.v:445`–`:450`, from `wa_nxt`,
+  (`src/kohakuaccel/sysnode/mover/mm_mover.v:543`–`:450`, from `wa_nxt`,
   `wa_room` and a 40-bit compare) through the command FIFO's push into the
   walkers' `next`, ending on the CE and reset pins of `mx_tdesc`'s `psum`,
   `apsum`, `idx` (2,700 endpoints, 79 % route). In the tree each walker
@@ -1194,16 +1194,16 @@ carries (§5.11 measures it):
   `src/kohakuaccel/sysnode/mover/mx_tdesc.v`), so `next` pops `AW + 3` flops
   and the walker steps on its own count.
 - **Mover fault → PC**. `mm_mover` `stat_fault` →
-  `src/kohakuaccel/sysnode/sysnode.v:543` (`irq_summary`, an OR) →
-  `src/kohakuaccel/pe/rv64-sys/rv64_syscore.v:779` (`irq_ext`) → the core;
+  `src/kohakuaccel/sysnode/sysnode.v:548` (`irq_summary`, an OR) →
+  `src/kohakuaccel/pe/rv64-sys/rv64_syscore.v:907` (`irq_ext`) → the core;
   v8t5 took it straight into `src/kohakuaccel/pe/rv64-sys/core/rv64_csr.v:149`,
   `:160`, `:165` (`mip`, `pend_ext`, `irq_pending`) →
   `src/kohakuaccel/pe/rv64-sys/core/rv64_core.v:799` (`irq_raw`) →
   `trap_take` → the redirect. In the tree both interrupt lines land in a
   register at the core's edge first (`rv64_core.v:125`–`:129`).
-- **CPU → mover configuration**. `rv64_syscore.v:88` (`mv_cfg_en`, a
-  register) → `mm_mover.v:681` (`cfg_en`): one level and 3.5 ns of net in
-  v8t5; in the tree the write lands in `cfg_*_q` (`mm_mover.v:186`–`:194`)
+- **CPU → mover configuration**. `rv64_syscore.v:91` (`mv_cfg_en`, a
+  register) → `mm_mover.v:786` (`cfg_en`): one level and 3.5 ns of net in
+  v8t5; in the tree the write lands in `cfg_*_q` (`mm_mover.v:211`–`:194`)
   first, and `stat_busy` covers the cycle through `go`.
 - **DRAM port R queue**. v8t5 read the block-RAM `sync_fifo`
   (`src/kohakuaccel/sysnode/core/mag_dram_port.v:641`, first-word
@@ -1422,7 +1422,7 @@ The families as RTL:
   `src/kohakuaccel/pe/rv64-sys/core/rv64_csr.v:30` (`wr_en`), `:359`,
   `:405`: the write data and enable of every CSR from the E-stage decode,
   9–10 levels into 64-bit registers on every die.
-- **Walkers.** `src/kohakuaccel/sysnode/mover/mx_tdesc.v:142`–`:156`
+- **Walkers.** `src/kohakuaccel/sysnode/mover/mx_tdesc.v:133`–`:156`
   (`at_max`, the innermost-first carry), `:184`–`:199` (`psum`, `apsum` on
   the wrap), `:225`–`:234` (`w_addr = d_base + off_sum`, the sum of every
   dimension's partial sum), `:341`–`:342` (`q_e0v`, `step`): the count
@@ -1430,7 +1430,7 @@ The families as RTL:
   adder into the queue entry (12–13 levels). The queue took the mover's
   compare out of the enable; the walker's own chain and adder are the
   depth that is left.
-- **Mover burst counter.** `src/kohakuaccel/sysnode/mover/mm_mover.v:269`–`:271`
+- **Mover burst counter.** `src/kohakuaccel/sysnode/mover/mm_mover.v:280`–`:271`
   (`xb_cnt`, `ent_first`, `ent_last`: 16-bit compares), `:887`: the
   compares feed the address and enable registers and the command FIFO's
   write, 8–9 levels.
@@ -1442,7 +1442,7 @@ The families as RTL:
   reaches 252 `rleft` bits as their enable.
 - **Network port.** `src/kohakuaccel/pe/rv64-sys/core/rv64_nport.v:160`–`:171`
   (`cp_wdata`): the node reset synchroniser is the enable of 255 bits.
-- **Interlink.** `src/kohakuaccel/sysnode/interlink/mag_ilink.v:316` (`d_r`),
+- **Interlink.** `src/kohakuaccel/sysnode/interlink/mag_ilink.v:406` (`d_r`),
   `:543`–`:563` (`ltx_dat`), `src/kohakuaccel/sysnode/interlink/il_pkt_arb.v:146`
   (`sel_r`): the switch's select and the port's data register feed the
   link's transmit register.
@@ -1485,7 +1485,7 @@ That route sets each die's phase, which the dies' mutual asynchrony absorbs
 its root and the regions a path spans. Station 1 is 25,874 cells against
 10,900 on the other dies and shares regions X4Y5 and X5Y5 with die 1's
 CPU; the compute-half pblock knob (`CMP_COLS` in
-`scripts/tcl/v8t3/60_constraints.tcl:56`–`:68`, a narrower pblock per die
+`scripts/tcl/v8t3/60_constraints.tcl:102`–`:68`, a narrower pblock per die
 holding the node, its station and its Xache partition) is unset in this
 build.
 
@@ -1614,7 +1614,7 @@ The remaining families as RTL and place:
   and trunk rings between: the hedge's full-flag synchroniser
   (`src/kohakuaccel/common/kohaku_aring.v`, the `rg_s2` register) is one
   register on 3,661 endpoints across that gap, and the head decode
-  (`src/kohakuaxi/pxache/kx_pxache.v:575`) into the home's `word_q`
+  (`src/kohakuaxi/pxache/kx_pxache.v:651-653`) into the home's `word_q`
   (`src/kohakuaxi/xache/array/kx_carray.v:198`–`:201`) is 10 levels with
   2.7 ns of net and −0.27 ns of skew on die 1. Fan-out first (copies of the
   full flag per consumer group), then a box of the partition's own around
@@ -1625,11 +1625,11 @@ The remaining families as RTL and place:
   −0.885 (die 1), −0.634 (die 2), −0.623 (die 0). The cores are compact
   now; what is left is the cone.
 - **Walkers**, `d_count` → `psum` and `psum` → `q_e0`
-  (`src/kohakuaccel/sysnode/mover/mx_tdesc.v:142`–`:156`, `:225`–`:234`):
+  (`src/kohakuaccel/sysnode/mover/mx_tdesc.v:133`–`:156`, `:225`–`:234`):
   −0.615 and −0.856, the movers of dies 1 and 3 three region rows tall
   inside the boxes.
 - **Mover → DRAM port W queue**, `ewidth`, `w_kind` → the W-queue block RAM
-  data pins (`src/kohakuaccel/sysnode/core/mag_dram_port.v:476`): die 1's
+  data pins (`src/kohakuaccel/sysnode/core/mag_dram_port.v:485`): die 1's
   WNS, 5 levels, 3.2 ns of net.
 - **XDMA → station 1's NMU request ring**, 9 levels at 4.000 ns (−0.227,
   947): the NMU's accept logic before the ring write, a skid at the NMU.

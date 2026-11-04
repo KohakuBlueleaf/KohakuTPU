@@ -79,7 +79,7 @@ a shared page rather than in a per-class file:
 - **A compiler emits it unmodified** — `-march=rv32im` and nothing else. That
   is the property no custom-major extension in this machine has, and it is why
   standard encoding space is worth more than its size suggests
-  ([microarchitecture](microarchitecture.md#why-minimal-scalar-float-is-the-wrong-purchase)).
+  ([microarchitecture](microarchitecture.md#what-the-microarchitecture-deliberately-does-not-do)).
 
 On the SIMT PE, `RV32M` ships with the float tier rather than separately from
 it — the two share a per-wave pending flag and a retire slot — so a build

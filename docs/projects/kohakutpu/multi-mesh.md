@@ -208,7 +208,7 @@ contraction split costs no FP16 round trip.
 There are two peer paths and they are easy to confuse:
 
 - **The direct ACU-to-ACU wire does not exist.**
-  `src/kohakutpu/matmul/mx_cluster_cu.v:435` and `:455` leave `.peer_out()` open,
+  `src/kohakutpu/matmul/mx_cluster_cu.v:450` and `:470` leave `.peer_out()` open,
   so there is no cluster-to-cluster accumulator chain, at any distance. `FWD` has
   no command source either.
 - **The drain path does, and it reaches another mesh.** A `DRAIN` with `dbuf=2`

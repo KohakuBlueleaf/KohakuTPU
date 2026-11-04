@@ -5,8 +5,10 @@
     python scripts/py/doclines.py --show     # every citation, resolved
 
 A LINE NUMBER IS A CLAIM WITH A SHELF LIFE. `docpaths.py` proves the file is
-still there; nothing proved the line is. This cannot read the sentence, so it
-checks what is mechanical: the line is within the file, and it is not blank.
+still there; this proves the line is. It cannot read the sentence, so it checks
+what is mechanical: the cited path names exactly one tracked file (a bare
+`ops.py` fits only when one `ops.py` exists), and every line it and its
+follow-on numbers (`mag.v:455, 470-472`) name is within the file and not blank.
 
 The quiet half -- a line that still exists and now says something else -- only a
 reader catches, and `--show` prints the cited line so they can do it quickly.
@@ -15,6 +17,7 @@ reader catches, and `--show` prints the cited line so they can do it quickly.
 import argparse
 import pathlib
 import re
+import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -27,36 +30,53 @@ CITE = re.compile(
     r":(\d+)(?:\s*[-–]\s*(\d+))?(?![\d\w])"
 )
 
+#: The further lines of the same file after a citation: `mag.v:455, 470-472`,
+#: `forms.py:280-286, :290-295`, `mx_cluster_cu.v:161,643`.
+CONT = re.compile(r"(?:\s*,\s*:?\d+(?:\s*[-–]\s*\d+)?(?![\d\w.]))+")
+NUMS = re.compile(r"(\d+)(?:\s*[-–]\s*(\d+))?")
+
 #: A citation inside one of these is history, not a pointer at today's tree.
 SKIP_LINE = re.compile(
     r"\bused to\b|\bwas at\b|\bbefore the\b|\bretired\b", re.IGNORECASE
 )
 
 
-def sources() -> dict:
-    """Every file a doc might cite, by basename and by repo-relative path."""
-    out: dict = {}
-    for p in ROOT.rglob("*"):
-        if not p.is_file() or p.suffix.lstrip(".") not in {
-            "v",
-            "vh",
-            "py",
-            "tcl",
-            "xdc",
-            "sv",
-        }:
-            continue
-        parts = set(p.parts)
-        if parts & {"build", "node_modules", ".git", ".venv", "dist"}:
-            continue
-        rel = p.relative_to(ROOT).as_posix()
-        out[rel] = p
-        # A bare basename is ambiguous when two trees hold the same name; the
-        # live source wins, because that is what a doc means by it.
-        key = p.name
-        if key not in out or "attic" in out[key].parts or "reference" in out[key].parts:
-            out[key] = p
-    return out
+SUFFIXES = (".v", ".vh", ".py", ".tcl", ".xdc", ".sv")
+
+
+def sources() -> list:
+    """Every tracked file a doc might cite, as repo-relative paths."""
+    out = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True
+    ).stdout.decode()
+    return [p for p in out.split("\0") if p.endswith(SUFFIXES)]
+
+
+def resolver(tracked: list):
+    """`resolve(cited)` -> (path, None) or (None, why).
+
+    A cited path names the one tracked file it is a suffix of: `ops.py` when
+    only one `ops.py` exists, `dsl/ops.py` or the full path otherwise. A citation
+    that fits several files is a finding: the doc has to say which one.
+    """
+    exact = set(tracked)
+    by_name: dict = {}
+    for p in tracked:
+        by_name.setdefault(p.rsplit("/", 1)[-1], []).append(p)
+
+    def resolve(cited: str):
+        cited = cited.strip("./")
+        if cited in exact:
+            return cited, None
+        name = cited.rsplit("/", 1)[-1]
+        fits = [p for p in by_name.get(name, []) if ("/" + p).endswith("/" + cited)]
+        if len(fits) == 1:
+            return fits[0], None
+        if not fits:
+            return None, None  # docpaths.py owns "does the file exist"
+        return None, f"names {len(fits)} files ({', '.join(fits[:3])}...)"
+
+    return resolve
 
 
 def docs() -> list:
@@ -72,38 +92,45 @@ def main() -> int:
     ap.add_argument("--show", action="store_true", help="print every citation")
     args = ap.parse_args()
 
-    known = sources()
+    resolve = resolver(sources())
     lines_of: dict = {}
     n_cite = 0
     bad: list = []
 
     for doc in docs():
         text = doc.read_text(encoding="utf-8", errors="replace")
+        rel = doc.relative_to(ROOT).as_posix()
         for at, raw in enumerate(text.splitlines(), 1):
             if SKIP_LINE.search(raw):
                 continue
-            for full, base, lo, hi in CITE.findall(raw):
-                src = known.get(full.strip("./")) or known.get(base)
-                if src is None:
-                    continue  # docpaths.py owns "does the file exist"
-                n_cite += 1
+            for m in CITE.finditer(raw):
+                full = m.group(1)
+                path, why = resolve(full)
+                if why:
+                    n_cite += 1
+                    bad.append(f"{rel}:{at}: {full}:{m.group(3)} -> {why}")
+                    continue
+                if path is None:
+                    continue
+                src = ROOT / path
                 if src not in lines_of:
                     lines_of[src] = src.read_text(
                         encoding="utf-8", errors="replace"
                     ).splitlines()
                 body = lines_of[src]
-                want = int(hi or lo)
-                rel = doc.relative_to(ROOT).as_posix()
-                if want > len(body):
-                    bad.append(
-                        f"{rel}:{at}: {full}:{lo}"
-                        f"{'-' + hi if hi else ''} -> {src.name} has "
-                        f"{len(body)} lines"
-                    )
-                elif not body[int(lo) - 1].strip():
-                    bad.append(f"{rel}:{at}: {full}:{lo} -> that line is blank")
-                elif args.show:
-                    print(f"  {rel}:{at}  {full}:{lo}  {body[int(lo) - 1].strip()}")
+                spans = [(m.group(3), m.group(4))]
+                more = CONT.match(raw, m.end())
+                if more:
+                    spans += NUMS.findall(more.group(0))
+                for lo, hi in spans:
+                    n_cite += 1
+                    where = f"{rel}:{at}: {full}:{lo}{'-' + hi if hi else ''}"
+                    if int(hi or lo) > len(body):
+                        bad.append(f"{where} -> {src.name} has {len(body)} lines")
+                    elif not body[int(lo) - 1].strip():
+                        bad.append(f"{where} -> line {lo} is blank")
+                    elif args.show:
+                        print(f"  {where}  {body[int(lo) - 1].strip()}")
 
     for b in bad:
         print(f"  {b}")

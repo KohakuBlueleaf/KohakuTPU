@@ -10,7 +10,7 @@ tags:
 # Boards
 
 One OS image runs on every board; **a board description is the only thing
-that differs**. It lives in `software/os/boards/<name>.json`; `tools/boot.py`
+that differs**. It lives in `software/kohakuaccel/os/boards/<name>.json`; `tools/boot.py`
 turns it into one boot table per node ([boot.md](../design/boot.md#the-boot-table)).
 
 ## Format

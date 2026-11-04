@@ -1,3 +1,11 @@
+---
+title: Host memory model
+summary: The driver owns one shared DRAM arena and a staging arena per node.
+tags:
+  - spec
+  - stack
+  - l0
+---
 # Host memory model
 
 The driver owns one shared DRAM arena and a staging arena per node. The firmware

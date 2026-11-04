@@ -1,3 +1,11 @@
+---
+title: Direct predicate selection
+summary: A comparison used only by one select need not materialize a floating-point 0/1 mask.
+tags:
+  - spec
+  - stack
+  - l2
+---
 # Direct predicate selection
 
 A comparison used only by one select need not materialize a floating-point

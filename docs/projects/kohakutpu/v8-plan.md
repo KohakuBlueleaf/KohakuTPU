@@ -190,7 +190,7 @@ when one is written.
 
 ## 7. v8t2 — the ship shape
 
-`scripts/tcl/v8t2/` behind `multimesh_v8t2_bd.tcl` (build, verify, synthesise,
+`scripts/tcl/v8t3/` behind `multimesh_v8t2_bd.tcl` (build, verify, synthesise,
 analyse) and `v8t2_impl.tcl` (implement, report). It is the v8 memory path
 carried to the card as one image, with six decisions that differ from §1–§6:
 

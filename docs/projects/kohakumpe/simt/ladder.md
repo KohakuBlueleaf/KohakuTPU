@@ -597,7 +597,7 @@ G0–G3 rows above without accounting for it.
 | 16 | 16 | 29,961 | 3,568 | 8,834 | 35 | 178 | 170.9 MHz |
 
 **These are a starting point, not a result.** They predate the frequency work
-described in [microarchitecture](microarchitecture.md#every-fix-that-mattered-was-the-same-fix),
+described in [microarchitecture](microarchitecture.md#cones-start-at-flip-flops),
 which took the same shape from 182 to 394 MHz on fewer LUT, and they predate the
 arithmetic tier entirely. The 4- and 16-lane rows have never been re-swept, so
 they remain the only figures that exist for those widths.

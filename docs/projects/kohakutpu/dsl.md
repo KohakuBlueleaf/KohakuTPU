@@ -28,7 +28,7 @@ def silu(x=kt.In("R", 128), y=kt.Out("R", 128), *, rows=kt.auto(16, 8)):
 print(silu.trace({"x": ((512, 128), "f16")}).text)      # the L2 module
 ```
 
-Code: `software/language/kohakutpu/language/dsl/` (`kernel.py` ports and
+Code: `software/kohakutpu/language/kohakutpu/language/dsl/` (`kernel.py` ports and
 tracing, `ops.py` every statement, `values.py` buffers and register values,
 `expr.py` symbolic indices, `trace.py` the recorder). Compiling and running:
 `kohakutpu.stack.kernel.specialise(kernel, given)` (L2 -> L1, cached by L2
@@ -110,7 +110,7 @@ them in one of two ways, and both are written in `kt`:
 
 ## 5. Examples
 
-`software/language/kohakutpu/language/examples/dsl/` -- each with a numpy
+`software/kohakutpu/language/kohakutpu/language/examples/dsl/` -- each with a numpy
 reference (`EXAMPLES`, `REFERENCES`):
 
 | example | what | 1 node, cycles (rel err) | 2 nodes |

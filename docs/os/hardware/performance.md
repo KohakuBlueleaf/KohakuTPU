@@ -20,7 +20,7 @@ node exited 0 and no `FAIL` line appeared.
 **Silicon** — KohakuTPU v9t6 (`multimesh_v9t6`), four dies at 100 MHz,
 driven over JTAG by `run_card.py --jtag`; five loads in a row on one card,
 no reset between them. The JSON of each run is
-`software/os/tools/<run>.json`.
+`software/kohakuaccel/os/tools/<run>.json`.
 
 | run | board | image, command | flags | load / run (s) |
 |---|---|---|---|---|

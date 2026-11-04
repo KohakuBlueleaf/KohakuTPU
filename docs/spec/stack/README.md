@@ -1,3 +1,10 @@
+---
+title: The KohakuTPU software stack spec
+summary: What the stack, firmware and driver guarantee, layer by layer, as numbered clauses.
+tags:
+  - spec
+  - stack
+---
 # The KohakuTPU software stack spec
 
 What the stack, firmware and driver guarantee, layer by layer, as numbered

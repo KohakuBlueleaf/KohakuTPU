@@ -20,9 +20,9 @@ batches of work on named units ([l2-program.md](../../../spec/l2-program.md),
 §9 here); the L2 -> L1 compiler writes L1 text. No Python builds a kernel: a
 runner loads the file, binds buffers to addresses and runs.
 
-Code: `software/language/kohakutpu/language/` (`text/` the syntax and
+Code: `software/kohakutpu/language/kohakutpu/language/` (`text/` the syntax and
 modules, `numerics/`, `examples/`);
-`software/rust/crates/ktpu-l1/src/` (`lower/node/` for L1 bodies,
+`software/kohakutpu/compiler/crates/ktpu-l1/src/` (`lower/node/` for L1 bodies,
 `lower/image/` for V2 IMEM words, `layout/` for memory layouts),
 `ktpu-isa` for encodings, and `ktpu-l0` for packages.
 
@@ -169,7 +169,7 @@ flit remote, H1). What L1 cannot express, and why:
 | H6 | the mailbox sets `last` on every flit it sends |
 | H7 | the dispatch engine waits on no slot and no RX flit, so those steps drain it first |
 
-## 7. Examples (`software/language/kohakutpu/language/examples/`)
+## 7. Examples (`software/kohakutpu/language/kohakutpu/language/examples/`)
 
 Hand-written L1 (`l1/`), each a standalone file:
 
@@ -327,7 +327,7 @@ What sets the numbers:
 ## 9. L2 (`fn NAME.l2`)
 
 The structure is [l2-program.md](../../../spec/l2-program.md)'s; these are
-KohakuTPU's spaces and ops. Code: `software/rust/crates/ktpu-l2/src/`.
+KohakuTPU's spaces and ops. Code: `software/kohakutpu/compiler/crates/ktpu-l2/src/`.
 
 **Spaces**
 

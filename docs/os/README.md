@@ -9,7 +9,7 @@ tags:
 
 # KohakuAccel OS
 
-`software/os/` — an operating system for the **RV64 system core** of every
+`software/kohakuaccel/os/` — an operating system for the **RV64 system core** of every
 system node in a KohakuAccel machine. One image runs on every node; a
 **board description** says what differs between machines (how many nodes,
 which meshes they sit on, where their DRAM is, which compute units exist).

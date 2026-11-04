@@ -13,9 +13,9 @@ Every IR level has a text, and no level's text is Python. The levels share one
 statement grammar; what a statement means is its level's reader's, which a
 project writes for its own words (its unit ops, layouts).
 
-Code: `software/language/kohakutpu/language/text/` (the grammar `ktpu.lark`,
+Code: `software/kohakutpu/language/kohakutpu/language/text/` (the grammar `ktpu.lark`,
 `syntax.py`, `reader.py`, `meta.py`, `module.py`). The L1 reader is in the
-Rust stack (`software/rust/crates/ktpu-l1/src/lower/`).
+Rust stack (`software/kohakutpu/compiler/crates/ktpu-l1/src/lower/`).
 
 ## 1. Statements
 
@@ -113,7 +113,7 @@ The grammar is LALR(1) with a contextual lexer (lark), the indentation a
 post-lexer. `ktpu.lark` is the grammar's one definition: a port to another
 parser (pest behind pyo3 and wasm; tree-sitter for editors) is written from it
 and is conformant when it reads the examples of
-`software/language/kohakutpu/language/examples/` to the same statements.
+`software/kohakutpu/language/kohakutpu/language/examples/` to the same statements.
 
 ## 4. Gates
 

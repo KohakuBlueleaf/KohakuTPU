@@ -1207,7 +1207,7 @@ that forces two parameters outright and constrains a third:
 | `AW` | **43** | `mesh_{id}` MEM sits at `(id+1) << 40` |
 | control windows | below 4 GB | `M_AXI_LITE` is 32-bit |
 | `FW` | **≥ 256** | `sb_nsu` supports `SDW ≤ FW` only, enforced by the elaboration guard at
-`src/kohakuaccel/axi/station/sb_nsu.v:106`, and the widest slave is `mesh_{id}/S_AXI_MEM` at 256 bits |
+`src/kohakuaccel/axi/station/sb_nsu.v:116`, and the widest slave is `mesh_{id}/S_AXI_MEM` at 256 bits |
 
 `S_AXI_MEM` is a 256-bit slave (`ktpu_ship_*.v`, `DW=256`); only the XDMA
 master is 512, and a master wider than the flit is the *supported*

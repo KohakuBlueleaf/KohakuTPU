@@ -23,7 +23,7 @@ refuses any package carrying relocation entries (`BAD_RELOC`, detail 0, value
 the relocation count). One compile therefore serves every call of a kernel at
 a shape; the relocation table is host metadata, not firmware work.
 
-The writer is `software/rust/crates/ktpu-l0/src/` (`format/`, `build/`); the reader that runs on the node is
+The writer is `software/kohakuaccel/compiler/crates/ka-package/src/` (`format/`, `build/`); the reader that runs on the node is
 `software/kohakuaccel/firmware/package/interp.c`, with the offsets in
 `software/kohakuaccel/firmware/include/ka/package/format.h`; a reference
 interpreter for package construction is
@@ -421,7 +421,7 @@ firmware image carries (`software/kohakuaccel/firmware/include/ka/unit/unit.h`):
 a name, an optional credit bound, how to read a completion's code (§4.2 is the
 default) and how to describe a fault. A type with no class gets the framework's
 generic reading. KohakuTPU registers `MG` and `VC`
-(`software/firmware/kohakutpu/units/`).
+(`software/kohakutpu/firmware/units/`).
 
 ## 6. Failure
 

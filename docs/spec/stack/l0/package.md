@@ -1,3 +1,11 @@
+---
+title: L0 package wire format
+summary: The bytes a compile stores and a node's dispatcher runs.
+tags:
+  - spec
+  - stack
+  - l0
+---
 # L0 package wire format
 
 The bytes a compile stores and a node's dispatcher runs: a 96-byte header, then
@@ -71,7 +79,7 @@ kernel held a `goto` or a field patch, so no package kept a `JUMP` or a
 
 ## Reading the package
 
-- **L0.PKG.028** `silicon` The firmware reads the package at the unit-global address the RUN entry names. A package outside the cacheable range (some bit of `[39:28]` set, bits 39 and 38 clear), such as one in a node's staging store (bit 39 set), is read through the processor's uncached alias (bit `node.uncached_bit` [38]). (code: software/kohakuaccel/firmware/package/interp.c:51-60,89-93,1484; software/kohakuaccel/firmware/include/ka/hal/mem.h:8-17; evidence: every card package sat in the queue heap in node 0's staging store (card.py:211-213); LOG:89 `local 0` ([debug/firmware.md](../debug/firmware.md) `LOG`, the v9t6 card log))
+- **L0.PKG.028** `silicon` The firmware reads the package at the unit-global address the RUN entry names. A package outside the cacheable range (some bit of `[39:28]` set, bits 39 and 38 clear), such as one in a node's staging store (bit 39 set), is read through the processor's uncached alias (bit `node.uncached_bit` [38]). (code: software/kohakuaccel/firmware/package/interp.c:51-60,89-93,1484; software/kohakuaccel/firmware/include/ka/hal/mem.h:8-17; evidence: every card package sat in the queue heap in node 0's staging store (card/__init__.py:285-288); LOG:89 `local 0` ([debug/firmware.md](../debug/firmware.md) `LOG`, the v9t6 card log))
 - **L0.PKG.036** `unproven` A package in the cacheable range is read through the D-cache. (code: software/kohakuaccel/firmware/package/interp.c:51-60,89-93,1484-1489; evidence: no card or test package sits in the cacheable range)
 - **L0.PKG.029** `unproven` A cached package has its D-cache invalidated before the first read; one of at most `fw.package.copy_bytes` bytes whose units do not fetch (no fetch port, a relocation present, or boot flag `NOFETCH`) is copied whole into the scratchpad and read from there. The size is the image's build knob `KA_PKG_COPY_BYTES` (software/kohakutpu/firmware/build.py `DEFINES`): 0 in the dispatcher images, which compiles the copy out, so every package is read where it lies. (code: software/kohakuaccel/firmware/package/interp.c (`KA_PKG_COPY_BYTES`, `LOCAL`, `localise`); software/kohakutpu/firmware/build.py (`DEFINES`); scripts/py/machine/table.py (`fw_package_copy_bytes`))
 

@@ -9,10 +9,10 @@ tags:
 
 # Building and running
 
-Everything lives under `software/os/`:
+Everything lives under `software/kohakuaccel/os/`:
 
 ```
-software/os/
+software/kohakuaccel/os/
   machine/   L0 (M)                     include/kos/   the ABI headers
   kernel/    L1 (S)                     lib/           string, formatting (both sides)
   user/      libkos (U)                 boards/        board descriptions

@@ -1,3 +1,11 @@
+---
+title: L0 binding and relocation
+summary: How the addresses a package's words carry are chosen.
+tags:
+  - spec
+  - stack
+  - l0
+---
 # L0 binding and relocation
 
 How the addresses a package's words carry are chosen: the buffer table and the

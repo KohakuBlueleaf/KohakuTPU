@@ -1,3 +1,11 @@
+---
+title: Repeated forward inference
+summary: "`kohakutpu.application.ktpugrad.Inference` wraps a forward callable returning one tinygrad tensor."
+tags:
+  - projects
+  - kohakutpu
+  - runtime
+---
 # Repeated forward inference
 
 `kohakutpu.application.ktpugrad.Inference` wraps a forward callable returning one

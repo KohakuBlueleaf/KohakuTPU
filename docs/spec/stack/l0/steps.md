@@ -1,3 +1,11 @@
+---
+title: L0 steps
+summary: What a node does with each step.
+tags:
+  - spec
+  - stack
+  - l0
+---
 # L0 steps
 
 What a node does with each step: the opcodes, their flags, the per-unit counts
@@ -57,7 +65,7 @@ payloads are appended after dispatched payloads so PATCH indices stay stable.
 ## Credit and completions
 
 - **L0.STEP.007** `silicon` An instruction word goes to unit `u` only while `u` holds fewer than its credit in flight. In a lowered package this is a `WAIT` on `u`'s retirement counter for `sent + n - credit` before the words that would exceed it. (code: software/kohakuaccel/compiler/crates/ka-package/src/engine.rs; software/kohakuaccel/firmware/dispatch/engine.c:182-185,253; doc: docs/spec/package-format.md:228-237; evidence: every card package's fetch runs were credit-bounded so)
-- **L0.STEP.008** `silicon` With boot `cq_depth` 0 there is no node-wide bound on outstanding completions (the firmware's cap is `0xFFFFFFFF`). (code: software/kohakuaccel/firmware/package/interp.c:1479-1480; software/kohakuaccel/driver/kohakuaccel/driver/node/boot/args.py:38; doc: docs/spec/package-format.md:233-236; evidence: the card booted with `cq_depth` 0 (card.py:219-221))
+- **L0.STEP.008** `silicon` With boot `cq_depth` 0 there is no node-wide bound on outstanding completions (the firmware's cap is `0xFFFFFFFF`). (code: software/kohakuaccel/firmware/package/interp.c:1479-1480; software/kohakuaccel/driver/kohakuaccel/driver/node/boot/args.py:38; doc: docs/spec/package-format.md:233-236; evidence: the card booted with `cq_depth` 0 (card/__init__.py:300-306))
 - **L0.STEP.009** `unproven` With boot `cq_depth` nonzero the node keeps at most `cq_depth - ack_reserve` completions outstanding (at least 1), and every unit's credit is at most that. (code: software/kohakuaccel/firmware/package/interp.c:1505-1507; software/kohakuaccel/firmware/dispatch/engine.c:58-61; doc: docs/spec/package-format.md:233-237,248-253)
 - **L0.STEP.010** `unproven` On the firmware path each completion is read by the unit's class; the generic reading is: `SIG_FAULT` (4) fails the package with `UNIT_FAULT` (0x20), detail the unit's index, value the completion word; `SIG_DATA_RECEIVED` (3) is an acknowledgement, counted as received and retiring nothing; every other code is received and retires one instruction in flight. A completion from a coordinate not in the unit table is counted as a stray; a fault from one fails the package with detail `0xFFFF`. (code: software/kohakuaccel/firmware/dispatch/engine.c:86-151; software/kohakuaccel/firmware/unit/registry.c:8-18; doc: docs/spec/package-format.md:239-246)
 - **L0.STEP.011** `unproven` `ack_reserve` (header word 4) is the most acknowledgements any round awaits beyond the words it dispatched; the writer keeps the maximum asked by `reserve_acks`, and no stack path asks. (code: software/kohakuaccel/compiler/crates/ka-package/src/build/mod.rs; doc: docs/spec/package-format.md:248-253)

@@ -1,3 +1,10 @@
+---
+title: Offline template verification
+summary: Offline proof that every in-box binding of a template kernel is legal, and the parameter confinement it rests on.
+tags:
+  - spec
+  - stack
+---
 # Offline template verification
 
 ## Verification domain

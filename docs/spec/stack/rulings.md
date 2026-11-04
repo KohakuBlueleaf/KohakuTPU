@@ -1,3 +1,10 @@
+---
+title: Rulings
+summary: Decisions on every disagreement the audit found between the code, the docs and the hardware, ruled 2026-10-22 (the owner accepted each recommendation).
+tags:
+  - spec
+  - stack
+---
 # Rulings
 
 Decisions on every disagreement the audit found between the code, the docs
@@ -172,10 +179,10 @@ Finally `sru_sum2e8` converts this value once to E8M15: retain 16 significant
 bits, increment on guard AND (sticky OR retained low bit), propagate carry into
 exponent, overflow to signed infinity, flush rounded exponent <=0 to signed
 zero; an exactly zero accumulator yields +0. Specials take precedence.
-This is read from `src/kohakutpu/sru/stream/sru_red.v:104-136` (maximum),
-`:147-151` (element truncation/sign), `:159-189` (signed accumulation and
+This is read from `src/kohakutpu/sru/stream/sru_red.v:104-146` (maximum),
+`:157-161` (element truncation/sign), `:169-199` (signed accumulation and
 arithmetic growth shift), and
-`src/kohakutpu/sru/stream/sru_sum2e8.v:44-47,81-126` (magnitude, RNE and packing).
+`src/kohakutpu/sru/stream/sru_sum2e8.v:44-47,85-134` (magnitude, RNE and packing).
 See [the numerical error budget](numerics/formats.md#sru-row-sum-error-budget).
 
 ### Hand-computed precision witnesses

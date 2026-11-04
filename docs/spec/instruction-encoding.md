@@ -353,7 +353,7 @@ The cost is that **a reader must rejoin them**. Taking `[251:218]` alone drops
 the aperture bit and the mesh id, so a staging or a remote address decodes as
 local DRAM at the same offset: a legal read of the wrong window, not a fault.
 The Rust cluster encoder (`ktpu-isa/src/unit/cluster.rs`) splits the address, and
-`mx_cluster_cu.v:268` is `{inst_flit[68 -: 6], inst_flit[251 -: 34]}`.
+`matmul/mx_cluster_cu.v:281` is `{inst_flit[68 -: 6], inst_flit[251 -: 34]}`.
 
 ### 8.2 `vec_cu` — vector core
 

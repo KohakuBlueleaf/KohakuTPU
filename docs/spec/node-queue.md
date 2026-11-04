@@ -23,7 +23,7 @@ interrupt.
 
 The firmware side is `software/kohakuaccel/firmware/queue/service.c` with the
 layout in `software/kohakuaccel/firmware/include/ka/queue/layout.h`; the host
-side is `software/driver/kohakuaccel/driver/node/queue/` (`NodeQueue`), with
+side is `software/kohakuaccel/driver/kohakuaccel/driver/node/queue/` (`NodeQueue`), with
 the layout in `layout.py`.
 
 ## 1. Addresses

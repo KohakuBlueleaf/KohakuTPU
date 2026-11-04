@@ -104,6 +104,6 @@ Units resolve through the package unit table (`ktpu-l0::units`).
 
 Per package: header ~430 node cycles, ~215 per unit to bind, ~150 to barrier.
 Per completion ~50 cycles of firmware, serial across units: a unit whose words
-retire faster than that waits on the node (`software/firmware/kohakuaccel/
+retire faster than that waits on the node (`software/kohakuaccel/firmware/
 dispatch/engine.c`, measured with RV_PC_PROF). A MOVER step's wait is bounded by
 progress (a move finishing), not by the step.

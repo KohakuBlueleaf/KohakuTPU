@@ -199,8 +199,8 @@ Stated once, so a reader is not left inferring absence from silence:
 
 | Not present | Why, and where the reasoning is |
 |---|---|
-| divide and remainder | a fixed ~35-cycle structure with its own subtractor, bought for an instruction a controller issues approximately never — [microarchitecture](microarchitecture.md#why-div-and-rem-are-a-different-answer) |
-| scalar floating point | fifteen cycles into a three-source in-order forwarding network, and it would not be `F`, so no compiler would emit it — [microarchitecture](microarchitecture.md#why-minimal-scalar-float-is-the-wrong-purchase) |
+| divide and remainder | a fixed ~35-cycle structure with its own subtractor, bought for an instruction a controller issues approximately never — [microarchitecture](microarchitecture.md#what-the-microarchitecture-deliberately-does-not-do) |
+| scalar floating point | fifteen cycles into a three-source in-order forwarding network, and it would not be `F`, so no compiler would emit it — [microarchitecture](microarchitecture.md#what-the-microarchitecture-deliberately-does-not-do) |
 | CSRs, privilege, interrupts | the unit halts and reports; there is no supervisor to trap to. A core that boots once and runs forever is a different processor — [rv64-sys](../rv64-sys/README.md) |
 | an MMU | the PE's addresses are its windows plus a DRAM aperture fixed at elaboration |
 | cache coherence | removed by construction: nothing cached is externally written |
