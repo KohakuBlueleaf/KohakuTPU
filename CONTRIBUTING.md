@@ -83,9 +83,9 @@ silently because nothing looked. All four are in `check.py`'s `fast` list.
 
 | gate | what it proves | what it cannot |
 |---|---|---|
-| `python scripts/py/docpaths.py` | every repo-rooted path a doc names still exists — prose, `code` spans and Vue string literals alike — and so does the target of every relative markdown link | anything about a fragment: it strips `#heading` before resolving |
+| `python scripts/py/docpaths.py` | every repo-rooted path a doc names still exists — prose, `code` spans and Vue string literals alike — and so does the target of every relative markdown link; a path behind a revision (`af7c1bb:software/...`) exists in that revision | anything about a fragment: it strips `#heading` before resolving |
 | `python scripts/py/docanchors.py` | a `page.md#heading` link lands on a heading that page actually defines | — |
-| `python scripts/py/doclines.py` | a `file.v:123` citation names a file that exists and a line that exists and is not blank | **whether that line still says what the doc claims.** `--show` prints the cited line so a person can check |
+| `python scripts/py/doclines.py` | a `file.v:123` citation (RTL, Python, C, Rust, `.ktpu`, other docs, ...) names exactly one tracked file and a line that exists and is not blank; `af7c1bb:run.py:90` is checked against that revision's files | **whether that line still says what the doc claims.** `--show` prints the cited line so a person can check |
 | `python scripts/py/specparams.py` | `docs/spec/parameters.md` against the `parameter` declarations in the RTL, reporting MISSING, EXTRA and DEFAULT separately | a row whose Default cell carries prose rather than a value |
 
 Each takes paths, so `python scripts/py/docpaths.py README.md` checks one file.

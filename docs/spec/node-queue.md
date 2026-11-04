@@ -74,7 +74,7 @@ region (§3) before the firmware reports ready.
 
 ## 3. The queue region
 
-The host allocates it, page-aligned, in the node's DRAM, writes the header
+The host allocates it from the node's staging store (§1, §7), writes the header
 (§3.1) and zeroes every index **before** booting the firmware. The firmware
 resumes the indices it finds, so a restarted firmware continues a queue the host
 still holds.
@@ -191,7 +191,7 @@ error; its tag alone does not establish success.
 | `0x13` | `BAD_CHECKSUM` | value: the checksum computed |
 | `0x14` | `BAD_STEP` | detail: the opcode |
 | `0x15` | `TOO_LARGE` | more units or buffers than the firmware holds (32, 64) |
-| `0x16` | `BAD_RELOC` | detail: the entry |
+| `0x16` | `BAD_RELOC` | the package carries relocations; detail 0, value: the relocation count |
 | `0x17` | `BAD_UNIT` | a step names a unit the table lacks |
 | `0x18` | `BAD_LAYOUT` | a section or a payload index past the package |
 | `0x20` | `UNIT_FAULT` | detail: the unit's index; value: its completion word |

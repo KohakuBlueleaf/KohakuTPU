@@ -17,6 +17,7 @@ that gets the check ignored.
 import argparse
 import pathlib
 import re
+import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -57,6 +58,11 @@ DELIBERATE = re.compile(
 )
 
 
+#: A revision in front of a path, `af7c1bb:software/...` or `53bf715d~1:...`:
+#: the path names a file of that revision, not of today's tree.
+REV = re.compile(r"(?<![\w/.-])([0-9a-f]{7,40}(?:~\d+)?):$")
+
+
 # `src/examples/NAME/NAME_cu.v` is a shape to fill in, not a file. An all-caps
 # or angle-bracketed segment is the tree's way of writing one.
 PLACEHOLDER = re.compile(r"(?:^|/)(?:[A-Z][A-Z0-9_]*|<[^/>]+>)(?:$|[/_.])")
@@ -66,8 +72,9 @@ def cited(path):
     """(line, cite, resolved) for every citation in one file.
 
     `cite` is what the doc says and `resolved` what it means: a repo-rooted
-    path resolves against ROOT, a relative markdown link against the file's own
-    directory. Lines that deliberately name a dead path are skipped.
+    path resolves against ROOT, a revision-prefixed one to `(rev, path)`, a
+    relative markdown link against the file's own directory. Lines that
+    deliberately name a dead path are skipped.
     """
     out = []
     here = path.parent
@@ -78,6 +85,11 @@ def cited(path):
         for m in CITE.finditer(line):
             if PLACEHOLDER.search(m.group("p")):
                 continue
+            past = REV.search(line, 0, m.start())
+            if past:
+                rev = past.group(1)
+                out.append((i, f"{rev}:{m.group('p')}", (rev, m.group("p"))))
+                continue
             out.append((i, m.group("p"), ROOT / m.group("p")))
         if path.suffix != ".md":
             continue
@@ -87,6 +99,20 @@ def cited(path):
                 continue
             out.append((i, t, here / t))
     return out
+
+
+def exists(target) -> bool:
+    """A path in today's tree, or `(rev, path)` in that revision."""
+    if isinstance(target, pathlib.Path):
+        return target.exists()
+    rev, path = target
+    got = subprocess.run(
+        ["git", "cat-file", "-e", f"{rev}:{path.rstrip('/')}"],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+    return got.returncode == 0
 
 
 def main():
@@ -115,7 +141,7 @@ def main():
             n_cites += 1
             if args.list:
                 print(f"{f.relative_to(ROOT).as_posix()}:{line}: {cite}")
-            if not target.exists():
+            if not exists(target):
                 bad.append((f.relative_to(ROOT).as_posix(), line, cite))
 
     for rel, line, cite in bad:

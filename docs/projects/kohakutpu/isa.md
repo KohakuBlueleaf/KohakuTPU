@@ -160,11 +160,20 @@ Three fields on it are worth naming:
 - **`peers`** names up to three other clusters reading the same bytes at the same
   moment; the lowest node index issues the descriptor and the rest issue nothing,
   so memory reads the operand once and runs the quantiser over it once however
-  many clusters want it. **It is decoded and the driver does not set it.** A
-  follower cannot tell *which* fill an arriving entry belongs to, so a shared A
-  entry reaching a cluster still executing its `FILL B` lands in the B side of
-  L1. Measured at the 256-cube it raised the rate and destroyed the answer
-  ([results.md](results.md) §8.3). It needs a rendezvous, which is not built.
+  many clusters want it. A follower cannot tell *which* fill an arriving entry
+  belongs to, so the driver makes the node the rendezvous: each follower is
+  sent its stream through the shared `FILL`, the node waits until the follower
+  has retired everything before that `FILL`, and only then sends the leader's
+  step that issues it. The L2 lowering sets `peers` on every `share=` fill:
+  `port` groups the clusters behind one memory port, `all` every instance,
+  `cross` one cluster from each port; the group's leader is its first cluster
+  in coordinate order. In a body spread over several nodes the `share` pass
+  marks a fill `share=cross` when its view does not name the cluster `par`'s
+  variable.
+  **A shared B `FILL` holds at most `mg.shared_b_max` [64] entries**: on the
+  Verilated card a follower's B entries past that come back wrong. The `share`
+  pass leaves a larger B fill unshared, and the lowering refuses an explicit
+  `share=` on one (L2.MG.006).
 
 **Capacity wraps silently.** The write address truncates, so `n` beyond L1's
 capacity overwrites entries from 0 with no error and the sweep then reads

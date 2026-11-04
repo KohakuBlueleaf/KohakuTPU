@@ -20,9 +20,9 @@ Clause format, ids and evidence tags: `../README.md`.
 
 Evidence on this page:
 
-- `silicon`: the construct is unchanged since the 2026-10-21 card run (the
-  tree at `af7c1bb`; `git diff af7c1bb` touches only `xrot`, `unpack lane=`
-  and the statistic pack / store in `dsl/ops.py`) and the generators of the
+- `silicon`: the construct's code is the same as in the tree of the
+  2026-10-21 card run, `af7c1bb` (a clause's evidence says where it
+  compared), and the generators of the
   455 card kernels at `af7c1bb` (`software/kohakutpu/application/kohakutpu/application/kernels/{vector,convert,matmul,transpose}.py`,
   every one built by `Kernel.build` with a `TensorSpec` for every port)
   used it, their L1 showing the
@@ -73,7 +73,7 @@ row).
 
 ## 2. Caching
 
-- **DSL.CACHE.001** `silicon` A kernel caches its traces by (every port's `TensorSpec`, the constants sorted by their text, the `Machine`): the same key returns the same `Traced` object without running the body. (code: dsl/kernel.py:304-315; evidence: host path of the LeNet run: `run.execute` re-launches a generated kernel per call and its `_trace` looks the key up first; kernel.py unchanged since af7c1bb)
+- **DSL.CACHE.001** `unproven` A kernel caches its traces by (every port's `TensorSpec`, each constant's structural key (`_const_key`) sorted by name, the `Machine`, the active mutant): the same key returns the same `Traced` object without running the body while it is among the last `TRACES_KEPT` keys. A kernel whose body is a plain function (its code, closure and default values plain) shares its traces with every kernel of the same body, name and port roles. (code: dsl/kernel.py:288-356; evidence: the LeNet run's `run.execute` looked each generated kernel up first, through af7c1bb:dsl/kernel.py:259-301, which keyed the raw sorted constants and kept every trace)
 - **DSL.CACHE.002** `silicon` Across `Kernel` objects, a trace is shared by identity: (the function's code object, the kernel name, its closure cell contents, its defaults and keyword defaults, the port roles) plus the specialisation key, used only when every one of those values and every constant is plain (int, float, str, bool, bytes, None, or tuples / frozensets of them). A body closing over any other object (an expression tree, an array) is traced anew per `Kernel`. (code: dsl/kernel.py:288-302, :316-326, :410-424; evidence: the rows generator over an expression tree)
 - **DSL.CACHE.003** `silicon` The Python seam holds compiled kernels in memory (`COMPILED_KEPT` 1024 entries, least recently used dropped), keyed by source, machine JSON and compilation options. Rust owns stage caches keyed by input, machine and stage version. (code: software/kohakutpu/compiler/kohakutpu/stack/kernel.py; software/kohakuaccel/compiler/crates/ka-cache/src/lib.rs; evidence: host compilation path; offline memo and stage-cache witnesses)
 - **DSL.CACHE.004** `unproven` `KTPU_COMPILE_CACHE` names another directory for the on-disk compile cache; empty turns it off. (code: software/kohakutpu/compiler/crates/ktpu/src/lib.rs; evidence: the LeNet run set neither)
@@ -226,8 +226,8 @@ cover vc = 1..4 (API.ROW.007, RUL.016).
 ## 11. L2 text
 
 - **DSL.TEXT.001** `silicon` The module prints `target {machine.target}`, a blank line, `fn NAME.l2(p: SPEC, ...)` with the ports in port order, then the body indented four spaces a level: the scratch buffers first, then the recorded statements; the text ends with a newline. (code: trace.py:119-126, :133-148; inventory L-004; evidence: every card kernel)
-- **DSL.TEXT.002** `silicon` A statement prints `[TARGET = ]OP ARGS`: operands joined by `, `, except `par`, `for`, `when`, `if` and any statement with `->` or `<-`, whose operands join by spaces; keyword arguments follow, space-separated, as `k=v`. (code: trace.py:34-45; evidence: host path of every card kernel's trace, read back by the L2 reader (`docs/spec/stack/l1/program.md` L1.MOD.004); trace.py unchanged since af7c1bb)
-- **DSL.TEXT.003** `silicon` A value statement carries its type as an annotation `: TYPE`; in each block annotations align two columns past the longest annotated statement head, at most column 48; a head at or past that column is followed by two spaces then `: TYPE`. (code: trace.py:17, :133-148; evidence: host path of every card kernel's trace; trace.py unchanged since af7c1bb)
+- **DSL.TEXT.002** `silicon` A statement prints `[TARGET = ]OP ARGS`: operands joined by `, `, except `par`, `for`, `when`, `if` and any statement with `->` or `<-`, whose operands join by spaces; keyword arguments follow, space-separated, as `k=v`. (code: trace.py:34-45; evidence: host path of every card kernel's trace, read back by the L2 reader (`docs/spec/stack/l1/program.md` L1.MOD.004); `Stmt.head` is af7c1bb:dsl/trace.py:32-43's line for line)
+- **DSL.TEXT.003** `silicon` A value statement carries its type as an annotation `: TYPE`; in each block annotations align two columns past the longest annotated statement head, at most column 48; a head at or past that column is followed by two spaces then `: TYPE`. (code: trace.py:17, :133-148; evidence: host path of every card kernel's trace; `ANNOT_COL` and the block alignment are af7c1bb:dsl/trace.py:17, :127-142's line for line)
 - **DSL.TEXT.004** `silicon` A number operand prints as Python's `repr` of the float (`-1.4426950408889634`, `5.0`). (code: ops.py:590-591; evidence: number operands of the card kernels reach the L1 as `seti s0 = 0.95` (138 / 70))
 - **DSL.TEXT.005** `silicon` Each statement records the author's `file:line` (the innermost frame outside the DSL package and `contextlib`, so a `when` / `if sticky` names the `with` line) for the L2 -> DSL source map. (code: trace.py:29-30, :101; errors.py `FOREIGN`, `_inside`, `at_caller`; evidence: host path of every card kernel's trace (`t.emit`))
 - **DSL.TEXT.006** `unproven` Every `DSLError` message ends `, at FILE:LINE`. (code: errors.py:40-53; ops.py call sites; evidence: error path, no card or RTL run checks a message)
