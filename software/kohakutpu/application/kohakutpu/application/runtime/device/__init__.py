@@ -229,6 +229,7 @@ class Device(Kernels, Allocation, Submission, Replay):
         self.recording = False
         self._record_pins: list = []
         self._record_runs: list = []
+        self._record_accesses: list = []
         self._record_templates: list = []
         self.runs: list = []
         #: Runs submitted and not yet collected, oldest first (`submit`).
@@ -270,9 +271,8 @@ class Device(Kernels, Allocation, Submission, Replay):
         self.tables: dict = {}
         #: Their spans, which no run writes.
         self.constants: set = set()
-        #: Runs on two nodes overlap when they share no written span. Off: on
-        #: v9t6 overlapping nodes can hang or corrupt a run (ISSUES 31).
-        self.node_overlap = ENV.get("KTPU_NODE_OVERLAP", "0") == "1"
+        #: Independent queue access sets overlap; scratch windows are writes.
+        self.node_overlap = ENV.get("KTPU_NODE_OVERLAP", "1") == "1"
         for node, queue in getattr(self.card, "queues", {}).items():
             queue.spill = partial(self._spill, node)
 

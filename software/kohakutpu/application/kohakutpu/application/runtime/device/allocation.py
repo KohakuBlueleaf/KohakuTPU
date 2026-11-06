@@ -131,14 +131,17 @@ class Allocation(Parts):
                 self.card.drop_spilled()
                 return alloc()
 
-    def _retain(self, addresses) -> list:
+    def _retain(self, addresses, *, pinned=False) -> list:
         held = []
         try:
             for addr in set(addresses):
-                entry, _ = self.mmu.resolve(addr, owner=True)
+                entry, _ = self.mmu.resolve(addr, owner=not pinned)
                 arena, at = entry.arena, entry.physical
                 if (arena, at) not in held:
-                    arena.retain(at)
+                    if pinned:
+                        arena.retain_pinned(at)
+                    else:
+                        arena.retain(at)
                     held.append((arena, at))
         except BaseException:
             for arena, at in held:

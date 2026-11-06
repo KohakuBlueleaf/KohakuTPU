@@ -115,6 +115,21 @@ pub(crate) struct LaunchRecipe {
     epoch: Option<(Arc<AtomicU64>, u64)>,
 }
 
+impl LaunchRecipe {
+    pub(crate) fn slot_leases(&self) -> std::collections::BTreeSet<(u64, u64)> {
+        self.template
+            .package
+            .steps
+            .iter()
+            .filter_map(|step| match step.op {
+                Op::Ring => Some((step.unit, step.count)),
+                Op::WaitSlot => Some((u64::from(self.mesh), step.unit)),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
 #[pymethods]
 impl LaunchRecipe {
     #[new]

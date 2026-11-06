@@ -1097,13 +1097,15 @@ fn row_sequence(
             share.role = ShardRole::Compute;
         }
     }
-    kernel.graph.name = crate::pyrepr::name(
-        "row_sequence",
-        vec![
-            crate::pyrepr::Py::str(&kernel.graph.name),
-            crate::pyrepr::Py::ints(request.nodes.ids()),
-        ],
-    );
+    if request.nodes.ids() != [0] {
+        kernel.graph.name = crate::pyrepr::name(
+            "row_sequence",
+            vec![
+                crate::pyrepr::Py::str(&kernel.graph.name),
+                crate::pyrepr::Py::ints(request.nodes.ids()),
+            ],
+        );
+    }
     let option = SplitOption {
         id: "rows".into(),
         axis: SplitAxis::Rows,
@@ -1220,7 +1222,7 @@ fn split_row_chain(
         names.insert(original.name.clone(), composed.name.clone());
     }
     rename_regions(&mut second, &names);
-    if !keep {
+    if !keep && request.nodes.ids() != [0] {
         if let Some(link) = kernel.graph.scratch.iter_mut().find(|s| s.name == to) {
             link.spec.space = g::BufSpace::Dram;
         }
@@ -1338,6 +1340,9 @@ fn split_row_package(
                 g::BufSpace::Dram,
             )?,
         });
+    }
+    if request.nodes.ids() == [0] {
+        kernel = signature;
     }
     row_sequence(kernel, plans, request, m)
 }

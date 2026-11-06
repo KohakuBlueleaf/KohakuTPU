@@ -1,5 +1,6 @@
 """Cold construction of native launch descriptors from the admitted submission."""
 
+from kohakutpu.application.runtime.graph.access import contracts
 from kohakutpu.stack.rs import _rs
 
 
@@ -54,6 +55,23 @@ def descriptor(dev, compiled, full, progs, submitted, explicit):
                 next(i for i, name in enumerate(names) if full[name] == handle)
             )
         packages.append((mesh, native, slots))
+    accesses = None
+    if compiled.traced is not None and compiled.traced.graph:
+        contract = {
+            name: (size, write)
+            for name, size, write in contracts(
+                compiled.traced.graph_json, dev.card.machine_json
+            )
+        }
+        accesses = []
+        for name, address in full.items():
+            if name in contract:
+                accesses.append(contract[name])
+            else:
+                allocation, _ = dev.mmu.resolve(address)
+                accesses.append(
+                    (allocation.extent - (address - allocation.virtual), True)
+                )
     return _rs.NativeSubmit(
         compiled.name,
         submitted.kind,
@@ -63,4 +81,5 @@ def descriptor(dev, compiled, full, progs, submitted, explicit):
         packages,
         dev.resident_mode.resident,
         (dev.recipe_epoch, dev.recipe_epoch.generation),
+        accesses=accesses,
     )

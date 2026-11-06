@@ -120,185 +120,182 @@ pub fn lower_bound(
     let mut packing_status = Vec::new();
     let mut built_by: IndexMap<i64, Vec<Stage>> = IndexMap::new();
     let last_st = body.stmts.last().map(|s| s.st().clone());
+    let mut states = IndexMap::new();
     for &n in &nodes {
         let mine: Vec<&crate::ir::Stage> = stages.iter().filter(|s| s.node == n).collect();
-        let mut links = Links::new(&streams(&body, &mine, t)?, t);
-        let mut reading: HashMap<String, (Option<i64>, Option<i64>)> = HashMap::new();
-        let mut built: Vec<Stage> = Vec::new();
-        let mut pending = mover::quant_status::Pending::default();
-        let end_st = last_st.as_ref().unwrap();
+        let links = Links::new(&streams(&body, &mine, t)?, t);
+        let mut built = Vec::new();
         if links.rings.values().any(|r| r.dst.starts_with("vc")) {
             built.push(open(&body.name, n, &links, &mut images));
         }
-        for (i, s) in mine.iter().enumerate() {
-            match &s.x {
-                StageX::Par(x) => {
-                    let key = stage_key(&node_vars, x);
-                    let rem = remote.get(&(n, key)).cloned().unwrap_or_default();
-                    let (lines, units, acc, segs, records) = par_stage(
-                        &body,
-                        x,
-                        t,
-                        &mut images,
-                        &mut links,
-                        land,
-                        &mut reading,
-                        &rem,
-                        search,
-                    )?;
-                    pending.protect(&body, end_st, &acc)?;
-                    for (s, write) in &records {
-                        pending.claim(&body, &x[0].par().st, s)?;
-                        pending.record(s, std::slice::from_ref(write));
-                    }
-                    let mut st = Stage::new(lines, units, acc);
-                    st.group = s.tag;
-                    st.segs = segs;
-                    st.phase = s.phase;
-                    built.push(st);
+        let blocking = mine.iter().any(|s| matches!(&s.x, StageX::Op(node, _) if node.as_op().is_some_and(|o| o.st.kw("node_loop").is_some() || (o.op == "quant" && t.machine.conversion.fp16_mx7.vector_looped && mover::quant_backend(&body, o, t).unwrap_or(false)))));
+        states.insert(n, (links, HashMap::new(), built, blocking, false));
+    }
+    let mut pending = mover::quant_status::Pending::default();
+    for s in &stages {
+        let n = s.node;
+        let (links, reading, built, blocking, previous_op) = &mut states[&n];
+        let was_op = *previous_op;
+        *previous_op = matches!(&s.x, StageX::Op(..));
+        let end_st = last_st.as_ref().expect("a stage has a source statement");
+        match &s.x {
+            StageX::Par(x) => {
+                let key = stage_key(&node_vars, x);
+                let rem = remote.get(&(n, key)).cloned().unwrap_or_default();
+                let (lines, units, acc, segs, records) =
+                    par_stage(&body, x, t, &mut images, links, land, reading, &rem, search)?;
+                pending.protect(&body, end_st, &acc)?;
+                for (status, write) in &records {
+                    pending.claim(&body, &x[0].par().st, status)?;
+                    pending.record(status, std::slice::from_ref(write), n, s.phase);
                 }
-                StageX::Op(node, env) => {
-                    let op = node.as_op().unwrap();
-                    if op.op == "quant_check" {
-                        let args = op.st.positional();
-                        if args.len() != 1 {
+                let mut st = Stage::new(lines, units, acc);
+                st.group = s.tag;
+                st.segs = segs;
+                st.phase = s.phase;
+                built.push(st);
+            }
+            StageX::Op(node, env) => {
+                let op = node.as_op().unwrap();
+                if op.op == "quant_check" {
+                    let args = op.st.positional();
+                    if args.len() != 1 {
+                        return Err(body.reader.fail(&op.st, "L2.MOV.019", "quant_check STATUS"));
+                    }
+                    let region = mover::quant_status::region(&body, &op.st, args[0], env, t)?;
+                    let mut stage = pending.check(&body, &op.st, &region, n, s.phase)?;
+                    stage.group = s.tag;
+                    stage.phase = s.phase;
+                    built.push(stage);
+                    continue;
+                }
+                if op.op == "quant" && mover::quant_backend(&body, op, t)? {
+                    let checked = op.st.kw("finite").and_then(Term::as_int) != Some(1);
+                    let deferred = op
+                        .st
+                        .kw("status")
+                        .map(|term| mover::quant_status::region(&body, &op.st, term, env, t))
+                        .transpose()?;
+                    let status = match deferred {
+                        Some(_) if !checked => {
                             return Err(body.reader.fail(
                                 &op.st,
                                 "L2.MOV.019",
-                                "quant_check STATUS",
-                            ));
+                                "a deferred quant status checks its quant: no finite=1",
+                            ))
                         }
-                        let region = mover::quant_status::region(&body, &op.st, args[0], env, t)?;
-                        let mut stage = pending.check(&body, &op.st, &region)?;
-                        stage.group = s.tag;
-                        stage.phase = s.phase;
-                        built.push(stage);
-                        continue;
-                    }
-                    if op.op == "quant" && mover::quant_backend(&body, op, t)? {
-                        let checked = op.st.kw("finite").and_then(Term::as_int) != Some(1);
-                        let deferred = op
-                            .st
-                            .kw("status")
-                            .map(|term| mover::quant_status::region(&body, &op.st, term, env, t))
-                            .transpose()?;
-                        let status = match deferred {
-                            Some(_) if !checked => {
-                                return Err(body.reader.fail(
-                                    &op.st,
-                                    "L2.MOV.019",
-                                    "a deferred quant status checks its quant: no finite=1",
-                                ))
-                            }
-                            Some(region) => {
-                                pending.admit(&body, &op.st, env, &region)?;
-                                Some(mover::Finite::Deferred(region))
-                            }
-                            None => checked.then(|| {
-                                mover::Finite::Inline(format!("__mx7_status_{}", images.len()))
-                            }),
-                        };
-                        let mut stage =
-                            mover::vector_quant(&body, op, env, t, &mut images, status.clone())?;
-                        pending.protect(&body, &op.st, &stage.accesses)?;
-                        match &status {
-                            Some(mover::Finite::Deferred(region)) => {
-                                pending.record(region, &stage.accesses)
-                            }
-                            Some(mover::Finite::Inline(name)) => packing_status
-                                .push(format!("{name}: f16[{}] @dram", 64 * t.vc.len())),
-                            None => {}
+                        Some(region) => {
+                            pending.admit(&body, &op.st, env, &region)?;
+                            Some(mover::Finite::Deferred(region))
                         }
-                        stage.group = s.tag;
-                        stage.phase = s.phase;
-                        built.push(stage);
-                        continue;
-                    }
-                    if op.op == "quant" && op.st.kw("status").is_some() {
-                        return Err(body.reader.fail(
-                            &op.st,
-                            "L2.MOV.019",
-                            "a deferred quant status is a vector_mx7 quant's",
-                        ));
-                    }
-                    if mover::lone_copy(&body, op, env, t)? {
-                        let mut stage = mover::vector_copy(&body, op, env, t, &mut images)?;
-                        pending.protect(&body, &op.st, &stage.accesses)?;
-                        stage.group = s.tag;
-                        stage.phase = s.phase;
-                        built.push(stage);
-                        continue;
-                    }
-                    if op.op == "tile_transpose" {
-                        let mut stage = mover::tile_transpose(&body, op, env, t, &mut images)?;
-                        pending.protect(&body, &op.st, &stage.accesses)?;
-                        stage.group = s.tag;
-                        stage.phase = s.phase;
-                        built.push(stage);
-                        continue;
-                    }
-                    if op.op == "gemm_tiles" {
-                        let mut stage = cluster::tiles::lower(&body, op, env, t, built.len())?;
-                        pending.protect(&body, &op.st, &stage.accesses)?;
-                        stage.group = s.tag;
-                        stage.phase = s.phase;
-                        built.push(stage);
-                        continue;
-                    }
-                    let ops = mover::ops();
-                    if !ops.contains(&op.op.as_str()) {
-                        return Err(body.reader.fail(
-                            &op.st,
-                            "L2.MOV.015",
-                            format!("no node-level L2 op '{}': {}", op.op, ops.join(", ")),
-                        ));
-                    }
-                    if op.st.kw("node_loop").is_some() {
-                        let (lines, acc) = if op.op == "copy" {
-                            mover::class_copy_loop(&body, op, env, t, built.len())?
-                        } else {
-                            mover::class_convert_loop(&body, op, env, t, built.len())?
-                        };
-                        pending.protect(&body, &op.st, &acc)?;
-                        let mut stage = Stage::new(lines, vec![], acc);
-                        stage.group = s.tag;
-                        stage.phase = s.phase;
-                        stage.blocking_mover = true;
-                        built.push(stage);
-                        continue;
-                    }
-                    let (got, acc) = mover::lower(&body, op, env, t)?;
-                    pending.protect(&body, &op.st, &acc)?;
-                    if mine.iter().any(|s| matches!(&s.x, StageX::Op(node, _) if node.as_op().is_some_and(|o| o.st.kw("node_loop").is_some() || (o.op == "quant" && t.machine.conversion.fp16_mx7.vector_looped && mover::quant_backend(&body, o, t).unwrap_or(false))))) {
-                        let mut lines = vec!["move".into()];
-                        lines.extend(got.iter().map(|l| format!("{IND}{l}")));
-                        let mut stage = Stage::new(lines, vec![], acc);
-                        stage.group = s.tag;
-                        stage.phase = s.phase;
-                        stage.blocking_mover = true;
-                        built.push(stage);
-                        continue;
-                    }
-                    let prev_op = i > 0 && matches!(mine[i - 1].x, StageX::Op(..));
-                    if let Some(prev) = built.last_mut() {
-                        if prev.post.is_some() && prev.group == s.tag && prev_op {
-                            prev.lines.extend(got.iter().map(|l| format!("{IND}{l}")));
-                            prev.accesses.extend(acc);
-                            continue;
+                        None => checked.then(|| {
+                            mover::Finite::Inline(format!("__mx7_status_{}", images.len()))
+                        }),
+                    };
+                    let mut stage =
+                        mover::vector_quant(&body, op, env, t, &mut images, status.clone())?;
+                    pending.protect(&body, &op.st, &stage.accesses)?;
+                    match &status {
+                        Some(mover::Finite::Deferred(region)) => {
+                            pending.record(region, &stage.accesses, n, s.phase)
                         }
+                        Some(mover::Finite::Inline(name)) => {
+                            packing_status.push(format!("{name}: f16[{}] @dram", 64 * t.vc.len()))
+                        }
+                        None => {}
                     }
-                    let tok = format!("mv{}", built.len());
-                    let mut lines = vec![format!("{tok} = move posted")];
-                    lines.extend(got.iter().map(|l| format!("{IND}{l}")));
-                    let mut st = Stage::new(lines, vec![], acc);
-                    st.group = s.tag;
-                    st.post = Some(tok);
-                    st.phase = s.phase;
-                    built.push(st);
+                    stage.group = s.tag;
+                    stage.phase = s.phase;
+                    built.push(stage);
+                    continue;
                 }
+                if op.op == "quant" && op.st.kw("status").is_some() {
+                    return Err(body.reader.fail(
+                        &op.st,
+                        "L2.MOV.019",
+                        "a deferred quant status is a vector_mx7 quant's",
+                    ));
+                }
+                if mover::lone_copy(&body, op, env, t)? {
+                    let mut stage = mover::vector_copy(&body, op, env, t, &mut images)?;
+                    pending.protect(&body, &op.st, &stage.accesses)?;
+                    stage.group = s.tag;
+                    stage.phase = s.phase;
+                    built.push(stage);
+                    continue;
+                }
+                if op.op == "tile_transpose" {
+                    let mut stage = mover::tile_transpose(&body, op, env, t, &mut images)?;
+                    pending.protect(&body, &op.st, &stage.accesses)?;
+                    stage.group = s.tag;
+                    stage.phase = s.phase;
+                    built.push(stage);
+                    continue;
+                }
+                if op.op == "gemm_tiles" {
+                    let mut stage = cluster::tiles::lower(&body, op, env, t, built.len())?;
+                    pending.protect(&body, &op.st, &stage.accesses)?;
+                    stage.group = s.tag;
+                    stage.phase = s.phase;
+                    built.push(stage);
+                    continue;
+                }
+                let ops = mover::ops();
+                if !ops.contains(&op.op.as_str()) {
+                    return Err(body.reader.fail(
+                        &op.st,
+                        "L2.MOV.015",
+                        format!("no node-level L2 op '{}': {}", op.op, ops.join(", ")),
+                    ));
+                }
+                if op.st.kw("node_loop").is_some() {
+                    let (lines, acc) = if op.op == "copy" {
+                        mover::class_copy_loop(&body, op, env, t, built.len())?
+                    } else {
+                        mover::class_convert_loop(&body, op, env, t, built.len())?
+                    };
+                    pending.protect(&body, &op.st, &acc)?;
+                    let mut stage = Stage::new(lines, vec![], acc);
+                    stage.group = s.tag;
+                    stage.phase = s.phase;
+                    stage.blocking_mover = true;
+                    built.push(stage);
+                    continue;
+                }
+                let (got, acc) = mover::lower(&body, op, env, t)?;
+                pending.protect(&body, &op.st, &acc)?;
+                if *blocking {
+                    let mut lines = vec!["move".into()];
+                    lines.extend(got.iter().map(|l| format!("{IND}{l}")));
+                    let mut stage = Stage::new(lines, vec![], acc);
+                    stage.group = s.tag;
+                    stage.phase = s.phase;
+                    stage.blocking_mover = true;
+                    built.push(stage);
+                    continue;
+                }
+                if let Some(prev) = built.last_mut() {
+                    if prev.post.is_some() && prev.group == s.tag && was_op {
+                        prev.lines.extend(got.iter().map(|l| format!("{IND}{l}")));
+                        prev.accesses.extend(acc);
+                        continue;
+                    }
+                }
+                let tok = format!("mv{}", built.len());
+                let mut lines = vec![format!("{tok} = move posted")];
+                lines.extend(got.iter().map(|l| format!("{IND}{l}")));
+                let mut st = Stage::new(lines, vec![], acc);
+                st.group = s.tag;
+                st.post = Some(tok);
+                st.phase = s.phase;
+                built.push(st);
             }
         }
+    }
+    if let Some(end_st) = &last_st {
         pending.end(&body, end_st)?;
+    }
+    for (n, (links, _, mut built, _, _)) in states {
         links.check(&body, last_st.as_ref())?;
         if links.rings.values().any(|r| r.dst.starts_with("vc")) {
             built.push(spend(&links));

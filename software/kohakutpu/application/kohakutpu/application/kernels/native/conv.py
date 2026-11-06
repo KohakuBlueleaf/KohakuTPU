@@ -14,7 +14,6 @@ from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.plan.emit import expr
 from kohakutpu.application.runtime import generated
 from kohakutpu.language import dsl as kt
-from kohakutpu.language.config import ENV
 from kohakutpu.stack import rs
 from kohakutpu.stack.kernel import dsl_machine
 
@@ -110,7 +109,7 @@ def kernel(
     rows = batch * oh * ow
     rows_pad = -(-rows // 4) * 4
     k_pad = -(-(kh * kw * cin_pad) // 32) * 32
-    if nodes is not None and (len(nodes) > 1 or ENV.get("KTPU_SPLIT_OPTION")):
+    if nodes is not None:
         extras = [Operand("col")]
         if residual:
             extras.append(Operand("full", pitch=cout_pad, rows=rows_pad))
@@ -137,15 +136,17 @@ def kernel(
                 "expr_cse": True,
             },
         }
-        source, _ = generated.split_graph(
+        source, selection = generated.split_graph(
             "conv.kernel",
             json.dumps(arguments, sort_keys=True),
             rs.machine_json(machine),
             rs._MUTANT.get(),
             tuple(nodes),
-            ENV.get("KTPU_SPLIT_OPTION"),
+            generated.split_option("conv.kernel"),
         )
-        return GraphKernel(json.loads(source))
+        return GraphKernel(
+            json.loads(source), selection={**selection, "nodes": tuple(nodes)}
+        )
     per_batch = oh * ow
     k_logical = kh * kw * cin_pad
     if (

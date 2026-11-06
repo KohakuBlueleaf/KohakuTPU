@@ -135,6 +135,7 @@ def fuse(
     stage_bytes,
     recursive=False,
     producer_quant=False,
+    edge_space="stage",
 ):
     """Bounded pairs; liveness includes partial aliases and all exported spans."""
     align = stage_alignment(machine)
@@ -211,7 +212,11 @@ def fuse(
                     -(-port_bytes(scratch, machine) // align) * align
                     for scratch in (*left.graph["scratch"], *right.graph["scratch"])
                     if scratch["spec"]["space"] == "stage"
-                ) + (0 if rule == "layout" else -(-(end - at) // align) * align)
+                ) + (
+                    -(-(end - at) // align) * align
+                    if rule != "layout" and edge_space == "stage"
+                    else 0
+                )
                 if (
                     exclusive
                     and exact
@@ -252,6 +257,7 @@ def fuse(
                                 right,
                                 output["name"],
                                 tuple(p["name"] for p in linked),
+                                space=edge_space,
                             )
                         )
                     rules.append(rule)
@@ -271,6 +277,7 @@ def fuse(
             stage_bytes=stage_bytes,
             recursive=True,
             producer_quant=producer_quant,
+            edge_space=edge_space,
         )
         rules.extend(more)
     return result, rules

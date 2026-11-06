@@ -51,6 +51,7 @@ class Compiled:
     recipe_scope: tuple | None = field(default=None, repr=False, compare=False)
     native_recipe: bool = field(default=False, repr=False, compare=False)
     wire_recipe: bool = field(default=False, repr=False, compare=False)
+    selection: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def params(self):

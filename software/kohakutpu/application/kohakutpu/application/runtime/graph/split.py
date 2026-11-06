@@ -24,7 +24,9 @@ class PreparedSplitGraph:
     def submit(self):
         if self.closed:
             raise RuntimeError("prepared split graph is closed")
-        return self.device.run(self.compiled, self.bindings, kind="graph")
+        return self.device._submitted(
+            self.compiled, self.bindings, "graph", None, pinned=True
+        )
 
     def close(self):
         if not self.closed:
@@ -41,8 +43,9 @@ class SplitRunner:
     lowered and scheduled together; replay uses ordinary device submission.
     """
 
-    def __init__(self, device):
+    def __init__(self, device, *, pinned=False):
         self.device = device
+        self.pinned = pinned
 
     def prepare(self, packets, dependencies):
         if not packets:
@@ -63,7 +66,7 @@ class SplitRunner:
             graph["scratch"].extend(part["scratch"])
             graph["body"].extend(part["body"])
             bindings.update({mapping[name]: at for name, at in packet.bindings.items()})
-        references = self.device._retain(bindings.values())
+        references = self.device._retain(bindings.values(), pinned=self.pinned)
         try:
             physical = {
                 name: self.device.mmu.resolve(at)[1] for name, at in bindings.items()

@@ -5,6 +5,7 @@ mod common;
 mod events;
 mod fill_throttle;
 mod modulo_memory_effects;
+mod quant_status_nodes;
 mod release_frontier;
 mod statistic_fold;
 mod stream_credit;

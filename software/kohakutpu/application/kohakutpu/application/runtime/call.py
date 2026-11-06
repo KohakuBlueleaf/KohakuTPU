@@ -76,7 +76,11 @@ def call(dev, kernel: kt.Kernel, arrays: dict, kind: str = "call", **consts) -> 
             compiled,
             binds,
             kind=kind,
-            info={"kernel": kernel.name, "compiled": compiled},
+            info={
+                "kernel": kernel.name,
+                "compiled": compiled,
+                **getattr(kernel, "selection", {}),
+            },
         )
         result = {}
         for n, s in outs.items():

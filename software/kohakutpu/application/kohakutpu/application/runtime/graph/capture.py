@@ -13,6 +13,7 @@ from itertools import accumulate
 from time import perf_counter
 
 from kohakutpu.application.runtime.graph.dependencies import dependencies
+from kohakutpu.application.runtime.graph.split import SplitRunner
 
 
 @dataclass(frozen=True)
@@ -154,6 +155,10 @@ class Graph:
         """
         packets = tuple(launch.bind(addresses) for launch in self.launches)
         return runner.prepare(packets, dependencies(self.launches, addresses))
+
+    def prepare_split(self, device, addresses):
+        """Lower the whole multi-node graph with one set of event leases."""
+        return self.prepare(SplitRunner(device), addresses)
 
 
 class Capture:

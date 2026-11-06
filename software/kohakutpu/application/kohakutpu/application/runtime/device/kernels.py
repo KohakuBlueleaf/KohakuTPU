@@ -1,6 +1,7 @@
 """Compiling a kernel for this device, and the compiled-kernel cache."""
 
 import json
+from dataclasses import replace
 
 from kohakutpu.application.runtime import generated
 from kohakutpu.application.runtime.class_library import ClassLibrary
@@ -131,7 +132,21 @@ class Kernels(Parts):
 
     def specialise(self, kernel, given, **consts):
         cached = self.specialise_cache
+        template_call = getattr(kernel, "template_call", None)
+        grant = (self.home,) if self.home is not None else tuple(self.card.nodes)
         key = (
+            grant,
+            (
+                generated.split_option(template_call.generator)
+                if template_call is not None
+                else None
+            ),
+            (
+                tuple(generated.class_schedule().items())
+                if template_call is not None
+                and "shape_class" in template_call.arguments
+                else ()
+            ),
             kernel,
             tuple(sorted(given.items())),
             tuple(
@@ -148,7 +163,13 @@ class Kernels(Parts):
                 self.counters[f"{hit_kind}_hits"] += 1
             return compiled
         before = (self.counters["class_hits"], self.counters["exact_hits"])
-        if self.library is None:
+        if template_call is not None:
+            kernel.specs(given, kernel.constants(consts))
+            source, selection = generated.invocation(
+                self, template_call.generator, template_call.arguments
+            )
+            compiled = replace(self.kernel(source), selection=selection)
+        elif self.library is None:
             with rs.compiler_owner(self):
                 compiled = K.specialise(kernel, given, machine=self.machine, **consts)
         else:

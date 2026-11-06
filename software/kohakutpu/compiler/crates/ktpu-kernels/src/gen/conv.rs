@@ -237,7 +237,7 @@ pub fn patch_split(spec: &ConvSpec, request: &SplitRequest, m: &Machine) -> R<Pl
         }],
         tokens: false,
     };
-    let signature = patch_kernel(spec, 0, 1, m)?;
+    let signature = patches(spec, m)?;
     vector::split::kernel(&shape, signature, request, m, |first, count| {
         patch_kernel(spec, first, count, m)
     })

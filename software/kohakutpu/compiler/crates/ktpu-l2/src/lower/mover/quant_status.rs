@@ -68,16 +68,27 @@ pub const DRAIN_L1: (i64, i64) = (384, 388);
 /// The vector register a checked core accumulates its finite status in.
 pub const STATUS_V: u32 = 31;
 
-/// The records still pending in a function.
+struct Record {
+    status: Status,
+    node: i64,
+    phase: i64,
+}
+
+/// The records still pending in a function, with their publication scopes.
 #[derive(Default)]
-pub struct Pending(Vec<Status>);
+pub struct Pending(Vec<Record>);
 
 impl Pending {
     /// Refuse `accesses` writing a pending record: a write would erase its
     /// evidence before it is checked.
     pub fn protect(&self, body: &Body, st: &Stmt, accesses: &[Access]) -> Result<()> {
         let hit = accesses.iter().any(|a| {
-            a.write && a.key.0 == "mem" && self.0.iter().any(|p| p.overlaps(&a.key.1, a.lo, a.hi))
+            a.write
+                && a.key.0 == "mem"
+                && self
+                    .0
+                    .iter()
+                    .any(|p| p.status.overlaps(&a.key.1, a.lo, a.hi))
         });
         if hit {
             return Err(fail(
@@ -112,7 +123,7 @@ impl Pending {
         if self
             .0
             .iter()
-            .any(|p| p.overlaps(&s.name, s.offset, s.offset + s.bytes))
+            .any(|p| p.status.overlaps(&s.name, s.offset, s.offset + s.bytes))
         {
             return Err(fail(
                 body,
@@ -125,7 +136,7 @@ impl Pending {
     }
 
     /// The records a deferred quant into `s` wrote (`accesses`).
-    pub fn record(&mut self, s: &Status, accesses: &[Access]) {
+    pub fn record(&mut self, s: &Status, accesses: &[Access], node: i64, phase: i64) {
         for a in accesses {
             if a.write
                 && a.key.0 == "mem"
@@ -133,10 +144,14 @@ impl Pending {
                 && a.lo >= s.offset
                 && a.hi <= s.offset + s.bytes
             {
-                self.0.push(Status {
-                    name: s.name.clone(),
-                    offset: a.lo,
-                    bytes: a.hi - a.lo,
+                self.0.push(Record {
+                    status: Status {
+                        name: s.name.clone(),
+                        offset: a.lo,
+                        bytes: a.hi - a.lo,
+                    },
+                    node,
+                    phase,
                 });
             }
         }
@@ -144,13 +159,32 @@ impl Pending {
 
     /// `quant_check` of `region`: one barrier, then every pending record in
     /// it asserted zero, in one fenced stage.
-    pub fn check(&mut self, body: &Body, st: &Stmt, region: &Status) -> Result<Stage> {
-        let inside = |p: &Status| {
-            p.name == region.name
-                && p.offset >= region.offset
-                && p.offset + p.bytes <= region.offset + region.bytes
+    pub fn check(
+        &mut self,
+        body: &Body,
+        st: &Stmt,
+        region: &Status,
+        node: i64,
+        phase: i64,
+    ) -> Result<Stage> {
+        let inside = |p: &Record| {
+            p.status.name == region.name
+                && p.status.offset >= region.offset
+                && p.status.offset + p.status.bytes <= region.offset + region.bytes
         };
-        let (mut checked, rest): (Vec<Status>, Vec<Status>) =
+        if self
+            .0
+            .iter()
+            .any(|p| inside(p) && p.node != node && p.phase >= phase)
+        {
+            return Err(fail(
+                body,
+                st,
+                "L2.MOV.019",
+                "a remote quant_check must follow the producer's node scope",
+            ));
+        }
+        let (mut checked, rest): (Vec<Record>, Vec<Record>) =
             std::mem::take(&mut self.0).into_iter().partition(inside);
         self.0 = rest;
         if checked.is_empty() {
@@ -166,7 +200,8 @@ impl Pending {
         }
         let mut lines = vec!["barrier".to_string()];
         let mut accesses = Vec::new();
-        for s in &checked {
+        for record in &checked {
+            let s = &record.status;
             for offset in (s.offset..s.offset + s.bytes).step_by(STATUS_RECORD as usize) {
                 lines.extend([
                     format!("r14 = load {} + {offset}", s.name),

@@ -163,8 +163,7 @@ def _flash(q, k, vt, motif, reason, contract):
                 h,
             )
         binds["y"] = padded.addr
-        nodes = list(dev.card.nodes) if dev.home is None else [dev.home]
-        args = {"heads": h, "queries": s, "_nodes": nodes}
+        args = {"heads": h, "queries": s}
         if contract is not None:
             args["contract"] = contract
         generated.launch(

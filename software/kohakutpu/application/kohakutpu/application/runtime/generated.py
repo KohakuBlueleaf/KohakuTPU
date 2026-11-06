@@ -16,6 +16,10 @@ from kohakutpu.language.text import module as M
 from kohakutpu.stack import rs
 from kohakutpu.stack.kernel import Compiled, dsl_machine
 
+# Hand L1 motifs: their executable is the planned L1, reached only through
+# split planning; they have no ordinary graph generation.
+L1_MOTIFS = frozenset(("attention.flash", "attention.flashd", "attention.srflash"))
+
 
 @lru_cache(maxsize=4096)
 def graph(generator, arguments, machine, mutant):
@@ -55,16 +59,33 @@ def split_graph(generator, arguments, machine, mutant, nodes, force):
         rs._rs.generate_split(generator, arguments, machine, nodes, force, mutant)
     )
     source = checked_graph(generator, arguments, machine, planned["source"])
-    return source, planned["info"]
+    return source, {**planned["info"], "nodes": nodes}
 
 
 def invocation(dev, generator, arguments):
     """Source and launch metadata, shared by capture and library lookup."""
     call = _call(dev, generator, prepared(generator, arguments))
-    if generator == "matmul.mm_kernel":
-        nodes = (dev.home,) if dev.home is not None else tuple(dev.card.nodes)
-        return split_graph(*call, nodes, ENV.get("KTPU_SPLIT_OPTION"))
-    return graph(*call), {}
+    nodes = (dev.home,) if dev.home is not None else tuple(dev.card.nodes)
+    force = split_option(generator)
+    if len(nodes) == 1 and force is None and generator not in L1_MOTIFS:
+        # One sysnode has one plan: the ordinary generation, unpriced, under
+        # the ordinary compile caches.
+        info = {"option_id": "p1", "p": 1, "active_nodes": 1, "nodes": nodes}
+        return graph(*call), info
+    return split_graph(*call, nodes, force)
+
+
+def split_option(generator):
+    """Family-scoped forcing; the legacy knob selects contractions."""
+    key = "KTPU_SPLIT_" + generator.replace(".", "_").upper() + "_OPTION"
+    return ENV.get(
+        key,
+        (
+            ENV.get("KTPU_SPLIT_OPTION")
+            if generator in ("matmul.mm_kernel", "conv.kernel")
+            else None
+        ),
+    )
 
 
 def prepared(generator, arguments) -> dict:
@@ -93,16 +114,18 @@ def _scheduled(arguments: dict) -> dict:
     """`arguments`, a class call's with the `KTPU_CLASS_*` knobs."""
     if "shape_class" not in arguments:
         return arguments
+    return dict(arguments, class_schedule=class_schedule())
+
+
+def class_schedule():
+    """Effective class generation controls, shared by selection and cache identity."""
     width = ENV.get("KTPU_CLASS_WIDE_WIDTH")
-    return dict(
-        arguments,
-        class_schedule={
-            "band": int(ENV.get("KTPU_CLASS_BAND", "4")),
-            "wide_width": int(width) if width else None,
-            "rows_direct": ENV.get("KTPU_CLASS_ROWS_DIRECT", "0") == "1",
-            "wide_direct": ENV.get("KTPU_CLASS_WIDE_DIRECT", "0") == "1",
-        },
-    )
+    return {
+        "band": int(ENV.get("KTPU_CLASS_BAND", "4")),
+        "wide_width": int(width) if width else None,
+        "rows_direct": ENV.get("KTPU_CLASS_ROWS_DIRECT", "0") == "1",
+        "wide_direct": ENV.get("KTPU_CLASS_WIDE_DIRECT", "0") == "1",
+    }
 
 
 def _call(dev, generator, arguments) -> tuple:

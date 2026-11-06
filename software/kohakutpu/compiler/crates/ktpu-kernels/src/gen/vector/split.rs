@@ -210,6 +210,7 @@ pub fn kernel(
 }
 
 /// Emit and price local schedules for precomputed global ownership options.
+/// `signature` is the complete unsharded kernel, reused for the node-0 plan.
 pub fn kernel_options(
     options: Vec<SplitOption>,
     signature: Kernel,
@@ -236,16 +237,24 @@ pub fn kernel_options(
                     region.bytes.start = region.bytes.start.min(region.bytes.end);
                 }
             }
-            let k = crate::kernel::on_node(request.nodes.ids()[share.logical_node], || {
-                local(share.logical_origin[0], share.valid_extent[0])
-            })?;
+            let k = if request.nodes.ids() == [0] {
+                signature.clone()
+            } else {
+                crate::kernel::on_node(request.nodes.ids()[share.logical_node], || {
+                    local(share.logical_origin[0], share.valid_extent[0])
+                })?
+            };
             share.local_schedule = k.graph.name.clone();
             share.scratch_regions = k
                 .graph
                 .scratch
                 .iter()
                 .map(|scratch| Region {
-                    allocation: format!("share{}_{}", kernels.len(), scratch.name),
+                    allocation: if request.nodes.ids() == [0] {
+                        scratch.name.clone()
+                    } else {
+                        format!("share{}_{}", kernels.len(), scratch.name)
+                    },
                     bytes: 0..(scratch.spec.shape.iter().product::<i64>()
                         * Hw::item(scratch.spec.dtype)) as u64,
                 })
@@ -260,15 +269,20 @@ pub fn kernel_options(
             .map(|p| (p.name.clone(), p.spec.clone()))
             .collect();
         let features = CostFeatures::of_shares(&kernels, m)?;
-        let mut kernel = crate::gen::chain::shares(&signature, kernels)?;
-        kernel.graph.name = name(
-            "row_shares",
-            vec![
-                Py::str(&signature.graph.name),
-                Py::ints(request.nodes.ids()),
-                Py::str(&option.id),
-            ],
-        );
+        let kernel = if request.nodes.ids() == [0] {
+            signature.clone()
+        } else {
+            let mut kernel = crate::gen::chain::shares(&signature, kernels)?;
+            kernel.graph.name = name(
+                "row_shares",
+                vec![
+                    Py::str(&signature.graph.name),
+                    Py::ints(request.nodes.ids()),
+                    Py::str(&option.id),
+                ],
+            );
+            kernel
+        };
         emitted.push((option.id.clone(), kernel));
         candidates.push((option, features));
     }

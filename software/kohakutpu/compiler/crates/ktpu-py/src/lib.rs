@@ -332,12 +332,6 @@ fn compile_split_graph<'py>(
     let m = machine(machine_json)?;
     let zero_sign = zero_sign.map(signed).transpose()?;
     let backend = CardStack {
-        binds: Some(
-            bindings
-                .iter()
-                .map(|(name, at)| (name.clone(), i128::from(*at)))
-                .collect(),
-        ),
         zero_sign,
         ..CardStack::default()
     };
@@ -995,8 +989,11 @@ fn generate_split(
         ktpu_kernels::call_split(generator, &args, &request, &m)
     })?
     .map_err(|e| PyValueError::new_err(e.to_string()))?;
-    let graph = serde_json::to_value(&planned.kernel.graph)
+    let mut graph = serde_json::to_value(&planned.kernel.graph)
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    if let Some(l1) = &planned.l1 {
+        graph["executable_l1"] = l1.clone().into();
+    }
     let source = serde_json::to_string(&graph).map_err(|e| PyValueError::new_err(e.to_string()))?;
     serde_json::to_string(&serde_json::json!({
         "graph": graph,
@@ -1004,6 +1001,7 @@ fn generate_split(
         "l1": planned.l1,
         "info": {
             "option_id": planned.split.id,
+            "p": planned.split.p,
             "active_nodes": planned.split.active_nodes,
         },
     }))

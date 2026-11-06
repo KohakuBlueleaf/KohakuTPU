@@ -65,12 +65,12 @@ failure, discards later in-flight results and refuses subsequent device access;
 it does not publish a successful Run. This does not cancel already published
 hardware work or prohibit raw card reads and diagnostic dumps.
 (code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:98-138;
-software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/quant_status.rs:145-200;
+software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/quant_status.rs:160-236;
 software/kohakuaccel/firmware/package/interp.c:1622-1626;
 software/kohakutpu/application/kohakutpu/application/runtime/memory/packing.py:14-32;
 software/kohakutpu/application/kohakutpu/application/runtime/card/collection.py:126-135, :175-190, :244-265;
-software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py:67-86, :421-466;
-software/kohakutpu/application/kohakutpu/application/runtime/device/allocation.py:187-198)
+software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py:69-88, :434-486;
+software/kohakutpu/application/kohakutpu/application/runtime/device/allocation.py:190-201)
 
 Checking classifies supplied image values including generated padding, not all
 underlying storage. Entirely zero tiles issue no source descriptor or DMA;
@@ -81,7 +81,7 @@ For vector quantisation, only integer finite=1 suppresses checking; deferred
 status with finite=1 is refused. This is caller proof, not tensor-value analysis.
 The ordinary unmapped vector path refuses checking under conversion version 1
 and checks contract-status/register/descriptor/EXP2D capabilities for version 2.
-(code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mod.rs:178-216;
+(code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mod.rs:172-211;
 software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:149-180)
 
 ## Vector schedule

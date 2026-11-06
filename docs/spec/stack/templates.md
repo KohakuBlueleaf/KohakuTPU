@@ -1,145 +1,284 @@
 ---
-title: Offline template verification
-summary: Offline proof that every in-box binding of a template kernel is legal, and the parameter confinement it rests on.
+title: Kernel templates and offline verification
+summary: Kernel split options, device-grant selection and replay, plus offline binding proofs and parameter confinement.
 tags:
   - spec
   - stack
 ---
-# Offline template verification
+# Kernel templates and offline verification
 
 ## Kernel split options
 
 A logical kernel receives an ordered `NodeSet` of physical sysnode IDs, checked
-against `Machine::nodes()`. The generator's `Hw.nodes` and the tracer's existing
-`Facts.nodes` read that same fact. Local MG/VC counts remain per-sysnode counts.
-`SplitRequest` retains the consumer form/scale requirements, input forms,
-numerical contract, dispatch profile and optional forced option ID.
+against `Machine::nodes()`. The generator and tracer use this grant independently
+of the local MG/VC counts. `SplitRequest` carries consumer form/scale requirements,
+input forms, numerical contract, dispatch profile and an optional forced option
+ID. `SplitOption` records the axis, participant and active-node counts, shares,
+physical output ownership, symbolic events, legality witness and cost. A
+`PlannedKernel` carries the executable graph or an authoritative L1 executable.
+(code: ktpu-kernels/src/split.rs:18-36, :40-69, :112-176)
 
-`SplitOption` describes the axis, participant count, active nodes, tile shares,
-output specs/physical ownership, symbolic events, legality witness and cost.
-Physical regions are byte runs over canonical allocation identities, not logical
-bounding rectangles. `validate_ownership` checks distinct writers at 64-byte
-line granularity and exact coverage of the valid output. Bindings must resolve
-aliases to those canonical identities before checking. This is an ownership
-check, not an all-agent happens-before or numerical certificate.
+Physical regions are byte runs over allocation identities. `validate_ownership`
+requires distinct writers to own distinct 64-byte lines and the byte union to
+cover exactly the declared valid output. Bindings must resolve aliases to
+canonical physical identities; this ownership check alone is not a numerical or
+all-agent happens-before certificate. `partition_tiles(T,P)` uses balanced cuts
+`p*q+ceil(p*r/P)`, where `q=T/P` and `r=T%P`. Empty shares stay in the plan but
+`emit_shares` emits no work for them. Explicit sysnode scopes place each nonempty share on its granted
+physical ID. (code: ktpu-kernels/src/split.rs:180-200, :204-276, :278-293)
 
-`partition_tiles(T,P)` uses the vector scheduler's `balanced_cut`: with
-`q=T/P`, `r=T%P`, boundary `p*q+ceil(p*r/P)`. Empty shares are retained in the
-plan and `emit_shares` emits no work for them. `Trace::on_node` emits an explicit
-node scope for the granted physical ID; it does not infer nodes from unit counts.
+`call_split` dispatches to family planners. Graph families expose distributed
+options where their ownership and local schedules permit them; generators with
+only a local implementation expose `p1`, on the first granted node. Producer
+forms and generator precision remain the default contract. The entry refuses
+unsupported consumer forms, explicit scale groups and unsupported numerical
+contracts rather than claiming a conversion it does not emit. Input-form labels
+and mapped-read capabilities remain request metadata; generator arguments select
+the reads. A split plan is not a certificate for a new binding, topology or
+consumer form. (code: ktpu-kernels/src/call.rs:1584-1628, :1629-1686,
+:1687-1873, :1874-1974)
 
-`call_split` is the planning entry; `call` retains its existing interface and
-path. Graph generators expose the `p1` compatibility option, explicitly
-placed on the first granted node, with `active_nodes=1` and the other granted
-shares empty. Kernel construction scopes the generator body before local unit
-pars are traced, so automatic unit-count expansion cannot escape that node;
-composite calls retain the same construction scope. Machine facts are unchanged.
-The plan retains the original request and producer tensor specs;
-its physical region lists remain unbound. Consumer conversion and distributed
-family options are not implemented by this compatibility option. It admits the
-producer's form and unchanged generator numerics; an incompatible required form,
-explicit scale groups or a different precision/reduction order has no matching
-option and is refused. Input-form labels and mapped-read capabilities remain
-request metadata; generator arguments continue to determine the actual reads. A split plan
-is not a certificate for a new binding, topology or consumer form.
+### Pricing and selection
 
-`CostModel::estimate` prices options. `LocalTiming` uses each complete share's
-existing L2/L1 timing and the machine's `vc.launch_front` intercept once per
-sysnode, taking the slowest share rather than dividing a full-kernel time by P.
-The intercept already present in `graph::cycles` is removed before assembling
-features. Conversions and event waits belong in those complete local schedules.
-Estimates carry revision/provenance, `uncertainty="unfitted"` and
-`measured=false`. `choose_split` orders by makespan, conversion count, event
-count and option ID; forcing still prices the selected option.
-`composed::split_sequences` compares dependent sequences of these makespans,
-including explicit conversion kernels and the machine's inter-launch gaps;
-it does not add the parallel sysnodes' costs together.
+`CostFeatures::of_shares` obtains each complete local schedule's existing L2/L1
+cost and removes the launch intercept already included by `graph::cycles`.
+`LocalTiming` takes the slowest share and adds `vc.launch_front` once; it does not
+divide an unsplit kernel time by P. Local conversions, scratch copies, prologues,
+epilogues and waits are part of the emitted schedule. Estimates retain revision,
+provenance, uncertainty and `measured=false`: they are model prices, not device
+measurements. Selection orders by makespan, conversion count, event count and
+option ID. A forced ID must name an eligible option; priced planners still price
+that option. Cached choices retain prices across forced selections. Forcing
+is selection, not a request to measure an otherwise unpriced local path: the
+matmul one-node planner selects its ownership option without pricing unless
+its caller requests `price_unsplit` for a dependent sequence. The generic local
+`p1` path likewise computes timing only when `price_unsplit` is requested. These
+default cost records are not measured zero-cycle execution times.
+(code: ktpu-kernels/src/split/cost.rs:10-35, :94-151, :154-217;
+ktpu-kernels/src/gen/matmul/split.rs:758-788;
+ktpu-kernels/src/call.rs:1953-1974)
 
-Code: `software/kohakutpu/compiler/crates/ktpu-kernels/src/split.rs`
-(`NodeSet`, `partition_tiles`, `validate_ownership`, `emit_shares`),
-`software/kohakutpu/compiler/crates/ktpu-kernels/src/split/cost.rs`
-(`CostFeatures`, `LocalTiming`, `choose_split`),
-`software/kohakutpu/compiler/crates/ktpu-kernels/src/call.rs` (`call_split`),
-and `software/kohakutpu/compiler/crates/ktpu-kernels/src/trace/control.rs`
-(`Trace::on_node`). Evidence: implementation and staged behavioural witnesses;
-no device result is asserted.
+Dependent work is priced as dependent work. Matmul K reductions and output-line
+assembly use the complete composed graph, B delivery uses its emitted transport
+model, convolution uses the patch/product sequence, and GroupNorm includes its
+population tree and normalization. These are not independent-share divisions.
+Row-stage sequences likewise use the complete composed graph for makespan while
+retaining per-node local costs. (code: ktpu-kernels/src/gen/matmul/split.rs:823-868;
+ktpu-kernels/src/call.rs:1126-1151;
+ktpu-kernels/src/gen/conv.rs:447-473;
+ktpu-kernels/src/gen/groupnorm/distributed.rs:410-438, :535-567)
 
-## Attention ownership
+### Matmul
 
-`gen::attention::AttentionSpec` records flattened batch/head count, independent
-query and key lengths, key and value widths, mask semantics and score precision.
-`assignments` enumerates head cuts, query-tile cuts per head, every head/query
-factor pair of the grant, and balanced contiguous flattened head/query-tile
-ranges. Each span carries global query coordinates, the complete key range and
-its head index. Empty participants remain in the assignment. The query ownership
-unit is supplied by the caller; valid endpoints exclude query padding.
+`matmul.mm_kernel` offers `m`, `n` and every eligible factorization `mn-PxQ` of
+the grant. M cuts preserve the row quantum (the class tile for classed kernels);
+N cuts preserve packed column groups. N and mixed column cuts require an
+independent output-column domain, not a column reduction or row-statistic
+output. Batched products also expose `groups`. Each share reads global packed
+operands at its origin. Boundary outputs needing a common physical-line owner
+use private output and explicit assembly, counted as a conversion.
+(code: ktpu-kernels/src/gen/matmul/split.rs:160-202, :204-430)
 
-Assignments are logical ownership records, independent of physical packing.
-The `attention.flash` recorded generator is available through `call_split`
-with an empty argument object. It uses the reference template's ten heads,
-1024 queries and keys per head, and Dk=Dv=64. Q is pre-scaled by
-log2(e)/sqrt(64). It does not implement masking or precise-score attention.
-The eager API does not select this generator.
+For two or four participants, non-classed products with nonempty K expose
+`k-tree` and `k-serial`. They partition whole packed K chunks, accumulate using
+native FP22 peer reduction and run the epilogue at the reduction root. Empty K
+shares do not contribute. A requested reduction order filters options by their
+actual edge list. With four live participants the tree joins 0 into 1, 3 into 2,
+then 1 into 2; serial reduction sends each earlier active rank to the last active
+rank. Changing this order changes the numerical contract, not just placement.
+(code: ktpu-kernels/src/gen/matmul/split.rs:466-611;
+ktpu-kernels/src/gen/matmul/peer.rs:43-66)
 
-The planner converts assignments to physical `SplitOption` records. IDs are
-`heads`, `query-rows`, `heads-query-PhxPq` (with numeric factors), and `balanced`.
-Every share reads its Q rows and all K/V of its heads and writes its Y rows.
-`validate_ownership` checks output lines before `choose_split` prices each
-complete local L1 schedule with the existing timing model. A forced option
-still undergoes validation and pricing. The returned `PlannedKernel.l1` is the
-authoritative executable; its `kernel.graph` holds port metadata only and must
-not be used as the executable. Graph generators return `l1=None` and retain
-their existing graph path.
+B-pass options retain the M or mixed M/N ownership but share raw packed B words:
+`b-pass`, `b-pass-relay`, `b-pass-PxQ` and `b-pass-PxQ-relay`. Direct delivery sends from the first participating node to each destination MG;
+relay delivery forwards through successive participants' VC0 buffers and each
+participant feeds its local MGs. They have separate candidates. VC0 owns two half-L1 buffers during MG
+stages; private-A prerequisites retire before B-ready and receiver-scoped
+ready/credit events protect bank generations. The emitted L1, not the precursor
+graph, is the executable. Its manifest records actual sender reads and events.
+The price sums emitted node budgets plus one launch intercept, mesh-hop word
+traffic, remote payloads, bank events, relay words, compute issues and private
+fills. This serial upper estimate is explicitly unfitted; it asserts no measured
+crossover. Other independent M/N options use the slowest complete local share.
+(code: ktpu-kernels/src/gen/matmul/split.rs:431-465, :747-803, :823-868;
+ktpu-kernels/src/gen/matmul/b_pass.rs:38-97, :240-352;
+ktpu-kernels/src/split/cost.rs:37-92)
 
-The flash adapter reads the original template text and substitutes only loop
-bounds, head-transition periods and address expressions. For a share with
-`nq` query tiles per head, local score tile T maps to head `h0 + T/nq` and
-query tile `q0 + T%nq`; the PV head period is `4*nq`. Local rings, bank
-selection, waits, marks, vector instructions and redo remain unchanged.
-The warm-up emits min(4, score tiles) and the close emits min(5, PV tiles).
-Scratch slots per logical rank occupy 1 MiB of S, 64 KiB of O partials and
-16 KiB of sums/offsets; the corresponding L1 parameters cover all slots.
-Each granted physical node has an explicit `node N` scope. Adjacent head spans
-with the same query range share one pipeline; other balanced spans use
-successive pipelines with private symbol names and the same node-local slots.
+Packing itself has `destination-tiles` options. `matmul.quant_kernel` and
+`matmul.quant_walk_kernel` assign complete physical `(side,g,nk)` tiles, preserving
+global source coordinates, valid tails and finite-status checking. Mapped reads
+and ordinary or walked reads retain their respective source contracts. Local
+schedules are priced through the shared vector split planner. Classed packing
+and materialized prepared-read sequences retain their complete local `p1`
+schedule; the dispatcher states the reason in its legality witness.
+(code: ktpu-kernels/src/gen/matmul/destination.rs:31-128, :149-303;
+ktpu-kernels/src/call.rs:1741-1815, :1929-1967)
 
-Code: `software/kohakutpu/compiler/crates/ktpu-kernels/src/gen/attention/flash.rs`
-and `software/kohakutpu/compiler/crates/ktpu-kernels/src/gen/attention/flash_split.rs`.
-The L1 simulator witness in `software/tests/stages/l1_l0/attention_flash.rs`
-compares P=1 with the original hand template and forced P=2/4 head, query and
-hybrid splits with P=1, byte for byte. Its memory write census observes every
-output byte written exactly once. This is an authored witness, not a claim of
-a measured result or a certificate for other attention contracts.
+### Vector rows and destination tiles
 
-The hand L1 programs have distinct execution contracts. `flash` uses four MG
-roles, two vector cores, a four-score-tile DRAM ring and eight-tile partial-state
-rings, with sticky-overflow redo. `flashd` streams scores with credits and
-closing drains; its lazy-offset path does not provide that redo. `srflash` uses
-two MG pairs and two SR units. Their inner programs remain unchanged. Only
-flash has an executable adapter; flashd and srflash retain resource contracts.
-A logical assignment is not evidence for mapping four live MG roles onto two MGs.
+Vector `rows` options partition independent rows while retaining each complete
+reduction width and global operand strides. Flat vector work uses `tokens`, one
+complete VL row per work item, with the last physical extent clipped to the
+caller's whole words. Row cuts coalesce adjacent quantums until every output
+plane has disjoint line ownership. Row-local chains and fused row stages can
+share that partition; other supported row/flat sequences compose distributed
+stages with L2 access ordering for their intermediates. Every nonempty local
+schedule is emitted and priced, including exact tails and scratch copies.
+(code: ktpu-kernels/src/gen/vector/split.rs:78-192, :196-299;
+ktpu-kernels/src/call.rs:1410-1579)
 
-`AttentionMotif::bind_roles` checks these resource requirements before returning
-separate score and product MG bindings. It refuses fewer than four MGs rather
-than aliasing roles. The SR motif requires two SRs, while the vector motifs
-require two VCs. This resource contract alone does not establish numerical or
-schedule eligibility and is not yet called by eager selection. Its packing and
-state metadata describe the hand streams, not arbitrary shapes.
+Copy, cast, eligible walked copy/fill and transpose use `destination-tiles`.
+Copies partition complete destination words with line-safe cuts. Walked
+conversion normalizes destination traversal, including negative strides, while
+preserving the corresponding global source walk. Casts use complete vector
+trips. Transpose partitions complete hand-tile/GT4 destination rectangles; a
+row pitch that cannot support independent column-line ownership keeps the whole
+row width together. These planners use the vector split emitter and complete
+local timing. Walks with ordered overlapping or partial-line destinations,
+indexed lane classes and staged relayout sequences retain their local `p1`
+option instead of inventing independent owners.
+(code: ktpu-kernels/src/gen/convert.rs:50-111;
+ktpu-kernels/src/gen/convert/destination.rs:20-133, :136-252;
+ktpu-kernels/src/gen/transpose/destination.rs:40-137;
+ktpu-kernels/src/call.rs:1476-1485, :1816-1867, :1929-1967)
 
-Code: `software/kohakutpu/compiler/crates/ktpu-kernels/src/gen/attention/motif.rs`
-(`AttentionMotif`, `bind_roles`, `pack`, `state`). The DSL-stage role witness
-checks capacity refusal and distinct live MG bindings.
+### Convolution and GroupNorm
 
-Code: `software/kohakutpu/compiler/crates/ktpu-kernels/src/gen/attention.rs`
-(`AttentionSpec`, `assignments`); ownership witness:
-`software/tests/stages/dsl/attention.rs`. Hand programs:
-`software/kohakutpu/language/kohakutpu/language/examples/l1/fused/flash.ktpu`
-(`redo`, `scores`, `pv`, `flash.l1`),
-`software/kohakutpu/language/kohakutpu/language/examples/l1/fused/flashd.ktpu`
-(`srow`, `scores`, `pv`), and
-`software/kohakutpu/language/kohakutpu/language/examples/l1/sru/srflash.ktpu`
-(`scores`, `soft`, `pv`, `norm`). No performance result or numerical certificate
-is asserted by this ownership interface.
+Convolution exposes `spatial` (matmul M), `channels` (matmul N, when output
+columns are independent) and, for grouped convolution, `groups`. Patch production
+and contraction are composed over the same global patch allocation. Channel
+splits use a row-distributed patch producer; spatial/group splits produce the
+patches their product shares consume. The selected makespan is the complete
+patch/product graph cost, with its cross-node dependencies, not the product
+price alone. Forcing selects among these family IDs.
+(code: ktpu-kernels/src/gen/conv.rs:256-340, :439-473)
+
+GroupNorm's `domains` option assigns complete NCHW normalization populations
+(batch times groups); `spatial` splits the elements within each population.
+Counts exclude padding. Each leaf computes a mean and centered M2, transported
+as F32 vector state with E8M15 arithmetic. For populations A and B, with
+`delta=meanB-meanA`, the merge is `n=nA+nB`,
+`mean=meanA+delta*nB/n`, `M2=M2A+M2B+delta*delta*nA*nB/n`.
+An empty population is the identity. Adjacent pairs merge left to right at each
+tree level, carrying an unmatched state unchanged. The root supplies mean and
+`rsqrt(M2/n+eps)` to output owners, which apply channel gamma/beta. Complete-domain
+and split-domain candidates are priced using the emitted population tree, F32
+transport, normalization and any private-output copy; forcing still emits and
+prices the selected candidate. The output is padded domain-major storage with
+one writer per line, not a claim of bitwise equality between reduction trees.
+(code: ktpu-kernels/src/gen/groupnorm/domains.rs:18-44;
+ktpu-kernels/src/gen/groupnorm.rs:19-60;
+ktpu-kernels/src/gen/groupnorm/distributed.rs:62-161, :227-302, :303-438,
+:439-457, :535-585)
+
+## Attention ownership and execution
+
+Attention assignments offer `heads`, `query-rows`, each factor pair
+`heads-query-PhxPq`, and `balanced` contiguous flattened head/query-tile ranges.
+Every span retains global query coordinates and the complete key range of its
+head. Empty participants remain in the assignment. The motif's ownership unit
+is 128 query rows for flash/flashd and 256 for srflash. Physical output ownership
+is validated before each complete local L1 schedule is timed and the cheapest
+eligible option chosen. Forced options undergo the same admission and pricing.
+(code: ktpu-kernels/src/gen/attention.rs:66-152;
+ktpu-kernels/src/gen/attention/flash_split.rs:206-371)
+
+All three recorded generators have executable adapters: `attention.flash`,
+`attention.flashd` and `attention.srflash`. They accept `heads`, `queries` and an
+optional `contract`; keys are 1024 and Dk=Dv=64, with unmasked MX7 scores. Admission
+allows 1..10 heads and whole motif query groups up to 1024 rows. Flash uses
+sticky-overflow redo; flashd requires the caller's `unit-scores` contract and
+uses a direct score ring; srflash uses SR row state. Four distinct MG roles are
+required, plus two VCs for flash/flashd or two SRs for srflash. These resource
+checks do not establish numerical eligibility for arbitrary attention inputs.
+(code: ktpu-kernels/src/call.rs:1647-1686;
+ktpu-kernels/src/gen/attention/motif.rs:57-161;
+ktpu-kernels/src/gen/attention/flash_split.rs:214-239)
+
+Adapters substitute ownership coordinates, external addresses and pipeline
+bounds into the hand programs, retaining their local rings, banks and instruction
+streams. Flash scratch per logical rank is 1 MiB of scores, 64 KiB of partials
+and 16 KiB of sums/offsets; flashd uses the latter two; srflash uses 256 KiB of
+partials. The SR adapter emits at most two heads per pipeline and whole 256-row
+normalization groups. Each physical node has an explicit scope, and successive
+pipelines have private symbols with node-local scratch. `PlannedKernel.l1` is
+the executable; the accompanying graph supplies port metadata, not a replacement
+executable. (code: ktpu-kernels/src/gen/attention/flash.rs:59-134;
+ktpu-kernels/src/gen/attention/flashd.rs:12-57;
+ktpu-kernels/src/gen/attention/srflash.rs:12-60;
+ktpu-kernels/src/gen/attention/motif.rs:65-79;
+ktpu-kernels/src/gen/attention/flash_split.rs:127-198, :363-371)
+
+The eager attention API selects flash automatically for eligible inputs without
+a bounded contract and flashd for `unit-scores`; it also accepts explicit
+flash/flashd selection. Precise scores are ineligible for those MX7 motifs.
+An ineligible automatic choice uses dense attention and records its reason;
+an ineligible explicit choice raises `ValueError`. Srflash is a recorded
+planning generator, not an eager attention selector. Eager motif execution
+pre-scales Q by log2(e)/8, packs Q/K with the selected nk and V with nk=16, and
+copies logical query rows from the 1024-row-pitch output.
+(code: software/kohakutpu/application/kohakutpu/application/kernels/attention.py:25-81;
+software/kohakutpu/application/kohakutpu/application/api/attention.py:41-47, :137-193)
+
+## Eager grants and TinyJit replay
+
+Every eager generated call obtains the device grant: the current `home` node in
+an explicit node scope, otherwise the card's ordered nodes. With one sysnode,
+no forced option and an ordinary graph generator, `invocation` uses ordinary
+cached generation without split pricing and reports `p1`. Hand L1 attention
+motifs always go through planning, including a one-sysnode grant. Multi-node
+calls and forced calls use cached split generation, retaining source and
+selection metadata for capture and library lookup. A forced `p1` is not a
+universal option: it must be exposed by that family's planner.
+(code: software/kohakutpu/application/kohakutpu/application/runtime/generated.py:19-27,
+:52-88, :149-161)
+
+Standalone Python template factories retain a logical `TemplateCall` alongside
+an inlineable Python body. Device specialization validates the declared specs
+and constants, then uses the same generated invocation path; the specialization
+cache includes the grant and forced option. Explicitly authored DSL kernels
+retain their ordinary tracing path.
+(code: software/kohakutpu/application/kohakutpu/application/kernels/template.py:30-55;
+software/kohakutpu/application/kohakutpu/application/runtime/device/kernels.py:133-187)
+
+`KTPU_SPLIT_<GENERATOR>_OPTION` forces a family option, with dots replaced by
+underscores and the generator uppercased: for example
+`KTPU_SPLIT_MATMUL_MM_KERNEL_OPTION`, `KTPU_SPLIT_ATTENTION_FLASH_OPTION` or
+`KTPU_SPLIT_GROUPNORM_KERNEL_OPTION`. This takes precedence over
+`KTPU_SPLIT_OPTION`, which applies only to `matmul.mm_kernel` and `conv.kernel`.
+Absent forcing, each planner chooses among its eligible candidates as described
+above. (code: software/kohakutpu/application/kohakutpu/application/runtime/generated.py:78-88)
+
+TinyJit admits a recording after two equal read-free captures. A recording with
+multi-node work is prepared as split replay: graph-backed launches are grouped
+between host writes and opaque/executable-L1 boundaries. Each pure region goes
+through `SplitRunner`, which composes the graph, resolves external physical
+aliases under allocation pins and compiles the region together for node ordering
+and event-slot allocation. Optional `KTPU_GRAPH_FUSE=1` rewrites run within these
+boundaries; split composition itself does not require that knob. Opaque L1
+launches retain their own executable. Replay preserves host writes, submits
+prepared regions through ordinary submission and waits for the previous replay
+epoch before reusing its scratch and event slots. Split replay matches storage
+and runtime private state but does not require or restore resident-core digests;
+package replay retains that additional state contract.
+(code: software/kohakutpu/application/kohakutpu/application/ktpugrad/device.py:380-394,
+:438-509;
+software/kohakutpu/application/kohakutpu/application/runtime/graph/split_recorded.py:15-19,
+:31-91, :122-187;
+software/kohakutpu/application/kohakutpu/application/runtime/graph/split.py:24-36, :50-92)
+
+Queue admission can overlap runs on disjoint physical lines, including runs
+using the same multi-node grant. A single common node FIFO already orders its
+runs. Otherwise admission compares bound read/write line intervals and leased
+receiver/slot resources; unknown graph contracts retain allocation-wide
+conflicts. Dependency completion can be observed without publishing success
+past an earlier fault. Host reads and writes still collect through their last
+conflicting allocation use. This is access-based admission, not a promise that
+all independent work executes in parallel.
+(code: software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py:79-98,
+:126-149, :443-482;
+software/kohakutpu/application/kohakutpu/application/runtime/graph/access.py:18-61;
+software/kohakutpu/application/kohakutpu/application/runtime/graph/leases.py:8-28)
 
 ## Verification domain
 

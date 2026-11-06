@@ -99,18 +99,20 @@ softmax 2.0e-4 in 1 kernel, layernorm 2.8e-4 in 1 kernel, linear + gelu
 `attention(q, k, vt, precise_scores=False)` accepts Q `[H,S,D]`, K `[H,T,D]`
 and transposed V `[H,D,T]`, with D in 64, 128, 192 or 256. Device packing pads
 queries and keys independently, a validity table masks absent keys, and only
-logical query rows are copied to the result. `precise_scores=True` selects the
-explicit score-computation path rather than the MXFP7 QK product; it does not
-request a flash motif.
+logical query rows are copied to the result.
 
-The eager implementation builds dense score and probability arrays. The Rust
-[attention ownership interface](../../spec/stack/templates.md#attention-ownership)
-has an explicit `call_split` L1 adapter for the reference flash packing, not
-an eager fast path. The hand `flash`, `flashd` and `srflash` programs are not
-methods selected by this API. There is no eager motif-selection or
-ineligibility call record.
+One eligibility decision (`flash_reason`), shared with the tinygrad path,
+chooses the kernel and records why on the launch: a shape the hand `flash`
+motif accepts runs `attention.flash` over the device's sysnodes; `flashd` runs
+only under the explicit `contract="unit-scores"` request; `precise_scores=True`
+and every other shape take the dense kernel, which builds score and probability
+arrays and does not use the MXFP7 QK product. The motifs and their split options
+are described under
+[attention ownership and execution](../../spec/stack/templates.md#attention-ownership-and-execution)
+and the API.ATTN clauses (`docs/spec/stack/api/attention.md`).
 
 Code: `software/kohakutpu/application/kohakutpu/application/api/attention.py`
 (`attention`) and
 `software/kohakutpu/application/kohakutpu/application/kernels/attention.py`
-(`kernel`). This describes source behavior, not a measured performance result.
+(`flash_reason`, `kernel`). This describes source behavior, not a measured
+performance result.

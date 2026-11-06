@@ -124,6 +124,7 @@ class Parts:
     _scope: Scope | None
     _record_pins: list
     _record_runs: list
+    _record_accesses: list
     _record_templates: list
     _recipe_capture: Any
     _recipe_recording: Any
@@ -150,6 +151,8 @@ class Recorded(list):
         super().__init__(events)
         self.references = references
         self.runs = list(runs)
+        self.accesses = [None] * len(self.runs)
+        self.list_accesses: list[tuple | None] = []
         self.templates = tuple(templates)
         self.owner = owner
         self.closed = False
@@ -157,9 +160,13 @@ class Recorded(list):
         self.list_events: list | None = None
         self.list_runs: Any = None
         self.native: Any = None
+        self.split: Any = None
 
     def close(self):
         if not self.closed:
+            if self.split is not None:
+                self.split.close()
+                self.split = None
             if self.native is not None:
                 self.native.close()
                 self.native = None
@@ -192,6 +199,7 @@ class Submitted:
     references: list = field(default_factory=list)
     writes: list = field(default_factory=list)
     nodes: tuple = ()
+    accesses: tuple | None = None
     error: Exception | None = None
     extents: dict = field(default_factory=dict)
 

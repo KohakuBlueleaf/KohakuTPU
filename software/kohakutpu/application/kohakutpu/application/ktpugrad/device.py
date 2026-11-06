@@ -190,8 +190,9 @@ class KTPUGraph(GraphRunner):
     batch is not yet known to be periodic, the run goes through the planner
     with the card's log on (`NodeCard.record`). Two calls in a row that log
     the same events -- packages, bindings, host writes, no host read -- make
-    that log the batch, and later calls replay it: every package already in
-    its node's heap, submitted back to back until a host dependency waits.
+    that log the batch. Split launches are composed by SplitRunner into one
+    multi-node graph per host-effect region, with access-set edges and leased
+    cross-node slots. Other recordings retain their package replay path.
 
     Inputs without host bytes (made on the card) run through the planner
     every call."""
@@ -388,8 +389,9 @@ class KTPUGraph(GraphRunner):
             if not st.unchanged:
                 # A write the planner did not see: what reads made is stale.
                 st.release_kept()
-        for n, snap in held.items():
-            cores[n].restore(snap)
+        if self.log[1].split is None:
+            for n, snap in held.items():
+                cores[n].restore(snap)
 
     @staticmethod
     def _cores(cores: dict) -> tuple:
@@ -447,14 +449,21 @@ class KTPUGraph(GraphRunner):
         storages = self._storages()
         cores = self._residents()
         entry = (self._state(storages), self._cores(cores), rt.private_state())
-        if self.log is not None and entry == self.log[0]:
-            self.counts["replayed"] += 1
-            self.history.append("replayed")
-            runs = rt.replay(self.log[1], wait=wait or not rt.queued)
-            self._restore(storages, cores)
-            if any(isinstance(r, SUBMITTED) for r in runs):
-                return None
-            return seconds(rt, runs)
+        if self.log is not None:
+            previous = self.log[0]
+            matches = (
+                (entry[0], entry[2]) == (previous[0], previous[2])
+                if self.log[1].split is not None
+                else entry == previous
+            )
+            if matches:
+                self.counts["replayed"] += 1
+                self.history.append("replayed")
+                runs = rt.replay(self.log[1], wait=wait or not rt.queued)
+                self._restore(storages, cores)
+                if any(isinstance(r, SUBMITTED) for r in runs):
+                    return None
+                return seconds(rt, runs)
         self.counts["recorded"] += 1
         # Placement pins survive recapture; only equal logs become replayable.
         self._release_records()

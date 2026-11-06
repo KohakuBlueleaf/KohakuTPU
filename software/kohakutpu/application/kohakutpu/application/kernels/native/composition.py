@@ -436,8 +436,9 @@ def logical_rows(
 class GraphKernel:
     """Existing custom-call protocol over a generated graph, without a second ABI."""
 
-    def __init__(self, graph):
+    def __init__(self, graph, *, selection=None):
         self.graph = graph
+        self.selection = dict(selection or {})
         self.name = graph["name"]
         self.consts = {}
         self.inputs = [p["name"] for p in graph["ports"] if p["role"] == "in"]

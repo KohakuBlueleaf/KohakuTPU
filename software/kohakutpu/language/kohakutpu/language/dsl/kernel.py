@@ -242,6 +242,13 @@ class Kernel:
             final[name] = TensorSpec.make(shape, dtype, layout, port.space)
         return final
 
+    def constants(self, supplied):
+        """Bind declared constants using the kernel's input error contract."""
+        unknown = set(supplied) - set(self.consts)
+        if unknown:
+            raise DSLError(f"{self.name} has no constant {sorted(unknown)}")
+        return {**self.consts, **supplied}
+
     def trace(
         self, given: dict | None = None, *, machine=None, check=None, **consts
     ) -> Traced:
@@ -256,10 +263,7 @@ class Kernel:
                 f"{self.name}: trace needs the machine it is traced for "
                 f"(machine=kt.Machine.of(<machine file>)), got {machine!r}"
             )
-        unknown = set(consts) - set(self.consts)
-        if unknown:
-            raise DSLError(f"{self.name} has no constant {sorted(unknown)}")
-        merged = {**self.consts, **consts}
+        merged = self.constants(consts)
         autos = [k for k, v in merged.items() if isinstance(v, Auto)]
         choices = [{}]
         for k in autos:

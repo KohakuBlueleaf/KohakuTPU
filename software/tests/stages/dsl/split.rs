@@ -246,6 +246,8 @@ fn selection_prices_the_slowest_share_and_forcing_keeps_its_price() {
 
 #[path = "attention.rs"]
 mod attention;
+#[path = "loop_ownership.rs"]
+mod loop_ownership;
 
 fn simulate_matmul(kernel: &ktpu_kernels::kernel::Kernel) -> (Vec<u8>, Vec<u32>) {
     simulate_matmul_inputs(

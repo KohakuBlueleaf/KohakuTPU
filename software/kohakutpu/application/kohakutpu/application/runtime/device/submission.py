@@ -16,6 +16,8 @@ from kohakutpu.application.runtime.device.common import (
     Submitted,
 )
 from kohakutpu.application.runtime.eager_batch import Deferred
+from kohakutpu.application.runtime.graph.access import bound_accesses, conflicts
+from kohakutpu.application.runtime.graph.leases import launch_slots
 from kohakutpu.application.runtime.memory.arena import OutOfMemory
 from kohakutpu.application.runtime.packages import Prebuilt, placed
 from kohakutpu.stack import rs
@@ -121,29 +123,30 @@ class Submission(Parts):
             refs.discard((entry.arena, entry.physical))
         return [r for r in references if r not in refs and r not in self.constants]
 
-    def _fence(self, nodes, references, writes) -> None:
-        """Before a run on `nodes` that reads `references` and writes `writes`
-        is queued, every run in flight it depends on is collected. One node's
-        queue orders its runs and nothing orders two nodes' queues, so a run
-        on other nodes that shares a written span with this one comes first
-        (scratch windows rest on this, `_window`); a run over several nodes
-        runs alone."""
-        if len(nodes) > 1 or any(len(s.nodes) > 1 for s in self.inflight):
-            self.drain()
-            return
+    def _fence(self, nodes, references, writes, accesses=None, slots=()) -> None:
+        """Collect conflicting runs not ordered by one common FIFO queue.
+
+        A multi-node launch can move data between queues, even when the next
+        launch uses the same grant. Scratch windows participate as writes.
+        """
         reads, wrote = set(references), set(writes)
-        conflicts = [
-            s
-            for s in self.inflight
-            if s.nodes != nodes
-            and (
-                not self.node_overlap
-                or not wrote.isdisjoint(s.references)
-                or not reads.isdisjoint(s.writes)
+        slots = frozenset(slots)
+        observed = False
+        for pending in list(self.inflight):
+            if len(nodes) == 1 and pending.nodes == nodes:
+                continue
+            conflict = (
+                conflicts(accesses, pending.accesses)
+                if accesses is not None and pending.accesses is not None
+                else not wrote.isdisjoint(pending.references)
+                or not reads.isdisjoint(pending.writes)
             )
-        ]
-        if conflicts:
-            self.collect_through(conflicts[-1])
+            conflict |= not slots.isdisjoint(pending.info.get("slot_leases", ()))
+            if not self.node_overlap or conflict:
+                self._observe_one(pending)
+                observed = True
+        while observed and self.inflight and self.inflight[0].result is not None:
+            self._collect_one(self.inflight[0])
 
     def _admit(self, nodes, references):
         """Bound each node's uncollected runs and the union of pinned spans."""
@@ -195,7 +198,9 @@ class Submission(Parts):
             )
         return self._submitted(compiled, binds, kind, info)
 
-    def _submitted(self, compiled, binds: dict, kind: str, info) -> Submitted:
+    def _submitted(
+        self, compiled, binds: dict, kind: str, info, *, pinned=False
+    ) -> Submitted:
         launch_boundary.before_submit(self)
         self._healthy()
         if self.closed:
@@ -205,7 +210,7 @@ class Submission(Parts):
         params = compiled.l1.params(compiled.name, "l1")
         full, scratch = dict(binds), []
         submitted_compiled = compiled
-        references = self._retain(binds.values())
+        references = self._retain(binds.values(), pinned=pinned)
         record_mark = len(self._record_pins)
         submitting = False
         publication = s = None
@@ -353,17 +358,24 @@ class Submission(Parts):
                 else tuple(progs)
             )
             writes = self._write_refs(references)
-            self._fence(nodes, references, writes)
+            accesses = bound_accesses(self, submitted_compiled, full)
+            slots = tuple(sorted(launch_slots(progs, self.card.nodes)))
+            self._fence(nodes, references, writes, accesses, slots)
             self._admit(nodes, references)
             card = progs[None] if single else progs
             s = Submitted(
                 compiled.name,
                 kind,
-                dict(info or {}),
+                {
+                    **(info or {}),
+                    **getattr(compiled, "selection", {}),
+                    "slot_leases": slots,
+                },
                 t0,
                 references=references,
                 writes=writes,
                 nodes=nodes,
+                accesses=accesses,
             )
             if self._scope is not None:
                 s.info["plan"] = self._scope[0]
@@ -405,6 +417,7 @@ class Submission(Parts):
             raise
         self.inflight.append(s)
         if self.recording:
+            self._record_accesses.append(accesses)
             self._record_templates.append((submitted_compiled, tuple(full.items())))
             self._record_runs.append(
                 (
@@ -427,10 +440,8 @@ class Submission(Parts):
                 self._collect_one(earlier)
         return self._collect_one(s)
 
-    def _collect_one(self, s: Submitted) -> Run:
-        """Retire one observed completion, releasing only its own references."""
-        if s.run is not None:
-            return s.run
+    def _observe_one(self, s):
+        """Wait for a dependency without exposing success ahead of earlier faults."""
         if s.error is not None:
             raise s.error
         self._healthy()
@@ -447,6 +458,15 @@ class Submission(Parts):
                 )
             raise
         s.result = got
+        return got
+
+    def _collect_one(self, s: Submitted) -> Run:
+        """Retire one observed completion, releasing only its own references."""
+        if s.run is not None:
+            return s.run
+        if s.error is not None:
+            raise s.error
+        got = self._observe_one(s)
         if s in self.inflight:
             self.inflight.remove(s)
         for arena, at in s.references:

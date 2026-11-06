@@ -315,6 +315,7 @@ class Submitted:
     references: list
     writes: list
     nodes: tuple[int, ...]
+    accesses: tuple | None
     error: Exception | None
 
 class NativeSubmit:
@@ -328,6 +329,7 @@ class NativeSubmit:
         packages: list,
         resident: bool,
         scope: tuple[RecipeEpoch, int],
+        accesses: list[tuple[int, bool]] | None = ...,
     ) -> None: ...
     def launch(
         self,

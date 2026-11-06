@@ -4,6 +4,7 @@ import time
 
 from kohakutpu.application.runtime.device.common import Parts, Recorded, Run, Submitted
 from kohakutpu.application.runtime.graph import recorded as native_recorded
+from kohakutpu.application.runtime.graph import split_recorded
 from kohakutpu.language.config import ENV
 
 
@@ -17,6 +18,7 @@ class Replay(Parts):
         self.recording = True
         self._record_pins = []
         self._record_runs = []
+        self._record_accesses = []
         self._record_templates = []
 
     def recorded(self) -> Recorded:
@@ -30,11 +32,15 @@ class Replay(Parts):
             self._record_runs,
             self._record_templates,
         )
+        log.accesses = self._record_accesses
         self._record_pins = []
         self._record_runs = []
+        self._record_accesses = []
         self._record_templates = []
         self.recording = False
-        if ENV.get("KTPU_GRAPH_FUSE", "0") == "1":
+        if ENV.get("KTPU_GRAPH_FUSE", "0") == "1" and not split_recorded.contains_split(
+            log
+        ):
             try:
                 log.native = native_recorded.from_environment(log)
             except BaseException:
@@ -57,6 +63,10 @@ class Replay(Parts):
         self._healthy()
         if self.closed:
             raise RuntimeError("device is closed")
+        if log.split is None and split_recorded.contains_split(log):
+            self.prepare_recorded(log)
+        if log.split is not None:
+            return log.split.run(wait)
         if log.native is not None:
             # Native LIST is synchronous even when asynchronous completion is optional.
             self.drain()
@@ -118,6 +128,10 @@ class Replay(Parts):
         """Keep a recording's dispatch wrappers and uploads, when selected."""
         if not isinstance(log, Recorded) or log.closed or log.owner is not self:
             raise ValueError("preparation requires an open, pinned recording")
+        if split_recorded.contains_split(log):
+            if log.split is None:
+                log.split = split_recorded.prepare(log)
+            return
         if log.native is not None:
             return
         if (
@@ -137,7 +151,14 @@ class Replay(Parts):
             try:
                 events, groups = self.card.prepare_execution(log.prepared)
                 log.list_events, log.list_runs = events, []
+                log.list_accesses = []
                 for group in groups:
+                    accesses = [log.accesses[i] for i in group]
+                    log.list_accesses.append(
+                        tuple(a for current in accesses for a in current)
+                        if all(current is not None for current in accesses)
+                        else None
+                    )
                     runs = [log.runs[i] for i in group]
                     refs = list(dict.fromkeys(r for run in runs for r in run[3]))
                     writes = list(dict.fromkeys(r for run in runs for r in run[4]))
@@ -146,7 +167,18 @@ class Replay(Parts):
                         (
                             "replay-list",
                             "replay",
-                            {"launches": len(group)},
+                            {
+                                "launches": len(group),
+                                "slot_leases": tuple(
+                                    sorted(
+                                        {
+                                            slot
+                                            for run in runs
+                                            for slot in run[2].get("slot_leases", ())
+                                        }
+                                    )
+                                ),
+                            },
                             refs,
                             writes,
                             nodes,
@@ -168,8 +200,10 @@ class Replay(Parts):
             self.card.submit_recorded if prepared is None else self.card.submit_prepared
         )
         metadata = iter(log.runs)
+        access_sets = iter(log.accesses)
         events = log if prepared is None else prepared
         if prepared is not None and hasattr(self.card, "prepare_execution"):
+            access_sets = iter(log.list_accesses)
             events, metadata, submit = (
                 log.list_events,
                 iter(log.list_runs),
@@ -190,7 +224,8 @@ class Replay(Parts):
                 self.card.write(ev[1], ev[2])
                 continue
             name, kind, info, refs, writes, nodes = next(metadata)
-            self._fence(nodes, refs, writes)
+            accesses = next(access_sets)
+            self._fence(nodes, refs, writes, accesses, info.get("slot_leases", ()))
             while (
                 self.max_inflight is not None
                 and len(self.inflight) >= self.max_inflight
@@ -207,6 +242,7 @@ class Replay(Parts):
                 references=list(refs),
                 writes=list(writes),
                 nodes=nodes,
+                accesses=accesses,
             )
             publication = getattr(self.card, "publication_epoch", None)
             try:

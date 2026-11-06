@@ -19,9 +19,9 @@ resolves handles through its software MMU and retains the underlying arena
 allocations. A run's scratch (the arenas and buffers the compiler kept that
 the bindings do not name) is laid out in the scratch **window** of its space:
 one per node's staging store and one in DRAM, each grown to the largest run's
-need and pinned by the same path. One window a space is sound because the runs
-in flight are always on one node in that node's queue order (below), so no two
-runs' scratch is live at once; a replayed graph therefore pins one window a
+need and pinned by the same path. A shared scratch window is a write access:
+its users order through their single-node FIFO or through admission conflicts.
+Runs using disjoint windows can overlap. A replayed graph pins one window a
 space, not a span per site. A window outgrown while a run or a recording still
 pins it stays alive for them and the next run takes a new one. Once no run is
 in flight, every window no recording pins is freed: a collected run keeps no
@@ -45,14 +45,35 @@ access contract conservatively treat all bindings as writable.
 `write` waits through the last pending use. tinygrad applies these hazards to
 all forms of its logical storage. Waits collect the submission prefix so an
 earlier fault cannot be attributed to the kernel whose read exposed it.
-Same-node kernels rely on FIFO ordering. Nothing orders two nodes' queues, so a
-run first collects through the last run in flight on other nodes that shares a
-written allocation with it, scratch windows included. A run over several nodes
-runs alone; its shares are staged and published on every participating queue
-before any of them is collected, the card and the device double through one
-`submit_launch` / `collect` pair, and the shares order each other only through
-device doorbells. `Device.on_node(k)` places one-mesh kernels and their scratch on node
-`k`, each home with its own DRAM window, so runs in two scopes overlap.
+Single-node kernels on the same node rely on FIFO ordering. Across queues,
+admission compares physical read/write-line access sets and observes completion only for the
+conflicting pending runs, not an unrelated submission prefix. Observed results
+and pins stay pending until their submission-order prefix can retire, so a
+later success is not exposed ahead of an earlier fault. This also applies
+to multi-node runs, including two runs with the same grant: different shares can
+consume one another's writes. Read/read and disjoint-line accesses do not order.
+Raw L1 recipes without a graph port contract retain allocation-wide access
+sets; generated native recipes bind their cached contracts during the existing
+allocation walk. Scratch windows are writes in their own memory space, so overlapping uses
+of one window always order. `KTPU_NODE_OVERLAP=0` selects serialized cross-queue
+admission; overlap is enabled by default. Doorbell receiver/slot pairs are also
+exclusive access resources. Their footprint is extracted once from immutable
+package RING/WAIT_SLOT steps and retained with the launch. Admission observes
+only launches sharing one of those resources before reuse; equal slot numbers
+on different receivers do not conflict. Native recipes derive this footprint
+at construction rather than trusting caller metadata. LIST replay unions its
+members' leases. Completion of the complete multi-node launch establishes sender
+quiescence and consumption before another artifact reuses its slots.
+
+These lifetime guarantees belong to `Device` submissions. The lower-level
+`NodeCard` queue interface is a transport primitive; applications using it
+directly own ordering and must not mix unmanaged slot users with managed runs.
+
+A split run stages and publishes its shares on every participating queue before
+any of them is collected, through one `submit_launch` / `collect` pair on both
+card and device double. Its shares order one another through device doorbells.
+`Device.on_node(k)` grants one node and places its scratch on `k`; each home has
+its own DRAM window.
 
 ## Working-set limits
 

@@ -285,7 +285,7 @@ impl Trace {
             kind: s.kind,
             in_loop: true,
             sticky: s.sticky,
-            node: false,
+            node: s.node,
         };
         self.block(node, at_line, scope, |t| body(t, var(&v)))
     }

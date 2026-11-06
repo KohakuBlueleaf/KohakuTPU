@@ -30,6 +30,7 @@ pub(crate) struct Submitted {
     references: Py<PyList>,
     writes: Py<PyList>,
     nodes: Py<PyTuple>,
+    accesses: Py<PyAny>,
     error: Py<PyAny>,
 }
 
@@ -66,6 +67,7 @@ pub(crate) struct NativeSubmit {
     info: Py<PyDict>,
     scratch: Vec<AllocSpec>,
     bindings: Vec<Binding>,
+    accesses: Option<Vec<(u64, bool)>>,
     packages: Vec<Package>,
     resident: bool,
     scope: (Arc<AtomicU64>, u64),
@@ -155,6 +157,7 @@ pub(crate) fn release(py: Python<'_>, dev: &Bound<'_, PyAny>, address: u64) -> P
 impl NativeSubmit {
     #[new]
     #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature=(name,kind,info,scratch,bindings,packages,resident,scope,accesses=None))]
     fn new(
         py: Python<'_>,
         name: String,
@@ -165,13 +168,26 @@ impl NativeSubmit {
         packages: Vec<Package>,
         resident: bool,
         scope: (PyRef<'_, RecipeEpoch>, u64),
+        accesses: Option<Vec<(u64, bool)>>,
     ) -> PyResult<Self> {
+        if accesses.as_ref().is_some_and(|a| a.len() != bindings.len()) {
+            return Err(PyValueError::new_err(
+                "one access contract per binding is required",
+            ));
+        }
+        let slots: BTreeSet<_> = packages
+            .iter()
+            .flat_map(|(_, recipe, _)| recipe.borrow(py).slot_leases())
+            .collect();
+        let info = info.bind(py).copy()?;
+        info.set_item("slot_leases", PyTuple::new(py, slots)?)?;
         Ok(Self {
             name,
             kind,
-            info,
+            info: info.unbind(),
             scratch,
             bindings,
+            accesses,
             packages,
             resident,
             scope: (scope.0.generation.clone(), scope.1),
@@ -224,6 +240,8 @@ impl NativeSubmit {
         let scratch = PyList::empty(py);
         let refs = PyList::empty(py);
         let writes = PyList::empty(py);
+        let accesses = PyList::empty(py);
+        let line: u64 = dev.getattr("line_bytes")?.extract()?;
         let nodes = PyTuple::new(py, self.packages.iter().map(|p| p.0))?;
         let mmu: Py<NativeMMU> = dev.getattr("mmu")?.extract()?;
         let epoch = publication(&card)?;
@@ -245,6 +263,7 @@ impl NativeSubmit {
                 references: refs.clone().unbind(),
                 writes: writes.clone().unbind(),
                 nodes: nodes.clone().unbind(),
+                accesses: py.None(),
                 error: py.None(),
             },
         )?;
@@ -276,9 +295,21 @@ impl NativeSubmit {
                 let (entry, _) = mmu.borrow_mut(py).resolve(py, address, 1, false)?;
                 readonly_set.remove(&entry.borrow(py).physical);
             }
-            for &address in &full {
-                let (entry, _) = mmu.borrow_mut(py).resolve(py, address, 1, true)?;
+            for (index, &address) in full.iter().enumerate() {
+                let bytes = self.accesses.as_ref().map_or(1, |a| a[index].0.max(1));
+                let (entry, physical) = mmu.borrow_mut(py).resolve(py, address, bytes, true)?;
                 let entry = entry.borrow(py);
+                if let Some(contract) = &self.accesses {
+                    let (bytes, write) = contract[index];
+                    if bytes != 0 {
+                        accesses.append((
+                            &entry.arena,
+                            physical / line,
+                            (physical + bytes).div_ceil(line),
+                            write,
+                        ))?;
+                    }
+                }
                 if seen.insert(entry.virtual_address) {
                     entry.arena.borrow_mut(py).retain(py, entry.physical)?;
                     let reference = (&entry.arena, entry.physical);
@@ -288,6 +319,9 @@ impl NativeSubmit {
                     }
                 }
             }
+            if self.accesses.is_some() {
+                pending.borrow_mut(py).accesses = accesses.clone().into_any().unbind();
+            }
             if nodes.len() > 1
                 || inflight.iter().any(|s| {
                     s.getattr("nodes")
@@ -295,7 +329,15 @@ impl NativeSubmit {
                         .is_ok_and(|eq| !eq)
                 })
             {
-                dev.call_method0("drain")?;
+                let slots = self
+                    .info
+                    .bind(py)
+                    .get_item("slot_leases")?
+                    .unwrap_or_else(|| PyTuple::empty(py).into_any());
+                dev.call_method1(
+                    "_fence",
+                    (&nodes, &refs, &writes, &pending.borrow(py).accesses, slots),
+                )?;
             }
             if direct.is_some() {
                 let mut held = 0_u64;

@@ -16,7 +16,6 @@ def dependencies(launches, addresses, line_bytes=64):
     Coordinate compression splits only at access endpoints, never at every byte
     or line. Addresses locate allocation-relative views within write lines.
     """
-    endpoints = defaultdict(set)
     regions = []
     for launch in launches:
         current = []
@@ -29,9 +28,17 @@ def dependencies(launches, addresses, line_bytes=64):
             start = addresses[span.allocation] + span.offset
             lo = start // line_bytes
             hi = (start + span.nbytes + line_bytes - 1) // line_bytes
-            endpoints[span.allocation].update((lo, hi))
             current.append((span.allocation, lo, hi, write))
         regions.append(current)
+    return access_dependencies(regions)
+
+
+def access_dependencies(regions):
+    """Dependency frontiers for launches with any number of read/write regions."""
+    endpoints = defaultdict(set)
+    for current in regions:
+        for allocation, lo, hi, _ in current:
+            endpoints[allocation].update((lo, hi))
     positions = {
         allocation: {point: index for index, point in enumerate(sorted(points))}
         for allocation, points in endpoints.items()

@@ -70,7 +70,11 @@ def call(kernel: CustomKernel, *args: Tensor, **consts) -> tuple[Tensor, ...]:
             compiled,
             binds,
             kind="custom",
-            info={"kernel": kernel.name, "compiled": compiled},
+            info={
+                "kernel": kernel.name,
+                "compiled": compiled,
+                **getattr(kernel, "selection", {}),
+            },
         )
         out = []
         for _, st, spec in results:

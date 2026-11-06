@@ -36,25 +36,69 @@ argument, `KTPU_INFERENCE_REPLAY=0` selects eager and `1` selects replay. The Vi
 example and MNIST classifier's KTPU accuracy path use this wrapper. ViT's explicit
 state observers run eagerly because observation reads intermediate results.
 
+## Numerical programs
+
+Captured planning can compute a different numerical program from separate eager
+kernels. `KTPUGraph._plan` uses `ktpugrad.run.units`: elementwise read-through
+composition substitutes the producer expression into its consumer, and row
+regions hold private normalization and softmax intermediates in registers.
+Those expressions have no intervening f16 store/load. Separate eager kernels
+pack their intermediate outputs to f16 before the next kernel reads them. The
+vector hardware computes in E8M15 register precision; the L2 device double uses
+its value simulator. Neither execution should be described as keeping a private
+row intermediate at f16 precision when its store has been eliminated.
+
+This expression composition is distinct from `KTPU_GRAPH_FUSE` neighbour
+composition: the latter namespaces graph bodies and moves private edges to
+scratch while retaining their element types. `SplitRunner` composes the selected
+graph bodies without selecting another matmul split or K reduction order.
+
+A recording is verified by its events and entry/exit state, not by equality to
+an unfused eager result. Its `history` distinguishes recording/planning from an
+actual replay. Replaying the same prepared program with the same input preserves
+its bytes, including its rounding boundaries. Comparing fused execution to eager
+execution or to an f32 reference instead reports absolute and relative error
+maxima, means and medians, with no tolerance-based pass label. Matmul K splits
+likewise report their changed accumulation order statistically; exact split
+options retain byte equality between equivalent P=1 and P>1 eager programs.
+
 ## Several nodes
 
-`Resident(model, nodes)` keeps one `Inference` per node, sharing the weights in
-DRAM. Each copy has its own captured graph, input slots and scratch, so requests
-on different nodes overlap on the card until a result is read.
-`Sharded(model, nodes)` runs one batch across the nodes: `shards` gives each node
-a contiguous range of the first axis, each range is a `Resident` request on the
-card's copy of the batch, and the outputs join on that axis.
+The shared runtime generated-call path grants every available sysnode to a
+kernel invocation. This is
+kernel parallelism, including batch 1: contractions split their matrix tiles,
+attention splits heads/query tiles, and row and destination kernels partition
+complete ownership tiles. An explicit `on_node(n)` scope grants only that node.
+Single-node devices use the P=1 selection and the same source/compiled caches.
+Each invocation records its requested `nodes`, selected `option_id` and `p`,
+and `active_nodes`; small
+kernels can have empty shares without pretending those shares did useful work.
+A generator with only a P=1 option reports `p=1`, independently of the grant.
+Legacy Python-DSL native compositions use their own construction path.
 
-```python
-from kohakutpu.application.ktpugrad import Resident, Sharded
+A verified TinyJit recording containing split launches is prepared through
+`SplitRunner`. Each graph-backed run-only region is composed before L2 lowering.
+Opaque L1 programs remain explicit executable boundaries. With
+`KTPU_GRAPH_FUSE=1`, neighbour fusion runs before whole-region lowering and slot
+leasing, with the quant, elementwise, norm and layout controls. Private
+cross-node edges use shared DRAM; single-node native capture retains stage-local
+edges. Live outputs and every access crossing a region boundary are exports,
+including a freed temporary read after a host write. Canonical
+physical read/write-line access sets define RAW, WAR and WAW edges; the lowering
+leases cross-sysnode slots for the whole region. Each CPU receives its node's
+package, all parts are published before collection, and a retained instance
+finishes its preceding epoch before reusing its slots. Host writes separate
+regions and retain their original order. Allocations remain pinned by the log
+and prepared regions. Physical bindings establish alias dependencies, while
+packages remain relocatable: compiler-layout scratch is bound through the
+ordinary per-space runtime windows. Deferred quantization records remain live
+across node scopes until their finite checks; a remote check acquires the
+producer's completed scope before reading its records. A recording without split
+launches keeps package replay.
 
-model_on = Resident(model)
-results = [out.numpy() for out in model_on([(image,) for image in images])]
-logits = Sharded(model)(batch).numpy()
-```
-
-Packages are built for mesh 0 and rewritten for their node at submission, a change
-of the unit and buffer tables only (`Package::rehomed`).
+`Resident` and `Sharded` are explicit request/batch-distribution utilities, not
+the implementation of a device's kernel-parallel grant. They are unnecessary
+for spreading a batch-1 model over the card.
 
 ## Dispatch controls
 

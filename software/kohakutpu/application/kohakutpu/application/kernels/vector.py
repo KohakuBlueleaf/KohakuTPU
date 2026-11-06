@@ -32,6 +32,7 @@ from kohakutpu.application.kernels.classes.base import (
     port,
     stat_words,
 )
+from kohakutpu.application.kernels.template import template
 from kohakutpu.language import dsl as kt
 from kohakutpu.stack.rs import _rs
 
@@ -215,6 +216,10 @@ def _rows_trips(bufs, e, operands, out, pl: Plan, c, start, trips, row0, cb) -> 
         _rows_block(bufs, e, operands, out, pl, r, cb, pro)
 
 
+@template(
+    "vector.rows_kernel",
+    ("e", "operands", "R", "W", "out", "bands", "shape_class"),
+)
 def rows_kernel(
     e,
     operands: tuple,
@@ -331,6 +336,10 @@ def _tail_band(p, e, operands, out: Operand, pl: Plan, row0: int, rows: int, W: 
         kt.copy(p["out"][rr + row0 : rr + row0 + rows, cc : cc + W], s[0:rows, :])
 
 
+@template(
+    "vector.flat_kernel",
+    ("e", "dtypes", "n", "out_dtype", "scalars", "shape_class"),
+)
 def flat_kernel(
     e,
     dtypes: tuple,
