@@ -25,6 +25,7 @@ use crate::text::{fmt, Definition, Env, Expander, Module, Reader, Stmt, Term, Va
 
 mod desc;
 mod facts;
+mod fill;
 mod flow;
 mod images;
 mod math;
@@ -52,6 +53,8 @@ pub struct Encoder<'a> {
     pub config: usize,
     /// Far peer drains encoded as two (L1.VC.010).
     pub split: Splits,
+    /// Descriptors used by emitted peer drains.
+    pub peer_drains: BTreeSet<u32>,
 }
 
 type Words = Vec<u64>;

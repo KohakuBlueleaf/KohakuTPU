@@ -1291,6 +1291,66 @@ FLAWS = [
             r"\.exec_done\(exec_done\), \.exec_result\(exec_result\), \.exec_fault\(1'b0\)",
         ),
     ),
+    (
+        "F-014",
+        "Xache read pipeline (kx_rd_pipe.v)",
+        (
+            "A duplicate beat-zero lookup of a one-beat read can land after"
+            " that burst completes and be accepted under the next burst's ID."
+        ),
+        "ISSUES 79: card-confirmed one-beat read misdelivery; kx_rd_pipe.v:185-233.",
+        (
+            "Handling pending: split multi-beat reads without single-beat pieces;"
+            " widen a single beat to its aligned 128-byte pair and discard the"
+            " neighbour in reserved receiving scratch. CPU reads are outside"
+            " kernel-payload handling."
+        ),
+        "Carry burst identity through the lookup pipeline and qualify every landing.",
+        lambda i: flaw_line(
+            "src/kohakuaxi/xache/engine/kx_rd_pipe.v",
+            r"wire       wanted  = land_v && \(accept \? eq1 : eq0\) && room;",
+        ),
+    ),
+    (
+        "F-015",
+        "interlink fault reporting (mag_ilink.v)",
+        (
+            "Packet closure clears acc_open inside a continuing CU_DATA burst;"
+            " the next data flit is checked as a descriptor and can raise ACK0."
+        ),
+        "ISSUES 81: remote vector bursts above 32 words report ACK0 with exact data.",
+        (
+            "The compiler records f015.long_remote per sending mesh. With F-015"
+            " present, ACK0 is not evidence on that die during a run containing"
+            " a long or statically unknown remote vector burst. Other faults"
+            " and other dies remain checked. Zero device cost."
+        ),
+        "Track CU_DATA descriptor lifetime independently of packet lifetime.",
+        lambda i: flaw_line(ILINK, r"wire e_isdesc = enc_take && !acc_open;"),
+    ),
+    (
+        "F-016",
+        "cluster drain (mx_cluster_cu.v)",
+        (
+            "The drain collector closes a write burst only at WBURST or drain"
+            " end, not at a 4-KiB boundary. Xache chooses one home from its"
+            " starting address, so a crossing burst can lose output words."
+        ),
+        "ISSUES 80: 63/65-entry drains; mx_cluster_cu.v:1087-1090.",
+        (
+            "Handling pending: boundary-crossing drains use burst-aligned"
+            " cluster scratch and the cheapest existing exact-extent copy;"
+            " proven noncrossing drains retain their direct path. Late-bound"
+            " addresses need a per-port burst-alignment rule."
+        ),
+        "Close each collected write burst before its next beat crosses 4 KiB.",
+        lambda i: unit_flaw(
+            i,
+            "MG",
+            "src/kohakutpu/matmul/mx_cluster_cu.v",
+            r"&& \(\(w_fill == WBURST\[WBW:0\]\) \|\| !drain_busy\)",
+        ),
+    ),
 ]
 
 

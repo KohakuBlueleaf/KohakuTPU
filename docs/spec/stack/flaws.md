@@ -44,6 +44,10 @@ Compiler handlings use machine flaw facts. Firmware and OS handlings also includ
 | F-012 | ktpu-l2 `lower/fills.rs` fill throttle (L2.VC.027): a `vsync fe on=fill` before every generated fill that would lose a completion entry by the queue rule `ktpu_machine::fill_lost` (ISA.VC.193); a descriptor set outside the image counts as a length equal only to its own register's. The verifier checks the same rule with the walked lengths (`ktpu-verify` `vc_fill_landed`). Both run on every machine: the rule is the ISA's. | `vc.fill_track_depth` |
 | F-013 | The compiler owns each SRU's configuration: ktpu-l1 `lower/sru.rs` holds the words a kernel has written and admission validates the effective executed configuration, so no compiled job starts on an inadmissible image. Raw `SruInst::Config` words and runtime debug writes are outside it. | positive `flaw_line` and `SR` unit inventory |
 
+| F-014 | Image-owned contiguous 256-word VC walks use 128-word AGU chunks, avoiding the 255+1 count-cap tail without widening. Scratch members align to at least 128 bytes; runtime arenas already align to 256 bytes. Offline reach reports VC/MG single-beat pieces and unresolved mover source runs; it is not a certificate. Short reads, unaligned L1/page tails and external descriptors are measured, not widened. CPU reads are excluded. | `CoreFacts::read_single = flaws.F-014.present`; scratch `flaws.f014.present` |
+| F-015 | The compiler records `f015.long_remote` per package / sending mesh. With the flaw present, ACK0 is not evidence on a die while a long or statically unknown remote vector burst ran. Other faults and other dies remain checked; zero device cost. | positive `flaw_line` at `e_isdesc` |
+| F-016 | L1 memory-drain lowering proves each extent against 4 KiB burst boundaries. Crossing drains and their paired GEMM emissions use burst-aligned arena scratch, then an ordered exact-extent copy through the ordinary mover/vector selector. Unit-directed and proven-safe drains stay direct. `f016.burst_ports` carries the late-bind alignment contract to submission. | positive `flaw_line` at the collector flush predicate and MG inventory |
+
 ## How each is tested
 
 Each existing RTL witness bench asserts its flaw as recorded, so it fails on a
@@ -98,6 +102,33 @@ window wider than half the counter range gets the extra WAITs that keep each
 target inside it. Machine fact generation reads one RTL signature and, for
 unit-specific flaws, the unit inventory; this is off the execution path.
 
+F-016 runs while L1 node programs are constructed, including hand L1, after
+macro expansion and before scratch allocation. The static boundary proof is
+O(1) per drain. Arena members on which a late proof depends start at the
+larger of the write line and the cluster burst; submission checks only the
+reported ports, once per binding. With the flaw absent, unit-directed drains,
+and proven-safe memory drains, there is no added device work or scratch.
+
+An affected drain reserves its exact extent in burst-aligned scratch (plus
+arena alignment padding), waits for its producing cluster, and copies exactly
+that extent before the following original statement can consume it or reuse
+storage. A fixed extent uses the existing L2 mover-copy lowering and F-001
+vector-copy selection when vector storage is not owned by the surrounding L1
+body. Otherwise the existing mover proof and split apply. Its cost is scratch
+capacity, one additional read and write of the output, and the copy's setup
+and completion waits; there is no retry, padding write, or extra model launch.
+
+A register-counted drain reserves the extent representable by its count field
+and 32 bytes for saved node registers. Its copy preserves three node registers
+and uses one-word mover commands, each admitted from idle; the loop adds
+constant register arithmetic and a branch per copied word, without a per-word
+host check or additional checking-memory access. A register-addressed copy
+uses the same path when no unowned vector storage is available. Remote memory
+destinations retain their mesh through the copy's global address; the scratch
+drain itself uses the ordinary memory path. These costs occur only on the
+unproven/crossing path. F-016's node-program rewrite is not included in the L1
+text timing model described above; no measured cycle delta is claimed here.
+
 ## The flaws
 
 | Id | Unit | What goes wrong | Witness | Fix |
@@ -115,6 +146,10 @@ unit-specific flaws, the unit inventory; this is off the execution path.
 | F-011 | SIMT barrier decode (kht_predec.v, kht_core.v) | BAR is accepted and sets C_BAR, but the core has no consumer of that control: the instruction retires without workgroup arrival, release or memory ordering. | Source witness: two waves with one producer delayed past the other's BAR can pass the purported barrier independently. No RTL witness was executed. | Implement workgroup arrival/release with memory ordering, or fault BAR as unsupported through the existing illegal-instruction path. |
 | F-012 | vector fill completion tracker (v2_core.v, v2_fifo.v) | VFILL admission does not reserve room in the 16-record completion FIFO. With delayed ordered responses, a seventeenth unretired fill overwrites a length record; completion accounting no longer matches issued fills. | Source witness: accept requests for a 256-word fill and sixteen one-word fills while withholding responses, then release responses in order. The length tracker has only sixteen slots. Not an executed bench. | Reserve a completion record before f_take and release it on retirement, accounting for simultaneous retirement/admission and the fill pending ft_push; never drop a full push. |
 | F-013 | SRU retained job admission (sru_core.v, sru_cu.v) | CFG retains omitted words and RUN starts without checking the effective image. No-pool arithmetic finalise can stall, disabled reciprocal acts as MOV, and disabled MX7 output disagrees with shell word counts. Unsupported profile/geometry combinations are not faulted at job acceptance. | Source witness: with FIN_RCP=0, store an unused reciprocal finalise entry, then update only FINLEN to execute it with K0=2: the retained reciprocal moves 2 instead of producing 0.5. Raw OUT=2 on HAS_MX7=0 gives mismatched core/shell output counts. Not an executed bench. | Validate the complete retained configuration before starting core or walkers; return one existing execution fault completion with no transfers or row writes, preserve configuration, and admit the next valid job. |
+
+| F-014 | Image-owned contiguous 256-word VC walks use 128-word AGU chunks, avoiding the 255+1 count-cap tail without widening. Scratch members align to at least 128 bytes; runtime arenas already align to 256 bytes. Offline reach reports VC/MG single-beat pieces and unresolved mover source runs; it is not a certificate. Short reads, unaligned L1/page tails and external descriptors are measured, not widened. CPU reads are excluded. | `CoreFacts::read_single = flaws.F-014.present`; scratch `flaws.f014.present` |
+| F-015 | Interlink fault reporting (`mag_ilink.v`) | Packet closure clears `acc_open` while a CU_DATA burst continues. The next packet's first data flit is tested as a descriptor, with payload bits interpreted as its acknowledgment coordinate. Data delivery is unaffected by this fault flag. | ISSUES 81: remote vector bursts over 32 words flag ACK0 while data and receiver synchronization are exact. `src/kohakuaccel/sysnode/interlink/mag_ilink.v:503-508`, :527-533. | Track CU_DATA burst/descriptor lifetime separately from link-packet lifetime. |
+| F-016 | Cluster drain (`mx_cluster_cu.v`) | The collector closes a write burst at eight beats or drain end, without splitting at a 4-KiB boundary. Xache routes the entire burst to the home selected by its starting address. | ISSUES 80: the second 63/65-entry tile starts 128 bytes off burst alignment; `src/kohakutpu/matmul/mx_cluster_cu.v:1087-1090`. | Close a collected write burst before the next beat crosses 4 KiB. |
 
 ## Reach and limits of software handling
 
@@ -232,7 +267,7 @@ sixteen-record capacity. Losing the first long record can make a short
 response count appear sufficient to retire it.
 
 L1 emits a direct fill at
-`software/kohakutpu/compiler/crates/ktpu-l1/src/lower/image/memory.rs:117-126`;
+`software/kohakutpu/compiler/crates/ktpu-l1/src/lower/image/memory.rs:117-127`;
 L2, DSL and kernel templates eventually use that image encoder. Raw vector
 words can bypass it. ka-package/firmware/OS dispatch credits count instruction
 retirements, not this internal length FIFO's occupancy, and the core accepts up
@@ -284,8 +319,8 @@ A one-flit tail is a concrete trigger of that same mechanism, not another id.
 The general RTL fix must gate **both** sampling and popping, hold valid/data/last
 under backpressure, and count only accepted valid data beats.
 `far_splits` is flaw-keyed and rewrites recognized structured far-peer drains
-(`software/kohakutpu/compiler/crates/ktpu-l1/src/lower/image/desc.rs:169-249`),
-then `image/memory.rs:170-177` emits two drains. It is not a readiness guarantee
+(`software/kohakutpu/compiler/crates/ktpu-l1/src/lower/image/desc.rs:169-232`),
+then `image/memory.rs:174-182` emits two drains. It is not a readiness guarantee
 for arbitrary raw flits, descriptor patches or refill gaps. Raw SEND transports
 words without that descriptor analysis (`ka-package/src/program.rs:809-817`
 under `software/kohakuaccel/compiler/crates`): raw flits are a debug path.
@@ -310,3 +345,86 @@ witness emits 2049 words then requests target 1 in one epoch, checks release
 with the flawed modular comparator, and checks unchanged targets when absent.
 Raw ENGINE Put issuance is not tracked by the semantic counters: raw ENGINE
 streams are a debug path and carry their own targets.
+
+### Short Xache reads (F-014)
+
+The image encoder factors an image-owned contiguous 256-word descriptor walk
+into `(32, 128), (4096, 2)`. The word addresses and total count are unchanged.
+The AGU hands the fill engine two 128-word chunks, which cannot merge into
+its eight-bit run count. At an L1-region boundary this issues 128+128 rather
+than 255+1. The rule lives in ktpu-l1 `lower/image/fill.rs`, shared by handwritten
+L1 images and L2-generated images. It consumes no extra descriptor or landing
+storage. A descriptor set outside the image is not rewritten. Valid VC fills
+have at most 256 words; the core faults longer fills.
+
+This handles the count-cap split, not inherent short reads. A fill crossing an
+L1 boundary after a single word still has a short piece, and a read starting at
+page+4032 can have a one-beat page fragment even when its total length covers
+whole MX7 entries. Those cases require measurement before a receiving-layout
+or descriptor-ownership design; there is no widening or discarded-head
+transform in this handling.
+
+On F-014 machines, ktpu-l1 `layout/scratch.rs` raises every arena member's
+alignment to at least 128 bytes while retaining larger write/burst alignment.
+The runtime's `CardMemory` constructs both Python and native arenas at their
+existing 256-byte alignment. Suballocation windows use at least 256-byte
+spacing and graph placement reuses those same physical spans. Caller-provided
+views and interior offsets are not promised 128-byte alignment.
+
+`software/tests/perf/f014_reach.py` accepts compiled package bytes, concrete
+bindings and an initial memory image (including gather indices). Its Rust
+census in ktpu-l1 `reach.rs`, driven by the value simulator and exposed through
+ktpu-py `f014_reach`, reports VC fills and MG fills whose 4 KiB / 16-beat MAG
+pieces include a single 64-byte beat. Reports include request addresses,
+lengths, unit identifiers, single-beat addresses, and per-class counts of
+requests, affected requests and single-beat pieces. External VC descriptors
+are read from the executed package state. CPU reads and instruction/protocol
+fetches are excluded. The scan is offline and adds no device-path work.
+
+Mover copy, transform, index, gather and scatter reads are enumerated separately
+as **unresolved maximal source runs**, not counted as proven MAG pieces. The
+mover uses the independent AXI channel and `mag_dram_port`'s `AR_MAX`, not
+`mag_mem_port`'s `RD_BEATS`. Its `rflush` also depends on queue starvation.
+The typed machine schema does not expose `DRAM_AR_MAX`; addresses alone do not
+determine the actual issue trace. A report with unresolved mover runs or an
+unsupported interpreter operation has `complete: false`; the script exits
+nonzero. Missing execution or unknown burst boundaries never count as zero
+reach. These limitations must be resolved before an exhaustive corpus count
+or further mover handling is claimed.
+
+Cost: descriptor normalization is O(rank) per image-owned fill occurrence.
+For the aligned 256-word case, the same two requests carry the same payload;
+no IMEM instructions, descriptor registers, launches, receiving words or data
+copies are added. Descriptor field values change, so configuration deduplication
+can see different values when switching images. No universal setup-cycle or
+walker-timing saving is claimed. Scratch alignment adds at most 127 padding
+bytes per member and constant-time construction arithmetic; runtime alignment
+is already stronger. Census work is offline simulator execution plus
+O(read words + request pieces) enumeration, retaining affected requests and
+mover source runs. It adds no firmware steps, polling, launch work or device
+memory accesses. The l1_l0 stage's `f014.rs` witnesses
+the emitted 128+128 versus 255+1 requests and flaw-on/off arena alignment.
+
+### Remote acknowledgment diagnostics (F-015)
+
+The compiler records `f015.long_remote` on each mesh's compiled package when an
+emitted remote vector burst exceeds `il.packet_beats` words or its length is
+not statically known. Image lowering records the peer-drain operands, including
+F-002's emitted pieces; node lowering resolves them against the descriptors set
+inside or outside the image. Opaque fetched vector commands and incremented
+instructions have no static burst-length proof. The fact is independent of
+whether F-015 is present.
+
+The runtime's interlink diagnostic reader scopes ACK0 with both the machine's
+`flaws.F-015.present` and the sending packages' `f015.long_remote`. ACK0 is not
+evidence on an affected die during such a run, including evidence of another
+sender's zero-ack descriptor on that same die. All other fault bits, ACK0 on
+other dies, and ACK0 with the flaw absent remain failures. The raw fault word
+is retained as `raw_faults`; the measurement ledger consumes the scoped fault
+word. The scope is the packages actually issued in the observed run, not the
+whole board or an earlier run.
+
+Device cost is zero: no extra descriptors, drains, payload words, peer responses,
+steps, polls or device memory accesses. Compilation tracks a bounded descriptor
+table and one fact per mesh. Diagnostic reading applies one constant-time mask
+per die to the fault word it already reads. No cycle estimate is claimed.

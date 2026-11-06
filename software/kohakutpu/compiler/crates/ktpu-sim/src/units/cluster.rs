@@ -159,6 +159,9 @@ impl Cluster {
                 addr,
                 n,
             } => {
+                if let Some(reach) = &mut mem.reach {
+                    reach.request("mg_fill", addr, n * ENTRY_BYTES);
+                }
                 for i in 0..n {
                     let bytes = mem.read(addr + (i * ENTRY_BYTES) as i64, ENTRY_BYTES)?;
                     let at = bank * BANK_ENTRIES + (eoff + i) % BANK_ENTRIES;

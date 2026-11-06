@@ -117,6 +117,7 @@ class Prebuilt:
     template_json: str | None = None
     template_params: dict | None = None
     recipe: object = None
+    long_remote: bool = False
 
     def matches_environment(self, mmu):
         """Compare the certified relation with this submission's physical spans."""

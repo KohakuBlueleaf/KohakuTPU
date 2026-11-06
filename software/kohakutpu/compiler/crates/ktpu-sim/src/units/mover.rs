@@ -139,6 +139,9 @@ impl Index {
 
 /// One move, whole.
 pub fn run(m: &Move, mem: &mut Dram) -> R<()> {
+    if mem.reach.is_some() {
+        trace_reads(m, mem)?;
+    }
     match m {
         Move::Copy { src, dst, pad, ew } => {
             let padding = replicate(*pad, *ew);
@@ -242,6 +245,73 @@ pub fn run(m: &Move, mem: &mut Dram) -> R<()> {
                     mem.set_word(dst + i * index.pitch + (w * WORD) as i64, &word)?;
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+/// Read addresses before numeric execution, including index-data reads.
+fn trace_reads(m: &Move, mem: &mut Dram) -> R<()> {
+    let mut streams: Vec<(&str, Vec<Option<i64>>)> = Vec::new();
+    match m {
+        Move::Copy { src, dst, .. } => {
+            let from = src.elements();
+            streams.push((
+                "mover_copy",
+                from.iter()
+                    .cycle()
+                    .take(dst.elements().len())
+                    .map(|&(at, inside)| inside.then_some(at))
+                    .collect(),
+            ));
+        }
+        Move::Quant { src, .. } | Move::Gt4 { src, .. } => {
+            streams.push((
+                "mover_transform",
+                src.elements()
+                    .into_iter()
+                    .map(|(at, inside)| inside.then_some(at))
+                    .collect(),
+            ));
+        }
+        Move::Gather { src, dst, index } => {
+            let list = index.read(mem)?;
+            streams.push((
+                "mover_index",
+                (0..((index.n + 7) / 8))
+                    .map(|i| Some(index.at + i * 32))
+                    .collect(),
+            ));
+            let to = dst.elements();
+            let mut reads = Vec::new();
+            for (row, destinations) in to.chunks(index.words as usize).enumerate() {
+                let Some(i) = list.get(row) else { break };
+                for (word, (_, inside)) in destinations.iter().enumerate() {
+                    reads.push(inside.then_some(src + i * index.pitch + word as i64 * 32));
+                }
+            }
+            streams.push(("mover_gather", reads));
+        }
+        Move::Scatter { src, index, .. } => {
+            streams.push((
+                "mover_index",
+                (0..((index.n + 7) / 8))
+                    .map(|i| Some(index.at + i * 32))
+                    .collect(),
+            ));
+            streams.push((
+                "mover_scatter",
+                src.elements()
+                    .into_iter()
+                    .map(|(at, inside)| inside.then_some(at))
+                    .collect(),
+            ));
+        }
+        Move::Fill { .. } | Move::Gen { .. } => {}
+    }
+    if let Some(reach) = &mut mem.reach {
+        for (class, addresses) in streams {
+            reach.mover(class, addresses);
         }
     }
     Ok(())

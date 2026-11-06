@@ -9,7 +9,7 @@
 pub mod cache;
 pub mod stage;
 
-use crate::output::{Compiled, Finding, Input, PackageOut, Refused, Scratch, Verdict, F001};
+use crate::output::{Compiled, Finding, Input, PackageOut, Refused, Scratch, Verdict, F001, F016};
 use cache::{Cache, Key};
 use ktpu_machine::{Machine, Refusal};
 use rayon::prelude::*;
@@ -223,6 +223,7 @@ impl<B: Backend> Run<'_, B> {
                 packages: b.order(p, m)?,
                 scratch: b.scratch(p),
                 f001: b.f001(p),
+                f016: b.f016(p),
             };
             Ok((json(&out), ()))
         });
@@ -230,7 +231,15 @@ impl<B: Backend> Run<'_, B> {
         let (ordered, bound) = match order {
             Ok((bytes, _)) => (unjson(Stage::Order, &bytes)?, None),
             Err(r) if r.refusal.clause == "STACK.RELOC" => {
-                (Ordered::default(), Some(r.refusal.message.clone()))
+                let p =
+                    built(b, m, &name, caller, &mut progs, &mut l1).map_err(at(Stage::Order))?;
+                (
+                    Ordered {
+                        scratch: b.scratch(p),
+                        ..Ordered::default()
+                    },
+                    Some(r.refusal.message.clone()),
+                )
             }
             Err(r) => return Err(r),
         };
@@ -248,6 +257,7 @@ impl<B: Backend> Run<'_, B> {
             verdict,
             bound,
             f001: ordered.f001,
+            f016: ordered.f016,
         })
     }
 }
@@ -262,6 +272,8 @@ struct Ordered {
     scratch: Vec<Scratch>,
     #[serde(default)]
     f001: F001,
+    #[serde(default)]
+    f016: F016,
 }
 
 fn built<'p, B: Backend>(

@@ -44,6 +44,7 @@ class Compiled:
     #: write line, and the mover commands the split made of unproven ones.
     line_ports: tuple = ()
     f001_split: int = 0
+    burst_ports: tuple = ()
     _progs: dict = field(default_factory=dict, repr=False, compare=False)
     _meta: tuple | None = field(default=None, init=False, repr=False, compare=False)
     _recipes: dict = field(default_factory=dict, init=False, repr=False, compare=False)
@@ -139,6 +140,7 @@ class Compiled:
                 template_json=p.get("template_json"),
                 template_params=p.get("template_params"),
                 recipe=recipe,
+                long_remote=p["f015"]["long_remote"],
             )
         return {None: out[0]} if not moved and list(out) == [0] else out
 
@@ -230,6 +232,7 @@ def compile(source, name=None, machine=None, level="l2"):
         scratch=rust.get("scratch"),
         line_ports=tuple(rust["f001"]["line_ports"]),
         f001_split=rust["f001"]["split"],
+        burst_ports=tuple(rust["f016"]["burst_ports"]),
         recipe_scope=scope,
         native_recipe=native_recipe,
         wire_recipe=wire_recipe,

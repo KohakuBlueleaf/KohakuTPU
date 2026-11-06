@@ -39,6 +39,22 @@ def unaligned(full: dict, line: int | None, ports) -> list[str]:
     return sorted(k for k in ports if k in full and full[k] % line)
 
 
+@functools.cache
+def cluster_burst(machine_json: str) -> int | None:
+    """F-016's cluster burst alignment within a 4 KiB page."""
+    m = json.loads(machine_json)["machine"]
+    if not m["flaws"]["F-016"]["present"]:
+        return None
+    return m["mg"]["wburst"] * m["die"]["word_bytes"]
+
+
+def burst_unaligned(full: dict, burst: int | None, ports) -> list[str]:
+    """Only bases on which a compiled memory-drain proof depends."""
+    if burst is None:
+        return []
+    return sorted(k for k in ports if k in full and full[k] % 4096 % burst)
+
+
 def _entry(s: Submitted) -> int:
     """The queue entry `s` holds: runs deferred into one eager list share it."""
     p = s.pending
@@ -231,6 +247,13 @@ class Submission(Parts):
                     f"silicon flaw F-001: {compiled.name} binds {off} off a "
                     f"{line}-byte base, which L1.MOV.019's mover proof assumes"
                 )
+            if compiled.burst_ports:
+                burst = cluster_burst(self.card.machine_json)
+                if off := burst_unaligned(full, burst, compiled.burst_ports):
+                    raise ValueError(
+                        f"silicon flaw F-016: {compiled.name} binds {off} off a "
+                        f"{burst}-byte burst within its 4 KiB page"
+                    )
             references.extend(self._retain(windowed.values()))
             self._pin_record(full.values())
             t0 = time.monotonic()

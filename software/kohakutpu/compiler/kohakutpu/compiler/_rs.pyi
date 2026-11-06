@@ -432,6 +432,7 @@ class Package(TypedDict):
     #: The fn parameter each buffer binds, in buffer order.
     params: list[str]
     images_json: str
+    f015: F015
 
 class Finding(TypedDict):
     kind: str
@@ -458,10 +459,18 @@ class Compiled(TypedDict):
     bound: str | None
     #: F-001 (L1.MOV.019): ports bound on a write line, split commands.
     f001: F001
+    #: F-016: ports whose base a memory-drain burst proof assumes aligned.
+    f016: F016
+
+class F015(TypedDict):
+    long_remote: bool
 
 class F001(TypedDict):
     line_ports: list[str]
     split: int
+
+class F016(TypedDict):
+    burst_ports: list[str]
 
 class RefusedItem(TypedDict):
     stage: str
@@ -784,6 +793,9 @@ def read_composed(
     mode: str, read_json: str, launches_json: str, machine_json: str
 ) -> bool: ...
 def call_cycles(call_json: str, machine_json: str) -> int | None: ...
+def f014_reach(
+    package: bytes, bindings: list[int], machine_json: str, memory: bytes, mesh: int
+) -> str: ...
 def image(
     l1_text: str,
     name: str,

@@ -27,12 +27,16 @@ use crate::layout::buffer::Buffer;
 use crate::mutant::on;
 use crate::text::{fmt, Env, Expander, Module, Reader, Stmt, Term, Val};
 
+mod burst;
 mod cluster;
 mod control;
+mod drains;
 mod mover;
 mod programs;
 mod send;
 
+pub use burst::{static_burst_proof, BurstProof, DrainBurst};
+pub use drains::{plan_drains, DrainCopy, DrainPlan};
 pub use programs::*;
 
 /// The node processor's coordinate, a mesh corner.
@@ -160,6 +164,11 @@ pub struct NodeReader<'a> {
     /// F-001 (L1.MOV.019): each mover write base the proof holds from on a
     /// write line, and the commands the split made.
     pub f001: F001,
+    /// Memory-drain address proofs, in instruction order.
+    pub drain_bursts: Vec<DrainBurst>,
+    /// F-015: this mesh can emit a long remote vector burst.
+    pub long_remote: bool,
+    vector_descs: HashMap<Xy, Descs>,
 }
 
 /// What a program's mover writes ask of F-001's handling (L1.MOV.019).
@@ -195,6 +204,9 @@ impl<'a> NodeReader<'a> {
             configs: HashMap::new(),
             tmp: target.machine.fw.package.regs as u64 - 1,
             f001: F001::default(),
+            drain_bursts: Vec::new(),
+            long_remote: false,
+            vector_descs: HashMap::new(),
         })
     }
 
@@ -232,6 +244,7 @@ impl<'a> NodeReader<'a> {
         match op {
             "send" => self.send(st),
             "move" => self.move_(st),
+            "drain_copy_dynamic" => self.drain_copy_dynamic(st),
             "mark" => {
                 let Some(name) = st.target_name() else {
                     return Err(self.fail(st, "L1.NODE.034", "t = mark UNIT"));
@@ -297,6 +310,7 @@ impl<'a> NodeReader<'a> {
             "label" => {
                 self.resident.clear();
                 self.configs.clear();
+                self.vector_descs.clear();
                 let t = self.one(st)?;
                 let name = self.name(st, t)?.to_string();
                 let got = self.p.label(&name).map(|_| ());
@@ -305,6 +319,7 @@ impl<'a> NodeReader<'a> {
             "goto" => {
                 self.resident.clear();
                 self.configs.clear();
+                self.vector_descs.clear();
                 self.goto(st)
             }
             "push" => self.push(st),

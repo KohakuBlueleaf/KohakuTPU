@@ -40,6 +40,17 @@ pub fn arenas(
     caller: &BTreeSet<String>,
     machine: &Machine,
 ) -> Result<Vec<Arena>> {
+    arenas_with_bursts(module, name, caller, machine, &BTreeSet::new())
+}
+
+/// Arenas whose named members also satisfy memory-drain burst proofs.
+pub fn arenas_with_bursts(
+    module: &Module,
+    name: &str,
+    caller: &BTreeSet<String>,
+    machine: &Machine,
+    burst_members: &BTreeSet<String>,
+) -> Result<Vec<Arena>> {
     if crate::mutant::on("l1.layout/no-arena") {
         return Ok(Vec::new());
     }
@@ -54,6 +65,11 @@ pub fn arenas(
             "DRAM write line is zero",
         ));
     }
+    let line = if machine.flaws.f014.present {
+        line.max(128)
+    } else {
+        line
+    };
     let up = |n: u64| n.div_ceil(line) * line;
     let mut out: Vec<Arena> = Vec::new();
     for (param, t) in &module.body(name, "l1")?.params {
@@ -78,7 +94,7 @@ pub fn arenas(
             }
         };
         let a = &mut out[i];
-        if b.layout.contains_key("tile") {
+        if b.layout.contains_key("tile") || burst_members.contains(param) {
             let burst = u64::from(machine.mg.wburst) * u64::from(machine.die.word_bytes);
             let align = line.max(burst);
             a.bytes = a.bytes.div_ceil(align) * align;

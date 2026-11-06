@@ -67,11 +67,20 @@ pub struct Flaws {
     /// SRU RUN does not admit the complete retained configuration.
     #[serde(rename = "F-013")]
     pub f013: Flaw,
+    /// A one-beat Xache read's duplicate beat-zero lookup can be taken by the next burst.
+    #[serde(rename = "F-014")]
+    pub f014: Flaw,
+    /// A remote vector burst past one packet reads a data flit as a descriptor (ACK0).
+    #[serde(rename = "F-015")]
+    pub f015: Flaw,
+    /// A cluster drain's write burst is not split at a 4 KiB boundary.
+    #[serde(rename = "F-016")]
+    pub f016: Flaw,
 }
 
 impl Flaws {
     /// `(id, flaw)` of every flaw, in id order.
-    pub fn all(&self) -> [(&'static str, &Flaw); 13] {
+    pub fn all(&self) -> [(&'static str, &Flaw); 16] {
         [
             ("F-001", &self.f001),
             ("F-002", &self.f002),
@@ -86,6 +95,9 @@ impl Flaws {
             ("F-011", &self.f011),
             ("F-012", &self.f012),
             ("F-013", &self.f013),
+            ("F-014", &self.f014),
+            ("F-015", &self.f015),
+            ("F-016", &self.f016),
         ]
     }
 }

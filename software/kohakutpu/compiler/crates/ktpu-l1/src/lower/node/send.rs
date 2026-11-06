@@ -56,6 +56,7 @@ impl<'a> NodeReader<'a> {
             let mut words = Vec::new();
             let mut patches = Vec::new();
             for (s, (op, fix)) in st.body.iter().zip(ops) {
+                self.record_drain_burst(c, s, &op, &fix)?;
                 let w = encoded_as(&op)
                     .encode(&self.isa.cluster)
                     .map_err(|e| self.at(s, e))?;
@@ -106,6 +107,8 @@ impl<'a> NodeReader<'a> {
         let mut advances = Vec::new();
         let steps = self.advance_steps(st)?;
         let mut stepped = BTreeSet::new();
+        let mut peer_runs = Vec::new();
+        let mut desc_words = BTreeMap::new();
         for s in &st.body {
             match s.op.as_str() {
                 "desc" => {
@@ -143,6 +146,17 @@ impl<'a> NodeReader<'a> {
                             advances.push((words.len() + index, bit, width, *step));
                         }
                     }
+                    let known = self.vector_descs.entry(c).or_default();
+                    known.extend(all.iter().map(|(k, v)| (*k, *v)));
+                    for key in held.keys() {
+                        known.remove(key);
+                    }
+                    peer_runs.push((known.clone(), self.images.peer_drains.clone()));
+                    desc_words.extend(
+                        all.keys()
+                            .enumerate()
+                            .map(|(i, key)| (words.len() + i, *key)),
+                    );
                     emit_descs(vec, &all, &mut held, &mut words, &mut fixes)
                         .map_err(|e| self.at(s, e))?;
                     let same = self
@@ -175,6 +189,17 @@ impl<'a> NodeReader<'a> {
                 }
             }
         }
+        let known = self.vector_descs.entry(c).or_default();
+        known.extend(descs.iter().map(|(k, v)| (*k, *v)));
+        for key in held.keys() {
+            known.remove(key);
+        }
+        desc_words.extend(
+            descs
+                .keys()
+                .enumerate()
+                .map(|(i, key)| (words.len() + i, *key)),
+        );
         emit_descs(vec, &descs, &mut held, &mut words, &mut fixes).map_err(|e| self.at(st, e))?;
         let unused = steps
             .iter()
@@ -235,6 +260,36 @@ impl<'a> NodeReader<'a> {
                     increments.push((v[0] as usize, v[1] as u32, v[2] as u32, v[3] as u64));
                 }
             }
+            if count > 1 {
+                let (value, width) = vec.desc.span("value");
+                let (high, high_width) = vec.desc.span("value_hi");
+                for &(index, bit, bits, delta) in &increments {
+                    if delta == 0 {
+                        continue;
+                    }
+                    let overlaps = |lo, n| bit < lo + n && lo < bit + bits;
+                    let Some(&(ad, field)) = desc_words.get(&index) else {
+                        // An incremented instruction has no static DMA operand proof.
+                        self.long_remote |= !peer_runs.is_empty();
+                        self.vector_descs.remove(&c);
+                        continue;
+                    };
+                    let value_only = (bit >= value && bit + bits <= value + width)
+                        || (bit >= high && bit + bits <= high + high_width);
+                    if !value_only {
+                        self.long_remote |= !peer_runs.is_empty();
+                        self.vector_descs.remove(&c);
+                    } else if field == 0 || overlaps(value, ktpu_isa::unit::vector::DIM_BOUND_BITS)
+                    {
+                        for (known, _) in &mut peer_runs {
+                            known.remove(&(ad, field));
+                        }
+                        if let Some(known) = self.vector_descs.get_mut(&c) {
+                            known.remove(&(ad, field));
+                        }
+                    }
+                }
+            }
             self.p.repeat(c, words, count as u64, increments);
             self.resident.remove(&c);
         } else {
@@ -243,6 +298,11 @@ impl<'a> NodeReader<'a> {
             }
             self.p.send(c, words, fixes);
         }
+        self.long_remote |= peer_runs.iter().any(|(known, drains)| {
+            drains
+                .iter()
+                .any(|ad| image::long_remote(*ad, known, &self.images.facts))
+        });
         Ok(())
     }
 

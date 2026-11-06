@@ -4,6 +4,7 @@
 mod common;
 mod fill_throttle;
 mod modulo_memory_effects;
+mod release_frontier;
 mod stream_credit;
 mod view_progression;
 

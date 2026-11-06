@@ -1,5 +1,5 @@
 {
- "schema": "592109120ad2a27f",
+ "schema": "3eb9973012af193c",
  "name": "multimesh_v9t8",
  "image": "v9t8",
  "machine": {
@@ -721,7 +721,7 @@
     "unit": "RV64 load window (rv64_load_win.v)",
     "summary": "The 256-byte console uses equal 8-bit pointers for empty and has no full state: 256 unconsumed writes alias empty; later writes overwrite unread bytes without reporting loss.",
     "witness": "Source witness: from reset, push 256 bytes without a host pop; R_CONS valid clears. Push one more and only that byte is visible. Not an executed bench.",
-    "handling": "Open: firmware ka_putc without a sink, ka_debug and the OS hardware-console mirror can reach this. Queue stdout and the separate OS DRAM log do not depend on this FIFO. No lossless software flow-control interface exists.",
+    "handling": "None: the load-window console is a best-effort debug channel. Queue stdout goes through the queue service's own sink and the OS keeps a DRAM log; neither uses this FIFO.",
     "fix": "Track occupancy/full separately from empty and expose loss or backpressure; define simultaneous push/pop and overflow behavior."
    },
    "F-009": {
@@ -753,7 +753,7 @@
     "unit": "vector fill completion tracker (v2_core.v, v2_fifo.v)",
     "summary": "VFILL admission does not reserve room in the 16-record completion FIFO. With delayed ordered responses, a seventeenth unretired fill overwrites a length record; completion accounting no longer matches issued fills.",
     "witness": "Source witness: accept requests for a 256-word fill and sixteen one-word fills while withholding responses, then release responses in order. The length tracker has only sixteen slots. Not an executed bench.",
-    "handling": "Open: L1 vfill and raw vector words can reach it. Static fill counts do not determine occupancy; periodic completion waits change valid programs' scheduling and critical path. No serialization or refusal is installed.",
+    "handling": "ktpu-l2 fill throttle (L2.VC.027): a front-end fill sync before every generated fill that would lose a completion entry by ktpu_machine::fill_lost (ISA.VC.193); a descriptor set outside the image counts as a length equal only to its own register's. The verifier checks the same rule. Raw vector words bypass it.",
     "fix": "Reserve a completion record before f_take and release it on retirement, accounting for simultaneous retirement/admission and the fill pending ft_push; never drop a full push."
    },
    "F-013": {
@@ -761,8 +761,32 @@
     "unit": "SRU retained job admission (sru_core.v, sru_cu.v)",
     "summary": "CFG retains omitted words and RUN starts without checking the effective image. No-pool arithmetic finalise can stall, disabled reciprocal acts as MOV, and disabled MX7 output disagrees with shell word counts. Unsupported profile/geometry combinations are not faulted at job acceptance.",
     "witness": "Source witness: with FIN_RCP=0, store an unused reciprocal finalise entry, then update only FINLEN to execute it with K0=2: the retained reciprocal moves 2 instead of producing 0.5. Raw OUT=2 on HAS_MX7=0 gives mismatched core/shell output counts. Not an executed bench.",
-    "handling": "Semantic job admission checks supplied/reconstructible contents. Open: raw SruInst::Config, package SEND/DISPATCH/FETCH and cross-submission retained state do not share an exclusive configuration-image owner. No partial-update refusal or reset writes are installed.",
+    "handling": "The compiler owns each SRU's configuration: ktpu-l1 holds the words a kernel has written and admission validates the effective executed configuration. Raw SruInst::Config words and runtime debug writes are outside it.",
     "fix": "Validate the complete retained configuration before starting core or walkers; return one existing execution fault completion with no transfers or row writes, preserve configuration, and admit the next valid job."
+   },
+   "F-014": {
+    "present": true,
+    "unit": "Xache read pipeline (kx_rd_pipe.v)",
+    "summary": "A duplicate beat-zero lookup of a one-beat read can land after that burst completes and be accepted under the next burst's ID.",
+    "witness": "ISSUES 79: card-confirmed one-beat read misdelivery; kx_rd_pipe.v:185-233.",
+    "handling": "Handling pending: split multi-beat reads without single-beat pieces; widen a single beat to its aligned 128-byte pair and discard the neighbour in reserved receiving scratch. CPU reads are outside kernel-payload handling.",
+    "fix": "Carry burst identity through the lookup pipeline and qualify every landing."
+   },
+   "F-015": {
+    "present": true,
+    "unit": "interlink fault reporting (mag_ilink.v)",
+    "summary": "Packet closure clears acc_open inside a continuing CU_DATA burst; the next data flit is checked as a descriptor and can raise ACK0.",
+    "witness": "ISSUES 81: remote vector bursts above 32 words report ACK0 with exact data.",
+    "handling": "The compiler records f015.long_remote per sending mesh. With F-015 present, ACK0 is not evidence on that die during a run containing a long or statically unknown remote vector burst. Other faults and other dies remain checked. Zero device cost.",
+    "fix": "Track CU_DATA descriptor lifetime independently of packet lifetime."
+   },
+   "F-016": {
+    "present": true,
+    "unit": "cluster drain (mx_cluster_cu.v)",
+    "summary": "The drain collector closes a write burst only at WBURST or drain end, not at a 4-KiB boundary. Xache chooses one home from its starting address, so a crossing burst can lose output words.",
+    "witness": "ISSUES 80: 63/65-entry drains; mx_cluster_cu.v:1087-1090.",
+    "handling": "Handling pending: boundary-crossing drains use burst-aligned cluster scratch and the cheapest existing exact-extent copy; proven noncrossing drains retain their direct path. Late-bound addresses need a per-port burst-alignment rule.",
+    "fix": "Close each collected write burst before its next beat crosses 4 KiB."
    }
   }
  },
@@ -1072,6 +1096,24 @@
   "flaws.F-013.summary": "derived: silicon flaw F-013",
   "flaws.F-013.witness": "derived: silicon flaw F-013",
   "flaws.F-013.handling": "derived: silicon flaw F-013",
-  "flaws.F-013.fix": "derived: silicon flaw F-013"
+  "flaws.F-013.fix": "derived: silicon flaw F-013",
+  "flaws.F-014.present": "src/kohakuaxi/xache/engine/kx_rd_pipe.v:222",
+  "flaws.F-014.unit": "derived: silicon flaw F-014",
+  "flaws.F-014.summary": "derived: silicon flaw F-014",
+  "flaws.F-014.witness": "derived: silicon flaw F-014",
+  "flaws.F-014.handling": "derived: silicon flaw F-014",
+  "flaws.F-014.fix": "derived: silicon flaw F-014",
+  "flaws.F-015.present": "src/kohakuaccel/sysnode/interlink/mag_ilink.v:503",
+  "flaws.F-015.unit": "derived: silicon flaw F-015",
+  "flaws.F-015.summary": "derived: silicon flaw F-015",
+  "flaws.F-015.witness": "derived: silicon flaw F-015",
+  "flaws.F-015.handling": "derived: silicon flaw F-015",
+  "flaws.F-015.fix": "derived: silicon flaw F-015",
+  "flaws.F-016.present": "src/kohakutpu/matmul/mx_cluster_cu.v:1089; boards/multimesh_v9t8.json:units.MG",
+  "flaws.F-016.unit": "derived: silicon flaw F-016",
+  "flaws.F-016.summary": "derived: silicon flaw F-016",
+  "flaws.F-016.witness": "derived: silicon flaw F-016",
+  "flaws.F-016.handling": "derived: silicon flaw F-016",
+  "flaws.F-016.fix": "derived: silicon flaw F-016"
  }
 }

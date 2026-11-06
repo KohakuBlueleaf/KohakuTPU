@@ -7,6 +7,7 @@ pub mod flaw;
 pub mod layout;
 pub mod lower;
 pub mod mutant;
+pub mod reach;
 pub mod sched;
 pub mod text;
 

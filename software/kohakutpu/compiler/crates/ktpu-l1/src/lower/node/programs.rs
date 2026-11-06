@@ -62,6 +62,8 @@ pub struct NodeProgram {
     pub mesh: u32,
     pub program: Program,
     pub f001: super::F001,
+    pub drain_bursts: Vec<super::DrainBurst>,
+    pub long_remote: bool,
 }
 
 /// `{node: Program}` of `fn name.l1`, each parameter bound to an address: one
@@ -116,6 +118,8 @@ pub fn programs_spanned(
             mesh: t.mesh,
             program: reader.p,
             f001: reader.f001,
+            drain_bursts: reader.drain_bursts,
+            long_remote: reader.long_remote,
         });
     }
     Ok(out)

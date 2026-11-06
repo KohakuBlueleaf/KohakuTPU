@@ -22,15 +22,30 @@ static volatile uint64_t *ring_at(unsigned dst_node, unsigned src, unsigned idx)
     return (volatile uint64_t *)(HW_STAGING(kn.mesh_of[dst_node]) + KOS_STG_RING(src) + idx * KOS_MSG_BYTES);
 }
 
+/* The sent count is the egress completion frontier. A blocked kernel cannot
+ * service unrelated work until the requested room or drain is available. */
+static void ring_wait(uint64_t w, unsigned limit)
+{
+    if (((rings_written - HW_SIG_SENT(w)) & 0xffffu) <= limit) {
+        return;
+    }
+    k_where_wait(KOS_W_RING, rings_written, w);
+    uint64_t t0 = hw_cycles();
+    do {
+        w = hw_sig_word();
+        if (((rings_written - HW_SIG_SENT(w)) & 0xffffu) <= limit) {
+            k_where_back();
+            return;
+        }
+        if (hw_cycles() - t0 > KOS_DE_TIMEOUT) {
+            k_panic("ring egress timeout: written %u signal %lx", rings_written, w);
+        }
+    } while (1);
+}
+
 void k_ring_word(uint64_t value)
 {
-    uint64_t w = hw_sig_word();
-    if (((rings_written - HW_SIG_SENT(w)) & 0xffffu) >= HW_RING_DEPTH) {
-        k_where_wait(KOS_W_RING, rings_written, w);
-        while (((rings_written - HW_SIG_SENT(hw_sig_word())) & 0xffffu) >= HW_RING_DEPTH) {
-        }
-        k_where_back();
-    }
+    ring_wait(hw_sig_word(), HW_RING_DEPTH - 1);
     hw_wr(HW_R_IL + HW_IL_RING, value);
     ++rings_written;
 }
@@ -43,13 +58,7 @@ void k_ring(unsigned node, unsigned slot, unsigned amount, int fence)
 
 void k_rings_drain(void)
 {
-    uint64_t w = hw_sig_word();
-    if (((rings_written - HW_SIG_SENT(w)) & 0xffffu) != 0) {
-        k_where_wait(KOS_W_RING, rings_written, w);
-        while (((rings_written - HW_SIG_SENT(hw_sig_word())) & 0xffffu) != 0) {
-        }
-        k_where_back();
-    }
+    ring_wait(hw_sig_word(), 0);
 }
 
 struct chanmsg {

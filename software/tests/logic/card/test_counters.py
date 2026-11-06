@@ -74,6 +74,28 @@ def test_counters_read_as_wrapped_deltas_around_a_run(narrow):
     assert t.writes == [(CTRLS[0], 5, bits), (CTRLS[1], 4, bits)]
 
 
+@pytest.mark.parametrize("present", [False, True])
+@pytest.mark.parametrize("long", [False, True])
+def test_ack0_is_evidence_except_on_an_affected_long_burst_sender(present, long):
+    t = Link(False)
+
+    def run():
+        for words in t.words.values():
+            words[1] = (1 << 1) | (1 << 3)
+
+    _, got = interlink.around(
+        t,
+        CTRLS,
+        run,
+        f015_present=present,
+        long_remote=frozenset({0}) if long else frozenset(),
+    )
+    assert got[0]["fault_names"] == (["AXI"] if present and long else ["ACK0", "AXI"])
+    assert got[1]["fault_names"] == ["ACK0", "AXI"]
+    assert got[0]["raw_faults"] == got[1]["raw_faults"] == 10
+    assert got[0]["faults"] == (8 if present and long else 10)
+
+
 class Dram:
     def __init__(self):
         self.bytes = {}

@@ -9,12 +9,14 @@ pub type Word = [u8; WORD];
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Dram {
     pub bytes: Vec<u8>,
+    pub reach: Option<ktpu_l1::reach::Census>,
 }
 
 impl Dram {
     pub fn new(size: usize) -> Dram {
         Dram {
             bytes: vec![0; size],
+            reach: None,
         }
     }
 

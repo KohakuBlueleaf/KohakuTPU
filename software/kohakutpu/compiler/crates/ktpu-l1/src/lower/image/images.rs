@@ -141,7 +141,9 @@ pub struct Images<'a> {
     macros: indexmap::IndexMap<String, (Vec<String>, Vec<Stmt>)>,
     plans: HashMap<String, Plan>,
     rests: HashMap<(String, Vec<i128>), Rest>,
-    encoded: HashMap<EncodedKey, ImageWords>,
+    encoded: HashMap<EncodedKey, (ImageWords, BTreeSet<u32>)>,
+    /// Descriptors used by the most recent call, including split drains.
+    pub peer_drains: BTreeSet<u32>,
 }
 
 impl<'a> Images<'a> {
@@ -169,6 +171,7 @@ impl<'a> Images<'a> {
             plans: HashMap::new(),
             rests: HashMap::new(),
             encoded: HashMap::new(),
+            peer_drains: BTreeSet::new(),
         })
     }
 
@@ -271,6 +274,8 @@ impl<'a> Images<'a> {
         let mut all = descs;
         all.extend(lead.iter().map(|(k, v)| (*k, *v)));
 
+        fill::fill_descs(&stmts, &mut all, &self.facts)?;
+
         // The split depends on descriptor values, which may come from
         // arguments the words do not otherwise read.
         let split = far_splits(&self.reader, &stmts[..], &all, &self.facts)?;
@@ -280,10 +285,12 @@ impl<'a> Images<'a> {
                 Encoder::new(&self.reader, &self.isa, &self.facts, self.entry, self.units);
             enc.split = split.clone();
             let words = enc.encode(&stmts[..])?;
-            self.encoded.insert(wkey.clone(), Rc::new(words));
+            self.encoded
+                .insert(wkey.clone(), (Rc::new(words), enc.peer_drains));
         }
+        self.peer_drains = self.encoded[&wkey].1.clone();
         Ok((
-            self.encoded[&wkey].clone(),
+            self.encoded[&wkey].0.clone(),
             split_descs(&all, &split, &self.facts),
         ))
     }

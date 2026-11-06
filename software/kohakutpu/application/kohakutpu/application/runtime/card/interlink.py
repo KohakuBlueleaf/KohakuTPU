@@ -60,8 +60,19 @@ def clear_faults(t, ctrls: list[int], words: dict[int, list[int]]) -> None:
         (t.write32 if narrow else t.write64)(c + CONTROL, value)
 
 
-def delta(before: dict, after: dict) -> dict[int, dict]:
-    """Each die's `FIELDS`, and its faults by name."""
+def failures(word: int, *, f015_present: bool, long_remote: bool) -> int:
+    """ACK0 is evidence only outside an F-015 long-burst sending die."""
+    return word & ~2 if f015_present and long_remote else word
+
+
+def delta(
+    before: dict,
+    after: dict,
+    *,
+    f015_present: bool = False,
+    long_remote: frozenset[int] = frozenset(),
+) -> dict[int, dict]:
+    """Each die's fields and scoped faults; `raw_faults` retains every bit."""
     out = {}
     for d, words in after.items():
         got = {}
@@ -71,15 +82,28 @@ def delta(before: dict, after: dict) -> dict[int, dict]:
             got[name] = (
                 (value - (before[d][w] >> lo & mask)) & mask if counter else value
             )
+        got["raw_faults"] = got["faults"]
+        got["faults"] = failures(
+            got["raw_faults"], f015_present=f015_present, long_remote=d in long_remote
+        )
         got["fault_names"] = [f for i, f in enumerate(FAULTS) if got["faults"] >> i & 1]
         out[d] = got
     return out
 
 
-def around[T](t, ctrls: list[int], run: Callable[[], T]) -> tuple[T, dict[int, dict]]:
+def around[T](
+    t,
+    ctrls: list[int],
+    run: Callable[[], T],
+    *,
+    f015_present: bool = False,
+    long_remote: frozenset[int] = frozenset(),
+) -> tuple[T, dict[int, dict]]:
     """`run()` between two reads of every die's counters (`ctrls`: each die's
     control window), the sticky faults cleared before it: its result and `delta`."""
     before = read(t, ctrls)
     clear_faults(t, ctrls, before)
     got = run()
-    return got, delta(before, read(t, ctrls))
+    return got, delta(
+        before, read(t, ctrls), f015_present=f015_present, long_remote=long_remote
+    )

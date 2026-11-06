@@ -3,8 +3,8 @@ reserved units: the compute keeps to vc[1] and mg[0], a stream to vc[0] (its
 receiver) and to vc[0] or mg[1] (its sender), so no receive context is shared.
 After a start barrier every participating sysnode interleaves its compute steps
 with its stream steps in one block (the CPU feeds both), each unit running
-asynchronously; a token ledger checks every ring and every die's faults (a
-remote burst names its ack destination, so ACK0 is a fault).
+asynchronously; a token ledger checks every ring and every die's scoped faults.
+ACK0 is evidence except on an F-015 die running a long remote vector burst.
 
 Compute, on every sysnode: `vc` (vc[1] unpacks, doubles and packs 256 KiB of host
 tag words in 2 KiB trips: C1's checked pack, streamed) or `mgvc` (16 of C1's

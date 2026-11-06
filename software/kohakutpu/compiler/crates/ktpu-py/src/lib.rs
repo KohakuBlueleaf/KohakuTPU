@@ -231,6 +231,9 @@ fn compiled<'py>(py: Python<'py>, c: &Compiled) -> PyResult<Bound<'py, PyDict>> 
         one.set_item("bytes", PyBytes::new(py, &p.bytes))?;
         one.set_item("params", &p.params)?;
         one.set_item("images_json", p.images.to_string())?;
+        let f015 = PyDict::new(py);
+        f015.set_item("long_remote", p.f015.long_remote)?;
+        one.set_item("f015", f015)?;
         pkgs.set_item(mesh, one)?;
     }
     d.set_item("packages", pkgs)?;
@@ -249,6 +252,9 @@ fn compiled<'py>(py: Python<'py>, c: &Compiled) -> PyResult<Bound<'py, PyDict>> 
     f001.set_item("line_ports", &c.f001.line_ports)?;
     f001.set_item("split", c.f001.split)?;
     d.set_item("f001", f001)?;
+    let f016 = PyDict::new(py);
+    f016.set_item("burst_ports", &c.f016.burst_ports)?;
+    d.set_item("f016", f016)?;
     let v = PyDict::new(py);
     v.set_item("refused", c.verdict.refused)?;
     let found = PyList::empty(py);

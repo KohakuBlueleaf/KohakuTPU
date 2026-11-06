@@ -80,7 +80,7 @@ impl<'a> NodeReader<'a> {
 
     /// One mover command's writes and patches, legal on F-001 (L1.MOV.019): a
     /// command the proof holds for as written, else its split.
-    fn checked(
+    pub(super) fn checked(
         &mut self,
         st: &Stmt,
         mv: Move,

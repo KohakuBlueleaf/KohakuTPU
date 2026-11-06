@@ -30,6 +30,8 @@ pub struct CoreFacts {
     /// Silicon flaw F-002: the interlink sends a one-flit packet before its
     /// flit shows (`flaws.F-002.present`).
     pub il_tail: bool,
+    /// Unit reads must avoid single-beat MAG pieces.
+    pub read_single: bool,
 }
 
 impl CoreFacts {
@@ -49,6 +51,7 @@ impl CoreFacts {
             l1_words: m.vc.l1_words,
             packet_beats: m.il.packet_beats,
             il_tail: m.flaws.f002.present,
+            read_single: m.flaws.f014.present,
         }
     }
 }

@@ -18,6 +18,7 @@ impl<'a> Encoder<'a> {
             units,
             config: 0,
             split: Splits::new(),
+            peer_drains: BTreeSet::new(),
         }
     }
 

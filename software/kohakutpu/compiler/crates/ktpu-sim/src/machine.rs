@@ -198,6 +198,9 @@ impl Machine {
     }
 
     fn step_unit(&mut self, u: Unit) -> R<()> {
+        if let Some(reach) = &mut self.mem.reach {
+            reach.unit = format!("{u:?}");
+        }
         match u {
             Unit::Vc(i) => {
                 let v = &mut self.vc[i];

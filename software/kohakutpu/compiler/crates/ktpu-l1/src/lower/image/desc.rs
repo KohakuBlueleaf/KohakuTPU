@@ -249,6 +249,25 @@ fn peer_drains(stmts: &[Stmt], out: &mut BTreeMap<u32, Stmt>) {
     }
 }
 
+/// Whether a peer burst's emitted descriptor is remote and longer than a
+/// packet. An unknown destination can be remote; unknown bounds can be long.
+pub fn long_remote(ad: u32, descs: &Descs, facts: &CoreFacts) -> bool {
+    if descs
+        .get(&(ad, 0))
+        .is_some_and(|base| (base >> 26) & 0xFF == 0)
+    {
+        return false;
+    }
+    let mut count = 1u64;
+    for field in 1..=facts.dims {
+        let Some(value) = descs.get(&(ad, field)) else {
+            return true;
+        };
+        count = count.saturating_mul((value & DIM_BOUND_MASK).max(1));
+    }
+    count > facts.packet_beats as u64
+}
+
 const DIM_BOUND_MASK: u64 = (1 << ktpu_isa::unit::vector::DIM_BOUND_BITS) - 1;
 
 /// `peer(OFF, ack=UNIT, mesh=M, fin=UNIT, count=1)`: a peer drain's

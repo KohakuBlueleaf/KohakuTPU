@@ -34,6 +34,13 @@ pub struct PackageOut {
     pub params: Vec<String>,
     #[serde(default)]
     pub images: serde_json::Value,
+    pub f015: F015,
+}
+
+/// F-015 scopes the sending mesh's interlink health signal.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct F015 {
+    pub long_remote: bool,
 }
 
 /// One arena: the scratch parameters of a memory space (and node) in one
@@ -54,6 +61,13 @@ pub struct Scratch {
 pub struct F001 {
     pub line_ports: Vec<String>,
     pub split: u64,
+}
+
+/// Memory-drain proofs whose buffers must start on a cluster burst within
+/// their 4 KiB page. Empty on machines without F-016.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct F016 {
+    pub burst_ports: Vec<String>,
 }
 
 /// One static-checker finding.
@@ -94,6 +108,8 @@ pub struct Compiled {
     /// a build at its bindings proves every command at its own address).
     #[serde(default)]
     pub f001: F001,
+    #[serde(default)]
+    pub f016: F016,
 }
 
 /// A refusal and the stage that made it.

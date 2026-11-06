@@ -7,6 +7,9 @@ mod branch_ordering;
 #[path = "../common.rs"]
 mod common;
 mod descriptor_initialization;
+mod drain_bursts;
+mod f014;
+mod long_remote;
 mod mark_frontiers;
 mod package;
 mod tiled_readback;

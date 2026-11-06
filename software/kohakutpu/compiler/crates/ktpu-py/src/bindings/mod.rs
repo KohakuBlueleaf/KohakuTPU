@@ -32,6 +32,7 @@ mod package;
 mod poll;
 mod program;
 mod queue;
+mod reach;
 mod recipe;
 mod recipe_table;
 mod simulate;
@@ -84,6 +85,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     recipe::register(m)?;
     recipe_table::register(m)?;
     queue::register(m)?;
+    reach::register(m)?;
     submit::register(m)?;
     program::register(m)?;
     poll::register(m)?;

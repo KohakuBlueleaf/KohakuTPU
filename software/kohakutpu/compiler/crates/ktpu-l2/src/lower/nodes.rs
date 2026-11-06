@@ -137,7 +137,7 @@ pub(super) fn order_nodes(built_by: &mut IndexMap<i64, Vec<Stage>>) {
                 rings
                     .entry((a, hit))
                     .or_default()
-                    .push((b, mem[&a][hit].clone()));
+                    .push((b, mem[&a][..=hit].iter().flatten().cloned().collect()));
                 waits.entry((b, j)).or_default().push(a);
             }
         }

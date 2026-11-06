@@ -87,6 +87,7 @@ enum Work {
     Fill {
         addrs: Vec<i64>,
         off: usize,
+        inner: usize,
     },
     Drain {
         addrs: Vec<i64>,
@@ -94,9 +95,7 @@ enum Work {
         peer: Option<Peer>,
     },
     /// A VWAIT: until `upto` granules have landed.
-    Landed {
-        upto: u64,
-    },
+    Landed { upto: u64 },
     /// A sync or a VBAR: its guard is the whole of it.
     Guard,
 }
@@ -473,7 +472,13 @@ impl Core {
             }
             Inst::Fill { ad, off, rel } => {
                 let addrs = self.dma_addrs(ad, rel)?;
+                let (stride, bound) = self.desc[ad as usize].dims[0];
                 let work = Work::Fill {
+                    inner: if stride == 32 {
+                        bound.max(1) as usize
+                    } else {
+                        1
+                    },
                     addrs,
                     off: off as usize,
                 };
@@ -712,7 +717,10 @@ impl Core {
                 cb,
                 n,
             } => self.pack(reg, &words, mode, cb, n),
-            Work::Fill { addrs, off } => {
+            Work::Fill { addrs, off, inner } => {
+                if let Some(reach) = &mut mem.reach {
+                    reach.vector(&addrs, off, inner);
+                }
                 for (i, at) in addrs.iter().enumerate() {
                     self.l1[(off + i) % L1_WORDS] = mem.word(*at)?;
                 }

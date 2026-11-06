@@ -342,6 +342,11 @@ impl<'a> NodeReader<'a> {
             }],
         };
         let n = self.const_(st, st.kw("n").unwrap())? as u64;
+        if n != 0 && self.target.units(UnitKind::Vc).contains(&c) {
+            // Fetched vector commands have no static descriptor or burst-length proof.
+            self.vector_descs.remove(&c);
+            self.long_remote = true;
+        }
         self.p.fetch(c, k as u64, n, patches);
         Ok(())
     }

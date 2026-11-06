@@ -234,3 +234,31 @@ def test_without_the_flaw_the_copy_stays_on_the_mover():
     l1 = lowered(doc)
     assert "copy w(x+0, (256, 32)) -> w(y+0, (256, 64))" in l1.replace(" + ", "+")
     assert "vdrain" not in l1
+
+
+def test_only_a_drain_proof_port_needs_cluster_burst_alignment():
+    doc = machine("multimesh_v9t8")
+    text = """target ktpu.v9
+fn bursts.l1(x: mx7a[4, 32] @dram(gm=1, nk=1), w: mx7b[32, 32] @dram(gn=8, nk=1), y: f16[4, 32] @dram(tile=1x8))
+    send mg[0]
+        fill A0 <- x n=1
+        fill B0 <- w n=8
+        gemm 1x8x1 a=A0 b=B0
+        drain y n=8
+    barrier
+"""
+    got = rs.compile(text, "bursts", json.dumps(doc), l1=True)
+    ports = got["f016"]["burst_ports"]
+    burst = submission.cluster_burst(json.dumps(doc))
+    binds = {"x": 32, "w": 64, "y": 4096 + 128}
+    assert submission.burst_unaligned(binds, burst, ports) == ["y"]
+    binds["y"] = 4096 + 256
+    assert submission.burst_unaligned(binds, burst, ports) == []
+    doc["machine"]["flaws"]["F-016"]["present"] = False
+    binds["y"] = 4096 + 128
+    assert (
+        submission.burst_unaligned(
+            binds, submission.cluster_burst(json.dumps(doc)), ports
+        )
+        == []
+    )

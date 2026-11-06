@@ -126,7 +126,7 @@ impl<'a> Encoder<'a> {
         )?])
     }
 
-    pub(super) fn vdrain(&self, st: &Stmt) -> Result<Words> {
+    pub(super) fn vdrain(&mut self, st: &Stmt) -> Result<Words> {
         let (ad, off, flags) = self.dma(st, "<-", &["signal"])?;
         let rel = flags.contains("rel");
         let Some(to) = st.kw("to") else {
@@ -154,6 +154,10 @@ impl<'a> Encoder<'a> {
             Some(t) => self.int(st, t)? as u32,
             None => 0,
         };
+        self.peer_drains.insert(ad);
+        if let Some(s) = self.split.get(&ad) {
+            self.peer_drains.insert(s.spare);
+        }
         let drain = |ad, l1off, signal| {
             self.word(
                 st,

@@ -11,6 +11,7 @@ packages, a row a phase. Every row carries the physical intervals after its run
 (`admission`), never issued."""
 
 import collections
+import json
 import time
 from collections.abc import Iterator
 
@@ -163,6 +164,7 @@ def runs(
     if not spec.fresh:
         ins |= {p: np.reshape(v, bufs[p].host_shape) for p, v in given.items()}
     ctrls = board_map(card.board)["ctrl"]
+    f015 = json.loads(card.machine_json)["machine"]["flaws"]["F-015"]["present"]
     held = card.mark()
     try:
         binds, zones = bind(card, layout)
@@ -203,12 +205,27 @@ def runs(
                     faults,
                     ring,
                     row,
+                    f015,
                 )
     finally:
         card.release(held)
 
 
-def once(card, ctrls, prog, ran, binds, zones, layout, want, spec, faults, ring, row):
+def once(
+    card,
+    ctrls,
+    prog,
+    ran,
+    binds,
+    zones,
+    layout,
+    want,
+    spec,
+    faults,
+    ring,
+    row,
+    f015=False,
+):
     """One run of `prog` (of its sysnodes `ran`): `row` completed, and its
     measure records keyed like it."""
     epoch = row["epoch"]
@@ -225,7 +242,12 @@ def once(card, ctrls, prog, ran, binds, zones, layout, want, spec, faults, ring,
         got = card.run(sub, faults=faults)
         return got, time.perf_counter() - t0
 
-    (res, wall), links = interlink.around(card.t, ctrls, timed)
+    sending = frozenset(
+        n for n, p in B.placed(sub, card.nodes).items() if p.long_remote
+    )
+    (res, wall), links = interlink.around(
+        card.t, ctrls, timed, f015_present=f015, long_remote=sending
+    )
     raw = {p: card.get(binds[p], b.nbytes) for p, b in outs}
     outputs, ledger, refs = {}, [], {}
     for p, b in outs:

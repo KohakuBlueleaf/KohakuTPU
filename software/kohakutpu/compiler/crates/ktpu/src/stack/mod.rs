@@ -5,9 +5,10 @@
 //! (`ktpu_l1`), the dispatch order and the checker (`ktpu_verify`). A stage
 //! whose crate publishes no version is not cached.
 
+mod drains;
 pub mod lines;
 
-use crate::output::{Finding, PackageOut, Scratch, F001};
+use crate::output::{Finding, PackageOut, Scratch, F001, F016};
 use crate::pipeline::stage::{Backend, Stage};
 use ktpu_l1::layout::scratch::Arena;
 use ktpu_l1::lower::imem::Cores;
@@ -179,6 +180,12 @@ impl Backend for Stack {
         p.f001()
     }
 
+    fn f016(&self, p: &Programs) -> F016 {
+        F016 {
+            burst_ports: p.burst_ports.iter().cloned().collect(),
+        }
+    }
+
     fn order(&self, p: &Programs, m: &Machine) -> Result<BTreeMap<u32, PackageOut>, Refusal> {
         order(p, m, None)
     }
@@ -309,6 +316,12 @@ impl Backend for CardStack {
         p.f001()
     }
 
+    fn f016(&self, p: &Programs) -> F016 {
+        F016 {
+            burst_ports: p.burst_ports.iter().cloned().collect(),
+        }
+    }
+
     fn order(&self, p: &Programs, m: &Machine) -> Result<BTreeMap<u32, PackageOut>, Refusal> {
         order(p, m, self.fetch(m))
     }
@@ -336,15 +349,37 @@ fn programs(
     binds: Option<&BTreeMap<String, i128>>,
     caller: Option<&[String]>,
 ) -> Result<Programs, Refusal> {
+    let mut drain_plan = ktpu_l1::lower::node::plan_drains(l1, name, m, binds).map_err(refusal)?;
+    drains::copies(&mut drain_plan, m)?;
+    let l1 = &drain_plan.module;
     let body = l1.body(name, "l1").map_err(refusal)?;
     let binds = binds.filter(|_| crate::mutant::active() != Some(BINDS_IGNORED));
-    let arenas = match (binds, caller) {
-        (None, Some(c)) => {
-            let c: std::collections::BTreeSet<String> = c.iter().cloned().collect();
-            ktpu_l1::layout::scratch::arenas(l1, name, &c, m).map_err(refusal)?
-        }
-        _ => Vec::new(),
+    let callers: std::collections::BTreeSet<String> = match binds {
+        Some(b) => body
+            .params
+            .iter()
+            .filter(|(p, _)| b.contains_key(p) || !drain_plan.scratch.contains(p))
+            .map(|(p, _)| p.clone())
+            .collect(),
+        None => caller.map_or_else(
+            || {
+                body.params
+                    .iter()
+                    .filter(|(p, _)| !drain_plan.scratch.contains(p))
+                    .map(|(p, _)| p.clone())
+                    .collect()
+            },
+            |c| c.iter().cloned().collect(),
+        ),
     };
+    let arenas = ktpu_l1::layout::scratch::arenas_with_bursts(
+        l1,
+        name,
+        &callers,
+        m,
+        &drain_plan.burst_ports,
+    )
+    .map_err(refusal)?;
     let members: std::collections::BTreeSet<&str> = arenas
         .iter()
         .flat_map(|a| a.members.iter().map(|(p, _)| p.as_str()))
@@ -376,13 +411,59 @@ fn programs(
         ktpu_l1::build::programs_in(l1, name, b, bases, m, Some(m.nodes()), None).map_err(refusal)
     };
     let (binds, bases, shifted) = match binds {
-        Some(b) => (b.clone(), Vec::new(), None),
+        Some(b) => {
+            let mut at = Place::new(0);
+            for (p, ty) in &body.params {
+                if let Some(&base) = b.get(p) {
+                    let buffer = ktpu_l1::layout::buffer::Buffer::of(ty).map_err(refusal)?;
+                    let end = base as u64 + buffer.bytes(m).map_err(refusal)?;
+                    match buffer.space.as_str() {
+                        "stage" => at.stage = at.stage.max(end.div_ceil(STAGE_ALIGN) * STAGE_ALIGN),
+                        _ => at.dram = at.dram.max(end.div_ceil(DRAM_ALIGN) * DRAM_ALIGN),
+                    }
+                }
+            }
+            let bases = arenas
+                .iter()
+                .map(|a| {
+                    let base = b
+                        .get(&a.name())
+                        .map_or_else(|| at.next(&a.space, a.bytes), |v| *v as u64);
+                    (a.clone(), base)
+                })
+                .collect();
+            (b.clone(), bases, None)
+        }
         None => {
             let (b, bases) = place(0)?;
             let (sb, sbases) = place(SHIFT)?;
             (b, bases, Some(build(&sb, &sbases)?))
         }
     };
+    let burst = u64::from(m.mg.wburst) * u64::from(m.die.word_bytes);
+    for p in &drain_plan.scratch {
+        if let Some(&at) = binds.get(p) {
+            if (at as u64) % 4096 % burst != 0 {
+                return Err(Refusal::new(
+                    "L1.MG.019",
+                    "cluster scratch must start on a burst",
+                ));
+            }
+        }
+    }
+    for (arena, at) in &bases {
+        if arena
+            .members
+            .iter()
+            .any(|(p, _)| drain_plan.burst_ports.contains(p))
+            && at % 4096 % burst != 0
+        {
+            return Err(Refusal::new(
+                "L1.MG.019",
+                "cluster scratch arena must start on a burst",
+            ));
+        }
+    }
     let mut params: BTreeMap<u64, String> = binds
         .iter()
         .map(|(p, at)| (*at as u64, p.clone()))
@@ -395,6 +476,16 @@ fn programs(
         name: name.to_string(),
         first: std::sync::Mutex::new(Vec::new()),
         parameter_images: false,
+        burst_ports: drain_plan
+            .burst_ports
+            .iter()
+            .map(|p| {
+                arenas
+                    .iter()
+                    .find(|a| a.members.iter().any(|(n, _)| n == p))
+                    .map_or_else(|| p.clone(), Arena::name)
+            })
+            .collect(),
         scratch: arenas
             .iter()
             .map(|a| Scratch {
@@ -512,6 +603,12 @@ fn order(
                 bytes,
                 params,
                 images,
+                f015: crate::output::F015 {
+                    long_remote: p
+                        .programs
+                        .iter()
+                        .any(|np| np.mesh == mesh && np.long_remote),
+                },
             },
         );
     }
@@ -632,9 +729,15 @@ pub struct Programs {
     /// The first run, by the fetch port it was built with.
     first: std::sync::Mutex<Vec<FirstBy>>,
     scratch: Vec<Scratch>,
+    burst_ports: std::collections::BTreeSet<String>,
 }
 
 impl Programs {
+    /// The lowered node streams and their explicit completion points.
+    pub fn nodes(&self) -> &[ktpu_l1::lower::node::NodeProgram] {
+        &self.programs
+    }
+
     /// The parameter (or arena) each line-proven write base lies in, and the
     /// split's commands, over every node (L1.MOV.019).
     fn f001(&self) -> F001 {
