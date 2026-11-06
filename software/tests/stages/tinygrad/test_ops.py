@@ -1,10 +1,12 @@
 """One small tensor program a planner path."""
 
 import re
+from collections import Counter
 
 import numpy as np
 import pytest
 
+from kohakutpu.application.runtime import generated
 from kohakutpu.application.runtime.double import DoubleCard
 
 #: A contraction reads its operands quantised to seven bits a block.
@@ -151,9 +153,37 @@ def test_a_product_lies_as_its_epilogue_reads_it(same, kernels):
     assert products and all("a: mx7a[40," in p or "out: f16[40," in p for p in products)
 
 
-def test_a_product_epilogue_computes_each_subexpression_once(same, kernels):
+def test_a_product_epilogue_computes_each_subexpression_once(
+    same, kernels, dev, monkeypatch
+):
+    dev.kernels.clear()
+    dev._invalidate_eager()
+    compiled = Counter()
+    compile_graph = DoubleCard.compile_graph
+    invocation = generated.invocation
+
+    def counted(self, source):
+        output = compile_graph(self, source)
+        compiled[output["l2"]] += 1
+        return output
+
+    def canonical(device, generator, arguments):
+        source, info = invocation(device, generator, arguments)
+        if generator == "matmul.mm_kernel":
+            ordinary = generated.graph(
+                *generated._call(
+                    device, generator, generated.prepared(generator, arguments)
+                )
+            )
+            assert source == ordinary, "P=1 uses the ordinary compile/stage key"
+        return source, info
+
+    monkeypatch.setattr(DoubleCard, "compile_graph", counted)
+    monkeypatch.setattr(generated, "invocation", canonical)
     x, w, b = R.normal(size=(40, 64)), R.normal(size=(96, 64)), R.normal(size=(96,))
     same(lambda a, m, c: (a.dot(m.transpose()) + c).gelu(), x, w, b, tolerance=4 * MX7)
+    assert compiled and all(count == 1 for count in compiled.values())
+    assert all(compiled[k["l2"]] == 1 for k in kernels)
     products = [k["l2"] for k in kernels if k["name"].startswith("mm")]
     assert products
     for text in products:

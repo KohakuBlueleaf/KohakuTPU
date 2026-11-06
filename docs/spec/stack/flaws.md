@@ -94,9 +94,9 @@ step it is +1.2% on MLP and +0.6% to +0.8% on wide, and −0.7% to −0.8% on Mi
 −1.7% to −1.8% on LeNet, where the vector copy is the cheaper one (REPORT, round e1).
 
 F-008, F-009, F-010, F-011 and F-013 cost no device work. F-012's throttle adds
-one front-end sync before a fill only where more fills than the queue's depth
-would be unlanded through descriptors of possibly different lengths; images
-within the depth are unchanged. F-004's OS clamp is O(1) host arithmetic per
+one front-end sync before a fill when unlanded fills exceed the queue's depth
+and the shadowed length may differ, or reach twice the depth even with equal
+lengths; images within the depth are unchanged. F-004's OS clamp is O(1) host arithmetic per
 wait; ordinary 512-credit and fetch windows keep their entries, and a credit
 window wider than half the counter range gets the extra WAITs that keep each
 target inside it. Machine fact generation reads one RTL signature and, for

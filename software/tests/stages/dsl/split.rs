@@ -228,6 +228,15 @@ fn simulate_matmul_inputs(
     input: &dyn Fn(bool, i64, i64, i64, i64) -> u16,
     extra: &dyn Fn(i64) -> u16,
 ) -> (Vec<u8>, Vec<u32>) {
+    simulate_named_inputs(kernel, "out", input, extra)
+}
+
+fn simulate_named_inputs(
+    kernel: &ktpu_kernels::kernel::Kernel,
+    output: &str,
+    input: &dyn Fn(bool, i64, i64, i64, i64) -> u16,
+    extra: &dyn Fn(i64) -> u16,
+) -> (Vec<u8>, Vec<u32>) {
     let text = ktpu_graph::lower(&kernel.graph).expect("L2 graph");
     let module = ktpu_l1::text::read(&text.text(), "matmul shares").expect("L2 text");
     let body = module.body(&text.name, "l2").expect("body");
@@ -258,7 +267,7 @@ fn simulate_matmul_inputs(
                     }
                 }
             }
-        } else if name != "out" {
+        } else if name != output {
             for i in 0..b.bytes() / 2 {
                 let code = extra(i);
                 mem.write(b.at + 2 * i, &code.to_le_bytes())
@@ -266,7 +275,7 @@ fn simulate_matmul_inputs(
             }
         }
     }
-    let (_, out) = buffers.iter().find(|(n, _)| n == "out").expect("output");
+    let (_, out) = buffers.iter().find(|(n, _)| n == output).expect("output");
     let start = out.at as usize;
     mem.watch_writes(start..start + out.bytes() as usize)
         .expect("watch the output");
@@ -570,4 +579,271 @@ fn matmul_k_reductions_apply_bias_once_and_write_each_word_once() {
             }
         }
     }
+}
+
+#[test]
+fn row_norm_and_softmax_shares_preserve_each_row_and_write_once() {
+    let m = machine();
+    let norm = json!({"nodes": [
+        {"load": 0}, {"reduce": "sum", "arg": 0}, {"const": 0.03125},
+        {"op": "mul", "args": [1, 2]}, {"op": "sub", "args": [0, 3]},
+        {"op": "mul", "args": [4, 4]}, {"reduce": "sum", "arg": 5},
+        {"op": "mul", "args": [6, 2]}, {"const": 0.00001},
+        {"op": "add", "args": [7, 8]}, {"op": "rsqrt", "args": [9]},
+        {"op": "mul", "args": [4, 10]}, {"load": 1},
+        {"op": "mul", "args": [11, 12]}, {"load": 2},
+        {"op": "add", "args": [13, 14]}
+    ], "root": 15});
+    let softmax = json!({"nodes": [
+        {"load": 0}, {"reduce": "max", "arg": 0},
+        {"op": "sub", "args": [0, 1]}, {"const": 1.4426950408889634},
+        {"op": "mul", "args": [2, 3]}, {"op": "exp2", "args": [4]},
+        {"reduce": "sum", "arg": 5}, {"op": "div", "args": [5, 6]}
+    ], "root": 7});
+    for e in [norm, softmax] {
+        let args = json!({
+            "R": 197, "W": 32, "e": e,
+            "operands": [
+                {"kind": "full", "dtype": "f16", "offset": 0, "pitch": 32, "rows": 197},
+                {"kind": "col", "dtype": "f16", "offset": 0, "pitch": 0, "rows": 0},
+                {"kind": "scalar", "dtype": "f16", "offset": 3, "pitch": 0, "rows": 0}
+            ],
+            "out": {"kind": "full", "dtype": "f16", "offset": 0, "pitch": 32, "rows": 197}
+        });
+        let baseline = ktpu_kernels::call("vector.rows_kernel", &args, &m).expect("P=1");
+        let (want, _) = simulate_matmul(&baseline);
+        for grant in [vec![3, 1], vec![3, 1, 0, 2]] {
+            let mut req = request(&m);
+            req.nodes = NodeSet::new(grant, &m).expect("grant");
+            req.force = Some("rows".into());
+            let got = call_split("vector.rows_kernel", &args, &req, &m).expect("row shares");
+            assert_eq!(got.split.active_nodes, req.nodes.ids().len());
+            validate_ownership(&got.split.output).expect("line owners");
+            let (actual, writes) = simulate_matmul(&got.kernel);
+            assert_eq!(actual, want);
+            assert!(writes.iter().all(|&n| n == 1), "one output write");
+        }
+    }
+}
+
+#[test]
+fn class_statistics_store_at_global_origin_including_the_tail() {
+    let m = machine();
+    let mut args = json!({
+        "R": 197, "W": 32,
+        "e": {"nodes": [{"load": 0}, {"reduce": "sum", "arg": 0}], "root": 1},
+        "operands": [{"kind": "full", "dtype": "f16", "offset": 0, "pitch": 32, "rows": 197}],
+        "out": {"kind": "row", "dtype": "f16", "offset": 0, "pitch": 0, "rows": 0},
+        "shape_class": {"kblock": 32, "max_block": 256, "policy": "exact", "cores": "min"}
+    });
+    let baseline = ktpu_kernels::call("vector.rows_kernel", &args, &m).expect("origin zero");
+    let (want, _) = simulate_matmul(&baseline);
+    args["out"]["offset"] = json!(32);
+    let shifted = ktpu_kernels::call("vector.rows_kernel", &args, &m).expect("global origin");
+    let (actual, writes) = simulate_matmul(&shifted);
+    assert_eq!(&actual[64..64 + 394], &want[..394]);
+    assert!(writes[..64].iter().all(|&n| n == 0));
+    for grant in [vec![3, 1], vec![3, 1, 0, 2]] {
+        let mut req = request(&m);
+        req.nodes = NodeSet::new(grant, &m).expect("grant");
+        req.force = Some("rows".into());
+        let got = call_split("vector.rows_kernel", &args, &req, &m).expect("class row shares");
+        validate_ownership(&got.split.output).expect("statistic lines");
+        let (actual, writes) = simulate_matmul(&got.kernel);
+        assert_eq!(&actual[64..64 + 394], &want[..394]);
+        assert!(writes[..64].iter().all(|&n| n == 0));
+        assert!(writes[64..].iter().all(|&n| n == 1));
+    }
+}
+
+#[test]
+fn flat_shares_keep_scalar_origins_and_exact_final_words() {
+    let m = machine();
+    let args = json!({
+        "n": 197 * 32 - 16, "dtypes": ["f16", "f16"], "scalars": [[1, 3]],
+        "e": {"nodes": [{"load": 0}, {"load": 1}, {"op": "add", "args": [0, 1]}], "root": 2}
+    });
+    let baseline = ktpu_kernels::call("vector.flat_kernel", &args, &m).expect("flat P=1");
+    let (want, _) = simulate_matmul(&baseline);
+    let mut req = request(&m);
+    req.nodes = NodeSet::new(vec![3, 1, 0, 2], &m).expect("grant");
+    req.force = Some("tokens".into());
+    let got = call_split("vector.flat_kernel", &args, &req, &m).expect("flat shares");
+    validate_ownership(&got.split.output).expect("flat word owners");
+    let (actual, writes) = simulate_matmul(&got.kernel);
+    assert_eq!(actual, want);
+    assert!(writes.iter().all(|&n| n == 1));
+}
+
+#[test]
+fn row_empty_shares_have_no_instances_or_writes() {
+    let m = machine();
+    let args = json!({
+        "R": 1, "W": 32,
+        "e": {"nodes": [{"load": 0}], "root": 0},
+        "operands": [{"kind": "full", "dtype": "f16", "offset": 0, "pitch": 32, "rows": 1}],
+        "out": {"kind": "full", "dtype": "f16", "offset": 0, "pitch": 32, "rows": 1}
+    });
+    let mut req = request(&m);
+    req.nodes = NodeSet::new(vec![3, 1, 0, 2], &m).expect("grant");
+    req.force = Some("rows".into());
+    let got = call_split("vector.rows_kernel", &args, &req, &m).expect("one row");
+    let program = ktpu_graph::program(&got.kernel.graph, &m).expect("graph");
+    let body = program.body().expect("body");
+    assert!(ktpu_l2::ir::instances(&body)
+        .expect("instances")
+        .iter()
+        .all(|s| s.node == 3));
+    let baseline = ktpu_kernels::call("vector.rows_kernel", &args, &m).expect("one row P=1");
+    let (want, _) = simulate_matmul(&baseline);
+    let (actual, writes) = simulate_matmul(&got.kernel);
+    assert_eq!(actual, want);
+    assert!(writes.iter().all(|&n| n == 1));
+}
+
+#[test]
+fn row_composites_keep_statistics_and_broadcasts_at_global_origins() {
+    let m = machine();
+    let full = json!({"kind": "full", "dtype": "f16", "offset": 0, "pitch": 32, "rows": 197});
+    let stat = json!({"kind": "row", "dtype": "f16", "offset": 32, "pitch": 0, "rows": 240});
+    let col = json!({"kind": "col", "dtype": "f16", "offset": 0, "pitch": 0, "rows": 0});
+    let reduce = json!({"nodes": [{"load": 0}, {"reduce": "sum", "arg": 0}], "root": 1});
+    let add = json!({"nodes": [{"load": 0}, {"load": 1}, {"load": 2},
+        {"op": "add", "args": [0, 1]}, {"op": "add", "args": [3, 2]}], "root": 4});
+    let chain = json!({
+        "first": {"gen": "vector.rows_kernel", "args": {
+            "R": 197, "W": 32, "e": reduce, "operands": [full], "out": stat
+        }},
+        "second": {"gen": "vector.rows_kernel", "args": {
+            "R": 197, "W": 32, "e": add, "operands": [stat, full, col], "out": full
+        }}, "from": "in0", "to": "out", "keep": false
+    });
+    let fused = json!({
+        "ports": [
+            {"name": "x", "shape": [197, 32], "dtype": "f16", "written": false},
+            {"name": "y", "shape": [197, 32], "dtype": "f16", "written": false},
+            {"name": "bias", "shape": [32], "dtype": "f16", "written": false},
+            {"name": "out", "shape": [197, 32], "dtype": "f16", "written": true}
+        ],
+        "scratch": [{"name": "stat", "shape": [240], "dtype": "f16"}], "staged": [],
+        "steps": [
+            {"kind": "rows", "R": 197, "W": 32, "exprs": [reduce],
+                "operands": [full], "ins": ["x"], "out_operands": [stat], "outs": ["stat"]},
+            {"kind": "rows", "R": 197, "W": 32, "exprs": [add],
+                "operands": [stat, full, col], "ins": ["stat", "y", "bias"],
+                "out_operands": [full], "outs": ["out"]}
+        ]
+    });
+    for (gen, args, output) in [
+        ("kernel.chain", chain, "c2_out"),
+        ("fused.kernel", fused, "out"),
+    ] {
+        let simulate = |k: &ktpu_kernels::kernel::Kernel| {
+            simulate_named_inputs(k, output, &|_, _, _, _, _| 0, &|i| {
+                0x2800 | ((i * 37) as u16 & 0x3ff)
+            })
+        };
+        let baseline = ktpu_kernels::call(gen, &args, &m).expect("local composite");
+        let (want, _) = simulate(&baseline);
+        let mut req = request(&m);
+        req.nodes = NodeSet::new(vec![3, 1, 0, 2], &m).expect("grant");
+        req.force = Some("rows".into());
+        let got = call_split(gen, &args, &req, &m).expect("composite shares");
+        validate_ownership(&got.split.output).expect("composite owners");
+        let (actual, writes) = simulate(&got.kernel);
+        assert_eq!(actual, want, "{gen}");
+        assert!(writes.iter().all(|&n| n == 1), "{gen}");
+    }
+}
+
+#[test]
+fn row_chain_publishes_a_statistic_before_cross_row_broadcast() {
+    let m = machine();
+    let full = json!({"kind": "full", "dtype": "f16", "offset": 0, "pitch": 32, "rows": 197});
+    let args = json!({
+        "first": {"gen": "vector.rows_kernel", "args": {
+            "R": 197, "W": 32,
+            "e": {"nodes": [{"load": 0}, {"reduce": "sum", "arg": 0}], "root": 1},
+            "operands": [full],
+            "out": {"kind": "row", "dtype": "f16", "offset": 0, "pitch": 0, "rows": 208}
+        }},
+        "second": {"gen": "vector.rows_kernel", "args": {
+            "R": 197, "W": 32,
+            "e": {"nodes": [{"load": 0}, {"load": 1}, {"op": "add", "args": [0, 1]}], "root": 2},
+            "operands": [
+                {"kind": "scalar", "dtype": "f16", "offset": 0, "pitch": 0, "rows": 208}, full
+            ], "out": full
+        }}, "from": "in0", "to": "out", "keep": false
+    });
+    let simulate = |k: &ktpu_kernels::kernel::Kernel| {
+        simulate_named_inputs(k, "c2_out", &|_, _, _, _, _| 0, &|i| {
+            0x2800 | ((i * 37) as u16 & 0x3ff)
+        })
+    };
+    let baseline = ktpu_kernels::call("kernel.chain", &args, &m).expect("reference chain");
+    let (want, _) = simulate(&baseline);
+    let mut req = request(&m);
+    req.nodes = NodeSet::new(vec![3, 1, 0, 2], &m).expect("grant");
+    req.force = Some("rows".into());
+    let got = call_split("kernel.chain", &args, &req, &m).expect("distributed stages");
+    assert_eq!(got.split.active_nodes, 4);
+    validate_ownership(&got.split.output).expect("final owners");
+    let (actual, writes) = simulate(&got.kernel);
+    assert_eq!(actual, want);
+    assert!(writes.iter().all(|&n| n == 1));
+    for share in &got.split.shards {
+        for region in &share.scratch_regions {
+            assert!(got
+                .kernel
+                .graph
+                .scratch
+                .iter()
+                .any(|s| s.name == region.allocation));
+        }
+    }
+}
+
+#[test]
+fn staged_row_flat_package_keeps_shared_statistics_and_exact_copies() {
+    let m = machine();
+    let hw = ktpu_kernels::gen::Hw::of(&m);
+    let total = (197 * 32 + hw.vlmax - 1) / hw.vlmax;
+    let words = 197 * 32 * 2 / hw.word_bytes;
+    let args = json!({
+        "ports": [
+            {"name": "x", "shape": [197, 32], "dtype": "f16", "written": false},
+            {"name": "out", "shape": [197, 32], "dtype": "f16", "written": true}
+        ],
+        "scratch": [
+            {"name": "stats", "shape": [208], "dtype": "f16"},
+            {"name": "flat_x", "shape": [total, hw.vlmax], "dtype": "f16"},
+            {"name": "flat_out", "shape": [total, hw.vlmax], "dtype": "f16"}
+        ],
+        "staged": [
+            {"scratch": "flat_x", "port": "x", "words": words, "read": true, "written": false},
+            {"scratch": "flat_out", "port": "out", "words": words, "read": false, "written": true}
+        ],
+        "steps": [
+            {"kind": "rows", "R": 197, "W": 32,
+                "exprs": [{"nodes": [{"load": 0}, {"reduce": "sum", "arg": 0}], "root": 1}],
+                "operands": [{"kind": "full", "dtype": "f16", "offset": 0, "pitch": 32, "rows": 197}],
+                "ins": ["x"],
+                "out_operands": [{"kind": "row", "dtype": "f16", "offset": 0, "pitch": 0, "rows": 208}],
+                "outs": ["stats"]},
+            {"kind": "flat", "total": total, "dtypes": ["f16", "f16"], "out_dtype": "f16",
+                "exprs": [{"nodes": [{"load": 0}, {"load": 1}, {"op": "add", "args": [0, 1]}], "root": 2}],
+                "ins": ["flat_x", "stats"], "lanes": [[1, 0]], "outs": ["flat_out"], "kept": [true]}
+        ]
+    });
+    let baseline = ktpu_kernels::call("fused.kernel", &args, &m).expect("staged reference");
+    let (want, _) = simulate_matmul(&baseline);
+    let mut req = request(&m);
+    req.nodes = NodeSet::new(vec![3, 1, 0, 2], &m).expect("grant");
+    req.force = Some("rows".into());
+    let got = call_split("fused.kernel", &args, &req, &m).expect("staged row/flat shares");
+    assert_eq!(got.split.active_nodes, 4);
+    validate_ownership(&got.split.output).expect("copy publishes exact output");
+    let (actual, writes) = simulate_matmul(&got.kernel);
+    assert_eq!(actual, want);
+    assert!(writes.iter().all(|&n| n == 1));
 }

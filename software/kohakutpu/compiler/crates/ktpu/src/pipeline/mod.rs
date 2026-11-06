@@ -136,6 +136,14 @@ impl<B: Backend> Run<'_, B> {
     }
 
     fn compile(&self, input: &Input, name: Option<&str>) -> Result<Compiled, Refused> {
+        if let Input::Graph(text) = input {
+            if let Ok(graph) = serde_json::from_str::<serde_json::Value>(text) {
+                if let Some(l1) = graph.get("executable_l1").and_then(|v| v.as_str()) {
+                    let name = name.or_else(|| graph.get("name").and_then(|v| v.as_str()));
+                    return self.compile(&Input::L1(l1.to_string()), name);
+                }
+            }
+        }
         let (l2, name, l1, caller) = match input {
             Input::L1(text) => {
                 let name = name.ok_or_else(|| Refused {
@@ -369,6 +377,13 @@ pub fn compile_l1<B: Backend>(
 ) -> Result<String, Refused> {
     if let Input::L1(text) = input {
         return Ok(text.clone());
+    }
+    if let Input::Graph(text) = input {
+        if let Ok(graph) = serde_json::from_str::<serde_json::Value>(text) {
+            if let Some(l1) = graph.get("executable_l1").and_then(|v| v.as_str()) {
+                return Ok(l1.to_string());
+            }
+        }
     }
     let run = Run {
         b,

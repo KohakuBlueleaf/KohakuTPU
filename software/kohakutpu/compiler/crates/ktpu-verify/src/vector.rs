@@ -300,9 +300,8 @@ fn conditional_block(
             .get(&pc)
             .ok_or_else(|| format!("pc {pc}: skipped control block is not loaded"))?;
         let (op, f) = word(t, raw)?;
-        if matches!(op, VOp::Vwait | VOp::Vpost | VOp::Vhalt)
-            || (op == VOp::Vdrain && f.g("node") != 0)
-        {
+        // Peer drains are checked against their resolved receiver at execution.
+        if matches!(op, VOp::Vwait | VOp::Vpost | VOp::Vhalt) {
             return Err(format!("pc {pc}: {op} under a data-dependent skip"));
         }
         // Skipping a control header also makes its body's counter totals conditional.

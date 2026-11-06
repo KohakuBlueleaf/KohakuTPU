@@ -107,7 +107,7 @@ pub fn kernel(a: &Rows, flat: bool, m: &Machine) -> R<Classed> {
     let count = stat_words(r, &hw) * sr;
     let (mut ports, mut given) = in_ports(operands, 0, r, w, &hw)?;
     let out_shape = if out.kind == Kind::Row {
-        vec![out.rows.max(count)]
+        vec![out.rows.max(out.offset + count)]
     } else {
         port_shape(out, r, w, &hw)?
     };
@@ -116,11 +116,7 @@ pub fn kernel(a: &Rows, flat: bool, m: &Machine) -> R<Classed> {
         "out".to_string(),
         spec(&out_shape, out.dtype, vec![], g::BufSpace::Dram)?,
     ));
-    let direct = schedule.rows_direct
-        && !flat
-        && w == width
-        && r % rows == 0
-        && (out.kind != Kind::Row || out.offset == 0);
+    let direct = schedule.rows_direct && !flat && w == width && r % rows == 0;
     let key = name(
         "rows_class",
         vec![
@@ -234,7 +230,7 @@ pub fn kernel(a: &Rows, flat: bool, m: &Machine) -> R<Classed> {
         let port = &b[operands.len()];
         if out.kind == Kind::Row {
             t.copy(
-                &port.at(&[sl(0, count)])?,
+                &port.at(&[sl(out.offset, out.offset + count)])?,
                 &dst.at(&[sl(0, count)])?,
                 None,
                 None,

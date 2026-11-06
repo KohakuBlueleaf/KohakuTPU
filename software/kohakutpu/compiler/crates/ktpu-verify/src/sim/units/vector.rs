@@ -172,6 +172,7 @@ pub(crate) struct Entry {
     done: Option<Clock>,
     /// A `rel` transfer's running offset (AINC).
     roff: i64,
+    conditional: bool,
     /// (L1 words, writes, what) it touches.
     l1: Option<(Vec<i64>, bool, What)>,
 }
@@ -200,6 +201,10 @@ pub(crate) struct Front {
     /// register -> [(entry, access)] not yet finished
     regs: HashMap<i64, Vec<(usize, Acc)>>,
     pending: Option<Guard>,
+    /// Peer drain PCs controlled by an unknown scalar in this RUN.
+    conditional_drains: std::collections::BTreeSet<i64>,
+    /// Unconditional (receiver, operand buffer, granule) coverage in this RUN.
+    peer_writes: std::collections::BTreeSet<(usize, i64, i64)>,
 }
 
 /// The walk configuration, kept across RUNs: pointers, increments,
@@ -591,6 +596,8 @@ impl Sim<'_> {
         fe.roff.clear();
         fe.regs.clear();
         fe.pending = None;
+        fe.conditional_drains.clear();
+        fe.peer_writes.clear();
         let p = v.fe_proc;
         self.tick(p, std::slice::from_ref(clock));
     }
@@ -837,6 +844,7 @@ impl Sim<'_> {
             guard: None,
             done: None,
             roff: 0,
+            conditional: op == VOp::Vdrain && v.fe.conditional_drains.contains(&pc),
             l1: None,
         };
         if matches!(op, VOp::Vfill | VOp::Vdrain) && f.g("rel") != 0 {
@@ -952,31 +960,35 @@ impl Sim<'_> {
         }
     }
 
-    /// Lemma 4: no VWAIT, VPOST or peer VDRAIN under a data-dependent skip.
+    /// Lemma 4: counter effects cannot depend on a data-dependent skip.
+    /// Peer overwrites are proved at their resolved receiver when executed.
     fn vc_check_block(&mut self, u: usize, pc: i64, n: i64) {
-        let mut k = 0;
-        while k < n {
-            let at = pc + k;
+        let mut at = pc;
+        let mut end = pc + n;
+        while at < end {
             let w = self.vc_fetch(u, at);
-            k += 1;
             let Some((op, f)) = core_word(&self.t.isa, w) else {
+                at += 1;
                 continue;
             };
-            if op == VOp::Vseti {
-                k += 1;
+            if matches!(op, VOp::Vloop | VOp::Vskipz) {
+                let span = if op == VOp::Vloop {
+                    f.g("body")
+                } else {
+                    f.g("skip")
+                };
+                end = end.max(at + 1 + span);
             }
-            if !matches!(op, VOp::Vwait | VOp::Vpost | VOp::Vdrain) {
-                continue;
+            if op == VOp::Vdrain && f.g("node") != 0 {
+                self.vc_mut(u).fe.conditional_drains.insert(at);
             }
-            if op == VOp::Vdrain && f.g("node") == 0 {
-                continue;
-            }
-            if self.flagged.insert(at) {
+            if matches!(op, VOp::Vwait | VOp::Vpost | VOp::Vhalt) && self.flagged.insert(at) {
                 self.vc_model(
                     u,
                     format!("pc {}: {} under a data-dependent skip", at, op.name()),
                 );
             }
+            at += if op == VOp::Vseti { 2 } else { 1 };
         }
     }
 
@@ -1030,7 +1042,8 @@ impl Sim<'_> {
                     && (f.g("dst_x") != 0 || f.g("dst_y") != 0)))
         {
             // A peer drain by the node bit alone, as the core decides (RUL.052).
-            self.vc_peer(u, k, &f, roff, &clock);
+            let conditional = self.vc(u).entries[e].conditional;
+            self.vc_peer(u, k, &f, roff, &clock, conditional);
         }
         let clock = if op == VOp::Vfill {
             let words = self.vc(u).walk_words(f.g("ad"));
@@ -1078,7 +1091,15 @@ impl Sim<'_> {
     /// A peer drain: one burst of the walk's words; the descriptor's base
     /// (plus a `rel` drain's running offset) is {COUNT [34], fin [33:26],
     /// mesh [25:24], ack [23:16], offset [15:0]}.
-    fn vc_peer(&mut self, u: usize, k: usize, f: &Fields, roff: i64, clock: &Clock) {
+    fn vc_peer(
+        &mut self,
+        u: usize,
+        k: usize,
+        f: &Fields,
+        roff: i64,
+        clock: &Clock,
+        conditional: bool,
+    ) {
         let v = self.vc(u);
         let p = v.eng_procs[k];
         let base = v.desc.get(&(f.g("ad"), 0)).copied().unwrap_or(0) + roff;
@@ -1107,6 +1128,35 @@ impl Sim<'_> {
             signal: f.g("signal") != 0,
             ack: ((ack & 0xF) as u8, (ack >> 4) as u8),
         };
+        let mesh = if sink.far.is_some() {
+            sink.mesh
+        } else {
+            self.units[u].key.0
+        };
+        let to = sink.far.unwrap_or(sink.to);
+        let dst = self.unit((mesh, to.0, to.1));
+        let off = base & 0xFFFF;
+        if conditional {
+            let complete = dst.is_some_and(|dst| {
+                matches!(&self.units[dst].kind, Kinded::Mg(c)
+                    if c.complete_operand(sink.buf, off, n))
+                    && (off..off + n)
+                        .all(|g| self.vc(u).fe.peer_writes.contains(&(dst, sink.buf, g)))
+            });
+            if sink.count || sink.signal || !complete {
+                self.vc_model(
+                    u,
+                    "VDRAIN under a data-dependent skip must overwrite complete cluster \
+                     operands without COUNT or SIGNAL"
+                        .into(),
+                );
+            }
+        } else if let Some(dst) = dst {
+            self.vc_mut(u)
+                .fe
+                .peer_writes
+                .extend((off..off + n).map(|g| (dst, sink.buf, g)));
+        }
         self.send(Sender::Unit(u), sink, base & 0xFFFF, n, clock, p);
     }
 }

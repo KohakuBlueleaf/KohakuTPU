@@ -1,4 +1,4 @@
-"""Exact logical-size entry point for masked dense DSL attention."""
+"""Logical attention with flash dispatch and a masked dense path."""
 
 import numpy as np
 
@@ -6,6 +6,7 @@ from kohakutpu.application.api.tensor import Buf, Tensor
 from kohakutpu.application.kernels import attention as A
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.runtime import forms as F
+from kohakutpu.application.runtime import generated
 from kohakutpu.application.runtime.memory.storage import Storage
 from kohakutpu.language import dsl as kt
 
@@ -29,6 +30,11 @@ def attention(q: Tensor, k: Tensor, vt: Tensor, *, precise_scores=False) -> Tens
     dev = q.st.dev
     if any(x.st.dev is not dev for x in (k, vt)):
         raise ValueError("attention operands must belong to the same device")
+    reason = A.flash_reason(h, s, t, d, precise_scores)
+    if reason is None and (dev.machine.count("MG") < 4 or dev.machine.count("VC") < 2):
+        reason = "flash requires four MG and two VC roles"
+    if reason is None:
+        return _flash(q, k, vt)
     sp, tp = -(-s // 64) * 64, -(-t // 64) * 64
     params = (
         (q, s, d, sp, d, "a", 16),
@@ -91,7 +97,11 @@ def attention(q: Tensor, k: Tensor, vt: Tensor, *, precise_scores=False) -> Tens
                 given[name] = kt.TensorSpec.make((h * rp * repeat, dp))
         binds["o"] = padded.addr
         F.launch(
-            dev, A.kernel(h, sp, tp, d, precise_scores=precise_scores), given, binds
+            dev,
+            A.kernel(h, sp, tp, d, precise_scores=precise_scores),
+            given,
+            binds,
+            info={"attention": reason},
         )
         F.relayout(
             dev,
@@ -111,4 +121,61 @@ def attention(q: Tensor, k: Tensor, vt: Tensor, *, precise_scores=False) -> Tens
     finally:
         for tmp in temporaries:
             tmp.free()
+        padded.free()
+
+
+def _flash(q, k, vt):
+    """Scale and pack the template's head-major inputs; untile its output."""
+    dev = q.st.dev
+    h, s, d = q.shape
+    scaled = (q * (kt.LOG2E / 8.0)).realize()
+    binds = {}
+    padded = Storage(dev, 2 * h * 1024 * d)
+    out = None
+    try:
+        for name, x, rows, cols, rp, side, g, nk in (
+            ("q", scaled, s, d, 1024, "a", 32, 1),
+            ("k", k, 1024, d, 1024, "b", 128, 1),
+            ("v", vt, d, 1024, d, "b", 16, 16),
+        ):
+            binds[name] = F.packed(
+                dev,
+                x.st,
+                x.dtype,
+                Operand("full", pitch=cols, rows=h * rows),
+                rows,
+                cols,
+                rp,
+                cols,
+                side,
+                g,
+                nk,
+                h,
+            )
+        binds["y"] = padded.addr
+        nodes = list(dev.card.nodes) if dev.home is None else [dev.home]
+        generated.launch(
+            dev,
+            "attention.flash",
+            {"heads": h, "queries": s, "_nodes": nodes},
+            binds,
+            info={"attention": "attention.flash"},
+        )
+        out = Storage(dev, 2 * h * s * d)
+        F.relayout(
+            dev,
+            padded.addr,
+            h * 1024 * d,
+            ((h, 1024 * d), (s // 32, 32 * d), (8, 256), (4, 4), (16, 16), (4, 1)),
+            0,
+            ((h, s * d), (s // 32, 32 * d), (8, 4 * d), (4, d), (16, 4), (4, 1)),
+            h * s * d,
+            out.addr,
+        )
+        return Tensor((h, s, d), buf=Buf(out, np.float16))
+    except BaseException:
+        if out is not None:
+            out.free()
+        raise
+    finally:
         padded.free()

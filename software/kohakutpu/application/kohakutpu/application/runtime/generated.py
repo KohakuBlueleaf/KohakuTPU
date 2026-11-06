@@ -2,7 +2,7 @@
 
 import json
 from dataclasses import asdict
-from functools import lru_cache
+from functools import cache, lru_cache
 
 import numpy as np
 
@@ -19,6 +19,12 @@ from kohakutpu.stack.kernel import Compiled, dsl_machine
 
 @lru_cache(maxsize=4096)
 def graph(generator, arguments, machine, mutant):
+    source = rs._rs.generate(generator, arguments, machine, mutant)
+    return checked_graph(generator, arguments, machine, source)
+
+
+def checked_graph(generator, arguments, machine, source):
+    """Qualify ring scratch at the cached generation boundary."""
     ring = (
         json.loads(arguments).get("ring_depth", 0)
         if generator == "matmul.mm_kernel"
@@ -26,9 +32,7 @@ def graph(generator, arguments, machine, mutant):
     )
     if ring not in (0, 1, 2):
         raise ValueError("matmul ring depth must be 0, 1 or 2")
-    source = rs._rs.generate(generator, arguments, machine, mutant)
     if ring and MM.resolved(json.loads(arguments), machine)["knobs"]["ring_depth"]:
-        # Qualify the generator at its cached production boundary, not on hits.
         scratch = json.loads(source)["scratch"]
         if not any(p["spec"]["space"] == "stage" for p in scratch):
             raise ValueError("ring lowering requires the ring-capable compiler")
@@ -38,7 +42,29 @@ def graph(generator, arguments, machine, mutant):
 def source(dev, generator, arguments):
     """The graph of a generator call under the process's kernel knobs: what
     `launch` compiles, and what a trace-only capture records."""
-    return graph(*_call(dev, generator, prepared(generator, arguments)))
+    return invocation(dev, generator, arguments)[0]
+
+
+@cache
+def split_graph(generator, arguments, machine, mutant, nodes, force):
+    """Retain the native source text and selection for a call and grant.
+
+    Source text is the eager compile-cache key, shared with ordinary generation.
+    """
+    planned = json.loads(
+        rs._rs.generate_split(generator, arguments, machine, nodes, force, mutant)
+    )
+    source = checked_graph(generator, arguments, machine, planned["source"])
+    return source, planned["info"]
+
+
+def invocation(dev, generator, arguments):
+    """Source and launch metadata, shared by capture and library lookup."""
+    call = _call(dev, generator, prepared(generator, arguments))
+    if generator == "matmul.mm_kernel":
+        nodes = (dev.home,) if dev.home is not None else tuple(dev.card.nodes)
+        return split_graph(*call, nodes, ENV.get("KTPU_SPLIT_OPTION"))
+    return graph(*call), {}
 
 
 def prepared(generator, arguments) -> dict:
@@ -98,7 +124,9 @@ def launch(dev, generator, arguments, bindings, kind="dsl", info=None):
 
 
 def launch_now(dev, generator, arguments, bindings, kind="dsl", info=None):
-    compiled = dev.kernel(source(dev, generator, arguments))
+    text, selection = invocation(dev, generator, arguments)
+    compiled = dev.kernel(text)
+    info = {**(info or {}), **selection}
     try:
         run = dev.run(compiled, bindings, kind=kind, info=info)
     except Exception as error:

@@ -155,3 +155,80 @@ fn complementary_forward_conditions_certify() {
         "replayed predicates must exclude the absent bell: {findings:?}"
     );
 }
+
+#[test]
+fn conditional_peer_overwrites_preserve_external_dependencies() {
+    let machine = card();
+    let facts = Facts::of_mesh(&machine, 0).expect("facts");
+    let isa = VecIsa::new(&machine).expect("vector ISA");
+    let coord = facts.units["VC"][0];
+    let target = ktpu_verify::Target::from_machine(&machine, Some(1)).expect("target");
+    let core = ktpu_l1::lower::image::CoreFacts::of(&machine, machine.vc.regs);
+    let (x, y) = facts.units["MG"][0];
+    for (initialized, counted) in [(true, false), (false, false), (true, true)] {
+        let prefix = if initialized {
+            format!("vdrain a1 <- l1[0] to=({x}, {y}) buf=0\n")
+        } else {
+            String::new()
+        };
+        let source = format!(
+            "vfill a0 -> l1[0]\nvsync drain on=fill\n{prefix}\
+             getstk s0\nseti s1 = 2\nskipz s0\n    loop s1\n        \
+             vdrain a2 <- l1[0] to=({x}, {y}) buf=0\nhalt\n"
+        );
+        let reader = ktpu_l1::text::Reader::new(&source, "optional overwrite");
+        let stmts = ktpu_l1::text::parse(&source, "optional overwrite").expect("image");
+        let words = ktpu_l1::lower::image::Encoder::new(
+            &reader,
+            &isa,
+            &core,
+            ktpu_l1::lower::image::UNKNOWN,
+            None,
+        )
+        .encode(&stmts)
+        .expect("encoded image");
+        let mut cu = Vec::new();
+        for (ad, base) in [(0, 4096), (1, 0), (2, u64::from(counted) << 34)] {
+            for (fld, value) in [(0, base), (1, (32 << 16) | 32)] {
+                cu.push(
+                    VecCu::Desc { ad, fld, value }
+                        .encode(&isa)
+                        .expect("descriptor"),
+                );
+            }
+        }
+        for (addr, word) in words.into_iter().enumerate() {
+            cu.push(
+                VecCu::Imem {
+                    addr: addr as u32,
+                    word,
+                }
+                .encode(&isa)
+                .expect("IMEM"),
+            );
+        }
+        cu.push(VecCu::Run { pc: 0 }.encode(&isa).expect("RUN"));
+        let mut program = Program::new();
+        program.send(coord, cu, vec![]);
+        program.barrier();
+        let package = program
+            .build(&facts, BuildOpts::default())
+            .expect("package")
+            .build(false, false);
+        let findings = ktpu_verify::check(&[BTreeMap::from([(0, package)])], &target);
+        if initialized && !counted {
+            assert!(
+                !findings.iter().any(|f| f.kind.refuses()),
+                "an optional overwrite neither supplies data nor releases a waiter: {findings:?}"
+            );
+        } else {
+            assert!(
+                findings
+                    .iter()
+                    .any(|f| f.kind.refuses()
+                        && f.text.contains("VDRAIN under a data-dependent skip")),
+                "a skipped producer cannot supply data or counter increments: {findings:?}"
+            );
+        }
+    }
+}

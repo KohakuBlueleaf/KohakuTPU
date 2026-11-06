@@ -1,5 +1,8 @@
 //! Unfitted local-schedule timing; no measured speedup is implied.
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use super::SplitOption;
 use crate::trace::{fail, R};
 use ktpu_machine::Machine;
@@ -102,6 +105,16 @@ pub fn choose_split(
         }
         priced.push(price_option(option, &features, model)?);
     }
+    select_split(priced, force)
+}
+
+/// Select from already priced options without lowering their shares again.
+pub fn select_split(mut priced: Vec<SplitOption>, force: Option<&str>) -> R<SplitOption> {
+    rank(&mut priced);
+    selected(&priced, force)
+}
+
+fn rank(priced: &mut [SplitOption]) {
     priced.sort_by(|a, b| {
         (a.cost.makespan, a.conversions, a.events.len(), &a.id).cmp(&(
             b.cost.makespan,
@@ -110,12 +123,36 @@ pub fn choose_split(
             &b.id,
         ))
     });
-    if let Some(option) = priced
-        .into_iter()
-        .find(|o| force.is_none_or(|id| id == o.id))
-    {
-        Ok(option)
+}
+
+fn selected(priced: &[SplitOption], force: Option<&str>) -> R<SplitOption> {
+    if let Some(option) = priced.iter().find(|o| force.is_none_or(|id| id == o.id)) {
+        Ok(option.clone())
     } else {
         fail("DSL.KERN.020", "no matching legal split option")
+    }
+}
+
+/// Process-lifetime prices, shared across callers and forced selections.
+#[derive(Default)]
+pub struct ChoiceCache(Mutex<HashMap<String, Vec<SplitOption>>>);
+
+impl ChoiceCache {
+    pub fn choose(
+        &self,
+        key: String,
+        force: Option<&str>,
+        price: impl FnOnce() -> R<Vec<SplitOption>>,
+    ) -> R<SplitOption> {
+        let mut cache = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let choices = match cache.entry(key) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let mut choices = price()?;
+                rank(&mut choices);
+                entry.insert(choices)
+            }
+        };
+        selected(choices, force)
     }
 }

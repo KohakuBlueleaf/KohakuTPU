@@ -559,6 +559,17 @@ def l2_of(graph_json: str, machine_json: str, mutant: str | None = None) -> str:
     """The tracer's graph (`Traced.graph` as JSON text) as L2 text, for the
     machine file `machine_json` (its text). Raises `Refused`."""
 
+def simulate_l1(
+    text: str,
+    name: str,
+    binds: dict[str, int],
+    read: Callable[[int, int], bytes],
+    write: Callable[[int, bytes], None],
+    machine_json: str,
+    seed: int = 1,
+) -> None:
+    """Run an L1 body on host memory, rebasing buffers with their aliases."""
+
 def simulate_l2(
     text: str,
     name: str,
@@ -820,6 +831,14 @@ def buffer_unpack(
 ) -> bytes: ...
 def generate(
     generator: str, args_json: str, machine_json: str, mutant: str | None = None
+) -> str: ...
+def generate_split(
+    generator: str,
+    args_json: str,
+    machine_json: str,
+    nodes: list[int],
+    force: str | None = None,
+    mutant: str | None = None,
 ) -> str: ...
 def class_info(
     generator: str, args_json: str, machine_json: str, mutant: str | None = None

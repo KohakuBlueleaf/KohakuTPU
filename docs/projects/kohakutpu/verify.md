@@ -212,10 +212,22 @@ reaches its VHALT on either path. The counters other units read — RX/CR
 targets, credits posted, bursts sent — change only through VWAIT, VPOST and
 peer VDRAIN. ∎
 
-The machine runs the block (the constrained path) and reports any of the
-three inside it as `model`. Races inside the block are checked on the path
-taken. A skipped block writes nothing, so the path the machine runs holds
-every access of either path.
+A peer VDRAIN is also counter-neutral when COUNT and SIGNAL are both zero, its
+resolved receiver is a cluster operand buffer (A or B, not accumulator
+ADD_PEER), and every destination granule is already initialized and covered by
+an unconditional earlier peer drain from this core in the same RUN. The
+verifier proves this at the resolved drain, including its descriptor's running
+offset. Same-core drain queue order (ISA.VC.140) keeps the unconditional
+producer before the overwrite. ISA.VC.130 defines COUNT/SIGNAL and peer
+routing. Skipping the overwrite leaves complete operands and no missing
+counter increment. A first producer, counted transfer, acknowledgement, or
+other receiver does not satisfy this proof.
+
+The machine runs the block (the constrained path). VWAIT, VPOST and VHALT
+inside it refuse; peer drains must pass the overwrite proof. Races inside the
+block, including optional peer writes and receiver assembly conflicts, are
+checked on the path taken. A skipped block writes nothing, so the path the
+machine runs holds every access of either path.
 
 ### 5.2 Node loops
 

@@ -88,7 +88,7 @@ fn execute(text: &str, card: &Card, meshes: u32, heads: usize, queries: usize) -
         programs(&module, "flash", &binds, card, Some(meshes), None).expect("flash node programs");
     let builder = Builder::new(card).expect("package builder");
     let mut cores = Cores::new(card).expect("image residents");
-    // Independent node packages run in turn on one mesh's units and shared DRAM.
+    // ENGINE packages execute in node-program order on one mesh and shared DRAM.
     let mut machine = Machine::new(
         mem,
         card.units(UnitKind::Vc).len(),

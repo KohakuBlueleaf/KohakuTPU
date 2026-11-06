@@ -123,6 +123,7 @@ fn flat(
     t: &mut Trace,
     env: &Env,
     total: i64,
+    first: i64,
     dtypes: &[g::Dtype],
     out_dtype: g::Dtype,
     exprs: &[E],
@@ -197,7 +198,7 @@ fn flat(
         }
         Ok(())
     };
-    v::flat_trips(t, total, rows, hw.vc, &trip)
+    v::flat_trips(t, total, rows, hw.vc, &|t, r, h| trip(t, &r.add(first), h))
 }
 
 /// Members over one [r, w] domain spread as one rows kernel spreads
@@ -577,6 +578,25 @@ fn tiled_ports(p: &Package, hw: &Hw) -> R<HashMap<String, Vec<i64>>> {
 
 /// The kernel of `p`, its ports bound by name.
 pub fn kernel(p: &Package, key: &str, m: &Machine) -> R<Kernel> {
+    kernel_at(p, key, None, m)
+}
+
+/// One complete-VL range of a flat stage in the package's global buffers.
+pub(crate) fn flat_range_kernel(
+    p: &Package,
+    first: i64,
+    count: i64,
+    key: &str,
+    m: &Machine,
+) -> R<Kernel> {
+    let key = name(
+        "flat_range",
+        vec![Py::str(key), Py::Int(first), Py::Int(count)],
+    );
+    kernel_at(p, &key, Some((first, count)), m)
+}
+
+fn kernel_at(p: &Package, key: &str, range: Option<(i64, i64)>, m: &Machine) -> R<Kernel> {
     let hw = Hw::of(m);
     let tiled = tiled_ports(p, &hw)?;
     let mut ports = Vec::new();
@@ -640,7 +660,18 @@ pub fn kernel(p: &Package, key: &str, m: &Machine) -> R<Kernel> {
                     outs,
                     kept,
                 } => flat(
-                    t, &env, *total, dtypes, *out_dtype, exprs, ins, lanes, outs, kept, &hw,
+                    t,
+                    &env,
+                    range.map_or(*total, |(_, count)| count),
+                    range.map_or(0, |(first, _)| first),
+                    dtypes,
+                    *out_dtype,
+                    exprs,
+                    ins,
+                    lanes,
+                    outs,
+                    kept,
+                    &hw,
                 )?,
                 Step::Rows {
                     r,

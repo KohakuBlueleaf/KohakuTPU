@@ -168,3 +168,35 @@ pub fn kernel(first: Kernel, second: Kernel, from: &str, to: &str, keep: bool) -
     );
     Ok(Kernel { graph, given })
 }
+
+/// Independently node-scoped schedules sharing the invocation's global ports.
+/// Values, loops and scratch remain private to each schedule.
+pub(crate) fn shares(signature: &Kernel, kernels: Vec<Kernel>) -> R<Kernel> {
+    let mut result = signature.clone();
+    result.graph.body.clear();
+    result.graph.scratch.clear();
+    for (rank, kernel) in kernels.into_iter().enumerate() {
+        let mut own: HashSet<String> = kernel
+            .graph
+            .scratch
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
+        let mut body = serde_json::to_value(&kernel.graph.body)
+            .map_err(|e| ktpu_machine::Refusal::new("DSL.KERN.020", e.to_string()))?;
+        names_in(&body, &["target", "var"], &mut own);
+        let rename = |n: &str| format!("share{rank}_{n}");
+        renamed(&mut body, &own, &rename);
+        let body: Vec<g::Stmt> = serde_json::from_value(body)
+            .map_err(|e| ktpu_machine::Refusal::new("DSL.KERN.020", e.to_string()))?;
+        result.graph.body.extend(body);
+        for scratch in kernel.graph.scratch {
+            result.graph.scratch.push(g::Scratch {
+                name: rename(&scratch.name),
+                ..scratch
+            });
+        }
+    }
+    result.graph.name = name("row_shares", vec![Py::str(&signature.graph.name)]);
+    Ok(result)
+}

@@ -11,6 +11,21 @@ KERNELS_KEPT = 256
 _kernels: OrderedDict = OrderedDict()
 
 
+def flash_reason(heads, queries, keys, dim, precise_scores=False):
+    """The reference flash motif's logical input contract."""
+    if precise_scores:
+        return "precise scores requested"
+    if keys != 1024:
+        return "flash requires 1024 keys"
+    if dim != 64:
+        return "flash requires head width 64"
+    if not 1 <= heads <= 10:
+        return "flash requires 1..10 heads"
+    if not 128 <= queries <= 1024 or queries % 128:
+        return "flash requires 128..1024 queries in multiples of 128"
+    return None
+
+
 def kernel(heads, sq, tk_total, dim, tq=64, tk=64, precise_scores=False):
     """Physical operands are bounded padded forms; valid marks logical keys."""
     kkey = (
@@ -86,7 +101,10 @@ def kernel(heads, sq, tk_total, dim, tq=64, tk=64, precise_scores=False):
                     )
                     for qi in kt.range(sq):
                         qv = kt.load(
-                            qg[(head * sq + qi) * 16 : (head * sq + qi) * 16 + 16, :]
+                            qg[
+                                (head * sq + qi) * 16 : (head * sq + qi) * 16 + 16,
+                                :,
+                            ]
                         )
                         kt.store(
                             raw[head * sq + qi, block * 16 : block * 16 + 16],

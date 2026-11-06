@@ -651,6 +651,844 @@ pub fn class_info(gen: &str, a: &Value, m: &Machine) -> R<Value> {
     Ok(info)
 }
 
+/// Common independent domain of row-only composites.
+fn row_domain(gen: &str, a: &Value) -> R<Option<i64>> {
+    match gen {
+        "vector.rows_kernel" => Ok(Some(int(a, "R")?)),
+        "kernel.chain" => {
+            let first = arg(a, "first")?;
+            let second = arg(a, "second")?;
+            let left = row_domain(&text(first, "gen")?, arg(first, "args")?)?;
+            let right = row_domain(&text(second, "gen")?, arg(second, "args")?)?;
+            Ok(left.filter(|_| left == right))
+        }
+        "fused.kernel" => {
+            let package = fused_package(a)?;
+            let mut domain = None;
+            for step in package.steps {
+                let fused::Step::Rows { r, .. } = step else {
+                    return Ok(None);
+                };
+                if domain.is_some_and(|n| n != r) {
+                    return Ok(None);
+                }
+                domain = Some(r);
+            }
+            if !package.staged.is_empty() {
+                return Ok(None);
+            }
+            Ok(domain)
+        }
+        _ => Ok(None),
+    }
+}
+
+fn operand_field(o: &mut Value, field: &str, value: i64) {
+    let o = if o.get("operand").is_some() {
+        &mut o["operand"]
+    } else {
+        o
+    };
+    o[field] = value.into();
+}
+
+fn row_operands_at(a: &mut Value, key: &str, first: i64) -> R<()> {
+    let ops = operands(arg(a, key)?)?;
+    for (i, o) in ops.iter().enumerate() {
+        operand_field(
+            &mut a[key][i],
+            "offset",
+            vector::split::shifted(o, first).offset,
+        );
+    }
+    Ok(())
+}
+
+fn shifted_rows_call(gen: &str, a: &Value, first: i64, count: i64, m: &Machine) -> R<Value> {
+    let mut local = a.clone();
+    match gen {
+        "vector.rows_kernel" => {
+            let signature = call(gen, a, m)?;
+            let out = operand(arg(a, "out")?)?;
+            if out.kind == Kind::Row {
+                let port = signature
+                    .graph
+                    .ports
+                    .iter()
+                    .find(|p| p.name == "out")
+                    .ok_or_else(|| ktpu_machine::Refusal::new("DSL.KERN.020", "row output"))?;
+                operand_field(
+                    &mut local["out"],
+                    "rows",
+                    port.spec.shape.last().copied().unwrap_or(0),
+                );
+            }
+            local["R"] = count.into();
+            row_operands_at(&mut local, "operands", first)?;
+            operand_field(
+                &mut local["out"],
+                "offset",
+                vector::split::shifted(&out, first).offset,
+            );
+        }
+        "kernel.chain" => {
+            for key in ["first", "second"] {
+                let part = arg(a, key)?;
+                local[key]["args"] =
+                    shifted_rows_call(&text(part, "gen")?, arg(part, "args")?, first, count, m)?;
+            }
+        }
+        "fused.kernel" => {
+            if let Some(steps) = local["steps"].as_array_mut() {
+                for step in steps {
+                    step["R"] = count.into();
+                    row_operands_at(step, "operands", first)?;
+                    row_operands_at(step, "out_operands", first)?;
+                }
+            }
+        }
+        _ => return fail("API.OP.001", "not an independent row composite"),
+    }
+    Ok(local)
+}
+
+fn composite_shape(gen: &str, a: &Value, m: &Machine) -> R<vector::split::Shape> {
+    let hw = Hw::of(m);
+    let Some(rows) = row_domain(gen, a)? else {
+        return fail("API.OP.001", "row composite needs one independent domain");
+    };
+    let mut shape = vector::split::Shape {
+        rows,
+        quantum: hw.band,
+        reads: vec![],
+        writes: vec![],
+        tokens: false,
+    };
+    match gen {
+        "vector.rows_kernel" => {
+            let ops = operands(arg(a, "operands")?)?;
+            let out = operand(arg(a, "out")?)?;
+            let w = int(a, "W")?;
+            if vector::holds_stat(&ops, out.kind) {
+                shape.quantum = hw.stat_rows();
+            }
+            shape.reads = ops
+                .iter()
+                .enumerate()
+                .map(|(i, o)| row_tensor(format!("in{i}"), *o, w))
+                .collect();
+            let mut tensor = row_tensor("out".into(), out, w);
+            let k = call(gen, a, m)?;
+            if let Some(p) = k.graph.ports.iter().find(|p| p.name == "out") {
+                if out.kind == Kind::Row && p.spec.shape.len() == 2 {
+                    tensor.planes = (0..p.spec.shape[0]).map(|i| i * p.spec.shape[1]).collect();
+                }
+            }
+            shape.writes.push(tensor);
+        }
+        "kernel.chain" => {
+            let first = arg(a, "first")?;
+            let second = arg(a, "second")?;
+            let mut left = composite_shape(&text(first, "gen")?, arg(first, "args")?, m)?;
+            let mut right = composite_shape(&text(second, "gen")?, arg(second, "args")?, m)?;
+            let from = text(a, "from")?;
+            let to = text(a, "to")?;
+            if !boolean(a, "keep")? {
+                left.writes.retain(|t| t.name != to);
+            }
+            right.reads.retain(|t| t.name != from);
+            let k = call(gen, a, m)?;
+            for tensor in right.reads.iter_mut().chain(&mut right.writes) {
+                tensor.name = k.graph.consts["chain"]["ports"][&tensor.name]
+                    .as_str()
+                    .ok_or_else(|| {
+                        ktpu_machine::Refusal::new("DSL.KERN.020", "chain port mapping")
+                    })?
+                    .to_string();
+            }
+            shape.quantum = left.quantum.max(right.quantum);
+            shape.reads = left.reads;
+            shape.reads.extend(right.reads);
+            shape.writes = left.writes;
+            shape.writes.extend(right.writes);
+        }
+        "fused.kernel" => {
+            let package = fused_package(a)?;
+            for step in package.steps {
+                if let fused::Step::Rows {
+                    w,
+                    operands,
+                    ins,
+                    out_operands,
+                    outs,
+                    ..
+                } = step
+                {
+                    if operands
+                        .iter()
+                        .chain(&out_operands)
+                        .any(|o| o.kind == Kind::Row)
+                    {
+                        shape.quantum = hw.stat_rows();
+                    }
+                    for (name, o) in ins.into_iter().zip(operands) {
+                        if package.ports.iter().any(|(p, _)| p.name == name) {
+                            shape.reads.push(row_tensor(name, o, w));
+                        }
+                    }
+                    for (name, o) in outs.into_iter().zip(out_operands) {
+                        if package
+                            .ports
+                            .iter()
+                            .any(|(p, written)| p.name == name && *written)
+                        {
+                            shape.writes.push(row_tensor(name, o, w));
+                        }
+                    }
+                }
+            }
+        }
+        _ => return fail("API.OP.001", "not an independent row composite"),
+    }
+    Ok(shape)
+}
+
+fn row_tensor(name: String, operand: Operand, width: i64) -> vector::split::Tensor {
+    vector::split::Tensor {
+        name,
+        operand,
+        width,
+        planes: vec![0],
+    }
+}
+
+fn same_row_read(producer: &Operand, consumer: &Operand) -> bool {
+    producer.dtype == consumer.dtype
+        && producer.offset == consumer.offset
+        && producer.logical_strides() == consumer.logical_strides()
+}
+
+/// Scratch dependencies must remain within one row owner's domain.
+fn row_local(gen: &str, a: &Value, m: &Machine) -> R<bool> {
+    match gen {
+        "vector.rows_kernel" => Ok(true),
+        "kernel.chain" => {
+            let first = arg(a, "first")?;
+            let second = arg(a, "second")?;
+            let fg = text(first, "gen")?;
+            let sg = text(second, "gen")?;
+            let fa = arg(first, "args")?;
+            let sa = arg(second, "args")?;
+            if !row_local(&fg, fa, m)? || !row_local(&sg, sa, m)? {
+                return Ok(false);
+            }
+            let left = composite_shape(&fg, fa, m)?;
+            let right = composite_shape(&sg, sa, m)?;
+            let from = text(a, "from")?;
+            let to = text(a, "to")?;
+            Ok(right.reads.iter().filter(|r| r.name == from).all(|r| {
+                left.writes.iter().any(|w| {
+                    w.name == to
+                        && same_row_read(&w.operand, &r.operand)
+                        && (r.operand.kind == Kind::Row || r.width <= w.width)
+                })
+            }))
+        }
+        "fused.kernel" => {
+            let package = fused_package(a)?;
+            let mut written = BTreeMap::new();
+            for step in package.steps {
+                let fused::Step::Rows {
+                    operands,
+                    ins,
+                    out_operands,
+                    outs,
+                    made,
+                    ..
+                } = step
+                else {
+                    return Ok(false);
+                };
+                for (i, (name, read)) in ins.iter().zip(&operands).enumerate() {
+                    if let Some(producer) = written.get(name) {
+                        if made.contains_key(&i) || !same_row_read(producer, read) {
+                            return Ok(false);
+                        }
+                    }
+                }
+                written.extend(outs.into_iter().zip(out_operands));
+            }
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// Compose already distributed stages over shared global allocations. Cross-node
+/// hazards remain graph accesses for L2's release/acquire lowering.
+fn row_sequence(
+    mut kernel: Kernel,
+    plans: Vec<crate::split::PlannedKernel>,
+    request: &crate::split::SplitRequest,
+    m: &Machine,
+) -> R<crate::split::PlannedKernel> {
+    use crate::split::{
+        choose_split, validate_ownership, CostEstimate, CostFeatures, LegalityWitness, LocalTiming,
+        OutputLayout, PlannedKernel, ShardRole, ShardTiles, SplitAxis, SplitOption,
+    };
+    let p = request.nodes.ids().len();
+    let mut cycles = vec![0; p];
+    let mut active = vec![false; p];
+    let mut shards: Vec<ShardTiles> = (0..p)
+        .map(|logical_node| ShardTiles {
+            logical_node,
+            tile_ranges: vec![],
+            logical_origin: vec![],
+            valid_extent: vec![],
+            padded_extent: vec![],
+            read_regions: vec![],
+            write_regions: vec![],
+            scratch_regions: vec![],
+            local_schedule: "row-stage-sequence".into(),
+            role: ShardRole::Empty,
+        })
+        .collect();
+    let mut output = OutputLayout {
+        form: "producer".into(),
+        tensors: kernel
+            .graph
+            .ports
+            .iter()
+            .filter(|p| p.role == g::Role::Out)
+            .map(|p| (p.name.clone(), p.spec.clone()))
+            .collect(),
+        ..OutputLayout::default()
+    };
+    let external = |name: &str| output.tensors.iter().any(|(n, _)| n == name);
+    let mut ownership = Vec::new();
+    let mut events = Vec::new();
+    let mut conversions = 0;
+    for plan in &plans {
+        let mut local = plan.split.cost.local_cycles.iter();
+        for rank in 0..p {
+            if plan
+                .split
+                .shards
+                .iter()
+                .any(|s| s.logical_node == rank && s.role != ShardRole::Empty)
+            {
+                cycles[rank] += local.next().copied().ok_or_else(|| {
+                    ktpu_machine::Refusal::new("L2.COST.001", "missing active row-stage timing")
+                })?;
+                active[rank] = true;
+            }
+        }
+        for share in &plan.split.shards {
+            let dst = &mut shards[share.logical_node];
+            dst.read_regions.extend(share.read_regions.clone());
+            dst.write_regions.extend(share.write_regions.clone());
+            dst.scratch_regions.extend(share.scratch_regions.clone());
+        }
+        for (_, region) in &plan.split.output.ownership {
+            if external(&region.allocation) {
+                // Retain earlier destination bytes outside the overwrite.
+                let mut retained = Vec::new();
+                for (owner, old) in ownership.drain(..) {
+                    let old: crate::split::Region = old;
+                    if old.allocation != region.allocation
+                        || old.bytes.end <= region.bytes.start
+                        || region.bytes.end <= old.bytes.start
+                    {
+                        retained.push((owner, old));
+                        continue;
+                    }
+                    if old.bytes.start < region.bytes.start {
+                        retained.push((
+                            owner,
+                            crate::split::Region {
+                                bytes: old.bytes.start..region.bytes.start,
+                                ..old.clone()
+                            },
+                        ));
+                    }
+                    if region.bytes.end < old.bytes.end {
+                        retained.push((
+                            owner,
+                            crate::split::Region {
+                                bytes: region.bytes.end..old.bytes.end,
+                                ..old
+                            },
+                        ));
+                    }
+                }
+                ownership = retained;
+            }
+        }
+        ownership.extend(
+            plan.split
+                .output
+                .ownership
+                .iter()
+                .filter(|(_, r)| external(&r.allocation))
+                .cloned(),
+        );
+        events.extend(plan.split.events.clone());
+        conversions += plan.split.conversions;
+    }
+    output.valid_region = ownership.iter().map(|(_, r)| r.clone()).collect();
+    output.ownership = ownership;
+    validate_ownership(&output)?;
+    for (rank, share) in shards.iter_mut().enumerate() {
+        if active[rank] {
+            share.role = ShardRole::Compute;
+        }
+    }
+    kernel.graph.name = crate::pyrepr::name(
+        "row_sequence",
+        vec![
+            crate::pyrepr::Py::str(&kernel.graph.name),
+            crate::pyrepr::Py::ints(request.nodes.ids()),
+        ],
+    );
+    let option = SplitOption {
+        id: "rows".into(),
+        axis: SplitAxis::Rows,
+        p,
+        active_nodes: active.iter().filter(|&&a| a).count(),
+        shards,
+        output,
+        events,
+        conversions,
+        cost: CostEstimate::default(),
+        legality: LegalityWitness {
+            numerics: request.numerics.clone(),
+            clauses: vec![
+                "stage-local row ownership; shared intermediates ordered by L2 accesses".into(),
+            ],
+        },
+    };
+    let features = CostFeatures {
+        share_cycles: cycles
+            .into_iter()
+            .zip(active)
+            .filter_map(|(c, a)| a.then_some(c))
+            .collect(),
+        dispatch_intercept: m.vc.launch_front as i64,
+    };
+    struct SequenceTiming(i64);
+    impl crate::split::CostModel for SequenceTiming {
+        fn estimate(&self, option: &SplitOption, features: &CostFeatures) -> CostEstimate {
+            let mut cost = crate::split::CostModel::estimate(&LocalTiming, option, features);
+            cost.makespan = self.0;
+            cost.provenance = "ktpu-l2 complete row-stage sequence".into();
+            cost
+        }
+    }
+    let timing = SequenceTiming(ktpu_graph::cycles(&kernel.graph, m)?);
+    let split = choose_split(vec![(option, features)], &timing, request.force.as_deref())?;
+    Ok(PlannedKernel {
+        kernel,
+        l1: None,
+        split,
+        request: request.clone(),
+    })
+}
+
+fn rename_regions(plan: &mut crate::split::PlannedKernel, names: &BTreeMap<String, String>) {
+    let rename = |region: &mut crate::split::Region| {
+        if let Some(name) = names.get(&region.allocation) {
+            region.allocation = name.clone();
+        }
+    };
+    for (_, region) in &mut plan.split.output.ownership {
+        rename(region);
+    }
+    for region in &mut plan.split.output.valid_region {
+        rename(region);
+    }
+    for share in &mut plan.split.shards {
+        for region in share
+            .read_regions
+            .iter_mut()
+            .chain(&mut share.write_regions)
+            .chain(&mut share.scratch_regions)
+        {
+            rename(region);
+        }
+    }
+}
+
+fn split_row_chain(
+    a: &Value,
+    request: &crate::split::SplitRequest,
+    m: &Machine,
+) -> R<crate::split::PlannedKernel> {
+    let mut stage_request = request.clone();
+    stage_request.force = None;
+    let part = |key: &str| {
+        let part = arg(a, key)?;
+        call_split_with_timing(
+            &text(part, "gen")?,
+            arg(part, "args")?,
+            &stage_request,
+            m,
+            true,
+        )
+    };
+    let first = part("first")?;
+    let mut second = part("second")?;
+    let from = text(a, "from")?;
+    let to = text(a, "to")?;
+    let keep = boolean(a, "keep")?;
+    let mut kernel = chain::kernel(
+        first.kernel.clone(),
+        second.kernel.clone(),
+        &from,
+        &to,
+        keep,
+    )?;
+    let mut names = BTreeMap::from([(from, to.clone())]);
+    if let Some(ports) = kernel.graph.consts["chain"]["ports"].as_object() {
+        for (old, new) in ports {
+            if let Some(new) = new.as_str() {
+                names.insert(old.clone(), new.to_string());
+            }
+        }
+    }
+    let scratch_prefix = kernel.graph.scratch.len() - second.kernel.graph.scratch.len();
+    for (original, composed) in second
+        .kernel
+        .graph
+        .scratch
+        .iter()
+        .zip(&kernel.graph.scratch[scratch_prefix..])
+    {
+        names.insert(original.name.clone(), composed.name.clone());
+    }
+    rename_regions(&mut second, &names);
+    if !keep {
+        if let Some(link) = kernel.graph.scratch.iter_mut().find(|s| s.name == to) {
+            link.spec.space = g::BufSpace::Dram;
+        }
+    }
+    row_sequence(kernel, vec![first, second], request, m)
+}
+
+/// Row/flat stages retain the package's named shared intermediate allocations.
+/// Staging copies are emitted once, outside all compute shares.
+fn split_row_package(
+    a: &Value,
+    request: &crate::split::SplitRequest,
+    m: &Machine,
+) -> R<crate::split::PlannedKernel> {
+    let signature = call("fused.kernel", a, m)?;
+    let mut ports = arg(a, "ports")?.as_array().cloned().unwrap_or_default();
+    let scratch = arg(a, "scratch")?.as_array().cloned().unwrap_or_default();
+    for buffer in &scratch {
+        let mut buffer = buffer.clone();
+        buffer["written"] = false.into();
+        ports.push(buffer);
+    }
+    let mut stage_request = request.clone();
+    stage_request.force = None;
+    let mut plans = Vec::new();
+    let stages = arg(a, "staged")?.as_array().cloned().unwrap_or_default();
+    let steps = arg(a, "steps")?.as_array().cloned().unwrap_or_default();
+    let copy = |stage: &Value, read: bool| -> R<crate::split::PlannedKernel> {
+        let mut stage = stage.clone();
+        stage["read"] = read.into();
+        stage["written"] = (!read).into();
+        let mut package = serde_json::json!({
+            "ports": ports, "scratch": [], "staged": [stage], "steps": []
+        });
+        let destination = text(&stage, if read { "scratch" } else { "port" })?;
+        if let Some(list) = package["ports"].as_array_mut() {
+            for port in list {
+                port["written"] = (text(port, "name")? == destination).into();
+            }
+        }
+        let mut plan = call_split_with_timing("fused.kernel", &package, &stage_request, m, true)?;
+        let source = text(&stage, if read { "port" } else { "scratch" })?;
+        let bytes = int(&stage, "words")? * Hw::of(m).word_bytes;
+        let mut written = bytes;
+        if read {
+            if let Some((_, spec)) = plan.kernel.given.iter().find(|(n, _)| n == &destination) {
+                written = spec.shape.iter().product::<i64>() * Hw::item(spec.dtype);
+            }
+        }
+        let dst = crate::split::Region {
+            allocation: destination,
+            bytes: 0..written as u64,
+        };
+        let src = crate::split::Region {
+            allocation: source,
+            bytes: 0..bytes as u64,
+        };
+        plan.split.shards[0].read_regions.push(src);
+        plan.split.shards[0].write_regions.push(dst.clone());
+        plan.split.output.valid_region = vec![dst.clone()];
+        plan.split.output.ownership = vec![(0, dst)];
+        Ok(plan)
+    };
+    for stage in &stages {
+        if boolean(stage, "read")? {
+            plans.push(copy(stage, true)?);
+        }
+    }
+    for step in steps {
+        let mut package = serde_json::json!({
+            "ports": ports, "scratch": [], "staged": [], "steps": [step]
+        });
+        let outs = names(arg(&step, "outs")?);
+        if let Some(list) = package["ports"].as_array_mut() {
+            for port in list {
+                port["written"] = outs.contains(&text(port, "name")?).into();
+            }
+        }
+        if text(&step, "kind")? == "flat" {
+            plans.push(split_flat_package(&package, &stage_request, m)?);
+        } else {
+            plans.push(call_split_with_timing(
+                "fused.kernel",
+                &package,
+                &stage_request,
+                m,
+                true,
+            )?);
+        }
+    }
+    for stage in &stages {
+        if boolean(stage, "written")? {
+            plans.push(copy(stage, false)?);
+        }
+    }
+    let mut kernel = chain::shares(&signature, plans.iter().map(|p| p.kernel.clone()).collect())?;
+    for (index, plan) in plans.iter_mut().enumerate() {
+        let names = plan
+            .kernel
+            .graph
+            .scratch
+            .iter()
+            .map(|s| (s.name.clone(), format!("share{index}_{}", s.name)))
+            .collect();
+        rename_regions(plan, &names);
+    }
+    for buffer in scratch {
+        let buffer = named(&buffer)?;
+        kernel.graph.scratch.push(g::Scratch {
+            name: buffer.name,
+            spec: crate::trace::buffer::spec(
+                &buffer.shape,
+                buffer.dtype,
+                vec![],
+                g::BufSpace::Dram,
+            )?,
+        });
+    }
+    row_sequence(kernel, plans, request, m)
+}
+
+fn split_flat_package(
+    a: &Value,
+    request: &crate::split::SplitRequest,
+    m: &Machine,
+) -> R<crate::split::PlannedKernel> {
+    let package = fused_package(a)?;
+    let Some(fused::Step::Flat {
+        total,
+        dtypes,
+        out_dtype,
+        ins,
+        lanes,
+        outs,
+        kept,
+        ..
+    }) = package.steps.first()
+    else {
+        return fail("API.OP.001", "a flat stage needs its row domain");
+    };
+    let hw = Hw::of(m);
+    let mut shape = vector::split::Shape {
+        rows: *total,
+        quantum: 1,
+        reads: vec![],
+        writes: vec![],
+        tokens: true,
+    };
+    for (i, (name, &dtype)) in ins.iter().zip(dtypes).enumerate() {
+        let o = if let Some((_, lane)) = lanes.iter().find(|(j, _)| *j == i) {
+            Operand {
+                dtype,
+                offset: *lane,
+                ..Operand::new(Kind::Scalar)
+            }
+        } else {
+            Operand {
+                dtype,
+                ..Operand::full(hw.vlmax, 0)
+            }
+        };
+        shape.reads.push(row_tensor(name.clone(), o, hw.vlmax));
+    }
+    for (name, &keep) in outs.iter().zip(kept) {
+        if keep {
+            shape.writes.push(row_tensor(
+                name.clone(),
+                Operand {
+                    dtype: *out_dtype,
+                    ..Operand::full(hw.vlmax, 0)
+                },
+                hw.vlmax,
+            ));
+        }
+    }
+    let signature = call("fused.kernel", a, m)?;
+    vector::split::kernel(&shape, signature, request, m, |first, count| {
+        fused::flat_range_kernel(&package, first, count, &a.to_string(), m)
+    })
+}
+
+fn row_split(
+    gen: &str,
+    a: &Value,
+    request: &crate::split::SplitRequest,
+    m: &Machine,
+) -> R<Option<crate::split::PlannedKernel>> {
+    let hw = Hw::of(m);
+    if gen == "vector.flat_kernel" {
+        let e = expr::from_table(arg(a, "e")?)?;
+        let dtypes = dtypes(arg(a, "dtypes")?)?;
+        let scalar = walk(a.get("scalars").unwrap_or(&Value::Null))?;
+        let scalar: Vec<_> = scalar.into_iter().map(|(i, l)| (i as usize, l)).collect();
+        let n = int(a, "n")?;
+        let out = a.get("out_dtype").map_or(Ok(g::Dtype::F16), dtype)?;
+        let signature = call(gen, a, m)?;
+        let class = a.get("shape_class").map(class_of).transpose()?;
+        let schedule = class_schedule(a);
+        // A flat work item is one complete VL row. The last item's physical
+        // extent is only the caller's whole words, not an implicit VL tail.
+        let mut shape = vector::split::Shape {
+            rows: crate::gen::cdiv(n, hw.vlmax),
+            quantum: 1,
+            reads: vec![],
+            writes: vec![row_tensor(
+                "out".into(),
+                Operand {
+                    dtype: out,
+                    ..Operand::full(hw.vlmax, 0)
+                },
+                hw.vlmax,
+            )],
+            tokens: true,
+        };
+        for (i, &dtype) in dtypes.iter().enumerate() {
+            let o = match scalar.iter().rev().find(|(j, _)| *j == i) {
+                Some((_, lane)) => Operand {
+                    dtype,
+                    offset: *lane,
+                    ..Operand::new(Kind::Scalar)
+                },
+                None => Operand {
+                    dtype,
+                    ..Operand::full(hw.vlmax, 0)
+                },
+            };
+            shape.reads.push(row_tensor(format!("in{i}"), o, hw.vlmax));
+        }
+        let mut got = vector::split::kernel(&shape, signature, request, m, |first, rows| {
+            let first = first * hw.vlmax;
+            let count = (rows * hw.vlmax).min(n - first);
+            if let Some(class) = &class {
+                let ops: Vec<_> = shape
+                    .reads
+                    .iter()
+                    .map(|t| vector::split::shifted(&t.operand, first / hw.vlmax))
+                    .collect();
+                let output = vector::split::shifted(&shape.writes[0].operand, first / hw.vlmax);
+                Ok(classes::rows::kernel(
+                    &classes::Rows {
+                        e: &e,
+                        operands: &ops,
+                        r: rows,
+                        w: hw.vlmax,
+                        out: &output,
+                        bands: None,
+                        class,
+                        schedule: &schedule,
+                    },
+                    true,
+                    m,
+                )?
+                .kernel)
+            } else {
+                vector::flat_kernel_at(&e, &dtypes, count, out, &scalar, first, n, m)
+            }
+        })?;
+        let bytes = if class.is_some() {
+            shape.rows * hw.vlmax * Hw::item(out)
+        } else {
+            crate::gen::cdiv(n * Hw::item(out), hw.word_bytes) * hw.word_bytes
+        };
+        for region in &mut got.split.output.valid_region {
+            region.bytes.end = region.bytes.end.min(bytes as u64);
+            region.bytes.start = region.bytes.start.min(region.bytes.end);
+        }
+        for (_, region) in &mut got.split.output.ownership {
+            region.bytes.end = region.bytes.end.min(bytes as u64);
+            region.bytes.start = region.bytes.start.min(region.bytes.end);
+        }
+        for shard in &mut got.split.shards {
+            for region in &mut shard.write_regions {
+                region.bytes.end = region.bytes.end.min(bytes as u64);
+                region.bytes.start = region.bytes.start.min(region.bytes.end);
+            }
+        }
+        crate::split::validate_ownership(&got.split.output)?;
+        return Ok(Some(got));
+    }
+    if gen == "vector.rows_kernel"
+        || (matches!(gen, "fused.kernel" | "kernel.chain")
+            && row_domain(gen, a)?.is_some()
+            && row_local(gen, a, m)?)
+    {
+        let mut shape = composite_shape(gen, a, m)?;
+        let signature = call(gen, a, m)?;
+        for tensor in &mut shape.writes {
+            if tensor.operand.kind == Kind::Row {
+                if let Some(port) = signature.graph.ports.iter().find(|p| p.name == tensor.name) {
+                    if port.spec.shape.len() == 2 {
+                        tensor.planes = (0..port.spec.shape[0])
+                            .map(|i| i * port.spec.shape[1])
+                            .collect();
+                    }
+                }
+            }
+        }
+        return Ok(Some(vector::split::kernel(
+            &shape,
+            signature,
+            request,
+            m,
+            |first, count| call(gen, &shifted_rows_call(gen, a, first, count, m)?, m),
+        )?));
+    }
+    if gen == "kernel.chain" {
+        return Ok(Some(split_row_chain(a, request, m)?));
+    }
+    if gen == "fused.kernel" {
+        let package = fused_package(a)?;
+        if !package.steps.is_empty()
+            && package
+                .steps
+                .iter()
+                .all(|s| matches!(s, fused::Step::Rows { .. } | fused::Step::Flat { .. }))
+        {
+            return Ok(Some(split_row_package(a, request, m)?));
+        }
+    }
+    Ok(None)
+}
+
 /// Plan one logical invocation on an explicit sysnode grant.
 /// Generators without distributed options expose their one-share implementation.
 pub fn call_split(
@@ -659,9 +1497,20 @@ pub fn call_split(
     request: &crate::split::SplitRequest,
     m: &Machine,
 ) -> R<crate::split::PlannedKernel> {
+    call_split_with_timing(gen, a, request, m, false)
+}
+
+/// Sequence stages need local timing even when their only option is unsplit.
+fn call_split_with_timing(
+    gen: &str,
+    a: &Value,
+    request: &crate::split::SplitRequest,
+    m: &Machine,
+    price_unsplit: bool,
+) -> R<crate::split::PlannedKernel> {
     use crate::split::{
-        choose_split, CostEstimate, CostFeatures, LegalityWitness, LocalTiming, OutputLayout,
-        PlannedKernel, ShardRole, ShardTiles, SplitAxis, SplitOption,
+        CostEstimate, LegalityWitness, OutputLayout, PlannedKernel, ShardRole, ShardTiles,
+        SplitAxis, SplitOption,
     };
     let nodes = crate::split::NodeSet::new(request.nodes.ids().to_vec(), m)?;
     if (!request.consumer.accepted_forms.is_empty()
@@ -710,7 +1559,9 @@ pub fn call_split(
         }
         return crate::gen::attention::flash_split::plan(heads, queries, request, m);
     }
-    if gen == "matmul.mm_kernel" || gen == "mm" {
+    if (gen == "matmul.mm_kernel" || gen == "mm")
+        && (nodes.ids().len() > 1 || request.force.as_deref().is_some_and(|id| id != "p1"))
+    {
         let class = a.get("shape_class").map(class_of).transpose()?;
         let mm = mm_plan(made_by(arg(a, "mm")?, "matmul.plan")?, m)?;
         let e = expr::from_table(arg(a, "e")?)?;
@@ -740,8 +1591,18 @@ pub fn call_split(
             m,
         );
     }
-    let kernel = crate::kernel::on_node(nodes.ids()[0], || call(gen, a, m))?;
-    let features = CostFeatures::of_shares(std::slice::from_ref(&kernel), m)?;
+    if let Some(planned) = row_split(gen, a, request, m)? {
+        return Ok(planned);
+    }
+    if !request.numerics.reduction_order.is_empty() {
+        return fail("DSL.KERN.020", "p1 preserves the generator reduction order");
+    }
+    let generator = if gen == "mm" { "matmul.mm_kernel" } else { gen };
+    let kernel = if nodes.ids()[0] == 0 {
+        call(generator, a, m)?
+    } else {
+        crate::kernel::on_node(nodes.ids()[0], || call(generator, a, m))?
+    };
     let tensors = kernel
         .graph
         .ports
@@ -791,11 +1652,15 @@ pub fn call_split(
             clauses: vec!["single owner; physical regions resolved at binding".into()],
         },
     };
-    let split = choose_split(
-        vec![(option, features)],
-        &LocalTiming,
-        request.force.as_deref(),
-    )?;
+    if request.force.as_deref().is_some_and(|id| id != option.id) {
+        return fail("DSL.KERN.020", "no matching legal split option");
+    }
+    let split = if price_unsplit {
+        let features = crate::split::CostFeatures::of_shares(std::slice::from_ref(&kernel), m)?;
+        crate::split::cost::price_option(option, &features, &crate::split::LocalTiming)?
+    } else {
+        option
+    };
     Ok(PlannedKernel {
         l1: None,
         kernel,

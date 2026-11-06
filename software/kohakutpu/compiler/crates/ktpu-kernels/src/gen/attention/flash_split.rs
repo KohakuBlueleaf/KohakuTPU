@@ -24,15 +24,15 @@ fn region(allocation: &str, start: i64, end: i64) -> Region {
     }
 }
 
-fn signature(m: &Machine) -> R<Kernel> {
-    let mut y = Port::output("y", &[10240, 64], g::Dtype::F16);
+fn signature(heads: i64, m: &Machine) -> R<Kernel> {
+    let mut y = Port::output("y", &[heads * 1024, 64], g::Dtype::F16);
     y.layout = vec![("tile".into(), g::LayoutValue::Ints(vec![8, 16]))];
     let ports = vec![
-        Port::input("q", &[10240, 64], g::Dtype::Mx7a)
+        Port::input("q", &[heads * 1024, 64], g::Dtype::Mx7a)
             .with_layout(layout(&[("gm", 32), ("nk", 1)])),
-        Port::input("k", &[10240, 64], g::Dtype::Mx7b)
+        Port::input("k", &[heads * 1024, 64], g::Dtype::Mx7b)
             .with_layout(layout(&[("gn", 128), ("nk", 1)])),
-        Port::input("v", &[64, 10240], g::Dtype::Mx7b).with_layout(layout(&[
+        Port::input("v", &[64, heads * 1024], g::Dtype::Mx7b).with_layout(layout(&[
             ("gn", 16),
             ("nk", 16),
             ("t", 1),
@@ -115,7 +115,7 @@ fn namespace(text: &str, tag: usize) -> String {
     result
 }
 
-fn emit(shares: &[ShardTiles], request: &SplitRequest) -> R<String> {
+fn emit(shares: &[ShardTiles], request: &SplitRequest, heads: i64) -> R<String> {
     let mut definitions = String::new();
     let mut body = String::new();
     let mut tag = 0;
@@ -159,6 +159,7 @@ fn emit(shares: &[ShardTiles], request: &SplitRequest) -> R<String> {
         .lines()
         .find(|s| s.starts_with("fn flash.l1("))
         .expect("template signature")
+        .replace("10240", &(heads * 1024).to_string())
         .replace("s: f16[512, 1024]", &format!("s: f16[{}, 1024]", 512 * p))
         .replace("o: f16[512, 64]", &format!("o: f16[{}, 64]", 512 * p))
         .replace("li: f16[128, 64]", &format!("li: f16[{}, 64]", 128 * p));
@@ -181,7 +182,7 @@ pub fn plan(heads: i64, queries: i64, request: &SplitRequest, m: &Machine) -> R<
         mask: AttentionMask::None,
         precision: AttentionPrecision::Mx7,
     };
-    let kernel = signature(m)?;
+    let kernel = signature(heads, m)?;
     let mut options = Vec::new();
     for assignment in assignments(&spec, 128, &request.nodes)? {
         let (id, axis) = match assignment.partition {
@@ -262,7 +263,7 @@ pub fn plan(heads: i64, queries: i64, request: &SplitRequest, m: &Machine) -> R<
         let mut cycles = Vec::new();
         for shard in &shards {
             if shard.role != ShardRole::Empty {
-                let text = emit(std::slice::from_ref(shard), request)?;
+                let text = emit(std::slice::from_ref(shard), request, heads)?;
                 let module = read(&text, "attention.flash")
                     .map_err(|e| Refusal::new(&e.clause, e.message))?;
                 let share =
@@ -293,7 +294,7 @@ pub fn plan(heads: i64, queries: i64, request: &SplitRequest, m: &Machine) -> R<
         options.push((option, features));
     }
     let split = choose_split(options, &LocalTiming, request.force.as_deref())?;
-    let l1 = Some(emit(&split.shards, request)?);
+    let l1 = Some(emit(&split.shards, request, heads)?);
     Ok(PlannedKernel {
         kernel,
         split,

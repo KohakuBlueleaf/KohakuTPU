@@ -145,6 +145,10 @@ fn identity(
     clean(&mut graph);
     let class = digest(&serde_json::to_string(&graph).unwrap());
     let canonical = if need_canonical {
+        if let Some(l1) = graph.get("executable_l1").and_then(Value::as_str) {
+            graph["executable_l1"] =
+                json!(l1.replace(&format!("fn {name}.l1("), &format!("fn t_{class}.l1(")));
+        }
         graph["name"] = json!(format!("t_{class}"));
         serde_json::to_string(&graph).unwrap()
     } else {

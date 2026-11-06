@@ -865,15 +865,85 @@ fn generate(
     mutant: Option<&str>,
 ) -> PyResult<String> {
     let m = machine(machine_json)?;
-    let args = serde_json::from_str(args_json)
+    let mut args: serde_json::Value = serde_json::from_str(args_json)
         .map_err(|e| PyValueError::new_err(format!("generator arguments: {e}")))?;
-    let run = || ktpu_kernels::call::call(generator, &args, &m);
+    let nodes = args.as_object_mut().and_then(|a| a.remove("_nodes"));
+    let run = || -> Result<serde_json::Value, ktpu_machine::Refusal> {
+        if let Some(nodes) = &nodes {
+            use ktpu_kernels::split::{DispatchProfile, NodeSet, SplitRequest};
+            let ids = serde_json::from_value(nodes.clone()).map_err(|e| {
+                ktpu_machine::Refusal::new("DSL.CTRL.001", format!("sysnode grant: {e}"))
+            })?;
+            let request = SplitRequest {
+                nodes: NodeSet::new(ids, &m)?,
+                consumer: Default::default(),
+                dispatch: DispatchProfile::Common,
+                numerics: Default::default(),
+                input_forms: vec![],
+                force: None,
+            };
+            let plan = ktpu_kernels::call_split(generator, &args, &request, &m)?;
+            let mut graph = serde_json::to_value(&plan.kernel.graph)
+                .map_err(|e| ktpu_machine::Refusal::new("API.OP.001", e.to_string()))?;
+            if let Some(l1) = plan.l1 {
+                graph["executable_l1"] = l1.into();
+            }
+            Ok(graph)
+        } else {
+            let kernel = ktpu_kernels::call::call(generator, &args, &m)?;
+            serde_json::to_value(&kernel.graph)
+                .map_err(|e| ktpu_machine::Refusal::new("API.OP.001", e.to_string()))
+        }
+    };
     let kernel = match mutant {
         Some(n) => ktpu::mutant::with(n, run).map_err(PyValueError::new_err)?,
         None => run(),
     }
     .map_err(|e| PyValueError::new_err(e.to_string()))?;
-    serde_json::to_string(&kernel.graph).map_err(|e| PyValueError::new_err(e.to_string()))
+    serde_json::to_string(&kernel).map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
+/// Generate a kernel on an ordered physical sysnode grant, with its selected plan.
+#[pyfunction]
+#[pyo3(signature = (generator, args_json, machine_json, nodes, force=None, mutant=None))]
+fn generate_split(
+    generator: &str,
+    args_json: &str,
+    machine_json: &str,
+    nodes: Vec<i64>,
+    force: Option<String>,
+    mutant: Option<&str>,
+) -> PyResult<String> {
+    use ktpu_kernels::split::{DispatchProfile, NodeSet, SplitRequest};
+
+    let m = machine(machine_json)?;
+    let args = serde_json::from_str(args_json)
+        .map_err(|e| PyValueError::new_err(format!("generator arguments: {e}")))?;
+    let request = SplitRequest {
+        nodes: NodeSet::new(nodes, &m).map_err(|e| PyValueError::new_err(e.to_string()))?,
+        consumer: Default::default(),
+        dispatch: DispatchProfile::Common,
+        numerics: Default::default(),
+        input_forms: vec![],
+        force,
+    };
+    let planned = under(mutant, || {
+        ktpu_kernels::call_split(generator, &args, &request, &m)
+    })?
+    .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let graph = serde_json::to_value(&planned.kernel.graph)
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let source = serde_json::to_string(&graph).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    serde_json::to_string(&serde_json::json!({
+        "graph": graph,
+        "source": source,
+        "l1": planned.l1,
+        "info": {
+            "option_id": planned.split.id,
+            "active_nodes": planned.split.active_nodes,
+        },
+    }))
+    .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
 /// `run` under `mutant`, when one is named.
@@ -1226,6 +1296,7 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(debug_decode, m)?)?;
     m.add_function(wrap_pyfunction!(compile, m)?)?;
     m.add_function(wrap_pyfunction!(generate, m)?)?;
+    m.add_function(wrap_pyfunction!(generate_split, m)?)?;
     m.add_function(wrap_pyfunction!(read_composed, m)?)?;
     m.add_function(wrap_pyfunction!(call_cycles, m)?)?;
     m.add_function(wrap_pyfunction!(l1_cycles, m)?)?;

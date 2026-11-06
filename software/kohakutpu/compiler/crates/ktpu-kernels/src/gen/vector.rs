@@ -6,6 +6,8 @@
 //! (API.ROW.001-.004, .007). [`flat_kernel`]: N
 //! elements as rows of `vc.vlmax` values (API.ROW.006, .010).
 
+pub mod split;
+
 use super::relayout::Logical;
 use super::{cdiv, Hw};
 use crate::expr::{self, E};
@@ -1556,6 +1558,20 @@ pub fn flat_kernel(
     scalars: &[(usize, i64)],
     m: &Machine,
 ) -> R<Kernel> {
+    flat_kernel_at(e, dtypes, n, out_dtype, scalars, 0, n, m)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn flat_kernel_at(
+    e: &E,
+    dtypes: &[g::Dtype],
+    n: i64,
+    out_dtype: g::Dtype,
+    scalars: &[(usize, i64)],
+    first: i64,
+    global_n: i64,
+    m: &Machine,
+) -> R<Kernel> {
     let hw = Hw::of(m);
     let mut lanes: Vec<(usize, i64)> = vec![];
     for &(i, l) in scalars {
@@ -1573,7 +1589,7 @@ pub fn flat_kernel(
         .collect();
     let rows = flat_rows(&held, lanes.len(), &[out_dtype], &hw);
     let total = cdiv(n, hw.vlmax);
-    let exact = n % hw.vlmax != 0 && !mutants::on("memory/flat-overrun");
+    let exact = global_n % hw.vlmax != 0 && !mutants::on("memory/flat-overrun");
     let extent = |d: g::Dtype| cdiv(n * Hw::item(d), hw.word_bytes);
     let mut ports = vec![];
     let mut given = vec![];
@@ -1582,9 +1598,12 @@ pub fn flat_kernel(
             vec![hw.lanes]
         } else {
             if exact {
-                vec![extent(*d), hw.word_bytes / Hw::item(*d)]
+                vec![
+                    extent(*d) + first * Hw::item(*d) / hw.word_bytes,
+                    hw.word_bytes / Hw::item(*d),
+                ]
             } else {
-                vec![total, hw.vlmax]
+                vec![first / hw.vlmax + total, hw.vlmax]
             }
         };
         ports.push(Port::input(&format!("in{i}"), &shape, *d));
@@ -1594,9 +1613,12 @@ pub fn flat_kernel(
         ));
     }
     let out_shape = if exact {
-        [extent(out_dtype), hw.word_bytes / Hw::item(out_dtype)]
+        [
+            extent(out_dtype) + first * Hw::item(out_dtype) / hw.word_bytes,
+            hw.word_bytes / Hw::item(out_dtype),
+        ]
     } else {
-        [total, hw.vlmax]
+        [first / hw.vlmax + total, hw.vlmax]
     };
     ports.push(Port::output("out", &out_shape, out_dtype));
     given.push((
@@ -1620,6 +1642,14 @@ pub fn flat_kernel(
             ),
         ],
     );
+    let key = if first == 0 && global_n == n {
+        key
+    } else {
+        name(
+            "flat_range",
+            vec![Py::Str(key), Py::Int(first), Py::Int(global_n)],
+        )
+    };
     let trip = |t: &mut Trace, b: &[Buf], r: &Idx, h: i64| -> R<()> {
         let mut vals = HashMap::new();
         for (i, buf) in b.iter().enumerate().take(dtypes.len()) {
@@ -1648,7 +1678,7 @@ pub fn flat_kernel(
                 t.copy(
                     &s.whole(),
                     &ports[i].whole(),
-                    Some((&walk, None)),
+                    Some((&walk, Some(first * Hw::item(dtype)))),
                     Some((&walk, None)),
                 )?;
                 padded[i] = s;
@@ -1656,14 +1686,21 @@ pub fn flat_kernel(
             padded[dtypes.len()] = t.buffer(&[total, hw.vlmax], out_dtype, vec![])?;
         }
         let b = padded.as_slice();
-        flat_trips(t, total, rows, hw.vc, &|t, r, h| trip(t, b, r, h))?;
+        flat_trips(t, total, rows, hw.vc, &|t, r, h| {
+            let at = if exact {
+                r.clone()
+            } else {
+                r.add(first / hw.vlmax)
+            };
+            trip(t, b, &at, h)
+        })?;
         if exact {
             let walk = [(extent(out_dtype), hw.word_bytes)];
             t.copy(
                 &ports[dtypes.len()].whole(),
                 &b[dtypes.len()].whole(),
                 Some((&walk, None)),
-                Some((&walk, None)),
+                Some((&walk, Some(first * Hw::item(out_dtype)))),
             )?;
         }
         Ok(())

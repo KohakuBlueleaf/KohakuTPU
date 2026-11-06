@@ -6,6 +6,7 @@ use crate::split::{
     Region, ShardRole, ShardTiles, SplitAxis, SplitOption, SplitRequest,
 };
 
+#[derive(Debug)]
 pub struct Shape<'a> {
     pub mm: &'a Mm,
     pub class: Option<&'a crate::gen::classes::ShapeClass>,
@@ -688,42 +689,36 @@ pub(crate) fn emit(
     Ok(())
 }
 
-/// Build explicit shares and price each node's complete local schedule.
+/// Build explicit shares; retain all candidate prices for the process lifetime.
 pub fn kernel(
     shape: &Shape<'_>,
     request: &SplitRequest,
     mach: &Machine,
 ) -> R<crate::split::PlannedKernel> {
-    use crate::split::{choose_split, CostFeatures, LocalTiming, PlannedKernel};
+    use crate::split::cost::{select_split, ChoiceCache};
+    use crate::split::PlannedKernel;
+    use std::sync::OnceLock;
 
-    let options = split_options(shape, request, mach)?;
-    let mut priced = Vec::new();
-    for option in options {
-        let mut kernels = Vec::new();
-        if option.conversions != 0 || matches!(option.axis, SplitAxis::K) {
-            let whole = build_option(shape, request, &option, mach)?;
-            let cycles = g::cycles(&whole.graph, mach)? - mach.vc.launch_front as i64;
-            let active = option.active_nodes;
-            priced.push((
-                option,
-                CostFeatures {
-                    share_cycles: vec![cycles; active],
-                    dispatch_intercept: mach.vc.launch_front as i64,
-                },
-            ));
-            continue;
-        }
-        for node in 0..option.p {
-            let mut part = option.clone();
-            part.shards.retain(|s| s.logical_node == node);
-            if part.shards.iter().all(|s| s.role == ShardRole::Empty) {
-                continue;
-            }
-            kernels.push(build_option(shape, request, &part, mach)?);
-        }
-        priced.push((option, CostFeatures::of_shares(&kernels, mach)?));
-    }
-    let mut split = choose_split(priced, &LocalTiming, request.force.as_deref())?;
+    static CHOICES: OnceLock<ChoiceCache> = OnceLock::new();
+    let mut split = if request.nodes.ids().len() == 1 {
+        select_split(
+            split_options(shape, request, mach)?,
+            request.force.as_deref(),
+        )?
+    } else {
+        let mut unforced = request.clone();
+        unforced.force = None;
+        let key = format!(
+            "{shape:?}/{unforced:?}/{:?}/{}",
+            mach.digest_bytes(),
+            pricing_mutants(),
+        );
+        CHOICES
+            .get_or_init(ChoiceCache::default)
+            .choose(key, request.force.as_deref(), || {
+                price_options(shape, &unforced, mach)
+            })?
+    };
     let kernel = build_option(shape, request, &split, mach)?;
     split.output.tensors = kernel
         .graph
@@ -739,6 +734,63 @@ pub fn kernel(
         split,
         request: request.clone(),
     })
+}
+
+fn pricing_mutants() -> String {
+    let mut active = Vec::new();
+    for (names, on) in [
+        (
+            crate::mutants::NAMES,
+            crate::mutants::on as fn(&str) -> bool,
+        ),
+        (crate::mutants::LOCAL, crate::mutants::on),
+        (g::mutant::NAMES, g::mutant::on),
+        (ktpu_l2::mutant::NAMES, ktpu_l2::mutant::on),
+        (ktpu_l1::mutant::NAMES, ktpu_l1::mutant::on),
+        (ktpu_machine::mutant::NAMES, ktpu_machine::mutant::on),
+    ] {
+        active.extend(names.iter().copied().filter(|name| on(name)));
+    }
+    active.join("/")
+}
+
+fn price_options(shape: &Shape<'_>, request: &SplitRequest, mach: &Machine) -> R<Vec<SplitOption>> {
+    use crate::split::cost::price_option;
+    use crate::split::{CostFeatures, LocalTiming};
+
+    let options = split_options(shape, request, mach)?;
+    let mut priced = Vec::new();
+    for option in options {
+        let mut kernels = Vec::new();
+        if option.conversions != 0 || matches!(option.axis, SplitAxis::K) {
+            let whole = build_option(shape, request, &option, mach)?;
+            let cycles = g::cycles(&whole.graph, mach)? - mach.vc.launch_front as i64;
+            let active = option.active_nodes;
+            priced.push(price_option(
+                option,
+                &CostFeatures {
+                    share_cycles: vec![cycles; active],
+                    dispatch_intercept: mach.vc.launch_front as i64,
+                },
+                &LocalTiming,
+            )?);
+            continue;
+        }
+        for node in 0..option.p {
+            let mut part = option.clone();
+            part.shards.retain(|s| s.logical_node == node);
+            if part.shards.iter().all(|s| s.role == ShardRole::Empty) {
+                continue;
+            }
+            kernels.push(build_option(shape, request, &part, mach)?);
+        }
+        priced.push(price_option(
+            option,
+            &CostFeatures::of_shares(&kernels, mach)?,
+            &LocalTiming,
+        )?);
+    }
+    Ok(priced)
 }
 
 /// Assign every destination line to the first producer touching it. A repair
@@ -869,6 +921,11 @@ fn build_option(
     option: &SplitOption,
     mach: &Machine,
 ) -> R<Kernel> {
+    let placement = if request.nodes.ids() == [0] {
+        None
+    } else {
+        Some((request, option))
+    };
     if let Some(class) = shape.class {
         return Ok(crate::gen::classes::mm::kernel_split(
             shape.mm,
@@ -877,7 +934,7 @@ fn build_option(
             shape.out,
             class,
             mach,
-            Some((request, option)),
+            placement,
         )?
         .kernel);
     }
@@ -890,7 +947,7 @@ fn build_option(
         mach,
         shape.made,
         shape.demands,
-        Some((request, option)),
+        placement,
     )
 }
 

@@ -1,6 +1,6 @@
-"""A card that runs on the L2 value simulator: a kernel compiles to its L2 and
-stops there, and a run is that L2 on host memory. No hardware, no timing, no
-lower stage: forms, memory and replay are what a run here tests.
+"""A card running kernel values on host memory, without hardware or timing.
+Graph kernels stop at L2; authoritative L1 motifs compile through the package
+boundary and execute on the L0 simulator. Forms, memory and replay are shared.
 
     dev = Device(kind="double", board="multimesh_v9t8")
 """
@@ -18,7 +18,10 @@ class DoubleCard(OfflineCard):
     def compile_graph(self, source: str) -> dict:
         """A compile's output with the L2 alone: the runtime asks an L1 body
         only for scratch parameters, and an L2 keeps its scratch to itself."""
-        name = json.loads(source)["name"]
+        graph = json.loads(source)
+        name = graph["name"]
+        if "executable_l1" in graph:
+            return dict(rs.compile(source, name, self.machine))
         return {
             "name": name,
             "l2": _rs.l2_of(source, self.machine_json, rs._MUTANT.get()),
@@ -39,6 +42,16 @@ class DoubleCard(OfflineCard):
         return {"cycles": 0, "steps": [], "phases": {}}
 
     def _simulate(self, compiled, binds: dict) -> None:
+        if not compiled.l2_text:
+            _rs.simulate_l1(
+                compiled.l1.source,
+                compiled.name,
+                binds,
+                self.mem.read_block,
+                self.mem.write_block,
+                self.machine_json,
+            )
+            return
         _rs.simulate_l2(
             compiled.l2_text,
             compiled.name,

@@ -95,6 +95,19 @@ fn side(s: i64) -> &'static str {
 }
 
 impl Cluster {
+    /// Every operand granule exists independently of an optional overwrite.
+    pub(crate) fn complete_operand(&self, buf: i64, off: i64, n: i64) -> bool {
+        if !matches!(buf, BUF_L1A | BUF_L1B) || off < 0 || n <= 0 {
+            return false;
+        }
+        let Some(end) = off.checked_add(n) else {
+            return false;
+        };
+        self.initialized[buf as usize]
+            .get(off as usize..end as usize)
+            .is_some_and(|granules| granules.iter().all(|&ready| ready))
+    }
+
     fn clock_left(&self, upto: i64) -> Clock {
         if upto <= 0 || self.marks.is_empty() {
             return Clock::new();
