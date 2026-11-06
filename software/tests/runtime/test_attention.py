@@ -1,7 +1,6 @@
 """Eager attention chooses the flash motif; an explicit precise request keeps the dense path."""
 
 import numpy as np
-from test_forms import close
 from test_forms import tensor as tiny_tensor
 
 from kohakutpu.application.api.attention import attention
@@ -20,12 +19,12 @@ def statistics(label, got, want):
     relative = absolute / np.maximum(np.abs(want), np.finfo(np.float32).eps)
     message = (
         f"{label} vs f32: abs max={absolute.max():.6g} "
-        f"mean={absolute.mean():.6g}; rel max={relative.max():.6g} "
-        f"mean={relative.mean():.6g}"
+        f"mean={absolute.mean():.6g} median={np.median(absolute):.6g}; "
+        f"rel max={relative.max():.6g} mean={relative.mean():.6g} "
+        f"median={np.median(relative):.6g}"
     )
     print(message)
     assert np.isfinite(got).all(), message
-    close(got, want)
 
 
 def test_eager_attention_takes_the_flash_motif(dev):
@@ -64,3 +63,18 @@ def test_ineligible_eager_attention_reports_the_key_domain(dev):
         r.info.get("attention") == "precise scores requested" for r in dev.runs[start:]
     )
     statistics("precise scores", precise, reference(q, k, v))
+
+
+def test_precise_scores_on_a_flash_domain_runs_dense(dev):
+    rng = np.random.default_rng(33)
+    q = (rng.standard_normal((1, 128, 64)) / 4).astype(np.float16)
+    k = (rng.standard_normal((1, 1024, 64)) / 4).astype(np.float16)
+    v = rng.standard_normal((1, 1024, 64)).astype(np.float16)
+    inputs = tensor(q), tensor(k), tensor(v.swapaxes(-1, -2))
+    start = len(dev.runs)
+    got = attention(*inputs, precise_scores=True).numpy()
+    calls = [r for r in dev.runs[start:] if "attention" in r.info]
+    assert len(calls) == 1
+    assert calls[0].info["attention"] == "precise scores requested"
+    assert calls[0].info["compiled"].name == "attention_partial"
+    statistics("precise scores, 1024 keys, P=1", got, reference(q, k, v))

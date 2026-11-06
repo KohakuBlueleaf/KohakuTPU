@@ -11,7 +11,15 @@ from kohakutpu.application.runtime.memory.storage import Storage
 from kohakutpu.language import dsl as kt
 
 
-def attention(q: Tensor, k: Tensor, vt: Tensor, *, precise_scores=False) -> Tensor:
+def attention(
+    q: Tensor,
+    k: Tensor,
+    vt: Tensor,
+    *,
+    precise_scores=False,
+    motif="auto",
+    contract=None,
+) -> Tensor:
     """q [H,S,D], k [H,T,D], vt [H,D,T]; independent query/key tails.
 
     Device-side packing creates bounded zero-padded forms. Only the logical
@@ -30,11 +38,13 @@ def attention(q: Tensor, k: Tensor, vt: Tensor, *, precise_scores=False) -> Tens
     dev = q.st.dev
     if any(x.st.dev is not dev for x in (k, vt)):
         raise ValueError("attention operands must belong to the same device")
-    reason = A.flash_reason(h, s, t, d, precise_scores)
-    if reason is None and (dev.machine.count("MG") < 4 or dev.machine.count("VC") < 2):
-        reason = "flash requires four MG and two VC roles"
-    if reason is None:
-        return _flash(q, k, vt)
+    selected, reason = A.flash_reason(
+        h, s, t, d, precise_scores, motif=motif, contract=contract, machine=dev.machine
+    )
+    if selected is not None:
+        return _flash(q, k, vt, selected, reason, contract)
+    if motif != "auto":
+        raise ValueError(reason)
     sp, tp = -(-s // 64) * 64, -(-t // 64) * 64
     params = (
         (q, s, d, sp, d, "a", 16),
@@ -124,7 +134,7 @@ def attention(q: Tensor, k: Tensor, vt: Tensor, *, precise_scores=False) -> Tens
         padded.free()
 
 
-def _flash(q, k, vt):
+def _flash(q, k, vt, motif, reason, contract):
     """Scale and pack the template's head-major inputs; untile its output."""
     dev = q.st.dev
     h, s, d = q.shape
@@ -134,8 +144,8 @@ def _flash(q, k, vt):
     out = None
     try:
         for name, x, rows, cols, rp, side, g, nk in (
-            ("q", scaled, s, d, 1024, "a", 32, 1),
-            ("k", k, 1024, d, 1024, "b", 128, 1),
+            ("q", scaled, s, d, 1024, "a", 32, motif.qk_nk),
+            ("k", k, 1024, d, 1024, "b", 128, motif.qk_nk),
             ("v", vt, d, 1024, d, "b", 16, 16),
         ):
             binds[name] = F.packed(
@@ -154,12 +164,15 @@ def _flash(q, k, vt):
             )
         binds["y"] = padded.addr
         nodes = list(dev.card.nodes) if dev.home is None else [dev.home]
+        args = {"heads": h, "queries": s, "_nodes": nodes}
+        if contract is not None:
+            args["contract"] = contract
         generated.launch(
             dev,
-            "attention.flash",
-            {"heads": h, "queries": s, "_nodes": nodes},
+            f"attention.{motif.name}",
+            args,
             binds,
-            info={"attention": "attention.flash"},
+            info={"attention": f"attention.{motif.name}", "attention_reason": reason},
         )
         out = Storage(dev, 2 * h * s * d)
         F.relayout(

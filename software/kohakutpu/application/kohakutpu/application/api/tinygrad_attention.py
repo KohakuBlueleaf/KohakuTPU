@@ -12,7 +12,15 @@ from kohakutpu.application.runtime import forms as F
 from kohakutpu.application.runtime.memory.storage import FLAT, Storage
 
 
-def attention(q: Tensor, k: Tensor, v: Tensor, *, precise_scores=False) -> Tensor:
+def attention(
+    q: Tensor,
+    k: Tensor,
+    v: Tensor,
+    *,
+    precise_scores=False,
+    motif="auto",
+    contract=None,
+) -> Tensor:
     """Three-axis scaled attention, with optional precise scores.
 
     Realized KTPU buffers are borrowed, never downloaded. The DSL adapter owns
@@ -32,7 +40,9 @@ def attention(q: Tensor, k: Tensor, v: Tensor, *, precise_scores=False) -> Tenso
         )
         st = Storage(original.dev, 2 * t.numel(), addr=addr, owned=False)
         borrowed.append(DeviceTensor(t.shape, buf=Buf(st, np.float16)))
-    result = device_attention(*borrowed, precise_scores=precise_scores)
+    result = device_attention(
+        *borrowed, precise_scores=precise_scores, motif=motif, contract=contract
+    )
     out = Tensor.empty(*result.shape, dtype=dtypes.half, device="KTPU").realize()
     target = _storage(out)
     F.relayout(

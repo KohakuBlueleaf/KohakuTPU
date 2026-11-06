@@ -15,8 +15,28 @@ const SUBTILE: usize = LANES * LANES;
 /// K blocks a pumped sweep issue carries (`mg.kstep`).
 const KSTEP: usize = 2;
 
+/// A unit-output walk, shared by emitting sweeps and plain drains.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Output {
+    pub to: Target,
+    pub buf: u32,
+    pub at: usize,
+    pub n: usize,
+    pub count: bool,
+    pub credit: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Word {
+    /// ISA.MG.026, .033: FP16 results emitted by the enclosed sweep.
+    GemmTo {
+        sweep: Box<Word>,
+        output: Output,
+    },
+    /// ISA.MG.032, .050: resident results under granule credits.
+    DrainCreditTo {
+        output: Output,
+    },
     Fill {
         /// Side B when true.
         b: bool,
@@ -214,7 +234,9 @@ impl Cluster {
             Word::Drain { addr, n } => self.drain(addr, n, mem)?,
             Word::Fused => {}
             Word::FillRecv { b, n } => self.landed[usize::from(b)] -= n * ENTRY_WORDS,
-            Word::DrainTo { .. } => unreachable!("the machine carries a unit drain"),
+            Word::DrainTo { .. } | Word::GemmTo { .. } | Word::DrainCreditTo { .. } => {
+                unreachable!("the machine carries unit output")
+            }
         }
         Ok(())
     }

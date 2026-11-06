@@ -21,6 +21,8 @@ pub struct Target {
 /// What a burst carries: words, or an accumulator's sub-tiles at full precision.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Data {
+    /// CU_SIGNAL CREDIT, in payload granules (ISA.MG.050).
+    Credit(usize),
     Words(Vec<Word>),
     Acc(Vec<[f64; 16]>),
 }

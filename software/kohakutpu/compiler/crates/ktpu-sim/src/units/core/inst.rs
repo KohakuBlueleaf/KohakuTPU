@@ -141,6 +141,11 @@ pub enum Inst {
         waiter: Waiter,
         n: u32,
     },
+    /// ISA.VC.153: an uncounted entry in the drain queue.
+    Post {
+        to: Target,
+        n: usize,
+    },
     Mark {
         mark: u32,
         kind: usize,

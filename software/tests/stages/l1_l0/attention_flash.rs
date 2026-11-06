@@ -22,7 +22,7 @@ use ktpu_sim::num::mx7;
 use ktpu_sim::Dram;
 use serde_json::json;
 
-fn coords(card: &Card, kind: UnitKind) -> Vec<(u64, u64)> {
+pub(super) fn coords(card: &Card, kind: UnitKind) -> Vec<(u64, u64)> {
     let mut coords: Vec<_> = card
         .units(kind)
         .iter()
@@ -33,8 +33,38 @@ fn coords(card: &Card, kind: UnitKind) -> Vec<(u64, u64)> {
 }
 
 fn execute(text: &str, card: &Card, meshes: u32, heads: usize, queries: usize) -> Vec<u8> {
+    execute_seeded(text, card, meshes, heads, queries, 0x3400, None, 1)
+}
+
+pub(super) fn seed_values(
+    salt: u32,
+    index: usize,
+    magnitude: u16,
+    positive: bool,
+) -> [[u16; mx7::KBLOCK]; mx7::LANES] {
+    let mut x = salt ^ index as u32;
+    let mut values = [[0u16; mx7::KBLOCK]; mx7::LANES];
+    for value in values.iter_mut().flatten() {
+        x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+        let sign = if positive { 0 } else { x as u16 & 0x8000 };
+        *value = magnitude | ((x >> 16) as u16 & 0x03FF) | sign;
+    }
+    values
+}
+
+pub(super) fn execute_seeded(
+    text: &str,
+    card: &Card,
+    meshes: u32,
+    heads: usize,
+    queries: usize,
+    magnitude: u16,
+    value_magnitude: Option<u16>,
+    repeats: u32,
+) -> Vec<u8> {
     let module = read(text, "flash share").expect("L1 parses");
-    let body = module.body("flash", "l1").expect("flash function");
+    let name = &module.names()[0];
+    let body = module.body(name, "l1").expect("motif function");
     let mut binds = BTreeMap::new();
     let mut spans = Vec::new();
     let mut at = 4096;
@@ -62,16 +92,15 @@ fn execute(text: &str, card: &Card, meshes: u32, heads: usize, queries: usize) -
             "v" => 0x31415926u32,
             _ => unreachable!("only Q/K/V are packed"),
         };
+        let (amplitude, positive) = match (port.as_str(), value_magnitude) {
+            ("v", Some(value)) => (value, true),
+            _ => (magnitude, false),
+        };
         for (index, bytes) in mem.bytes[start..end]
             .chunks_mut(mx7::ENTRY_BYTES)
             .enumerate()
         {
-            let mut x = salt ^ index as u32;
-            let mut values = [[0u16; mx7::KBLOCK]; mx7::LANES];
-            for value in values.iter_mut().flatten() {
-                x = x.wrapping_mul(1664525).wrapping_add(1013904223);
-                *value = 0x3400 | ((x >> 16) as u16 & 0x03FF) | (x as u16 & 0x8000);
-            }
+            let values = seed_values(salt, index, amplitude, positive);
             for (word, target) in mx7::entry(&values)
                 .write(buffer.dtype == "mx7b")
                 .iter()
@@ -85,7 +114,7 @@ fn execute(text: &str, card: &Card, meshes: u32, heads: usize, queries: usize) -
     mem.watch_writes(output.clone())
         .expect("watch output bytes");
     let node_programs =
-        programs(&module, "flash", &binds, card, Some(meshes), None).expect("flash node programs");
+        programs(&module, name, &binds, card, Some(meshes), None).expect("flash node programs");
     let builder = Builder::new(card).expect("package builder");
     let mut cores = Cores::new(card).expect("image residents");
     // ENGINE packages execute in node-program order on one mesh and shared DRAM.
@@ -99,19 +128,28 @@ fn execute(text: &str, card: &Card, meshes: u32, heads: usize, queries: usize) -
     machine.isa = Some(Rc::new(Isa::reference(card).expect("machine ISA")));
     for np in &node_programs {
         let facts = ktpu_l0::Facts::of_mesh(card, np.mesh).expect("mesh facts");
-        let opts = Opts {
-            fetch: Some((card.die.fetch_port.x(), card.die.fetch_port.y())),
-            cores: Some(&mut cores),
-            relocate: false,
-        };
-        let (package, _) = builder.package(np, opts).expect("flash package");
         let units = l0::Units {
             vc: coords(card, UnitKind::Vc),
             mg: coords(card, UnitKind::Mg),
             src_mover: facts.src_mover(),
             counter_bits: facts.counter_bits,
         };
-        l0::run(&package, &units, &mut machine).expect("flash executes");
+        for repeat in 0..repeats {
+            // L1.LOW.003: deltas use the actual preceding invocation's residents.
+            let opts = Opts {
+                fetch: Some((card.die.fetch_port.x(), card.die.fetch_port.y())),
+                cores: Some(&mut cores),
+                relocate: false,
+            };
+            let (package, _) = builder.package(np, opts).expect("flash package");
+            println!("mesh={} execution={repeat}", np.mesh);
+            l0::run(&package, &units, &mut machine)
+                .expect(&format!("mesh={} execution={repeat}", np.mesh));
+            assert!(
+                machine.mg.iter().all(|mg| mg.credits == 0),
+                "each share spends its initial and returned credits before the next invocation"
+            );
+        }
     }
     for (word, counts) in machine
         .mem
@@ -121,7 +159,7 @@ fn execute(text: &str, card: &Card, meshes: u32, heads: usize, queries: usize) -
         .enumerate()
     {
         let row = word * WORD / 128;
-        let expected = u32::from(row / 1024 < heads && row % 1024 < queries);
+        let expected = repeats * u32::from(row / 1024 < heads && row % 1024 < queries);
         assert!(
             counts.iter().all(|&n| n == expected),
             "output word {word} writes: {counts:?}"

@@ -347,10 +347,7 @@ impl Node<'_> {
                     Some(n) if n == format!("{side}1") => Ok(1),
                     Some(n) => Err(format!("bank {n}")),
                 };
-                if s.kw("to").is_some() {
-                    return Err("an emit to a unit in this simulator".into());
-                }
-                cluster::Word::Gemm {
+                let sweep = cluster::Word::Gemm {
                     gm: d[0] as usize,
                     gn: d[1] as usize,
                     nk: d[2] as usize,
@@ -361,8 +358,34 @@ impl Node<'_> {
                     acc: opt("acc", 0)? != 0,
                     anchor: opt("anchor", 40)?,
                     emit: s.kw("emit").map(|t| int(t, &self.env)).transpose()?,
+                };
+                if let Some(to) = s.kw("to") {
+                    cluster::Word::GemmTo {
+                        sweep: Box::new(sweep),
+                        output: cluster::Output {
+                            to: image::target(to)?,
+                            buf: opt("buf", 0)? as u32,
+                            at: opt("l1", 0)? as usize,
+                            n: d[0] as usize * d[1] as usize,
+                            count: flag("count"),
+                            credit: flag("credit"),
+                        },
+                    }
+                } else {
+                    sweep
                 }
             }
+            "drain" if flag("fused") => cluster::Word::Fused,
+            "drain" if s.kw("to").is_some() && flag("credit") => cluster::Word::DrainCreditTo {
+                output: cluster::Output {
+                    to: image::target(s.kw("to").ok_or("drain to=")?)?,
+                    buf: opt("buf", 0)? as u32,
+                    at: opt("l1", 0)? as usize,
+                    n: opt("n", 0)? as usize,
+                    count: flag("count"),
+                    credit: true,
+                },
+            },
             "drain" if s.kw("to").is_some() => cluster::Word::DrainTo {
                 to: image::target(s.kw("to").ok_or("drain to=")?)?,
                 buf: opt("buf", 0)? as u32,
@@ -370,7 +393,6 @@ impl Node<'_> {
                 n: opt("n", 0)? as usize,
                 count: flag("count"),
             },
-            "drain" if flag("fused") => cluster::Word::Fused,
             "drain" => cluster::Word::Drain {
                 addr: int(pos[0], &self.env)?,
                 n: opt("n", 0)? as usize,

@@ -32,7 +32,7 @@ pub struct Share {
 impl Share {
     /// Preserve the local stream indices; map only external addresses to global
     /// heads and queries. Rings and ping-pong banks always start at local zero.
-    pub fn text(&self) -> R<String> {
+    pub(super) fn validate(&self) -> R<()> {
         let h = &self.heads;
         let q = &self.query_tiles;
         if h.start < 0
@@ -53,6 +53,13 @@ impl Share {
         {
             return fail("DSL.KERN.020", "flash origins must be aligned byte offsets");
         }
+        Ok(())
+    }
+
+    pub fn text(&self) -> R<String> {
+        self.validate()?;
+        let h = &self.heads;
+        let q = &self.query_tiles;
         let nq = q.end - q.start;
         let per_head = 4 * nq;
         let nt = (h.end - h.start) * per_head;
@@ -87,6 +94,13 @@ impl Share {
         ] {
             text = text.replace(from, &to);
         }
+        Ok(self.rebase(&text))
+    }
+
+    pub(super) fn rebase(&self, text: &str) -> String {
+        let h = &self.heads;
+        let q = &self.query_tiles;
+        let origins = &self.origins;
         let offsets = [
             ("q", origins.q + h.start * 65536 + q.start * 8192),
             ("k", origins.k + h.start * 65536),
@@ -116,6 +130,6 @@ impl Share {
             result.push_str(&line);
             result.push('\n');
         }
-        Ok(result)
+        result
     }
 }

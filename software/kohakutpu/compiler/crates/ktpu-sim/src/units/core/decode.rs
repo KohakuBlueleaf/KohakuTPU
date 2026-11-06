@@ -152,7 +152,14 @@ fn word(isa: &VecIsa, w: u64, next: u64) -> R<Inst> {
             waiter: waiter(g("waiter"))?,
             n: g("n") as u32,
         },
-        "VWAIT" | "VPOST" | "VCFG" => return Err(format!("{name} in this simulator")),
+        "VPOST" => Inst::Post {
+            to: Target {
+                mesh: None,
+                place: Place::At(g("dst_x") as u32, g("dst_y") as u32),
+            },
+            n: g("n") as usize,
+        },
+        "VWAIT" | "VCFG" => return Err(format!("{name} in this simulator")),
         math => Inst::Math {
             op: MathOp::parse(&math.to_lowercase()).ok_or(format!("no word {math}"))?,
             vd: g("vd") as u32,

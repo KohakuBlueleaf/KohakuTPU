@@ -6,6 +6,7 @@ mod events;
 mod fill_throttle;
 mod modulo_memory_effects;
 mod release_frontier;
+mod statistic_fold;
 mod stream_credit;
 mod view_progression;
 

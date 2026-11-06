@@ -13,7 +13,7 @@ use crate::mem::{Dram, Word, WORD};
 use crate::num;
 use crate::num::mx7;
 use crate::rng::Rng;
-use crate::units::link::{Data, Landing};
+use crate::units::link::{Data, Landing, Target};
 use crate::R;
 
 pub const LANES: usize = 16;
@@ -94,8 +94,14 @@ enum Work {
         off: usize,
         peer: Option<Peer>,
     },
+    Post {
+        to: Target,
+        n: usize,
+    },
     /// A VWAIT: until `upto` granules have landed.
-    Landed { upto: u64 },
+    Landed {
+        upto: u64,
+    },
     /// A sync or a VBAR: its guard is the whole of it.
     Guard,
 }
@@ -313,7 +319,7 @@ impl Core {
             Inst::Walk { pack: false, .. } | Inst::Bar => self.queue_room(Q_UNPACK),
             Inst::Walk { pack: true, .. } => self.queue_room(Q_PACK),
             Inst::Fill { .. } => self.queue_room(Q_FILL),
-            Inst::Drain { .. } => self.queue_room(Q_DRAIN),
+            Inst::Drain { .. } | Inst::Post { .. } => self.queue_room(Q_DRAIN),
             Inst::Landed { waiter, .. } | Inst::Sync { waiter, .. } => match waiter {
                 Waiter::Fe => true,
                 Waiter::Unpack => self.queue_room(Q_UNPACK),
@@ -492,6 +498,10 @@ impl Core {
                     peer,
                 };
                 self.push(Q_DRAIN, work, None, Vec::new(), Some(DRAIN));
+            }
+            Inst::Post { to, n } => {
+                // ISA.VC.144, .153: ordered with drains, not a drain counter tick.
+                self.push(Q_DRAIN, Work::Post { to, n }, None, Vec::new(), None);
             }
             Inst::Landed { waiter, n } => {
                 self.asked += u64::from(n);
@@ -750,6 +760,13 @@ impl Core {
                     count: addrs[0] >> PEER_COUNT_BIT & 1 != 0,
                 });
             }
+            Work::Post { to, n } => self.outbox.push(Landing {
+                to,
+                buf: 0,
+                at: 0,
+                data: Data::Credit(n),
+                count: false,
+            }),
             Work::Landed { .. } | Work::Guard => {}
         }
         let entry = &mut self.run.entries[e];

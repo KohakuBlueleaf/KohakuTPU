@@ -4,7 +4,7 @@ use ktpu_isa::unit::vector::VecCu;
 use ktpu_isa::{Isa, W256};
 
 use crate::machine::VcWord;
-use crate::units::cluster::Word;
+use crate::units::cluster::{Output, Word};
 use crate::units::link::{Place, Target};
 use crate::R;
 
@@ -31,6 +31,23 @@ pub fn cluster(isa: &Isa, w: W256) -> R<Word> {
     let g = |n: &str| f.iter().find(|(k, _)| *k == n).map_or(0, |(_, v)| *v);
     let addr = g("addr") | g("addr_hi") << ADDR_LO_BITS;
     let toward_unit = g("dnode") != 0;
+    let remote = g("dfin") != 0;
+    let to = Target {
+        mesh: remote.then_some(g("dmesh") as usize),
+        place: if remote {
+            Place::At((g("dfin") & 0xF) as u32, (g("dfin") >> 4) as u32)
+        } else {
+            Place::At(g("dst_x") as u32, g("dst_y") as u32)
+        },
+    };
+    let output = |n| Output {
+        to,
+        buf: g("dbuf") as u32,
+        at: (addr / WORD_BYTES) as usize,
+        n,
+        count: g("dflags") & FLAG_COUNT != 0,
+        credit: g("credit") != 0,
+    };
     Ok(match name {
         "FILL" if g("recv") != 0 => Word::FillRecv {
             b: g("sel") != 0,
@@ -43,30 +60,40 @@ pub fn cluster(isa: &Isa, w: W256) -> R<Word> {
             addr,
             n: g("n") as usize,
         },
-        "GEMM" if toward_unit => return Err("an emit to a unit in this simulator".into()),
-        "GEMM" => Word::Gemm {
-            gm: g("gm") as usize,
-            gn: g("gn") as usize,
-            nk: g("nk") as usize,
-            abank: g("abank") as usize,
-            bbank: g("bbank") as usize,
-            aoff: g("aoff") as usize,
-            boff: g("boff") as usize,
-            acc: g("acc") != 0,
-            anchor: g("anchor"),
-            emit: (g("emit") != 0).then_some(addr),
+        "GEMM" => {
+            let sweep = Word::Gemm {
+                gm: g("gm") as usize,
+                gn: g("gn") as usize,
+                nk: g("nk") as usize,
+                abank: g("abank") as usize,
+                bbank: g("bbank") as usize,
+                aoff: g("aoff") as usize,
+                boff: g("boff") as usize,
+                acc: g("acc") != 0,
+                anchor: g("anchor"),
+                emit: (g("emit") != 0 && !toward_unit).then_some(addr),
+            };
+            if g("emit") != 0 && toward_unit {
+                Word::GemmTo {
+                    sweep: Box::new(sweep),
+                    output: output(g("gm") as usize * g("gn") as usize),
+                }
+            } else {
+                sweep
+            }
+        }
+        // ISA.MG.030: collection never sends the results a second time.
+        "DRAIN" if g("fuse") != 0 => Word::Fused,
+        "DRAIN" if toward_unit && g("credit") != 0 => Word::DrainCreditTo {
+            output: output(g("n") as usize),
         },
         "DRAIN" if toward_unit => Word::DrainTo {
-            to: Target {
-                mesh: (g("dfin") != 0).then_some(g("dmesh") as usize),
-                place: Place::At(g("dst_x") as u32, g("dst_y") as u32),
-            },
+            to,
             buf: g("dbuf") as u32,
             at: (addr / WORD_BYTES) as usize,
             n: g("n") as usize,
             count: g("dflags") & FLAG_COUNT != 0,
         },
-        "DRAIN" if g("fuse") != 0 => Word::Fused,
         "DRAIN" => Word::Drain {
             addr,
             n: g("n") as usize,

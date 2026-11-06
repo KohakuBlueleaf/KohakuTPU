@@ -3,6 +3,8 @@
 
 mod admission;
 mod attention_flash;
+mod attention_flashd;
+mod attention_srflash;
 mod branch_certification;
 mod branch_ordering;
 #[path = "../common.rs"]

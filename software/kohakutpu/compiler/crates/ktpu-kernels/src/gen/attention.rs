@@ -5,7 +5,9 @@
 
 pub mod flash;
 pub mod flash_split;
+pub mod flashd;
 pub mod motif;
+pub mod srflash;
 
 use std::ops::Range;
 

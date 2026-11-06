@@ -94,8 +94,9 @@ SUITES = (
             f"{COMPILER}/ktpu-verify",
             f"{COMPILER}/ktpu-isa",
             f"{COMPILER}/ktpu-kernels/src/gen/attention",
-            f"{COMPILER}/ktpu-sim/src/mem.rs",
+            f"{COMPILER}/ktpu-sim",
             "kohakutpu/language/kohakutpu/language/examples/l1/fused",
+            "kohakutpu/language/kohakutpu/language/examples/l1/sru",
             f"{FRAMEWORK}/ka-package",
         ),
         cargo=(("ktpu-sim", "l1_l0"),),
@@ -143,6 +144,7 @@ SUITES = (
         (
             "kohakutpu/application/kohakutpu/application/runtime",
             "kohakutpu/application/kohakutpu/application/api",
+            "kohakutpu/application/kohakutpu/application/kernels/attention.py",
         ),
         per_test=20.0,
     ),

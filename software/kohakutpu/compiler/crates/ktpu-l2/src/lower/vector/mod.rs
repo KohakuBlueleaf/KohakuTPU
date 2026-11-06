@@ -11,6 +11,7 @@ pub mod banks;
 pub mod checked;
 pub mod ctx;
 pub mod encode;
+pub mod fold;
 pub mod gen;
 pub mod modulo;
 pub mod range;

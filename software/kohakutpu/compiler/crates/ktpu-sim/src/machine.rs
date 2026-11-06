@@ -35,11 +35,65 @@ pub struct Vc {
     pub done: u64,
 }
 
+/// ISA.MG.035, .050: at most eight granules per handoff, paid in full.
+struct PendingOutput {
+    output: cluster::Output,
+    data: Data,
+    sent: usize,
+    completes_word: bool,
+}
+
+impl PendingOutput {
+    fn granules(&self) -> usize {
+        match &self.data {
+            Data::Words(words) => words.len(),
+            Data::Acc(tiles) => 2 * tiles.len(),
+            Data::Credit(_) => unreachable!("output is data"),
+        }
+    }
+
+    fn burst(&self) -> usize {
+        (self.granules() - self.sent).min(8)
+    }
+}
+
 pub struct Mg {
     pub cluster: Cluster,
+    /// Incoming CREDIT amounts not yet spent; survives package boundaries.
+    pub credits: usize,
+    output: Option<PendingOutput>,
     queue: VecDeque<cluster::Word>,
     pub sent: u64,
     pub done: u64,
+}
+
+impl Mg {
+    fn output_ready(&self) -> bool {
+        self.output
+            .as_ref()
+            .is_some_and(|p| !p.output.credit || self.credits >= p.burst())
+    }
+
+    fn word_ready(&self) -> bool {
+        let Some(w) = self.queue.front() else {
+            return false;
+        };
+        if let Some(p) = &self.output {
+            // FILL may overlap an emitting sweep's output. Collection and the
+            // next output wait for its last handoff (ISA.MG.027, .030).
+            if p.completes_word
+                || !matches!(
+                    w,
+                    cluster::Word::Fill { .. }
+                        | cluster::Word::FillRecv { .. }
+                        | cluster::Word::Gemm { emit: None, .. }
+                )
+            {
+                return false;
+            }
+        }
+        self.cluster.ready(w)
+    }
 }
 
 /// A unit of the schedule.
@@ -99,6 +153,8 @@ impl Machine {
             mg: (0..meshes * clusters)
                 .map(|_| Mg {
                     cluster: Cluster::default(),
+                    credits: 0,
+                    output: None,
                     queue: VecDeque::new(),
                     sent: 0,
                     done: 0,
@@ -148,7 +204,7 @@ impl Machine {
     fn busy(&self, u: Unit) -> bool {
         match u {
             Unit::Vc(i) => !self.vc[i].queue.is_empty() || !self.vc[i].core.idle(),
-            Unit::Mg(i) => !self.mg[i].queue.is_empty(),
+            Unit::Mg(i) => !self.mg[i].queue.is_empty() || self.mg[i].output.is_some(),
             Unit::Mover => !self.moves.is_empty(),
         }
     }
@@ -156,10 +212,7 @@ impl Machine {
     fn runnable(&self, u: Unit) -> bool {
         match u {
             Unit::Vc(i) => self.vc[i].core.runnable(),
-            Unit::Mg(i) => self.mg[i]
-                .queue
-                .front()
-                .is_none_or(|w| self.mg[i].cluster.ready(w)),
+            Unit::Mg(i) => self.mg[i].output_ready() || self.mg[i].word_ready(),
             Unit::Mover => true,
         }
     }
@@ -191,10 +244,44 @@ impl Machine {
                     .mg
                     .get_mut(m * self.clusters + i)
                     .ok_or(format!("mg[{i}] of mesh {m}"))?;
-                c.cluster.land(l.buf, l.at, &l.data, l.count)
+                if let Data::Credit(n) = l.data {
+                    c.credits += n;
+                    Ok(())
+                } else {
+                    c.cluster.land(l.buf, l.at, &l.data, l.count)
+                }
             }
             Place::At(..) => unreachable!("a coordinate is resolved above"),
         }
+    }
+
+    fn output_burst(&mut self, i: usize) -> R<()> {
+        let m = &mut self.mg[i];
+        let p = m.output.as_mut().expect("a ready output");
+        let n = p.burst();
+        let data = match &p.data {
+            Data::Words(words) => Data::Words(words[p.sent..p.sent + n].to_vec()),
+            Data::Acc(tiles) => Data::Acc(tiles[p.sent / 2..(p.sent + n) / 2].to_vec()),
+            Data::Credit(_) => unreachable!("output is data"),
+        };
+        let landing = Landing {
+            to: p.output.to,
+            buf: p.output.buf,
+            at: p.output.at + p.sent,
+            data,
+            count: p.output.count,
+        };
+        if p.output.credit {
+            m.credits -= n;
+        }
+        p.sent += n;
+        if p.sent == p.granules() {
+            if p.completes_word {
+                m.done += 1;
+            }
+            m.output = None;
+        }
+        self.carry(i / self.clusters, landing)
     }
 
     fn step_unit(&mut self, u: Unit) -> R<()> {
@@ -242,29 +329,50 @@ impl Machine {
                 }
             }
             Unit::Mg(i) => {
+                if self.mg[i].output_ready() {
+                    return self.output_burst(i);
+                }
                 let m = &mut self.mg[i];
-                let w = m.queue.pop_front().expect("a busy cluster's word");
-                if let cluster::Word::DrainTo {
-                    to,
-                    buf,
-                    at,
-                    n,
-                    count,
-                } = w
-                {
-                    let data = m.cluster.out(buf, n);
-                    self.carry(
-                        i / self.clusters,
-                        Landing {
-                            to,
-                            buf,
-                            at,
-                            data,
-                            count,
-                        },
-                    )?;
-                } else {
-                    m.cluster.run(&w, &mut self.mem)?;
+                let w = m.queue.pop_front().expect("a ready cluster word");
+                match w {
+                    cluster::Word::GemmTo { sweep, output } => {
+                        m.cluster.run(&sweep, &mut self.mem)?;
+                        m.output = Some(PendingOutput {
+                            data: Data::Words(m.cluster.words(output.n)),
+                            output,
+                            sent: 0,
+                            completes_word: false,
+                        });
+                    }
+                    cluster::Word::DrainCreditTo { output } => {
+                        m.output = Some(PendingOutput {
+                            data: m.cluster.out(output.buf, output.n),
+                            output,
+                            sent: 0,
+                            completes_word: true,
+                        });
+                        return Ok(());
+                    }
+                    cluster::Word::DrainTo {
+                        to,
+                        buf,
+                        at,
+                        n,
+                        count,
+                    } => {
+                        let data = m.cluster.out(buf, n);
+                        self.carry(
+                            i / self.clusters,
+                            Landing {
+                                to,
+                                buf,
+                                at,
+                                data,
+                                count,
+                            },
+                        )?;
+                    }
+                    _ => m.cluster.run(&w, &mut self.mem)?,
                 }
                 self.mg[i].done += 1;
             }

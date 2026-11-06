@@ -1,12 +1,12 @@
-//! Ownership and executable L1 for the reference flash packing.
+//! Ownership and executable L1 for the hand attention motifs.
 
 use std::collections::BTreeMap;
 
 use ktpu_graph as g;
 use ktpu_l1::text::read;
-use ktpu_machine::{Machine, Refusal};
+use ktpu_machine::{Machine, Refusal, UnitKind};
 
-use super::flash::{Origins, Share, TEMPLATE};
+use super::flash::{Origins, Share};
 use super::motif::AttentionMotif;
 use super::{assignments, AttentionMask, AttentionPartition, AttentionPrecision, AttentionSpec};
 use crate::kernel::{layout, Kernel, Port};
@@ -24,21 +24,30 @@ fn region(allocation: &str, start: i64, end: i64) -> Region {
     }
 }
 
-fn signature(heads: i64, m: &Machine) -> R<Kernel> {
+fn signature(heads: i64, motif: AttentionMotif, m: &Machine) -> R<Kernel> {
+    let pack = motif.pack();
     let mut y = Port::output("y", &[heads * 1024, 64], g::Dtype::F16);
-    y.layout = vec![("tile".into(), g::LayoutValue::Ints(vec![8, 16]))];
-    let ports = vec![
+    let row_tile = if motif == AttentionMotif::Srflash {
+        1
+    } else {
+        8
+    };
+    y.layout = vec![("tile".into(), g::LayoutValue::Ints(vec![row_tile, 16]))];
+    let mut ports = vec![
         Port::input("q", &[heads * 1024, 64], g::Dtype::Mx7a)
-            .with_layout(layout(&[("gm", 32), ("nk", 1)])),
+            .with_layout(layout(&[("gm", 32), ("nk", pack.qk_nk as i64)])),
         Port::input("k", &[heads * 1024, 64], g::Dtype::Mx7b)
-            .with_layout(layout(&[("gn", 128), ("nk", 1)])),
+            .with_layout(layout(&[("gn", 128), ("nk", pack.qk_nk as i64)])),
         Port::input("v", &[64, heads * 1024], g::Dtype::Mx7b).with_layout(layout(&[
-            ("gn", 16),
-            ("nk", 16),
+            ("gn", pack.v_gn as i64),
+            ("nk", pack.v_nk as i64),
             ("t", 1),
         ])),
         y,
     ];
+    if motif == AttentionMotif::Srflash {
+        ports.push(Port::input("tab", &[256, 8], g::Dtype::F32));
+    }
     let given: Vec<(String, g::Spec)> = ports
         .iter()
         .map(|p| {
@@ -58,7 +67,7 @@ fn signature(heads: i64, m: &Machine) -> R<Kernel> {
         graph: g::Graph {
             format: g::FORMAT.into(),
             version: g::FORMAT_VERSION,
-            name: "flash".into(),
+            name: motif.name().into(),
             target: m.die.target.clone(),
             machine: g::DslMachine {
                 mg: facts.mg as u32,
@@ -115,7 +124,12 @@ fn namespace(text: &str, tag: usize) -> String {
     result
 }
 
-fn emit(shares: &[ShardTiles], request: &SplitRequest, heads: i64) -> R<String> {
+fn emit(
+    shares: &[ShardTiles],
+    request: &SplitRequest,
+    heads: i64,
+    motif: AttentionMotif,
+) -> R<String> {
     let mut definitions = String::new();
     let mut body = String::new();
     let mut tag = 0;
@@ -132,14 +146,21 @@ fn emit(shares: &[ShardTiles], request: &SplitRequest, heads: i64) -> R<String> 
                 query_tiles: ranges[1].clone(),
                 origins: Origins {
                     s: rank * 1048576,
-                    o: rank * 65536,
+                    o: rank
+                        * if motif == AttentionMotif::Srflash {
+                            262144
+                        } else {
+                            65536
+                        },
                     li: rank * 16384,
                     ..Origins::default()
                 },
             };
-            let text = namespace(&share.text()?, tag);
+            let text = namespace(&motif.text(&share, heads)?, tag);
             tag += 1;
-            let (defs, function) = text.split_once("fn flash.l1(").expect("template function");
+            let (defs, function) = text
+                .split_once(&format!("fn {}.l1(", motif.name()))
+                .expect("template function");
             for line in defs.lines() {
                 if !line.starts_with("target ") {
                     definitions.push_str(line);
@@ -155,11 +176,19 @@ fn emit(shares: &[ShardTiles], request: &SplitRequest, heads: i64) -> R<String> 
         }
     }
     let p = request.nodes.ids().len();
-    let declaration = TEMPLATE
+    let declaration = motif
+        .template()
         .lines()
-        .find(|s| s.starts_with("fn flash.l1("))
+        .find(|s| s.starts_with("fn "))
         .expect("template signature")
+        .replace("fn flash.l1(", &format!("fn {}.l1(", motif.name()))
         .replace("10240", &(heads * 1024).to_string())
+        .replace("2048, 64", &format!("{}, 64", heads * 1024))
+        .replace("64, 2048", &format!("64, {}", heads * 1024))
+        .replace(
+            "o: f16[4096, 32] @dram",
+            &format!("o: f16[{}, 32] @stage", 4096 * p),
+        )
         .replace("s: f16[512, 1024]", &format!("s: f16[{}, 1024]", 512 * p))
         .replace("o: f16[512, 64]", &format!("o: f16[{}, 64]", 512 * p))
         .replace("li: f16[128, 64]", &format!("li: f16[{}, 64]", 128 * p));
@@ -171,8 +200,24 @@ fn emit(shares: &[ShardTiles], request: &SplitRequest, heads: i64) -> R<String> 
 /// Logical head/query prefixes use the reference template's physical port contract.
 /// Q is already scaled by log2(e)/sqrt(64); each head retains 1024 keys.
 pub fn plan(heads: i64, queries: i64, request: &SplitRequest, m: &Machine) -> R<PlannedKernel> {
+    plan_motif(heads, queries, AttentionMotif::Flash, None, request, m)
+}
+
+pub(crate) fn plan_motif(
+    heads: i64,
+    queries: i64,
+    motif: AttentionMotif,
+    contract: Option<&str>,
+    request: &SplitRequest,
+    m: &Machine,
+) -> R<PlannedKernel> {
+    motif.admit(heads, queries, contract)?;
     let facts = Facts::of(m);
-    AttentionMotif::Flash.bind_roles(facts.mg as usize, facts.vc as usize, 0)?;
+    motif.bind_roles(
+        facts.mg as usize,
+        facts.vc as usize,
+        m.units(UnitKind::Sr).len(),
+    )?;
     let spec = AttentionSpec {
         heads,
         queries,
@@ -182,9 +227,17 @@ pub fn plan(heads: i64, queries: i64, request: &SplitRequest, m: &Machine) -> R<
         mask: AttentionMask::None,
         precision: AttentionPrecision::Mx7,
     };
-    let kernel = signature(heads, m)?;
+    let kernel = signature(heads, motif, m)?;
     let mut options = Vec::new();
-    for assignment in assignments(&spec, 128, &request.nodes)? {
+    let tq = motif.query_rows();
+    let mut numerics = request.numerics.clone();
+    numerics.precision = match motif {
+        AttentionMotif::Flash => "mx7/sticky-overflow",
+        AttentionMotif::Flashd => "mx7/unit-scores",
+        AttentionMotif::Srflash => "mx7/sr-row-max",
+    }
+    .into();
+    for assignment in assignments(&spec, tq, &request.nodes)? {
         let (id, axis) = match assignment.partition {
             AttentionPartition::Heads => ("heads".into(), SplitAxis::Heads),
             AttentionPartition::QueryRows => ("query-rows".into(), SplitAxis::QueryRows),
@@ -219,7 +272,7 @@ pub fn plan(heads: i64, queries: i64, request: &SplitRequest, m: &Machine) -> R<
                 read_regions: vec![],
                 write_regions: vec![],
                 scratch_regions: vec![],
-                local_schedule: "attention.flash".into(),
+                local_schedule: format!("attention.{}", motif.name()),
                 role: if spans.is_empty() {
                     ShardRole::Empty
                 } else {
@@ -228,12 +281,22 @@ pub fn plan(heads: i64, queries: i64, request: &SplitRequest, m: &Machine) -> R<
             };
             for span in spans {
                 let h = span.head;
-                let q = &span.query_tiles;
+                let q = &(span.query_tiles.start * (tq / 128)..span.query_tiles.end * (tq / 128));
                 shard.read_regions.extend([
                     region("q", h * 65536 + q.start * 8192, h * 65536 + q.end * 8192),
                     region("k", h * 65536, (h + 1) * 65536),
-                    region("v", h * 65536, (h + 1) * 65536),
                 ]);
+                if motif == AttentionMotif::Srflash {
+                    for half in 0..2 {
+                        let start = (half * heads + h) * 32768;
+                        shard.read_regions.push(region("v", start, start + 32768));
+                    }
+                    shard.read_regions.push(region("tab", 0, 8192));
+                } else {
+                    shard
+                        .read_regions
+                        .push(region("v", h * 65536, (h + 1) * 65536));
+                }
                 let write = region(
                     "y",
                     h * 131072 + q.start * 16384,
@@ -242,14 +305,18 @@ pub fn plan(heads: i64, queries: i64, request: &SplitRequest, m: &Machine) -> R<
                 output.ownership.push((rank, write.clone()));
                 shard.write_regions.push(write);
                 let n = shard.tile_ranges.len();
-                if n >= 2 && shard.tile_ranges[n - 2].end == h && shard.tile_ranges[n - 1] == *q {
+                if n >= 2
+                    && shard.tile_ranges[n - 2].end == h
+                    && shard.tile_ranges[n - 1] == *q
+                    && (motif != AttentionMotif::Srflash || h - shard.tile_ranges[n - 2].start < 2)
+                {
                     shard.tile_ranges[n - 2].end = h + 1;
                 } else {
                     shard.tile_ranges.extend([h..h + 1, q.clone()]);
                 }
             }
             if !spans.is_empty() {
-                for (name, bytes) in [("s", 1048576), ("o", 65536), ("li", 16384)] {
+                for &(name, bytes) in motif.scratch() {
                     shard.scratch_regions.push(region(
                         name,
                         rank as i64 * bytes,
@@ -263,11 +330,11 @@ pub fn plan(heads: i64, queries: i64, request: &SplitRequest, m: &Machine) -> R<
         let mut cycles = Vec::new();
         for shard in &shards {
             if shard.role != ShardRole::Empty {
-                let text = emit(std::slice::from_ref(shard), request, heads)?;
-                let module = read(&text, "attention.flash")
-                    .map_err(|e| Refusal::new(&e.clause, e.message))?;
+                let text = emit(std::slice::from_ref(shard), request, heads, motif)?;
+                let module =
+                    read(&text, motif.name()).map_err(|e| Refusal::new(&e.clause, e.message))?;
                 let share =
-                    ktpu_l2::cost::cycles(&module, "flash", &ktpu_l2::target::Target::of(m))
+                    ktpu_l2::cost::cycles(&module, motif.name(), &ktpu_l2::target::Target::of(m))
                         .map_err(|e| Refusal::new(&e.clause, e.message))?;
                 cycles.push(share - m.vc.launch_front as i64);
             }
@@ -287,14 +354,14 @@ pub fn plan(heads: i64, queries: i64, request: &SplitRequest, m: &Machine) -> R<
             conversions: 0,
             cost: CostEstimate::default(),
             legality: LegalityWitness {
-                numerics: request.numerics.clone(),
+                numerics: numerics.clone(),
                 clauses: vec!["complete keys per head/query tile; disjoint output lines".into()],
             },
         };
         options.push((option, features));
     }
     let split = choose_split(options, &LocalTiming, request.force.as_deref())?;
-    let l1 = Some(emit(&split.shards, request, heads)?);
+    let l1 = Some(emit(&split.shards, request, heads, motif)?);
     Ok(PlannedKernel {
         kernel,
         split,

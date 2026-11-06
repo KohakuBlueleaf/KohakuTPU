@@ -1639,28 +1639,45 @@ pub(crate) fn call_split_with_timing(
         })?;
         return crate::gen::conv::patch_split(&spec, request, m);
     }
-    if gen == "attention.flash" {
+    if matches!(
+        gen,
+        "attention.flash" | "attention.flashd" | "attention.srflash"
+    ) {
         let args = a.as_object().ok_or_else(|| {
-            ktpu_machine::Refusal::new("API.OP.001", "attention.flash expects an argument object")
+            ktpu_machine::Refusal::new(
+                "API.OP.001",
+                "attention template expects an argument object",
+            )
         })?;
-        let heads = args.get("heads").map_or(Some(10), Value::as_i64);
+        let default_heads = if gen == "attention.srflash" { 2 } else { 10 };
+        let heads = args.get("heads").map_or(Some(default_heads), Value::as_i64);
         let queries = args.get("queries").map_or(Some(1024), Value::as_i64);
         let (Some(heads), Some(queries)) = (heads, queries) else {
             return fail("API.OP.001", "flash heads and queries must be integers");
         };
         if args
             .keys()
-            .any(|key| !matches!(key.as_str(), "heads" | "queries"))
-            || !(1..=10).contains(&heads)
-            || !(128..=1024).contains(&queries)
-            || queries % 128 != 0
+            .any(|key| !matches!(key.as_str(), "heads" | "queries" | "contract"))
         {
-            return fail(
-                "API.OP.001",
-                "flash expects 1..=10 heads and 128..=1024 queries in tiles of 128",
-            );
+            return fail("API.OP.001", "unknown attention template argument");
         }
-        return crate::gen::attention::flash_split::plan(heads, queries, request, m);
+        let contract = args
+            .get("contract")
+            .map(|value| {
+                value.as_str().ok_or_else(|| {
+                    ktpu_machine::Refusal::new("API.OP.001", "attention contract must be a string")
+                })
+            })
+            .transpose()?;
+        use crate::gen::attention::motif::AttentionMotif;
+        let motif = match gen {
+            "attention.flashd" => AttentionMotif::Flashd,
+            "attention.srflash" => AttentionMotif::Srflash,
+            _ => AttentionMotif::Flash,
+        };
+        return crate::gen::attention::flash_split::plan_motif(
+            heads, queries, motif, contract, request, m,
+        );
     }
     if (gen == "matmul.mm_kernel" || gen == "mm")
         && (nodes.ids().len() > 1 || request.force.as_deref().is_some_and(|id| id != "p1"))

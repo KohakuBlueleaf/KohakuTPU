@@ -24,6 +24,9 @@ pub(super) fn lower_band(
     fits: &Fits,
 ) -> VResult<Cand> {
     crate::work::LOWERED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if let Some((m, p, a)) = super::super::fold::lower(body, par, env, name, t)? {
+        return Ok((Arc::new(m), p, a));
+    }
 
     crate::lower::vector::ctx::band::typed::lower_band(
         body, par, env, name, t, band, remat, ahead, plan, land, hold, pin, fits,
@@ -121,6 +124,9 @@ fn modulo_module(
     land: Option<i64>,
     t: &Target,
 ) -> VResult<std::result::Result<Cand, String>> {
+    if let Some((m, p, a)) = super::super::fold::lower(body, par, env, name, t)? {
+        return Ok(Ok((Arc::new(m), p, a)));
+    }
     let no = |w: &str| Ok(Err(w.to_string()));
     let (pre, lp) = split(body, par)?;
     let Some(lp) = lp else {

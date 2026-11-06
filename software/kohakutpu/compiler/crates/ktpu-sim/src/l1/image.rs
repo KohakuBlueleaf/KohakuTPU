@@ -175,6 +175,10 @@ fn statement(st: &Stmt, env: &Env, out: &mut Vec<Inst>) -> R<()> {
                 n: opt(st, "n", env, 0)? as u32,
             }
         }
+        "vpost" => Inst::Post {
+            to: target(pos[0])?,
+            n: opt(st, "n", env, 0)? as usize,
+        },
         "vsync" => {
             let waiter = waiter(pos[0])?;
             let on = match st.kw("mark") {

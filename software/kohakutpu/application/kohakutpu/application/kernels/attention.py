@@ -1,6 +1,7 @@
 """Masked dense attention on explicitly padded MXFP7 operands."""
 
 from collections import OrderedDict
+from dataclasses import dataclass
 
 from kohakutpu.language import dsl as kt
 from kohakutpu.language.examples.dsl.cluster.sweep import core_blocks, sweep
@@ -11,19 +12,73 @@ KERNELS_KEPT = 256
 _kernels: OrderedDict = OrderedDict()
 
 
-def flash_reason(heads, queries, keys, dim, precise_scores=False):
-    """The reference flash motif's logical input contract."""
+@dataclass(frozen=True)
+class AttentionMotif:
+    name: str
+    dim: int
+    tq: int
+    tk: int
+    qk_nk: int
+    contract: str | None
+
+
+FLASH = AttentionMotif("flash", 64, 128, 1024, 1, None)
+FLASHD = AttentionMotif("flashd", 64, 128, 1024, 2, "unit-scores")
+MOTIFS = {m.name: m for m in (FLASH, FLASHD)}
+
+
+def flash_reason(
+    heads,
+    queries,
+    keys,
+    dim,
+    precise_scores=False,
+    *,
+    motif="auto",
+    contract=None,
+    machine=None,
+):
+    """Choose one geometry/precision contract and retain its admission reason.
+
+    ``unit-scores`` declares that the *packed*, base-2 QK scores lie in
+    [-1, 1] and packed V in [-1, 1]. It is a caller contract, not a data scan.
+    The direct motif's integer offset then lies in [3, 5], so P is in
+    [2**-6, 2**-2], each half's sum in [8, 128], and |O| <= 128.
+    """
+    if motif != "auto" and motif not in MOTIFS:
+        raise ValueError(f"unknown attention motif {motif!r}")
+    if contract not in (None, "unit-scores"):
+        raise ValueError(f"unknown attention numerical contract {contract!r}")
+    selected = MOTIFS[
+        (
+            ("flashd" if contract == "unit-scores" else "flash")
+            if motif == "auto"
+            else motif
+        )
+    ]
     if precise_scores:
-        return "precise scores requested"
-    if keys != 1024:
-        return "flash requires 1024 keys"
-    if dim != 64:
-        return "flash requires head width 64"
+        return None, "precise scores requested"
+    if selected.contract is not None and contract != selected.contract:
+        return None, f"{selected.name} requires the {selected.contract} contract"
+    if keys != selected.tk:
+        return None, f"{selected.name} requires {selected.tk} keys"
+    if dim != selected.dim:
+        return None, f"{selected.name} requires head width {selected.dim}"
     if not 1 <= heads <= 10:
-        return "flash requires 1..10 heads"
-    if not 128 <= queries <= 1024 or queries % 128:
-        return "flash requires 128..1024 queries in multiples of 128"
-    return None
+        return None, f"{selected.name} requires 1..10 heads"
+    if not selected.tq <= queries <= 1024 or queries % selected.tq:
+        return None, (
+            f"{selected.name} requires {selected.tq}..1024 queries "
+            f"in multiples of {selected.tq}"
+        )
+    if machine is not None and (machine.count("MG") < 4 or machine.count("VC") < 2):
+        return None, f"{selected.name} requires four MG and two VC roles"
+    reason = (
+        "unit-scores contract: direct score ring"
+        if selected.contract is not None
+        else "MX7 scores: sticky-overflow redo"
+    )
+    return selected, reason
 
 
 def kernel(heads, sq, tk_total, dim, tq=64, tk=64, precise_scores=False):

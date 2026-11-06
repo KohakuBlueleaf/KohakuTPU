@@ -1,6 +1,8 @@
 //! `step` (L2.PASS.007): a vector stream loop some memory view of which steps
 //! further a trip than a descriptor's `ainc` reaches becomes a node-scope
 //! loop around its `par`, one trip a run (`for t in T..T + 1` inside).
+//! Statistic folds with more operands than descriptors use the same row
+//! traversal; the vector image streams the operand axis (L2.PASS.014).
 
 use ktpu_l1::text::{fmt, Env, Expander, Reader, Stmt, Term, Val};
 
@@ -203,7 +205,9 @@ pub fn step(p: &Program, t: &Target, _search: &Search) -> Result<Program> {
                 }
             }
         }
-        if (far == 0 && !phased) || crate::mutant::on("l2.passes/step-near") {
+        let fold = s.kw("classed").is_none()
+            && vector::fold::chain(&lp.body).is_some_and(|c| c.loads.len() + 1 > t.descriptors);
+        if (far == 0 && !phased && !fold) || crate::mutant::on("l2.passes/step-near") {
             return Ok(vec![s]);
         }
         let carries = carried(&lp) && !crate::mutant::on("l2.passes/step-carried-ignored");
