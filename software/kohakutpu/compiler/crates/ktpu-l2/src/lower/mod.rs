@@ -57,17 +57,32 @@ pub fn lower_with_sync(
     search: &Search,
     sync: &events::BackendSyncFacts,
 ) -> Result<String> {
-    lower_bound(p, t, search, sync, &BTreeMap::new()).map(|(text, _)| text)
+    lower_bound(p, t, search, sync, &BTreeMap::new(), |_, _| Ok(())).map(|(text, _)| text)
+}
+
+/// Adapt lowered unit stages before dependency scheduling and slot allocation.
+/// The adapter supplies ordinary L1 streams and their complete resource accesses.
+pub fn lower_adapted(
+    p: &Program,
+    t: &Target,
+    search: &Search,
+    sync: &events::BackendSyncFacts,
+    adapt: impl FnOnce(&mut IndexMap<i64, Vec<Stage>>, &mut Vec<String>) -> Result<()>,
+) -> Result<String> {
+    lower_bound(p, t, search, sync, &BTreeMap::new(), adapt).map(|(text, _)| text)
 }
 
 /// Lower one bound graph, retaining the dependency edges used by node ordering.
 /// External ports share physical DRAM; private scratch retains symbolic identity.
+/// `adapt` rewrites lowered unit stages before dependency scheduling and slot
+/// allocation.
 pub fn lower_bound(
     p: &Program,
     t: &Target,
     search: &Search,
     sync: &events::BackendSyncFacts,
     bindings: &BTreeMap<String, i64>,
+    adapt: impl FnOnce(&mut IndexMap<i64, Vec<Stage>>, &mut Vec<String>) -> Result<()>,
 ) -> Result<(String, Vec<serde_json::Value>)> {
     let mut body = p.body()?;
     let stages = instances(&body)?;
@@ -290,6 +305,7 @@ pub fn lower_bound(
         }
         built_by.insert(n, built);
     }
+    adapt(&mut built_by, &mut images)?;
     for built in built_by.values_mut() {
         for stage in built {
             for access in &mut stage.accesses {
@@ -311,10 +327,7 @@ pub fn lower_bound(
             }
         }
     }
-    let mut edges = if nodes.len() > 1
-        || !bindings.is_empty()
-        || on("l2.lower/handshake-always")
-    {
+    let mut edges = if nodes.len() > 1 || !bindings.is_empty() || on("l2.lower/handshake-always") {
         order_nodes(&mut built_by)
     } else {
         Vec::new()

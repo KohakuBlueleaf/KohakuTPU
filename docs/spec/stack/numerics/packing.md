@@ -81,7 +81,7 @@ For vector quantisation, only integer finite=1 suppresses checking; deferred
 status with finite=1 is refused. This is caller proof, not tensor-value analysis.
 The ordinary unmapped vector path refuses checking under conversion version 1
 and checks contract-status/register/descriptor/EXP2D capabilities for version 2.
-(code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mod.rs:163-201;
+(code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mod.rs:178-216;
 software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:149-180)
 
 ## Vector schedule

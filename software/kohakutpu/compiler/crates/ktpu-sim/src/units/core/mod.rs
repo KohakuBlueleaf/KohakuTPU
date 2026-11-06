@@ -13,7 +13,7 @@ use crate::mem::{Dram, Word, WORD};
 use crate::num;
 use crate::num::mx7;
 use crate::rng::Rng;
-use crate::units::link::{Data, Landing, Target};
+use crate::units::link::{Data, Landing, Place, Target};
 use crate::R;
 
 pub const LANES: usize = 16;
@@ -752,8 +752,18 @@ impl Core {
                 let words = (0..addrs.len())
                     .map(|i| self.l1[(off + i) % L1_WORDS])
                     .collect();
+                let base = addrs[0];
+                let final_yx = (base >> 26) & 0xff;
+                let to = if final_yx != 0 {
+                    Target {
+                        mesh: Some(((base >> 24) & 3) as usize),
+                        place: Place::At((final_yx & 15) as u32, (final_yx >> 4) as u32),
+                    }
+                } else {
+                    p.to
+                };
                 self.outbox.push(Landing {
-                    to: p.to,
+                    to,
                     buf: p.buf,
                     at: (addrs[0] & 0xFFFF) as usize,
                     data: Data::Words(words),

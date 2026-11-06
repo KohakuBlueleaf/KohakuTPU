@@ -16,6 +16,7 @@ use crate::trace::buffer::{sl, spec, ALL};
 use crate::trace::control::At;
 use crate::trace::{fail, Buf, Cond, Idx, Trace, View, R};
 
+mod b_pass;
 pub mod destination;
 pub(crate) mod destination_walk;
 mod peer;

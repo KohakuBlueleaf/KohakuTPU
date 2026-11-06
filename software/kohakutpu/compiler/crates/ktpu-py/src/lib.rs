@@ -360,6 +360,7 @@ fn compile_split_graph<'py>(
             .signed(zero_sign.unwrap_or(ktpu_l2::ZeroSign::DEFAULT)),
         &ktpu_l2::lower::events::BackendSyncFacts::common(target.il_slots),
         &bindings,
+        |_, _| Ok(()),
     )
     .map_err(|e| Refused::new_err(e.to_string()))?;
     let module = backend

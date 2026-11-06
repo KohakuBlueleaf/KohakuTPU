@@ -86,6 +86,7 @@ pub struct Cluster {
     acc: Vec<[f64; SUBTILE]>,
     /// Words COUNT bursts landed on each side and no `recv` took yet.
     landed: [usize; 2],
+    assembly: [u8; ENTRY_BYTES],
 }
 
 impl Default for Cluster {
@@ -97,6 +98,7 @@ impl Default for Cluster {
             ],
             acc: vec![[0.0; SUBTILE]; SUBTILES],
             landed: [0; 2],
+            assembly: [0; ENTRY_BYTES],
         }
     }
 }
@@ -144,18 +146,35 @@ impl Cluster {
             }
             (0 | 1, Data::Words(words)) => {
                 let side = buf as usize;
-                for (i, entry) in words.as_chunks::<ENTRY_WORDS>().0.iter().enumerate() {
-                    let bytes: Vec<u8> = entry.iter().flatten().copied().collect();
-                    let slot = (at / ENTRY_WORDS + i) % (2 * BANK_ENTRIES);
-                    self.sides[side][slot] = Entry::read(&bytes, buf == 1);
+                let capacity = self.sides[side].len() * ENTRY_WORDS;
+                if at > capacity || words.len() > capacity - at {
+                    return Err("operand burst outside L1".into());
                 }
-                if count {
-                    self.landed[side] += words.len();
+                for (i, word) in words.iter().enumerate() {
+                    let off = at + i;
+                    let part = off % ENTRY_WORDS;
+                    self.assembly[part * WORD..(part + 1) * WORD].copy_from_slice(word);
+                    if part + 1 == ENTRY_WORDS {
+                        let slot = off / ENTRY_WORDS;
+                        self.sides[side][slot] = Entry::read(&self.assembly, buf == 1);
+                        if count {
+                            self.landed[side] += ENTRY_WORDS;
+                        }
+                    }
                 }
             }
             _ => return Err(format!("a burst to cluster buffer {buf} of the wrong kind")),
         }
         Ok(())
+    }
+
+    /// Canonical packed words of resident operand entries (ISA.MG.061).
+    pub fn operand_words(&self, b: bool, bank: usize, at: usize, n: usize) -> Vec<MemWord> {
+        let start = bank * BANK_ENTRIES + at;
+        self.sides[usize::from(b)][start..start + n]
+            .iter()
+            .flat_map(|entry| entry.write(b))
+            .collect()
     }
 
     /// An entry placed on a side's bank, as a burst would.

@@ -1,10 +1,11 @@
-//! L1 to L0: each single-node fixture's scheduled L1 against its packages.
-//! Interlink steps are machine/'s; a multi-node body stays on the L1 simulator.
+//! L1 to L0: scheduled single-node fixtures and encoded peer-transfer witnesses.
+//! The peer witnesses execute concurrent pre-engine packages.
 
 mod admission;
 mod attention_flash;
 mod attention_flashd;
 mod attention_srflash;
+mod b_pass;
 mod branch_certification;
 mod branch_ordering;
 #[path = "../common.rs"]

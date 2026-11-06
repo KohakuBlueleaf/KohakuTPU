@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use super::SplitOption;
 use crate::trace::{fail, R};
-use ktpu_machine::Machine;
+use ktpu_machine::{Machine, Refusal};
 
 #[derive(Clone, Debug)]
 pub struct CostEstimate {
@@ -16,6 +16,7 @@ pub struct CostEstimate {
     pub provenance: String,
     pub uncertainty: String,
     pub measured: bool,
+    pub delivery: Option<DeliveryCost>,
 }
 
 impl Default for CostEstimate {
@@ -28,8 +29,66 @@ impl Default for CostEstimate {
             provenance: "ktpu-l2 cost / L1 timed".into(),
             uncertainty: "unfitted".into(),
             measured: false,
+            delivery: None,
         }
     }
+}
+
+/// Emitted raw delivery demand. Bytes are transport bytes, not logical f16
+/// operand sizes; every remote copy and each traversed link is counted.
+#[derive(Clone, Debug, Default)]
+pub struct DeliveryCost {
+    pub sender_fills: u64,
+    pub sender_bytes: u64,
+    pub local_bytes: u64,
+    pub remote_bytes: u64,
+    pub route_bytes: u64,
+    pub remote_payloads: u64,
+    pub relay_words: u64,
+    pub bank_events: u64,
+    pub compute_cycles: u64,
+    pub private_fill_bytes: u64,
+}
+
+/// Phase-exclusive delivery is priced from its actual images and node streams,
+/// not from the independent M shards. Serializing the node budgets is an
+/// unfitted upper estimate of reduced overlap; transport and bank-event costs
+/// are added because the node-local timing model does not join remote clocks.
+pub fn price_delivery(
+    local_cycles: Vec<i64>,
+    delivery: DeliveryCost,
+    machine: &Machine,
+) -> R<CostEstimate> {
+    let word = u64::from(machine.die.word_bytes);
+    let transport = delivery.route_bytes.div_ceil(word)
+        + delivery.remote_payloads
+        + delivery.bank_events
+            * (2 * u64::from(machine.vc.word_cycles) + u64::from(machine.vc.wait_cycles))
+        + delivery.relay_words
+        + delivery.compute_cycles
+        + delivery.private_fill_bytes.div_ceil(word);
+    let transport = i64::try_from(transport)
+        .map_err(|_| Refusal::new("L2.COST.001", "delivery cost exceeds cycle range"))?;
+    let makespan = local_cycles
+        .iter()
+        .try_fold(
+            machine.vc.launch_front as i64 + transport,
+            |total, cycles| total.checked_add(*cycles),
+        )
+        .ok_or_else(|| Refusal::new("L2.COST.001", "delivery cost exceeds cycle range"))?;
+    Ok(CostEstimate {
+        makespan,
+        local_cycles,
+        dispatch_intercept: machine.vc.launch_front as i64,
+        revision: "raw-b-delivery-v1".into(),
+        provenance:
+            "emitted VC fills/sends, serialized node budgets, mesh-hop bytes and bank events".into(),
+        uncertainty:
+            "unfitted serial upper estimate; link slope one word/cycle; no measured crossover"
+                .into(),
+        measured: false,
+        delivery: Some(delivery),
+    })
 }
 
 #[derive(Clone, Debug)]

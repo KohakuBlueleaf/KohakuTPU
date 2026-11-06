@@ -363,7 +363,7 @@ impl Node<'_> {
                     cluster::Word::GemmTo {
                         sweep: Box::new(sweep),
                         output: cluster::Output {
-                            to: image::target(to)?,
+                            to: image::target(to, &self.env)?,
                             buf: opt("buf", 0)? as u32,
                             at: opt("l1", 0)? as usize,
                             n: d[0] as usize * d[1] as usize,
@@ -378,7 +378,7 @@ impl Node<'_> {
             "drain" if flag("fused") => cluster::Word::Fused,
             "drain" if s.kw("to").is_some() && flag("credit") => cluster::Word::DrainCreditTo {
                 output: cluster::Output {
-                    to: image::target(s.kw("to").ok_or("drain to=")?)?,
+                    to: image::target(s.kw("to").ok_or("drain to=")?, &self.env)?,
                     buf: opt("buf", 0)? as u32,
                     at: opt("l1", 0)? as usize,
                     n: opt("n", 0)? as usize,
@@ -387,7 +387,7 @@ impl Node<'_> {
                 },
             },
             "drain" if s.kw("to").is_some() => cluster::Word::DrainTo {
-                to: image::target(s.kw("to").ok_or("drain to=")?)?,
+                to: image::target(s.kw("to").ok_or("drain to=")?, &self.env)?,
                 buf: opt("buf", 0)? as u32,
                 at: opt("l1", 0)? as usize,
                 n: opt("n", 0)? as usize,

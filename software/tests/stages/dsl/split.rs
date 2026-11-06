@@ -1,6 +1,6 @@
 //! Kernel split contracts exercised by the DSL stage.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use ktpu_kernels::call_split;
@@ -282,9 +282,34 @@ fn simulate_named_tables(
     extra: &dyn Fn(i64) -> u16,
     tables: &[(&str, Vec<u8>)],
 ) -> (Vec<u8>, Vec<u32>) {
+    simulate_named_executable(kernel, None, output, input, extra, tables)
+}
+
+fn simulate_matmul_executable(
+    kernel: &ktpu_kernels::kernel::Kernel,
+    l1: Option<&str>,
+    input: &dyn Fn(bool, i64, i64, i64, i64) -> u16,
+    extra: &dyn Fn(i64) -> u16,
+) -> (Vec<u8>, Vec<u32>) {
+    simulate_named_executable(kernel, l1, "out", input, extra, &[])
+}
+
+fn simulate_named_executable(
+    kernel: &ktpu_kernels::kernel::Kernel,
+    l1: Option<&str>,
+    output: &str,
+    input: &dyn Fn(bool, i64, i64, i64, i64) -> u16,
+    extra: &dyn Fn(i64) -> u16,
+    tables: &[(&str, Vec<u8>)],
+) -> (Vec<u8>, Vec<u32>) {
     let text = ktpu_graph::lower(&kernel.graph).expect("L2 graph");
     let module = ktpu_l1::text::read(&text.text(), "matmul shares").expect("L2 text");
-    let body = module.body(&text.name, "l2").expect("body");
+    let executable =
+        l1.map(|source| ktpu_l1::text::read(source, "matmul delivery").expect("L1 motif"));
+    let body = match &executable {
+        Some(module) => module.body(&text.name, "l1").expect("L1 body"),
+        None => module.body(&text.name, "l2").expect("L2 body"),
+    };
     let mut binds = HashMap::new();
     let mut buffers = Vec::new();
     let mut end = 4096;
@@ -296,6 +321,15 @@ fn simulate_named_tables(
     }
     let mut mem = Dram::new(end as usize);
     for (name, b) in &buffers {
+        if l1.is_some()
+            && !kernel
+                .graph
+                .ports
+                .iter()
+                .any(|port| port.name == *name && port.role == ktpu_graph::Role::In)
+        {
+            continue;
+        }
         if let Some((_, bytes)) = tables.iter().find(|(table, _)| *table == name.as_str()) {
             mem.write(b.at, bytes).expect("table input");
         } else if let Layout::Mx7 { b: side, .. } = b.layout {
@@ -332,7 +366,67 @@ fn simulate_named_tables(
     let start = out.at as usize;
     mem.watch_writes(start..start + out.bytes() as usize)
         .expect("watch the output");
-    ktpu_sim::l2::run(&module, &text.name, &binds, &mut mem, 7).expect("simulated shares");
+    if let Some(executable) = &executable {
+        let card = machine();
+        let facts = Facts::of(&card);
+        let bound: BTreeMap<_, _> = binds
+            .iter()
+            .map(|(k, v)| (k.clone(), i128::from(*v)))
+            .collect();
+        let programs = ktpu_l1::build::programs(
+            executable,
+            &text.name,
+            &bound,
+            &card,
+            Some(card.nodes()),
+            None,
+        )
+        .expect("bound delivery programs");
+        let builder = ktpu_l1::build::Builder::new(&card).expect("package builder");
+        let packages: BTreeMap<_, _> = programs
+            .iter()
+            .map(|p| {
+                (
+                    p.mesh,
+                    builder
+                        .build(p, ktpu_l1::build::Opts::default())
+                        .expect("delivery package")
+                        .build(false, false),
+                )
+            })
+            .collect();
+        let target = ktpu_verify::Target::from_machine(&card, Some(card.nodes())).expect("target");
+        let findings = ktpu_verify::check(&[packages], &target);
+        assert!(!findings.iter().any(|f| f.kind.refuses()), "{findings:?}");
+        let mut simulator = ktpu_sim::machine::Machine::of_meshes(
+            mem,
+            card.nodes() as usize,
+            facts.vc as usize,
+            facts.mg as usize,
+            card.vc.regs as usize,
+            7,
+        );
+        for (kind, vc) in [
+            (ktpu_machine::UnitKind::Vc, true),
+            (ktpu_machine::UnitKind::Mg, false),
+        ] {
+            for (index, coord) in card.units(kind).iter().enumerate() {
+                simulator.places.insert(
+                    (coord.x(), coord.y()),
+                    if vc {
+                        ktpu_sim::units::link::Place::Vc(index)
+                    } else {
+                        ktpu_sim::units::link::Place::Mg(index)
+                    },
+                );
+            }
+        }
+        ktpu_sim::l1::run(executable, &text.name, &binds, &mut simulator)
+            .expect("simulated delivery motif");
+        mem = simulator.mem;
+    } else {
+        ktpu_sim::l2::run(&module, &text.name, &binds, &mut mem, 7).expect("simulated shares");
+    }
     let bytes = mem.read(out.at, out.bytes() as usize).expect("C").to_vec();
     (bytes, mem.write_counts().expect("write census").to_vec())
 }
@@ -373,6 +467,88 @@ fn matmul_output_splits_preserve_k_order_and_write_each_word_once() {
                 assert!(
                     counts.iter().all(|&n| n == 1),
                     "{p} nodes, {id}, word {word}: {counts:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn matmul_b_pass_preserves_k_order_and_writes_each_word_once() {
+    let m = machine();
+    let args = json!({
+        "mm": {"made_by": {"gen": "matmul.plan", "args": {
+            "bt": 1, "m": 76, "n": 64, "k": 256
+        }}},
+        "e": {"nodes": [{"load": 0}, {"load": 1}, {"op": "add", "args": [0, 1]}], "root": 2},
+        "extras": [{"kind": "col", "dtype": "f16", "offset": 0, "pitch": 0, "rows": 0}],
+        "out": {"kind": "full", "dtype": "f16", "offset": 0, "pitch": 64, "rows": 76},
+        "ring_depth": 2, "tail_bands": true
+    });
+    let input = |side, group, block, lane, k| {
+        let tag = group * 71 + block * 29 + lane * 13 + k * 3 + i64::from(side);
+        0x2400 | (tag as u16 & 0x3ff) | (((tag / 5) as u16 & 1) << 15)
+    };
+    let extra = |i| 0x2800u16 | ((i * 37) as u16 & 0x3ff);
+    let baseline = ktpu_kernels::call("matmul.mm_kernel", &args, &m).expect("P=1");
+    let (single, _) = simulate_matmul_inputs(&baseline, &input, &extra);
+    let single = decoded(&single);
+    let value = |side, row: i64, k: i64| {
+        ktpu_sim::num::value(ktpu_sim::num::from_f16(input(
+            side,
+            row / 4,
+            k / 32,
+            row % 4,
+            k % 32,
+        ))) as f32
+    };
+    let mut reference = Vec::new();
+    for row in 0..76 {
+        for col in 0..64 {
+            reference.push(
+                (0..256)
+                    .map(|k| value(false, row, k) * value(true, col, k))
+                    .sum::<f32>()
+                    + ktpu_sim::num::value(ktpu_sim::num::from_f16(extra(col))) as f32,
+            );
+        }
+    }
+    for grant in [vec![3, 1], vec![3, 1, 0, 2]] {
+        let p = grant.len();
+        let mut req = request(&m);
+        req.nodes = NodeSet::new(grant, &m).expect("grant");
+        req.force = Some("m".into());
+        let plain = call_split("matmul.mm_kernel", &args, &req, &m).expect("M split");
+        let (want, _) = simulate_matmul_inputs(&plain.kernel, &input, &extra);
+        let ids = if p == 4 {
+            vec!["b-pass", "b-pass-relay", "b-pass-2x2", "b-pass-2x2-relay"]
+        } else {
+            vec!["b-pass", "b-pass-relay"]
+        };
+        for id in ids {
+            req.force = Some(id.into());
+            let plan = call_split("matmul.mm_kernel", &args, &req, &m).expect("B delivery");
+            let chosen = ktpu_kernels::split::cost::select_split(
+                vec![plain.split.clone(), plan.split.clone()],
+                None,
+            )
+            .expect("priced alternatives");
+            assert_eq!(chosen.id, "m", "raw delivery can lose for a short M share");
+            let executable = plan.l1.as_deref().expect("raw peer delivery executable");
+            let (actual, writes) =
+                simulate_matmul_executable(&plan.kernel, Some(executable), &input, &extra);
+            let values = decoded(&actual);
+            println!(
+                "{id} P={p}: against P=1: {}; against f32: {}; P=1 against f32: {}",
+                error_statistics_columns(&values, &single, 64),
+                error_statistics_columns(&values, &reference, 64),
+                error_statistics_columns(&single, &reference, 64),
+            );
+            assert_eq!(actual, want, "{id} at P={p} against M split");
+            for (word, counts) in writes.chunks(32).enumerate() {
+                assert!(
+                    counts.iter().all(|&n| n == 1),
+                    "{id} P={p}, word {word}: {counts:?}"
                 );
             }
         }
@@ -527,6 +703,10 @@ fn decoded(bytes: &[u8]) -> Vec<f32> {
 }
 
 fn error_statistics(actual: &[f32], reference: &[f32]) -> String {
+    error_statistics_columns(actual, reference, 32)
+}
+
+fn error_statistics_columns(actual: &[f32], reference: &[f32], columns: usize) -> String {
     let mut errors: Vec<_> = actual
         .iter()
         .zip(reference)
@@ -539,12 +719,20 @@ fn error_statistics(actual: &[f32], reference: &[f32]) -> String {
         .max_by(|(_, a), (_, b)| a.total_cmp(b))
         .map(|(i, _)| i)
         .expect("nonempty result");
-    let relative = actual
+    let mut relative: Vec<_> = actual
         .iter()
         .zip(reference)
         .filter(|(_, b)| **b != 0.0)
         .map(|(a, b)| ((a - b) / b).abs())
-        .fold(0.0f32, f32::max);
+        .collect();
+    relative.sort_by(f32::total_cmp);
+    let rel_max = relative.last().copied().unwrap_or(0.0);
+    let rel_mean = relative.iter().sum::<f32>() / relative.len().max(1) as f32;
+    let rel_median = if relative.is_empty() {
+        0.0
+    } else {
+        (relative[(relative.len() - 1) / 2] + relative[relative.len() / 2]) / 2.0
+    };
     let zero = actual
         .iter()
         .zip(reference)
@@ -555,12 +743,12 @@ fn error_statistics(actual: &[f32], reference: &[f32]) -> String {
     let rms = (errors.iter().map(|x| x * x).sum::<f32>() / errors.len() as f32).sqrt();
     errors.sort_by(f32::total_cmp);
     format!(
-        "abs_max={} mean={mean} median={} p95={} rms={rms} rel_max={relative} zero_ref_abs={zero} nonfinite={nonfinite} worst=({}, {})",
+        "abs_max={} mean={mean} median={} p95={} rms={rms} rel_max={rel_max} rel_mean={rel_mean} rel_median={rel_median} zero_ref_abs={zero} nonfinite={nonfinite} worst=({}, {})",
         errors[errors.len() - 1],
-        errors[errors.len() / 2],
+        (errors[(errors.len() - 1) / 2] + errors[errors.len() / 2]) / 2.0,
         errors[errors.len() * 95 / 100],
-        worst / 32,
-        worst % 32,
+        worst / columns,
+        worst % columns,
     )
 }
 

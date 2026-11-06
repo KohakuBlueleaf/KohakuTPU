@@ -167,6 +167,7 @@ pub(super) fn lower_events(
                     if !part.starts_with("order:")
                         && !part.starts_with("ready:")
                         && !part.starts_with("complete:")
+                        && !part.starts_with("bready:")
                     {
                         continue;
                     }
@@ -191,6 +192,8 @@ pub(super) fn lower_events(
                             EventKind::MemoryRelease
                         } else if fields[0] == "complete" {
                             EventKind::PeerComplete
+                        } else if fields[0] == "bready" {
+                            EventKind::BankCredit
                         } else {
                             EventKind::AccumulatorReady
                         },

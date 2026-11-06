@@ -1,6 +1,7 @@
 //! The L0 simulator: a bound package's steps on the machine, its words read
 //! back by the ISA's formats (`docs/spec/stack/l0/`).
 
+pub mod card;
 mod mover;
 pub mod words;
 

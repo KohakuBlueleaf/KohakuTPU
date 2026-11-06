@@ -428,6 +428,41 @@ pub fn split_options(
             },
         });
     }
+    if p > 1 && mm.kp > 0 && shape.class.is_none() {
+        let assignments: Vec<_> = options
+            .iter()
+            .filter_map(|option| match option.axis {
+                SplitAxis::M => Some((option.clone(), p, 1)),
+                SplitAxis::MN { pm, pn } if pm > 1 && pn > 1 => Some((option.clone(), pm, pn)),
+                _ => None,
+            })
+            .collect();
+        for (assignment, pm, pn) in assignments {
+            for delivery in [
+                crate::split::Delivery::Direct,
+                crate::split::Delivery::Relay,
+            ] {
+                let mut option = assignment.clone();
+                let suffix = match delivery {
+                    crate::split::Delivery::Direct => "",
+                    crate::split::Delivery::Relay => "-relay",
+                };
+                option.id = if pn == 1 {
+                    format!("b-pass{suffix}")
+                } else {
+                    format!("b-pass-{pm}x{pn}{suffix}")
+                };
+                option.axis = SplitAxis::BPass { pm, pn, delivery };
+                option.legality.clauses.extend([
+                    "VC raw-word fill and CU_DATA buf=1 preserve the producer's MX7B layout".into(),
+                    "private A and shared-A prerequisites retire before B-ready; COUNT is operand-B".into(),
+                    "VC0 owns two half-L1 buffers during MG stages; all sends retire before reuse".into(),
+                    "bank-generation ready/credit tokens alternate on receiver-scoped leased FIFOs".into(),
+                ]);
+                options.push(option);
+            }
+        }
+    }
     if matches!(p, 2 | 4) && mm.kp > 0 && shape.class.is_none() {
         let mut single = request.clone();
         single.nodes = crate::split::NodeSet::new(vec![request.nodes.ids()[0]], mach)?;
@@ -740,6 +775,13 @@ pub(crate) fn kernel_with_timing(
             })?
     };
     let kernel = build_option(shape, request, &split, mach)?;
+    let l1 = if matches!(split.axis, SplitAxis::BPass { .. }) {
+        let emitted = b_pass::emit(&kernel, &split, request, mach)?;
+        emitted.manifest(&mut split, request);
+        Some(emitted.text)
+    } else {
+        None
+    };
     if price_unsplit && request.nodes.ids().len() == 1 {
         let features = crate::split::CostFeatures::of_shares(std::slice::from_ref(&kernel), mach)?;
         split = crate::split::cost::price_option(split, &features, &crate::split::LocalTiming)?;
@@ -754,7 +796,7 @@ pub(crate) fn kernel_with_timing(
     validate_ownership(&split.output)?;
     Ok(PlannedKernel {
         kernel,
-        l1: None,
+        l1,
         split,
         request: request.clone(),
     })
@@ -784,7 +826,15 @@ fn price_options(shape: &Shape<'_>, request: &SplitRequest, mach: &Machine) -> R
 
     let options = split_options(shape, request, mach)?;
     let mut priced = Vec::new();
-    for option in options {
+    for mut option in options {
+        if matches!(option.axis, SplitAxis::BPass { .. }) {
+            let kernel = build_option(shape, request, &option, mach)?;
+            let emitted = b_pass::emit(&kernel, &option, request, mach)?;
+            emitted.manifest(&mut option, request);
+            option.cost = emitted.price(&kernel.graph.name, request, mach)?;
+            priced.push(option);
+            continue;
+        }
         let mut kernels = Vec::new();
         if option.conversions != 0 || matches!(option.axis, SplitAxis::K) {
             let whole = build_option(shape, request, &option, mach)?;

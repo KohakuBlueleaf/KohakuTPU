@@ -21,6 +21,12 @@ fn base_of(t: &Term, env: &Env) -> R<i64> {
     for a in &args[1..] {
         match a {
             Term::Kw(k, v) if k == "count" => base |= int(v, env)? << PEER_COUNT_BIT,
+            Term::Kw(k, v) if k == "mesh" => base |= int(v, env)? << 24,
+            Term::Kw(k, v) if k == "fin" || k == "ack" => {
+                let (x, y) = pair(v, env)?;
+                let shift = if k == "fin" { 26 } else { 16 };
+                base |= ((y << 4) | x) << shift;
+            }
             other => return Err(format!("a peer base's {}", fmt(other))),
         }
     }
@@ -105,8 +111,15 @@ fn waiter(t: &Term) -> R<Waiter> {
     }
 }
 
-/// `vc[i]`, `mg[i]` or `meshM.mg[i]`, as a burst names its receiver.
-pub fn target(t: &Term) -> R<Target> {
+/// A coordinate pair or named unit, as a burst names its receiver (L1.IMG.042).
+pub fn target(t: &Term, env: &Env) -> R<Target> {
+    if matches!(t, Term::Tuple(_)) {
+        let (x, y) = pair(t, env)?;
+        return Ok(Target {
+            mesh: None,
+            place: Place::At(x as u32, y as u32),
+        });
+    }
     let text = fmt(t);
     let (mesh, unit) = match text.strip_prefix("mesh").and_then(|r| r.split_once('.')) {
         Some((m, u)) => (
@@ -155,7 +168,7 @@ fn statement(st: &Stmt, env: &Env, out: &mut Vec<Inst>) -> R<()> {
             let rel = pos[3..].iter().any(|p| p.as_name() == Some("rel"));
             let peer = match st.kw("to") {
                 Some(t) => Some(Peer {
-                    to: target(t)?,
+                    to: target(t, env)?,
                     buf: opt(st, "buf", env, 0)? as u32,
                 }),
                 None => None,
@@ -176,7 +189,7 @@ fn statement(st: &Stmt, env: &Env, out: &mut Vec<Inst>) -> R<()> {
             }
         }
         "vpost" => Inst::Post {
-            to: target(pos[0])?,
+            to: target(pos[0], env)?,
             n: opt(st, "n", env, 0)? as usize,
         },
         "vsync" => {
