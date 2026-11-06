@@ -433,7 +433,7 @@ def fig_targets(rows, out):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--csv", required=True)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()

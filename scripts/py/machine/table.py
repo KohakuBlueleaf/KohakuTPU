@@ -957,6 +957,13 @@ def mover_lead(img):
     return ungated and skid, f"{src}; scripts/tcl/{img.ver} KOHAKU_IL_MVSKID"
 
 
+def unit_flaw(img, kind, path, flawed):
+    """A positive RTL flaw reading, exposed only by an instantiated unit kind."""
+    present, source = flaw_line(path, flawed)
+    units, inventory = die_units(img, kind)
+    return present and bool(units), f"{source}; {inventory}"
+
+
 #: Every silicon flaw: (id, unit, summary, witness, handling, fix, present).
 FLAWS = [
     (
@@ -988,15 +995,23 @@ FLAWS = [
         (
             "A one-flit outbound packet is read from u_enc two edges after its"
             " write, before XPM fwft shows it: the previous flit goes twice and"
-            " the real one stays queued as the next packet's first flit."
+            " the real one stays queued as the next packet's first flit. Both"
+            " initial load and refill sample/pop without FIFO readiness."
         ),
         (
             "tests/sysnode/mag_ilink_tail_tb.v (xsim on the real cell, Verilator"
             " on the fwft shim); v9t8 card, far vector peer drain of 32 words"
             " (ISSUES 14)"
         ),
-        "ktpu-l1 lower/image/desc.rs far_splits (L1.VC.010)",
-        "OB_HDR and OB_DAT load ltx_dat and pop u_enc only when !ef_empty.",
+        (
+            "ktpu-l1 lower/image/desc.rs far_splits (L1.VC.010) covers recognized"
+            " structured far-drain tails, not arbitrary raw flits or head gaps."
+        ),
+        (
+            "An elastic output stage: sample and pop only a valid FIFO head,"
+            " hold data/last while stalled, and advance completion only on"
+            " valid accepted beats."
+        ),
         lambda i: flaw_line(ILINK, r"W_FL:\s+ltx_dat <= ef_q;"),
     ),
     (
@@ -1025,14 +1040,19 @@ FLAWS = [
         "F-004",
         "dispatch engine (dispatch_engine.v)",
         (
-            "A WAIT compares its count modulo the counter: a target more than"
-            " half the range behind reads as ahead and holds forever."
+            "A WAIT compares its count modulo the counter: a completed target"
+            " at least half the range behind reads as ahead and holds while the"
+            " count is unchanged."
         ),
         (
             "tests/sysnode/dispatch_engine_tb.v: a WAIT half the range behind"
             " holds; ISSUES 12 (v9t8 card)"
         ),
-        "ka-package engine.rs Stream::wait; firmware de_wait",
+        (
+            "ka-package engine.rs Stream::wait and firmware de_wait clamp known"
+            " issued frontiers; OS graph lowering shares that clamp; raw ENGINE is not a"
+            " complete epoch/window proof. See docs/spec/stack/flaws.md."
+        ),
         "Release a WAIT against the issued count, not the counter's sign.",
         lambda i: flaw_line(DISPATCH, r"wire\s+wait_ok = !behind\[CTR_W-1\];"),
     ),
@@ -1074,6 +1094,202 @@ FLAWS = [
         ),
         "Reset the node-facing interlink state with the processor reset.",
         lambda i: flaw_line(MAG, r"\) u_il \(", r"\.resetn\(resetn\)"),
+    ),
+    (
+        "F-008",
+        "RV64 load window (rv64_load_win.v)",
+        (
+            "The 256-byte console uses equal 8-bit pointers for empty and has"
+            " no full state: 256 unconsumed writes alias empty; later writes"
+            " overwrite unread bytes without reporting loss."
+        ),
+        (
+            "Source witness: from reset, push 256 bytes without a host pop;"
+            " R_CONS valid clears. Push one more and only that byte is"
+            " visible. Not an executed bench."
+        ),
+        (
+            "None: the load-window console is a best-effort debug channel."
+            " Queue stdout goes through the queue service's own sink and the"
+            " OS keeps a DRAM log; neither uses this FIFO."
+        ),
+        (
+            "Track occupancy/full separately from empty and expose loss or"
+            " backpressure; define simultaneous push/pop and overflow"
+            " behavior."
+        ),
+        lambda i: flaw_line(
+            "src/kohakuaccel/sysnode/cpu/rv64_load_win.v",
+            r"wire\s+con_empty = \(con_wr == con_rd\);",
+        ),
+    ),
+    (
+        "F-009",
+        "matmul FP22 accumulator (mx_fpacc.v)",
+        (
+            "Opposite-sign nonzero operands with discarded alignment residue"
+            " round away from zero when the truncated difference is exactly a"
+            " retained-format midpoint. Before saturation the result differs"
+            " by one FP22 ULP from nearest-even, with exact error at most"
+            " 16639/32768 ULP. A rounding carry into exponent 127 invokes"
+            " saturation and can amplify the difference to 32767 ULP of the"
+            " correct exponent-126 result. These are single-add bounds, not"
+            " accumulation bounds."
+        ),
+        (
+            "Source arithmetic witness: MW=14, (sign, exponent, fraction)"
+            " operands (0,63,1) and (1,48,1) produce (0,63,1) instead of"
+            " (0,63,0); swapping operands or negating both preserves the"
+            " magnitude error. Not an executed RTL bench."
+        ),
+        (
+            "Accuracy flaw: no software handling. Avoiding data-dependent"
+            " subtraction/rounding inside the accumulator requires extra"
+            " computation or changing the numerical algorithm; no cycle-free"
+            " lowering preserves all inputs."
+        ),
+        (
+            "Carry the sign of discarded alignment residue through"
+            " subtraction, normalization and nearest-even rounding in both"
+            " split and reference add paths."
+        ),
+        lambda i: unit_flaw(
+            i,
+            "MG",
+            "src/kohakutpu/matmul/mx_fpacc.v",
+            r"wire \[SW:0\] sum = sub_i \? \(bg_i - sh_i\) : \(bg_i \+ sh_i\);",
+        ),
+    ),
+    (
+        "F-010",
+        "SIMT scalar load decode (kht_predec.v)",
+        (
+            "Custom SMOV funct7=2 (SLD) is admitted by the family decode but"
+            " selects neither a scalar register write nor a memory request;"
+            " the instruction retires without loading its destination."
+        ),
+        (
+            "Source witness: assemble sld s2,s1 followed by a use of s2 with"
+            " distinct old and memory values. tests/pe/tools/rv_simt_isa.py"
+            " defines SMOV funct7=2. No RTL witness was executed."
+        ),
+        (
+            "No generated TPU path: L1 resolves vc/mg/sr only and software"
+            " has no SIMT shader emitter. The PE assembler/reference tools can"
+            " construct the instruction; they are not a protected hardware"
+            " execution path."
+        ),
+        (
+            "Implement scalar load request, response, destination and fault"
+            " handling, or report the unsupported encoding through the"
+            " existing illegal-instruction fault."
+        ),
+        lambda i: unit_flaw(
+            i,
+            "SIMT",
+            "src/kohakumpe/simt/kht_predec.v",
+            r"wire is_smov = is_khg && \(f3 == KHT_F3_SMOV\);",
+        ),
+    ),
+    (
+        "F-011",
+        "SIMT barrier decode (kht_predec.v, kht_core.v)",
+        (
+            "BAR is accepted and sets C_BAR, but the core has no consumer of"
+            " that control: the instruction retires without workgroup arrival,"
+            " release or memory ordering."
+        ),
+        (
+            "Source witness: two waves with one producer delayed past the"
+            " other's BAR can pass the purported barrier independently. No RTL"
+            " witness was executed."
+        ),
+        (
+            "No generated TPU path: L1 resolves vc/mg/sr only and software"
+            " has no SIMT shader emitter. Package and OS barriers are not SIMT"
+            " BAR instructions."
+        ),
+        (
+            "Implement workgroup arrival/release with memory ordering, or"
+            " fault BAR as unsupported through the existing"
+            " illegal-instruction path."
+        ),
+        lambda i: unit_flaw(
+            i,
+            "SIMT",
+            "src/kohakumpe/simt/kht_predec.v",
+            r"assign ctrl\[C_BAR\]\s*= is_div && \(f7 == KHT_DIV_BAR\);",
+        ),
+    ),
+    (
+        "F-012",
+        "vector fill completion tracker (v2_core.v, v2_fifo.v)",
+        (
+            "VFILL admission does not reserve room in the 16-record"
+            " completion FIFO. With delayed ordered responses, a seventeenth"
+            " unretired fill overwrites a length record; completion accounting"
+            " no longer matches issued fills."
+        ),
+        (
+            "Source witness: accept requests for a 256-word fill and sixteen"
+            " one-word fills while withholding responses, then release"
+            " responses in order. The length tracker has only sixteen slots."
+            " Not an executed bench."
+        ),
+        (
+            "ktpu-l2 fill throttle (L2.VC.027): a front-end fill sync before"
+            " every generated fill that would lose a completion entry by"
+            " ktpu_machine::fill_lost (ISA.VC.193); a descriptor set outside"
+            " the image counts as a length equal only to its own register's."
+            " The verifier checks the same rule. Raw vector words bypass it."
+        ),
+        (
+            "Reserve a completion record before f_take and release it on"
+            " retirement, accounting for simultaneous retirement/admission and"
+            " the fill pending ft_push; never drop a full push."
+        ),
+        lambda i: unit_flaw(
+            i,
+            "VC",
+            "src/kohakutpu/vector2/v2_core.v",
+            r"\.pop\(ft_pop\), \.dout\(ft_q\), \.empty\(ft_e\), \.full\(\), \.count\(\)",
+        ),
+    ),
+    (
+        "F-013",
+        "SRU retained job admission (sru_core.v, sru_cu.v)",
+        (
+            "CFG retains omitted words and RUN starts without checking the"
+            " effective image. No-pool arithmetic finalise can stall, disabled"
+            " reciprocal acts as MOV, and disabled MX7 output disagrees with"
+            " shell word counts. Unsupported profile/geometry combinations are"
+            " not faulted at job acceptance."
+        ),
+        (
+            "Source witness: with FIN_RCP=0, store an unused reciprocal"
+            " finalise entry, then update only FINLEN to execute it with K0=2:"
+            " the retained reciprocal moves 2 instead of producing 0.5. Raw"
+            " OUT=2 on HAS_MX7=0 gives mismatched core/shell output counts."
+            " Not an executed bench."
+        ),
+        (
+            "The compiler owns each SRU's configuration: ktpu-l1 holds the"
+            " words a kernel has written and admission validates the effective"
+            " executed configuration. Raw SruInst::Config words and runtime"
+            " debug writes are outside it."
+        ),
+        (
+            "Validate the complete retained configuration before starting"
+            " core or walkers; return one existing execution fault completion"
+            " with no transfers or row writes, preserve configuration, and"
+            " admit the next valid job."
+        ),
+        lambda i: unit_flaw(
+            i,
+            "SR",
+            "src/kohakutpu/sru/sru_cu.v",
+            r"\.exec_done\(exec_done\), \.exec_result\(exec_result\), \.exec_fault\(1'b0\)",
+        ),
     ),
 ]
 

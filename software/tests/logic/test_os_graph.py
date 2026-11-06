@@ -192,3 +192,30 @@ def test_a_session_refuses_a_data_arena_off_a_write_burst_line():
     assert ResidentGraph(Mailbox(0x1000 + DATA_ALIGN), 0).data_pa == 0x1100
     with pytest.raises(ValueError, match="task_capacity"):
         ResidentGraph(Mailbox(0x1000 + DATA_ALIGN // 2), 0)
+
+
+@pytest.mark.parametrize("present", [False, True])
+def test_os_waits_remain_reachable_after_a_half_counter_window(monkeypatch, present):
+    # Keep one stream so the counter epoch cannot reset at a task boundary.
+    monkeypatch.setattr(A, "KOS_DE_MAX_ENTRIES", 100000)
+    sent = (A.KOS_DE_CTR_MASK >> 1) + 2
+    raw = bytearray(package([step(D, 0, sent), step(AWAIT, 0, 1), step(A.KA_OP_END)]))
+    # Keep the requested credit target nonpositive across the first half window.
+    unit_at = struct.calcsize(A.PKG_HDR_FMT)
+    struct.pack_into("<Q", raw, unit_at + 8, sent + 1)
+    graph = Graph(de_stream=True, de_fetch=False, wait_window=present)
+    graph.package(bytes(raw), [], UNITS)
+    waits = [
+        value & A.KOS_DE_CTR_MASK
+        for task in sorted(graph.streams)
+        for code, value in entries(graph, task)
+        if code == A.KOS_DE_WAIT_CODE and value >> 56 == 0
+    ]
+    if present:
+        # Every emitted WAIT must release on the flawed modular comparator.
+        play(graph)
+        assert waits[-2] > 1
+    else:
+        # A fixed engine can retire the original target without strengthening.
+        assert waits == [1, sent]
+        assert all(want <= sent for want in waits)

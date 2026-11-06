@@ -157,7 +157,7 @@ def run_case(name, dram, launch, defines, arg, wall, env=None):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "--only", nargs="*", default=None, help="shader short names, e.g. smoke diverge"
     )

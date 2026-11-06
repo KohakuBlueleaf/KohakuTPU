@@ -60,6 +60,7 @@ pub struct Sim<'a> {
     deferring: bool,
     adds: Vec<(i64, Data)>,
     drains: Vec<(i64, Word)>,
+    maps: map::Cache,
 }
 
 /// Runs `fn name.l2`, a buffer `binds` names placed there and the others past
@@ -84,6 +85,7 @@ pub fn run(module: &Module, name: &str, binds: &Binds, mem: &mut Dram, seed: u64
         deferring: false,
         adds: Vec::new(),
         drains: Vec::new(),
+        maps: map::Cache::default(),
     };
     sim.block(&body.stmts)
 }

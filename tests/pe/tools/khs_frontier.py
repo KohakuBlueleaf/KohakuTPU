@@ -40,7 +40,7 @@ RUN = ROOT / "tests" / "pe" / "tools" / "khs_run.py"
 #: vreg_prim, float, npart. The three width fields USED TO BE muls/shift/perm;
 #: they are now unit COUNTS where 0 is not built. NPART is ARCHITECTURAL -- float
 #: addition does not associate, so two counts compute different answers.
-CONFIGS = {
+_INTEGER_CONFIGS = {
     # the width sweep: at equal everything else
     "s2": (2, 8, 2, 1024, 2, 2, 2, 0, "yes", "distributed"),
     "s4": (4, 8, 2, 1024, 4, 4, 4, 0, "yes", "distributed"),
@@ -62,8 +62,7 @@ CONFIGS = {
     # every width at its narrowest that is still built
     "s8-min": (8, 4, 1, 1024, 1, 0, 0, 0, "yes", "distributed"),
 }
-for _n, _c in list(CONFIGS.items()):
-    CONFIGS[_n] = _c + (0, 0)
+CONFIGS = {name: config + (0, 0) for name, config in _INTEGER_CONFIGS.items()}
 
 #: The float tier. `s8-floatonly` answers whether a float-only SIMD PE is a thing;
 #: `s8-float-a4` prices the rotation contract in accumulators.
@@ -244,7 +243,7 @@ def run_gate(cfg, wall):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--csv", required=True)
     ap.add_argument("--work", required=True)
     ap.add_argument("--config", required=True, choices=sorted(CONFIGS))

@@ -68,9 +68,11 @@ impl Walk<'_> {
             self.front = self.front.max(self.finished(FILL, slack));
         }
         self.enter(FILL, None);
-        let name = st.positional().first().map(|t| fmt(t));
-        let words = name.and_then(|n| self.words.get(&n).copied());
-        let words = words.unwrap_or(1);
+        // A descriptor set outside the image has a length the walk does not
+        // know: one stand-in per register, equal only to that register's.
+        let name = st.positional().first().map(|t| fmt(t)).unwrap_or_default();
+        let unknown = -1 - self.words.len() as i64;
+        let words = *self.words.entry(name).or_insert(unknown);
         let held = self.fills + 1 - self.queue[FILL];
         let slot = (self.fills % self.depth) as usize;
         let shadowed = std::mem::replace(&mut self.track[slot], words);

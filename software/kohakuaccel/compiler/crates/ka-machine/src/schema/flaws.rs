@@ -1,6 +1,6 @@
 //! `flaws`: the image's silicon flaws (`docs/spec/stack/flaws.md`). Each is a
-//! defect of the RTL the image was built from, recorded with its witness
-//! bench and an RTL fix; the stack works around it while `present`.
+//! defect of the RTL the image was built from, recorded with its evidence,
+//! handling status and an RTL fix.
 
 use super::Runtime;
 use serde::{Deserialize, Serialize};
@@ -9,16 +9,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Flaw {
-    /// Whether this image carries the flaw, read from its RTL and defines.
-    /// The handling keys on it.
+    /// Whether this image carries the flaw, read from its RTL and inventory.
     pub present: bool,
     /// The block that has it.
     pub unit: Runtime<String>,
-    /// What goes wrong, in one sentence.
+    /// What goes wrong.
     pub summary: Runtime<String>,
-    /// The bench that shows it.
+    /// The bench or source reasoning that shows it.
     pub witness: Runtime<String>,
-    /// Where the stack works around it.
+    /// Software handling, accuracy disposition or an open requirement.
     pub handling: Runtime<String>,
     /// The RTL change that removes it.
     pub fix: Runtime<String>,
@@ -37,8 +36,7 @@ pub struct Flaws {
     /// A dispatch engine RING has no room check.
     #[serde(rename = "F-003")]
     pub f003: Flaw,
-    /// A dispatch engine WAIT on a count more than half its range behind
-    /// holds forever.
+    /// A completed WAIT at least half the counter range behind reads as ahead.
     #[serde(rename = "F-004")]
     pub f004: Flaw,
     /// Under Sv39 a data access right after a multi-cycle one reuses its
@@ -51,11 +49,29 @@ pub struct Flaws {
     /// A node's interlink slots and sent count outlive its processor reset.
     #[serde(rename = "F-007")]
     pub f007: Flaw,
+    /// Console pointer equality aliases full with empty.
+    #[serde(rename = "F-008")]
+    pub f008: Flaw,
+    /// FP22 subtraction treats discarded residue as positive sticky.
+    #[serde(rename = "F-009")]
+    pub f009: Flaw,
+    /// SIMT SLD is admitted without a scalar load path.
+    #[serde(rename = "F-010")]
+    pub f010: Flaw,
+    /// SIMT BAR has no arrival/release consumer.
+    #[serde(rename = "F-011")]
+    pub f011: Flaw,
+    /// Vector fill admission does not reserve a completion-tracker slot.
+    #[serde(rename = "F-012")]
+    pub f012: Flaw,
+    /// SRU RUN does not admit the complete retained configuration.
+    #[serde(rename = "F-013")]
+    pub f013: Flaw,
 }
 
 impl Flaws {
     /// `(id, flaw)` of every flaw, in id order.
-    pub fn all(&self) -> [(&'static str, &Flaw); 7] {
+    pub fn all(&self) -> [(&'static str, &Flaw); 13] {
         [
             ("F-001", &self.f001),
             ("F-002", &self.f002),
@@ -64,6 +80,12 @@ impl Flaws {
             ("F-005", &self.f005),
             ("F-006", &self.f006),
             ("F-007", &self.f007),
+            ("F-008", &self.f008),
+            ("F-009", &self.f009),
+            ("F-010", &self.f010),
+            ("F-011", &self.f011),
+            ("F-012", &self.f012),
+            ("F-013", &self.f013),
         ]
     }
 }

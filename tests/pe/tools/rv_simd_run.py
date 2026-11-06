@@ -29,7 +29,7 @@ ROW = re.compile(
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--csv", help="append the rows here as well")
     ap.add_argument(
         "--rtl",

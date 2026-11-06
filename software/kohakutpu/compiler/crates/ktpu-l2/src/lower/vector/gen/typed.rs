@@ -217,13 +217,11 @@ impl Event {
 }
 
 /// Explicit blocks become statement bodies after allocation; symbolic operands stay unresolved.
-pub fn nest(events: &[Event]) -> Result<Vec<Stmt>> {
+pub fn nest(events: Vec<Event>) -> Result<Vec<Stmt>> {
     let mut stack: Vec<Vec<Stmt>> = vec![Vec::new()];
     for event in events {
         match event {
-            Event::Op { stmt, .. } | Event::Fixed(stmt) => {
-                stack.last_mut().unwrap().push(stmt.clone())
-            }
+            Event::Op { stmt, .. } | Event::Fixed(stmt) => stack.last_mut().unwrap().push(stmt),
             Event::Open => {
                 let parent = stack.last().unwrap().last().ok_or("block has no header")?;
                 if !matches!(parent.op.as_str(), "loop" | "skipz") || !parent.body.is_empty() {

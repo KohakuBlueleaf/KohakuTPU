@@ -80,12 +80,12 @@ def per_die(rows, p):
         elif inst.startswith("("):
             for die in dies:
                 add(die, vals, 1.0 / p)
-        elif re.match(r"g_stn\[(\d+)\]", inst):
+        elif station := re.match(r"g_stn\[(\d+)\]", inst):
             # the station bus: station s is die s; a link's two halves
             # straddle the boundary, half to each die
-            add(dies[int(re.match(r"g_stn\[(\d+)\]", inst).group(1))], vals)
-        elif re.match(r"g_link\[(\d+)\]", inst):
-            b = int(re.match(r"g_link\[(\d+)\]", inst).group(1))
+            add(dies[int(station.group(1))], vals)
+        elif link := re.match(r"g_link\[(\d+)\]", inst):
+            b = int(link.group(1))
             add(dies[b], vals, 0.5)
             add(dies[b + 1], vals, 0.5)
         else:

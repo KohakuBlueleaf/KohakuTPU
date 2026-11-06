@@ -165,7 +165,7 @@ impl<'a> Expander<'a> {
             let v = self.term(cond, env, st)?;
             let Term::Int(c, _) = v else {
                 if !self.unroll_all {
-                    let mut kept = st.clone();
+                    let mut kept = st.with_body(Vec::new());
                     kept.args = vec![v];
                     kept.body = self.stmts(&st.body, env)?;
                     return Ok(vec![kept]);
@@ -185,7 +185,16 @@ impl<'a> Expander<'a> {
         if st.op == "expand" && st.target.is_none() {
             return self.expand(st, env);
         }
-        let mut out = st.clone();
+        let mut out = Stmt {
+            op: st.op.clone(),
+            args: Vec::new(),
+            target: None,
+            annot: None,
+            body: Vec::new(),
+            line: st.line,
+            col: st.col,
+            commas: st.commas,
+        };
         out.args = st
             .args
             .iter()
@@ -252,8 +261,11 @@ impl<'a> Expander<'a> {
             ));
         };
         let mut out = Vec::new();
+        if lo >= hi {
+            return Ok(out);
+        }
+        let mut inner = env.clone();
         for v in lo..hi {
-            let mut inner = env.clone();
             inner.insert(var.clone(), Val::Int(v));
             out.extend(self.stmts(&st.body, &inner)?);
         }
@@ -266,9 +278,7 @@ impl<'a> Expander<'a> {
         }
         let pos = st.positional();
         let call = match pos.first() {
-            Some(Term::Call(n, args)) if pos.len() == 1 && self.macros.contains_key(n) => {
-                (n.clone(), args.clone())
-            }
+            Some(Term::Call(n, args)) if pos.len() == 1 && self.macros.contains_key(n) => (n, args),
             other => {
                 return Err(self.reader.fail(
                     st,
@@ -278,7 +288,7 @@ impl<'a> Expander<'a> {
             }
         };
         let macros = self.macros;
-        let (params, body) = &macros[&call.0];
+        let (params, body) = &macros[call.0];
         if call.1.len() != params.len() {
             return Err(self.reader.fail(
                 st,
@@ -295,7 +305,7 @@ impl<'a> Expander<'a> {
             ));
         }
         let mut inner = env.clone();
-        for (p, a) in params.iter().zip(&call.1) {
+        for (p, a) in params.iter().zip(call.1) {
             inner.insert(p.clone(), value(self.term(a, env, st)?));
         }
         let out = self.stmts(body, &inner)?;

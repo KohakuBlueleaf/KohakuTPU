@@ -49,13 +49,13 @@ fn is_reg_name(s: &str) -> bool {
 }
 
 /// Every register name a term reads or writes.
-fn regs(t: &Term, out: &mut BTreeSet<String>) {
+fn regs<'a>(t: &'a Term, out: &mut BTreeSet<&'a str>) {
     match t {
         Term::Name(n) if is_reg_name(n) => {
-            out.insert(n.clone());
+            out.insert(n.as_str());
         }
         Term::View(n, _) if is_reg_name(n) => {
-            out.insert(n.clone());
+            out.insert(n.as_str());
         }
         Term::Call(_, args) => args.iter().for_each(|a| regs(a, out)),
         _ => {}
@@ -107,15 +107,15 @@ fn l1_words(st: &Stmt, isa: &VecIsa, facts: &CoreFacts) -> Option<BTreeSet<i128>
 
 /// A statement's engine (`u`, `m`, `p`), the registers it defines and uses,
 /// and the L1 words it touches (writing them or not).
-struct Info {
+struct Info<'a> {
     eng: char,
-    defs: BTreeSet<String>,
-    uses: BTreeSet<String>,
+    defs: BTreeSet<&'a str>,
+    uses: BTreeSet<&'a str>,
     l1: Option<BTreeSet<i128>>,
     write: bool,
 }
 
-fn info(st: &Stmt, isa: &VecIsa, facts: &CoreFacts) -> Info {
+fn info<'a>(st: &'a Stmt, isa: &VecIsa, facts: &CoreFacts) -> Info<'a> {
     let pos = st.positional();
     let mut defs = BTreeSet::new();
     let mut uses = BTreeSet::new();
@@ -160,21 +160,21 @@ fn info(st: &Stmt, isa: &VecIsa, facts: &CoreFacts) -> Info {
 /// defines and the other uses or defines; L1 words both touch, one writing;
 /// two unpack / pack statements either of whose words or pointer effects is unknown.
 pub fn preds(run: &[Stmt], isa: &VecIsa, facts: &CoreFacts) -> Vec<BTreeSet<usize>> {
-    let info: Vec<Info> = run.iter().map(|st| info(st, isa, facts)).collect();
+    let info: Vec<Info<'_>> = run.iter().map(|st| info(st, isa, facts)).collect();
     // The pair test runs for every two statements of the run: registers as
     // bit rows over the run's names, not string sets.
     let mut number: HashMap<&str, usize> = HashMap::new();
     for a in &info {
         for r in a.defs.iter().chain(&a.uses) {
             let n = number.len();
-            number.entry(r.as_str()).or_insert(n);
+            number.entry(r).or_insert(n);
         }
     }
     let width = number.len().div_ceil(64);
-    let bits = |set: &BTreeSet<String>| {
+    let bits = |set: &BTreeSet<&str>| {
         let mut row = vec![0u64; width];
         for r in set {
-            let n = number[r.as_str()];
+            let n = number[r];
             row[n / 64] |= 1 << (n % 64);
         }
         row
@@ -203,12 +203,16 @@ pub fn preds(run: &[Stmt], isa: &VecIsa, facts: &CoreFacts) -> Vec<BTreeSet<usiz
     preds
 }
 
-/// Whether image `name` of `text` encodes within the image room.
-fn fits(text: &str, name: &str, nparams: usize, vregs: u32, machine: &Machine) -> Result<bool> {
+fn read_image(text: &str, name: &str, vregs: u32) -> Result<Module> {
     let mut module = read(text, &format!("<{name}>"))?;
     module.vregs = vregs;
-    let words = words_of(&module, name, nparams, machine);
-    Ok(words.is_ok_and(|n| n as i64 <= IMEM_ROOM) || mutant::on("l1.sched/unfit"))
+    Ok(module)
+}
+
+/// Whether image `name` encodes within the image room.
+fn fits(module: &Module, name: &str, nparams: usize, machine: &Machine) -> bool {
+    let words = words_of(module, name, nparams, machine);
+    words.is_ok_and(|n| n as i64 <= IMEM_ROOM) || mutant::on("l1.sched/unfit")
 }
 
 /// An image as the scheduler leaves it.
@@ -254,13 +258,20 @@ fn images(
         for &price in prices {
             let tuned = format!("{head}{}", emit_at(&ruled.block_at(&body, price)?, 1, 48));
             let mut faster = tuned != written;
-            if faster && !fits(&tuned, &img.name, nparams, regs, machine)? {
-                continue;
-            }
-            if faster && !classed {
-                let t = timing::cycles(&tuned, &img.name, regs, copies, fill, machine)?;
-                let w = timing::cycles(&written, &img.name, regs, copies, fill, machine)?;
-                faster = t < w;
+            if faster {
+                let candidate = read_image(&tuned, &img.name, regs)?;
+                if !fits(&candidate, &img.name, nparams, machine) {
+                    continue;
+                }
+                if !classed {
+                    let t = if mutant::on("l1.sched/timing-flat") {
+                        0
+                    } else {
+                        timing::cycles_of(&candidate, &img.name, regs, copies, fill, machine)?
+                    };
+                    let w = timing::cycles(&written, &img.name, regs, copies, fill, machine)?;
+                    faster = t < w;
+                }
             }
             return Ok(match faster {
                 true => left(tuned, price == 0, true),
@@ -276,7 +287,13 @@ fn images(
 /// core of `copies` register-file read copies.
 pub fn whole(module: &Module, copies: u32, machine: &Machine) -> Result<bool> {
     for s in images(module, copies, &PRICES[..1], machine)? {
-        let room = s.tuned || fits(&s.text, &s.name, s.nparams, module.vregs, machine)?;
+        let room = s.tuned
+            || fits(
+                &read_image(&s.text, &s.name, module.vregs)?,
+                &s.name,
+                s.nparams,
+                machine,
+            );
         if !s.first || !room {
             return Ok(false);
         }

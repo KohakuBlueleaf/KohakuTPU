@@ -81,6 +81,9 @@ class OSCard(OfflineCard):
         self.de_stream = ENV.get("KOHAKUTPU_OS_DE_STREAM", "1") == "1"
         self.de_fetch = ENV.get("KOHAKUTPU_OS_DE_FETCH", "1") == "1"
         self.de_fuse = ENV.get("KOHAKUTPU_OS_DE_FUSE", "1") == "1"
+        self.wait_window = json.loads(self.machine_json)["machine"]["flaws"]["F-004"][
+            "present"
+        ]
         self.launch_ring = ENV.get("KOHAKUTPU_OS_LAUNCH_RING", "0") == "1"
         # Launches that start a new descriptor stream on a fused graph.
         breaks = ENV.get("KOHAKUTPU_OS_DE_BREAKS", "")
@@ -110,6 +113,7 @@ class OSCard(OfflineCard):
             False if multi else self.de_stream,
             self.de_fetch,
             False,
+            wait_window=self.wait_window,
         )
         log_entry = {}
         for n, p in sorted(progs.items()):
@@ -152,6 +156,7 @@ class OSCard(OfflineCard):
                 use_de,
                 self.de_fetch,
                 use_fuse,
+                wait_window=self.wait_window,
             ),
             (),
             0,

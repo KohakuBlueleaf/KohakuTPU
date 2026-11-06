@@ -146,7 +146,7 @@ def main() -> None:
         figsize=(iw / dpi + legend_w, ih / dpi + 0.1), dpi=dpi, facecolor=BG
     )
     fw, fh = fig.get_size_inches()
-    ax = fig.add_axes([0, 0.05 / fh, iw / dpi / fw, ih / dpi / fh])
+    ax = fig.add_axes((0, 0.05 / fh, iw / dpi / fw, ih / dpi / fh))
     ax.imshow(img, interpolation="nearest")
     ax.set_axis_off()
     for d, rs in sorted(slr_rows.items()):

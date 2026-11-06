@@ -111,7 +111,7 @@ def docs() -> list:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--show", action="store_true", help="print every citation")
     args = ap.parse_args()
 

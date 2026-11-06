@@ -2,6 +2,7 @@
 
 #[path = "../common.rs"]
 mod common;
+mod fill_throttle;
 mod modulo_memory_effects;
 mod stream_credit;
 mod view_progression;

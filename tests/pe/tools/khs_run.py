@@ -29,7 +29,7 @@ WFAIL = re.compile(r"FAIL case(\d+) write (\d+) \(instruction (\d+)\)")
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--simd", type=int, default=8, choices=(2, 4, 8))
     ap.add_argument("--vregs", type=int, default=8)
     ap.add_argument("--nacc", type=int, default=2)

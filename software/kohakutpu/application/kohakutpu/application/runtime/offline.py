@@ -53,13 +53,17 @@ class HostMemory:
             at += k
 
     def read_block(self, addr: int, nbytes: int) -> bytes:
-        out = bytearray()
-        while len(out) < nbytes:
-            n, off = divmod(addr + len(out), PAGE)
-            k = min(PAGE - off, nbytes - len(out))
+        parts = []
+        at = 0
+        while at < nbytes:
+            n, off = divmod(addr + at, PAGE)
+            k = min(PAGE - off, nbytes - at)
             page = self.pages.get(n)
-            out += page[off : off + k] if page is not None else bytes(k)
-        return bytes(out)
+            parts.append(
+                memoryview(page)[off : off + k] if page is not None else bytes(k)
+            )
+            at += k
+        return b"".join(parts)
 
     def read64(self, addr: int) -> int:
         return int.from_bytes(self.read_block(addr, 8), "little")

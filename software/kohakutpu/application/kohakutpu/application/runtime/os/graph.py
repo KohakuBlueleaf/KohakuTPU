@@ -136,6 +136,7 @@ class Graph:
         de_stream=False,
         de_fetch=True,
         de_fuse=False,
+        wait_window=False,
     ):
         if not 1 <= batch <= 32:
             raise ValueError("OS instruction segment size is 1..32")
@@ -144,6 +145,7 @@ class Graph:
         self.de_stream = de_stream
         self.de_fetch = de_fetch
         self.de_fuse = de_fuse
+        self.wait_window = wait_window
         self._de: dict[str, Any] | None = None
         self.streams = {}
         self.prune = prune
@@ -321,6 +323,13 @@ class Graph:
                     entries.append((code & 0xFF, val & ((1 << 64) - 1)))
 
                 def push_wait(src, want):
+                    if self.wait_window:
+                        sent = (
+                            state["mv_gos"]
+                            if src == A.KOS_DE_MOVER_SRC
+                            else sent_cnt.get(src, 0)
+                        )
+                        want = max(want, sent - (A.KOS_DE_CTR_MASK >> 1))
                     if want > 0 and (not dedupe_waits or want > waited.get(src, 0)):
                         push(
                             A.KOS_DE_WAIT_CODE,
@@ -379,8 +388,7 @@ class Graph:
                             chunk_bytes = word_bytes[off : off + n * 32]
                             blob_off = len(blobs)
                             blobs.extend(chunk_bytes)
-                            if s_uid + n > room:
-                                push_wait(uid, s_uid + n - room)
+                            push_wait(uid, s_uid + n - room)
                             push_mb(A.KOS_DE_MB_DST, A.de_fetch_dst(fetch))
                             push_mb(A.KOS_DE_MB_ARG0, 0)
                             push_mb(A.KOS_DE_MB_ARG1, 0)
@@ -395,8 +403,7 @@ class Graph:
                         for k in range(nwords):
                             ensure_room(7)
                             s_uid = sent_cnt.get(uid, 0)
-                            if s_uid + 1 > cred:
-                                push_wait(uid, s_uid + 1 - cred)
+                            push_wait(uid, s_uid + 1 - cred)
                             w0, w1, w2, w3 = struct.unpack_from(
                                 "<4Q", word_bytes, 32 * k
                             )
@@ -450,8 +457,7 @@ class Graph:
                             ensure_room(7)
                             s_uid = sent_cnt.get(uid, 0)
                             n = min(rem, most)
-                            if s_uid + n > room:
-                                push_wait(uid, s_uid + n - room)
+                            push_wait(uid, s_uid + n - room)
                             push_mb(A.KOS_DE_MB_DST, A.de_fetch_dst(fetch))
                             push_mb(A.KOS_DE_MB_ARG0, 0)
                             push_mb(A.KOS_DE_MB_ARG1, 0)

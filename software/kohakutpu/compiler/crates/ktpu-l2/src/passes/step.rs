@@ -30,7 +30,7 @@ pub fn scope_ok(s: &Stmt) -> bool {
 pub fn first_of(scopes: &[Stmt], inner: Stmt) -> Stmt {
     let mut inner = inner;
     for s in scopes.iter().rev() {
-        let mut s = s.clone();
+        let mut s = s.with_body(Vec::new());
         if s.op == "for" || s.op == "par" {
             if let Some(Term::Member(lhs, rhs)) = s.positional().first().map(|t| (*t).clone()) {
                 if let Term::Span(lo, _) = rhs.as_ref() {

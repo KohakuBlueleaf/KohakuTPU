@@ -107,11 +107,11 @@ NAMES = ["base", "c_n", "c_m", "c_mn", "c_k", "c_kfill", "r_sasd", "w_sasd", "cd
 def lstsq(X, y):
     # normal equations with Gaussian elimination -- no numpy dependency
     p = len(X[0])
-    A = [
+    A: list[list[float]] = [
         [sum(X[r][i] * X[r][j] for r in range(len(X))) for j in range(p)]
         for i in range(p)
     ]
-    b = [sum(X[r][i] * y[r] for r in range(len(X))) for i in range(p)]
+    b: list[float] = [sum(X[r][i] * y[r] for r in range(len(X))) for i in range(p)]
     for i in range(p):
         piv = max(range(i, p), key=lambda r: abs(A[r][i]))
         A[i], A[piv] = A[piv], A[i]
@@ -149,10 +149,10 @@ class LutSteps:
     def __init__(self, rp):
         r = rows_of(rp)
         g = lambda m, n, k, rs, ws, c: r.get((m, n, k, rs, ws, c), (None,))[0]
-        self.ship = g(4, 4, 1, 1, 1, 0)
-        self.M = {m: g(m, 4, 1, 1, 1, 0) for m in (2, 4, 8) if g(m, 4, 1, 1, 1, 0)}
-        self.N = {n: g(4, n, 1, 1, 1, 0) for n in (4, 8) if g(4, n, 1, 1, 1, 0)}
-        self.K = {k: g(4, 4, k, 1, 1, 0) for k in (1, 2, 4) if g(4, 4, k, 1, 1, 0)}
+        self.ship = r[4, 4, 1, 1, 1, 0][0]
+        self.M = {m: v for m in (2, 4, 8) if (v := g(m, 4, 1, 1, 1, 0))}
+        self.N = {n: v for n in (4, 8) if (v := g(4, n, 1, 1, 1, 0))}
+        self.K = {k: v for k in (1, 2, 4) if (v := g(4, 4, k, 1, 1, 0))}
         self.MN88 = g(8, 8, 1, 1, 1, 0)
         self.RSASD = (g(4, 4, 1, 0, 1, 0) or self.ship) - self.ship
         self.WSASD = (g(4, 4, 1, 1, 0, 0) or self.ship) - self.ship

@@ -100,7 +100,7 @@ def write_user(src, arg, dram_init, lanes, waves, ctl, launch=1, has_fsfu=False)
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("source", help="a shader .s file")
     ap.add_argument("--arg", type=lambda s: int(s, 0), default=0)
     ap.add_argument("--lanes", type=int, default=8)

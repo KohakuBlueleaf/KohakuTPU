@@ -71,7 +71,14 @@ fn size(v: i128) -> String {
 }
 
 fn join(ts: &[Term]) -> String {
-    ts.iter().map(fmt).collect::<Vec<_>>().join(", ")
+    let mut out = String::new();
+    for (i, t) in ts.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(&fmt(t));
+    }
+    out
 }
 
 /// One term, canonically.

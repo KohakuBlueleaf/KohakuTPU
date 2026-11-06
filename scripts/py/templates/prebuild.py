@@ -7,6 +7,7 @@ import pathlib
 import runpy
 import time
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from contextlib import ExitStack
 from functools import partial
 from types import SimpleNamespace
@@ -24,7 +25,7 @@ from kohakutpu.application.runtime.class_library import ClassLibrary, structure
 from kohakutpu.application.runtime.template_store import TemplateStore, digest
 from kohakutpu.stack import kernel as K
 from kohakutpu.stack import rs
-from tinygrad import TinyJit
+from tinygrad.engine.jit import TinyJit
 from tinygrad.helpers import Context
 from tinygrad.nn.state import get_parameters
 from tinygrad.tensor import Tensor
@@ -177,7 +178,9 @@ def vit_tiny(
     return step_records
 
 
-MODELS = {name: partial(mnist_model, model_name=name) for name in MNIST_MODELS}
+MODELS: dict[str, Callable[..., list]] = {
+    name: partial(mnist_model, model_name=name) for name in MNIST_MODELS
+}
 MODELS["vit-tiny"] = vit_tiny
 MODELS["vit-small"] = partial(vit_tiny, width=384)
 MODELS["vit-base"] = partial(vit_tiny, width=768)
@@ -221,7 +224,7 @@ def capture(
                     sig.append([p1, p2, pa2 - pa1])
         return sig
 
-    def record(source, family, binds=None, kind="dsl", info=None):
+    def record(source, family, binds: dict, kind="dsl", info=None):
         key = json.loads(rs.library_key(source, rs.machine_json(dev.machine)))["class"]
         entry = sources.setdefault(
             key, {"source": source, "family": family, "aliases": []}
@@ -395,7 +398,7 @@ def _classify_singleton_reason(gname, graph):
 def _derive_and_verify_group(group, machine):
     """Derive a shared template for `group`, verify confinement/coverage, and byte-prove all members."""
     p0_bytes = group[0]["pkg_bytes"]
-    site_vals = defaultdict(lambda: [None] * len(group))
+    site_values: dict[tuple, dict[int, int]] = defaultdict(dict)
     site_meta = {}
     for i in range(1, len(group)):
         pi_bytes = group[i]["pkg_bytes"]
@@ -420,13 +423,12 @@ def _derive_and_verify_group(group, machine):
             site_meta[skey] = site
             v0 = site["constant"]
             vi = site["constant"] + site["coefficients"].get("i", 0)
-            site_vals[skey][0] = v0
-            site_vals[skey][i] = vi
-    for skey, vals in site_vals.items():
-        v0 = vals[0]
-        for i in range(len(group)):
-            if vals[i] is None:
-                vals[i] = v0
+            site_values[skey][0] = v0
+            site_values[skey][i] = vi
+    site_vals = {
+        skey: [vals.get(i, vals[0]) for i in range(len(group))]
+        for skey, vals in site_values.items()
+    }
     dirs = {}
     sites_out = []
     for skey, vals in sorted(site_vals.items()):
@@ -626,7 +628,7 @@ def prebuild_classes(library_root, doc, machine, exact_results, cold_times):
     store = TemplateStore(library_root, machine)
     clib = ClassLibrary(library_root, machine)
     by_struct = defaultdict(list)
-    machine_digest = None
+    machine_digest = rs.library_machine(machine)
     for key, entry in doc["sources"].items():
         source = entry["source"]
         output = rs.library_get(str(library_root), source, machine)
@@ -635,8 +637,6 @@ def prebuild_classes(library_root, doc, machine, exact_results, cold_times):
         g = json.loads(source)
         gname = g.pop("name", "")
         skey = digest(structure(g))
-        if machine_digest is None:
-            machine_digest = json.loads(rs.library_key(source, machine))["machine"]
         pkg_bytes = output["packages"][0]["bytes"]
         buffers = rs._rs.package_read(pkg_bytes, machine)["buffers"]
         aliases = entry.get("aliases", [])

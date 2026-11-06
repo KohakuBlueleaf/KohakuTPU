@@ -40,7 +40,7 @@ def contents(lib: pathlib.Path) -> str:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--check", action="store_true", help="report, do not write")
     args = ap.parse_args()
 

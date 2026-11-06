@@ -186,7 +186,7 @@ def pack(segs):
     cs = 0
     while cs < 2 and top * (1 << (15 - cs)) >= (1 << 12) - 0.5:
         cs += 1
-    return [entry(*s, cs) for s in segs], cs
+    return [entry(sg, es, c0, c1, cs) for sg, es, c0, c1 in segs], cs
 
 
 def exp2_table(nseg):

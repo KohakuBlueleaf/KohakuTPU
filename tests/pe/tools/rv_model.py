@@ -115,10 +115,13 @@ class Machine:
         r = self.region_of(a)
         base = a & ~3
         if r == R_SPAD:
-            i = ((a & 0x0FFF_FFFF) >> 2) % len(self.spad)
-            old = self.spad[i]
+            memory = self.spad
+            index = ((a & 0x0FFF_FFFF) >> 2) % len(memory)
+            old = memory[index]
         elif r == R_DRAM:
-            old = self.dram.get(base, 0)
+            memory = self.dram
+            index = base
+            old = memory.get(index, 0)
         elif r == R_CTL:
             return
         elif r == R_PEER:
@@ -130,10 +133,7 @@ class Machine:
         for b in range(4):
             src = val if (be >> b) & 1 else old
             new |= ((src >> (8 * b)) & 0xFF) << (8 * b)
-        if r == R_SPAD:
-            self.spad[i] = new & MASK
-        else:
-            self.dram[base] = new & MASK
+        memory[index] = new & MASK
 
     def load(self, a, f3):
         if f3 in (1, 5) and (a & 1):
@@ -302,7 +302,7 @@ class Machine:
         self.instret += 1
         return pc, rd, val & MASK
 
-    def custom(self, opc, ins, pc):
+    def custom(self, opc, ins, pc) -> int | None:
         """The one extension seam: an opcode the base ISA does not define.
 
         RV32I has none, so this faults and the base model behaves exactly as it

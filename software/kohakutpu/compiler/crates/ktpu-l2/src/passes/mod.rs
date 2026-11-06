@@ -78,8 +78,11 @@ pub fn pass(name: &str, p: &Program, t: &Target, search: &Search) -> Result<Prog
 
 /// `p` rewritten by `passes` in order, each result read back before the next.
 pub fn run(p: &Program, passes: &[&str], t: &Target, search: &Search) -> Result<Program> {
-    let mut p = p.clone();
-    for name in passes {
+    let Some((first, rest)) = passes.split_first() else {
+        return Ok(p.clone());
+    };
+    let mut p = pass(first, p, t, search)?;
+    for name in rest {
         p = pass(name, &p, t, search)?;
     }
     Ok(p)
@@ -123,12 +126,10 @@ where
     {
         let mut out = Vec::new();
         for s in sts {
-            let mut s = s.clone();
             scopes.push(s.clone());
             let body = go(&s.body, scopes, f);
             scopes.pop();
-            s.body = body?;
-            out.extend(f(s, scopes)?);
+            out.extend(f(s.with_body(body?), scopes)?);
         }
         Ok(out)
     }
@@ -251,7 +252,7 @@ pub fn subst(t: &Term, map: &[(String, Term)]) -> Term {
 /// A statement (and its block) with each name in `map` replaced; a keyword's
 /// name kept.
 pub fn subst_stmt(s: &Stmt, map: &[(String, Term)]) -> Stmt {
-    let mut out = s.clone();
+    let mut out = s.with_body(Vec::new());
     out.args = s
         .args
         .iter()

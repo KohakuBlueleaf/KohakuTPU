@@ -22,6 +22,8 @@ from sru import profiles
 
 TOP = ROOT / "src" / "kohakutpu" / "sru" / "top"
 _spec = importlib.util.spec_from_file_location("tokens_sru", TOP / "tokens_sru.py")
+if _spec is None or _spec.loader is None:
+    raise ImportError(f"cannot load SRU tokens from {TOP}")
 tokens_sru = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(tokens_sru)
 

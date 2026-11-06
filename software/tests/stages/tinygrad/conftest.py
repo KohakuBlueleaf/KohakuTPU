@@ -5,10 +5,14 @@ import os
 
 import numpy as np
 import pytest
-from tinygrad.tensor import Tensor
 
+# Every tensor names its device; the default is the CPU reference, so tinygrad
+# does not open each backend it knows to pick one.
+os.environ.setdefault("DEV", "CPU")
 # Composed reads are part of the lowering; their kernels here compile in a blink.
 os.environ.setdefault("KTPU_COMPOSED", "on")
+
+from tinygrad.tensor import Tensor
 
 from kohakutpu.application import ktpugrad  # noqa: F401
 from kohakutpu.application.runtime import device as card

@@ -285,7 +285,6 @@ class DspMachine(Machine):
 
     def _exec(self, name, o, pc):
         base, _, suf = name.partition(".")
-        bits = {"s8": 8, "s16": 16, "s32": 32}.get(suf)
 
         for k in ("vd", "vs1", "vs2", "vs"):
             if k in o and o[k] >= self.vregs:
@@ -309,6 +308,7 @@ class DspMachine(Machine):
 
         # ---- element-wise integer ----
         if base in ("vadd", "vsub", "vsadd", "vssub", "vmin", "vmax", "vmul"):
+            bits = {"s8": 8, "s16": 16, "s32": 32}[suf]
             a = self._elems(self.v[o["vs1"]], bits)
             b = self._elems(self.v[o["vs2"]], bits)
             f = {
@@ -336,6 +336,7 @@ class DspMachine(Machine):
 
         # ---- immediate shifts ----
         if base in ("vslli", "vsrli", "vsrai", "vsrari"):
+            bits = {"s8": 8, "s16": 16, "s32": 32}[suf]
             # The shift amount is masked to the ELEMENT width, as RV32 masks a
             # scalar shift to 5 bits. A packed shift of 20 on int8 elements is
             # otherwise a different instruction on every implementation.

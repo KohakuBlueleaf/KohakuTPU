@@ -32,7 +32,7 @@ TARGET = {"spec": "rs", "prod": "rs-prod"}
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("build", choices=sorted(FEATURES))
     ap.add_argument("--target-dir", help="default: build/TARGET[build]")
     ap.add_argument("--release", action="store_true")

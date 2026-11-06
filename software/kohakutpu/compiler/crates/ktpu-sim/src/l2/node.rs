@@ -1,9 +1,10 @@
 //! Node scope: control, buffers and the mover ops (L2.BODY, L2.MOV).
 
+use std::rc::Rc;
+
 use ktpu_l1::text::{fmt, Stmt, Term};
 
 use super::cluster::mg_block;
-use super::map;
 use super::math::Instance;
 use super::view::{walk_term, Buf, Layout, View, WORD};
 use super::Sim;
@@ -389,7 +390,7 @@ impl Sim<'_> {
         };
         let (r0, rows, k0, keys) = q.rect();
         let (s0, srows, t0, scols) = x.rect();
-        let reader = Window::of(st, &self.env, *src.shape.last().ok_or("a quant source")?)?;
+        let reader = Window::of(st, self, *src.shape.last().ok_or("a quant source")?)?;
         let checked = st.kw("finite").and_then(Term::as_int) != Some(1);
         for g in 0..rows / mx7::LANES as i64 {
             for k in 0..keys / mx7::KBLOCK as i64 {
@@ -422,7 +423,7 @@ impl Sim<'_> {
 
 /// `read_shape` and `read_batch` over a composed source of `pitch` columns.
 struct Window {
-    map: Vec<i64>,
+    map: Rc<Vec<i64>>,
     pitch: i64,
     row0: i64,
     col0: i64,
@@ -435,20 +436,22 @@ struct Window {
 
 impl Window {
     /// The window of `st`'s composed read of a source `source_pitch` values wide.
-    fn of(st: &Stmt, env: &crate::l1::term::Env, source_pitch: i64) -> R<Option<Window>> {
+    fn of(st: &Stmt, sim: &mut Sim<'_>, source_pitch: i64) -> R<Option<Window>> {
         if st.kw("read_map").is_none() {
             return Ok(None);
         }
         let Some(Term::Tuple(d)) = st.kw("read_shape") else {
             return Err("read_shape=".into());
         };
+        let map = sim.maps.read(st, &sim.env)?;
+        let env = &sim.env;
         let dim = |i: usize| int(&d[i], env);
         let (batches, padded) = match st.kw("read_batch") {
             Some(t) => crate::l1::term::pair(t, env)?,
             None => (1, dim(3)?),
         };
         Ok(Some(Window {
-            map: map::read(st, env)?,
+            map,
             pitch: dim(0)?,
             row0: dim(1)?,
             col0: dim(2)?,

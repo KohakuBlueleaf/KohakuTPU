@@ -25,7 +25,7 @@ mod wasm;
 pub use output::{Compiled, Finding, Input, PackageOut, Refused, Scratch, Verdict};
 pub use pipeline::cache::Cache;
 pub use pipeline::stage::{Backend, Stage};
-pub use pipeline::{compile, compile_each, compile_many};
+pub use pipeline::{compile, compile_each, compile_l1, compile_many};
 #[cfg(feature = "stack")]
 pub use stack::{CardStack, Stack};
 

@@ -128,17 +128,15 @@ fn logical_lines(source: &str) -> Vec<Logical> {
     let mut i = 0;
     while i < lines.len() {
         let phys = lines[i].strip_suffix('\r').unwrap_or(lines[i]);
-        let lead: String = phys
-            .chars()
-            .take_while(|c| *c == ' ' || *c == '\t')
-            .collect();
+        let lead_len = phys.len() - phys.trim_start_matches([' ', '\t']).len();
+        let lead = &phys[..lead_len];
         let rest = phys[lead.len()..].trim_start_matches([' ', '\t', '\x0C']);
         if rest.is_empty() || rest.starts_with('#') {
             i += 1;
             continue;
         }
         let indent = lead.chars().map(|c| if c == '\t' { TAB } else { 1 }).sum();
-        let col = phys.chars().count() - rest.chars().count() + 1;
+        let col = phys[..phys.len() - rest.len()].chars().count() + 1;
         let start = i;
         let mut text = String::new();
         let mut depth: i32 = 0;

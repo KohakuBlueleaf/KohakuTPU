@@ -370,7 +370,6 @@ def report_counts(results, baseline):
 def run_check(argv, cwd, timeout, env=None):
     """Run one check. Returns (ok, stalled, output)."""
     # One process group, so a timeout can signal the whole pipeline at once.
-    kw = {} if os.name == "nt" else {"start_new_session": True}
     proc = subprocess.Popen(
         argv,
         cwd=cwd,
@@ -381,7 +380,7 @@ def run_check(argv, cwd, timeout, env=None):
         # A non-cp950 byte from a tool otherwise raises in the reader thread and
         # crashes the summary instead of reporting the failure that produced it.
         errors="replace",
-        **kw,
+        start_new_session=os.name != "nt",
     )
     try:
         out, _ = proc.communicate(timeout=timeout)

@@ -230,7 +230,13 @@ def sqrt_table():
         fixed = tuple(round(c[k] * (1 << (Q0 + 4 * k))) for k in range(3))
         biggest = max(biggest, max(abs(v) for v in fixed))
         for raw in range(0, 1 << UW, 8):
-            worst = max(worst, abs(eval_fixed(*fixed, raw) / (1 << Q0) - g(raw / 4096)))
+            worst = max(
+                worst,
+                abs(
+                    eval_fixed(fixed[0], fixed[1], fixed[2], raw) / (1 << Q0)
+                    - g(raw / 4096)
+                ),
+            )
     return {
         "abs": worst,
         # An output in [1, 2) rather than (0.5, 1], so one binade higher and an

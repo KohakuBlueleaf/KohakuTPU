@@ -33,7 +33,7 @@ Each clause is one list item. This fenced example illustrates the syntax; it doe
     evidence. Evidence tags are documentation metadata. The software test runner
     selects explicitly registered suites; it does not discover tests from these
     clauses or rewrite their tags. Its `anchors` and `machine` suites are
-    non-default suites. (code: software/tests/run.py:82-186)
+    non-default suites. (code: software/tests/run.py:82-185)
   - `unproven`: neither silicon nor named RTL-test evidence establishes the
     clause. This tag records evidence status; it does not itself disable the
     behaviour. The compiler refuses inputs at explicit validation checks and

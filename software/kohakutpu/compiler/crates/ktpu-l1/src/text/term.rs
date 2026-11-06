@@ -117,6 +117,20 @@ impl Stmt {
         }
     }
 
+    /// The statement's header with a replacement body.
+    pub fn with_body(&self, body: Vec<Stmt>) -> Stmt {
+        Stmt {
+            op: self.op.clone(),
+            args: self.args.clone(),
+            target: self.target.clone(),
+            annot: self.annot.clone(),
+            body,
+            line: self.line,
+            col: self.col,
+            commas: self.commas,
+        }
+    }
+
     /// Every argument that is no keyword argument (L1.TXT.006).
     pub fn positional(&self) -> Vec<&Term> {
         let any_lhs = crate::mutant::on("l1.text/kwargs-any-lhs");

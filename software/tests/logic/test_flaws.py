@@ -18,6 +18,8 @@ from machine.read import image
 
 #: Images whose mover has the W skid F-001 needs (KOHAKU_IL_MVSKID=1).
 SKIDDED = {"multimesh_v9t5", "multimesh_v9t6", "multimesh_v9t7", "multimesh_v9t8"}
+#: Flaws of units these images do not build (SIMT shader core, SRU).
+UNITLESS = {"F-010", "F-011", "F-013"}
 
 
 def machine(name: str) -> dict:
@@ -31,7 +33,7 @@ def machine(name: str) -> dict:
 def test_presence_follows_the_image(name):
     flaws = machine(name)["machine"]["flaws"]
     assert flaws["F-001"]["present"] == (name in SKIDDED)
-    assert all(flaws[f]["present"] for f in flaws if f != "F-001")
+    assert all(flaws[f]["present"] != (f in UNITLESS) for f in flaws if f != "F-001")
 
 
 def test_a_flaw_is_read_both_ways_and_an_unknown_line_stops(monkeypatch):

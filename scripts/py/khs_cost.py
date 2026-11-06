@@ -595,7 +595,7 @@ def _ladder(knob, curve):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("cfg", nargs="*", help="knob=value pairs to price")
     ap.add_argument("--dir", default=str(SWEEP))
     ap.add_argument("--fit", action="store_true", help="rebuild the coefficients")

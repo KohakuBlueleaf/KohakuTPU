@@ -6,6 +6,7 @@
 
 use std::cell::Cell;
 use std::collections::BTreeSet;
+use std::rc::Rc;
 
 use crate::mutant;
 
@@ -17,7 +18,7 @@ thread_local! {
 use ktpu_machine::Machine;
 
 use super::schedule::{movable, preds, MIN_GAIN};
-use super::timing::Core;
+use super::timing::{Core, MOp};
 use crate::error::Result;
 use crate::lower::image::{isa_for, CoreFacts, Encoder, State, UNKNOWN};
 use crate::text::{emit_at, Reader, Stmt};
@@ -57,14 +58,14 @@ impl<'a> Ruled<'a> {
         Core::new(self.copies, (0, 0), self.machine)
     }
 
-    /// `st` (printed `text`) issued on `core`, or with `peek` only timed: the
+    /// `st` (decoded `op`) issued on `core`, or with `peek` only timed: the
     /// encoder state after it, and its start.
     fn step(
         enc: &mut Encoder<'_>,
         core: &mut Core,
         state: State,
         st: &Stmt,
-        text: &str,
+        op: &mut (String, Option<Rc<MOp>>),
         peek: bool,
     ) -> Result<(State, i64)> {
         let config = enc.config;
@@ -73,28 +74,41 @@ impl<'a> Ruled<'a> {
         if mutant::on("l1.sched/cfg-cost") {
             n -= (enc.config - config) as i64;
         }
+        let decoded = op.1.get_or_insert_with(|| core.mop(&op.0));
         let start = if peek {
-            core.peek(text, n)
+            core.start_of(decoded, n)
         } else {
-            core.op(text, n)
+            core.op_decoded(decoded, n)
         };
         Ok((state, start))
     }
 
-    fn texts(run: &[Stmt]) -> Vec<String> {
+    fn decoded(&self, run: &[Stmt]) -> Vec<(String, Option<Rc<MOp>>)> {
         run.iter()
-            .map(|st| emit_at(std::slice::from_ref(st), 0, 48).trim().to_string())
+            .map(|st| {
+                let text = emit_at(std::slice::from_ref(st), 0, 48);
+                (text.trim().to_string(), None)
+            })
             .collect()
     }
 
     /// The model's cycles for `run` issued in `order`.
     pub fn cycles(&self, run: &[Stmt], order: &[usize]) -> Result<i64> {
-        let texts = Self::texts(run);
+        let mut decoded = self.decoded(run);
+        self.cycles_decoded(run, order, &mut decoded)
+    }
+
+    fn cycles_decoded(
+        &self,
+        run: &[Stmt],
+        order: &[usize],
+        decoded: &mut [(String, Option<Rc<MOp>>)],
+    ) -> Result<i64> {
         let mut enc = self.encoder();
         let mut core = self.core();
         let mut state = UNKNOWN;
         for &k in order {
-            state = Self::step(&mut enc, &mut core, state, &run[k], &texts[k], false)?.0;
+            state = Self::step(&mut enc, &mut core, state, &run[k], &mut decoded[k], false)?.0;
         }
         Ok(core.end())
     }
@@ -129,7 +143,7 @@ impl<'a> Ruled<'a> {
             return Ok(written);
         }
         let preds = preds(run, &self.isa, &self.facts);
-        let texts = Self::texts(run);
+        let mut decoded = self.decoded(run);
         let mut enc = self.encoder();
         let mut core = self.core();
         let mut state = UNKNOWN;
@@ -146,14 +160,15 @@ impl<'a> Ruled<'a> {
             let mut best: Option<(i64, usize)> = None;
             for &k in &ready {
                 let config = enc.config;
-                let (_, start) = Self::step(&mut enc, &mut core, state, &run[k], &texts[k], true)?;
+                let (_, start) =
+                    Self::step(&mut enc, &mut core, state, &run[k], &mut decoded[k], true)?;
                 let start = start + price * (enc.config - config) as i64;
                 if best.is_none_or(|(s, _)| start < s) {
                     best = Some((start, k));
                 }
             }
             let (_, k) = best.expect("a ready statement");
-            state = Self::step(&mut enc, &mut core, state, &run[k], &texts[k], false)?.0;
+            state = Self::step(&mut enc, &mut core, state, &run[k], &mut decoded[k], false)?.0;
             ready.remove(&k);
             for &s in &after[k] {
                 waiting[s] -= 1;
@@ -168,7 +183,9 @@ impl<'a> Ruled<'a> {
         } else {
             MIN_GAIN
         };
-        if self.cycles(run, &out)? as f64 > self.cycles(run, &written)? as f64 * (1.0 - gain) {
+        if self.cycles_decoded(run, &out, &mut decoded)? as f64
+            > self.cycles_decoded(run, &written, &mut decoded)? as f64 * (1.0 - gain)
+        {
             return Ok(written);
         }
         Ok(out)
@@ -181,23 +198,25 @@ impl<'a> Ruled<'a> {
 
     /// [`Ruled::block`] at a configuration word's `price`.
     pub fn block_at(&self, stmts: &[Stmt], price: i64) -> Result<Vec<Stmt>> {
-        let mut out = Vec::new();
-        let mut run: Vec<Stmt> = Vec::new();
-        for st in stmts {
+        let mut out = Vec::with_capacity(stmts.len());
+        let mut start = 0;
+        for (i, st) in stmts.iter().enumerate() {
             if movable(st) {
-                run.push(st.clone());
                 continue;
             }
-            let order = self.priced(&run, price)?;
+            let run = &stmts[start..i];
+            let order = self.priced(run, price)?;
             out.extend(order.into_iter().map(|k| run[k].clone()));
-            run.clear();
-            let mut st = st.clone();
-            if !st.body.is_empty() {
-                st.body = self.block_at(&st.body, price)?;
-            }
-            out.push(st);
+            start = i + 1;
+            let body = if st.body.is_empty() {
+                Vec::new()
+            } else {
+                self.block_at(&st.body, price)?
+            };
+            out.push(st.with_body(body));
         }
-        let order = self.priced(&run, price)?;
+        let run = &stmts[start..];
+        let order = self.priced(run, price)?;
         out.extend(order.into_iter().map(|k| run[k].clone()));
         Ok(out)
     }

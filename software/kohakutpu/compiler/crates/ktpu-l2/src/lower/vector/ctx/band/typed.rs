@@ -31,7 +31,7 @@ pub(in crate::lower::vector) fn lower_band(
     );
     let regs = crate::lower::vector::checked::registers(body.vregs, c.checked);
     let (assigned, _) = crate::lower::vector::assign_typed::assign(&events, &c.pinned, regs);
-    let result = image(&c, name, &assigned?).expect("generated band image");
+    let result = image(&c, name, assigned?).expect("generated band image");
     let fits = fits.whole(&result.0, result.1.len(), t) || on("l2.vector/imem-unbounded");
     let (_, lp) = crate::lower::vector::split(body, par)?;
     // Peer streams retain their producer/consumer parity protocol.
@@ -54,7 +54,7 @@ pub(in crate::lower::vector) fn lower_band(
     );
     let regs = crate::lower::vector::checked::registers(body.vregs, c.checked);
     let (assigned, _) = crate::lower::vector::assign_typed::assign(&events, &c.pinned, regs);
-    Ok(image(&c, name, &assigned?).expect("generated serial band image"))
+    Ok(image(&c, name, assigned?).expect("generated serial band image"))
 }
 
 /// `events` in the instance's zero-sign form (L2.VC.026).
@@ -293,13 +293,15 @@ fn flat_band<'a>(
 }
 
 fn phase_period(c: &Ctx) -> usize {
+    let all;
+    let loads = if on("l2.readmap/invariant-phase") {
+        all = (0..c.descs.len()).collect::<Vec<_>>();
+        &all
+    } else {
+        &c.loads
+    };
     (1..=c.trips.len())
         .find(|&p| {
-            let loads = if on("l2.readmap/invariant-phase") {
-                (0..c.descs.len()).collect::<Vec<_>>()
-            } else {
-                c.loads.clone()
-            };
             loads
                 .iter()
                 .map(|&i| &c.descs[i])
@@ -318,7 +320,7 @@ fn phase_period(c: &Ctx) -> usize {
 pub(in crate::lower::vector) fn image(
     c: &Ctx,
     name: &str,
-    events: &[ir::Event],
+    events: Vec<ir::Event>,
 ) -> ir::Result<(Module, Vec<String>, Vec<Access>)> {
     let mem: Vec<&Desc> = c.descs.iter().filter(|d| d.to.is_empty()).collect();
     let params = mem

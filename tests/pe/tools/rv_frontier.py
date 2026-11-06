@@ -223,7 +223,7 @@ def run_gates(cfg, wall):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--csv", required=True, help="where the points are appended")
     ap.add_argument("--work", required=True, help="directory for the OOC runs")
     ap.add_argument("--config", required=True, choices=sorted(CONFIGS))

@@ -118,8 +118,8 @@ def paths() -> None:
     order = sorted(path_rows(), key=lambda p: p[1])
     fig, ax = plt.subplots(figsize=(11, 4.4))
     for label, cycles, source in order:
-        ax.barh(label, cycles, color=COLORS[source], label=source)
-        ax.text(cycles, label, f" {cycles:,}", va="center", color=SECOND, fontsize=8)
+        bar = ax.barh(label, cycles, color=COLORS[source], label=source)
+        ax.bar_label(bar, [f" {cycles:,}"], color=SECOND, fontsize=8)
     handles, labels = ax.get_legend_handles_labels()
     keep = dict(zip(labels, handles, strict=True))
     ax.legend(keep.values(), keep.keys(), loc="lower right")
@@ -163,19 +163,20 @@ def kernel_stages() -> None:
     prof = measures("t6low.prof")
     fig, ax = plt.subplots(figsize=(11, 3.2))
     left = dict.fromkeys(CALLS, 0)
+    stacked = []
     for at, stage in enumerate(STAGES):
         cycles = [prof.get(f"kprof.{call}.{stage}", 0) for call in CALLS]
-        ax.barh(
+        bars = ax.barh(
             CALLS,
             cycles,
             left=[left[c] for c in CALLS],
             color=SERIES[at % len(SERIES)],
             label=stage,
         )
+        stacked.append(bars)
         for call, v in zip(CALLS, cycles, strict=True):
             left[call] += v
-    for call in CALLS:
-        ax.text(left[call], call, f" {left[call]:,}", va="center", color=SECOND)
+    ax.bar_label(stacked[-1], [f" {left[c]:,}" for c in CALLS], color=SECOND)
     ax.grid(axis="y", visible=False)
     ax.set_xlabel("node cycles a call")
     ax.legend(ncol=len(STAGES), loc="upper center", bbox_to_anchor=(0.5, -0.25))
@@ -187,10 +188,9 @@ def primitives() -> None:
     bench = measures("t6low.all")
     rows = sorted(((n, bench[k]) for k, n in PRIMITIVES), key=lambda r: r[1])
     fig, ax = plt.subplots(figsize=(11, 3.2))
-    ax.barh([r[0] for r in rows], [r[1] for r in rows], color=SERIES[1])
+    bars = ax.barh([r[0] for r in rows], [r[1] for r in rows], color=SERIES[1])
     ax.set_xscale("log")
-    for name, cycles in rows:
-        ax.text(cycles, name, f" {cycles:,}", va="center", color=SECOND)
+    ax.bar_label(bars, [f" {cycles:,}" for _, cycles in rows], color=SECOND)
     ax.grid(axis="y", visible=False)
     ax.set_xlabel("node cycles, log scale")
     ax.set_title("OS primitives")
@@ -309,10 +309,9 @@ def clock_effect() -> None:
         ((name, mid[key] / low[key]) for key, name in CLOCKED), key=lambda r: r[1]
     )
     fig, ax = plt.subplots(figsize=(11, 3.2))
-    ax.barh([r[0] for r in rows], [r[1] for r in rows], color=SERIES[1])
+    bars = ax.barh([r[0] for r in rows], [r[1] for r in rows], color=SERIES[1])
     ax.axvline(1, color=SECOND, linewidth=1)
-    for name, ratio in rows:
-        ax.text(ratio, name, f" {ratio:.2f}", va="center", color=SECOND)
+    ax.bar_label(bars, [f" {ratio:.2f}" for _, ratio in rows], color=SECOND)
     ax.grid(axis="y", visible=False)
     ax.set_xlabel("cycles at 200 MHz over cycles at 100 MHz")
     ax.set_title("OS operations as the clock doubles and DDR4 does not")

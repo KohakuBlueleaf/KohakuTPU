@@ -123,7 +123,6 @@ SUITES = (
     Suite(
         "stages/tinygrad",
         ("kohakutpu/application/kohakutpu/application/ktpugrad",),
-        per_test=5.0,
     ),
     Suite(
         "logic",

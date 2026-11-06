@@ -84,7 +84,7 @@ def write_user(src, arg, dram_init, prologue):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("source", nargs="?", help="an RV32I .s file to run")
     ap.add_argument("--gate", type=int, choices=sorted(GATES))
     ap.add_argument(

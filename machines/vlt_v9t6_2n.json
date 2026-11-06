@@ -1,5 +1,5 @@
 {
- "schema": "fa4b5df3b228e5de",
+ "schema": "592109120ad2a27f",
  "name": "vlt_v9t6_2n",
  "image": "v9t6",
  "board": "vlt_v9t6_2n",
@@ -662,10 +662,10 @@
    "F-002": {
     "present": true,
     "unit": "interlink (mag_ilink.v)",
-    "summary": "A one-flit outbound packet is read from u_enc two edges after its write, before XPM fwft shows it: the previous flit goes twice and the real one stays queued as the next packet's first flit.",
+    "summary": "A one-flit outbound packet is read from u_enc two edges after its write, before XPM fwft shows it: the previous flit goes twice and the real one stays queued as the next packet's first flit. Both initial load and refill sample/pop without FIFO readiness.",
     "witness": "tests/sysnode/mag_ilink_tail_tb.v (xsim on the real cell, Verilator on the fwft shim); v9t8 card, far vector peer drain of 32 words (ISSUES 14)",
-    "handling": "ktpu-l1 lower/image/desc.rs far_splits (L1.VC.010)",
-    "fix": "OB_HDR and OB_DAT load ltx_dat and pop u_enc only when !ef_empty."
+    "handling": "ktpu-l1 lower/image/desc.rs far_splits (L1.VC.010) covers recognized structured far-drain tails, not arbitrary raw flits or head gaps.",
+    "fix": "An elastic output stage: sample and pop only a valid FIFO head, hold data/last while stalled, and advance completion only on valid accepted beats."
    },
    "F-003": {
     "present": true,
@@ -678,9 +678,9 @@
    "F-004": {
     "present": true,
     "unit": "dispatch engine (dispatch_engine.v)",
-    "summary": "A WAIT compares its count modulo the counter: a target more than half the range behind reads as ahead and holds forever.",
+    "summary": "A WAIT compares its count modulo the counter: a completed target at least half the range behind reads as ahead and holds while the count is unchanged.",
     "witness": "tests/sysnode/dispatch_engine_tb.v: a WAIT half the range behind holds; ISSUES 12 (v9t8 card)",
-    "handling": "ka-package engine.rs Stream::wait; firmware de_wait",
+    "handling": "ka-package engine.rs Stream::wait and firmware de_wait clamp known issued frontiers; OS graph lowering shares that clamp; raw ENGINE is not a complete epoch/window proof. See docs/spec/stack/flaws.md.",
     "fix": "Release a WAIT against the issued count, not the counter's sign."
    },
    "F-005": {
@@ -706,6 +706,54 @@
     "witness": "v9t6 card (a second load hung in its first barrier); run_core.py --boots 2",
     "handling": "firmware interp.c counts rings from the interlink's sent count; KohakuAccel OS start.h handshake",
     "fix": "Reset the node-facing interlink state with the processor reset."
+   },
+   "F-008": {
+    "present": true,
+    "unit": "RV64 load window (rv64_load_win.v)",
+    "summary": "The 256-byte console uses equal 8-bit pointers for empty and has no full state: 256 unconsumed writes alias empty; later writes overwrite unread bytes without reporting loss.",
+    "witness": "Source witness: from reset, push 256 bytes without a host pop; R_CONS valid clears. Push one more and only that byte is visible. Not an executed bench.",
+    "handling": "Open: firmware ka_putc without a sink, ka_debug and the OS hardware-console mirror can reach this. Queue stdout and the separate OS DRAM log do not depend on this FIFO. No lossless software flow-control interface exists.",
+    "fix": "Track occupancy/full separately from empty and expose loss or backpressure; define simultaneous push/pop and overflow behavior."
+   },
+   "F-009": {
+    "present": true,
+    "unit": "matmul FP22 accumulator (mx_fpacc.v)",
+    "summary": "Opposite-sign nonzero operands with discarded alignment residue round away from zero when the truncated difference is exactly a retained-format midpoint. Before saturation the result differs by one FP22 ULP from nearest-even, with exact error at most 16639/32768 ULP. A rounding carry into exponent 127 invokes saturation and can amplify the difference to 32767 ULP of the correct exponent-126 result. These are single-add bounds, not accumulation bounds.",
+    "witness": "Source arithmetic witness: MW=14, (sign, exponent, fraction) operands (0,63,1) and (1,48,1) produce (0,63,1) instead of (0,63,0); swapping operands or negating both preserves the magnitude error. Not an executed RTL bench.",
+    "handling": "Accuracy flaw: no software handling. Avoiding data-dependent subtraction/rounding inside the accumulator requires extra computation or changing the numerical algorithm; no cycle-free lowering preserves all inputs.",
+    "fix": "Carry the sign of discarded alignment residue through subtraction, normalization and nearest-even rounding in both split and reference add paths."
+   },
+   "F-010": {
+    "present": false,
+    "unit": "SIMT scalar load decode (kht_predec.v)",
+    "summary": "Custom SMOV funct7=2 (SLD) is admitted by the family decode but selects neither a scalar register write nor a memory request; the instruction retires without loading its destination.",
+    "witness": "Source witness: assemble sld s2,s1 followed by a use of s2 with distinct old and memory values. tests/pe/tools/rv_simt_isa.py defines SMOV funct7=2. No RTL witness was executed.",
+    "handling": "No generated TPU path: L1 resolves vc/mg/sr only and software has no SIMT shader emitter. The PE assembler/reference tools can construct the instruction; they are not a protected hardware execution path.",
+    "fix": "Implement scalar load request, response, destination and fault handling, or report the unsupported encoding through the existing illegal-instruction fault."
+   },
+   "F-011": {
+    "present": false,
+    "unit": "SIMT barrier decode (kht_predec.v, kht_core.v)",
+    "summary": "BAR is accepted and sets C_BAR, but the core has no consumer of that control: the instruction retires without workgroup arrival, release or memory ordering.",
+    "witness": "Source witness: two waves with one producer delayed past the other's BAR can pass the purported barrier independently. No RTL witness was executed.",
+    "handling": "No generated TPU path: L1 resolves vc/mg/sr only and software has no SIMT shader emitter. Package and OS barriers are not SIMT BAR instructions.",
+    "fix": "Implement workgroup arrival/release with memory ordering, or fault BAR as unsupported through the existing illegal-instruction path."
+   },
+   "F-012": {
+    "present": true,
+    "unit": "vector fill completion tracker (v2_core.v, v2_fifo.v)",
+    "summary": "VFILL admission does not reserve room in the 16-record completion FIFO. With delayed ordered responses, a seventeenth unretired fill overwrites a length record; completion accounting no longer matches issued fills.",
+    "witness": "Source witness: accept requests for a 256-word fill and sixteen one-word fills while withholding responses, then release responses in order. The length tracker has only sixteen slots. Not an executed bench.",
+    "handling": "Open: L1 vfill and raw vector words can reach it. Static fill counts do not determine occupancy; periodic completion waits change valid programs' scheduling and critical path. No serialization or refusal is installed.",
+    "fix": "Reserve a completion record before f_take and release it on retirement, accounting for simultaneous retirement/admission and the fill pending ft_push; never drop a full push."
+   },
+   "F-013": {
+    "present": false,
+    "unit": "SRU retained job admission (sru_core.v, sru_cu.v)",
+    "summary": "CFG retains omitted words and RUN starts without checking the effective image. No-pool arithmetic finalise can stall, disabled reciprocal acts as MOV, and disabled MX7 output disagrees with shell word counts. Unsupported profile/geometry combinations are not faulted at job acceptance.",
+    "witness": "Source witness: with FIN_RCP=0, store an unused reciprocal finalise entry, then update only FINLEN to execute it with K0=2: the retained reciprocal moves 2 instead of producing 0.5. Raw OUT=2 on HAS_MX7=0 gives mismatched core/shell output counts. Not an executed bench.",
+    "handling": "Semantic job admission checks supplied/reconstructible contents. Open: raw SruInst::Config, package SEND/DISPATCH/FETCH and cross-submission retained state do not share an exclusive configuration-image owner. No partial-update refusal or reset writes are installed.",
+    "fix": "Validate the complete retained configuration before starting core or walkers; return one existing execution fault completion with no transfers or row writes, preserve configuration, and admit the next valid job."
    }
   }
  },
@@ -979,6 +1027,42 @@
   "flaws.F-007.summary": "derived: silicon flaw F-007",
   "flaws.F-007.witness": "derived: silicon flaw F-007",
   "flaws.F-007.handling": "derived: silicon flaw F-007",
-  "flaws.F-007.fix": "derived: silicon flaw F-007"
+  "flaws.F-007.fix": "derived: silicon flaw F-007",
+  "flaws.F-008.present": "src/kohakuaccel/sysnode/cpu/rv64_load_win.v:91",
+  "flaws.F-008.unit": "derived: silicon flaw F-008",
+  "flaws.F-008.summary": "derived: silicon flaw F-008",
+  "flaws.F-008.witness": "derived: silicon flaw F-008",
+  "flaws.F-008.handling": "derived: silicon flaw F-008",
+  "flaws.F-008.fix": "derived: silicon flaw F-008",
+  "flaws.F-009.present": "src/kohakutpu/matmul/mx_fpacc.v:387; boards/vlt_v9t6_2n.json:units.MG",
+  "flaws.F-009.unit": "derived: silicon flaw F-009",
+  "flaws.F-009.summary": "derived: silicon flaw F-009",
+  "flaws.F-009.witness": "derived: silicon flaw F-009",
+  "flaws.F-009.handling": "derived: silicon flaw F-009",
+  "flaws.F-009.fix": "derived: silicon flaw F-009",
+  "flaws.F-010.present": "src/kohakumpe/simt/kht_predec.v:35; boards/vlt_v9t6_2n.json:units.SIMT",
+  "flaws.F-010.unit": "derived: silicon flaw F-010",
+  "flaws.F-010.summary": "derived: silicon flaw F-010",
+  "flaws.F-010.witness": "derived: silicon flaw F-010",
+  "flaws.F-010.handling": "derived: silicon flaw F-010",
+  "flaws.F-010.fix": "derived: silicon flaw F-010",
+  "flaws.F-011.present": "src/kohakumpe/simt/kht_predec.v:116; boards/vlt_v9t6_2n.json:units.SIMT",
+  "flaws.F-011.unit": "derived: silicon flaw F-011",
+  "flaws.F-011.summary": "derived: silicon flaw F-011",
+  "flaws.F-011.witness": "derived: silicon flaw F-011",
+  "flaws.F-011.handling": "derived: silicon flaw F-011",
+  "flaws.F-011.fix": "derived: silicon flaw F-011",
+  "flaws.F-012.present": "src/kohakutpu/vector2/v2_core.v:1236; boards/vlt_v9t6_2n.json:units.VC",
+  "flaws.F-012.unit": "derived: silicon flaw F-012",
+  "flaws.F-012.summary": "derived: silicon flaw F-012",
+  "flaws.F-012.witness": "derived: silicon flaw F-012",
+  "flaws.F-012.handling": "derived: silicon flaw F-012",
+  "flaws.F-012.fix": "derived: silicon flaw F-012",
+  "flaws.F-013.present": "src/kohakutpu/sru/sru_cu.v:114; boards/vlt_v9t6_2n.json:units.SR",
+  "flaws.F-013.unit": "derived: silicon flaw F-013",
+  "flaws.F-013.summary": "derived: silicon flaw F-013",
+  "flaws.F-013.witness": "derived: silicon flaw F-013",
+  "flaws.F-013.handling": "derived: silicon flaw F-013",
+  "flaws.F-013.fix": "derived: silicon flaw F-013"
  }
 }

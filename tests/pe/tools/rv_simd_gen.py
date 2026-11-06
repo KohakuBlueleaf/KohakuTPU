@@ -174,7 +174,7 @@ def check(outdir, simd):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--simd", type=int, default=8, choices=(2, 4, 8))
     ap.add_argument("--out", default=str(ROOT / "tests" / "pe" / "build" / "simd"))
     ap.add_argument("--check", action="store_true")

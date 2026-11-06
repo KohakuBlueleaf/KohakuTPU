@@ -34,6 +34,12 @@ UNMODELLED = {
     "F-005": "KohakuAccel OS",
     "F-006": "KohakuAccel OS",
     "F-007": "the firmware and KohakuAccel OS",
+    "F-008": "no handling: a best-effort debug console",
+    "F-009": "FP22 accuracy limitation; no software handling",
+    "F-010": "no generated SIMT shader path",
+    "F-011": "no generated SIMT shader path",
+    "F-012": "the L2 fill throttle, on every machine",
+    "F-013": "no handling: compiled jobs pass SRU admission",
 }
 #: Statements an L2 handling of a mover flaw rewrites.
 MOVES = re.compile(r"^\s*(copy|gather|scatter)\b", re.MULTILINE)
@@ -72,9 +78,10 @@ def compiled(kernels: dict[str, str], docs: list[dict], out: pathlib.Path) -> li
         (side / "l1").mkdir(parents=True)
         (side / "machine.json").write_text(text, "utf-8")
         for i, name in enumerate(names):
-            (side / "l1" / f"{name}.l1").write_text(
-                got[i * len(texts) + j]["l1"], "utf-8"
-            )
+            result = got[i * len(texts) + j]
+            if "l1" not in result:
+                raise ValueError(f"{name}: compilation refused: {result['refused']}")
+            (side / "l1" / f"{name}.l1").write_text(result["l1"], "utf-8")
         timed(side / "l1", side / "machine.json", side / "timed.jsonl")
         found.append(cycles(side / "timed.jsonl"))
     return found

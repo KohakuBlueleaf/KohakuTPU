@@ -39,6 +39,8 @@ Two consequences a frontend must honour:
   D = 16. Overflow is a FAULT -- never a wrap, never a mask merge.
 """
 
+from typing import Literal
+
 MASK = 0xFFFFFFFF
 
 # G9's arithmetic is the SIMD tier's, so its MODEL is too: `khs_fp32.fpu`
@@ -199,7 +201,9 @@ class Wave:
         self.wiw = wid
         self.slot = 0
         # None, ("bar",) or ("wait", counter, target): why the wave cannot issue.
-        self.sleep = None
+        self.sleep: tuple[Literal["bar"]] | tuple[Literal["wait"], int, int] | None = (
+            None
+        )
 
     def active(self):
         return [i for i in range(self.lanes) if (self.mask >> i) & 1]
@@ -928,7 +932,9 @@ class GpuMachine:
                     trace.append((w.wid,) + self.step(w))
                     ran = True
                 if not ran:
-                    why = sorted({w.sleep for w in live})
+                    why = sorted(
+                        {reason for w in live if (reason := w.sleep) is not None}
+                    )
                     raise RuntimeError("deadlock: every live wave sleeps on %s" % why)
             raise RuntimeError("model did not halt within %d steps" % limit)
         except Halt as h:

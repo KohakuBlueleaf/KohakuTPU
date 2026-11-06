@@ -346,6 +346,28 @@ pub fn compile<B: Backend>(
     run.compile(input, name)
 }
 
+/// `input` through the scheduled L1 boundary, using the same stage caches
+/// and backend options as [`compile`]. L1 input is already at this boundary.
+pub fn compile_l1<B: Backend>(
+    b: &B,
+    input: &Input,
+    name: Option<&str>,
+    m: &Machine,
+    cache: &Cache,
+) -> Result<String, Refused> {
+    if let Input::L1(text) = input {
+        return Ok(text.clone());
+    }
+    let run = Run {
+        b,
+        m,
+        cache,
+        digest: m.digest_bytes(),
+    };
+    let (_, _, l1, _) = run.to_l1(input, name)?;
+    Ok(l1.text)
+}
+
 /// Every input compiled in parallel on the current rayon pool; result `i` is
 /// input `i`'s, whatever the thread count.
 pub fn compile_many<B: Backend>(

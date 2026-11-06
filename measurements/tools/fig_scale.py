@@ -95,8 +95,8 @@ def idle_dies() -> None:
     for tag, label in rows:
         step = load(f"mixer.{tag}.multimesh_v9t6.1n").step
         cycles = sum(r["cycles"] for r in step) / 1e6
-        ax.barh(label, cycles, color=SERIES[0])
-        ax.text(cycles, label, f" {cycles:.2f} M", va="center", color=SECOND)
+        bar = ax.barh(label, cycles, color=SERIES[0])
+        ax.bar_label(bar, [f" {cycles:.2f} M"], color=SECOND)
     ax.grid(axis="y", visible=False)
     ax.set_xlabel("node 0 cycles a warm step, node 0 at mid")
     ax.set_title("Dies that run nothing still change node 0's cycles")

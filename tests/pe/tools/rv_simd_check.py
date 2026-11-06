@@ -348,7 +348,7 @@ CHECKS = [
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--simd", type=int, default=8, choices=(2, 4, 8))
     a = ap.parse_args()
     global SIMD

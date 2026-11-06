@@ -9,7 +9,7 @@ use ktpu_l1::text::{fmt, Stmt, Term};
 
 use super::node::holds;
 use super::view::{view, Layout};
-use super::{map, Rows, Sim, CORE_KEY};
+use super::{Rows, Sim, CORE_KEY};
 use crate::l1::term::{int, Env};
 use crate::mem::WORD;
 use crate::num::{self, mx7};
@@ -265,7 +265,7 @@ impl Instance {
             Ok(u32::from(u16::from_le_bytes([bytes[0], bytes[1]])))
         };
         if st.kw("read_map").is_some() {
-            let elements = map::read(st, &sim.env)?;
+            let elements = sim.maps.read(st, &sim.env)?;
             let kw = |k: &str, d: i64| st.kw(k).map_or(Ok(d), |t| int(t, &sim.env));
             let first = kw("read_at", 0)?;
             let pitch = kw("read_pitch", cols as i64)?;

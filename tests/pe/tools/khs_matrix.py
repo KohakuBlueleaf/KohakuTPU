@@ -25,7 +25,7 @@ COLS = [
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--csv", required=True)
     ap.add_argument("--rtl", help="only this revision")
     ap.add_argument("--target", default="3.333")

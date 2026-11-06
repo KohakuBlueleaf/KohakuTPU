@@ -102,7 +102,7 @@ def sources():
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--list", action="store_true", help="print allowed edges too")
     args = ap.parse_args()
 

@@ -20,6 +20,7 @@ against a fully-featured one.
 
 import argparse
 import ctypes
+import io
 import itertools
 import json
 import os
@@ -521,8 +522,9 @@ def run(argv: list, script: str, tag: str) -> dict:
 
 
 def main() -> int:
-    sys.stdout.reconfigure(line_buffering=True)
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("sweep", nargs="*", help="which sweeps to run")
     ap.add_argument("--all", action="store_true", help="every sweep")
     ap.add_argument("--list", action="store_true")

@@ -41,6 +41,7 @@ GRID_Y_HI separately, which is why noc_inport.v clamps each axis on its own.
 
 import argparse
 import sys
+from collections.abc import Set as AbstractSet
 from pathlib import Path
 
 EMPTY = {"xxx", "   ", "..."}
@@ -52,7 +53,7 @@ class MeshError(Exception):
     pass
 
 
-def parse_map(text, extra=frozenset()):
+def parse_map(text, extra: AbstractSet[str] = frozenset()):
     """Parse the token picture into a list of rows of 3-char tokens.
 
     `extra` is a project's own unit tokens (--tokens). Raises MeshError on
@@ -91,7 +92,7 @@ def parse_map(text, extra=frozenset()):
 class Mesh:
     """The parsed map, resolved into routers, endpoints and their coordinates."""
 
-    def __init__(self, rows, extra=frozenset()):
+    def __init__(self, rows, extra: AbstractSet[str] = frozenset()):
         self.rows = rows
         self.ny = len(rows) - 2
         self.nx = len(rows[0]) - 2
@@ -519,6 +520,10 @@ def emit(
     # ---- project units, from the --tokens table ------------------------
     # Same link discipline as the built-ins; the table supplies only the
     # instance text, so a new accelerator never edits this file.
+    if tokens is None:
+        if m.units:
+            raise MeshError("project units require a token emitter table")
+        tokens = {}
     unit_sites = []
     for tok in sorted(m.units):
         for i, (x, y) in enumerate(m.units[tok]):

@@ -11,6 +11,7 @@
 //! rest are the last pass's cycles each.
 
 use std::collections::{BTreeSet, HashMap};
+use std::rc::Rc;
 use std::sync::OnceLock;
 
 use ktpu_machine::Machine;
@@ -228,9 +229,9 @@ fn hold_beats(op: &str, opnds: &[String], syms: &[String], beats: i64, p: &Param
     let walks: Vec<(String, i64, i64)> = walks.into_iter().map(Option::unwrap).collect();
     let mut held = 0;
     for i in 0..beats {
-        let words: BTreeSet<(String, i64)> = walks
+        let words: BTreeSet<(&str, i64)> = walks
             .iter()
-            .map(|(s, b, st)| (s.clone(), (b + st * i).rem_euclid(p.chunks)))
+            .map(|(s, b, st)| (s.as_str(), (b + st * i).rem_euclid(p.chunks)))
             .collect();
         let banks: BTreeSet<i64> = words.iter().map(|(_, c)| c % p.banks).collect();
         if words.len() == 3 && banks.len() == 1 {
@@ -350,7 +351,7 @@ pub(crate) struct Core {
     pack_end: HashMap<String, i64>,
     unpack_end: HashMap<String, i64>,
     by_math: BTreeSet<String>,
-    parsed: HashMap<String, MOp>,
+    parsed: HashMap<String, Rc<MOp>>,
 }
 
 impl Core {
@@ -423,12 +424,12 @@ impl Core {
         self.fe
     }
 
-    fn mop(&mut self, text: &str) -> MOp {
+    pub(crate) fn mop(&mut self, text: &str) -> Rc<MOp> {
         match self.parsed.get(text) {
             Some(o) => o.clone(),
             None => {
                 let (tmpl, syms) = symbolic(text);
-                let o = parse(&tmpl, &syms, self.copies, &self.p);
+                let o = Rc::new(parse(&tmpl, &syms, self.copies, &self.p));
                 self.parsed.insert(text.to_string(), o.clone());
                 o
             }
@@ -436,7 +437,7 @@ impl Core {
     }
 
     /// The cycle `o` would start at, dispatched `words` words now.
-    fn start_of(&self, o: &MOp, words: i64) -> i64 {
+    pub(crate) fn start_of(&self, o: &MOp, words: i64) -> i64 {
         let eng = o.eng;
         let mut start = self.entered(eng, words).max(self.free[eng]);
         let get = |m: &HashMap<String, i64>, k: &String| *m.get(k).unwrap_or(&0);
@@ -468,19 +469,17 @@ impl Core {
         start
     }
 
-    /// The cycle instruction `text` of `words` dispatch words would start
-    /// at, the core unchanged.
-    pub(crate) fn peek(&mut self, text: &str, words: i64) -> i64 {
-        let o = self.mop(text);
-        self.start_of(&o, words)
-    }
-
     /// Issue the instruction `text` of `words` dispatch words: the cycle it
     /// starts.
     pub(crate) fn op(&mut self, text: &str, words: i64) -> i64 {
         let o = self.mop(text);
+        self.op_decoded(&o, words)
+    }
+
+    /// Issue an instruction decoded for this core's parameters.
+    pub(crate) fn op_decoded(&mut self, o: &MOp, words: i64) -> i64 {
         let eng = o.eng;
-        let start = self.start_of(&o, words);
+        let start = self.start_of(o, words);
         self.enter(eng, words);
         let end;
         let get = |m: &HashMap<String, i64>, k: &String| *m.get(k).unwrap_or(&0);

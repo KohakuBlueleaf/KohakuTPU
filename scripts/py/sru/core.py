@@ -238,7 +238,7 @@ class SubRow:
     def chain(self, pnum, table, cols_mem, rom=False):
         G, ps, W = self.G, self.P[pnum], self.W
         ops = self.OPS[ps["OPBASE"] : ps["OPBASE"] + ps["NOPS"]]
-        sums = None
+        sums: list[list[list[int]]] = []
         fp = []
         for h, (wd, bw) in enumerate(zip(self.words, self.bws)):
             x = [self.f2e(v) for v in wd]

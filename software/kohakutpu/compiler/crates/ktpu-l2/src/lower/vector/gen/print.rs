@@ -21,11 +21,14 @@ fn name(s: &str) -> Result<&str> {
 }
 
 fn join(ts: &[Term], rule: Rule) -> Result<String> {
-    Ok(ts
-        .iter()
-        .map(|t| term(t, rule))
-        .collect::<Result<Vec<_>>>()?
-        .join(", "))
+    let mut out = String::new();
+    for (i, t) in ts.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(&term(t, rule)?);
+    }
+    Ok(out)
 }
 
 fn term(t: &Term, rule: Rule) -> Result<String> {
@@ -57,9 +60,8 @@ fn head(st: &Stmt, rule: Rule) -> Result<String> {
         return Err("generated instructions have no binding target or annotation".into());
     }
     let mut out = name(&st.op)?.to_string();
-    let args: Vec<&Term> = st.args.iter().collect();
-    for (i, a) in args.iter().enumerate() {
-        let prev = i.checked_sub(1).map(|p| args[p]);
+    for (i, a) in st.args.iter().enumerate() {
+        let prev = i.checked_sub(1).and_then(|p| st.args.get(p));
         let comma = st.commas
             && i > 0
             && a.as_kwarg().is_none()

@@ -117,7 +117,7 @@ def main():
         if got is None:
             print(f"{d.name}: EMPTY/FAILED", file=sys.stderr)
             continue
-        if got[0] == "INCOMPLETE":
+        if len(got) == 3:
             print(f"{d.name}: RUNNING or DIED before @@@REC", file=sys.stderr)
             continue
         cfg, rec, fmax, units = got

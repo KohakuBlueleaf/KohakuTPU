@@ -50,7 +50,10 @@ def xache_homes() -> dict:
     """The Xache's homes and the home on each die: `N`, and `MP` and `HP`, the
     partition of each master and home (a packed list, last entry first)."""
     text = XACHE.read_text(encoding="utf-8")
-    homes = int(re.search(r"localparam integer M = \d+, N = (\d+)", text).group(1))
+    match = re.search(r"localparam integer M = \d+, N = (\d+)", text)
+    if match is None:
+        raise SystemExit(f"gen_board: no home count in {XACHE}")
+    homes = int(match.group(1))
     die_of = {
         name: [int(v) for v in re.findall(r"\d+'d(\d+)", braces)][::-1]
         for name, braces in re.findall(r"\b(MP|HP) = \{(.+?)\}", text)

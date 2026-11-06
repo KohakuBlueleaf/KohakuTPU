@@ -410,7 +410,9 @@ def run_one(job):
         if "@@@REC " in text or "couldn't read file" not in text:
             return tag, text
         print(f"  {tag}: install-tree read failure, retry {attempt + 1}/2")
-    return tag, text
+        if attempt == 2:
+            return tag, text
+    raise RuntimeError("sweep attempt range is empty")
 
 
 def collect(text):

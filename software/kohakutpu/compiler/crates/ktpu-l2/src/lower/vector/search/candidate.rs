@@ -88,7 +88,7 @@ fn image(
         );
     }
     events.push(Event::Fixed(ir::instruction("halt", vec![], vec![])));
-    body.extend(ir::nest(&events).unwrap());
+    body.extend(ir::nest(events).unwrap());
     let names = c
         .descs
         .iter()

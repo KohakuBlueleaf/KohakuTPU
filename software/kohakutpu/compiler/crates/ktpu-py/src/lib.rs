@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 mod bindings;
 mod library;
+mod pricing;
 
 create_exception!(
     kohakutpu.compiler._rs,
@@ -1153,6 +1154,17 @@ fn l1_cycles(l1_text: &str, name: &str, machine_json: &str) -> PyResult<i64> {
         .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
+/// call_cycles(call_json, machine_json) -> int | None: the admission price
+/// through scheduled L1, without package construction or verification.
+#[pyfunction]
+fn call_cycles(call_json: &str, machine_json: &str) -> PyResult<Option<i64>> {
+    let m = machine(machine_json)?;
+    let call: Call = serde_json::from_str(call_json)
+        .map_err(|e| PyValueError::new_err(format!("a read's call: {e}")))?;
+    let root = cache(None);
+    Ok(pricing::Prices::new(&m, &root).cycles(&call))
+}
+
 /// read_composed(mode, read_json, launches_json, machine_json) -> bool:
 /// `ktpu_kernels::composed::composed` of `{"gen", "args"}` calls.
 #[pyfunction]
@@ -1178,21 +1190,11 @@ fn read_composed(
     let mode = ktpu_kernels::gen::prepared::Composed::named(mode)
         .ok_or_else(|| PyValueError::new_err(format!("a composed mode {mode:?}")))?;
     let root = cache(None);
-    let cost = |c: &Call| built_cycles(c, &m, &root);
+    let prices = pricing::Prices::new(&m, &root);
+    let cost = |c: &Call| prices.cycles(c);
     Ok(ktpu_kernels::composed::sequences(
         mode, &read, &launches, &m, &cost,
     ))
-}
-
-/// The cycles of `call`'s kernel as a card builds it, through the stage
-/// caches; None where it does not build.
-fn built_cycles(call: &Call, m: &Machine, root: &Cache) -> Option<i64> {
-    let kernel = ktpu_kernels::call::call(&call.gen, &call.args, m).ok()?;
-    let source = Input::detect(&serde_json::to_string(&kernel.graph).ok()?);
-    let name = kernel.graph.name.as_str();
-    let built = ktpu::compile(&CardStack::default(), &source, Some(name), m, root).ok()?;
-    let module = ktpu_l1::text::read(&built.l1, "<l1>").ok()?;
-    ktpu_l2::cost::cycles(&module, name, &ktpu_l2::target::Target::of(m)).ok()
 }
 
 /// The relayout knobs' defaults (`ktpu_kernels::gen::relayout`), a JSON
@@ -1219,6 +1221,7 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compile, m)?)?;
     m.add_function(wrap_pyfunction!(generate, m)?)?;
     m.add_function(wrap_pyfunction!(read_composed, m)?)?;
+    m.add_function(wrap_pyfunction!(call_cycles, m)?)?;
     m.add_function(wrap_pyfunction!(l1_cycles, m)?)?;
     m.add_function(wrap_pyfunction!(pairs_blocks, m)?)?;
     m.add_function(wrap_pyfunction!(relayout_plan, m)?)?;
