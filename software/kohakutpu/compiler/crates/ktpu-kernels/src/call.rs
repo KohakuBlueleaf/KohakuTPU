@@ -678,7 +678,9 @@ pub fn call_split(
         );
     }
     if (!request.numerics.precision.is_empty() && request.numerics.precision != "generator")
-        || !request.numerics.reduction_order.is_empty()
+        || (!request.numerics.reduction_order.is_empty()
+            && gen != "matmul.mm_kernel"
+            && gen != "mm")
     {
         return fail(
             "DSL.KERN.020",

@@ -10,7 +10,7 @@ use super::view::Layout;
 use super::{Rows, Sim, CORE_KEY};
 use crate::l1::term::int;
 use crate::num::mx7;
-use crate::units::cluster::{Cluster, Word, BUF_ACC};
+use crate::units::cluster::{Cluster, Word};
 use crate::R;
 
 const LANES: i64 = 4;
@@ -142,7 +142,7 @@ impl Instance {
         let node = st.kw("node").map_or(Ok(sim.node), |t| int(t, &sim.env))?;
         let index = sim.unit(pos[2])?;
         if matches!(pos[2], Term::View(u, _) if u == "mg") {
-            sim.adds.push((sim.key(node, index), c.out(BUF_ACC, tiles)));
+            sim.adds.push((self.key, sim.key(node, index), tiles));
             return Ok(());
         }
         let words = c.words(tiles);

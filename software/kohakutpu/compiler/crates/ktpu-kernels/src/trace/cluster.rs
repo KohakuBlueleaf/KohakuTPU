@@ -4,6 +4,27 @@ use super::{fail, here, Trace, ValueData, View, R, V};
 use ktpu_graph as g;
 
 impl Trace {
+    /// Drain native accumulator subtiles into a peer cluster's accumulator.
+    pub fn drain_add(&mut self, acc: V, unit: &super::Idx, node: i64) -> R<()> {
+        let at = here();
+        self.need(Some(g::UnitKind::Mg), "drain")?;
+        let av = self.value(acc);
+        if av.space != g::ValSpace::Acc {
+            return fail("DSL.CL.008", format!("drain takes an @acc value, at {at}"));
+        }
+        let op = g::Node::Drain {
+            src: av.name.clone(),
+            dst: g::Operand::Unit(g::UnitRef {
+                kind: g::UnitKind::Mg,
+                index: Some(unit.graph()),
+            }),
+            add: true,
+            node: Some(super::Idx::Int(node).graph()),
+        };
+        self.emit(op, at);
+        Ok(())
+    }
+
     /// `aN = fill VIEW : mx7a @A` / `bN = .. @B` (DSL.CL.001).
     #[track_caller]
     pub fn fill(&mut self, view: &View) -> R<V> {

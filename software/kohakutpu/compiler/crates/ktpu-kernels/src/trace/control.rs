@@ -59,6 +59,42 @@ fn par_node(
 }
 
 impl Trace {
+    /// A common stage on an ordered, validated grant; the body sees logical rank.
+    pub fn on_nodes(
+        &mut self,
+        nodes: &crate::split::NodeSet,
+        body: impl FnOnce(&mut Trace, Idx) -> R<()>,
+    ) -> R<()> {
+        if self.scope().node || self.scope().kind.is_some() {
+            return fail("DSL.CTRL.001", "nested explicit sysnode scope");
+        }
+        let name = self.fresh("n");
+        let rank = var(&name);
+        let ids = nodes.ids();
+        let p = ids.len() as i64;
+        let mut physical = Idx::Int(ids[0]);
+        for i in 1..ids.len() {
+            physical = physical.add(rank.add(p - i as i64).div(p).mul(ids[i] - ids[i - 1]));
+        }
+        let node = par_node(
+            &name,
+            &Idx::Int(0),
+            &Idx::Int(p),
+            g::UnitKind::Node,
+            Some(&physical),
+            None,
+        );
+        self.block(
+            node,
+            here(),
+            Scope {
+                node: true,
+                ..Scope::default()
+            },
+            |t| body(t, rank),
+        )
+    }
+
     /// Emit a share on one physical sysnode, independently of local unit counts.
     #[track_caller]
     pub fn on_node(&mut self, id: i64, body: impl FnOnce(&mut Trace) -> R<()>) -> R<()> {

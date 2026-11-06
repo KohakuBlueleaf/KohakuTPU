@@ -17,7 +17,6 @@ use crate::l1::term::Env;
 use crate::mem::Dram;
 use crate::rng::Rng;
 use crate::units::cluster::{Cluster, Word};
-use crate::units::link::Data;
 use crate::R;
 
 use view::{view, Buf, View};
@@ -58,7 +57,7 @@ pub struct Sim<'a> {
     links: HashMap<i64, VecDeque<Rows>>,
     /// In a stage that adds accumulators: its adds and drains, for its end.
     deferring: bool,
-    adds: Vec<(i64, Data)>,
+    adds: Vec<(i64, i64, usize)>,
     drains: Vec<(i64, Word)>,
     maps: map::Cache,
 }

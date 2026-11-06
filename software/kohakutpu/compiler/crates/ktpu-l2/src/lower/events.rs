@@ -164,7 +164,10 @@ pub(super) fn lower_events(
         for stage in stages {
             for line in &stage.lines {
                 for part in line.split('@').skip(1).step_by(2) {
-                    if !part.starts_with("order:") && !part.starts_with("ready:") {
+                    if !part.starts_with("order:")
+                        && !part.starts_with("ready:")
+                        && !part.starts_with("complete:")
+                    {
                         continue;
                     }
                     let fields: Vec<_> = part.split(':').collect();
@@ -186,6 +189,8 @@ pub(super) fn lower_events(
                         acquire_regions: vec![],
                         kind: if fields[0] == "order" {
                             EventKind::MemoryRelease
+                        } else if fields[0] == "complete" {
+                            EventKind::PeerComplete
                         } else {
                             EventKind::AccumulatorReady
                         },

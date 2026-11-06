@@ -72,6 +72,12 @@ pub(super) fn added(
 ) -> Result<Vec<String>> {
     // The COUNTed token behind a peer drain is one MXFP7 entry (L2.MG.013).
     let token = t.entry_words();
+    let local_into: BTreeSet<_> = streams
+        .iter()
+        .flat_map(|(_, s)| &s.lines)
+        .filter(|line| line.far.is_none())
+        .filter_map(|line| line.into)
+        .collect();
     let (mut heads, mut tails, mut addl) = (Vec::new(), Vec::new(), Vec::new());
     for (idx, s) in streams {
         let cut = s
@@ -87,7 +93,10 @@ pub(super) fn added(
             }
             _ => cut,
         };
-        if into.contains(idx) && line.map(|l| l.into.is_some()).unwrap_or(true) {
+        if into.contains(idx)
+            && (line.is_none()
+                || local_into.contains(idx) && line.is_some_and(|l| l.into.is_some()))
+        {
             return Err(body.reader.fail(
                 st,
                 "L2.MG.023",
@@ -98,6 +107,18 @@ pub(super) fn added(
         tails.push((*idx, s.lines[cut_tail..].to_vec()));
     }
     let mut out = interleave(&heads);
+    let mut incoming: IndexMap<i64, i64> = IndexMap::new();
+    let consume = |out: &mut Vec<String>, incoming: &mut IndexMap<i64, i64>, j: i64| {
+        if let Some(source) = incoming.shift_remove(&j) {
+            out.push(format!("send mg[{j}]"));
+            out.push(format!("{IND}fill A0 recv n=1"));
+            out.push(format!("wait mg[{j}]"));
+            out.push(format!(
+                "ring mesh={source} slot={}",
+                events::symbol("complete", node, source)
+            ));
+        }
+    };
     let mut marked: IndexMap<i64, i64> = IndexMap::new();
     // Adds into one cluster land one at a time (L1.VER.008 P1): the previous
     // add's entry is taken before the next sender goes.
@@ -113,14 +134,18 @@ pub(super) fn added(
         *m += 1;
     };
     for &(src_node, j) in remote {
-        release(&mut out, &mut marked, j);
+        consume(&mut out, &mut incoming, j);
+        out.push(format!("wait mg[{j}]"));
         out.push(format!(
             "ring mesh={src_node} slot={}",
             events::symbol("ready", node, src_node)
         ));
+        incoming.insert(j, src_node);
     }
+    let mut completions = Vec::new();
     let mut sent_far: Option<i64> = None;
     for (src, line) in &addl {
+        consume(&mut out, &mut incoming, *src);
         let into_j = line.into.unwrap();
         if let Some(far) = line.far {
             if let Some(sf) = sent_far.filter(|_| !on("l2.lower/far-adds-at-once")) {
@@ -135,14 +160,26 @@ pub(super) fn added(
             out.push(format!(
                 "{IND}drain n={token} to=mesh{far}.mg[{into_j}] buf=0 l1=0 count"
             ));
+            completions.push(far);
             sent_far = Some(*src);
             continue;
         }
+        consume(&mut out, &mut incoming, into_j);
         release(&mut out, &mut marked, into_j);
         out.push(format!("send mg[{src}]"));
         out.push(format!("{IND}{}", line.render()));
         out.push(format!(
             "{IND}drain n={token} to=mg[{into_j}] buf=0 l1=0 count"
+        ));
+    }
+    let receivers: Vec<_> = incoming.keys().copied().collect();
+    for j in receivers {
+        consume(&mut out, &mut incoming, j);
+    }
+    for far in completions {
+        out.push(format!(
+            "wait slot {} n=1 consume",
+            events::symbol("complete", far, node)
         ));
     }
     let tails: Vec<(i64, Vec<Line>)> = tails

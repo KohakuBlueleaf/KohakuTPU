@@ -16,6 +16,7 @@ use crate::trace::buffer::{sl, spec, ALL};
 use crate::trace::control::At;
 use crate::trace::{fail, Buf, Cond, Idx, Trace, View, R};
 
+mod peer;
 mod ring;
 pub mod split;
 use ktpu_graph as g;
@@ -1385,6 +1386,7 @@ pub(super) fn mm_kernel_build(
                 made,
                 demands,
                 split::Origin::default(),
+                None,
             )
         }
     })
@@ -1403,6 +1405,7 @@ fn emit_local(
     made: &BTreeMap<usize, prepared::Read>,
     demands: &[QDemand],
     origin: split::Origin,
+    peer: Option<&peer::Plan<'_>>,
 ) -> R<()> {
     let hw = Hw::of(mach);
     let (clusters, cores) = (hw.mg, hw.vc);
@@ -1429,23 +1432,43 @@ fn emit_local(
         let all = nb * tiles;
         let ncl = clusters.min(all).max(1);
         let per = cdiv(all, ncl);
-        t.par(ncl, g::UnitKind::Mg, At::Var, |t, u| {
-            t.range(per, |t, i| {
-                let tile = u.add(i.mul(ncl));
-                let (bt, at) = if nb == 1 {
-                    (bt.clone(), tile.clone())
-                } else {
-                    (tile.div(tiles), tile.rem(tiles))
-                };
-                let (ti, tj) = (at.div(ntn), at.rem(ntn));
-                if per * ncl != all {
-                    t.when(Cond::new(&tile, g::CmpOp::Lt, all), |t| {
-                        product_tile(t, b, h, mm, &bt, &ti, &tj, &hw, product_origin)
-                    })
-                } else {
-                    product_tile(t, b, h, mm, &bt, &ti, &tj, &hw, product_origin)
-                }
-            })
+        peer::clusters(t, peer, ncl, per, |t, u, i, rank| {
+            let tile = u.add(i.mul(ncl));
+            let (bt, at) = if nb == 1 {
+                (bt.clone(), tile.clone())
+            } else {
+                (tile.div(tiles), tile.rem(tiles))
+            };
+            let (ti, tj) = (at.div(ntn), at.rem(ntn));
+            if per * ncl != all {
+                t.when(Cond::new(&tile, g::CmpOp::Lt, all), |t| {
+                    product_tile(
+                        t,
+                        b,
+                        h,
+                        mm,
+                        &bt,
+                        &ti,
+                        &tj,
+                        &hw,
+                        product_origin,
+                        peer.zip(rank.as_ref()).map(|(p, r)| (p, r, &u)),
+                    )
+                })
+            } else {
+                product_tile(
+                    t,
+                    b,
+                    h,
+                    mm,
+                    &bt,
+                    &ti,
+                    &tj,
+                    &hw,
+                    product_origin,
+                    peer.zip(rank.as_ref()).map(|(p, r)| (p, r, &u)),
+                )
+            }
         })
     };
     let epilogue = |t: &mut Trace, b: &[Buf], h: &Buf, bt: &Idx| -> R<()> {
@@ -1484,7 +1507,7 @@ fn emit_local(
                 sl(origin.f16 + bi * mm.m, origin.f16 + (bi + 1) * mm.m),
                 ALL,
             ])?;
-            quant_a(t, &dst, &src, padded, None)?;
+            peer::quant(t, peer, mm, &hw, &dst, &src, padded, None)?;
         }
         quantised[0] = qa;
     }
@@ -1503,6 +1526,7 @@ fn emit_local(
             mach,
             made,
             product_origin,
+            peer,
         );
     }
     let tile = vec![(
@@ -1512,11 +1536,13 @@ fn emit_local(
     let h = t.buffer(&[mm.bt * mm.mp, mm.n], g::Dtype::F16, tile)?;
     let batch = |t: &mut Trace, bt: &Idx| -> R<()> {
         products(t, b, &h, bt, 1)?;
-        epilogue(t, b, &h, bt)
+        peer::root(t, peer, |t| epilogue(t, b, &h, bt))
     };
     if batched {
         products(t, b, &h, &Idx::Int(0), mm.bt)?;
-        t.range(mm.bt, |t, bt| epilogue(t, b, &h, &bt))
+        t.range(mm.bt, |t, bt| {
+            peer::root(t, peer, |t| epilogue(t, b, &h, &bt))
+        })
     } else if mm.bt == 1 {
         batch(t, &Idx::Int(0))
     } else {
@@ -1576,11 +1602,12 @@ fn product_tile(
     tj: &Idx,
     hw: &Hw,
     origin: split::Origin,
+    peer: Option<(&peer::Plan<'_>, &Idx, &Idx)>,
 ) -> R<()> {
     let arow = bt.mul(mm.mp).add(ti.mul(mm.tm));
     let c0 = tj.mul(mm.tn);
     let dst = h.at(&[sl(&arow, arow.add(mm.tm)), sl(&c0, c0.add(mm.tn))])?;
-    product(t, b, mm, bt, &arow, tj, &dst, hw, origin)
+    product(t, b, mm, bt, &arow, tj, &dst, hw, origin, peer)
 }
 
 /// One tile, A rows from `arow`, B's N tile `tj` of batch `bt`: zero, a gemm
@@ -1596,6 +1623,7 @@ fn product(
     dst: &View,
     hw: &Hw,
     origin: split::Origin,
+    peer: Option<(&peer::Plan<'_>, &Idx, &Idx)>,
 ) -> R<()> {
     let acc = t.zero(mm.tm, mm.tn)?;
     let brow = if mm.shared {
@@ -1607,12 +1635,19 @@ fn product(
     let arow = arow.add(origin.a);
     let kc = mm.kc(hw);
     let mut acc = acc;
-    t.range(mm.kp / kc, |t, k| {
-        let k0 = k.mul(kc);
+    let (first, count) = match peer {
+        Some((plan, rank, _)) => peer::chunks(mm, hw, rank, plan.nodes.ids().len()),
+        None => (Idx::Int(0), Idx::Int(mm.kp / kc)),
+    };
+    t.range(count, |t, k| {
+        let k0 = k.add(&first).mul(kc);
         let a = t.fill(&b[0].at(&[sl(&arow, arow.add(mm.tm)), sl(&k0, k0.add(kc))])?)?;
         let bv = t.fill(&b[1].at(&[sl(&brow, brow.add(mm.tn)), sl(&k0, k0.add(kc))])?)?;
         acc = t.gemm(a, bv, acc)?;
         Ok(())
     })?;
-    t.drain(acc, dst)
+    match peer {
+        Some((plan, rank, unit)) => peer::drain(t, plan, rank, unit, acc, dst),
+        None => t.drain(acc, dst),
+    }
 }

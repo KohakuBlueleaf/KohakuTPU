@@ -213,6 +213,21 @@ fn selection_prices_the_slowest_share_and_forcing_keeps_its_price() {
 mod attention;
 
 fn simulate_matmul(kernel: &ktpu_kernels::kernel::Kernel) -> (Vec<u8>, Vec<u32>) {
+    simulate_matmul_inputs(
+        kernel,
+        &|side, group, block, lane, k| {
+            let tag = group * 71 + block * 29 + lane * 13 + k * 3 + i64::from(side);
+            0x2400 | (tag as u16 & 0x3ff) | (((tag / 5) as u16 & 1) << 15)
+        },
+        &|i| 0x2800u16 | ((i * 37) as u16 & 0x3ff),
+    )
+}
+
+fn simulate_matmul_inputs(
+    kernel: &ktpu_kernels::kernel::Kernel,
+    input: &dyn Fn(bool, i64, i64, i64, i64) -> u16,
+    extra: &dyn Fn(i64) -> u16,
+) -> (Vec<u8>, Vec<u32>) {
     let text = ktpu_graph::lower(&kernel.graph).expect("L2 graph");
     let module = ktpu_l1::text::read(&text.text(), "matmul shares").expect("L2 text");
     let body = module.body(&text.name, "l2").expect("body");
@@ -233,12 +248,7 @@ fn simulate_matmul(kernel: &ktpu_kernels::kernel::Kernel) -> (Vec<u8>, Vec<u32>)
                     let mut values = [[0u16; 32]; 4];
                     for (lane, row) in values.iter_mut().enumerate() {
                         for (k, value) in row.iter_mut().enumerate() {
-                            let tag = group * 71
-                                + block * 29
-                                + lane as i64 * 13
-                                + k as i64 * 3
-                                + i64::from(side);
-                            *value = 0x2400 | (tag as u16 & 0x3ff) | (((tag / 5) as u16 & 1) << 15);
+                            *value = input(side, group, block, lane as i64, k as i64);
                         }
                     }
                     let at = b.entry(group, block).expect("packed address");
@@ -250,7 +260,7 @@ fn simulate_matmul(kernel: &ktpu_kernels::kernel::Kernel) -> (Vec<u8>, Vec<u32>)
             }
         } else if name != "out" {
             for i in 0..b.bytes() / 2 {
-                let code = 0x2800u16 | ((i * 37) as u16 & 0x3ff);
+                let code = extra(i);
                 mem.write(b.at + 2 * i, &code.to_le_bytes())
                     .expect("epilogue input");
             }
@@ -435,4 +445,129 @@ fn matmul_empty_shares_issue_no_work() {
     let (actual, writes) = simulate_matmul(&plan.kernel);
     assert_eq!(actual, want);
     assert!(writes.iter().all(|&n| n == 1));
+}
+
+fn k_input(side: bool, group: i64, block: i64, lane: i64, k: i64) -> u16 {
+    if side && group == 0 && lane == 0 {
+        return 0;
+    }
+    let tag = group * 71 + block * 29 + lane * 13 + k * 3 + i64::from(side);
+    0x2400 | (tag as u16 & 0x3ff) | (((tag / 5) as u16 & 1) << 15)
+}
+
+fn decoded(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(2)
+        .map(|x| {
+            ktpu_sim::num::value(ktpu_sim::num::from_f16(u16::from_le_bytes([x[0], x[1]]))) as f32
+        })
+        .collect()
+}
+
+fn error_statistics(actual: &[f32], reference: &[f32]) -> String {
+    let mut errors: Vec<_> = actual
+        .iter()
+        .zip(reference)
+        .map(|(a, b)| (a - b).abs())
+        .collect();
+    let nonfinite = actual.iter().filter(|x| !x.is_finite()).count();
+    let worst = errors
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(i, _)| i)
+        .expect("nonempty result");
+    let relative = actual
+        .iter()
+        .zip(reference)
+        .filter(|(_, b)| **b != 0.0)
+        .map(|(a, b)| ((a - b) / b).abs())
+        .fold(0.0f32, f32::max);
+    let zero = actual
+        .iter()
+        .zip(reference)
+        .filter(|(_, b)| **b == 0.0)
+        .map(|(a, _)| a.abs())
+        .fold(0.0f32, f32::max);
+    let mean = errors.iter().sum::<f32>() / errors.len() as f32;
+    let rms = (errors.iter().map(|x| x * x).sum::<f32>() / errors.len() as f32).sqrt();
+    errors.sort_by(f32::total_cmp);
+    format!(
+        "abs_max={} mean={mean} median={} p95={} rms={rms} rel_max={relative} zero_ref_abs={zero} nonfinite={nonfinite} worst=({}, {})",
+        errors[errors.len() - 1],
+        errors[errors.len() / 2],
+        errors[errors.len() * 95 / 100],
+        worst / 32,
+        worst % 32,
+    )
+}
+
+#[test]
+fn matmul_k_reductions_apply_bias_once_and_write_each_word_once() {
+    let m = machine();
+    let args = json!({
+        "mm": {"made_by": {"gen": "matmul.plan", "args": {
+            "bt": 1, "m": 32, "n": 32, "k": 512
+        }}},
+        "e": {"nodes": [{"load": 0}, {"load": 1}, {"op": "add", "args": [0, 1]}], "root": 2},
+        "extras": [{"kind": "col", "dtype": "f16", "offset": 0, "pitch": 0, "rows": 0}],
+        "out": {"kind": "full", "dtype": "f16", "offset": 0, "pitch": 32, "rows": 32},
+        "ring_depth": 2, "tail_bands": true
+    });
+    let run = |kernel: &ktpu_kernels::kernel::Kernel| {
+        simulate_matmul_inputs(kernel, &k_input, &|_| 0x3000)
+    };
+    let baseline = ktpu_kernels::call("matmul.mm_kernel", &args, &m).expect("P=1");
+    let (want, _) = run(&baseline);
+    let want = decoded(&want);
+    let value = |side, row: i64, k: i64| {
+        ktpu_sim::num::value(ktpu_sim::num::from_f16(k_input(
+            side,
+            row / 4,
+            k / 32,
+            row % 4,
+            k % 32,
+        ))) as f32
+    };
+    let mut reference = Vec::new();
+    for row in 0..32 {
+        for col in 0..32 {
+            reference.push(
+                (0..512)
+                    .map(|k| value(false, row, k) * value(true, col, k))
+                    .sum::<f32>()
+                    + 0.125,
+            );
+        }
+    }
+    let baseline_stats = error_statistics(&want, &reference);
+    for grant in [vec![3, 1], vec![3, 1, 0, 2]] {
+        let mut req = request(&m);
+        req.nodes = NodeSet::new(grant, &m).expect("grant");
+        for id in ["k-tree", "k-serial"] {
+            req.force = Some(id.into());
+            let plan = call_split("matmul.mm_kernel", &args, &req, &m).expect("K reduction");
+            let (actual, writes) = run(&plan.kernel);
+            let actual = decoded(&actual);
+            let stats = format!(
+                "{id} P={}: against P=1: {}; against f32: {}; P=1 against f32: {}",
+                req.nodes.ids().len(),
+                error_statistics(&actual, &want),
+                error_statistics(&actual, &reference),
+                baseline_stats,
+            );
+            // FP22 reduction order differs from P=1: the statistics are reported, not gated.
+            assert!(actual.iter().all(|a| a.is_finite()), "{stats}");
+            assert!(
+                (0..32).all(|row| actual[row * 32] == 0.125),
+                "bias-only column: {stats}"
+            );
+            for (word, counts) in writes.chunks(32).enumerate() {
+                assert!(
+                    counts.iter().all(|&n| n == 1),
+                    "word {word}: {counts:?}; {stats}"
+                );
+            }
+        }
+    }
 }

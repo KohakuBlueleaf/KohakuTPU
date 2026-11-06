@@ -81,10 +81,7 @@ pub fn lower_with_sync(
     let shared = beside_clusters(&body.stmts, &cores, false) && !on("l2.lower/fill-alone");
     body.fill = t.mem(shared);
     let body = body;
-    let multi = body
-        .stmts
-        .iter()
-        .any(|s| matches!(s.as_ref(), Node::Par(p) if p.kind == "node"));
+    let multi = !node_vars(&body.stmts).is_empty();
     let land = if drains_to_cores(&body.stmts) {
         Some(t.l1_words - t.pool())
     } else {

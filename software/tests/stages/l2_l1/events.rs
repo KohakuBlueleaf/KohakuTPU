@@ -77,3 +77,76 @@ fn native_add_example_uses_only_common_backend_leases() {
         "each ready event is consumed"
     );
 }
+
+#[test]
+fn native_tree_consumes_each_subtotal_before_forwarding_or_reopening() {
+    let fixture = super::common::Fixture {
+        label: "native-tree".into(),
+        name: "native_tree".into(),
+        source: r#"target ktpu.v9
+fn native_tree.l2(x: mx7a[4, 128] @dram(gm=1, nk=1), w: mx7b[32, 128] @dram(gn=8, nk=1), y: f16[4, 32] @dram(tile=1x8))
+    for tile in 0..1
+        par n in 0..4 on node[n]
+            par u in 0..1 on mg[u]
+                acc = zero : f32[4, 32] @acc
+                a = fill x[:, n*32 : +32] : mx7a[4, 32] @A
+                b = fill w[:, n*32 : +32] : mx7b[32, 32] @B
+                acc = gemm a, b, acc : f32[4, 32] @acc
+                when n == 0
+                    drain acc -> mg[0] add node=1
+                when n == 3
+                    drain acc -> mg[0] add node=2
+                when n == 1
+                    drain acc -> mg[0] add node=2
+                when n == 2
+                    drain acc -> y
+"#
+        .into(),
+    };
+    let pair = super::lower(&fixture, &super::common::card()).expect("native tree lowering");
+    let text = &pair.after.1;
+    let node = |id| {
+        let marker = format!("    node {id}\n");
+        let start = text.find(&marker).expect("node scope") + marker.len();
+        let body = &text[start..];
+        &body[..body.find("\n    node ").unwrap_or(body.len())]
+    };
+    let intermediate = node(1);
+    let consume = intermediate
+        .find("fill A0 recv n=1")
+        .expect("incoming marker");
+    let forward = intermediate
+        .find("to=mesh2.mg[0] buf=2")
+        .expect("native forwarding");
+    assert!(consume < forward, "{text}");
+    let root = node(2);
+    let first = root.find("ring mesh=3").expect("leaf ready");
+    let consume = root.find("fill A0 recv n=1").expect("leaf completion");
+    let second = root.find("ring mesh=1").expect("subtotal ready");
+    assert!(
+        first < consume && consume < second,
+        "one receive context: {text}"
+    );
+    assert!(
+        !root.contains(" fused") && !root.contains(" emit="),
+        "plain root drain: {text}"
+    );
+    for line in text
+        .lines()
+        .filter(|line| line.trim_start().starts_with("ring "))
+    {
+        let slot = line
+            .split_whitespace()
+            .find_map(|s| s.strip_prefix("slot="))
+            .expect("lease")
+            .parse::<i64>()
+            .expect("numeric lease");
+        assert!((9..16).contains(&slot), "{text}");
+    }
+    assert!(
+        super::common::compare(&pair)
+            .expect("both simulations terminate")
+            .is_none(),
+        "native FP22 tree agrees with L2: {text}"
+    );
+}

@@ -249,6 +249,7 @@ pub(super) fn schedule(
     mach: &Machine,
     made: &BTreeMap<usize, prepared::Read>,
     origin: split::Origin,
+    peer: Option<&peer::Plan<'_>>,
 ) -> R<()> {
     let hw = &Hw::of(mach);
     let wg = ring.tiles * mm.tn;
@@ -305,70 +306,71 @@ pub(super) fn schedule(
     let mask = match cut {
         Some((_, si, _, s0)) => {
             let m = t.buffer(&[segs[si].2.rows, pl.wc], g::Dtype::F16, vec![])?;
-            t.fill_value(&m.whole(), 0, None, None)?;
-            t.fill_value(&m.at(&[sl(0, mm.m - s0), ALL])?, 0x3c00_3c00, None, None)?;
+            peer::root(t, peer, |t| {
+                t.fill_value(&m.whole(), 0, None, None)?;
+                t.fill_value(&m.at(&[sl(0, mm.m - s0), ALL])?, 0x3c00_3c00, None, None)
+            })?;
             Some(m.whole())
         }
         None => None,
     };
-    let qa = quant_ring(t, b, mm, ring, mach, origin.f16)?;
+    let qa = quant_ring(t, b, mm, ring, mach, origin.f16, peer)?;
     let mut bq = b.to_vec();
     if let Some(q) = &qa {
         bq[0] = q.slots.clone();
     }
     if let Some(q) = qa.as_ref().filter(|q| q.ahead == 1) {
-        q.wave(t, &Idx::Int(0))?;
+        q.wave(t, &Idx::Int(0), peer)?;
     }
     t.range_pipe(cdiv(ring.groups, ring.lanes), Some(ring.depth), |t, w| {
         let slot0 = w.rem(ring.depth).mul(ring.lanes);
         if let Some(q) = qa.as_ref().filter(|q| q.ahead == 0) {
-            q.wave(t, &w)?;
+            q.wave(t, &w, peer)?;
         }
-        t.par(ncl, g::UnitKind::Mg, At::Var, |t, u| {
-            t.range(per, |t, i| {
-                let q = u.add(i.mul(ncl));
-                let (lg, tl) = (q.div(ring.tiles), q.rem(ring.tiles));
-                let gi = w.mul(ring.lanes).add(&lg);
-                let work = |t: &mut Trace| {
-                    let (bt, ti, tj0) = ring.group(mm, &gi);
-                    let arow = match &qa {
-                        Some(q) => q.row(&bt.mul(mm.mp / mm.tm).add(&ti)),
-                        None => bt.mul(mm.mp).add(ti.mul(mm.tm)),
-                    };
-                    let srow = slot0.add(&lg).mul(mm.tm);
-                    let c0 = tl.mul(mm.tn);
-                    let dst = slots.at(&[sl(&srow, srow.add(mm.tm)), sl(&c0, c0.add(mm.tn))])?;
-                    product(
-                        t,
-                        &bq,
-                        mm,
-                        &bt,
-                        &arow,
-                        &tj0.add(&tl),
-                        &dst,
-                        hw,
-                        split::Origin {
-                            a: if qa.is_some() { 0 } else { origin.a },
-                            ..origin
-                        },
-                    )
+        peer::clusters(t, peer, ncl, per, |t, u, i, rank| {
+            let q = u.add(i.mul(ncl));
+            let (lg, tl) = (q.div(ring.tiles), q.rem(ring.tiles));
+            let gi = w.mul(ring.lanes).add(&lg);
+            let work = |t: &mut Trace| {
+                let (bt, ti, tj0) = ring.group(mm, &gi);
+                let arow = match &qa {
+                    Some(q) => q.row(&bt.mul(mm.mp / mm.tm).add(&ti)),
+                    None => bt.mul(mm.mp).add(ti.mul(mm.tm)),
                 };
-                let live = |t: &mut Trace| {
-                    if ragged {
-                        t.when(Cond::new(&gi, g::CmpOp::Lt, ring.groups), work)
-                    } else {
-                        work(t)
-                    }
-                };
-                if per * ncl != per_wave {
-                    t.when(Cond::new(&q, g::CmpOp::Lt, per_wave), live)
+                let srow = slot0.add(&lg).mul(mm.tm);
+                let c0 = tl.mul(mm.tn);
+                let dst = slots.at(&[sl(&srow, srow.add(mm.tm)), sl(&c0, c0.add(mm.tn))])?;
+                product(
+                    t,
+                    &bq,
+                    mm,
+                    &bt,
+                    &arow,
+                    &tj0.add(&tl),
+                    &dst,
+                    hw,
+                    split::Origin {
+                        a: if qa.is_some() { 0 } else { origin.a },
+                        ..origin
+                    },
+                    peer.zip(rank.as_ref()).map(|(p, r)| (p, r, &u)),
+                )
+            };
+            let live = |t: &mut Trace| {
+                if ragged {
+                    t.when(Cond::new(&gi, g::CmpOp::Lt, ring.groups), work)
                 } else {
-                    live(t)
+                    work(t)
                 }
-            })
+            };
+            if per * ncl != per_wave {
+                t.when(Cond::new(&q, g::CmpOp::Lt, per_wave), live)
+            } else {
+                live(t)
+            }
         })?;
         if let Some(q) = qa.as_ref().filter(|q| q.ahead == 1) {
-            q.wave(t, &w.add(1))?;
+            q.wave(t, &w.add(1), peer)?;
         }
         // One phase a column block and segment (and the cut trip): a vector
         // instance runs one stream loop.
@@ -392,107 +394,116 @@ pub(super) fn schedule(
                 if !masked && partial && last == 0 && lives.iter().all(|l| *l == 0) {
                     continue;
                 }
-                t.par(cores, g::UnitKind::Vc, on, |t, u| {
-                    let (lg, p) = (u.div(ring.parts), u.rem(ring.parts));
-                    let gi = w.mul(ring.lanes).add(&lg);
-                    let packs = match &status {
-                        Some(s) => {
-                            let rec = w.mul(phases).add(j).mul(cores).add(&u).mul(record);
-                            Some(v::Packs {
-                                q: qs.clone(),
-                                status: s.at(&[sl(&rec, rec.add(record))])?,
-                                mask: mask.clone().filter(|_| masked),
-                            })
-                        }
-                        None => None,
-                    };
-                    let work = |t: &mut Trace| {
-                        let (bt, ti, tj0) = ring.group(mm, &gi);
-                        let grow = bt.mul(mm.mp).add(ti.mul(mm.tm));
-                        let gcol = tj0.mul(mm.tn);
-                        let srow = slot0.add(&lg).mul(mm.tm);
-                        let trips = |t: &mut Trace, n: i64, k0: i64| -> R<()> {
-                            let pro = v::prologue(t, &bufs, &operands, spl, cb, &gcol)?;
-                            t.range(n, |t, k| {
-                                let local = p.mul(part).add(*start).add(k.add(k0).mul(spl.rows));
-                                let mut at = v::Origin::rows(&grow.add(&local), operands.len());
-                                for x in at.ins.iter_mut().skip(1) {
-                                    x.1 = gcol.clone();
+                peer::root(t, peer, |t| {
+                    t.par(cores, g::UnitKind::Vc, on, |t, u| {
+                        let (lg, p) = (u.div(ring.parts), u.rem(ring.parts));
+                        let gi = w.mul(ring.lanes).add(&lg);
+                        let packs = match &status {
+                            Some(s) => {
+                                let rec = w.mul(phases).add(j).mul(cores).add(&u).mul(record);
+                                Some(v::Packs {
+                                    q: qs.clone(),
+                                    status: s.at(&[sl(&rec, rec.add(record))])?,
+                                    mask: mask.clone().filter(|_| masked),
+                                })
+                            }
+                            None => None,
+                        };
+                        let work = |t: &mut Trace| {
+                            let (bt, ti, tj0) = ring.group(mm, &gi);
+                            let grow = bt.mul(mm.mp).add(ti.mul(mm.tm));
+                            let gcol = tj0.mul(mm.tn);
+                            let srow = slot0.add(&lg).mul(mm.tm);
+                            let trips = |t: &mut Trace, n: i64, k0: i64| -> R<()> {
+                                let pro = v::prologue(t, &bufs, &operands, spl, cb, &gcol)?;
+                                t.range(n, |t, k| {
+                                    let local =
+                                        p.mul(part).add(*start).add(k.add(k0).mul(spl.rows));
+                                    let mut at = v::Origin::rows(&grow.add(&local), operands.len());
+                                    for x in at.ins.iter_mut().skip(1) {
+                                        x.1 = gcol.clone();
+                                    }
+                                    at.ins[0] = (srow.add(&local), Idx::Int(0));
+                                    at.out.1 = gcol.clone();
+                                    match &packs {
+                                        Some(pk) => v::rows_block_packed(
+                                            t, &bufs, e, &operands, out, spl, &at, cb, &pro, hw, pk,
+                                        ),
+                                        None => v::rows_block(
+                                            t, &bufs, e, &operands, out, spl, &at, cb, &pro, hw,
+                                        ),
+                                    }
+                                })
+                            };
+                            if masked {
+                                let (pc, _, kc, _) = cut.expect("a cut trip");
+                                return t.when(Cond::new(&ti, g::CmpOp::Eq, last), |t| {
+                                    if ring.parts > 1 {
+                                        t.when(Cond::new(&p, g::CmpOp::Eq, pc), |t| trips(t, 1, kc))
+                                    } else {
+                                        trips(t, 1, kc)
+                                    }
+                                });
+                            }
+                            if !partial {
+                                return trips(t, *count, 0);
+                            }
+                            if last > 0 {
+                                t.when(Cond::new(&ti, g::CmpOp::Lt, last), |t| {
+                                    trips(t, *count, 0)
+                                })?;
+                            }
+                            if lives.iter().all(|l| *l == 0) {
+                                return Ok(());
+                            }
+                            t.when(Cond::new(&ti, g::CmpOp::Eq, last), |t| {
+                                for (pi, &live) in lives.iter().enumerate() {
+                                    let pi = pi as i64;
+                                    if live == 0 {
+                                        continue;
+                                    }
+                                    if ring.parts > 1 {
+                                        t.when(Cond::new(&p, g::CmpOp::Eq, pi), |t| {
+                                            trips(t, live, 0)
+                                        })?;
+                                    } else {
+                                        trips(t, live, 0)?;
+                                    }
                                 }
-                                at.ins[0] = (srow.add(&local), Idx::Int(0));
-                                at.out.1 = gcol.clone();
-                                match &packs {
-                                    Some(pk) => v::rows_block_packed(
-                                        t, &bufs, e, &operands, out, spl, &at, cb, &pro, hw, pk,
-                                    ),
-                                    None => v::rows_block(
-                                        t, &bufs, e, &operands, out, spl, &at, cb, &pro, hw,
-                                    ),
-                                }
+                                Ok(())
                             })
                         };
-                        if masked {
-                            let (pc, _, kc, _) = cut.expect("a cut trip");
-                            return t.when(Cond::new(&ti, g::CmpOp::Eq, last), |t| {
-                                if ring.parts > 1 {
-                                    t.when(Cond::new(&p, g::CmpOp::Eq, pc), |t| trips(t, 1, kc))
-                                } else {
-                                    trips(t, 1, kc)
-                                }
-                            });
+                        if ragged {
+                            t.when(Cond::new(&gi, g::CmpOp::Lt, ring.groups), work)
+                        } else {
+                            work(t)
                         }
-                        if !partial {
-                            return trips(t, *count, 0);
-                        }
-                        if last > 0 {
-                            t.when(Cond::new(&ti, g::CmpOp::Lt, last), |t| trips(t, *count, 0))?;
-                        }
-                        if lives.iter().all(|l| *l == 0) {
-                            return Ok(());
-                        }
-                        t.when(Cond::new(&ti, g::CmpOp::Eq, last), |t| {
-                            for (pi, &live) in lives.iter().enumerate() {
-                                let pi = pi as i64;
-                                if live == 0 {
-                                    continue;
-                                }
-                                if ring.parts > 1 {
-                                    t.when(Cond::new(&p, g::CmpOp::Eq, pi), |t| trips(t, live, 0))?;
-                                } else {
-                                    trips(t, live, 0)?;
-                                }
-                            }
-                            Ok(())
-                        })
-                    };
-                    if ragged {
-                        t.when(Cond::new(&gi, g::CmpOp::Lt, ring.groups), work)
-                    } else {
-                        work(t)
-                    }
+                    })
                 })?;
             }
         }
         Ok(())
     })?;
     if let Some(s) = &status {
-        // Rows past the trips run, to rp: packed zeros.
-        let row = out.offset.div_euclid(out.pitch);
-        let col = out.offset.rem_euclid(out.pitch);
-        let end = row + cover(mm, ring, segs);
-        for q in &qs {
-            let rp = q.spec.shape[0];
-            if origin.last_rows && end < rp {
-                let z = t.buffer(&[rp - end, mm.n], g::Dtype::F16, vec![])?;
-                t.fill_value(&z.whole(), 0, None, None)?;
-                let dst = q.at(&[sl(end, rp), sl(col, col + mm.n)])?;
-                t.quant_scheduled(&dst, &z.whole(), true, QUANT_SCHEDULE, false)?;
+        peer::root(t, peer, |t| {
+            // Rows past the trips run, to rp: packed zeros.
+            let row = out.offset.div_euclid(out.pitch);
+            let col = out.offset.rem_euclid(out.pitch);
+            let end = row + cover(mm, ring, segs);
+            for q in &qs {
+                let rp = q.spec.shape[0];
+                if origin.last_rows && end < rp {
+                    let z = t.buffer(&[rp - end, mm.n], g::Dtype::F16, vec![])?;
+                    t.fill_value(&z.whole(), 0, None, None)?;
+                    let dst = q.at(&[sl(end, rp), sl(col, col + mm.n)])?;
+                    t.quant_scheduled(&dst, &z.whole(), true, QUANT_SCHEDULE, false)?;
+                }
             }
-        }
-        t.quant_check(&s.whole())?;
+            t.quant_check(&s.whole())
+        })?;
     }
     match qa.and_then(|q| q.status) {
-        Some(s) => t.quant_check(&s.whole()),
+        Some(s) => peer::check(t, peer, &s),
         None => Ok(()),
     }
 }
@@ -510,6 +521,7 @@ struct QuantRing<'a> {
     ahead: i64,
     mm: &'a Mm,
     ring: &'a Ring,
+    hw: Hw,
 }
 
 /// The quant ring `ring` takes, or none.
@@ -520,6 +532,7 @@ fn quant_ring<'a>(
     ring: &'a Ring,
     mach: &Machine,
     origin: i64,
+    peer: Option<&peer::Plan<'_>>,
 ) -> R<Option<QuantRing<'a>>> {
     if ring.quant == 0 {
         return Ok(None);
@@ -534,7 +547,11 @@ fn quant_ring<'a>(
     let ntm = mm.mp / mm.tm;
     let slice = ktpu_machine::packing::quant_status_bytes(mach.quant_cores()) / 2;
     let status = if ring.quant == 2 {
-        Some(t.buffer(&[mm.bt * ntm * slice], g::Dtype::F16, vec![])?)
+        Some(t.buffer(
+            &[mm.bt * ntm * slice * peer.map_or(1, |p| p.nodes.ids().len() as i64)],
+            g::Dtype::F16,
+            vec![],
+        )?)
     } else {
         None
     };
@@ -547,6 +564,7 @@ fn quant_ring<'a>(
         ahead: ring.quant - 1,
         mm,
         ring,
+        hw,
     }))
 }
 
@@ -558,7 +576,7 @@ impl QuantRing<'_> {
 
     /// Row tile `rt` quantised into its slot: the rows of A it holds, the
     /// rest zero.
-    fn tile(&self, t: &mut Trace, rt: &Idx) -> R<()> {
+    fn tile(&self, t: &mut Trace, rt: &Idx, peer: Option<&peer::Plan<'_>>) -> R<()> {
         let mm = self.mm;
         let ntm = mm.mp / mm.tm;
         let (bt, ti) = (rt.div(ntm), rt.rem(ntm));
@@ -574,7 +592,16 @@ impl QuantRing<'_> {
         let quant = |t: &mut Trace, rows: i64| -> R<()> {
             let r0 = bt.mul(mm.m).add(ti.mul(mm.tm)).add(self.origin);
             let src = self.a.at(&[sl(&r0, r0.add(rows)), ALL])?;
-            quant_a(t, &dst, &src, rows < mm.tm || mm.k < mm.kp, status.as_ref())
+            peer::quant(
+                t,
+                peer,
+                mm,
+                &self.hw,
+                &dst,
+                &src,
+                rows < mm.tm || mm.k < mm.kp,
+                status.as_ref(),
+            )
         };
         let tail = mm.m - (ntm - 1) * mm.tm;
         if tail == mm.tm {
@@ -587,17 +614,17 @@ impl QuantRing<'_> {
     }
 
     /// The row tiles wave `w`'s row groups start.
-    fn wave(&self, t: &mut Trace, w: &Idx) -> R<()> {
+    fn wave(&self, t: &mut Trace, w: &Idx, peer: Option<&peer::Plan<'_>>) -> R<()> {
         let ring = self.ring;
         let per_row = ring.groups / (self.mm.bt * (self.mm.mp / self.mm.tm));
         for j in 0..ring.lanes {
             let gi = w.mul(ring.lanes).add(j);
             let starts = |t: &mut Trace| {
                 if per_row == 1 {
-                    return self.tile(t, &gi);
+                    return self.tile(t, &gi, peer);
                 }
                 t.when(Cond::new(&gi.rem(per_row), g::CmpOp::Eq, 0), |t| {
-                    self.tile(t, &gi.div(per_row))
+                    self.tile(t, &gi.div(per_row), peer)
                 })
             };
             t.when(Cond::new(&gi, g::CmpOp::Lt, ring.groups), starts)?;

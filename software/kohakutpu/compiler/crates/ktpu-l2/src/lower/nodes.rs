@@ -71,6 +71,54 @@ pub(super) fn remote_adds(
             out.entry(key).or_default().push((src, j.unwrap_or(0)));
         }
     }
+    // Receivers consume shallower partials before a dependent subtotal.
+    type Unit = (i64, i64);
+    let mut edges: HashMap<StageKey, Vec<(Unit, Unit)>> = HashMap::new();
+    for s in stages {
+        let StageX::Par(x) = &s.x else { continue };
+        let key = stage_key(node_vars, x);
+        for (src, unit, dst, target) in adds(body, x)? {
+            edges
+                .entry(key.clone())
+                .or_default()
+                .push(((src, unit), (dst, target.unwrap_or(0))));
+        }
+    }
+    let mut depths = HashMap::new();
+    for (key, edges) in &edges {
+        let mut pending = edges.clone();
+        let mut depth = HashMap::new();
+        while !pending.is_empty() {
+            let (ready, later): (Vec<_>, Vec<_>) = pending
+                .iter()
+                .copied()
+                .partition(|(src, _)| !pending.iter().any(|(_, target)| target == src));
+            if ready.is_empty() {
+                return Err(crate::ir::Error::new(
+                    "L2.MG.014",
+                    "cyclic accumulator reduction",
+                ));
+            }
+            for (src, dst) in ready {
+                let d = depth.get(&src).copied().unwrap_or(0usize) + 1;
+                let entry = depth.entry(dst).or_insert(0);
+                *entry = (*entry).max(d);
+            }
+            pending = later;
+        }
+        depths.insert(key.clone(), depth);
+    }
+    for ((receiver, key), sources) in &mut out {
+        let depth = &depths[key];
+        sources.sort_by_key(|(source, target)| {
+            edges[key]
+                .iter()
+                .filter(|(src, dst)| src.0 == *source && *dst == (*receiver, *target))
+                .map(|(src, _)| depth.get(src).copied().unwrap_or(0))
+                .max()
+                .unwrap_or(0)
+        });
+    }
     Ok(out)
 }
 

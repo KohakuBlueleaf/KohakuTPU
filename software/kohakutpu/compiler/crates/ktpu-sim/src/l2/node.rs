@@ -139,8 +139,10 @@ impl Sim<'_> {
             other => return Err(format!("a par's unit, got {}", fmt(other))),
         };
         let mut order: Vec<i64> = (lo..hi).collect();
-        for i in (1..order.len()).rev() {
-            order.swap(i, self.rng.pick(i + 1));
+        if unit != "node" || !adds(&st.body) {
+            for i in (1..order.len()).rev() {
+                order.swap(i, self.rng.pick(i + 1));
+            }
         }
         let outer = !self.deferring && adds(&st.body);
         self.deferring |= outer;
@@ -149,7 +151,7 @@ impl Sim<'_> {
             for s in &st.body {
                 for i in &order {
                     self.env.insert(var.clone(), *i);
-                    self.node = *i;
+                    self.node = self.unit(on)?;
                     self.statement(s)?;
                 }
                 if outer {
@@ -184,11 +186,28 @@ impl Sim<'_> {
 
     /// The accumulator adds of a stage, then the drains that read their sum.
     fn settle(&mut self) -> R<()> {
-        for (key, data) in std::mem::take(&mut self.adds) {
-            self.clusters
-                .entry(key)
-                .or_default()
-                .land(BUF_ACC, 0, &data, false)?;
+        let mut pending = std::mem::take(&mut self.adds);
+        while !pending.is_empty() {
+            let mut ready = Vec::new();
+            let mut later = Vec::new();
+            for &(src, dst, tiles) in &pending {
+                if pending.iter().any(|&(_, target, _)| target == src) {
+                    later.push((src, dst, tiles));
+                } else {
+                    ready.push((src, dst, tiles));
+                }
+            }
+            if ready.is_empty() {
+                return Err("cyclic accumulator reduction".into());
+            }
+            for (src, dst, tiles) in ready {
+                let data = self.clusters.entry(src).or_default().out(BUF_ACC, tiles);
+                self.clusters
+                    .entry(dst)
+                    .or_default()
+                    .land(BUF_ACC, 0, &data, false)?;
+            }
+            pending = later;
         }
         for (key, word) in std::mem::take(&mut self.drains) {
             self.clusters.entry(key).or_default().run(&word, self.mem)?;

@@ -417,6 +417,150 @@ pub fn split_options(
             },
         });
     }
+    if matches!(p, 2 | 4) && mm.kp > 0 && shape.class.is_none() {
+        let mut single = request.clone();
+        single.nodes = crate::split::NodeSet::new(vec![request.nodes.ids()[0]], mach)?;
+        single.numerics.reduction_order.clear();
+        let base = split_options(shape, &single, mach)?.remove(0);
+        let cuts = partition_tiles(mm.kp / mm.kc(&hw), p)?;
+        let active: Vec<_> = cuts
+            .iter()
+            .enumerate()
+            .filter(|(_, cut)| !cut.is_empty())
+            .map(|(rank, _)| rank)
+            .collect();
+        for tree in [true, false] {
+            let (edges, root) = peer::reduction(p, tree, &active);
+            if !request.numerics.reduction_order.is_empty()
+                && request.numerics.reduction_order != edges
+            {
+                continue;
+            }
+            let mut output = base.output.clone();
+            for (owner, _) in &mut output.ownership {
+                *owner = root;
+            }
+            let mut shards = Vec::new();
+            for (rank, cut) in cuts.iter().enumerate() {
+                let lo = cut.start * mm.kc(&hw);
+                let hi = cut.end * mm.kc(&hw);
+                let mut reads = Vec::new();
+                if !cut.is_empty() {
+                    if takes_f16(mm.k, mm.nk, shape.knobs, mach) {
+                        for row in 0..mm.bt * mm.m {
+                            reads.push(region(
+                                "a",
+                                (row * mm.k + lo) * 2,
+                                (row * mm.k + hi.min(mm.k)) * 2,
+                            ));
+                        }
+                    } else {
+                        reads.extend(packed_rect(
+                            "a",
+                            0,
+                            mm.bt * mm.mp,
+                            lo,
+                            hi - lo,
+                            mm.tm / hw.band,
+                            mm.nk,
+                            mm.kp,
+                            &hw,
+                        ));
+                    }
+                    reads.extend(packed_rect(
+                        "b",
+                        0,
+                        if mm.shared { mm.n } else { mm.bt * mm.n },
+                        lo,
+                        hi - lo,
+                        mm.tn / hw.band,
+                        mm.nk,
+                        mm.kp,
+                        &hw,
+                    ));
+                }
+                if rank == root {
+                    reads.extend(
+                        base.shards
+                            .iter()
+                            .flat_map(|s| s.read_regions.iter())
+                            .filter(|r| r.allocation != "a" && r.allocation != "b")
+                            .cloned(),
+                    );
+                }
+                shards.push(ShardTiles {
+                    logical_node: rank,
+                    tile_ranges: vec![0..mm.bt * (mm.mp / mm.tm), 0..mm.n / mm.tn, cut.clone()],
+                    logical_origin: vec![0, 0, 0, lo],
+                    valid_extent: vec![mm.bt * mm.m, mm.n, (hi.min(mm.k) - lo).max(0)],
+                    padded_extent: vec![mm.bt * mm.mp, mm.n, hi - lo],
+                    read_regions: reads,
+                    write_regions: if rank == root {
+                        output.valid_region.clone()
+                    } else {
+                        vec![]
+                    },
+                    scratch_regions: vec![],
+                    local_schedule: mm.py().repr(),
+                    role: if cut.is_empty() {
+                        ShardRole::Empty
+                    } else if rank == root {
+                        ShardRole::ReductionRoot
+                    } else if edges.iter().any(|&(_, to)| to == rank) {
+                        ShardRole::ReductionIntermediate
+                    } else {
+                        ShardRole::Compute
+                    },
+                });
+            }
+            let mut events = Vec::new();
+            for &(from, to) in &edges {
+                for (kind, label) in [
+                    (ktpu_l2::lower::events::EventKind::AccumulatorReady, "ready"),
+                    (ktpu_l2::lower::events::EventKind::PeerComplete, "complete"),
+                ] {
+                    let producer = request.nodes.ids()[to];
+                    let receiver = request.nodes.ids()[from];
+                    events.push(crate::split::EventSpec {
+                        id: crate::split::EventId(format!("@{label}:{producer}:{receiver}@")),
+                        producers: vec![producer],
+                        consumers: vec![receiver],
+                        released_regions: vec![],
+                        acquire_regions: vec![],
+                        kind,
+                        count: 1,
+                        lifetime: 0..1,
+                    });
+                }
+            }
+            options.push(SplitOption {
+                id: if tree { "k-tree" } else { "k-serial" }.into(),
+                axis: SplitAxis::K,
+                p,
+                active_nodes: active.len(),
+                shards,
+                output,
+                events,
+                conversions: 0,
+                cost: CostEstimate::default(),
+                legality: LegalityWitness {
+                    numerics: crate::split::NumericContract {
+                        precision: "generator".into(),
+                        reduction_order: edges,
+                    },
+                    clauses: vec![
+                        "whole packed K chunks; native FP22 peer reduction; root epilogue".into(),
+                    ],
+                },
+            });
+        }
+    }
+    if !request.numerics.reduction_order.is_empty() {
+        options.retain(|o| {
+            o.legality.numerics.reduction_order == request.numerics.reduction_order
+                && matches!(o.axis, SplitAxis::K)
+        });
+    }
     Ok(options)
 }
 
@@ -428,6 +572,23 @@ pub(crate) fn emit(
     option: &SplitOption,
     mach: &Machine,
 ) -> R<()> {
+    if matches!(option.axis, SplitAxis::K) {
+        let plan = peer::Plan::new(&request.nodes, option);
+        return emit_local(
+            t,
+            b,
+            shape.mm,
+            shape.e,
+            shape.extras,
+            shape.out,
+            shape.knobs,
+            mach,
+            shape.made,
+            shape.demands,
+            Origin::default(),
+            Some(&plan),
+        );
+    }
     let mut private = Vec::new();
     if option.conversions != 0 {
         for share in &option.shards {
@@ -518,6 +679,7 @@ pub(crate) fn emit(
             shape.made,
             &demands,
             origin,
+            None,
         )
     })?;
     if option.conversions != 0 {
@@ -538,7 +700,7 @@ pub fn kernel(
     let mut priced = Vec::new();
     for option in options {
         let mut kernels = Vec::new();
-        if option.conversions != 0 {
+        if option.conversions != 0 || matches!(option.axis, SplitAxis::K) {
             let whole = build_option(shape, request, &option, mach)?;
             let cycles = g::cycles(&whole.graph, mach)? - mach.vc.launch_front as i64;
             let active = option.active_nodes;
