@@ -59,6 +59,28 @@ fn par_node(
 }
 
 impl Trace {
+    /// Emit a share on one physical sysnode, independently of local unit counts.
+    #[track_caller]
+    pub fn on_node(&mut self, id: i64, body: impl FnOnce(&mut Trace) -> R<()>) -> R<()> {
+        if id < 0 || id >= self.facts.nodes || self.scope().node || self.scope().kind.is_some() {
+            return fail("DSL.CTRL.001", "invalid or nested explicit sysnode scope");
+        }
+        let name = self.fresh("n");
+        let node = par_node(
+            &name,
+            &Idx::Int(id),
+            &Idx::Int(id + 1),
+            g::UnitKind::Node,
+            Some(&var(&name)),
+            None,
+        );
+        let scope = Scope {
+            node: true,
+            ..Scope::default()
+        };
+        self.block(node, here(), scope, body)
+    }
+
     /// `par v in 0..n on KIND[v]` (DSL.CTRL.001, .011). More `mg` / `vc`
     /// instances than a node has, outside a par over nodes, span the
     /// machine's nodes: `par n on node[n]` around `par u on KIND[u]`, the

@@ -230,6 +230,13 @@ pub struct Split {
     n: i64,
 }
 
+/// Balanced tile boundary for participant `p`, including the final boundary.
+pub fn balanced_cut(n: i64, p: &Idx, participants: i64) -> Idx {
+    let (q, rem) = (n / participants, n % participants);
+    p.mul(q)
+        .add(p.mul(rem).add(participants - 1).div(participants))
+}
+
 impl Split {
     pub fn start(&self, c: &Idx) -> Idx {
         if self.cores == 1 {
@@ -237,10 +244,7 @@ impl Split {
         }
         match self.trips {
             Trips::HChunk => c.mul(self.h),
-            Trips::Balanced => {
-                let (q, rem) = (self.n / self.cores, self.n % self.cores);
-                c.mul(q).add(c.mul(rem).add(self.cores - 1).div(self.cores))
-            }
+            Trips::Balanced => balanced_cut(self.n, c, self.cores),
         }
     }
 

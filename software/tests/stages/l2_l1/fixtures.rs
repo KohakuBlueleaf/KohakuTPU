@@ -2,6 +2,7 @@
 
 #[path = "../common.rs"]
 mod common;
+mod events;
 mod fill_throttle;
 mod modulo_memory_effects;
 mod release_frontier;

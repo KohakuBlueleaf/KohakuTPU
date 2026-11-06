@@ -70,7 +70,6 @@ pub(super) fn added(
     node: i64,
     t: &Target,
 ) -> Result<Vec<String>> {
-    let add = add_slot(t);
     // The COUNTed token behind a peer drain is one MXFP7 entry (L2.MG.013).
     let token = t.entry_words();
     let (mut heads, mut tails, mut addl) = (Vec::new(), Vec::new(), Vec::new());
@@ -115,7 +114,10 @@ pub(super) fn added(
     };
     for &(src_node, j) in remote {
         release(&mut out, &mut marked, j);
-        out.push(format!("ring mesh={src_node} slot={}", add + node));
+        out.push(format!(
+            "ring mesh={src_node} slot={}",
+            events::symbol("ready", node, src_node)
+        ));
     }
     let mut sent_far: Option<i64> = None;
     for (src, line) in &addl {
@@ -124,7 +126,10 @@ pub(super) fn added(
             if let Some(sf) = sent_far.filter(|_| !on("l2.lower/far-adds-at-once")) {
                 out.push(format!("wait mg[{sf}]"));
             }
-            out.push(format!("wait slot {} n=1 consume", add + far));
+            out.push(format!(
+                "wait slot {} n=1 consume",
+                events::symbol("ready", far, node)
+            ));
             out.push(format!("send mg[{src}]"));
             out.push(format!("{IND}{}", line.render()));
             out.push(format!(

@@ -7,6 +7,63 @@ tags:
 ---
 # Offline template verification
 
+## Kernel split options
+
+A logical kernel receives an ordered `NodeSet` of physical sysnode IDs, checked
+against `Machine::nodes()`. The generator's `Hw.nodes` and the tracer's existing
+`Facts.nodes` read that same fact. Local MG/VC counts remain per-sysnode counts.
+`SplitRequest` retains the consumer form/scale requirements, input forms,
+numerical contract, dispatch profile and optional forced option ID.
+
+`SplitOption` describes the axis, participant count, active nodes, tile shares,
+output specs/physical ownership, symbolic events, legality witness and cost.
+Physical regions are byte runs over canonical allocation identities, not logical
+bounding rectangles. `validate_ownership` checks distinct writers at 64-byte
+line granularity and exact coverage of the valid output. Bindings must resolve
+aliases to those canonical identities before checking. This is an ownership
+check, not an all-agent happens-before or numerical certificate.
+
+`partition_tiles(T,P)` uses the vector scheduler's `balanced_cut`: with
+`q=T/P`, `r=T%P`, boundary `p*q+ceil(p*r/P)`. Empty shares are retained in the
+plan and `emit_shares` emits no work for them. `Trace::on_node` emits an explicit
+node scope for the granted physical ID; it does not infer nodes from unit counts.
+
+`call_split` is the planning entry; `call` retains its existing interface and
+path. Generators currently expose the `p1` compatibility option, explicitly
+placed on the first granted node, with `active_nodes=1` and the other granted
+shares empty. Kernel construction scopes the generator body before local unit
+pars are traced, so automatic unit-count expansion cannot escape that node;
+composite calls retain the same construction scope. Machine facts are unchanged.
+The plan retains the original request and producer tensor specs;
+its physical region lists remain unbound. Consumer conversion and distributed
+family options are not implemented by this compatibility option. It admits the
+producer's form and unchanged generator numerics; an incompatible required form,
+explicit scale groups or a different precision/reduction order has no matching
+option and is refused. Input-form labels and mapped-read capabilities remain
+request metadata; generator arguments continue to determine the actual reads. A split plan
+is not a certificate for a new binding, topology or consumer form.
+
+`CostModel::estimate` prices options. `LocalTiming` uses each complete share's
+existing L2/L1 timing and the machine's `vc.launch_front` intercept once per
+sysnode, taking the slowest share rather than dividing a full-kernel time by P.
+The intercept already present in `graph::cycles` is removed before assembling
+features. Conversions and event waits belong in those complete local schedules.
+Estimates carry revision/provenance, `uncertainty="unfitted"` and
+`measured=false`. `choose_split` orders by makespan, conversion count, event
+count and option ID; forcing still prices the selected option.
+`composed::split_sequences` compares dependent sequences of these makespans,
+including explicit conversion kernels and the machine's inter-launch gaps;
+it does not add the parallel sysnodes' costs together.
+
+Code: `software/kohakutpu/compiler/crates/ktpu-kernels/src/split.rs`
+(`NodeSet`, `partition_tiles`, `validate_ownership`, `emit_shares`),
+`software/kohakutpu/compiler/crates/ktpu-kernels/src/split/cost.rs`
+(`CostFeatures`, `LocalTiming`, `choose_split`),
+`software/kohakutpu/compiler/crates/ktpu-kernels/src/call.rs` (`call_split`),
+and `software/kohakutpu/compiler/crates/ktpu-kernels/src/trace/control.rs`
+(`Trace::on_node`). Evidence: implementation and staged behavioural witnesses;
+no device result is asserted.
+
 ## Verification domain
 
 - **STACK.TEMPLATE.001** `unproven` For a fixed machine, package set, inclusive integer parameter box, physical address bindings and effective buffer extents, the affine-binder/certified-mover/exhaustive-checker-quotient proof mode returns `PROVEN` only after establishing binder legality and an empty checker result for its certified quotient of the box. Each simulated binding must retain its emitted package order when scheduled first with empty resident instruction memory and then with the state left by the first schedule. Proof mode rejects any checker finding. Certified static mover execution may be reused across bindings while the independent line checker is rerun. This host-side guarantee does not establish safety under arbitrary initial core state, alternating bindings, composition with other templates, changed physical addresses or extents, or numerical equivalence to a generator. (code: software/kohakutpu/compiler/crates/ktpu/src/templates/proof.rs:141-208, :215-274, :276-328, software/kohakutpu/compiler/crates/ktpu/src/templates/proof_mover.rs:63-112; evidence: offline proof implementation, not silicon or RTL-test evidence)

@@ -1,9 +1,27 @@
 //! A generated kernel: its graph and the specs the generator gives its
 //! ports (`Kernel.build` + `Kernel.graph`, DSL.KERN.003, .005-.008).
 
+use std::cell::Cell;
+
 use crate::trace::{buffer, fail, Buf, Facts, Trace, R};
 use ktpu_graph as g;
 use ktpu_machine::Machine;
+
+thread_local! {
+    static NODE: Cell<Option<i64>> = const { Cell::new(None) };
+}
+
+/// Scope every constituent kernel of a generator call to one physical node.
+pub(crate) fn on_node<T>(node: i64, body: impl FnOnce() -> R<T>) -> R<T> {
+    struct Restore(Option<i64>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            NODE.set(self.0);
+        }
+    }
+    let _restore = Restore(NODE.replace(Some(node)));
+    body()
+}
 
 /// A generated kernel.
 #[derive(Clone, Debug, PartialEq)]
@@ -90,7 +108,10 @@ pub fn build(
         let spec = buffer::spec(&s.shape, p.dtype, p.layout.clone(), g::BufSpace::Dram)?;
         bufs.push(t.port(&p.name, p.role, spec)?);
     }
-    body(&mut t, &bufs)?;
+    match NODE.get() {
+        Some(node) => t.on_node(node, |t| body(t, &bufs))?,
+        None => body(&mut t, &bufs)?,
+    }
     Ok(Kernel {
         graph: t.graph()?,
         given,

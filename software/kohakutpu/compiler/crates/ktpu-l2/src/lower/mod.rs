@@ -7,6 +7,7 @@
 //! gives each node its own `node N` block.
 
 pub mod cluster;
+pub mod events;
 pub mod fills;
 pub mod links;
 pub mod memory;
@@ -35,7 +36,7 @@ use adds::{added, added_into, adds};
 use cluster::{Line, ShareKey, Stream};
 use group::{close, grouped};
 use links::{Key, Links};
-use nodes::{add_slot, node_vars, order_nodes, remote_adds, stage_key};
+use nodes::{node_vars, order_nodes, remote_adds, stage_key};
 use rings::{counts, open, spend, streams};
 use share::shared;
 use sync::{Access, Stage, FENCE};
@@ -46,6 +47,16 @@ const IND: &str = "    ";
 /// L1 text for `fn name.l2` of `p`: the module's target, the images, then
 /// `fn name.l1` with the L2 parameters and the scratch buffers (L2.LOW.001).
 pub fn lower(p: &Program, t: &Target, search: &Search) -> Result<String> {
+    lower_with_sync(p, t, search, &events::BackendSyncFacts::common(t.il_slots))
+}
+
+/// Lower for an explicitly selected backend slot ABI.
+pub fn lower_with_sync(
+    p: &Program,
+    t: &Target,
+    search: &Search,
+    sync: &events::BackendSyncFacts,
+) -> Result<String> {
     let mut body = p.body()?;
     let stages = instances(&body)?;
     let nodes: Vec<i64> = stages
@@ -273,6 +284,7 @@ pub fn lower(p: &Program, t: &Target, search: &Search) -> Result<String> {
     if nodes.len() > 1 || on("l2.lower/handshake-always") {
         order_nodes(&mut built_by);
     }
+    events::lower_events(&mut built_by, sync)?;
     let mut out: Vec<String> = Vec::new();
     for &n in &nodes {
         let built = std::mem::take(built_by.get_mut(&n).unwrap());

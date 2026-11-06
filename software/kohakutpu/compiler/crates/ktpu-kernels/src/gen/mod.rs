@@ -23,6 +23,8 @@ pub const BAND_REGS: i64 = 8;
 /// The machine facts the generators read.
 #[derive(Clone, Copy, Debug)]
 pub struct Hw {
+    /// Physical sysnodes in the machine.
+    pub nodes: i64,
     /// Vector cores and clusters of a node.
     pub vc: i64,
     pub mg: i64,
@@ -56,6 +58,7 @@ impl Hw {
             (m.mg.lanes as i64, m.mg.kblock as i64, m.mg.kstep as i64)
         };
         Hw {
+            nodes: m.nodes() as i64,
             band,
             kblock,
             kstep,

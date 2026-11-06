@@ -651,6 +651,103 @@ pub fn class_info(gen: &str, a: &Value, m: &Machine) -> R<Value> {
     Ok(info)
 }
 
+/// Plan one logical invocation on an explicit sysnode grant.
+/// Generators without distributed options expose their one-share implementation.
+pub fn call_split(
+    gen: &str,
+    a: &Value,
+    request: &crate::split::SplitRequest,
+    m: &Machine,
+) -> R<crate::split::PlannedKernel> {
+    use crate::split::{
+        choose_split, CostEstimate, CostFeatures, LegalityWitness, LocalTiming, OutputLayout,
+        PlannedKernel, ShardRole, ShardTiles, SplitAxis, SplitOption,
+    };
+    let nodes = crate::split::NodeSet::new(request.nodes.ids().to_vec(), m)?;
+    if (!request.consumer.accepted_forms.is_empty()
+        && !request
+            .consumer
+            .accepted_forms
+            .iter()
+            .any(|form| form == "producer"))
+        || !request.consumer.scale_groups.is_empty()
+    {
+        return fail(
+            "DSL.KERN.020",
+            "p1 has no option satisfying the requested output form or scale groups",
+        );
+    }
+    if (!request.numerics.precision.is_empty() && request.numerics.precision != "generator")
+        || !request.numerics.reduction_order.is_empty()
+    {
+        return fail(
+            "DSL.KERN.020",
+            "p1 preserves generator numerics; no requested precision or reduction-order option",
+        );
+    }
+    let kernel = crate::kernel::on_node(nodes.ids()[0], || call(gen, a, m))?;
+    let features = CostFeatures::of_shares(std::slice::from_ref(&kernel), m)?;
+    let tensors = kernel
+        .graph
+        .ports
+        .iter()
+        .filter(|p| p.role == ktpu_graph::Role::Out)
+        .map(|p| (p.name.clone(), p.spec.clone()))
+        .collect();
+    let option = SplitOption {
+        id: "p1".into(),
+        axis: SplitAxis::Unsplit,
+        p: 1,
+        active_nodes: 1,
+        shards: nodes
+            .ids()
+            .iter()
+            .enumerate()
+            .map(|(logical_node, _)| ShardTiles {
+                logical_node,
+                tile_ranges: vec![],
+                logical_origin: vec![],
+                valid_extent: vec![],
+                padded_extent: vec![],
+                read_regions: vec![],
+                write_regions: vec![],
+                scratch_regions: vec![],
+                local_schedule: gen.into(),
+                role: if logical_node == 0 {
+                    ShardRole::Compute
+                } else {
+                    ShardRole::Empty
+                },
+            })
+            .collect(),
+        output: OutputLayout {
+            form: "producer".into(),
+            tensors,
+            ..OutputLayout::default()
+        },
+        events: vec![],
+        conversions: 0,
+        cost: CostEstimate::default(),
+        legality: LegalityWitness {
+            numerics: crate::split::NumericContract {
+                precision: "generator".into(),
+                reduction_order: vec![],
+            },
+            clauses: vec!["single owner; physical regions resolved at binding".into()],
+        },
+    };
+    let split = choose_split(
+        vec![(option, features)],
+        &LocalTiming,
+        request.force.as_deref(),
+    )?;
+    Ok(PlannedKernel {
+        kernel,
+        split,
+        request: request.clone(),
+    })
+}
+
 /// The kernel of one recorded generator call, built for `m`.
 pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
     if a.get("shape_class").is_some() || gen == "lanes.class_kernel" {

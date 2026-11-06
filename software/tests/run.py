@@ -119,6 +119,7 @@ SUITES = (
     Suite(
         "stages/dsl",
         ("kohakutpu/language", f"{COMPILER}/ktpu-kernels", f"{COMPILER}/ktpu-graph"),
+        cargo=(("ktpu-sim", "dsl_split"),),
     ),
     Suite(
         "stages/tinygrad",

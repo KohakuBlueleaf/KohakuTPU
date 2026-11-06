@@ -14,6 +14,8 @@ ktpu-machine.workspace = true
 
 [dev-dependencies]
 ktpu-l2.workspace = true
+ktpu-kernels.workspace = true
+ktpu-graph.workspace = true
 ktpu-verify.workspace = true
 ka-package.workspace = true
 ka-emu.workspace = true
@@ -52,3 +54,7 @@ path = "../../../../tests/firmware/emu/package.rs"
 [[test]]
 name = "anchors_core"
 path = "../../../../tests/anchors/core.rs"
+
+[[test]]
+name = "dsl_split"
+path = "../../../../tests/stages/dsl/split.rs"

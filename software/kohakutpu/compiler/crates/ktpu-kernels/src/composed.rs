@@ -25,13 +25,36 @@ pub fn sequences(
     m: &Machine,
     cost: &dyn Fn(&Call) -> Option<i64>,
 ) -> bool {
+    compare_sequences(mode, kernels, materialized, m, cost)
+}
+
+/// Compare distributed alternatives. Every required conversion is an explicit
+/// element of its sequence, priced by its complete split makespan.
+pub fn split_sequences(
+    mode: Composed,
+    kernels: &[crate::split::PlannedKernel],
+    materialized: &[crate::split::PlannedKernel],
+    m: &Machine,
+) -> bool {
+    compare_sequences(mode, kernels, materialized, m, &|plan| {
+        Some(plan.split.cost.makespan)
+    })
+}
+
+fn compare_sequences<T>(
+    mode: Composed,
+    kernels: &[T],
+    materialized: &[T],
+    m: &Machine,
+    cost: &dyn Fn(&T) -> Option<i64>,
+) -> bool {
     if crate::mutants::on("api.forms/composed_always") {
         return true;
     }
     if crate::mutants::on("api.forms/composed_never") || mode == Composed::Off {
         return false;
     }
-    let total = |calls: &[Call]| -> Option<i64> {
+    let total = |calls: &[T]| -> Option<i64> {
         let cycles: Option<i64> = calls.iter().map(cost).sum();
         cycles.map(|c| c + calls.len().saturating_sub(1) as i64 * m.vc.launch_gap as i64)
     };

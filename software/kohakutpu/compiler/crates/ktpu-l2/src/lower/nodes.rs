@@ -74,14 +74,6 @@ pub(super) fn remote_adds(
     Ok(out)
 }
 
-/// Signal slots of the cross-node handshakes: `ORDER + n` counts node n's
-/// memory releases, `ADD + n` node n's opened accumulator tiles.
-const ORDER: i64 = 0;
-
-pub(super) fn add_slot(t: &Target) -> i64 {
-    t.il_slots / 2
-}
-
 /// A ring to a waiting node: that node, and the memory accesses released to it.
 type Released = (i64, Vec<Access>);
 
@@ -137,7 +129,7 @@ pub(super) fn order_nodes(built_by: &mut IndexMap<i64, Vec<Stage>>) {
                 rings
                     .entry((a, hit))
                     .or_default()
-                    .push((b, mem[&a][..=hit].iter().flatten().cloned().collect()));
+                    .push((b, events::release_union(&mem[&a], hit)));
                 waits.entry((b, j)).or_default().push(a);
             }
         }
@@ -150,7 +142,7 @@ pub(super) fn order_nodes(built_by: &mut IndexMap<i64, Vec<Stage>>) {
             if let Some(got) = waits.get(&(n, j)) {
                 let lines = got
                     .iter()
-                    .map(|a| format!("wait slot {} n=1 consume", ORDER + a))
+                    .map(|a| format!("wait slot {} n=1 consume", events::symbol("order", *a, n)))
                     .collect();
                 let mut f = Stage::new(lines, vec![], vec![]);
                 f.fence = true;
@@ -162,7 +154,7 @@ pub(super) fn order_nodes(built_by: &mut IndexMap<i64, Vec<Stage>>) {
             if let Some(to) = rings.get(&(n, j)) {
                 let lines = to
                     .iter()
-                    .map(|(b, _)| format!("ring mesh={b} slot={}", ORDER + n))
+                    .map(|(b, _)| format!("ring mesh={b} slot={}", events::symbol("order", n, *b)))
                     .collect();
                 let acc = to
                     .iter()

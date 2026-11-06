@@ -15,9 +15,10 @@ pub mod gen;
 pub mod kernel;
 pub mod mutants;
 pub mod pyrepr;
+pub mod split;
 pub mod trace;
 
-pub use call::call;
+pub use call::{call, call_split};
 pub use gen::convert::{cast_kernel, copy_kernel, fill_kernel, walk_kernel};
 pub use gen::lanes::relayout_kernel;
 pub use gen::matmul::{mm_kernel, quant_kernel, Mm, Side};
