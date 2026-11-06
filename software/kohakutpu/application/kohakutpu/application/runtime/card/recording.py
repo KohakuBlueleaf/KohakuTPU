@@ -39,8 +39,12 @@ class Recording(Parts):
             nodes = tuple(sorted(ev[1]))
             if len(nodes) > 1 or nodes != last:
                 self._drain(pending, cycles)
-            for n, (raw, bindings) in ev[1].items():
-                pending.setdefault(n, []).append(self._submit(n, raw, list(bindings)))
+            with self._stage_parts(ev[1]) as staged:
+                for n, (raw, bindings) in staged.items():
+                    pending.setdefault(n, []).append(
+                        self._submit(n, raw, list(bindings))
+                    )
+                self._flush_parts(staged)
             last = nodes
         self._drain(pending, cycles)
         self.runs += sum(1 for ev in log if ev[0] == "run")
@@ -124,10 +128,13 @@ class Recording(Parts):
         """Publish admitted entries; pinned uploads bypass transfer, others stream."""
         self._forget_residents(programs)
         tags, plain = {}, {}
-        for n, (upload, pkg, bindings) in programs.items():
-            tag = self._submit(n, upload, bindings, admitted=True)
-            tags[n] = (tag, pkg)
-            plain[n] = (pkg, bindings)
+        raw = {n: (upload, bindings) for n, (upload, _, bindings) in programs.items()}
+        with self._stage_parts(raw, admitted=True) as staged:
+            for n, (upload, bindings) in staged.items():
+                tag = self._submit(n, upload, bindings, admitted=True)
+                tags[n] = (tag, programs[n][1])
+                plain[n] = (programs[n][1], bindings)
+            self._flush_parts(tags)
         return Pending(len(tags) == 1 and self.nodes[0] in tags, tags, plain)
 
     def submit_recorded(self, programs: dict) -> Pending:
@@ -137,8 +144,10 @@ class Recording(Parts):
             for n, (raw, b) in programs.items()
         }
         self._forget_residents(programs)
-        tags = {
-            n: (self._submit(n, programs[n][0], b), pkg)
-            for n, (pkg, b) in plain.items()
-        }
+        with self._stage_parts(programs) as staged:
+            tags = {
+                n: (self._submit(n, upload, b), plain[n][0])
+                for n, (upload, b) in staged.items()
+            }
+            self._flush_parts(tags)
         return Pending(len(tags) == 1 and self.nodes[0] in tags, tags, plain)

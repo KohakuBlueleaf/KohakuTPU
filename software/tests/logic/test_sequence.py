@@ -151,7 +151,8 @@ def test_a_plain_card_run_joins_the_eager_list(monkeypatch):
         flush=lambda: published.append("flush"),
         add=lambda raw, plain, alone: added.append(raw) or "deferred",
     )
-    card = SimpleNamespace(
+    card = object.__new__(NodeCard)
+    card.__dict__.update(
         _eager_batch=batch,
         debug=False,
         nodes=(0,),

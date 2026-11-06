@@ -193,12 +193,6 @@ class Collection(Parts):
         if p.execution:
             return execution.collect(self, p, dump)
         single, tags, plain = p.single, p.tags, p.plain
-        # Peers may communicate: publish all of them before waiting on any one.
-        if not single:
-            for node in tags:
-                queue = self.queues[node]
-                if hasattr(queue, "flush"):
-                    queue.flush()
         if single:
             node = self.nodes[0]
             tag, pkg = tags[node]

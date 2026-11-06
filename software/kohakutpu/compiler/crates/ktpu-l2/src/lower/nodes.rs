@@ -126,7 +126,8 @@ pub(super) fn remote_adds(
 type Released = (i64, Vec<Access>);
 
 /// Cross-node order through the shared memory (L2.ORDER.009).
-pub(super) fn order_nodes(built_by: &mut IndexMap<i64, Vec<Stage>>) {
+pub(super) fn order_nodes(built_by: &mut IndexMap<i64, Vec<Stage>>) -> Vec<serde_json::Value> {
+    let mut edges = Vec::new();
     let mem: IndexMap<i64, Vec<Vec<Access>>> = built_by
         .iter()
         .map(|(n, b)| {
@@ -136,7 +137,7 @@ pub(super) fn order_nodes(built_by: &mut IndexMap<i64, Vec<Stage>>) {
                     .map(|s| {
                         s.accesses
                             .iter()
-                            .filter(|a| a.key.0 == "mem")
+                            .filter(|a| a.key.0 == "mem" || a.key.0 == "bound_dram")
                             .cloned()
                             .collect()
                     })
@@ -150,13 +151,6 @@ pub(super) fn order_nodes(built_by: &mut IndexMap<i64, Vec<Stage>>) {
         let mut seen: HashMap<i64, i64> = HashMap::new();
         for (j, sj) in built.iter().enumerate() {
             for (&a, other) in built_by.iter() {
-                // `l2.lower/handshake-always`: a node orders against itself
-                // as against a peer reading its writes.
-                if a == b
-                    && !(built_by.len() == 1 && crate::mutant::on("l2.lower/handshake-always"))
-                {
-                    continue;
-                }
                 let mut hit: Option<usize> = None;
                 for (i, si) in other.iter().enumerate() {
                     if si.phase < 0 || sj.phase < 0 || si.phase >= sj.phase {
@@ -174,10 +168,40 @@ pub(super) fn order_nodes(built_by: &mut IndexMap<i64, Vec<Stage>>) {
                     continue;
                 }
                 seen.insert(a, hit as i64);
-                rings
-                    .entry((a, hit))
-                    .or_default()
-                    .push((b, events::release_union(&mem[&a], hit)));
+                let released = events::release_union(&mem[&a], hit);
+                let regions: Vec<_> = released
+                    .iter()
+                    .flat_map(|x| {
+                        mem[&b][j].iter().filter_map(move |y| {
+                            if sync::clash(x, y) {
+                                Some(serde_json::json!({
+                                    "allocation": x.key.1,
+                                    "lo": x.lo.max(y.lo) / 64 * 64,
+                                    "hi": (x.hi.min(y.hi) + 63) / 64 * 64,
+                                }))
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect();
+                edges.push(serde_json::json!({
+                    "producer": a,
+                    "consumer": b,
+                    "producer_phase": other[hit].phase,
+                    "consumer_phase": sj.phase,
+                    "regions": regions,
+                    "released_regions": released.iter().map(|x| serde_json::json!({
+                        "allocation": x.key.1, "lo": x.lo, "hi": x.hi, "write": x.write,
+                    })).collect::<Vec<_>>(),
+                    "slot": null,
+                }));
+                if a == b
+                    && !(built_by.len() == 1 && crate::mutant::on("l2.lower/handshake-always"))
+                {
+                    continue;
+                }
+                rings.entry((a, hit)).or_default().push((b, released));
                 waits.entry((b, j)).or_default().push(a);
             }
         }
@@ -217,4 +241,5 @@ pub(super) fn order_nodes(built_by: &mut IndexMap<i64, Vec<Stage>>) {
         }
         built_by.insert(n, out);
     }
+    edges
 }

@@ -68,8 +68,8 @@ hardware work or prohibit raw card reads and diagnostic dumps.
 software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/quant_status.rs:145-200;
 software/kohakuaccel/firmware/package/interp.c:1622-1626;
 software/kohakutpu/application/kohakutpu/application/runtime/memory/packing.py:14-32;
-software/kohakutpu/application/kohakutpu/application/runtime/card/collection.py:126-135, :175-190, :250-264;
-software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py:67-86, :414-459;
+software/kohakutpu/application/kohakutpu/application/runtime/card/collection.py:126-135, :175-190, :244-265;
+software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py:67-86, :421-466;
 software/kohakutpu/application/kohakutpu/application/runtime/device/allocation.py:187-198)
 
 Checking classifies supplied image values including generated padding, not all
@@ -81,7 +81,7 @@ For vector quantisation, only integer finite=1 suppresses checking; deferred
 status with finite=1 is refused. This is caller proof, not tensor-value analysis.
 The ordinary unmapped vector path refuses checking under conversion version 1
 and checks contract-status/register/descriptor/EXP2D capabilities for version 2.
-(code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mod.rs:151-175;
+(code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mod.rs:163-201;
 software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:149-180)
 
 ## Vector schedule

@@ -186,6 +186,8 @@ class Parts:
     _forget_residents: Callable[..., None]
     _segment: Callable[..., str]
     _submit: Callable[..., int]
+    _stage_parts: Callable
+    _flush_parts: Callable[..., None]
 
     if TYPE_CHECKING:
 

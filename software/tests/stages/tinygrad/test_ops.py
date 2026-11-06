@@ -87,14 +87,14 @@ def test_a_product_of_transposed_weights(same, k, n):
 @pytest.fixture
 def kernels(monkeypatch):
     """Every kernel the test runs, compiled here or before, its L2 under "l2"."""
-    run_compiled = DoubleCard.run_compiled
+    submit_launch = DoubleCard.submit_launch
     made = []
 
-    def kept(self, compiled, binds):
+    def kept(self, program, compiled, bindings):
         made.append({"name": compiled.name, "l2": compiled.l2_text})
-        return run_compiled(self, compiled, binds)
+        return submit_launch(self, program, compiled, bindings)
 
-    monkeypatch.setattr(DoubleCard, "run_compiled", kept)
+    monkeypatch.setattr(DoubleCard, "submit_launch", kept)
     return made
 
 

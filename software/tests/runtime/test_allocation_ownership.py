@@ -219,6 +219,7 @@ def test_attention_owns_outputs_until_wrapper_publication(monkeypatch, fault):
     monkeypatch.setattr(A.F, "packed", lambda *args: 999)
     monkeypatch.setattr(A.F, "table", lambda *args: 999)
     monkeypatch.setattr(A.A, "kernel", lambda *args, **kw: None)
+
     def launch(dev, kernel, given, binds, kind="dsl", info=None, **consts):
         if fault == "launch":
             fail()

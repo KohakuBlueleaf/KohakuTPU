@@ -22,7 +22,7 @@ mod nodes;
 mod rings;
 mod share;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use indexmap::IndexMap;
@@ -57,6 +57,18 @@ pub fn lower_with_sync(
     search: &Search,
     sync: &events::BackendSyncFacts,
 ) -> Result<String> {
+    lower_bound(p, t, search, sync, &BTreeMap::new()).map(|(text, _)| text)
+}
+
+/// Lower one bound graph, retaining the dependency edges used by node ordering.
+/// External ports share physical DRAM; private scratch retains symbolic identity.
+pub fn lower_bound(
+    p: &Program,
+    t: &Target,
+    search: &Search,
+    sync: &events::BackendSyncFacts,
+    bindings: &BTreeMap<String, i64>,
+) -> Result<(String, Vec<serde_json::Value>)> {
     let mut body = p.body()?;
     let stages = instances(&body)?;
     let nodes: Vec<i64> = stages
@@ -278,10 +290,48 @@ pub fn lower_with_sync(
         }
         built_by.insert(n, built);
     }
-    if nodes.len() > 1 || on("l2.lower/handshake-always") {
-        order_nodes(&mut built_by);
+    for built in built_by.values_mut() {
+        for stage in built {
+            for access in &mut stage.accesses {
+                if access.key.0 == "mem" {
+                    if let Some(base) = bindings.get(&access.key.1) {
+                        access.lo = base.checked_add(access.lo).ok_or_else(|| {
+                            crate::ir::Error::new("L2.ORDER.009", "bound access overflow")
+                        })?;
+                        access.hi = base.checked_add(access.hi).ok_or_else(|| {
+                            crate::ir::Error::new("L2.ORDER.009", "bound access overflow")
+                        })?;
+                        if access.lo < access.hi {
+                            access.lo = access.lo.div_euclid(64) * 64;
+                            access.hi = ((access.hi - 1).div_euclid(64) + 1) * 64;
+                        }
+                        access.key = ("bound_dram".to_string(), String::new());
+                    }
+                }
+            }
+        }
     }
-    events::lower_events(&mut built_by, sync)?;
+    let mut edges = if nodes.len() > 1
+        || !bindings.is_empty()
+        || on("l2.lower/handshake-always")
+    {
+        order_nodes(&mut built_by)
+    } else {
+        Vec::new()
+    };
+    let leases = events::lower_events(&mut built_by, sync)?;
+    for edge in &mut edges {
+        let producer = edge["producer"].as_i64();
+        let consumer = edge["consumer"].as_i64();
+        if let (Some(a), Some(b)) = (producer, consumer) {
+            if a != b {
+                let id = events::symbol("order", a, b);
+                if let Some(lease) = leases.iter().find(|lease| lease.event.0 == id) {
+                    edge["slot"] = lease.slot.into();
+                }
+            }
+        }
+    }
     let mut out: Vec<String> = Vec::new();
     for &n in &nodes {
         let built = std::mem::take(built_by.get_mut(&n).unwrap());
@@ -323,7 +373,7 @@ pub fn lower_with_sync(
     }
     text.push(format!("fn {}.l1({})", p.name, params.join(", ")));
     text.extend(out.iter().map(|l| format!("{IND}{l}")));
-    Ok(text.join("\n") + "\n")
+    Ok((text.join("\n") + "\n", edges))
 }
 
 /// Whether any cluster drains a tile into a core's L1.

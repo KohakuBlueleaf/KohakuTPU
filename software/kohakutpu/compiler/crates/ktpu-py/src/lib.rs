@@ -319,6 +319,69 @@ fn l2_of(
     })
 }
 
+/// Compose access ordering and slot leases before building any node package.
+#[pyfunction]
+#[pyo3(signature = (graph_json, machine_json, bindings, zero_sign=None))]
+fn compile_split_graph<'py>(
+    py: Python<'py>,
+    graph_json: &str,
+    machine_json: &str,
+    bindings: std::collections::BTreeMap<String, i64>,
+    zero_sign: Option<&str>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let m = machine(machine_json)?;
+    let zero_sign = zero_sign.map(signed).transpose()?;
+    let backend = CardStack {
+        binds: Some(
+            bindings
+                .iter()
+                .map(|(name, at)| (name.clone(), i128::from(*at)))
+                .collect(),
+        ),
+        zero_sign,
+        ..CardStack::default()
+    };
+    let stage_error = |stage, refusal| raise(py, &StageRefused { stage, refusal });
+    let graph = backend
+        .graph_to_l2(graph_json, &m)
+        .map_err(|e| stage_error(Stage::Graph, e))?;
+    let name = graph.name.clone();
+    let caller = backend
+        .caller(&graph, &name)
+        .map_err(|e| stage_error(Stage::Passes, e))?;
+    let passed = backend
+        .passes(&graph, &name, &m)
+        .map_err(|e| stage_error(Stage::Passes, e))?;
+    let target = ktpu_l2::target::Target::of(&m);
+    let (text, events) = ktpu_l2::lower::lower_bound(
+        &passed,
+        &target,
+        &ktpu_l2::lower::vector::Search::default()
+            .signed(zero_sign.unwrap_or(ktpu_l2::ZeroSign::DEFAULT)),
+        &ktpu_l2::lower::events::BackendSyncFacts::common(target.il_slots),
+        &bindings,
+    )
+    .map_err(|e| Refused::new_err(e.to_string()))?;
+    let module = backend
+        .parse_l1(&text)
+        .map_err(|e| stage_error(Stage::Lower, e))?;
+    let scheduled = backend
+        .schedule(&module, &m)
+        .map_err(|e| stage_error(Stage::Schedule, e))?;
+    let result = ktpu::pipeline::package_scheduled(
+        &backend,
+        name,
+        backend.print_l1(&scheduled),
+        caller,
+        &m,
+        &cache(None),
+    )
+    .map_err(|e| raise(py, &e))?;
+    let output = compiled(py, &result)?;
+    output.set_item("events", py_value(py, &serde_json::Value::Array(events))?)?;
+    Ok(output)
+}
+
 /// A JSON value as the Python value it reads as.
 fn py_value<'py>(py: Python<'py>, v: &serde_json::Value) -> PyResult<Bound<'py, PyAny>> {
     use serde_json::Value as V;
@@ -1292,6 +1355,7 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     }
     m.add("MACHINE_SCHEMA", ktpu_machine::schema_version())?;
     m.add_function(wrap_pyfunction!(l2_of, m)?)?;
+    m.add_function(wrap_pyfunction!(compile_split_graph, m)?)?;
     m.add_function(wrap_pyfunction!(cache_root, m)?)?;
     m.add_function(wrap_pyfunction!(debug_decode, m)?)?;
     m.add_function(wrap_pyfunction!(compile, m)?)?;

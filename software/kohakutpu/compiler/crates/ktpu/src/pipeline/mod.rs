@@ -366,6 +366,32 @@ pub fn compile<B: Backend>(
     run.compile(input, name)
 }
 
+/// Build an already scheduled lowering with its original external signature.
+pub fn package_scheduled<B: Backend>(
+    b: &B,
+    name: String,
+    l1: String,
+    caller: Vec<String>,
+    m: &Machine,
+    cache: &Cache,
+) -> Result<Compiled, Refused> {
+    let run = Run {
+        b,
+        m,
+        cache,
+        digest: m.digest_bytes(),
+    };
+    run.packages(
+        String::new(),
+        name,
+        Lazy {
+            text: l1,
+            typed: None,
+        },
+        Some(caller),
+    )
+}
+
 /// `input` through the scheduled L1 boundary, using the same stage caches
 /// and backend options as [`compile`]. L1 input is already at this boundary.
 pub fn compile_l1<B: Backend>(

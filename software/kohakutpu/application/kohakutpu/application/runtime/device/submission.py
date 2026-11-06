@@ -372,11 +372,18 @@ class Submission(Parts):
                 self._recipe_capture(compiled, full, progs, s)
             publication = getattr(self.card, "publication_epoch", None)
             submitting = True
-            if hasattr(self.card, "submit"):
+            if hasattr(self.card, "submit_launch"):
+                s.pending = self.card.submit_launch(
+                    card,
+                    submitted_compiled,
+                    lambda: {k: self.mmu.resolve(v)[1] for k, v in full.items()},
+                )
+                if getattr(s.pending, "completed", False):
+                    # A terminal completion cannot leave device work running.
+                    submitting = False
+                    s.result = self.card.collect(s.pending)
+            elif hasattr(self.card, "submit"):
                 s.pending = self.card.submit(card)
-            elif hasattr(self.card, "run_compiled"):
-                phys = {k: self.mmu.resolve(v)[1] for k, v in full.items()}
-                s.result = self.card.run_compiled(submitted_compiled, phys)
             else:
                 s.result = self.card.run(card)
         except BaseException:

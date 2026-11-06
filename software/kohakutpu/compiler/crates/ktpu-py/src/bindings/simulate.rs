@@ -116,9 +116,10 @@ fn simulate_l1(
         coords.sort();
         coords
     };
-    // ENGINE packages execute in node-program order on one mesh and shared DRAM.
-    let mut machine = ktpu_sim::machine::Machine::new(
+    let multi = node_programs.len() > 1;
+    let mut machine = ktpu_sim::machine::Machine::of_meshes(
         memory,
+        if multi { card.nodes() as usize } else { 1 },
         card.units(UnitKind::Vc).len(),
         card.units(UnitKind::Mg).len(),
         card.vc.regs as usize,
@@ -144,7 +145,21 @@ fn simulate_l1(
             src_mover: facts.src_mover(),
             counter_bits: facts.counter_bits,
         };
-        l0::run(&package, &units, &mut machine).map_err(PyValueError::new_err)?;
+        if !multi {
+            l0::run(&package, &units, &mut machine).map_err(PyValueError::new_err)?;
+        }
+    }
+    if multi {
+        let bindings = local
+            .iter()
+            .map(|(name, at)| {
+                i64::try_from(*at)
+                    .map(|at| (name.clone(), at))
+                    .map_err(|e| PyValueError::new_err(e.to_string()))
+            })
+            .collect::<PyResult<HashMap<_, _>>>()?;
+        ktpu_sim::l1::run(&module, name, &bindings, &mut machine)
+            .map_err(PyValueError::new_err)?;
     }
     for (lo, hi, base) in spans {
         let raw = machine

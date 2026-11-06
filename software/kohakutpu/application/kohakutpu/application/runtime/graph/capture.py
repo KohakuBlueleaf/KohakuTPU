@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from itertools import accumulate
 from time import perf_counter
 
+from kohakutpu.application.runtime.graph.dependencies import dependencies
+
 
 @dataclass(frozen=True)
 class Span:
@@ -151,8 +153,7 @@ class Graph:
         replay calls its prepared object's submit once, not once per micro-op.
         """
         packets = tuple(launch.bind(addresses) for launch in self.launches)
-        dependencies = tuple(() if i == 0 else (i - 1,) for i in range(len(packets)))
-        return runner.prepare(packets, dependencies)
+        return runner.prepare(packets, dependencies(self.launches, addresses))
 
 
 class Capture:

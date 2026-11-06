@@ -1,5 +1,7 @@
 """Putting a package on the card's queues."""
 
+from contextlib import contextmanager
+
 from kohakuaccel.driver.node.queue import layout as QL
 from kohakuaccel.driver.node.queue.client import PreparedPackage
 from kohakutpu.application.runtime import packages as B
@@ -9,6 +11,10 @@ from kohakutpu.language.dsl.kernel import _MUTANT
 
 
 class Submission(Parts):
+    def submit_launch(self, program, compiled, bindings):
+        """Submit a fully bound kernel through the card's queue protocol."""
+        return self.submit(program)
+
     # ------------------------------------------------------------- run
     def run(
         self,
@@ -90,17 +96,21 @@ class Submission(Parts):
             )
 
         def publish() -> Pending:
+            raw = {
+                n: (pkg.to_bytes(), bindings) for n, (pkg, bindings) in built.items()
+            }
             tags = {}
-            for n, (pkg, bindings) in built.items():
-                try:
-                    # `B.built` admits lowered bytes; NOENGINE admits its own stream.
-                    tag = self._submit(
-                        n, pkg.to_bytes(), bindings, flags=flags, admitted=not off
-                    )
-                except Exception:
-                    self._forget_residents((n,))
-                    raise
-                tags[n] = (tag, pkg)
+            try:
+                with self._stage_parts(raw, admitted=not off) as staged:
+                    for n, (upload, bindings) in staged.items():
+                        tag = self._submit(
+                            n, upload, bindings, flags=flags, admitted=not off
+                        )
+                        tags[n] = (tag, built[n][0])
+                    self._flush_parts(tags)
+            except BaseException:
+                self._forget_residents(raw)
+                raise
             return Pending(single, tags, plain)
 
         # The node runs its queue in order, list or not: IMEM ends as predicted.
@@ -131,19 +141,56 @@ class Submission(Parts):
                 ),
                 (),
             )
-            pkg = B.Package(data, self.machine_json, n)
-            try:
-                tag = self._submit(n, data, bindings, admitted=True)
-            except Exception:
-                self._forget_residents((n,))
-                raise
-            tags[n] = tag, pkg
+        try:
+            with self._stage_parts(raw, admitted=True) as staged:
+                for n, (upload, bindings) in staged.items():
+                    tag = self._submit(n, upload, bindings, admitted=True)
+                    tags[n] = tag, B.Package(raw[n][0], self.machine_json, n)
+                self._flush_parts(tags)
+        except BaseException:
+            self._forget_residents(raw)
+            raise
         if self.log is not None:
             self.log.append(("run", raw))
         single = len(tags) == 1 and (
             _MUTANT.get() == "app.card/single_by_count" or self.nodes[0] in tags
         )
         return Pending(single, tags, plain)
+
+    @contextmanager
+    def _stage_parts(self, raw, admitted=False):
+        """Pin every split upload before any queue can start its share."""
+        if len(raw) == 1:
+            yield raw
+            return
+        uploads = []
+        staged = {}
+        try:
+            for node, (data, bindings) in raw.items():
+                if not admitted and not isinstance(data, PreparedPackage):
+                    B.admit(
+                        data,
+                        self.machine_json,
+                        node,
+                        tuple(bindings or ()),
+                        cached=self.admission_cached,
+                    )
+                if isinstance(data, PreparedPackage):
+                    upload = data
+                else:
+                    upload = self.queues[node].prepare(data)
+                    uploads.append(upload)
+                staged[node] = upload, bindings
+            yield staged
+        finally:
+            for upload in uploads:
+                upload.close()
+
+    def _flush_parts(self, tags):
+        """Publish every participating queue before returning a split submission."""
+        if len(tags) > 1:
+            for node in tags:
+                self.queues[node].flush()
 
     @property
     def publication_epoch(self) -> int:

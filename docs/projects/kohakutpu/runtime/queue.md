@@ -48,7 +48,10 @@ earlier fault cannot be attributed to the kernel whose read exposed it.
 Same-node kernels rely on FIFO ordering. Nothing orders two nodes' queues, so a
 run first collects through the last run in flight on other nodes that shares a
 written allocation with it, scratch windows included. A run over several nodes
-runs alone. `Device.on_node(k)` places one-mesh kernels and their scratch on node
+runs alone; its shares are staged and published on every participating queue
+before any of them is collected, the card and the device double through one
+`submit_launch` / `collect` pair, and the shares order each other only through
+device doorbells. `Device.on_node(k)` places one-mesh kernels and their scratch on node
 `k`, each home with its own DRAM window, so runs in two scopes overlap.
 
 ## Working-set limits
@@ -81,6 +84,18 @@ log wait for overlapping pending allocations. Logs containing host reads are
 not replayable. `wait=True` uses the same path and then collects its runs.
 TinyJit uses non-waiting replay in queued mode, restoring the captured form
 and instruction-residency bookkeeping after publication.
+
+A captured graph orders its launches by their accesses
+(`runtime/graph/dependencies.py`): each launch's reads and writes over the
+canonical allocations, in 64-byte lines, give RAW, WAR and WAW edges; reads of
+the same lines and disjoint lines give none, and transitive edges are dropped.
+Host-effect boundaries of the capture stay. `SplitRunner`
+(`runtime/graph/split.py`) composes the launches of a graph of split kernels
+into one L2 lowering under their physical bindings (`compile_split_graph`), so
+node ordering and slot leasing see every event of the graph at once: an edge
+between shares on one sysnode rides that queue's FIFO order, an edge between
+sysnodes becomes a ring/wait pair on a leased doorbell slot (9-15). The prepared
+graph keeps the lowered edges (producer, consumer, regions, slot) as `events`.
 
 ## Errors and shutdown
 

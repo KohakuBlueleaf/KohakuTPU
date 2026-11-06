@@ -158,7 +158,7 @@ pub(super) fn symbol(kind: &str, producer: i64, receiver: i64) -> String {
 pub(super) fn lower_events(
     built: &mut IndexMap<i64, Vec<Stage>>,
     facts: &BackendSyncFacts,
-) -> Result<()> {
+) -> Result<Vec<SlotLease>> {
     let mut specs = BTreeMap::new();
     for stages in built.values() {
         for stage in stages {
@@ -211,5 +211,5 @@ pub(super) fn lower_events(
             }
         }
     }
-    Ok(())
+    Ok(leases)
 }

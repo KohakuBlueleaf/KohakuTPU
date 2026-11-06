@@ -92,13 +92,13 @@ def publish(card, programs):
         )
         order.append(tag)
         tags[node] = tag, packages
+    for node in tags:
+        card.queues[node].flush()
     return tags
 
 
 def collect(card, pending, dump):
     results = {}
-    for node in pending.tags:
-        card.queues[node].flush()
     for node, (tag, packages) in pending.tags.items():
         peers = [card.queues[n] for n in pending.tags if n != node]
 
