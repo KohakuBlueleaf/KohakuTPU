@@ -27,7 +27,7 @@ pub fn quant_backend(body: &Body, op: &Op, tg: &Target) -> Result<bool> {
         .is_some_and(|b| b.get("nk") >= 2)
         && !on("l2.packing/mover-paired")
         && !crate::mutant::before_rul099();
-    let vector_only = ["read_map", "pad_cols", "pad"]
+    let vector_only = ["read_map", "pad_cols", "pad", "zero"]
         .iter()
         .any(|k| op.st.kw(k).is_some());
     let backend = match op.st.kw("backend") {
@@ -55,7 +55,7 @@ pub fn quant_backend(body: &Body, op: &Op, tg: &Target) -> Result<bool> {
             "logical read-map packing requires backend=vector_mx7",
         ));
     }
-    if (op.st.kw("pad_cols").is_some() || op.st.kw("pad").is_some())
+    if (op.st.kw("pad_cols").is_some() || op.st.kw("pad").is_some() || op.st.kw("zero").is_some())
         && backend != PackingBackend::VectorMx7
     {
         return Err(fail(
@@ -147,6 +147,14 @@ pub fn vector_quant(
     status: Option<Finite>,
 ) -> Result<Stage> {
     if op.st.kw("read_map").is_some() {
+        if op.st.kw("zero").is_some() {
+            return Err(fail(
+                body,
+                &op.st,
+                "L2.MOV.010",
+                "zero packing has no read map",
+            ));
+        }
         return mapped::quant(body, op, env, tg, images, status);
     }
     let st = &op.st;
@@ -300,8 +308,25 @@ pub fn vector_quant(
     }
     let sb = buffer(body, st, &sn, "source ")?;
     let dax = M::axes_of(&dv, &db.shape).map_err(err)?;
-    let sax = M::axes_of(&sv, &sb.shape).map_err(err)?;
+    let mut sax = M::axes_of(&sv, &sb.shape).map_err(err)?;
     let ds = M::shape_of(&dax);
+    let zero = match st.kw("zero") {
+        None => false,
+        Some(k) => match const_of(body, st, k, env)? {
+            0 => false,
+            1 if st.kw("pad").is_some() && sax.len() == 2 => true,
+            _ => {
+                return Err(err(
+                    "zero is 0 or 1; zero=1 requires a padded 2D quant".into()
+                ))
+            }
+        },
+    };
+    if zero {
+        for axis in &mut sax {
+            axis.size = 0;
+        }
+    }
     let ss = M::shape_of(&sax);
     let half_columns = match st.kw("pad_cols") {
         None => false,

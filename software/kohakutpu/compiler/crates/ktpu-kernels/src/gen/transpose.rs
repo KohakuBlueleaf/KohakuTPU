@@ -22,9 +22,11 @@ use crate::pyrepr::{name, Py};
 use crate::trace::buffer::{f16, sl, Buf, ALL};
 use crate::trace::control::{At, Classed};
 use crate::trace::mover::Walk;
-use crate::trace::{fail, Arg, Idx, Trace, R};
+use crate::trace::{fail, Arg, Idx, Trace, View, R};
 use ktpu_graph as g;
 use ktpu_machine::Machine;
+
+pub mod destination;
 
 /// Rows of `vc.vlmax` values a vector-core trip transforms.
 pub const ROWS: i64 = 8;
@@ -135,46 +137,89 @@ pub fn emit(
     class: Option<Cores>,
     hw: &Hw,
 ) -> R<()> {
+    emit_window(
+        t,
+        &x.whole(),
+        mask,
+        m0,
+        &y.whole(),
+        nb,
+        a,
+        b,
+        class,
+        None,
+        None,
+        hw,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_window(
+    t: &mut Trace,
+    x: &View,
+    mask: &Buf,
+    m0: i64,
+    y: &View,
+    nb: i64,
+    a: i64,
+    b: i64,
+    class: Option<Cores>,
+    pitches: Option<(i64, i64)>,
+    walks: Option<(&View, &View, i64, i64)>,
+    hw: &Hw,
+) -> R<()> {
     let (lanes, vl, wb, band) = (hw.lanes, hw.vlmax, hw.word_bytes, hw.band);
     let s = swaps(hw)?;
+    let (source_pitch, destination_pitch) = pitches.unwrap_or((2 * b, 2 * a));
+    let (walk_x, walk_y, source_origin, destination_origin) = match walks {
+        Some((x, y, source, destination)) => (x, y, Some(source), Some(destination)),
+        None => (x, y, None, None),
+    };
     let (ra, rb) = (
         cdiv(a, hw.kblock) * hw.kblock,
         cdiv(b, hw.kblock) * hw.kblock,
     );
-    if class.is_none() && ra.max(rb) * 2 <= TILE_PITCH {
+    if class.is_none()
+        && ra.max(rb) * 2 <= TILE_PITCH
+        && source_pitch.max(destination_pitch) <= TILE_PITCH
+    {
         let masks = mask.at(&[sl(m0, m0 + s), ALL])?;
         if (ra, rb) == (a, b) {
-            return t.tile_transpose(&y.whole(), &x.whole(), &masks, nb, a, b);
+            return if pitches.is_some() {
+                t.tile_transpose_pitched(y, x, &masks, a, b, source_pitch, destination_pitch)
+            } else {
+                t.tile_transpose(y, x, &masks, nb, a, b)
+            };
         }
         let shape = [nb * ra * rb / lanes, lanes];
         let sx = t.buffer(&shape, g::Dtype::F16, vec![])?;
         let sy = t.buffer(&shape, g::Dtype::F16, vec![])?;
         let (xp, yp) = (2 * rb, 2 * ra);
         let (cols, rows) = (b / lanes, a / lanes);
-        let walk: &Walk = &[(nb * a, 2 * b), (cols, wb)];
+        let walk: &Walk = &[(nb * a, source_pitch), (cols, wb)];
         let dwalk: &Walk = &[(nb, ra * xp), (a, xp), (cols, wb)];
         // Tiles read the whole rectangle; whole lines first, so the copy is
         // the one move writing part of a line (L1.VER.017).
         t.fill_value(&sx.whole(), 0, None, None)?;
         t.copy(
             &sx.whole(),
-            &x.whole(),
-            Some((walk, None)),
+            walk_x,
+            Some((walk, source_origin)),
             Some((dwalk, None)),
         )?;
         t.tile_transpose(&sy.whole(), &sx.whole(), &masks, nb, ra, rb)?;
         let walk: &Walk = &[(nb, rb * yp), (b, yp), (rows, wb)];
-        let dwalk: &Walk = &[(nb * b, 2 * a), (rows, wb)];
+        let dwalk: &Walk = &[(nb * b, destination_pitch), (rows, wb)];
         return t.copy(
-            &y.whole(),
+            walk_y,
             &sy.whole(),
             Some((walk, None)),
-            Some((dwalk, None)),
+            Some((dwalk, destination_origin)),
         );
     }
     let words = nb * a * b / lanes;
     let lines = words / (vl / lanes);
-    let (p, rg, cw) = (2 * b, a / band, b / lanes);
+    let (p, rg, cw) = (source_pitch, a / band, b / lanes);
     let sub = b / band;
     let al = a / lanes;
     let trips = cdiv(lines, ROWS);
@@ -203,7 +248,15 @@ pub fn emit(
     let looped = class.is_some();
     let walk: &Walk = &[(nb, a * p), (rg, band * p), (cw, wb), (band, p)];
     let dwalk: &Walk = &[(nb, rg * cw * sw), (rg, cw * sw), (cw, sw)];
-    t.gt4_looped(&st.whole(), &x.whole(), walk, dwalk, looped)?;
+    t.gt4_origins(
+        &st.whole(),
+        walk_x,
+        walk,
+        dwalk,
+        looped,
+        source_origin,
+        None,
+    )?;
     let core = |t: &mut Trace, count: Idx, row: &dyn Fn(&Idx) -> Idx| -> R<()> {
         let mut ms = vec![];
         for i in m0..m0 + s {
@@ -242,15 +295,26 @@ pub fn emit(
     let dwalk: &Walk = &[(nb, sub * al * sw), (sub, al * sw), (al, sw)];
     t.gt4_looped(&z.whole(), &tt.whole(), walk, dwalk, looped)?;
     let walk: &Walk = &[(nb, sub * al * sw), (sub, al * sw), (band, wb), (al, sw)];
-    let dwalk: &Walk = &[(words, wb)];
+    let destination_walk = if pitches.is_some() {
+        vec![(nb * b, destination_pitch), (a / lanes, wb)]
+    } else {
+        vec![(words, wb)]
+    };
+    let dwalk: &Walk = &destination_walk;
     if looped {
-        return t.copy_classed(&y.whole(), &z.whole(), (walk, None), (dwalk, None), Some(2));
+        return t.copy_classed(
+            walk_y,
+            &z.whole(),
+            (walk, None),
+            (dwalk, destination_origin),
+            Some(2),
+        );
     }
     t.copy(
-        &y.whole(),
+        walk_y,
         &z.whole(),
         Some((walk, None)),
-        Some((dwalk, None)),
+        Some((dwalk, destination_origin)),
     )
 }
 
@@ -258,6 +322,17 @@ pub fn emit(
 /// (the last level a row's words stepping back) with each word's lanes
 /// reversed (TG.RUN.007).
 pub fn reverse_kernel(src_bytes: i64, levels: &Walk, at: i64, n: i64, m: &Machine) -> R<Kernel> {
+    reversed(src_bytes, levels, at, n, None, m)
+}
+
+fn reversed(
+    src_bytes: i64,
+    levels: &Walk,
+    at: i64,
+    n: i64,
+    share: Option<(i64, i64)>,
+    m: &Machine,
+) -> R<Kernel> {
     let hw = Hw::of(m);
     let (lanes, vl, wb) = (hw.lanes, hw.vlmax, hw.word_bytes);
     let (sw, words) = (cdiv(src_bytes, wb), n / lanes);
@@ -276,10 +351,14 @@ pub fn reverse_kernel(src_bytes: i64, levels: &Walk, at: i64, n: i64, m: &Machin
         Port::output("y", &ys, g::Dtype::F16),
     ];
     let given = vec![("x".to_string(), f16(&xs)?), ("y".to_string(), f16(&ys)?)];
-    let key = name(
-        "reverse",
-        vec![Py::Int(sw), Py::walk(levels), Py::Int(at), Py::Int(n)],
-    );
+    let mut parts = vec![Py::Int(sw), Py::walk(levels), Py::Int(at), Py::Int(n)];
+    if let Some((first, count)) = share {
+        parts.extend([Py::Int(first), Py::Int(count)]);
+    }
+    let key = name("reverse", parts);
+    let total_words = words;
+    let (origin, words) = share.unwrap_or((0, words));
+    let trips = cdiv(words, vl / lanes * ROWS);
     build(&key, m, ports, given, |t: &mut Trace, b| {
         let (x, y) = (&b[0], &b[1]);
         let s = t.buffer(&[trips * ROWS, vl], g::Dtype::F16, vec![])?;
@@ -292,12 +371,26 @@ pub fn reverse_kernel(src_bytes: i64, levels: &Walk, at: i64, n: i64, m: &Machin
         if trips * ROWS * (vl / lanes) > words {
             t.fill_value(&s.whole(), 0, None, None)?;
         }
-        t.copy(
-            &s.whole(),
-            &x.whole(),
-            Some((levels, Some(at))),
-            Some((dwalk, None)),
-        )?;
+        if share.is_some() {
+            let pieces = super::matmul::destination_walk::rectangle(
+                levels,
+                at,
+                0,
+                1,
+                total_words,
+                origin,
+                words,
+                wb,
+            )?;
+            super::matmul::destination_walk::emit(t, &s, x, &pieces, words, words, wb)?;
+        } else {
+            t.copy(
+                &s.whole(),
+                &x.whole(),
+                Some((levels, Some(at))),
+                Some((dwalk, None)),
+            )?;
+        }
         let sp = split(trips, hw.vc);
         t.par(sp.cores, g::UnitKind::Vc, At::Var, |t, c| {
             let first = sp.start(&c);
@@ -306,7 +399,8 @@ pub fn reverse_kernel(src_bytes: i64, levels: &Walk, at: i64, n: i64, m: &Machin
                 let lv = t.load(&s.at(&[sl(&r, r.add(ROWS)), ALL])?, false)?;
                 let v = t.unpack(lv, None)?;
                 let o = t.xlane(Arg::Val(v), lanes - 1)?;
-                t.store(&output.at(&[sl(&r, r.add(ROWS)), ALL])?, Arg::Val(o))
+                let to = r.add(if exact { 0 } else { origin * lanes / vl });
+                t.store(&output.at(&[sl(&to, to.add(ROWS)), ALL])?, Arg::Val(o))
             })
         })?;
         if exact {
@@ -314,9 +408,65 @@ pub fn reverse_kernel(src_bytes: i64, levels: &Walk, at: i64, n: i64, m: &Machin
                 &y.whole(),
                 &output.whole(),
                 Some((dwalk, None)),
-                Some((dwalk, None)),
+                Some((dwalk, Some(origin * wb))),
             )?;
         }
         Ok(())
+    })
+}
+
+/// Complete reverse trips with global word-walk and output origins.
+pub fn reverse_split(
+    src_bytes: i64,
+    levels: &Walk,
+    at: i64,
+    n: i64,
+    request: &crate::split::SplitRequest,
+    m: &Machine,
+) -> R<crate::split::PlannedKernel> {
+    let hw = Hw::of(m);
+    let words = n / hw.lanes;
+    let shape = super::vector::split::Shape {
+        rows: words,
+        quantum: ROWS * hw.vlmax / hw.lanes,
+        reads: vec![],
+        writes: vec![super::vector::split::Tensor {
+            name: "y".into(),
+            operand: super::vector::Operand {
+                kind: super::vector::Kind::Full,
+                dtype: g::Dtype::F16,
+                offset: 0,
+                pitch: hw.lanes,
+                rows: words,
+            },
+            width: hw.lanes,
+            planes: vec![0],
+        }],
+        tokens: false,
+    };
+    let mut options = super::vector::split::split_options(&shape, request, m)?;
+    for option in &mut options {
+        option.id = "destination-tiles".into();
+        option.axis = crate::split::SplitAxis::DestinationTiles;
+        option.legality.clauses = vec![
+            "complete reverse trips; global walked source; one owner per destination line".into(),
+        ];
+        for shard in &mut option.shards {
+            if shard.valid_extent[0] != 0 {
+                shard.read_regions.push(crate::split::Region {
+                    allocation: "x".into(),
+                    bytes: 0..src_bytes as u64,
+                });
+            }
+        }
+    }
+    let signature = reverse_kernel(src_bytes, levels, at, n, m)?;
+    super::vector::split::kernel_options(options, signature, request, m, |first, count| {
+        let share = if first == 0 && count == words {
+            None
+        } else {
+            Some((first, count))
+        };
+        reversed(src_bytes, levels, at, n, share, m)
     })
 }

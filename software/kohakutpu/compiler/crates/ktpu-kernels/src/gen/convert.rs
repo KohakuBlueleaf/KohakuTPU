@@ -5,11 +5,14 @@ use super::{cdiv, vector, Hw};
 use crate::expr;
 use crate::kernel::{build, Kernel, Port};
 use crate::pyrepr::{name, Py};
-use crate::trace::buffer::f16;
+use crate::trace::buffer::{f16, sl, ALL};
 use crate::trace::mover::Walk;
 use crate::trace::R;
 use ktpu_graph as g;
 use ktpu_machine::Machine;
+
+pub mod destination;
+pub mod local;
 
 /// Words of `nbytes` and the f16 values a word holds: a buffer as words.
 fn words(nbytes: i64, hw: &Hw) -> (i64, i64) {
@@ -40,6 +43,70 @@ pub fn copy_kernel(nbytes: i64, m: &Machine) -> R<Kernel> {
     let (ports, given) = word_ports(&[("src", g::Role::In, w), ("dst", g::Role::Out, w)], &hw)?;
     build(&name("copy", vec![Py::Int(w)]), m, ports, given, |t, b| {
         t.copy(&b[1].whole(), &b[0].whole(), None, None)
+    })
+}
+
+/// Complete destination words, coalesced at physical write-line boundaries.
+pub fn split_options(
+    nbytes: i64,
+    request: &crate::split::SplitRequest,
+    m: &Machine,
+) -> R<Vec<crate::split::SplitOption>> {
+    let hw = Hw::of(m);
+    let (w, lanes) = words(nbytes, &hw);
+    let operand = vector::Operand {
+        kind: vector::Kind::Full,
+        dtype: g::Dtype::F16,
+        offset: 0,
+        pitch: lanes,
+        rows: w,
+    };
+    let tensor = |name: &str| vector::split::Tensor {
+        name: name.into(),
+        operand,
+        width: lanes,
+        planes: vec![0],
+    };
+    let shape = vector::split::Shape {
+        rows: w,
+        quantum: 1,
+        reads: vec![tensor("src")],
+        writes: vec![tensor("dst")],
+        tokens: false,
+    };
+    let mut options = vector::split::split_options(&shape, request, m)?;
+    for option in &mut options {
+        option.id = "destination-tiles".into();
+        option.axis = crate::split::SplitAxis::DestinationTiles;
+        option.legality.clauses =
+            vec!["complete destination words; one owner per physical write line".into()];
+        for share in &mut option.shards {
+            share.local_schedule = "destination-copy".into();
+        }
+    }
+    Ok(options)
+}
+
+/// Copy each destination share directly from its global source origin.
+pub fn copy_split(
+    nbytes: i64,
+    request: &crate::split::SplitRequest,
+    m: &Machine,
+) -> R<crate::split::PlannedKernel> {
+    let hw = Hw::of(m);
+    let w = words(nbytes, &hw).0;
+    let options = split_options(nbytes, request, m)?;
+    let signature = copy_kernel(nbytes, m)?;
+    vector::split::kernel_options(options, signature, request, m, |first, count| {
+        let (ports, given) = word_ports(&[("src", g::Role::In, w), ("dst", g::Role::Out, w)], &hw)?;
+        let key = name(
+            "copy_share",
+            vec![Py::Int(w), Py::Int(first), Py::Int(count)],
+        );
+        build(&key, m, ports, given, |t, b| {
+            let slice = [sl(first, first + count), ALL];
+            t.copy(&b[1].at(&slice)?, &b[0].at(&slice)?, None, None)
+        })
     })
 }
 

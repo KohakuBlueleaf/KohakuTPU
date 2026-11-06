@@ -144,6 +144,30 @@ impl Trace {
         self.mover(g::MoverOp::TileTranspose, dst, Some(src), &kw, at)
     }
 
+    /// Transpose a rectangular window with global source and destination pitches.
+    #[track_caller]
+    #[allow(clippy::too_many_arguments)]
+    pub fn tile_transpose_pitched(
+        &mut self,
+        dst: &View,
+        src: &View,
+        mask: &View,
+        a: i64,
+        b: i64,
+        source_pitch: i64,
+        destination_pitch: i64,
+    ) -> R<()> {
+        let kw = [
+            ("mask", Kw::Index(mask)),
+            ("nb", Kw::Int(Some(1))),
+            ("a", Kw::Int(Some(a))),
+            ("b", Kw::Int(Some(b))),
+            ("source_pitch", Kw::Int(Some(source_pitch))),
+            ("destination_pitch", Kw::Int(Some(destination_pitch))),
+        ];
+        self.mover(g::MoverOp::TileTranspose, dst, Some(src), &kw, here())
+    }
+
     /// `quant DST <- SRC` (DSL.MOV.003).
     #[track_caller]
     pub fn quant(&mut self, dst: &View, src: &View) -> R<()> {
@@ -188,9 +212,46 @@ impl Trace {
         schedule: &[(&str, i64)],
         read: &[(&str, g::Attr)],
     ) -> R<()> {
+        self.quant_mapped_status(dst, src, finite, schedule, read, None)
+    }
+
+    /// Pack only padding. `src` supplies an FP16 address anchor; no source
+    /// elements are accessed. A deferred record, when present, receives success.
+    #[track_caller]
+    pub fn quant_zeros(
+        &mut self,
+        dst: &View,
+        src: &View,
+        schedule: &[(&str, i64)],
+        status: Option<&View>,
+    ) -> R<()> {
+        let head = match status {
+            Some(status) => ("status", Kw::Index(status)),
+            None => ("finite", Kw::Int(Some(1))),
+        };
+        let mut kw = quant_kw(head, schedule, true);
+        kw.push(("zero", Kw::Int(Some(1))));
+        self.mover(g::MoverOp::Quant, dst, Some(src), &kw, here())
+    }
+
+    /// A mapped quant with an optional deferred finite-status record.
+    #[track_caller]
+    #[allow(clippy::too_many_arguments)]
+    pub fn quant_mapped_status(
+        &mut self,
+        dst: &View,
+        src: &View,
+        finite: bool,
+        schedule: &[(&str, i64)],
+        read: &[(&str, g::Attr)],
+        status: Option<&View>,
+    ) -> R<()> {
         let mut kw = vec![("finite", Kw::Int(finite.then_some(1)))];
         kw.extend(schedule.iter().map(|&(k, v)| (k, Kw::Int(Some(v)))));
         kw.extend(read.iter().map(|(k, a)| (*k, Kw::Attr(a))));
+        if let Some(status) = status {
+            kw.push(("status", Kw::Index(status)));
+        }
         self.mover(g::MoverOp::Quant, dst, Some(src), &kw, here())
     }
 
@@ -252,6 +313,22 @@ impl Trace {
         dwalk: &Walk,
         node_loop: bool,
     ) -> R<()> {
+        self.gt4_origins(dst, src, walk, dwalk, node_loop, None, None)
+    }
+
+    /// A GT4 word walk with global allocation origins.
+    #[track_caller]
+    #[allow(clippy::too_many_arguments)]
+    pub fn gt4_origins(
+        &mut self,
+        dst: &View,
+        src: &View,
+        walk: &Walk,
+        dwalk: &Walk,
+        node_loop: bool,
+        source_origin: Option<i64>,
+        destination_origin: Option<i64>,
+    ) -> R<()> {
         let at = here();
         if !(src.whole && dst.whole) {
             return fail(
@@ -262,9 +339,9 @@ impl Trace {
         let kw = [
             ("node_loop", Kw::Int(node_loop.then_some(1))),
             ("walk", Kw::Walk(Some(walk))),
-            ("at", Kw::Int(None)),
+            ("at", Kw::Int(source_origin)),
             ("dwalk", Kw::Walk(Some(dwalk))),
-            ("dat", Kw::Int(None)),
+            ("dat", Kw::Int(destination_origin)),
         ];
         self.mover(g::MoverOp::Gt4, dst, Some(src), &kw, at)
     }

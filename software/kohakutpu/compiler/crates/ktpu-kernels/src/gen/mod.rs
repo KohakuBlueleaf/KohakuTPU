@@ -3,8 +3,10 @@
 pub mod attention;
 pub mod chain;
 pub mod classes;
+pub mod conv;
 pub mod convert;
 pub mod fused;
+pub mod groupnorm;
 pub mod lanes;
 pub mod matmul;
 pub mod prepared;

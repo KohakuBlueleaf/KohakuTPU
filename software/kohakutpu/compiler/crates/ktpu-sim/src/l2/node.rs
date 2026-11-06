@@ -254,10 +254,16 @@ impl Sim<'_> {
         let pos = st.positional();
         let (to, from) = (self.view(pos[0])?, self.view(pos[2])?);
         let mask = self.view(st.kw("mask").ok_or("tile_transpose mask=")?)?;
-        let (y0, x0) = (self.buf(&to.name)?.at, self.buf(&from.name)?.at);
+        let (y0, x0) = (self.walk_of(&to)?.base, self.walk_of(&from)?.base);
         let m0 = self.walk_of(&mask)?.base;
         let arg = |k: &str| int(st.kw(k).ok_or("tile_transpose nb= a= b=")?, &self.env);
         let (nb, a, b) = (arg("nb")?, arg("a")?, arg("b")?);
+        let sp = st
+            .kw("source_pitch")
+            .map_or(Ok(2 * b), |t| int(t, &self.env))?;
+        let dp = st
+            .kw("destination_pitch")
+            .map_or(Ok(2 * a), |t| int(t, &self.env))?;
         let mut set = [[false; 128]; 2];
         for (k, row) in set.iter_mut().enumerate() {
             for (i, lane) in row.iter_mut().enumerate() {
@@ -280,9 +286,9 @@ impl Sim<'_> {
                                 };
                                 let (r, c) = (ri + 4 * i + (l0 >> 2), ci + 4 * j + (l0 & 3));
                                 let bytes =
-                                    self.mem.read(x0 + 2 * ((n * a + r) * b + c), 2)?.to_vec();
+                                    self.mem.read(x0 + (n * a + r) * sp + 2 * c, 2)?.to_vec();
                                 let (ro, co) = (ci + 4 * j + (l >> 2), ri + 4 * i + (l & 3));
-                                self.mem.write(y0 + 2 * ((n * b + ro) * a + co), &bytes)?;
+                                self.mem.write(y0 + (n * b + ro) * dp + 2 * co, &bytes)?;
                             }
                         }
                     }
@@ -409,7 +415,22 @@ impl Sim<'_> {
             return Err("a quant writes an MXFP7 buffer".into());
         };
         let (r0, rows, k0, keys) = q.rect();
-        let (s0, srows, t0, scols) = x.rect();
+        let (s0, mut srows, t0, mut scols) = x.rect();
+        if st.kw("zero").is_some() && st.kw("read_map").is_some() {
+            return Err("zero packing has no read map".into());
+        }
+        match st
+            .kw("zero")
+            .map(|value| int(value, &self.env))
+            .transpose()?
+        {
+            None | Some(0) => {}
+            Some(1) if st.kw("pad").is_some() => {
+                srows = 0;
+                scols = 0;
+            }
+            _ => return Err("zero is 0 or 1; zero=1 requires a padded quant".into()),
+        }
         let reader = Window::of(st, self, *src.shape.last().ok_or("a quant source")?)?;
         let checked = st.kw("finite").and_then(Term::as_int) != Some(1);
         for g in 0..rows / mx7::LANES as i64 {

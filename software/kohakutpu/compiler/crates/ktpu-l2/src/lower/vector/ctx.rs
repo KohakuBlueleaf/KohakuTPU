@@ -327,6 +327,39 @@ impl<'a> Ctx<'a> {
             return Ok((name, off, walk, words, Kind::Mx7, 0, 0));
         }
         let (off, dims, item) = M::rowmajor_walk(buf, &ax).map_err(vf)?;
+        if rows && item == 4 {
+            let shape = M::shape_of(&ax);
+            let width = shape
+                .last()
+                .copied()
+                .ok_or_else(|| self.fail(&o.st, "L2.VC.003", "F32 GT4 view needs a column axis"))?;
+            let rows = if shape.len() == 2 { shape[0] } else { 1 };
+            if width % 32 != 0 || (rows != 1 && rows % 4 != 0) {
+                return Err(self.fail(&o.st, "L2.VC.003", "F32 GT4 views need complete bands"));
+            }
+            let outer: Vec<_> = dims.iter().filter(|d| d.1 != item).collect();
+            if outer.len() > 1 || dims.iter().filter(|d| d.1 == item).any(|d| d.0 != width) {
+                return Err(self.fail(&o.st, "L2.VC.003", "F32 GT4 rows need contiguous columns"));
+            }
+            let pitch = if rows == 1 {
+                0
+            } else {
+                outer.first().map_or(width * item, |d| d.1)
+            };
+            if pitch % 32 != 0 {
+                return Err(self.fail(&o.st, "L2.VC.003", "F32 GT4 row pitch needs whole words"));
+            }
+            let bands = if rows == 1 { 1 } else { rows / 4 };
+            // F32 chunk pairs in register order: first sixteen columns of
+            // each row, then the next sixteen, before advancing the band.
+            let walk = Walk(vec![
+                (32, 2),
+                (pitch, 4),
+                (64, width / 16),
+                (pitch * 4, bands),
+            ]);
+            return Ok((name, off, walk, bands * width / 2, Kind::Rows, 0, bands * 4));
+        }
         if rows {
             let (walk, words, rows_w, r) = self.rows_walk(o, &ax, &dims, item)?;
             return Ok((name, off, walk, words, Kind::Rows, rows_w, r));

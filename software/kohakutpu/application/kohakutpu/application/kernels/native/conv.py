@@ -1,12 +1,21 @@
 """2D convolution with spatial padding, 5D mover unfold, in-kernel quant and epilogue."""
 
+import json
+from dataclasses import asdict
+
 from kohakutpu.application.kernels.native import generated as G
+from kohakutpu.application.kernels.native import linear as L
 from kohakutpu.application.kernels.native.composition import (
     GraphKernel,
     compose,
     sequence,
 )
+from kohakutpu.application.kernels.vector import Operand
+from kohakutpu.application.plan.emit import expr
+from kohakutpu.application.runtime import generated
 from kohakutpu.language import dsl as kt
+from kohakutpu.language.config import ENV
+from kohakutpu.stack import rs
 from kohakutpu.stack.kernel import dsl_machine
 
 
@@ -91,6 +100,7 @@ def kernel(
     residual=False,
     ring_depth=2,
     edge_space="stage",
+    nodes=None,
 ):
     """Fused unfold + in-kernel quant + ring contraction + epilogue in one package."""
     if cout_pad % 32:
@@ -100,6 +110,42 @@ def kernel(
     rows = batch * oh * ow
     rows_pad = -(-rows // 4) * 4
     k_pad = -(-(kh * kw * cin_pad) // 32) * 32
+    if nodes is not None and (len(nodes) > 1 or ENV.get("KTPU_SPLIT_OPTION")):
+        extras = [Operand("col")]
+        if residual:
+            extras.append(Operand("full", pitch=cout_pad, rows=rows_pad))
+        arguments = {
+            "spec": {
+                "batch": batch,
+                "height": height,
+                "width": width,
+                "cin": cin_pad,
+                "cout": cout_pad,
+                "kh": kh,
+                "kw": kw,
+                "stride": [stride, stride],
+                "padding": [padding, padding],
+                "dilation": [1, 1],
+                "groups": 1,
+            },
+            "product": {
+                "e": expr(L.epilogue(activation, residual)),
+                "extras": [asdict(o) for o in extras],
+                "out": asdict(Operand("full", pitch=cout_pad, rows=rows_pad)),
+                "ring_depth": ring_depth,
+                "tail_bands": True,
+                "expr_cse": True,
+            },
+        }
+        source, _ = generated.split_graph(
+            "conv.kernel",
+            json.dumps(arguments, sort_keys=True),
+            rs.machine_json(machine),
+            rs._MUTANT.get(),
+            tuple(nodes),
+            ENV.get("KTPU_SPLIT_OPTION"),
+        )
+        return GraphKernel(json.loads(source))
     per_batch = oh * ow
     k_logical = kh * kw * cin_pad
     if (

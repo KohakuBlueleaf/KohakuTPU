@@ -2,7 +2,7 @@
 //! (L2.VC, L2.OP, L2.STAT).
 
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ktpu_isa::unit::vector::core::MathOp;
 use ktpu_l1::text::{fmt, Stmt, Term};
@@ -25,6 +25,8 @@ const MG_BLOCK: i64 = mx7::KBLOCK as i64;
 #[derive(Default)]
 pub struct Instance {
     values: HashMap<String, Rows>,
+    /// L1 values whose elements are IEEE F32 words.
+    f32_values: HashSet<String>,
     /// An `exp2d` lane reached 2^tau since the last `if sticky`.
     sticky: bool,
 }
@@ -178,6 +180,21 @@ impl Instance {
         Ok(())
     }
 
+    fn put_packed(&mut self, st: &Stmt, rows: Rows) -> R<()> {
+        let name = st.target_name().ok_or("NAME = OP")?;
+        let ty = st.annot.as_ref().ok_or("a value's type")?;
+        let ty = match ty {
+            Term::Placed(ty, _) => ty.as_ref(),
+            ty => ty,
+        };
+        if matches!(ty, Term::View(dtype, _) if dtype == "f32") {
+            self.f32_values.insert(name.to_string());
+        } else {
+            self.f32_values.remove(name);
+        }
+        self.put(st, rows)
+    }
+
     fn statement(&mut self, sim: &mut Sim<'_>, st: &Stmt) -> R<()> {
         let pos = st.positional();
         match st.op.as_str() {
@@ -232,14 +249,23 @@ impl Instance {
                 let (r, c) = shape(st)?;
                 self.fits(st, r, c, &sim.env)?;
                 let from = self.operand(pos[0], &sim.env)?;
-                let v: Vec<u32> = (0..r * c)
-                    .map(|i| u32::from(num::to_f16(from.at(i / c, i % c))))
-                    .collect();
+                let ty = st.annot.as_ref().ok_or("a pack's type")?;
+                let ty = match ty {
+                    Term::Placed(ty, _) => ty.as_ref(),
+                    ty => ty,
+                };
+                let f32 = matches!(ty, Term::View(dtype, _) if dtype == "f32");
+                let encode: fn(u32) -> u32 = if f32 {
+                    num::to_f32
+                } else {
+                    |x| u32::from(num::to_f16(x))
+                };
+                let v: Vec<u32> = (0..r * c).map(|i| encode(from.at(i / c, i % c))).collect();
                 // A checked pack (`status=`) refuses a non-finite f16 value.
                 if st.kw("status").is_some() && v.iter().any(|x| x & 0x7c00 == 0x7c00) {
                     return Err("a checked pack of a non-finite value".into());
                 }
-                self.put(
+                self.put_packed(
                     st,
                     Rows {
                         rows: r,
@@ -261,8 +287,12 @@ impl Instance {
         let b = sim.buf(&v.name)?.clone();
         let mut out = Vec::with_capacity(rows * cols);
         let code = |sim: &Sim<'_>, r: i64, c: i64| -> R<u32> {
-            let bytes = sim.mem.read(b.element(r, c)?, 2)?;
-            Ok(u32::from(u16::from_le_bytes([bytes[0], bytes[1]])))
+            let bytes = sim.mem.read(b.element(r, c)?, b.item() as usize)?;
+            Ok(if b.dtype == "f32" {
+                u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+            } else {
+                u32::from(u16::from_le_bytes([bytes[0], bytes[1]]))
+            })
         };
         if st.kw("read_map").is_some() {
             let elements = sim.maps.read(st, &sim.env)?;
@@ -306,7 +336,7 @@ impl Instance {
                 }
             }
         }
-        self.put(st, Rows { rows, cols, v: out })
+        self.put_packed(st, Rows { rows, cols, v: out })
     }
 
     /// A value's rows `[lo, lo + n)`, as `x[lo : +n, :]` names them.
@@ -331,8 +361,17 @@ impl Instance {
 
     fn unpack(&mut self, sim: &Sim<'_>, st: &Stmt) -> R<()> {
         let (rows, cols) = shape(st)?;
+        let source = match st.positional()[0] {
+            Term::Name(name) | Term::View(name, _) => name,
+            _ => return Err("unpack VALUE".into()),
+        };
+        let decode: fn(u32) -> u32 = if self.f32_values.contains(source) {
+            num::from_f32
+        } else {
+            |x| num::from_f16(x as u16)
+        };
         if let Some(part) = self.window(sim, st.positional()[0])? {
-            let v = part.v.iter().map(|c| num::from_f16(*c as u16)).collect();
+            let v = part.v.iter().map(|c| decode(*c)).collect();
             return self.put(st, Rows { rows, cols, v });
         }
         if st.kw("lane").is_none() {
@@ -340,7 +379,7 @@ impl Instance {
                 if x.cols != cols && x.rows * x.cols == rows * cols {
                     // The same row-major values in the register shape: an
                     // L1 [2, 128] value unpacked as one [1, 256] row.
-                    let v = x.v.iter().map(|c| num::from_f16(*c as u16)).collect();
+                    let v = x.v.iter().map(|c| decode(*c)).collect();
                     return self.put(st, Rows { rows, cols, v });
                 }
             }
@@ -350,10 +389,10 @@ impl Instance {
         let v: Vec<u32> = match st.kw("lane") {
             Some(t) => {
                 let l = number(t).ok_or("lane=L")? as usize;
-                vec![num::from_f16(from.at(0, l) as u16); rows * cols]
+                vec![decode(from.at(0, l)); rows * cols]
             }
             None => (0..rows * cols)
-                .map(|i| num::from_f16(from.at(i / cols, i % cols) as u16))
+                .map(|i| decode(from.at(i / cols, i % cols)))
                 .collect(),
         };
         self.put(st, Rows { rows, cols, v })
@@ -390,9 +429,11 @@ impl Instance {
             } else {
                 ((i / vc) as usize, (i % vc) as usize)
             };
-            let code = from.at(r, c) as u16;
-            sim.mem
-                .write(b.element(r0 + i / vc, c0 + i % vc)?, &code.to_le_bytes())?;
+            let code = from.at(r, c).to_le_bytes();
+            sim.mem.write(
+                b.element(r0 + i / vc, c0 + i % vc)?,
+                &code[..b.item() as usize],
+            )?;
         }
         Ok(())
     }
@@ -408,9 +449,15 @@ impl Instance {
         if x.rows < rows {
             return Err(format!("{} of {} rows into {rows}", st.op, x.rows));
         }
+        let cols = st
+            .kw("valid_cols")
+            .map_or(Ok(x.cols as i64), |t| int(t, &sim.env))?;
+        if cols <= 0 || cols > x.cols as i64 {
+            return Err("valid_cols must select columns of the reduction".into());
+        }
         let v = (0..rows)
             .map(|r| {
-                let row = (0..x.cols).map(|c| x.at(r, c));
+                let row = (0..cols as usize).map(|c| x.at(r, c));
                 if st.op == "rsum" {
                     num::lane(row.map(num::value).sum())
                 } else {

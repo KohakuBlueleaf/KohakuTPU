@@ -50,6 +50,29 @@ fn a_padded_pack_gathers_whole_tile_rows_and_checks_once() {
 }
 
 #[test]
+fn padding_only_pack_does_not_read_its_source_anchor() {
+    let fixture = Fixture {
+        label: "padding-only-pack".into(),
+        name: "padding_only".into(),
+        source: r#"target ktpu.v9
+fn padding_only.l2(x: f16[4, 32] @dram, q: mx7a[4, 32] @dram(gm=1, nk=1))
+    quant q <- x pad=1 zero=1
+"#
+        .into(),
+    };
+    let pair = lower(&fixture, &common::card()).expect("padding-only pack");
+    assert!(!pair.after.1.contains("vfill"), "{}", pair.after.1);
+    let nan = |mem: &mut [u8], binds: &ktpu_sim::l1::Binds| {
+        let at = binds["x"] as usize;
+        for value in mem[at..at + 4 * 32 * 2].chunks_exact_mut(2) {
+            value.copy_from_slice(&0x7E00u16.to_le_bytes());
+        }
+    };
+    assert!(common::stops(&pair, false, &nan).is_none());
+    assert!(common::stops(&pair, true, &nan).is_none());
+}
+
+#[test]
 fn a_paired_pack_image_runs_its_loop_unguarded() {
     // Whole-row K-pair tiles make a loop body past VSKIPZ's 8-bit skip.
     let l1 = lowered(
@@ -176,4 +199,123 @@ fn the_lowering_keeps_every_fixture() {
         "l2.retile",
     ];
     stage_suite(&corpus, lower, &lowering, &known(include_str!("known.txt")));
+}
+
+#[test]
+fn f32_population_records_keep_gt4_rows_across_publication() {
+    let m = common::card();
+    let mut t = ktpu_kernels::trace::Trace::new(
+        "f32_population_records",
+        ktpu_kernels::trace::Facts::of(&m),
+        &m.die.target,
+    );
+    let source = t
+        .port(
+            "x",
+            ktpu_graph::Role::In,
+            ktpu_kernels::trace::buffer::f16(&[4, 32]).expect("source spec"),
+        )
+        .expect("source");
+    let state_spec = ktpu_kernels::trace::buffer::spec(
+        &[4, 32],
+        ktpu_graph::Dtype::F32,
+        vec![],
+        ktpu_graph::BufSpace::Dram,
+    )
+    .expect("state spec");
+    let state = t
+        .port("state", ktpu_graph::Role::Out, state_spec.clone())
+        .expect("state");
+    let output = t
+        .port("out", ktpu_graph::Role::Out, state_spec)
+        .expect("output");
+    t.par(
+        1,
+        ktpu_graph::UnitKind::Vc,
+        ktpu_kernels::trace::control::At::Var,
+        |t, _| {
+            t.range(1, |t, _| {
+                let x = t.load(&source.whole(), true)?;
+                let fine = t.math(
+                    ktpu_graph::ValueOp::Add,
+                    &[x.into(), (1.0 / 32768.0).into()],
+                )?;
+                t.store(&state.whole(), fine.into())
+            })
+        },
+    )
+    .expect("publish");
+    t.par(
+        1,
+        ktpu_graph::UnitKind::Vc,
+        ktpu_kernels::trace::control::At::Var,
+        |t, _| {
+            t.range(1, |t, _| {
+                let x = t.load(&source.whole(), true)?;
+                let published = t.load(&state.whole(), true)?;
+                let difference = t.math(ktpu_graph::ValueOp::Sub, &[published.into(), x.into()])?;
+                t.store(&output.whole(), difference.into())
+            })
+        },
+    )
+    .expect("consume");
+    let graph = t.graph().expect("graph");
+    let text = ktpu_graph::lower(&graph).expect("L2");
+    let fixture = Fixture {
+        label: "F32 population publication".into(),
+        source: text.text(),
+        name: text.name,
+    };
+    let pair = lower(&fixture, &m).expect("F32 GT4 lowers");
+    assert_eq!(common::compare(&pair), Ok(None));
+}
+
+#[test]
+fn partial_population_reduction_ignores_centered_padding() {
+    let m = common::card();
+    let mut t = ktpu_kernels::trace::Trace::new(
+        "partial_population",
+        ktpu_kernels::trace::Facts::of(&m),
+        &m.die.target,
+    );
+    let spec = ktpu_kernels::trace::buffer::f16(&[4, 32]).expect("rows");
+    let source = t
+        .port("x", ktpu_graph::Role::In, spec.clone())
+        .expect("source");
+    let output = t.port("out", ktpu_graph::Role::Out, spec).expect("output");
+    t.par(
+        1,
+        ktpu_graph::UnitKind::Vc,
+        ktpu_kernels::trace::control::At::Var,
+        |t, _| {
+            t.range(1, |t, _| {
+                let x = t.load(&source.whole(), true)?;
+                let centered = t.math(ktpu_graph::ValueOp::Sub, &[x.into(), 1.0.into()])?;
+                let square = t.math(
+                    ktpu_graph::ValueOp::Mul,
+                    &[centered.into(), centered.into()],
+                )?;
+                let sum = t.reduce_over(
+                    ktpu_graph::ValueOp::Rsum,
+                    square.into(),
+                    ktpu_kernels::trace::vector::Fold {
+                        valid_cols: Some(17),
+                        carry: false,
+                    },
+                )?;
+                let rows = t.broadcast(sum, 32)?;
+                t.store(&output.whole(), rows.into())
+            })
+        },
+    )
+    .expect("partial population");
+    let graph = t.graph().expect("graph");
+    let text = ktpu_graph::lower(&graph).expect("L2");
+    let fixture = Fixture {
+        label: "partial population reduction".into(),
+        source: text.text(),
+        name: text.name,
+    };
+    let pair = lower(&fixture, &m).expect("partial population lowers");
+    assert_eq!(common::compare(&pair), Ok(None));
 }

@@ -204,6 +204,11 @@ def conv2d(
         residual=residual is not None,
         ring_depth=ring_depth,
         edge_space=edge_space,
+        nodes=(
+            (D.device().home,)
+            if D.device().home is not None
+            else tuple(D.device().card.nodes)
+        ),
     )
     args = [x.reshape(batch * height * width, cin_pad), weight, bias]
     if residual is not None:

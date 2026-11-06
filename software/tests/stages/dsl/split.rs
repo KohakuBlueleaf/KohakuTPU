@@ -67,19 +67,54 @@ fn request(m: &Machine) -> SplitRequest {
 }
 
 #[test]
-fn compatibility_share_executes_on_the_first_granted_node() {
+fn destination_copy_preserves_global_origins_and_single_word_writers() {
     let m = machine();
-    for grant in [vec![3], vec![3, 1], vec![3, 1, 0, 2]] {
-        let mut request = request(&m);
-        request.nodes = NodeSet::new(grant, &m).expect("grant");
-        let plan =
-            call_split("convert.copy_kernel", &json!({"nbytes": 128}), &request, &m).expect("plan");
-        let program = ktpu_graph::program(&plan.kernel.graph, &m).expect("explicit node graph");
-        let body = program.body().expect("body");
-        let instances = ktpu_l2::ir::instances(&body).expect("instances");
-        assert!(!instances.is_empty());
-        assert!(instances.iter().all(|s| s.node == 3));
-        assert_eq!(plan.split.active_nodes, 1, "only emitted work counts");
+    for (nbytes, classed) in [(32, false), (289, false), (289, true)] {
+        let mut args = json!({"nbytes": nbytes});
+        if classed {
+            args["shape_class"] = json!({
+                "kblock": 32, "max_block": 256, "policy": "exact", "cores": "min"
+            });
+        }
+        let baseline = ktpu_kernels::call("convert.copy_kernel", &args, &m).expect("P=1");
+        let input = |i| 0x2800u16 | ((i * 37) as u16 & 0x3ff);
+        let (want, _) = simulate_named_inputs(&baseline, "dst", &|_, _, _, _, _| 0, &input);
+        for grant in [vec![3], vec![3, 1], vec![3, 1, 0, 2]] {
+            let mut request = request(&m);
+            request.nodes = NodeSet::new(grant, &m).expect("grant");
+            request.force = Some("destination-tiles".into());
+            let plan = call_split("convert.copy_kernel", &args, &request, &m).expect("plan");
+            validate_ownership(&plan.split.output).expect("physical owners");
+            let allocation_bytes = want.len() as u64;
+            for share in &plan.split.shards {
+                for read in &share.read_regions {
+                    assert!(read.bytes.end <= allocation_bytes);
+                }
+                if classed && share.role != ktpu_kernels::split::ShardRole::Empty {
+                    assert!(share.read_regions.iter().any(|read| {
+                        read.allocation == "src" && read.bytes.end == allocation_bytes
+                    }));
+                }
+            }
+            let (actual, writes) =
+                simulate_named_inputs(&plan.kernel, "dst", &|_, _, _, _, _| 0, &input);
+            assert_eq!(actual, want);
+            assert!(writes.iter().all(|&count| count == 1));
+            let program = ktpu_graph::program(&plan.kernel.graph, &m).expect("node graph");
+            let body = program.body().expect("body");
+            let instances = ktpu_l2::ir::instances(&body).expect("instances");
+            for share in &plan.split.shards {
+                let node = request.nodes.ids()[share.logical_node];
+                assert_eq!(
+                    instances.iter().any(|s| s.node == node),
+                    share.role != ktpu_kernels::split::ShardRole::Empty,
+                );
+            }
+            assert_eq!(
+                plan.split.active_nodes,
+                request.nodes.ids().len().min((nbytes + 63) as usize / 64),
+            );
+        }
     }
     let ordinary = ktpu_kernels::call("convert.copy_kernel", &json!({"nbytes": 128}), &m)
         .expect("ordinary call");
@@ -237,6 +272,16 @@ fn simulate_named_inputs(
     input: &dyn Fn(bool, i64, i64, i64, i64) -> u16,
     extra: &dyn Fn(i64) -> u16,
 ) -> (Vec<u8>, Vec<u32>) {
+    simulate_named_tables(kernel, output, input, extra, &[])
+}
+
+fn simulate_named_tables(
+    kernel: &ktpu_kernels::kernel::Kernel,
+    output: &str,
+    input: &dyn Fn(bool, i64, i64, i64, i64) -> u16,
+    extra: &dyn Fn(i64) -> u16,
+    tables: &[(&str, Vec<u8>)],
+) -> (Vec<u8>, Vec<u32>) {
     let text = ktpu_graph::lower(&kernel.graph).expect("L2 graph");
     let module = ktpu_l1::text::read(&text.text(), "matmul shares").expect("L2 text");
     let body = module.body(&text.name, "l2").expect("body");
@@ -251,7 +296,9 @@ fn simulate_named_inputs(
     }
     let mut mem = Dram::new(end as usize);
     for (name, b) in &buffers {
-        if let Layout::Mx7 { b: side, .. } = b.layout {
+        if let Some((_, bytes)) = tables.iter().find(|(table, _)| *table == name.as_str()) {
+            mem.write(b.at, bytes).expect("table input");
+        } else if let Layout::Mx7 { b: side, .. } = b.layout {
             for group in 0..b.shape[0] / 4 {
                 for block in 0..b.shape[1] / 32 {
                     let mut values = [[0u16; 32]; 4];
@@ -266,6 +313,12 @@ fn simulate_named_inputs(
                             .expect("packed input");
                     }
                 }
+            }
+        } else if name == "mask" {
+            let masks = ktpu_kernels::gen::transpose::masks(&machine()).expect("transpose masks");
+            for (i, code) in masks.iter().enumerate() {
+                mem.write(b.at + 2 * i as i64, &code.to_le_bytes())
+                    .expect("transpose mask input");
             }
         } else if name != output {
             for i in 0..b.bytes() / 2 {
@@ -289,7 +342,7 @@ fn matmul_output_splits_preserve_k_order_and_write_each_word_once() {
     let m = machine();
     let args = json!({
         "mm": {"made_by": {"gen": "matmul.plan", "args": {
-            "bt": 1, "m": 197, "n": 192, "k": 64,
+            "bt": 1, "m": 69, "n": 192, "k": 64,
             "n_tile": "auto", "waves": true
         }}},
         "e": {"nodes": [{"load": 0}, {"load": 1}, {"op": "add", "args": [0, 1]}], "root": 2},
@@ -314,7 +367,7 @@ fn matmul_output_splits_preserve_k_order_and_write_each_word_once() {
             validate_ownership(&got.split.output).expect("physical owners");
             assert_eq!(got.split.active_nodes, p, "{id}: grant is useful work");
             let (actual, writes) = simulate_matmul(&got.kernel);
-            let valid = 197 * 192 * 2;
+            let valid = 69 * 192 * 2;
             assert_eq!(&actual[..valid], &want[..valid], "{p} nodes, {id}");
             for (word, counts) in writes[..valid].chunks(32).enumerate() {
                 assert!(
@@ -602,13 +655,13 @@ fn row_norm_and_softmax_shares_preserve_each_row_and_write_once() {
     ], "root": 7});
     for e in [norm, softmax] {
         let args = json!({
-            "R": 197, "W": 32, "e": e,
+            "R": 69, "W": 32, "e": e,
             "operands": [
-                {"kind": "full", "dtype": "f16", "offset": 0, "pitch": 32, "rows": 197},
+                {"kind": "full", "dtype": "f16", "offset": 0, "pitch": 32, "rows": 69},
                 {"kind": "col", "dtype": "f16", "offset": 0, "pitch": 0, "rows": 0},
                 {"kind": "scalar", "dtype": "f16", "offset": 3, "pitch": 0, "rows": 0}
             ],
-            "out": {"kind": "full", "dtype": "f16", "offset": 0, "pitch": 32, "rows": 197}
+            "out": {"kind": "full", "dtype": "f16", "offset": 0, "pitch": 32, "rows": 69}
         });
         let baseline = ktpu_kernels::call("vector.rows_kernel", &args, &m).expect("P=1");
         let (want, _) = simulate_matmul(&baseline);
@@ -846,4 +899,547 @@ fn staged_row_flat_package_keeps_shared_statistics_and_exact_copies() {
     let (actual, writes) = simulate_matmul(&got.kernel);
     assert_eq!(actual, want);
     assert!(writes.iter().all(|&n| n == 1));
+}
+
+#[test]
+fn groupnorm_population_merge_preserves_f32_states_and_empty_identity() {
+    let m = machine();
+    let lanes = m.vc.vlmax as usize;
+    for (na, nb) in [(1, 3), (0, 4), (4, 0), (0, 0)] {
+        let kernel = ktpu_kernels::call("groupnorm.merge_kernel", &json!({"na": na, "nb": nb}), &m)
+            .expect("population merge");
+        let text = ktpu_graph::lower(&kernel.graph).expect("merge graph");
+        let module = ktpu_l1::text::read(&text.text(), "population merge").expect("L2 text");
+        let body = module.body(&text.name, "l2").expect("body");
+        let mut binds = HashMap::new();
+        let mut buffers = HashMap::new();
+        let mut end = 4096;
+        for (name, ty) in &body.params {
+            let buf = SimBuf::of(ty, end).expect("buffer");
+            binds.insert(name.clone(), end);
+            end += (buf.bytes() + 4095) / 4096 * 4096;
+            buffers.insert(name.clone(), buf);
+        }
+        let mut mem = Dram::new(end as usize);
+        let mut expected = Vec::new();
+        for lane in 0..lanes {
+            let base = 1.0 + lane as f32 / 32768.0;
+            let population: Vec<_> = (0..na + nb).map(|i| base + i as f32 / 8.0).collect();
+            let stats = |xs: &[f32]| {
+                if xs.is_empty() {
+                    return (f32::NAN, f32::NAN);
+                }
+                let mean = xs.iter().sum::<f32>() / xs.len() as f32;
+                let m2 = xs.iter().map(|x| (x - mean) * (x - mean)).sum::<f32>();
+                (mean, m2)
+            };
+            let (ma, m2a) = stats(&population[..na as usize]);
+            let (mb, m2b) = stats(&population[na as usize..]);
+            expected.push(if population.is_empty() {
+                (0.0, 0.0)
+            } else {
+                stats(&population)
+            });
+            for (field, value) in [("mean_a", ma), ("m2_a", m2a), ("mean_b", mb), ("m2_b", m2b)] {
+                mem.write(buffers[field].at + lane as i64 * 4, &value.to_le_bytes())
+                    .expect("state input");
+            }
+        }
+        let start = buffers["mean"].at.min(buffers["m2"].at) as usize;
+        let stop = (buffers["mean"].at.max(buffers["m2"].at) + lanes as i64 * 4) as usize;
+        mem.watch_writes(start..stop).expect("state writes");
+        ktpu_sim::l2::run(&module, &text.name, &binds, &mut mem, 7).expect("merge execution");
+        for (field, column) in [("mean", 0), ("m2", 1)] {
+            let out = &buffers[field];
+            let bytes = mem
+                .read(out.at, out.bytes() as usize)
+                .expect("merged state");
+            for (lane, chunk) in bytes.chunks_exact(4).enumerate() {
+                let want = if column == 0 {
+                    expected[lane].0
+                } else {
+                    expected[lane].1
+                };
+                assert_eq!(chunk, want.to_le_bytes(), "{na}+{nb}, {field}, lane {lane}");
+            }
+            let lo = out.at as usize - start;
+            let counts = mem.write_counts().expect("write census");
+            assert!(counts[lo..lo + out.bytes() as usize]
+                .iter()
+                .all(|&n| n == 1));
+        }
+    }
+}
+
+#[test]
+fn conv_patch_owners_preserve_halo_reads_and_group_slices() {
+    let m = machine();
+    let args = json!({"spec": {
+        "batch": 1, "height": 3, "width": 5, "cin": 32, "cout": 64,
+        "kh": 2, "kw": 3, "stride": [1, 2], "padding": [1, 2],
+        "dilation": [2, 1], "groups": 2
+    }});
+    let tag = |i: i64| 0x3000 | (i as u16 & 0x3ff);
+    let mut want = Vec::new();
+    for group in 0..2 {
+        for oh in 0..3 {
+            for ow in 0..4 {
+                for kh in 0..2 {
+                    for kw in 0..3 {
+                        for channel in 0..16 {
+                            let ih = oh - 1 + kh * 2;
+                            let iw = ow * 2 - 2 + kw;
+                            let value = if (0..3).contains(&ih) && (0..5).contains(&iw) {
+                                tag((ih * 5 + iw) * 32 + group * 16 + channel)
+                            } else {
+                                0
+                            };
+                            want.extend_from_slice(&value.to_le_bytes());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for grant in [vec![0], vec![3, 1], vec![3, 1, 0, 2]] {
+        let mut req = request(&m);
+        req.nodes = NodeSet::new(grant, &m).expect("grant");
+        req.force = Some("rows".into());
+        let plan = call_split("conv.patch_kernel", &args, &req, &m).expect("patch producer");
+        validate_ownership(&plan.split.output).expect("patch ownership");
+        let (actual, writes) =
+            simulate_named_inputs(&plan.kernel, "patches", &|_, _, _, _, _| 0, &tag);
+        assert_eq!(actual, want);
+        assert!(
+            writes.iter().all(|&n| n == 1),
+            "one patch producer per destination word"
+        );
+    }
+}
+
+#[test]
+fn conv_product_splits_preserve_output_and_write_each_word_once() {
+    let m = machine();
+    for groups in [1, 4] {
+        let (height, width, cin, cout) = if groups == 1 {
+            (8, 8, 32, 128)
+        } else {
+            (4, 4, 64, 128)
+        };
+        let rows = height * width;
+        let columns = cout / groups;
+        let args = json!({
+            "spec": {
+                "batch": 1, "height": height, "width": width, "cin": cin, "cout": cout,
+                "kh": 3, "kw": 3, "stride": [1, 1], "padding": [1, 1],
+                "dilation": [1, 1], "groups": groups
+            },
+            "product": {
+                "e": {"nodes": [{"load": 0}], "root": 0}, "extras": [],
+                "out": {"kind": "full", "dtype": "f16", "offset": 0, "pitch": columns, "rows": groups * rows},
+                "ring_depth": 2, "tail_bands": true
+            }
+        });
+        let mut req = request(&m);
+        req.nodes = NodeSet::new(vec![0], &m).expect("reference grant");
+        req.force = Some("spatial".into());
+        let baseline = call_split("conv.kernel", &args, &req, &m).expect("P=1 convolution");
+        assert!(baseline
+            .split
+            .cost
+            .local_cycles
+            .iter()
+            .all(|&cycles| cycles > 0));
+        assert_eq!(
+            baseline.split.cost.local_cycles.len(),
+            baseline.split.active_nodes,
+            "every active convolution owner has local timing"
+        );
+        let (want, baseline_writes) = simulate_named_inputs(
+            &baseline.kernel,
+            "c2_out",
+            &|_, g, b, l, k| 0x2800 | ((g + b + l + k) as u16 & 0x3ff),
+            &|i| 0x3000 | (i as u16 & 0x3ff),
+        );
+        assert!(baseline_writes.iter().all(|&n| n == 1));
+        for grant in [vec![3, 1], vec![3, 1, 0, 2]] {
+            req.nodes = NodeSet::new(grant, &m).expect("grant");
+            let axes = if groups == 1 {
+                vec!["channels", "spatial"]
+            } else {
+                vec!["groups"]
+            };
+            for axis in axes {
+                req.force = Some(axis.into());
+                let plan = call_split("conv.kernel", &args, &req, &m).expect("forced convolution");
+                validate_ownership(&plan.split.output).expect("output owners");
+                let (actual, writes) = simulate_named_inputs(
+                    &plan.kernel,
+                    "c2_out",
+                    &|_, g, b, l, k| 0x2800 | ((g + b + l + k) as u16 & 0x3ff),
+                    &|i| 0x3000 | (i as u16 & 0x3ff),
+                );
+                assert_eq!(actual, want, "{groups} groups, {axis}");
+                assert!(writes.iter().all(|&n| n == 1), "{groups} groups, {axis}");
+            }
+        }
+    }
+}
+
+#[test]
+fn groupnorm_domains_and_population_trees_own_each_output_word() {
+    let m = machine();
+    let tag = |i: i64| 0x3c00u16 | ((i * 37 + i / 11) as u16 & 0x3ff);
+    let value = |i: i64| ktpu_sim::num::value(ktpu_sim::num::from_f16(tag(i))) as f32;
+    for (batch, channels, groups, spatial, option) in
+        [(2, 32, 8, 8, "domains"), (1, 2, 1, 85, "spatial")]
+    {
+        let domains = batch * groups;
+        let width = channels / groups * spatial;
+        let padded_width = (width + 31) / 32 * 32;
+        let eps = 0.00001;
+        let args = json!({"spec": {
+            "batch": batch, "channels": channels, "height": 1, "width": spatial,
+            "groups": groups, "eps": eps
+        }});
+        let mut req = request(&m);
+        req.nodes = NodeSet::new(vec![0], &m).expect("reference grant");
+        req.force = Some("domains".into());
+        let baseline = call_split("groupnorm.kernel", &args, &req, &m).expect("P=1 GroupNorm");
+        let (reference_bytes, writes) =
+            simulate_named_inputs(&baseline.kernel, "out", &|_, _, _, _, _| 0, &tag);
+        assert!(writes.iter().all(|&n| n == 1));
+        let logical = |bytes: &[u8]| {
+            let all = decoded(bytes);
+            (0..domains)
+                .flat_map(|d| {
+                    let start = (d * padded_width) as usize;
+                    all[start..start + width as usize].to_vec()
+                })
+                .collect::<Vec<_>>()
+        };
+        let reference = logical(&reference_bytes);
+        let mut f32_reference = Vec::new();
+        for d in 0..domains {
+            let xs: Vec<_> = (0..width).map(|j| value(d * width + j)).collect();
+            let mean = xs.iter().sum::<f32>() / width as f32;
+            let variance = xs.iter().map(|x| (x - mean) * (x - mean)).sum::<f32>() / width as f32;
+            let inverse = (variance + eps as f32).sqrt().recip();
+            for (j, x) in xs.into_iter().enumerate() {
+                let channel = (d % groups) * (channels / groups) + j as i64 / spatial;
+                f32_reference.push((x - mean) * inverse * value(channel) + value(channel));
+            }
+        }
+        eprintln!(
+            "GroupNorm {option} P=1 vs f32: {}",
+            error_statistics(&reference, &f32_reference)
+        );
+        for grant in [vec![3, 1], vec![3, 1, 0, 2]] {
+            let p = grant.len();
+            req.nodes = NodeSet::new(grant, &m).expect("grant");
+            req.force = Some(option.into());
+            let plan = call_split("groupnorm.kernel", &args, &req, &m).expect("forced GroupNorm");
+            validate_ownership(&plan.split.output).expect("output lines");
+            assert_eq!(plan.split.active_nodes, p);
+            let (bytes, writes) =
+                simulate_named_inputs(&plan.kernel, "out", &|_, _, _, _, _| 0, &tag);
+            assert!(writes.iter().all(|&n| n == 1), "{option}, P={p}");
+            let actual = logical(&bytes);
+            if option == "domains" {
+                assert_eq!(bytes, reference_bytes, "complete domains, P={p}");
+            }
+            eprintln!(
+                "GroupNorm {option} P={p} vs P=1: {}; vs f32: {}",
+                error_statistics(&actual, &reference),
+                error_statistics(&actual, &f32_reference)
+            );
+        }
+    }
+}
+
+#[test]
+fn destination_cast_preserves_global_element_origins_and_exact_tail() {
+    let m = machine();
+    let hw = ktpu_kernels::gen::Hw::of(&m);
+    let args = json!({"n": 4 * hw.vlmax + hw.lanes, "src": "f16", "dst": "f32"});
+    let baseline = ktpu_kernels::call("convert.cast_kernel", &args, &m).expect("P=1 cast");
+    let (want, _) = simulate_matmul(&baseline);
+    for grant in [vec![3, 1], vec![3, 1, 0, 2]] {
+        let mut req = request(&m);
+        let p = grant.len();
+        req.nodes = NodeSet::new(grant, &m).expect("grant");
+        req.force = Some("destination-tiles".into());
+        let got = call_split("convert.cast_kernel", &args, &req, &m).expect("cast owners");
+        assert_eq!(got.split.active_nodes, p);
+        validate_ownership(&got.split.output).expect("physical owners");
+        let (actual, writes) = simulate_matmul(&got.kernel);
+        assert_eq!(actual, want);
+        assert!(writes.iter().all(|&count| count == 1));
+    }
+}
+
+#[test]
+fn destination_pack_tail_matches_single_node_and_writes_each_word_once() {
+    let m = machine();
+    for (side, strategy, rows, cols, rp, cp, source) in [
+        ("a", "native", 15, 48, 16, 128, 0),
+        ("b", "native", 3, 48, 4, 256, 0),
+        ("a", "staged", 3, 48, 4, 256, 0),
+        ("b", "native", 7, 112, 8, 256, 1),
+        ("a", "native", 7, 112, 8, 256, 2),
+    ] {
+        let mut args = json!({
+            "src": {"kind": "full", "dtype": "f16", "offset": 0, "pitch": cols, "rows": rows},
+            "rows": rows, "cols": cols, "rp": rp, "cp": cp,
+            "side": side, "g": 1, "nk": 2, "batches": 1, "finite": source == 0,
+            "pad_strategy": strategy
+        });
+        let generator = if source == 1 {
+            args["src_bytes"] = json!(rows * 256);
+            args["levels"] = json!([[rows, 256], [cols / 16, -32]]);
+            args["at"] = json!(224);
+            "matmul.quant_walk_kernel"
+        } else {
+            if source == 2 {
+                args["prepared"] = json!([{"made_by": {
+                    "gen": "relayout.plan",
+                    "args": {
+                        "src_n": rows * cols, "m": rows * cols,
+                        "walk": [[rows, cols], [cols, -1]], "at": cols - 1,
+                        "dwalk": [[rows * cols, 1]], "dat": 0
+                    }
+                }}]);
+                args["composed"] = json!([0]);
+            }
+            "matmul.quant_kernel"
+        };
+        let input = |i| 0x2800u16 | ((i * 37) as u16 & 0x3ff);
+        let simulate = |kernel: &ktpu_kernels::kernel::Kernel| {
+            simulate_named_inputs(kernel, "q", &|_, _, _, _, _| 0, &input)
+        };
+        let baseline = ktpu_kernels::call(generator, &args, &m).expect("P=1 pack");
+        let (want, baseline_writes) = simulate(&baseline);
+        assert!(baseline_writes.iter().all(|&count| count == 1));
+        for grant in [vec![3, 1], vec![3, 1, 0, 2]] {
+            let mut req = request(&m);
+            let p = grant.len();
+            req.nodes = NodeSet::new(grant, &m).expect("grant");
+            req.force = Some("destination-tiles".into());
+            let got = call_split(generator, &args, &req, &m).expect("pack owners");
+            assert_eq!(got.split.active_nodes, p);
+            validate_ownership(&got.split.output).expect("complete scale and entry owners");
+            let (actual, writes) = simulate(&got.kernel);
+            assert_eq!(actual, want);
+            assert!(writes.iter().all(|&count| count == 1));
+        }
+    }
+}
+
+#[test]
+fn destination_transpose_matches_single_node_and_writes_each_word_once() {
+    let m = machine();
+    for (a, b, classed) in [(64, 96, false), (48, 128, false), (64, 96, true)] {
+        let mut args = json!({"nb": 1, "A": a, "B": b});
+        if classed {
+            args["shape_class"] = json!({
+                "kblock": 32, "max_block": 256, "policy": "exact", "cores": "min"
+            });
+        }
+        let input = |i| 0x2800u16 | ((i * 37) as u16 & 0x3ff);
+        let simulate = |kernel: &ktpu_kernels::kernel::Kernel| {
+            simulate_named_inputs(kernel, "y", &|_, _, _, _, _| 0, &input)
+        };
+        let baseline =
+            ktpu_kernels::call("transpose.transpose_kernel", &args, &m).expect("P=1 transpose");
+        let (want, baseline_writes) = simulate(&baseline);
+        assert!(baseline_writes.iter().all(|&count| count == 1));
+        for grant in [vec![3, 1], vec![3, 1, 0, 2]] {
+            let mut req = request(&m);
+            let p = grant.len();
+            req.nodes = NodeSet::new(grant, &m).expect("grant");
+            req.force = Some("destination-tiles".into());
+            let got = call_split("transpose.transpose_kernel", &args, &req, &m)
+                .expect("transpose owners");
+            assert_eq!(got.split.active_nodes, p);
+            validate_ownership(&got.split.output).expect("destination rectangles");
+            let (actual, writes) = simulate(&got.kernel);
+            assert_eq!(actual, want);
+            assert!(writes.iter().all(|&count| count == 1));
+        }
+    }
+}
+
+#[test]
+fn destination_reverse_keeps_walk_origins_and_exact_tail() {
+    let m = machine();
+    let hw = ktpu_kernels::gen::Hw::of(&m);
+    let words = 4 * 8 * hw.vlmax / hw.lanes + 3;
+    let args = json!({
+        "src_bytes": (words + 1) * hw.word_bytes,
+        "levels": [[words, -hw.word_bytes]],
+        "at": words * hw.word_bytes,
+        "n": words * hw.lanes
+    });
+    let simulate = |kernel: &ktpu_kernels::kernel::Kernel| {
+        simulate_named_inputs(kernel, "y", &|_, _, _, _, _| 0, &|i| {
+            0x2800u16 | ((i * 37) as u16 & 0x3ff)
+        })
+    };
+    let baseline = ktpu_kernels::call("transpose.reverse_kernel", &args, &m).expect("P=1 reverse");
+    let (want, _) = simulate(&baseline);
+    for grant in [vec![3, 1], vec![3, 1, 0, 2]] {
+        let mut req = request(&m);
+        let p = grant.len();
+        req.nodes = NodeSet::new(grant, &m).expect("grant");
+        req.force = Some("destination-tiles".into());
+        let got = call_split("transpose.reverse_kernel", &args, &req, &m).expect("reverse owners");
+        assert_eq!(got.split.active_nodes, p);
+        validate_ownership(&got.split.output).expect("reverse destination owners");
+        let (actual, writes) = simulate(&got.kernel);
+        assert_eq!(actual, want);
+        assert!(writes.iter().all(|&count| count == 1));
+    }
+}
+
+#[test]
+fn destination_mover_walk_and_fill_preserve_written_windows() {
+    let m = machine();
+    let hw = ktpu_kernels::gen::Hw::of(&m);
+    let words = 131;
+    let base = hw.word_bytes;
+    let args = json!({
+        "src_bytes": (words + 1) * hw.word_bytes,
+        "levels": [[words, -hw.word_bytes]], "at": words * hw.word_bytes,
+        "dst_bytes": (words + 2) * hw.word_bytes,
+        "dlevels": [[words, hw.word_bytes]], "dat": base,
+        "value": 0x1234, "ew": 16
+    });
+    let simulate = |kernel: &ktpu_kernels::kernel::Kernel| {
+        simulate_named_inputs(kernel, "dst", &|_, _, _, _, _| 0, &|i| {
+            0x2800u16 | ((i * 37) as u16 & 0x3ff)
+        })
+    };
+    for (stride, classed, permuted) in [
+        (hw.word_bytes, false, false),
+        (-hw.word_bytes, false, false),
+        (2 * hw.word_bytes, false, false),
+        (hw.word_bytes, true, false),
+        (hw.word_bytes, false, true),
+    ] {
+        let mut args = args.clone();
+        args["dlevels"] = json!([[words, stride]]);
+        args["dst_bytes"] = json!((words + 2) * stride.abs());
+        args["dat"] = json!(if stride < 0 { words * -stride } else { base });
+        if permuted {
+            args["levels"] = json!([[4, 32 * hw.word_bytes], [32, -hw.word_bytes]]);
+            args["at"] = json!(31 * hw.word_bytes);
+            args["dlevels"] = json!([[4, -hw.word_bytes], [32, 4 * hw.word_bytes]]);
+            args["dat"] = json!(4 * hw.word_bytes);
+        }
+        if classed {
+            args["shape_class"] = json!({
+                "kblock": 32, "max_block": 256, "policy": "exact", "cores": "min"
+            });
+        }
+        for generator in ["convert.walk_kernel", "convert.fill_kernel"] {
+            if classed && generator == "convert.fill_kernel" {
+                continue;
+            }
+            let baseline = ktpu_kernels::call(generator, &args, &m).expect("P=1 mover");
+            let (want, want_writes) = simulate(&baseline);
+            for grant in [vec![3, 1], vec![3, 1, 0, 2]] {
+                let mut req = request(&m);
+                let p = grant.len();
+                req.nodes = NodeSet::new(grant, &m).expect("grant");
+                req.force = Some("destination-tiles".into());
+                let got = call_split(generator, &args, &req, &m).expect("mover owners");
+                assert_eq!(got.split.active_nodes, p);
+                validate_ownership(&got.split.output).expect("mover destination owners");
+                let (actual, writes) = simulate(&got.kernel);
+                assert_eq!(actual, want);
+                assert_eq!(writes, want_writes);
+                assert!(writes.iter().all(|&count| count <= 1));
+                assert!(writes.iter().any(|&count| count == 1));
+            }
+        }
+    }
+}
+
+#[test]
+fn destination_indexed_schedules_keep_one_owner_for_layered_writes() {
+    let m = machine();
+    let plan = json!({
+        "src_n": 256, "walk": [[241, 1]], "at": 0,
+        "dwalk": [[241, 1]], "dat": 3, "m": 256, "keep": true
+    });
+    for (generator, planner) in [
+        ("lanes.relayout_kernel", "lanes.plan"),
+        ("relayout.relayout_kernel", "relayout.plan"),
+    ] {
+        let (index, masks): (Vec<f32>, Vec<u16>) = if planner == "lanes.plan" {
+            let pl = ktpu_kernels::call::lanes_plan(&plan, &m).expect("lane plan");
+            (pl.index, pl.masks)
+        } else {
+            let pl = ktpu_kernels::call::relayout_plan(&plan, &m)
+                .expect("relayout plan")
+                .expect("planned runs");
+            (
+                pl.index,
+                pl.masks
+                    .into_iter()
+                    .flatten()
+                    .map(|x| ktpu_sim::num::to_f16(ktpu_sim::num::from_f32(x.to_bits())))
+                    .collect(),
+            )
+        };
+        let tables = [
+            (
+                "index",
+                index.iter().flat_map(|x| x.to_le_bytes()).collect(),
+            ),
+            ("mask", masks.iter().flat_map(|x| x.to_le_bytes()).collect()),
+        ];
+        let args = json!({"pl": {"made_by": {"gen": planner, "args": plan}}});
+        let simulate = |kernel: &ktpu_kernels::kernel::Kernel| {
+            simulate_named_tables(
+                kernel,
+                "dst",
+                &|_, _, _, _, _| 0,
+                &|i| 0x2800u16 | ((i * 37) as u16 & 0x3ff),
+                &tables,
+            )
+        };
+        let baseline = ktpu_kernels::call(generator, &args, &m).expect("local indexed schedule");
+        let (want, want_writes) = simulate(&baseline);
+        let mut req = request(&m);
+        req.nodes = NodeSet::new(vec![3, 1, 0, 2], &m).expect("grant");
+        req.force = Some("p1".into());
+        let got = call_split(generator, &args, &req, &m).expect("explicit one-owner option");
+        validate_ownership(&got.split.output).expect("indexed allocation owner");
+        let (actual, writes) = simulate(&got.kernel);
+        assert_eq!(actual, want);
+        assert_eq!(writes, want_writes);
+        for (byte, &count) in writes.iter().enumerate() {
+            if count != 0 {
+                let owners: Vec<_> = got
+                    .split
+                    .output
+                    .ownership
+                    .iter()
+                    .filter(|(_, region)| {
+                        region.allocation == "dst" && region.bytes.contains(&(byte as u64))
+                    })
+                    .map(|(owner, _)| *owner)
+                    .collect();
+                assert_eq!(
+                    owners,
+                    vec![0],
+                    "each executed write has one certified owner"
+                );
+            }
+        }
+        req.force = Some("destination-tiles".into());
+        let error = call_split(generator, &args, &req, &m).expect_err("no table repartition");
+        assert!(error.to_string().contains("p1"));
+    }
 }

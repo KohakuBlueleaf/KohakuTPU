@@ -198,11 +198,28 @@ pub fn kernel(
     signature: Kernel,
     request: &SplitRequest,
     m: &Machine,
+    local: impl FnMut(i64, i64) -> R<Kernel>,
+) -> R<PlannedKernel> {
+    kernel_options(
+        split_options(shape, request, m)?,
+        signature,
+        request,
+        m,
+        local,
+    )
+}
+
+/// Emit and price local schedules for precomputed global ownership options.
+pub fn kernel_options(
+    options: Vec<SplitOption>,
+    signature: Kernel,
+    request: &SplitRequest,
+    m: &Machine,
     mut local: impl FnMut(i64, i64) -> R<Kernel>,
 ) -> R<PlannedKernel> {
     let mut candidates = Vec::new();
     let mut emitted = Vec::new();
-    for mut option in split_options(shape, request, m)? {
+    for mut option in options {
         let mut kernels = Vec::new();
         for share in &mut option.shards {
             if share.role == ShardRole::Empty {

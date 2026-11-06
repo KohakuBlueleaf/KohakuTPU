@@ -112,8 +112,8 @@ pub fn tile_transpose(
     };
     let (nb, a, b) = (int("nb")?, int("a")?, int("b")?);
     let mask = st.kw("mask").ok_or_else(|| err("tile_transpose mask="))?;
-    let (dn, doff, _) = whole(body, st, p[0], env, "destination ")?;
-    let (sn, soff, _) = whole(body, st, p[2], env, "source ")?;
+    let (dn, doff, db) = whole(body, st, p[0], env, "destination ")?;
+    let (sn, soff, sb) = whole(body, st, p[2], env, "source ")?;
     let (mn, moff, _) = whole(body, st, mask, env, "mask ")?;
     if a % TILE != 0 || b % TILE != 0 || nb < 1 || a < 1 || b < 1 {
         return Err(err(
@@ -132,7 +132,26 @@ pub fn tile_transpose(
             "tile_transpose needs eight-chunk cores, three descriptors and 144 L1 words",
         ));
     }
-    let (sp, dp) = (2 * b, 2 * a);
+    let pitch = |key: &str, default| -> Result<i64> {
+        st.kw(key)
+            .map_or(Ok(default), |term| const_of(body, st, term, env))
+    };
+    let (sp, dp) = (
+        pitch("source_pitch", 2 * b)?,
+        pitch("destination_pitch", 2 * a)?,
+    );
+    if sp < 2 * b || dp < 2 * a || sp % tg.word_bytes != 0 || dp % tg.word_bytes != 0 {
+        return Err(err("tile_transpose: pitches cover whole-word rows"));
+    }
+    let source_end = soff + (nb * a - 1) * sp + 2 * b;
+    let destination_end = doff + (nb * b - 1) * dp + 2 * a;
+    if soff < 0
+        || doff < 0
+        || source_end > sb.shape.iter().product::<i64>() * sb.item()
+        || destination_end > db.shape.iter().product::<i64>() * db.item()
+    {
+        return Err(err("tile_transpose: rectangle exceeds its allocation"));
+    }
     if sp >= tg.step() || dp >= tg.step() {
         return Err(err("tile_transpose: a row past a descriptor's stride"));
     }
@@ -176,17 +195,22 @@ pub fn tile_transpose(
             lines.extend(units.iter().map(|u| format!("wait {u}")));
         }
     }
-    let bytes = nb * a * b * 2;
     // A tile overwrites what a later tile reads.
-    if sn == dn && soff < doff + bytes && doff < soff + bytes {
+    if sn == dn && soff < destination_end && doff < source_end {
         return Err(err("tile_transpose: source and destination overlap"));
     }
     let mut accesses = Vec::new();
     for unit in &units {
+        for row in 0..nb * a {
+            let at = soff + row * sp;
+            accesses.push(Access::new(unit, false, ("mem", &sn), at, at + 2 * b));
+        }
+        for row in 0..nb * b {
+            let at = doff + row * dp;
+            accesses.push(Access::new(unit, true, ("mem", &dn), at, at + 2 * a));
+        }
         accesses.extend([
-            Access::new(unit, false, ("mem", &sn), soff, soff + bytes),
             Access::new(unit, false, ("mem", &mn), moff, moff + 16 * tg.word_bytes),
-            Access::new(unit, true, ("mem", &dn), doff, doff + bytes),
             Access::new(unit, true, (unit, "l1"), 0, L1_WORDS),
         ]);
     }

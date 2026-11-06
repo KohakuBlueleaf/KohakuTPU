@@ -197,9 +197,19 @@ pub fn split_options(
             ));
         }
     }
+    if mm.bt > 1 {
+        axes.push((SplitAxis::Groups, p, 1, "groups".into()));
+    }
     let mut options = Vec::new();
     for (axis, pm, pn, id) in axes {
-        let mr = partition_tiles(mm.bt * mt, pm)?;
+        let mr = if matches!(axis, SplitAxis::Groups) {
+            partition_tiles(mm.bt, pm)?
+                .into_iter()
+                .map(|r| r.start * mt..r.end * mt)
+                .collect()
+        } else {
+            partition_tiles(mm.bt * mt, pm)?
+        };
         let nr = partition_tiles(nt, pn)?;
         let mut shards = Vec::new();
         for (mi, rows) in mr.iter().enumerate() {
@@ -695,6 +705,16 @@ pub fn kernel(
     request: &SplitRequest,
     mach: &Machine,
 ) -> R<crate::split::PlannedKernel> {
+    kernel_with_timing(shape, request, mach, false)
+}
+
+/// Price the selected single-node schedule when a sequence consumes its timing.
+pub(crate) fn kernel_with_timing(
+    shape: &Shape<'_>,
+    request: &SplitRequest,
+    mach: &Machine,
+    price_unsplit: bool,
+) -> R<crate::split::PlannedKernel> {
     use crate::split::cost::{select_split, ChoiceCache};
     use crate::split::PlannedKernel;
     use std::sync::OnceLock;
@@ -720,6 +740,10 @@ pub fn kernel(
             })?
     };
     let kernel = build_option(shape, request, &split, mach)?;
+    if price_unsplit && request.nodes.ids().len() == 1 {
+        let features = crate::split::CostFeatures::of_shares(std::slice::from_ref(&kernel), mach)?;
+        split = crate::split::cost::price_option(split, &features, &crate::split::LocalTiming)?;
+    }
     split.output.tensors = kernel
         .graph
         .ports

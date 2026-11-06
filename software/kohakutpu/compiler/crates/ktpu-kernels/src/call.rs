@@ -431,18 +431,72 @@ fn plan_list(v: &Value, m: &Machine) -> R<Vec<relayout::Plan>> {
     Ok(out)
 }
 
+/// Refine both walks at the same iteration boundaries, innermost first.
+fn paired_walks(
+    source: &[(i64, i64)],
+    destination: &[(i64, i64)],
+) -> R<(Vec<(i64, i64)>, Vec<(i64, i64)>)> {
+    if source
+        .iter()
+        .map(|x| x.0)
+        .eq(destination.iter().map(|x| x.0))
+    {
+        return Ok((source.to_vec(), destination.to_vec()));
+    }
+    let mut src = source.iter().rev().copied().filter(|x| x.0 != 1);
+    let mut dst = destination.iter().rev().copied().filter(|x| x.0 != 1);
+    let (mut s, mut d) = (src.next(), dst.next());
+    let (mut sw, mut dw) = (Vec::new(), Vec::new());
+    while let (Some((sc, ss)), Some((dc, ds))) = (s, d) {
+        let count = sc.min(dc);
+        if count <= 0 || sc % count != 0 || dc % count != 0 {
+            return fail(
+                "API.OP.001",
+                "composed walks need common iteration boundaries",
+            );
+        }
+        sw.push((count, ss));
+        dw.push((count, ds));
+        s = if sc == count {
+            src.next()
+        } else {
+            let Some(stride) = ss.checked_mul(count) else {
+                return fail("API.OP.001", "composed source stride exceeds i64");
+            };
+            Some((sc / count, stride))
+        };
+        d = if dc == count {
+            dst.next()
+        } else {
+            let Some(stride) = ds.checked_mul(count) else {
+                return fail("API.OP.001", "composed destination stride exceeds i64");
+            };
+            Some((dc / count, stride))
+        };
+    }
+    if s.is_some() || d.is_some() {
+        return fail("API.OP.001", "composed walks need equal iteration extents");
+    }
+    sw.reverse();
+    dw.reverse();
+    Ok((sw, dw))
+}
+
 /// The walk pairs of a list of `relayout.plan` calls.
 fn logical_list(v: &Value) -> R<Vec<relayout::Logical>> {
     let mut out = vec![];
     for p in v.as_array().map(Vec::as_slice).unwrap_or_default() {
         let a = made_by(p, "relayout.plan")?;
+        let source = walk(arg(a, "walk")?)?;
+        let destination = walk(arg(a, "dwalk")?)?;
+        let (walk, dwalk) = paired_walks(&source, &destination)?;
         out.push(relayout::Logical {
             n: int(a, "src_n")?,
             at: int(a, "at")?,
             dat: int(a, "dat")?,
             m: int(a, "m")?,
-            walk: walk(arg(a, "walk")?)?,
-            dwalk: walk(arg(a, "dwalk")?)?,
+            walk,
+            dwalk,
         });
     }
     Ok(out)
@@ -1355,13 +1409,32 @@ fn row_split(
     m: &Machine,
 ) -> R<Option<crate::split::PlannedKernel>> {
     let hw = Hw::of(m);
-    if gen == "vector.flat_kernel" {
-        let e = expr::from_table(arg(a, "e")?)?;
-        let dtypes = dtypes(arg(a, "dtypes")?)?;
-        let scalar = walk(a.get("scalars").unwrap_or(&Value::Null))?;
+    if gen == "vector.flat_kernel"
+        || gen == "convert.cast_kernel" && request.force.as_deref() != Some("p1")
+    {
+        let cast = gen == "convert.cast_kernel";
+        let e = if cast {
+            expr::load(0)
+        } else {
+            expr::from_table(arg(a, "e")?)?
+        };
+        let dtypes = if cast {
+            vec![dtype(arg(a, "src")?)?]
+        } else {
+            dtypes(arg(a, "dtypes")?)?
+        };
+        let scalar = if cast {
+            vec![]
+        } else {
+            walk(a.get("scalars").unwrap_or(&Value::Null))?
+        };
         let scalar: Vec<_> = scalar.into_iter().map(|(i, l)| (i as usize, l)).collect();
         let n = int(a, "n")?;
-        let out = a.get("out_dtype").map_or(Ok(g::Dtype::F16), dtype)?;
+        let out = if cast {
+            dtype(arg(a, "dst")?)?
+        } else {
+            a.get("out_dtype").map_or(Ok(g::Dtype::F16), dtype)?
+        };
         let signature = call(gen, a, m)?;
         let class = a.get("shape_class").map(class_of).transpose()?;
         let schedule = class_schedule(a);
@@ -1395,7 +1468,18 @@ fn row_split(
             };
             shape.reads.push(row_tensor(format!("in{i}"), o, hw.vlmax));
         }
-        let mut got = vector::split::kernel(&shape, signature, request, m, |first, rows| {
+        let mut options = vector::split::split_options(&shape, request, m)?;
+        if cast {
+            for option in &mut options {
+                option.id = "destination-tiles".into();
+                option.axis = crate::split::SplitAxis::DestinationTiles;
+                option.legality.clauses = vec![
+                    "complete local vector trips; global element origins; disjoint write lines"
+                        .into(),
+                ];
+            }
+        }
+        let local = |first: i64, rows: i64| {
             let first = first * hw.vlmax;
             let count = (rows * hw.vlmax).min(n - first);
             if let Some(class) = &class {
@@ -1423,7 +1507,8 @@ fn row_split(
             } else {
                 vector::flat_kernel_at(&e, &dtypes, count, out, &scalar, first, n, m)
             }
-        })?;
+        };
+        let mut got = vector::split::kernel_options(options, signature, request, m, local)?;
         let bytes = if class.is_some() {
             shape.rows * hw.vlmax * Hw::item(out)
         } else {
@@ -1501,7 +1586,7 @@ pub fn call_split(
 }
 
 /// Sequence stages need local timing even when their only option is unsplit.
-fn call_split_with_timing(
+pub(crate) fn call_split_with_timing(
     gen: &str,
     a: &Value,
     request: &crate::split::SplitRequest,
@@ -1535,6 +1620,24 @@ fn call_split_with_timing(
             "DSL.KERN.020",
             "p1 preserves generator numerics; no requested precision or reduction-order option",
         );
+    }
+    if gen == "groupnorm.kernel" {
+        let spec = serde_json::from_value(arg(a, "spec")?.clone()).map_err(|e| {
+            ktpu_machine::Refusal::new("API.OP.001", format!("GroupNorm descriptor: {e}"))
+        })?;
+        return crate::gen::groupnorm::kernel(&spec, request, m);
+    }
+    if gen == "conv.kernel" {
+        let spec = serde_json::from_value(arg(a, "spec")?.clone()).map_err(|e| {
+            ktpu_machine::Refusal::new("API.OP.001", format!("convolution descriptor: {e}"))
+        })?;
+        return crate::gen::conv::kernel(&spec, arg(a, "product")?, request, m);
+    }
+    if gen == "conv.patch_kernel" {
+        let spec = serde_json::from_value(arg(a, "spec")?.clone()).map_err(|e| {
+            ktpu_machine::Refusal::new("API.OP.001", format!("convolution descriptor: {e}"))
+        })?;
+        return crate::gen::conv::patch_split(&spec, request, m);
     }
     if gen == "attention.flash" {
         let args = a.as_object().ok_or_else(|| {
@@ -1576,7 +1679,7 @@ fn call_split_with_timing(
             made_reads(a, m)?
         };
         let demands = if class.is_some() { vec![] } else { demands(a)? };
-        return matmul::split::kernel(
+        return matmul::split::kernel_with_timing(
             &matmul::split::Shape {
                 class: class.as_ref(),
                 mm: &mm,
@@ -1589,7 +1692,156 @@ fn call_split_with_timing(
             },
             request,
             m,
+            price_unsplit,
         );
+    }
+    if gen == "transpose.transpose_kernel" && request.force.as_deref() != Some("p1") {
+        let class = a.get("shape_class").map(class_of).transpose()?;
+        return transpose::destination::kernel(
+            int(a, "nb")?,
+            int(a, "A")?,
+            int(a, "B")?,
+            class.as_ref(),
+            request,
+            m,
+        );
+    }
+    if gen == "transpose.reverse_kernel" && request.force.as_deref() != Some("p1") {
+        return transpose::reverse_split(
+            int(a, "src_bytes")?,
+            &walk(arg(a, "levels")?)?,
+            int(a, "at")?,
+            int(a, "n")?,
+            request,
+            m,
+        );
+    }
+    if gen == "matmul.quant_walk_kernel" && request.force.as_deref() != Some("p1") {
+        let rows = int(a, "rows")?;
+        let cols = int(a, "cols")?;
+        let batches = a.get("batches").map_or(Ok(1), |_| int(a, "batches"))?;
+        return matmul::destination::kernel(
+            &Operand {
+                kind: Kind::Full,
+                dtype: g::Dtype::F16,
+                offset: 0,
+                pitch: cols,
+                rows: batches * rows,
+            },
+            rows,
+            cols,
+            int(a, "rp")?,
+            int(a, "cp")?,
+            quant_side(a)?,
+            int(a, "g")?,
+            int(a, "nk")?,
+            batches,
+            a.get("finite")
+                .map_or(Ok(false), |_| boolean(a, "finite"))?,
+            &quant_schedule(a)?,
+            false,
+            Some((
+                int(a, "src_bytes")?,
+                &walk(arg(a, "levels")?)?,
+                int(a, "at")?,
+            )),
+            None,
+            request,
+            m,
+        );
+    }
+    let quant_read = if gen == "matmul.quant_kernel"
+        && a.get("shape_class").is_none()
+        && request.force.as_deref() != Some("p1")
+    {
+        Some(read_of(a, 0, a.get("prepared").unwrap_or(&Value::Null), m)?)
+    } else {
+        None
+    };
+    if quant_read.as_ref().is_some_and(|read| match read {
+        prepared::Read::Composed(_) => true,
+        prepared::Read::Materialized(steps) => steps.is_empty(),
+    }) {
+        let staged = match a.get("pad_strategy").map(Value::as_str) {
+            None | Some(Some("native")) => false,
+            Some(Some("staged")) => true,
+            Some(_) => return fail("API.OP.001", format!("a pad strategy in {a}")),
+        };
+        let mapped = match &quant_read {
+            Some(prepared::Read::Composed(steps)) => Some(steps.as_slice()),
+            _ => None,
+        };
+        return matmul::destination::kernel(
+            &operand(arg(a, "src")?)?,
+            int(a, "rows")?,
+            int(a, "cols")?,
+            int(a, "rp")?,
+            int(a, "cp")?,
+            quant_side(a)?,
+            int(a, "g")?,
+            int(a, "nk")?,
+            a.get("batches").map_or(Ok(1), |_| int(a, "batches"))?,
+            a.get("finite")
+                .map_or(Ok(false), |_| boolean(a, "finite"))?,
+            &quant_schedule(a)?,
+            staged,
+            None,
+            mapped,
+            request,
+            m,
+        );
+    }
+    if request.force.as_deref() != Some("p1") {
+        let class = a.get("shape_class").map(class_of).transpose()?;
+        let planned = match gen {
+            "convert.copy_kernel" if class.is_some() => {
+                let hw = Hw::of(m);
+                let bytes = int(a, "nbytes")?;
+                let count = crate::gen::cdiv(bytes, hw.word_bytes);
+                let levels = [(count, hw.word_bytes)];
+                convert::destination::walk(
+                    bytes,
+                    &levels,
+                    0,
+                    bytes,
+                    &levels,
+                    0,
+                    class.as_ref(),
+                    request,
+                    m,
+                )?
+            }
+            "convert.walk_kernel" => convert::destination::walk(
+                int(a, "src_bytes")?,
+                &walk(arg(a, "levels")?)?,
+                int(a, "at")?,
+                int(a, "dst_bytes")?,
+                &walk(arg(a, "dlevels")?)?,
+                int(a, "dat")?,
+                class.as_ref(),
+                request,
+                m,
+            )?,
+            "convert.fill_kernel" => convert::destination::fill(
+                int(a, "dst_bytes")?,
+                &walk(arg(a, "dlevels")?)?,
+                int(a, "dat")?,
+                int(a, "value")?,
+                int(a, "ew")?,
+                request,
+                m,
+            )?,
+            _ => None,
+        };
+        if let Some(planned) = planned {
+            return Ok(planned);
+        }
+    }
+    if gen == "convert.copy_kernel"
+        && a.get("shape_class").is_none()
+        && request.force.as_deref() != Some("p1")
+    {
+        return convert::copy_split(int(a, "nbytes")?, request, m);
     }
     if let Some(planned) = row_split(gen, a, request, m)? {
         return Ok(planned);
@@ -1610,7 +1862,7 @@ fn call_split_with_timing(
         .filter(|p| p.role == ktpu_graph::Role::Out)
         .map(|p| (p.name.clone(), p.spec.clone()))
         .collect();
-    let option = SplitOption {
+    let mut option = SplitOption {
         id: "p1".into(),
         axis: SplitAxis::Unsplit,
         p: 1,
@@ -1652,8 +1904,38 @@ fn call_split_with_timing(
             clauses: vec!["single owner; physical regions resolved at binding".into()],
         },
     };
+    let local_reason = match gen {
+        "lanes.relayout_kernel" | "lanes.class_kernel" => Some(
+            "indexed lane classes share destination lines; table ports select write locations and padded classes repeat destinations",
+        ),
+        "relayout.relayout_kernel" => Some(
+            "relayout parts share staged buffers and ordered line-merge layers; table ports bind gather/scatter destinations",
+        ),
+        "matmul.quant_kernel" if a.get("shape_class").is_some() => Some(
+            "classed packing preserves the complete node-loop entry schedule and finite-status reduction",
+        ),
+        "matmul.quant_kernel" => Some(
+            "materialized prepared reads retain their ordered relayout stages and shared scratch before packing",
+        ),
+        "convert.walk_kernel" | "convert.fill_kernel" => Some(
+            "the complete destination walk retains ordered writes and partial-line ownership; this option does not reorder its descriptor stream",
+        ),
+        "convert.copy_kernel" | "convert.cast_kernel" => Some(
+            "explicit P=1 preserves the complete local conversion schedule",
+        ),
+        _ => None,
+    };
+    if let Some(reason) = local_reason {
+        convert::local::certify(&mut option, &kernel, reason)?;
+    }
     if request.force.as_deref().is_some_and(|id| id != option.id) {
-        return fail("DSL.KERN.020", "no matching legal split option");
+        return fail(
+            "DSL.KERN.020",
+            local_reason.map_or_else(
+                || "no matching legal split option".to_string(),
+                |reason| format!("this destination schedule exposes p1: {reason}"),
+            ),
+        );
     }
     let split = if price_unsplit {
         let features = crate::split::CostFeatures::of_shares(std::slice::from_ref(&kernel), m)?;
@@ -1676,6 +1958,29 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
     }
     let e = |k: &str| expr::from_table(arg(a, k)?);
     Ok(match gen {
+        "groupnorm.kernel" => {
+            let spec = serde_json::from_value(arg(a, "spec")?.clone()).map_err(|e| {
+                ktpu_machine::Refusal::new("API.OP.001", format!("GroupNorm descriptor: {e}"))
+            })?;
+            let request = crate::split::SplitRequest {
+                nodes: crate::split::NodeSet::new(vec![0], m)?,
+                consumer: crate::split::OutputRequirement::default(),
+                dispatch: crate::split::DispatchProfile::Common,
+                numerics: crate::split::NumericContract::default(),
+                input_forms: vec![],
+                force: Some("domains".into()),
+            };
+            crate::gen::groupnorm::kernel(&spec, &request, m)?.kernel
+        }
+        "conv.patch_kernel" => {
+            let spec = serde_json::from_value(arg(a, "spec")?.clone()).map_err(|e| {
+                ktpu_machine::Refusal::new("API.OP.001", format!("convolution descriptor: {e}"))
+            })?;
+            crate::gen::conv::patches(&spec, m)?
+        }
+        "groupnorm.merge_kernel" => {
+            crate::gen::groupnorm::merge_kernel(int(a, "na")?, int(a, "nb")?, m)?
+        }
         "reductions.wide_fold_kernel" => {
             let (out, r, w) = (operand(arg(a, "out")?)?, int(a, "R")?, int(a, "W")?);
             let ops = operands(arg(a, "operands")?)?;

@@ -113,15 +113,11 @@ impl Ctx<'_> {
                         .filter(|_| !crate::mutant::on("l2.class/no-mask"))
                 {
                     let width = crate::ir::const_of(self.body, &o.st, width, &self.env)?;
-                    if width <= 0
-                        || width % 32 != 0
-                        || width > self.per_band * 32
-                        || vals.len() != 1
-                    {
+                    if width <= 0 || width > self.per_band * 32 || vals.len() != 1 {
                         return Err(self.fail(
                             &o.st,
                             "L2.OP.024",
-                            "valid_cols must select whole GT4 blocks",
+                            "valid_cols must select columns of the GT4 rows",
                         ));
                     }
                     let stage = format!("s{}", self.t.stage_reg());
@@ -146,6 +142,51 @@ impl Ctx<'_> {
                     };
                     for (reg, r) in regs.iter_mut().zip(&rs) {
                         let masked = g.sym();
+                        let valid = (width - (r % self.per_band) * 32).clamp(0, 32);
+                        if (1..32).contains(&valid) {
+                            let mut syms = vec![masked.clone()];
+                            let other = match &neutral {
+                                Some(n) => {
+                                    syms.push(n.clone());
+                                    n.operand(Select::Whole)
+                                }
+                                None => Term::name("k0"),
+                            };
+                            g.emit(tt::Insn {
+                                stmt: ir::math(
+                                    "vsel",
+                                    masked.operand(Select::Whole),
+                                    vec![Term::name("k1"), other, Term::name("k0")],
+                                    vec![],
+                                ),
+                                syms,
+                            });
+                            // GT4 holds four row chunks in each 16-column half.
+                            for half in 0..2 {
+                                let lanes = (valid - half * 16).clamp(0, 16);
+                                if lanes == 0 {
+                                    continue;
+                                }
+                                for row in 0..4 {
+                                    let chunk = Select::Chunk((half * 4 + row) as u64);
+                                    g.emit(tt::Insn {
+                                        stmt: ir::math(
+                                            "vsel",
+                                            masked.operand(chunk),
+                                            vec![
+                                                reg[0].operand(chunk),
+                                                Term::name("k0"),
+                                                Term::name("k1"),
+                                            ],
+                                            vec![ir::kw("vl", Term::int(lanes as i128))],
+                                        ),
+                                        syms: vec![masked.clone(), reg[0].clone()],
+                                    });
+                                }
+                            }
+                            reg[0] = masked;
+                            continue;
+                        }
                         g.code.push(ir::Event::Fixed(ir::seti(
                             &stage,
                             Term::int(i128::from((r % self.per_band) * 32 < width)),
