@@ -29,7 +29,7 @@ class NativeExchange:
         with self.queue._native_lock, self.transport._native_lock:
             return self._submit(execution, publishing)
 
-    def _submit(self, execution, publishing):
+    def _submit(self, execution, publishing, timeout=None):
         q = self.queue
         # A transport recovery replaces descriptors. Do not run an old native
         # owner against a different device; duplicate the new handles cold.
@@ -38,6 +38,7 @@ class NativeExchange:
             self.endpoint = _rs.QueueExchange(*handles, q.layout)
             self.handles = handles
             self.generation = self.transport.fd_generation
+        timeout = q.timeout if timeout is None else timeout
         q._tag += 1
         tag = q._tag
         if publishing is not None:
@@ -46,7 +47,7 @@ class NativeExchange:
         q._list_tags[tag] = execution
         q._outstanding.add(tag)
         try:
-            result = self.exchange(execution, tag)
+            result = self.exchange(execution, tag, timeout)
         except (ValueError, TypeError, OverflowError):
             q._list_tags.pop(tag)
             q._outstanding.discard(tag)
@@ -57,7 +58,7 @@ class NativeExchange:
             raise
         return self.finish(execution, tag, result)
 
-    def exchange(self, execution, tag):
+    def exchange(self, execution, tag, timeout):
         q = self.queue
         return self.endpoint.run(
             self.base,
@@ -71,7 +72,7 @@ class NativeExchange:
                 execution.count,
                 execution.generation,
             ),
-            q.timeout,
+            timeout,
         )
 
     def finish(self, execution, tag, result):
@@ -92,7 +93,7 @@ class NativeExchange:
         completion = Completion.from_bytes(
             raw, q.layout, record, q.record or q.layout.record
         )
-        q.console += console.decode("utf-8", "replace")
+        q.console += console
         q._done[tag] = completion
         q._sq_head_seen = q.sq_tail
         q._list_tags.pop(tag)

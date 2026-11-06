@@ -390,7 +390,7 @@ impl Buffer {
 
     /// What the host reads back: `raw` the buffer's bytes as float64 values
     /// in `host_shape` order. A `tile=` layout's values are the clusters'
-    /// fp16 (`tensor::fp16_value`), or IEEE fp16 with `ieee=1`. An MXFP7
+    /// declared element type; f16 uses cluster fp16, or IEEE with `ieee=1`. An MXFP7
     /// buffer is read through its fp16 source, not here.
     pub fn unpack(&self, raw: &[u8]) -> Result<Vec<f64>> {
         if self.dtype.starts_with("mx7") {
@@ -411,26 +411,29 @@ impl Buffer {
             .and_then(LayoutVal::int)
             .unwrap_or(0)
             != 0;
-        let mut v: Vec<f64> = match self.tile() {
-            Some(_) => {
-                let h: Vec<u16> = raw
+        let mut v: Vec<f64> = if let Some(tile) = self.tile() {
+            if self.dtype == "f16" {
+                let bits: Vec<u16> = raw
                     .as_chunks::<2>()
                     .0
                     .iter()
                     .map(|&b| u16::from_le_bytes(b))
                     .collect();
-                let h = self.untiled(&h).expect("a tile= layout");
-                h.into_iter()
-                    .map(|b| match ieee {
-                        true => ieee_f16(b),
-                        false => cluster_f16(b),
-                    })
+                self.untile(&bits, tile)
+                    .into_iter()
+                    .map(|b| if ieee { ieee_f16(b) } else { cluster_f16(b) })
                     .collect()
+            } else {
+                let decoded: Vec<f64> = raw
+                    .chunks_exact(item)
+                    .map(|b| scalar(&self.dtype, b))
+                    .collect();
+                self.untile(&decoded, tile)
             }
-            None => raw
-                .chunks_exact(item)
+        } else {
+            raw.chunks_exact(item)
                 .map(|b| scalar(&self.dtype, b))
-                .collect(),
+                .collect()
         };
         if self.transposed() {
             let (m, n) = self.slab();
@@ -494,14 +497,17 @@ impl Buffer {
 
     /// The `tile=` layout's fp16 bit patterns back in row-major order.
     pub fn untiled(&self, raw: &[u16]) -> Option<Vec<u16>> {
-        let (gm, gn) = self.tile()?;
+        Some(self.untile(raw, self.tile()?))
+    }
+
+    fn untile<T: Copy + Default>(&self, raw: &[T], (gm, gn): (i128, i128)) -> Vec<T> {
         let (m, n) = (
             self.shape[self.shape.len() - 2] as usize,
             self.shape[self.shape.len() - 1] as usize,
         );
         let (gm, gn) = (gm as usize, gn as usize);
         let slab = m * n;
-        let mut out = vec![0u16; raw.len() - raw.len() % slab.max(1)];
+        let mut out = vec![T::default(); raw.len() - raw.len() % slab.max(1)];
         let swap = crate::mutant::on("l1.layout/subtile-transposed");
         for (k, s) in raw.chunks_exact(slab).enumerate() {
             let mut at = 0;
@@ -523,6 +529,6 @@ impl Buffer {
                 }
             }
         }
-        Some(out)
+        out
     }
 }

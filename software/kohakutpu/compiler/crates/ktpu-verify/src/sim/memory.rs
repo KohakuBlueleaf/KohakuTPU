@@ -27,6 +27,7 @@ pub(crate) enum Space {
 }
 
 /// One value per location of a space.
+#[derive(Clone, PartialEq, Eq)]
 struct Locs<T> {
     dense: Vec<Option<T>>,
     sparse: BTreeMap<i64, T>,
@@ -98,7 +99,7 @@ impl fmt::Display for Space {
 
 /// What made an access, as a race finding names it; written out only for
 /// a finding.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum What {
     /// `{op} word {pc}`: a cluster word.
     Word(&'static str, i64),
@@ -118,6 +119,7 @@ impl fmt::Display for What {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
 struct Access {
     clock: Clock,
     proc: usize,
@@ -129,7 +131,7 @@ type Event = Rc<Access>;
 
 /// A location's reads since its last write, one per process, in first-read
 /// order: the first held in place, the rest spilled.
-#[derive(Default)]
+#[derive(Default, Clone, PartialEq, Eq)]
 struct Readers {
     first: Option<(usize, Event)>,
     more: Vec<(usize, Event)>,
@@ -154,6 +156,7 @@ impl Readers {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Memory {
     name: String,
     /// Per space (`Space as usize`): location -> its last write.

@@ -199,7 +199,11 @@ def _laid_read(dev, plan: Plan, a: Access, over_r, over_c, pitch, bufs, key) -> 
     if held is not None:
         return held, []
     t, runs = _laying(dev, plan, a, over_r, over_c, pitch, bufs, key)
-    return _hold(dev, s, read, t), runs
+    try:
+        return _hold(dev, s, read, t), runs
+    except BaseException:
+        t.free()
+        raise
 
 
 def _laying(dev, plan: Plan, a: Access, over_r, over_c, pitch, bufs, key) -> tuple:
@@ -227,55 +231,58 @@ def _laying(dev, plan: Plan, a: Access, over_r, over_c, pitch, bufs, key) -> tup
         if hit is not None:
             return hit, []
     t = Storage(dev, max(32, 2 * R * pitch))
-    t.dtype = np.float16
-    if a.slot is None:
-        laid = np.zeros((R, pitch), np.float16)
-        laid[:, :W] = _table_over(a, order).reshape(R, W)
-        dev.write(t.addr, laid.tobytes())
-        return t, []
-    if (
-        elide_rule("dense_repitch")
-        and pitch != W
-        and dtypes.is_float(a.dtype)
-        and {r: c for r, c in a.coef if U.extent(r) > 1}
-        == {r: c for r, c in _dense(order).items() if U.extent(r) > 1}
-    ):
-        s_in = bufs[a.slot]
-        st_in, soff_in = FM.base_of(s_in)
-        dt_in = F.np_dtype(a.dtype)
-        n_in = (
-            _n(st_in, dt_in) if not soff_in else s_in.nbytes // np.dtype(dt_in).itemsize
-        )
-        try:
-            src_f16 = FM.f16(dev, s_in, dt_in, n_in) + 2 * a.off
-        except FM.FormError:
-            src_f16 = -1
-        if src_f16 >= 0 and not (src_f16 % 32):
-            if RW.MUTANT == "drop_member":
-                return t, []
-            shift = 32 if RW.MUTANT == "wrong_order" and R * W * 2 > 32 else 0
-            dst_rep = src_f16 if RW.MUTANT == "alias_members" else t.addr
-            FM.repitch(dev, src_f16 + shift, W, dst_rep, pitch, R, W)
-            if scope is not None and cache_key is not None:
-                scope.laid_cache[cache_key] = t
-            return t, []
-    dense = t if pitch == W else Storage(dev, max(32, 2 * R * W))
     try:
-        runs = _bare(dev, _laid_plan(plan, key, a, order), {**bufs, key: dense})
-        if runs is None:
-            raise Refused(f"a read with no f16 form: strides {dict(a.coef)}")
-        if dense is not t:
-            src = FM.f16(dev, dense, np.float16, R * W)
-            FM.repitch(dev, src, W, t.addr, pitch, R, W)
+        t.dtype = np.float16
+        if a.slot is None:
+            laid = np.zeros((R, pitch), np.float16)
+            laid[:, :W] = _table_over(a, order).reshape(R, W)
+            dev.write(t.addr, laid.tobytes())
+            return t, []
+        if (
+            elide_rule("dense_repitch")
+            and pitch != W
+            and dtypes.is_float(a.dtype)
+            and {r: c for r, c in a.coef if U.extent(r) > 1}
+            == {r: c for r, c in _dense(order).items() if U.extent(r) > 1}
+        ):
+            s_in = bufs[a.slot]
+            st_in, soff_in = FM.base_of(s_in)
+            dt_in = F.np_dtype(a.dtype)
+            n_in = (
+                _n(st_in, dt_in)
+                if not soff_in
+                else s_in.nbytes // np.dtype(dt_in).itemsize
+            )
+            try:
+                src_f16 = FM.f16(dev, s_in, dt_in, n_in) + 2 * a.off
+            except FM.FormError:
+                src_f16 = -1
+            if src_f16 >= 0 and not (src_f16 % 32):
+                if RW.MUTANT == "drop_member":
+                    return t, []
+                shift = 32 if RW.MUTANT == "wrong_order" and R * W * 2 > 32 else 0
+                dst_rep = src_f16 if RW.MUTANT == "alias_members" else t.addr
+                FM.repitch(dev, src_f16 + shift, W, dst_rep, pitch, R, W)
+                if scope is not None and cache_key is not None:
+                    scope.laid_cache[cache_key] = t
+                return t, []
+        dense = t if pitch == W else Storage(dev, max(32, 2 * R * W))
+        try:
+            runs = _bare(dev, _laid_plan(plan, key, a, order), {**bufs, key: dense})
+            if runs is None:
+                raise Refused(f"a read with no f16 form: strides {dict(a.coef)}")
+            if dense is not t:
+                src = FM.f16(dev, dense, np.float16, R * W)
+                FM.repitch(dev, src, W, t.addr, pitch, R, W)
+        finally:
+            if dense is not t:
+                dense.free()
+        if scope is not None and cache_key is not None:
+            scope.laid_cache[cache_key] = t
+        return t, runs
     except BaseException:
         t.free()
         raise
-    finally:
-        if dense is not t:
-            dense.free()
-    if scope is not None and cache_key is not None:
-        scope.laid_cache[cache_key] = t
-    return t, runs
 
 
 def _place(dev, plan: Plan, bufs, kind: str, rows, cols, Wp: int, tmps) -> tuple:

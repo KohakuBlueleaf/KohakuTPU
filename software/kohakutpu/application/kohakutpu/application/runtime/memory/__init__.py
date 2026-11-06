@@ -45,11 +45,15 @@ class CardMemory:
     def alloc(self, nbytes: int, owner: str = "runtime", near=None) -> int:
         """`nbytes` of DRAM, on `near`'s home when they fit there."""
         at = self.dram.alloc(nbytes, owner=owner, near=near)
-        end = at + self.dram.live[at]
-        if self.paint is not None and end > self.painted:
-            _zero(self.paint, self.painted, end - self.painted)
-            self.painted = end
-        return at
+        try:
+            end = at + self.dram.live[at]
+            if self.paint is not None and end > self.painted:
+                _zero(self.paint, self.painted, end - self.painted)
+                self.painted = end
+            return at
+        except BaseException:
+            self.dram.release(at)
+            raise
 
     def stage(self, nbytes: int, node: int, owner: str = "staging") -> int:
         """`nbytes` of `node`'s staging store."""
@@ -61,12 +65,16 @@ class CardMemory:
         closes."""
         arena = self.dram if node is None else self.staging[node]
         at = arena.alloc_top(nbytes)
-        size = arena.live[at]
-        if node is None and self.paint is not None:
-            _zero(self.paint, at, size)
-        if _MUTANT.get() == "app.memory/unlatched_carve":
-            return _arena_cls()(at, at + size)
-        return self.arena_cls(at, at + size)
+        try:
+            size = arena.live[at]
+            if node is None and self.paint is not None:
+                _zero(self.paint, at, size)
+            if _MUTANT.get() == "app.memory/unlatched_carve":
+                return _arena_cls()(at, at + size)
+            return self.arena_cls(at, at + size)
+        except BaseException:
+            arena.release(at)
+            raise
 
     def free(self, addr: int) -> None:
         for arena in self.arenas():

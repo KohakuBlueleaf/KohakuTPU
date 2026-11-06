@@ -4,6 +4,7 @@
 mod mover;
 pub mod words;
 
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use ktpu_isa::{Isa, W256};
@@ -51,6 +52,7 @@ struct Node<'a> {
     moves_base: u64,
     expected: Vec<u64>,
     sent: Vec<u64>,
+    frontiers: HashMap<u64, (u64, u64)>,
     gos: u64,
     regs: [u64; REGS],
     mover: Regs,
@@ -78,6 +80,7 @@ pub fn run(pkg: &Package, units: &Units, m: &mut Machine) -> R<()> {
         moves_base: m.moves_done,
         expected: vec![0; pkg.units.len()],
         sent: vec![0; pkg.units.len()],
+        frontiers: HashMap::new(),
         gos: 0,
         regs: [0; REGS],
         mover: Regs::default(),
@@ -256,9 +259,46 @@ impl Node<'_> {
                 self.sent[s.unit as usize] += s.count;
                 Ok(())
             }
+            Op::Frontier => {
+                if s.flags == 2 {
+                    if s.unit != 0
+                        || s.arg > self.pkg.payloads.len() as u64
+                        || s.count > self.pkg.payloads.len() as u64 - s.arg
+                    {
+                        return Err("invalid FRONTIER clear".into());
+                    }
+                    self.frontiers
+                        .retain(|k, _| !(s.arg..s.arg + s.count).contains(k));
+                    return Ok(());
+                }
+                let u = s.unit as usize;
+                if u >= self.sent.len() || s.count >= self.pkg.payloads.len() as u64 || s.arg != 0 {
+                    return Err("invalid FRONTIER fields".into());
+                }
+                match s.flags {
+                    0 => {
+                        self.frontiers.insert(s.count, (s.unit, self.sent[u]));
+                        Ok(())
+                    }
+                    1 => {
+                        let &(_, target) = self
+                            .frontiers
+                            .get(&s.count)
+                            .filter(|(unit, _)| *unit == s.unit)
+                            .ok_or_else(|| "FRONTIER wait has no saved target".to_string())?;
+                        self.expected[u] = self.expected[u].max(target);
+                        self.wait_unit(u, self.expected[u])
+                    }
+                    _ => Err("invalid FRONTIER flags".into()),
+                }
+            }
             Op::Await => {
                 let u = s.unit as usize;
-                self.expected[u] += s.count;
+                self.expected[u] = if s.flags == F_IMM {
+                    self.sent[u]
+                } else {
+                    self.expected[u] + s.count
+                };
                 self.wait_unit(u, self.expected[u])
             }
             Op::Barrier => self.barrier(),

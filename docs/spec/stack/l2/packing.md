@@ -53,20 +53,18 @@ On the `vector_mx7` backend, the application `quant_kernel` uses this rule by
 default for ordinary and class-shaped kernels and each batch. `pad_strategy="staged"` is a measured
 alternative: fill a padded FP16 scratch, copy logical values, then quantize
 whole entries. It can be cheaper when splitting partial rows leaves cores
-idle and multiplies node dispatch. Runtime admission uses a board-specific
+idle and multiplies sysnode dispatch. Runtime admission uses a board-specific
 cost profile, not a global `KTPU_PIPE_PAD` switch. `quant_walk_kernel` still materializes arbitrary
 source walks into a dense tensor of **logical values only**, then uses the same
 padding rule on the vector backend. This walk staging is not claimed to be a
 peer-stream pipeline.
 
-The trace machine's `packing_backend` is the machine file's selected
-`conversion.fp16_mx7.preferred_backend`, including runtime overrides. With
-`mover_quant`, both row and walk producers stage required row/column padding
-in a zero-filled scratch tensor before quantization; already complete views
-quantize directly. They omit `pad`, `pad_cols`, `finite_batch` and `overlap`:
-finite-classifier batching and output-drain overlap schedule the vector
-backend only. Native lowering still enforces `allowed_backends`; the producer
-does not override board admission.
+The Python row producer treats conversion as vector-backed when the trace
+machine's `packing_backend` is `vector_mx7` or destination `nk >= 2`. Otherwise
+required row/column padding uses a zero-filled FP16 scratch. A staged padding
+strategy also selects scratch. Vector scheduling options are passed only on
+the vector path; backend admission remains the lowerer's responsibility.
+(code: software/kohakutpu/application/kohakutpu/application/kernels/matmul.py:225-268)
 
 `pad_cols=16` remains the low-level form for an explicit 16-column to 32-column
 view with matching row counts. Both padding forms require the vector backend;
@@ -75,15 +73,16 @@ requesting them with mover-quant is refused rather than silently staging.
 ## Deferred finite status
 
 A checked quant clears each core's sticky finite accumulator once, every piece
-folds into it, and after the last piece it drains into a status buffer; a node
+folds into it, and after the last piece it drains into a status buffer; a sysnode
 barrier and one `assert_zero` per core follow. Given `status=VIEW`, the quant
 drains each core into its own 128-byte record of `VIEW` (`f16[64]` a record)
 with no barrier, and a later `quant_check VIEW` checks every record pending
 inside it behind one barrier (L2.MOV.019). The records a quant takes are
 `ktpu_machine::packing::quant_status_bytes`, the rule the lowering and the
-contraction kernel's quant ring both size by. The application's padded quant
-kernel defers each checked batch's status this way and checks them all once
-at its end. A pending record is a linear
+contraction kernel's quant ring both size by. The Python application's quant producer does not supply `status` or emit
+`quant_check`. Its native path emits one quant over stacked batches when
+`rows == rp`, otherwise one per batch; its staged path emits one quant over
+padded scratch. (code: software/kohakutpu/application/kohakutpu/application/kernels/matmul.py:228-269) A pending record is a linear
 resource: nothing writes over it before its check, and a function does not
 end with one unchecked.
 
@@ -93,7 +92,7 @@ With `overlap=1`, an output drain can run under the next tile's computation.
 Before packing into a reused output slot, the pack queue waits on drains
 with slack `slots-1`: zero for one slot, one for alternating slots. Only the
 other slot's youngest drain is exempt. Pack completion still precedes drain
-issue; unpack/math/pack register dependencies and node tile retirement remain
+issue; unpack/math/pack register dependencies and sysnode tile retirement remain
 ordered. The application defaults to `KTPU_PIPE_OVERLAP=1`; the low-level DSL
 default is off. Batch and overlap settings are part of the kernel cache key
 and captured graph. Libraries must match the settings and source revision.

@@ -162,7 +162,13 @@ impl<'a> Encoder<'a> {
                 }
             }
             if !st.body.is_empty() {
-                self.stale(&st.body, done, out)?;
+                if st.op == "skipz" {
+                    let mut taken = done.clone();
+                    self.stale(&st.body, &mut taken, out)?;
+                    done.retain(|d| taken.contains(d));
+                } else {
+                    self.stale(&st.body, done, out)?;
+                }
             }
         }
         Ok(())

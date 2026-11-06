@@ -209,18 +209,21 @@ impl Package {
         }
         for step in self.steps.iter().filter(|s| s.op == super::Op::Repeat) {
             let first = (step.arg & 0xffff_ffff) as usize;
-            if !self
-                .relocs
-                .iter()
-                .any(|r| r.payload >= first as u64 && r.payload - (first as u64) < step.count)
-            {
-                continue;
-            }
             let repeats = (step.arg >> 32) & 0xffff;
             let increments = step.arg >> 48;
             if repeats == 0 {
                 return refuse!("L0.STEP.041", "zero repeat count at binding");
             }
+            let available = words.len().saturating_sub(first) as u64;
+            if first > words.len()
+                || step.count == 0
+                || step.count > available
+                || increments.div_ceil(2) > available - step.count
+            {
+                return refuse!("L0.STEP.041", "repeat extent outside payloads");
+            }
+            let mut previous = None;
+            let mut occupied = Word::ZERO;
             for index in 0..increments {
                 let table_index = first
                     .checked_add(step.count as usize)
@@ -239,6 +242,17 @@ impl Package {
                 {
                     return refuse!("L0.STEP.041", "invalid repeat field at binding");
                 }
+                if previous.is_some_and(|i| relative < i) {
+                    return refuse!("L0.STEP.041", "unordered repeat words");
+                }
+                if previous != Some(relative) {
+                    occupied = Word::ZERO;
+                }
+                if occupied.get(bit, width) != 0 {
+                    return refuse!("L0.STEP.041", "overlapping repeat fields");
+                }
+                occupied.set(bit, width, mask64(width));
+                previous = Some(relative);
                 let payload = first.checked_add(relative).ok_or_else(|| {
                     crate::Refusal::new("L0.STEP.041", "repeat payload index overflow")
                 })?;

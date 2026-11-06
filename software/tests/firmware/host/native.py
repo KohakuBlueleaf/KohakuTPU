@@ -33,11 +33,18 @@ def build(out: pathlib.Path, harness: str, source: str, change=None) -> pathlib.
 
 
 def on_double(
-    out: pathlib.Path, harness: str, sources: list[str], change=None, app=None
+    out: pathlib.Path,
+    harness: str,
+    sources: list[str],
+    change=None,
+    app=None,
+    *,
+    freestanding=True,
 ):
     """`harness` on the hardware double, linked with `sources` (under `software/
     kohakuaccel`), `app` the one it includes as APP_SOURCE, `change` applied to a
-    copy of the one that holds it."""
+    copy of the one that holds it. Included applications use freestanding
+    libc calls unless `freestanding=False` selects the host builtins."""
     os_dir = SOFTWARE / "kohakuaccel" / "os"
     paths = [SOFTWARE / "kohakuaccel" / s for s in [*sources, *([app] if app else [])]]
     if change:
@@ -56,7 +63,9 @@ def on_double(
         *FLAGS,
     ]
     if app:
-        flags += ["-fno-builtin", f'-DAPP_SOURCE="{paths.pop()}"']
+        flags += [f'-DAPP_SOURCE="{paths.pop()}"']
+        if freestanding:
+            flags += ["-fno-builtin"]
     subprocess.run(
         [
             "gcc",

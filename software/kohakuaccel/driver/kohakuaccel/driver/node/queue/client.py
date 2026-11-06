@@ -12,6 +12,7 @@ between reads (advance the model, or sleep on a card). Packages live in a heap
 in the region, found again by digest (docs/spec/node-queue.md s6).
 """
 
+import codecs
 import os
 import re
 import struct
@@ -97,7 +98,12 @@ def failure_snapshot(console: str) -> dict | None:
         raise ValueError("DBG.FAIL.006: snapshot counter exceeds 64 bits")
     fault = mvstat >> 28 & 0xF
     return {
-        "raw": {"stat": stat, "moves": moves, "mvstat": mvstat, "xfdata": xfdata},
+        "raw": {
+            "stat": stat,
+            "moves": moves,
+            "mvstat": mvstat,
+            "xfdata": xfdata,
+        },
         "stat": decoded,
         "moves": {"issued": moves >> 32, "done": moves & 0xFFFFFFFF},
         "mover": {
@@ -198,8 +204,10 @@ class Completion:
 class NodeError(RuntimeError):
     """A package the node refused or failed, with its completion."""
 
-    def __init__(self, completion: Completion, console: str = "") -> None:
+    def __init__(self, completion: Completion, console: str | bytes = "") -> None:
         self.completion = completion
+        self.console_bytes = console if isinstance(console, bytes) else console.encode()
+        console = self.console_bytes.decode("utf-8", "replace")
         self.console = console
         self.snapshot_error: str | None = None
         try:
@@ -217,7 +225,7 @@ class NodeError(RuntimeError):
 
     def __reduce__(self):
         # Rebuilt from its own arguments: a process pool pickles it back.
-        return (NodeError, (self.completion, self.console))
+        return (NodeError, (self.completion, self.console_bytes))
 
 
 class FirmwareFatal(RuntimeError):
@@ -340,6 +348,7 @@ class NodeQueue:
         self._idle_bytes = 0
         self._staged = []
         self._broken = False
+        self._quarantined = False
         self._poll_state: Any = None
         self._sq_head_seen = 0
         self.native_poll: Any = None
@@ -401,7 +410,7 @@ class NodeQueue:
         self._stdin = bytearray(si_bytes)
         self.progress: list[Completion] = []
         self._tag = 0
-        self.console = ""
+        self.console = b""
         self.console_at = 0
         self.counters = dict.fromkeys(
             ("submitted", "uploads", "upload_bytes", "cache_hits", "polls"), 0
@@ -452,9 +461,16 @@ class NodeQueue:
             self._generation,
         )
 
-    def init(self) -> None:
-        """Write the region's header and zero every index. Before the firmware boots."""
+    def init(self, *, sysnode_reset: bool = False) -> None:
+        """Initialize before boot. `sysnode_reset` certifies a completed hardware
+        sysnode reset, not a hart halt or a JTAG-master reset. It revokes ownership
+        held by a quarantined run."""
         with self._native_lock:
+            if self._generation >= 0:
+                self.state()
+                if not sysnode_reset:
+                    self._require_usable()
+            self._quarantined = False
             self._generation += 1
             info = self._info_line()
             self.mem.write_block(
@@ -466,7 +482,7 @@ class NodeQueue:
             self._staged.clear()
             self._broken = False
             self._poll_state = None
-            self.console, self.console_at = "", 0
+            self.console, self.console_at = b"", 0
             # Nothing submitted before this is waited for: a node restarted
             # mid-run never completes it.
             self._list_tags.clear()
@@ -487,12 +503,20 @@ class NodeQueue:
     def state(self) -> dict:
         """The firmware's line: state, ABI, packages done, fatal code."""
         raw = self.mem.read_block(self.base + self.layout.fw, self.layout.fw_bytes)
-        return self.layout.decode_fw(raw)
+        state = self.layout.decode_fw(raw)
+        if state["state"] == "fatal":
+            self._quarantined = True
+        return state
+
+    def _require_usable(self) -> None:
+        if self._quarantined:
+            raise RuntimeError("queue quarantined; sysnode reset required")
 
     def pointers(self) -> dict:
         """Both rings as the card and the host see them: the firmware's SQ
         head and CQ tail, the host's SQ tail and CQ head, and the tag of the
-        CQ entry at the host's head. *_card reads back host-owned publications."""
+        CQ entry at the host's head. *_card reads back host-owned publications.
+        """
         cq_tail = self.mem.read64(self.base + self.layout.cq_tail)
         at = self.cq_head % self.cq_n
         head_tag = self.mem.read64(
@@ -568,6 +592,7 @@ class NodeQueue:
         nothing submitted is outstanding.
         """
         with self._native_lock:
+            self._require_usable()
             if len(package) % PACKAGE_LINE:
                 raise ValueError(f"a package is whole {PACKAGE_LINE}-byte lines")
             key = bytes(package)
@@ -665,8 +690,10 @@ class NodeQueue:
         return {self._cache[k][0] for k in self._prepared_keys}
 
     def discard_packages(self):
-        """Invalidate uploads after the backend has stopped accessing memory."""
+        """Invalidate quiescent uploads; fatal runs require a sysnode reset."""
         with self._native_lock:
+            self.state()
+            self._require_usable()
             if (
                 self._discarded_generation == self._generation
                 and not self._list_tags
@@ -691,6 +718,7 @@ class NodeQueue:
 
     def submit_list(self, prepared, publishing=None, native=False):
         with self._native_lock:
+            self._require_usable()
             if (
                 prepared.queue is not self
                 or prepared.closed
@@ -757,6 +785,7 @@ class NodeQueue:
         `publishing`, if given, runs immediately before the first queue entry write.
         """
         with self._native_lock:
+            self._require_usable()
             op = self.layout.op_run if op is None else op
             if (
                 self.native_run is not None
@@ -850,6 +879,7 @@ class NodeQueue:
     def flush(self):
         """Write contiguous SQ runs, then publish one tail, never the reverse."""
         with self._native_lock:
+            self._require_usable()
             if self._broken:
                 raise RuntimeError("queue publication failed; reset before flushing")
             if not self._staged:
@@ -908,6 +938,13 @@ class NodeQueue:
                 + layout.tail_poll_bytes
             ]
             self._poll_state = layout.decode_fw(header)
+            if self._poll_state["state"] == "fatal":
+                self._quarantined = True
+                state = self._poll_state
+                text = self.read_stdout()
+                if (state["fatal"] & EXIT_MASK) == EXIT_BOOTARGS:
+                    raise BootRefused(state, text)
+                raise FirmwareFatal(state, text)
             head = struct.unpack_from("<Q", header, layout.sq_head - layout.fw)[0]
             self._sq_head_seen = max(self._sq_head_seen, head)
             tail = struct.unpack_from("<Q", raw, 0)[0]
@@ -985,7 +1022,11 @@ class NodeQueue:
         return raw
 
     def wait(
-        self, tag: int, timeout: float | None = None, check: bool = True, service=None
+        self,
+        tag: int,
+        timeout: float | None = None,
+        check: bool = True,
+        service=None,
     ) -> Completion:
         """Poll until `tag` completes, at most `timeout` seconds (the queue's
         `timeout` when None). Raises :class:`NodeError` on a failed
@@ -1025,11 +1066,6 @@ class NodeQueue:
                         time.sleep(delay)
                         delay = min(self.backoff, delay * 2)
                     if left > 0 or min(waited, -left) >= self.spin:
-                        st = self._poll_state
-                        if st["state"] == "fatal":
-                            if (st["fatal"] & EXIT_MASK) == EXIT_BOOTARGS:
-                                raise BootRefused(st, self.read_stdout())
-                            raise FirmwareFatal(st, self.read_stdout())
                         if self.nap and (left > 0 or not due):
                             rest = left if left > 0 else waited * NAP_SHARE
                             time.sleep(min(self.nap, rest))
@@ -1039,7 +1075,7 @@ class NodeQueue:
             self._outstanding.discard(tag)
             if check and not c.ok:
                 text = (
-                    self.read_stdout_to(c.record["so_wr"])
+                    self.read_stdout_bytes_to(c.record["so_wr"])
                     if c.record
                     else self.read_stdout()
                 )
@@ -1075,7 +1111,8 @@ class NodeQueue:
         """Ask the firmware to leave its loop; it exits with STOP | value.
         Raises :class:`TimeoutError` past `timeout` (see :meth:`wait`)."""
         return self.wait(
-            self.submit(None, op=self.layout.op_stop, arg=value), timeout=timeout
+            self.submit(None, op=self.layout.op_stop, arg=value),
+            timeout=timeout,
         )
 
     def drop_spilled(self) -> None:
@@ -1093,7 +1130,11 @@ class NodeQueue:
 
     def _release_package(self, key):
         with self._native_lock:
-            if key in self._package_tags.values() or self._package_pins.get(key):
+            if (
+                self._quarantined
+                or key in self._package_tags.values()
+                or self._package_pins.get(key)
+            ):
                 return
             if (
                 self.resident_bytes
@@ -1111,6 +1152,8 @@ class NodeQueue:
             self._evict_package(key)
 
     def _evict_package(self, key):
+        if self._quarantined:
+            return
         self._idle_bytes -= self._idle_packages.pop(key, 0)
         cached = self._cache.pop(key, None)
         self._prepared_keys.discard(key)
@@ -1134,7 +1177,11 @@ class NodeQueue:
 
     def _unspill_all(self) -> None:
         for key, at in list(self._spilled.items()):
-            if key in self._package_tags.values() or self._package_pins.get(key):
+            if (
+                self._quarantined
+                or key in self._package_tags.values()
+                or self._package_pins.get(key)
+            ):
                 continue
             self._cache.pop(key, None)
             self._idle_bytes -= self._idle_packages.pop(key, 0)
@@ -1197,8 +1244,7 @@ class NodeQueue:
             raw = self.mem.read_block(ring + lo, first) + self.mem.read_block(
                 ring, span - first
             )
-        text = raw[start - lo : start - lo + n].decode("utf-8", "replace")
-        self.console += text
+        self.console += raw[start - lo : start - lo + n]
         self.so_rd = wr
         self.mem.write_block(
             self.base + self.layout.so_rd, self.layout.line_bytes(self.so_rd)
@@ -1208,12 +1254,24 @@ class NodeQueue:
         """Everything the firmware printed since the last call."""
         with self._native_lock:
             self._stdout()
-            out, self.console = self.console, ""
-            self.console_at += len(out)
+            out, consumed = codecs.utf_8_decode(self.console, "replace", False)
+            self.console = self.console[consumed:]
+            self.console_at += consumed
             return out
 
+    def discard_stdout(self) -> None:
+        """Discard all prior-stream bytes, including an incomplete UTF-8 suffix."""
+        with self._native_lock:
+            self._stdout()
+            self.console_at += len(self.console)
+            self.console = b""
+
     def read_stdout_to(self, end: int) -> str:
-        """Read through a record's stdout count, keeping later ASCII text."""
+        """Decode the bytes through a completion boundary."""
+        return self.read_stdout_bytes_to(end).decode("utf-8", "replace")
+
+    def read_stdout_bytes_to(self, end: int) -> bytes:
+        """Read through a record's byte count, keeping later bytes."""
         with self._native_lock:
             if self.console_at + len(self.console) < end:
                 self._stdout()
@@ -1225,9 +1283,14 @@ class NodeQueue:
     def stdin(self, text: str) -> None:
         """Push bytes into the firmware's stdin ring, whole lines at a time."""
         with self._native_lock:
+            data = text.encode()
+            read = self.mem.read64(self.base + self.layout.si_rd)
+            used = (self.si_wr - read) & ((1 << 64) - 1)
+            if len(data) > self.si_bytes - used:
+                raise ValueError("stdin write exceeds free ring capacity")
             ring = self.base + self.geo["si"]
             touched = set()
-            for ch in text.encode():
+            for ch in data:
                 at = self.si_wr % self.si_bytes
                 self._stdin[at] = ch
                 touched.add(at & ~(self.layout.line - 1))

@@ -54,13 +54,42 @@ class Ring:
         self.read: dict[int, int] = {}
         #: sysnode -> records overwritten before the last `rows` read them
         self.lost: dict[int, int] = {}
-        for n, q in card.queues.items():
-            at = card.memory.alloc(RING_SLOTS * RING_BYTES, owner=f"measure:{n}")
-            q.size = RING_OFF
-            card.mem.write64(q.base + RING_OFF, at)
-            card.mem.write64(q.base + RING_OFF + 8, RING_SLOTS)
-            card.mem.write64(q.base + RING_OFF + 16, 0)
-            self.at[n], self.read[n] = at, 0
+        previous = {}
+        try:
+            for n, q in card.queues.items():
+                previous[n] = (
+                    q.size,
+                    getattr(q, "_measure_header", (0, 0, 0)),
+                )
+                at = card.memory.alloc(RING_SLOTS * RING_BYTES, owner=f"measure:{n}")
+                try:
+                    self.at[n] = at
+                except BaseException:
+                    card.memory.free(at)
+                    raise
+                self.read[n] = 0
+                q.size = RING_OFF
+                card.mem.write64(q.base + RING_OFF, at)
+                card.mem.write64(q.base + RING_OFF + 8, RING_SLOTS)
+                card.mem.write64(q.base + RING_OFF + 16, 0)
+                q._measure_header = (at, RING_SLOTS, 0)
+        except BaseException:
+            for n in self.at:
+                q = card.queues[n]
+                card.mem.write64(q.base + RING_OFF + 8, 0)
+            for n in self.at:
+                q = card.queues[n]
+                size, header = previous[n]
+                card.mem.write64(q.base + RING_OFF, header[0])
+                card.mem.write64(q.base + RING_OFF + 16, header[2])
+                card.mem.write64(q.base + RING_OFF + 8, header[1])
+                q.size = size
+                q._measure_header = header
+            for at in self.at.values():
+                card.memory.free(at)
+            self.at.clear()
+            self.read.clear()
+            raise
 
     def rows(self) -> list[dict]:
         """The records written since the last call, sysnode by sysnode; of a ring

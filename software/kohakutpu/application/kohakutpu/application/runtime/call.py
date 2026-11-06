@@ -27,10 +27,14 @@ def upload(dev, a: np.ndarray) -> Storage:
     """`a` in a new storage, its host bytes kept for other forms."""
     a = np.ascontiguousarray(a)
     s = Storage(dev, max(a.nbytes, 32))
-    raw = a.tobytes()
-    dev.write(s.addr, raw)
-    s.host, s.dtype = raw, a.dtype
-    return s
+    try:
+        raw = a.tobytes()
+        dev.write(s.addr, raw)
+        s.host, s.dtype = raw, a.dtype
+        return s
+    except BaseException:
+        s.free()
+        raise
 
 
 def call(dev, kernel: kt.Kernel, arrays: dict, kind: str = "call", **consts) -> tuple:
@@ -53,11 +57,19 @@ def call(dev, kernel: kt.Kernel, arrays: dict, kind: str = "call", **consts) -> 
         for n in kernel.inputs:
             a = np.asarray(arrays[n])
             s = upload(dev, a)
-            held.append(s)
+            try:
+                held.append(s)
+            except BaseException:
+                s.free()
+                raise
             binds[n] = FM.for_port(dev, s, a.dtype, a.shape, specs[n])
         for n in kernel.outputs:
             s = Storage(dev, specs[n].nbytes())
-            held.append(s)
+            try:
+                held.append(s)
+            except BaseException:
+                s.free()
+                raise
             binds[n] = s.addr
             outs[n] = s
         run = dev.run(

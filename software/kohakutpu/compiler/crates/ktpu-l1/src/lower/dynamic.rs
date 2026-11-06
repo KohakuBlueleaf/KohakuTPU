@@ -9,7 +9,9 @@ use ktpu_l0::{Package, Word, WordOps};
 use super::imem::Cores;
 use crate::error::{Error, Result};
 
-type Queues = BTreeMap<u64, VecDeque<bool>>;
+mod frontiers;
+
+use frontiers::State;
 
 /// Runtime paths share only immutable physical IMEM cells; mutable cells stay inline.
 pub fn package(pkg: &Package, cores: &mut Cores) -> Result<Package> {
@@ -243,76 +245,81 @@ fn vc(pkg: &Package, unit: u64) -> bool {
         .is_some_and(|u| u.type_code == 0x5643)
 }
 
-/// Completion queues meet exactly at CFG joins, including loop backedges.
+/// Completion suffixes retain saved positions through joins and backedges.
 fn await_counts(
     pkg: &Package,
     keep: &BTreeMap<usize, Vec<bool>>,
     opaque: &BTreeSet<u64>,
 ) -> Result<BTreeMap<usize, u64>> {
-    let mut incoming = BTreeMap::from([(0usize, Queues::new())]);
+    let transfer = |i: usize, state: &mut State| -> Option<u64> {
+        let s = &pkg.steps[i];
+        if s.op == Op::Frontier && s.flags == 2 {
+            state.clear(s.arg, s.count);
+            return None;
+        }
+        if opaque.contains(&s.unit) {
+            return None;
+        }
+        if !vc(pkg, s.unit) {
+            return None;
+        }
+        let unit = state.unit(s.unit);
+        match s.op {
+            Op::Dispatch => unit.send(keep[&i].iter().copied()),
+            Op::Repeat => {
+                for _ in 0..(s.arg >> 32) & 65535 {
+                    unit.send(keep[&i].iter().copied());
+                }
+            }
+            Op::Fetch => unit.send(std::iter::repeat_n(true, s.count as usize)),
+            Op::Await if s.flags == ktpu_l0::format::F_IMM => unit.full(),
+            Op::Await => return unit.wait_delta(s.count),
+            Op::Frontier if s.flags == 0 => unit.capture(s.count),
+            Op::Frontier if s.flags == 1 => unit.wait_saved(s.count),
+            _ => {}
+        }
+        None
+    };
+    let mut incoming = BTreeMap::from([(0usize, State::default())]);
     let mut todo = VecDeque::from([0usize]);
-    let mut counts = BTreeMap::new();
     while let Some(i) = todo.pop_front() {
         let Some(s) = pkg.steps.get(i) else {
             continue;
         };
-        let mut queues = incoming[&i].clone();
-        if opaque.contains(&s.unit) {
-            // Runtime counts on this core remain exactly as in the input.
-        } else if s.op == Op::Dispatch && vc(pkg, s.unit) {
-            queues
-                .entry(s.unit)
-                .or_default()
-                .extend(keep[&i].iter().copied());
-        } else if s.op == Op::Repeat && vc(pkg, s.unit) {
-            for _ in 0..(s.arg >> 32) & 65535 {
-                queues
-                    .entry(s.unit)
-                    .or_default()
-                    .extend(keep[&i].iter().copied());
-            }
-        } else if s.op == Op::Fetch && vc(pkg, s.unit) {
-            queues
-                .entry(s.unit)
-                .or_default()
-                .extend(std::iter::repeat_n(true, s.count as usize));
-        } else if s.op == Op::Await && s.flags == ktpu_l0::format::F_IMM {
-            // The runtime sent frontier already includes rewritten dispatch lengths.
-            // Preserve this step; it is not a static zero-count no-op.
-            queues.remove(&s.unit);
-        } else if s.op == Op::Await && vc(pkg, s.unit) {
-            let q = queues.entry(s.unit).or_default();
-            let mut count = 0;
-            for _ in 0..s.count {
-                count += q
-                    .pop_front()
-                    .ok_or_else(|| Error::new("IMR.CFG", "AWAIT has no dominating sends"))?
-                    as u64;
-            }
-            counts.insert(i, count);
-        }
-        queues.retain(|_, q| !q.is_empty());
+        let mut state = incoming[&i].clone();
+        transfer(i, &mut state);
         let successors = if s.op == Op::End {
             vec![]
+        } else if s.op == Op::Jump && s.count & 255 == 0 {
+            vec![s.unit as usize]
         } else if s.op == Op::Jump {
             vec![i + 1, s.unit as usize]
         } else {
             vec![i + 1]
         };
         for next in successors {
-            match incoming.get(&next) {
-                Some(old) if *old != queues => {
-                    return Err(Error::new(
-                        "IMR.CFG",
-                        "completion queues disagree at control-flow join",
-                    ))
-                }
-                Some(_) => {}
+            let changed = match incoming.get_mut(&next) {
+                Some(old) => old.join(&state),
                 None => {
-                    incoming.insert(next, queues.clone());
-                    todo.push_back(next);
+                    incoming.insert(next, state.clone());
+                    true
                 }
+            };
+            if changed {
+                todo.push_back(next);
             }
+        }
+    }
+    let mut counts = BTreeMap::new();
+    for (&i, state) in &incoming {
+        let Some(s) = pkg.steps.get(i) else {
+            continue;
+        };
+        if s.op == Op::Await && s.flags == 0 && vc(pkg, s.unit) && !opaque.contains(&s.unit) {
+            let count = transfer(i, &mut state.clone()).ok_or_else(|| {
+                Error::new("IMR.CFG", "AWAIT has no path-independent rewritten delta")
+            })?;
+            counts.insert(i, count);
         }
     }
     Ok(counts)
@@ -325,6 +332,8 @@ fn compact(pkg: &mut Package, original: &Package) -> Result<()> {
         let (first, count) = match s.op {
             Op::Dispatch | Op::Mover | Op::Store | Op::Ctrl => (s.arg, s.count),
             Op::Load | Op::Recv => (s.arg, 1),
+            Op::Frontier if s.flags == 2 => (s.arg, s.count),
+            Op::Frontier => (s.count, 1),
             Op::Repeat => (s.arg & 0xffff_ffff, s.count + (s.arg >> 48).div_ceil(2)),
             Op::Send => (
                 s.arg & 0xffff_ffff,
@@ -368,6 +377,12 @@ fn compact(pkg: &mut Package, original: &Package) -> Result<()> {
             }
             Op::Send => {
                 s.arg = (s.arg & !0xffff_ffff) | map[&(s.arg & 0xffff_ffff)];
+            }
+            Op::Frontier if s.flags == 2 => {
+                s.arg = if s.count == 0 { 0 } else { map[&s.arg] };
+            }
+            Op::Frontier => {
+                s.count = map[&s.count];
             }
             Op::Patch if s.arg >> 24 & 1 == 0 => {
                 s.count = map[&s.count];

@@ -75,3 +75,15 @@ impl Clock {
         self.at(owner) <= other.at(owner)
     }
 }
+
+impl PartialEq for Clock {
+    fn eq(&self, other: &Self) -> bool {
+        let len = self.base.len().max(other.base.len());
+        (0..len)
+            .chain(self.own)
+            .chain(other.own)
+            .all(|k| self.at(k) == other.at(k))
+    }
+}
+
+impl Eq for Clock {}

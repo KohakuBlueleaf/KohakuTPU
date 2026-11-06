@@ -574,7 +574,20 @@ impl MoverIsa {
         out_words: i64,
     ) -> Result<Vec<RegWrite>, Refusal> {
         let wb = self.word_bytes as i64;
-        let step = self.move_words as i64 / in_words;
+        if entries < 0
+            || in_words < 1
+            || out_words < 1
+            || wb <= 0
+            || out_words > i64::from(i32::MAX) / wb
+            || self.move_words == 0
+            || in_words as u64 > self.move_words
+        {
+            return refuse(
+                "ISA.MV.061",
+                "entries require positive geometry within the move budget",
+            );
+        }
+        let step = (self.move_words.min(i64::MAX as u64) as i64) / in_words;
         let mut out = Vec::new();
         let mut at = 0;
         while at < entries {
@@ -587,9 +600,21 @@ impl MoverIsa {
             mv.ewidth = self.ewidths[1];
             mv.xform = xform;
             out.extend(self.move_writes(&mv)?);
-            at += step;
+            at += n;
         }
         Ok(out)
+    }
+
+    /// Validate a whole-word copy before choosing its lowering.
+    pub fn copy_words(&self, nbytes: i64) -> Result<i64, Refusal> {
+        let wb = self.word_bytes as i64;
+        if wb <= 0 || nbytes < 0 || nbytes % wb != 0 {
+            return refuse("ISA.MV.007", "copy length must be nonnegative whole words");
+        }
+        if nbytes != 0 && self.move_words == 0 {
+            return refuse("ISA.MV.007", "copy requires a positive move budget");
+        }
+        Ok(nbytes / wb)
     }
 
     /// The register writes of `op`.
@@ -598,18 +623,18 @@ impl MoverIsa {
         match op {
             MoverOp::Move(mv) => self.move_writes(mv),
             MoverOp::Copy { src, dst, nbytes } => {
-                let words = nbytes.div_euclid(wb);
+                let words = self.copy_words(*nbytes)?;
                 let mut out = Vec::new();
                 let mut at = 0;
                 while at < words {
-                    let n = (self.move_words as i64).min(words - at);
+                    let n = (self.move_words.min(i64::MAX as u64) as i64).min(words - at);
                     let off = at * wb;
                     out.extend(self.move_writes(&self.plain(
                         MoveMode::Copy,
                         Some(Walk::new(src + off, &[(n, wb)])),
                         Some(Walk::new(dst + off, &[(n, wb)])),
                     ))?);
-                    at += self.move_words as i64;
+                    at += n;
                 }
                 Ok(out)
             }
@@ -623,9 +648,6 @@ impl MoverIsa {
                 out_words,
             } => {
                 let in_words = in_words.unwrap_or(self.f16_entry_words);
-                if in_words < 1 {
-                    return refuse("ISA.MV.061", format!("an entry of {in_words} source words"));
-                }
                 self.convert(
                     (*src, *dst, *entries),
                     (*xform_id, *mode),

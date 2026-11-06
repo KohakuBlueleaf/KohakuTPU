@@ -427,6 +427,7 @@ fn lower_steps(pkg: &Package, f: &Facts) -> Result<Package> {
 /// the interlink's sent count (RUL.046, L0.STEP.032).
 fn lowered(pkg: &Package, f: &Facts, rings_kept: bool) -> Result<Package> {
     let mut st = Stream::new(pkg, f);
+    let mut saved = HashMap::new();
     for (i, s) in pkg.steps.iter().enumerate() {
         let names_unit = matches!(s.op, Op::Dispatch | Op::Repeat | Op::Await | Op::Fetch);
         if names_unit && s.unit >= pkg.units.len() as u64 {
@@ -446,6 +447,32 @@ fn lowered(pkg: &Package, f: &Facts, rings_kept: bool) -> Result<Package> {
                 st.exp[u] += s.count as i128;
                 st.wait(s.unit, st.exp[u]);
             }
+            Op::Frontier => match s.flags {
+                0 if s.unit < pkg.units.len() as u64
+                    && s.count < pkg.payloads.len() as u64
+                    && s.arg == 0 =>
+                {
+                    saved.insert(s.count, (s.unit, st.sent[s.unit as usize]));
+                }
+                1 if s.unit < pkg.units.len() as u64 && s.arg == 0 => {
+                    let Some(&(unit, target)) = saved.get(&s.count) else {
+                        return refuse!("L0.PKG.032", "step {i} has no captured frontier");
+                    };
+                    if unit != s.unit {
+                        return refuse!("L0.PKG.032", "step {i} uses another unit's frontier");
+                    }
+                    let u = s.unit as usize;
+                    st.exp[u] = st.exp[u].max(target);
+                    st.wait(s.unit, st.exp[u]);
+                }
+                2 if s.unit == 0
+                    && s.arg <= pkg.payloads.len() as u64
+                    && s.count <= pkg.payloads.len() as u64 - s.arg =>
+                {
+                    saved.retain(|slot, _| !(s.arg..s.arg + s.count).contains(slot));
+                }
+                _ => return refuse!("L0.PKG.032", "step {i} has invalid FRONTIER fields"),
+            },
             Op::Barrier => st.barrier(),
             Op::Mover => st.mover(s)?,
             Op::Mwait => st.wait(src_mover(f), s.count as i128),

@@ -410,6 +410,12 @@ class Layout:
     def list_descriptor_bytes(self, count: int) -> int:
         return count * self.sq_bytes
 
+    def _check_stdio(self, so_bytes: int, si_bytes: int) -> None:
+        if any(n <= 0 or n >= 1 << 32 or n % self.line for n in (so_bytes, si_bytes)):
+            raise ValueError(
+                f"stdio rings are positive u32 whole {self.line}-byte lines"
+            )
+
     def info_line(
         self,
         version: int,
@@ -419,6 +425,7 @@ class Layout:
         si_bytes: int,
         epoch: int = 0,
     ) -> bytes:
+        self._check_stdio(so_bytes, si_bytes)
         words = [0] * (self.line // 8)
         values = {
             "magic": self.magic,
@@ -491,8 +498,7 @@ class Layout:
             rec_bytes = self.rec_bytes
         if not (0 < sq_n < 1 << 16 and 0 < cq_n < 1 << 16):
             raise ValueError("ring depths are 1..65535")
-        if so_bytes % self.line or si_bytes % self.line or not so_bytes or not si_bytes:
-            raise ValueError(f"stdio rings are whole {self.line}-byte lines")
+        self._check_stdio(so_bytes, si_bytes)
         sq = self.sq
         cq = sq + sq_n * self.sq_bytes
         so = -(-(cq + cq_n * self.cq_bytes) // self.line) * self.line

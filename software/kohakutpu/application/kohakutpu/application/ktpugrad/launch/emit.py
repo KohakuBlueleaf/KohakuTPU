@@ -160,16 +160,22 @@ def packings(dev, st, n: int, lanes: dict, reads: int) -> tuple | None:
     b = WRITER_PACK_FORM != "a" and all(q is not None for q in quants)
     if WRITER_PACK_FORM == "auto" and (a or b):
         priced = _Priced(dev, shape, lanes, reads)
+        separate = [_standalone(dev, k) for k in keys]
+        a_calls = (
+            [
+                priced.call(shape, packed),
+                *[c for seq in separate[len(a_keys) :] for c in seq],
+            ]
+            if a
+            else []
+        )
+        b_calls = [priced.call(None, quants)] if b else []
         if a and b:
-            b = not priced.cheaper(
-                priced.call(shape, packed), [priced.call(None, quants)]
-            )
+            b = not priced.cheaper(a_calls, b_calls)
             a = not b
-        # The separate path: the writer alone, then each consumer's quant.
-        alone = [priced.call(None, None), *map(_alone, quants)]
-        if not priced.cheaper(
-            priced.call(*((None, quants) if b else (shape, packed))), alone
-        ):
+        # The separate path writes the same complete set of consumer packings.
+        alone = [priced.call(None, None), *[c for seq in separate for c in seq]]
+        if not priced.cheaper(b_calls if b else a_calls, alone):
             a = b = False
     if not (a or b):
         return None
@@ -181,15 +187,48 @@ def packings(dev, st, n: int, lanes: dict, reads: int) -> tuple | None:
     return (None if b else shape), qs, tuple(keys)
 
 
-def _alone(q: dict) -> dict:
-    """The separate `matmul.quant_kernel` call of a writer quant step's packing
-    (`forms.writer_quant`), as `forms.packed` launches it."""
-    args = {k: q[k] for k in ("src", "rows", "cols", "rp", "cp", "side", "g", "nk")}
-    if "composed" in q:
-        args.update(batches=1, prepared=q["composed"], composed=[0])
-    else:
-        args.update(batches=1, pad_strategy=q["pad_strategy"])
-    return {"gen": "matmul.quant_kernel", "args": args}
+def _standalone(dev, key: tuple) -> list[dict]:
+    """The production launches selected for a flat writer's consumer."""
+    _, side, src, rows, cols, rp, cp, g, nk, batches = key
+    if cols % 16 == 0 and src.pitch % 16 == 0 and src.offset % 16 == 0:
+        return [_quant(dev, src, rows, cols, rp, cp, side, g, nk, batches)]
+    r, dp = batches * rows, -(-cols // 16) * 16
+    walk, dwalk = ((r, src.pitch), (cols, 1)), ((r, dp), (cols, 1))
+    step = FM.Step(None, batches * rows * cols, walk, src.offset, dwalk, 0, r * dp)
+    laid = Operand("full", pitch=dp)
+    mode, call, _ = FM.quant_production(
+        dev, (step,), laid, rows, dp, rp, cp, side, g, nk, batches
+    )
+    if mode != "materialized":
+        return [{"gen": "matmul.quant_kernel", "args": call}]
+    made = FM.generated.relayout_plan(
+        "relayout.plan", rows * cols, walk, src.offset, dwalk, 0, r * dp, False, 0
+    )
+    plan = FM.generated.planned(dev, made)
+    gen = "relayout.relayout_kernel"
+    if "unplanned" in plan:
+        made = FM.generated.relayout_plan(
+            "lanes.plan", rows * cols, walk, src.offset, dwalk, 0, r * dp, False
+        )
+        gen = "lanes.relayout_kernel"
+    laid = Operand("full", pitch=dp, rows=r)
+    return [
+        {"gen": gen, "args": {"pl": made}},
+        _quant(dev, laid, rows, dp, rp, cp, side, g, nk, batches),
+    ]
+
+
+def _quant(dev, src, rows, cols, rp, cp, side, g, nk, batches):
+    recipe = FM.costs.quant_recipe(src, rows, cols, rp, cp, side, g, nk, batches)
+    strategy = (
+        "staged"
+        if FM.costs.choose("staged_padding", recipe, dev.machine.board)
+        else "native"
+    )
+    return {
+        "gen": "matmul.quant_kernel",
+        "args": FM._quant_call(src, rows, cols, rp, cp, side, g, nk, batches, strategy),
+    }
 
 
 class _Priced:
@@ -224,8 +263,8 @@ class _Priced:
         package, _ = _package(self.dev, merged)
         return {"gen": "fused.kernel", "args": package}
 
-    def cheaper(self, read: dict, launches: list) -> bool:
-        """Whether `read` builds and costs no more than `launches` and their gaps."""
+    def cheaper(self, read: list, launches: list) -> bool:
+        """Whether all of `read` costs no more than `launches`, including gaps."""
         return _cost_decided(
             json.dumps(read, sort_keys=True),
             json.dumps(launches, sort_keys=True),

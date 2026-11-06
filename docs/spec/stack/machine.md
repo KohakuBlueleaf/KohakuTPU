@@ -126,19 +126,8 @@ with the named machine. Bring-up uses the same map for both model and card.
 
 ## Unit-global addresses and staging
 
-- **MACHINE.ADDR.001** `silicon` A unit-global staging address selects
-  `die.address.special_bit`, clears `die.address.reserved_bit`, and encodes the
-  destination mesh and aperture using `die.address.mesh_shift`, `mesh_bits`,
-  `aperture_shift` and `aperture_bits`. (RTL: `mag_stage.v:85-93`; evidence:
-  the silicon card runtime places each node queue in that mesh's staging
-  aperture and submits its packages through the queue.)
-- **MACHINE.STAGE.001** `silicon` Staging occupies `die.staging.aperture`,
-  enabled in `die.staging.implemented`. Its byte capacity is
-  `die.staging.entries * die.staging.entry_words * die.word_bytes`; banks
-  interleave those entries. (RTL: `mag_stage.v:25-42,74-79,95-103`;
-  evidence: each silicon card run's node queue sits in staging through
-  `AP_STAGE`; the entry-word fixture independently distinguishes capacity
-  from the bank count.)
+- **MACHINE.ADDR.001** `silicon` A unit-global staging address sets `die.address.special_bit` [39], clears `die.address.reserved_bit` [38], and encodes the destination mesh at `die.address.mesh_shift` [36] with `die.address.mesh_bits` [2] bits and the staging aperture at `die.address.aperture_shift` [32] with `die.address.aperture_bits` [4] bits. (code: src/kohakuaccel/sysnode/core/mag_stage.v:85-93, software/kohakutpu/compiler/crates/ktpu-machine/src/card.rs:46-50, :62-69, :130-138; evidence: the v9t6 card runtime's sysnode queues occupy their respective meshes' staging apertures; af7c1bb:software/compiler/kohakuaccel/compiler/machine.py:17-32, :283-295 constructs the same v9t6 address, and af7c1bb:software/application/kohakutpu/application/runtime/card.py:204-220 places each sysnode queue there)
+- **MACHINE.STAGE.001** `silicon` Staging occupies `die.staging.aperture` [0], whose bit is set in `die.staging.implemented` [0x0037]. Its byte capacity is `die.staging.entries` [16384] times `die.staging.entry_words` [4] times `die.word_bytes` [32], giving 2097152 bytes on v9t6. `die.staging.banks` [4] interleaves entries using their low entry-address bits; it does not multiply capacity. (code: src/kohakuaccel/sysnode/core/mag_stage.v:25-42, :74-79, :85-103, software/kohakuaccel/compiler/crates/ka-machine/src/schema/die.rs:65-69, software/kohakutpu/compiler/crates/ktpu-machine/src/card.rs:59-69; evidence: the v9t6 card runtime places each sysnode queue in staging; af7c1bb:software/compiler/kohakuaccel/compiler/machine.py:25-37, :283-295 uses the same aperture and 2097152-byte capacity, and af7c1bb:software/application/kohakutpu/application/runtime/card.py:182-190, :211-220 uses those bounds and addresses)
 
 `die.address` holds `special_bit`, `reserved_bit`, `mesh_shift`, `mesh_bits`,
 `aperture_shift` and `aperture_bits`. The generator reads complete decode lines

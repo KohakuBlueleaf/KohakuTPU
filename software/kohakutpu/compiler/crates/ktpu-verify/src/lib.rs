@@ -30,6 +30,6 @@ pub use model::finding::{Finding, Kind};
 pub use target::{Facts, MeshUnits, Target, UnitKind};
 
 /// The finding kinds a run is refused for (L1.VER.015).
-pub const REFUSE: [&str; 9] = [
-    "deadlock", "rest", "port", "race", "bounds", "route", "line", "cluster", "vector",
+pub const REFUSE: [&str; 10] = [
+    "deadlock", "rest", "port", "race", "bounds", "route", "line", "cluster", "vector", "loop",
 ];

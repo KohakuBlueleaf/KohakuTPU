@@ -45,7 +45,7 @@ void ka_dbg_begin(uint64_t tag, unsigned run_flags)
 {
     D.tag = tag;
     D.flags = run_flags;
-    D.issued = 0;
+    D.issued = 0x10000u;
     for (unsigned u = 0; u < KA_MAX_PKG_UNITS; ++u) {
         D.count[u] = 0;
         if (D.base) {
@@ -104,7 +104,7 @@ void ka_dbg_step(uint64_t w0, uint32_t first, uint32_t last, uint64_t cycle, int
     uint64_t c0 = 0, c1 = 0;
     if (u < e->n) {
         const struct ka_unit_state *s = &e->u[u];
-        c0 = s->sent | (uint64_t)s->received << 32;
+        c0 = s->sent | (uint64_t)(uint32_t)(s->retired + s->acks) << 32;
         c1 = s->expected | (uint64_t)s->inflight << 32;
     }
     put(head(KA_DBG_STEP, engine ? KA_DBG_STEP_ENGINE : 0, w0),
@@ -122,13 +122,18 @@ void ka_dbg_completion(unsigned u, uint64_t w)
     ka_st64(at, D.count[u]);
 }
 
-void ka_dbg_failed(void) { D.issued = KA_DE_STAT_ISSUED(ka_ctrl_rd(KA_R_DE_STAT)); }
+void ka_dbg_failed(void)
+{
+    if (D.issued == 0x10000u) {
+        D.issued = KA_DE_STAT_ISSUED(ka_ctrl_rd(KA_R_DE_STAT));
+    }
+}
 
 void ka_dbg_units(const struct ka_engine *e)
 {
     for (unsigned i = 0; i < e->n; ++i) {
         const struct ka_unit_state *s = &e->u[i];
-        put(KA_DBG_UNIT | (uint64_t)i << 32, unit_word(s), s->sent | (uint64_t)s->received << 32,
+        put(KA_DBG_UNIT | (uint64_t)i << 32, unit_word(s), s->sent | (uint64_t)(uint32_t)(s->retired + s->acks) << 32,
             s->expected | (uint64_t)s->inflight << 32, s->acks | (uint64_t)s->credit << 32,
             D.count[i], 0);
     }
@@ -136,11 +141,15 @@ void ka_dbg_units(const struct ka_engine *e)
 
 void ka_dbg_fail(uint64_t w0, uint32_t step, int engine, const struct ka_engine *e)
 {
-    unsigned flags = (engine ? KA_DBG_FAIL_ENGINE : 0) | (e->outstanding ? 0 : KA_DBG_FAIL_DRAINED);
+    uint64_t mover = ka_ctrl_rd(KA_R_MVSTAT);
+    int idle = !e->outstanding && !(mover & (1UL << 32)) &&
+               !(ka_nm_rd(KA_NM_STAT) & KA_NM_STAT_OFFERED) &&
+               !KA_DE_STAT_USED(ka_ctrl_rd(KA_R_DE_STAT));
+    unsigned flags = (engine ? KA_DBG_FAIL_ENGINE : 0) | (idle ? KA_DBG_FAIL_DRAINED : 0);
     put(head(KA_DBG_FAIL, flags, w0),
         (uint64_t)(e->status & 0xffff) | (uint64_t)(e->detail & 0xffff) << 16 |
             (uint64_t)step << 32,
-        e->value, ka_ctrl_rd(KA_R_MVSTAT), e->stray | (uint64_t)e->outstanding << 32, e->n,
-        engine ? D.issued : 0);
+        e->value, mover, e->stray | (uint64_t)e->outstanding << 32, e->n,
+        engine && D.issued != 0x10000u ? D.issued : 0);
 }
 #endif

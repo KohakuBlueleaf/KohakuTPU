@@ -8,9 +8,6 @@ use ktpu_isa::Isa;
 use ktpu_machine::Machine;
 use serde_json::Value;
 
-/// Times a node loop on data is run (verify.md s5).
-pub const TRIPS: u32 = 3;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum UnitKind {
     Mg,

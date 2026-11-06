@@ -2,6 +2,9 @@
 
 #[path = "../common.rs"]
 mod common;
+mod modulo_memory_effects;
+mod stream_credit;
+mod view_progression;
 
 use common::{fixtures, known, stage_suite, Fixture, Level, Pair};
 use ktpu::{Backend, CardStack};

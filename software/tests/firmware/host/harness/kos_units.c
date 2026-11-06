@@ -36,6 +36,12 @@ int k_copy_out(uint64_t uva, const void *src, uint64_t n)
     (void)n;
     abort();
 }
+void k_ring_word(uint64_t value)
+{
+    (void)value;
+    abort();
+}
+
 void k_reply(unsigned node, uint64_t req, int64_t status, uint64_t value)
 {
     (void)node;

@@ -202,7 +202,8 @@ impl<'n, 'a> RowReader<'n, 'a> {
                     Term::Neg(x) => -self.c(st, x)?,
                     v => self.c(st, v)?,
                 };
-                g.insert(name.into(), (x & ((1i128 << width) - 1)) as i64);
+                let value = (x & ((1i128 << width) - 1)) as i64;
+                g.insert(name.into(), value);
             }
         }
         self.job = Some(g);
@@ -476,6 +477,9 @@ impl<'n, 'a> RowReader<'n, 'a> {
             .map(|(a, v)| (*a, *v))
             .collect();
         self.held.extend(want);
+        let job = self.job.as_mut().expect("configuration has a job");
+        let (_, _, width) = lookup(S::G, "NW").expect("NW configuration slot");
+        *job.get_mut("NW").expect("job dimension") &= (1i64 << width) - 1;
         Ok(SruInst::Config { words: diff })
     }
 

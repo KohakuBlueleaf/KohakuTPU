@@ -16,6 +16,9 @@ use crate::refuse;
 use crate::units::machine_units;
 use crate::word::Word;
 
+mod frontiers;
+use frontiers::Event;
+
 /// Word `word` of an op's flits gets, when the node reaches it, `(register
 /// reg + konst) >> shift` into each `(bit, width, shift)` of `segments`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -453,10 +456,9 @@ struct Lowering<'a> {
     types: BTreeMap<Coord, String>,
     resident: Option<&'a mut dyn Resident>,
     addresses: Option<&'a dyn Addresses>,
-    /// Words dispatched to and awaited from each unit, cumulative.
+    /// Words dispatched to each unit in the lowering traversal.
     sent: BTreeMap<usize, u64>,
-    awaited: HashMap<usize, u64>,
-    marks: HashMap<usize, u64>,
+    frontiers: HashMap<usize, Event>,
     /// Queued words by unit, in first-queued order.
     pending: Vec<Pending>,
     piece: usize,
@@ -490,8 +492,7 @@ impl<'a> Lowering<'a> {
             resident: opts.resident,
             addresses: opts.addresses,
             sent: BTreeMap::new(),
-            awaited: HashMap::new(),
-            marks: HashMap::new(),
+            frontiers: HashMap::new(),
             pending: Vec::new(),
             piece: (f.inst_depth / 2) as usize,
             gos: 0,
@@ -512,17 +513,10 @@ impl<'a> Lowering<'a> {
         self.b.unit(coord, None, None)
     }
 
-    fn await_to(&mut self, u: usize, upto: u64) {
-        let have = self.awaited.get(&u).copied().unwrap_or(0);
-        if upto > have {
-            if self.looping && !crate::mutant::on("l0.program/static-loop-wait") {
-                // Static counts after a backedge can fall behind by more than half the HW counter.
-                self.b.await_sent(u);
-            } else {
-                self.b.await_(u, upto - have);
-            }
-            self.awaited.insert(u, upto);
-        }
+    fn await_to(&mut self, u: usize, token: Option<usize>) {
+        self.frontiers
+            .insert(self.b.steps.len(), Event::Wait(u, token));
+        self.b.await_sent(u);
     }
 
     /// PATCH steps for `p` into word `index`, its bits offset by `base`; a
@@ -682,7 +676,7 @@ impl<'a> Lowering<'a> {
                 } => {
                     self.flush(None)?;
                     let unit = self.unit(*coord)?;
-                    self.await_to(unit, self.sent.get(&unit).copied().unwrap_or(0));
+                    self.await_to(unit, None);
                     let first = self.b.payloads.len() as u64;
                     for patch in patches {
                         if patch.segments.len() > 1 {
@@ -709,7 +703,7 @@ impl<'a> Lowering<'a> {
                     self.b.dispatch(unit, words, self.addresses)?;
                     let total = self.sent.get(&unit).copied().unwrap_or(0) + words.len() as u64;
                     self.sent.insert(unit, total);
-                    self.await_to(unit, total);
+                    self.await_to(unit, None);
                 }
                 Stmt::Repeat {
                     coord,
@@ -848,20 +842,14 @@ impl<'a> Lowering<'a> {
                 Stmt::Mark { coord, token } => {
                     let u = self.unit(*coord)?;
                     self.flush(None)?;
-                    let s = self.sent.get(&u).copied().unwrap_or(0);
-                    self.marks.insert(*token, s);
+                    self.frontiers
+                        .insert(self.b.steps.len(), Event::Mark(u, *token));
+                    self.b.settle(0);
                 }
                 Stmt::Wait { coord, token } => {
                     let u = self.unit(*coord)?;
                     self.flush(None)?;
-                    let upto = match token {
-                        None => self.sent.get(&u).copied().unwrap_or(0),
-                        Some(t) => match self.marks.get(t) {
-                            Some(&m) => m,
-                            None => return refuse!("L0.STEP.021", "no mark {t}"),
-                        },
-                    };
-                    self.await_to(u, upto);
+                    self.await_to(u, *token);
                 }
                 Stmt::Barrier => {
                     self.flush(None)?;
@@ -953,14 +941,15 @@ impl<'a> Lowering<'a> {
             };
             self.b.retarget(at, target);
         }
+        frontiers::lower(&mut self.b, &self.frontiers)?;
         Ok(self.b)
     }
 
     /// AWAITs up to everything sent, by unit index.
     fn await_all(&mut self) {
         let sent: Vec<(usize, u64)> = self.sent.iter().map(|(&u, &n)| (u, n)).collect();
-        for (u, n) in sent {
-            self.await_to(u, n);
+        for (u, _) in sent {
+            self.await_to(u, None);
         }
     }
 }

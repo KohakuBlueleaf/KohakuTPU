@@ -3,6 +3,8 @@
 
 #[path = "../common.rs"]
 mod common;
+mod memory_dependencies;
+mod unary_semantics;
 
 use common::{fixtures, known, stage_suite, Fixture, Level, Pair};
 use ktpu::{Backend, CardStack};

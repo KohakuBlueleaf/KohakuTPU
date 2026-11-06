@@ -27,6 +27,7 @@ use crate::sim::memory::Memory;
 use crate::sim::{Kinded, Pk, Sender, Sim, Sink, Unit};
 
 /// One RUN: input words taken, output words sent, in the shell's events.
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Job {
     f: Fields,
     nw: i64,
@@ -52,6 +53,7 @@ impl Job {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Row {
     pub rx: usize,
     pub taken: i64,

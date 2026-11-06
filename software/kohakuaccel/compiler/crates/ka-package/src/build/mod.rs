@@ -326,13 +326,18 @@ impl PackageBuilder {
                 template.len()
             );
         }
+        let mut previous = None;
         for &(index, bit, width, delta) in &incs {
+            if previous.is_some_and(|(i, end)| i == index && bit < end) {
+                return refuse!("L0.STEP.041", "overlapping repeat fields");
+            }
             if !(1..=64).contains(&width) || bit + width > 256 {
                 return refuse!(
                     "L0.STEP.041",
                     "increment field [{bit}, +{width}) leaves the word"
                 );
             }
+            previous = Some((index, bit + width));
             let Some(w) = template.get(index) else {
                 return refuse!(
                     "L0.STEP.041",

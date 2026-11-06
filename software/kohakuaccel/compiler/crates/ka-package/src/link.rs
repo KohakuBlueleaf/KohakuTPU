@@ -36,6 +36,16 @@ pub fn bound(parts: &[Package]) -> Result<Package, String> {
                     }
                     step.arg = (step.arg & !0xffff_ffff) | start;
                 }
+                Op::Frontier => {
+                    let index = if step.flags == 2 {
+                        &mut step.arg
+                    } else {
+                        &mut step.count
+                    };
+                    *index = index
+                        .checked_add(offset)
+                        .ok_or("frontier offset overflow")?;
+                }
                 Op::Await | Op::Barrier | Op::Mwait => (),
                 _ => return Err(format!("unsupported linked step {:?}", step.op)),
             }

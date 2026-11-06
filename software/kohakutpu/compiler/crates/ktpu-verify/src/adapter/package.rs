@@ -22,6 +22,7 @@ pub mod op {
     pub const PATCH: u8 = 18;
     pub const SEND: u8 = 19;
     pub const RECV: u8 = 20;
+    pub const FRONTIER: u8 = 23;
 
     /// The opcode's name (`"WAIT_BELL"`).
     pub fn name(op: u8) -> String {

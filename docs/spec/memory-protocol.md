@@ -513,19 +513,7 @@ The agent is an AXI4 slave `DATA_W` bits wide, through which the host uploads an
 reads back memory. **An upload is written verbatim**: no address bit carries a
 conversion marker, and the bytes that land are the bytes that were sent.
 
-**What the window reaches is DRAM, and only DRAM.** The host's upload becomes an
-ordinary requester on the agent's converged path, and nothing on that path
-decodes `addr[39]` for the aperture or `addr[37:36]` for another mesh. So:
-
-- an upload with `addr[39]` set does **not** reach the staging store — staging is
-  the mover's to write;
-- an upload naming another mesh does **not** cross the interlink — it reaches
-  local DRAM above the local capacity, where nothing answers.
-
-Neither faults. A host that wants bytes in staging asks the control processor to
-move them there; a host that wants bytes in another mesh writes them into that
-mesh's own window. [address-map.md](../address-map.md) has the host-side map and
-the routing prefix that chooses the window.
+With converged staging enabled, the host memory window reaches DRAM and local staging. The host UP requester preserves its address through the common arbiter. Staging decode requires the special bit set, reserved bit clear, matching mesh and aperture 0; the selected request drives the staging store. The driver forms a staging host address as `window | unit_global_address`, retaining bit 39 and the mesh field. A mismatched mesh does not forward a host request over the interlink. (code: src/kohakuaccel/sysnode/core/mag.v:620-636, :1120-1126, :1157-1192; src/kohakuaccel/sysnode/core/mag_dram_port.v:139-145, :325-332, :621-625; software/kohakuaccel/driver/kohakuaccel/driver/transport/rebase.py:82-86)
 
 The upload window converts nothing on the way in. A host that wants converted
 bytes in memory either converts them itself or uploads raw and has the mover

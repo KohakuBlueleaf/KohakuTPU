@@ -34,6 +34,7 @@ pub const BUF_PEER: i64 = 2;
 /// reports no leftovers and no FILL overlap.
 pub(crate) const CHECKER: &str = "isa.cluster/checker";
 
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Cluster {
     /// Entries landed by COUNT bursts, per L1 side, and taken by fills.
     pub rx: [usize; 2],

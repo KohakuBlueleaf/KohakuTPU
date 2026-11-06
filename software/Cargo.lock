@@ -364,6 +364,7 @@ name = "ktpu-sim"
 version = "0.1.0"
 dependencies = [
  "ka-emu",
+ "ka-package",
  "ktpu",
  "ktpu-isa",
  "ktpu-l0",

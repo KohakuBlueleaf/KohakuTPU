@@ -9,8 +9,8 @@
 
 /* Read CU_CAPS at every (x, y) in 0..span, skipping (0, 0) -- this processor.
  * Fills `out` with unit words (type << 32 | mesh << 16 | y << 8 | x), returns
- * how many; `depth`, when given, gets each unit's inst_depth. */
-unsigned ka_enumerate(unsigned span, unsigned mesh, uint64_t *out, uint32_t *depth,
+ * how many, or -1 on outbound timeout; `depth` gets each unit's inst_depth. */
+int ka_enumerate(unsigned span, unsigned mesh, uint64_t *out, uint32_t *depth,
                       unsigned max);
 
 #endif

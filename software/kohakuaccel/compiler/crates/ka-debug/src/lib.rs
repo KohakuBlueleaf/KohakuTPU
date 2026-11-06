@@ -290,6 +290,15 @@ fn pair(w: u64) -> (u32, u32) {
 /// against `m`'s names. Records run from the host's read position to the
 /// firmware's write position.
 pub fn decode<M: MachineFacts + ?Sized>(region: &[u8], m: &M) -> Result<Report, Refusal> {
+    decode_since(region, m, 0)
+}
+
+/// Decode records after the host last acknowledged `lost_before` dropped bytes.
+pub fn decode_since<M: MachineFacts + ?Sized>(
+    region: &[u8],
+    m: &M,
+    lost_before: u64,
+) -> Result<Report, Refusal> {
     if word(region, layout::H_MAGIC)? != layout::MAGIC {
         return refuse("DBG.API.002", "the region holds no debug header (KADBG1)");
     }
@@ -327,6 +336,15 @@ pub fn decode<M: MachineFacts + ?Sized>(region: &[u8], m: &M) -> Result<Report, 
                 "{} record bytes past the host's read, the ring holds {}",
                 header.written - header.read,
                 header.cap
+            ),
+        );
+    }
+    if header.lost != lost_before {
+        return refuse(
+            "DBG.TRACE.002",
+            format!(
+                "debug record loss changed from {lost_before} to {}",
+                header.lost
             ),
         );
     }

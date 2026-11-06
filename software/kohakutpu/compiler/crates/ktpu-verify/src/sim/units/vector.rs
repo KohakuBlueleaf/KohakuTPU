@@ -141,7 +141,7 @@ enum Acc {
 }
 
 /// A sync's or a wait's guard, its target fixed at dispatch.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Guard {
     /// Satisfied at once (the `model_no_sync` mutant).
     Always,
@@ -155,12 +155,13 @@ enum Guard {
     },
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SVal {
     Known(i64),
     Unknown,
 }
 
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Entry {
     pub op: VOp,
     f: Fields,
@@ -175,14 +176,14 @@ pub(crate) struct Entry {
     l1: Option<(Vec<i64>, bool, What)>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, PartialEq, Eq)]
 pub(crate) struct Engine {
     pub items: Vec<usize>,
     kinds: Vec<Option<usize>>,
     pub head: usize,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, PartialEq, Eq)]
 pub(crate) struct Front {
     pub halted: bool,
     pub pc: i64,
@@ -203,6 +204,7 @@ pub(crate) struct Front {
 
 /// The walk configuration, kept across RUNs: pointers, increments,
 /// (s0, s1) strides.
+#[derive(Clone, PartialEq, Eq)]
 struct Walk {
     uptr: i64,
     uinc: i64,
@@ -212,6 +214,7 @@ struct Walk {
     pstr: (i64, i64),
 }
 
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Vector {
     pub rx: usize,
     pub cr: usize,

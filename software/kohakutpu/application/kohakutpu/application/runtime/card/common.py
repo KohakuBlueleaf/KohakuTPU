@@ -110,7 +110,10 @@ def parse_boot_flags(text: str, nodes) -> dict[int, int]:
 
     def value(v: str) -> int:
         if v[:1].isalpha():
-            return sum(BOOT_FLAGS[k] for k in v.split("+"))
+            flags = 0
+            for k in v.split("+"):
+                flags |= BOOT_FLAGS[k]
+            return flags
         return int(v, 0)
 
     if ":" not in text:

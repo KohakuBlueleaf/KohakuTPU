@@ -176,8 +176,10 @@ def test_a_lost_retirement_in_a_held_package_is_reported(exe, tmp_path):
 
 
 def test_a_lost_retirement_before_a_wide_package_is_reported(exe, tmp_path):
-    ((_, last),) = run(exe, tmp_path, [sends(4), wide()], lost=1)
+    ((packages, last),) = run(exe, tmp_path, [sends(4), wide()], lost=1)
     assert last[0] == TIMEOUT
+    assert len(packages) == 1
+    assert last[1] == 1
 
 
 def test_a_count_past_what_the_chain_waited_for_is_reported(exe, tmp_path):
@@ -185,13 +187,12 @@ def test_a_count_past_what_the_chain_waited_for_is_reported(exe, tmp_path):
     assert last[0] == BAD_STEP
 
 
-def test_a_failed_header_mid_chain_leaves_the_next_list_working(exe, tmp_path):
+def test_a_failed_header_mid_chain_quarantines_the_queue(exe, tmp_path):
     bad = b"\0" * 256
-    first, second = run(
-        exe, tmp_path, [sends(20), bad, sends(20)], [sends(9), sends(9)]
-    )
-    assert first[1][0] == BAD_MAGIC and len(first[0]) == 2
-    assert second[1][0] == 0 and second[1][2] == CREDIT and second[1][3] == 18
+    (first,) = run(exe, tmp_path, [sends(20), bad, sends(20)], [sends(9), sends(9)])
+    assert first[1][0] == BAD_MAGIC
+    assert len(first[0]) == 1
+    assert first[1][1] == 1  # only the chain's initial clear
 
 
 def test_engine_rings_take_the_interlink_room_ring_steps_take(exe, tmp_path):
@@ -232,18 +233,30 @@ def test_ctrl_rings_take_the_interlink_room_ring_steps_take(exe, tmp_path):
 
 
 MUTANTS = {
-    "no_base": ("((want + de.base[c]) & KA_DE_CTR_MASK)", "(want & KA_DE_CTR_MASK)"),
+    "no_base": (
+        "((want + de.base[c]) & KA_DE_CTR_MASK)",
+        "(want & KA_DE_CTR_MASK)",
+    ),
     "no_slot": ("de.slot[u] = (uint8_t)c;", "de.slot[u] = (uint8_t)u;"),
     "no_rebase": ("    return de_target(src, want);\n}", "    return v;\n}"),
     "no_top": ("*top += ahead;", ""),
-    "no_move_carry": ("de.base[KA_DE_MOVER] += ", "de.base[KA_DE_MOVER] += 0 * "),
+    "no_move_carry": (
+        "de.base[KA_DE_MOVER] += ",
+        "de.base[KA_DE_MOVER] += 0 * ",
+    ),
     "no_settle": ("        de_total();\n        de_settled();\n", ""),
     "unchain_silent": (
+        (
+            "    if (!de_drain()) {\n        de_settled();\n    }\n"
+            "    if (eng.status) {\n        quarantine();\n    }\n    de_stop();"
+        ),
         "    if (!de_drain()) {\n        de_settled();\n    }\n    de_stop();",
-        "    de_stop();",
     ),
     "ring_unroomed": ("c == KA_DE_IL(KA_IL_RING) && ring_room()", "0"),
-    "ctrl_ring_unroomed": ("else if (at == KA_R_IL + KA_IL_RING)", "else if (0)"),
+    "ctrl_ring_unroomed": (
+        "else if (at == KA_R_IL + KA_IL_RING)",
+        "else if (0)",
+    ),
 }
 CHECKS = {
     "no_base": test_every_wait_holds_at_the_chain_running_count,

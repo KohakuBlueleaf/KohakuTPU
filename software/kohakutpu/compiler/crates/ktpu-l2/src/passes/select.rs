@@ -1,10 +1,11 @@
 //! `select` (L2.PASS.002, .013): `o = sel m, P, Q` where `m` compares a value
-//! x with 0 and the arms are x and `s = mul x, a` (a >= 0) becomes one
+//! x with 0 and the arms are x and `s = mul x, a` (a > 0) becomes one
 //! `max x, s` or `min x, s`; the compare goes when nothing else reads it.
 //! The values are the select's bit for bit.
 
 use std::collections::{BTreeSet, HashMap};
 
+use ktpu_isa::numerics::e8m15_value;
 use ktpu_l1::text::{Stmt, Term};
 
 use super::{body_of, names, walk, write};
@@ -23,7 +24,7 @@ fn sign(cmp: &str, zero: usize) -> bool {
     matches!((cmp, zero), ("cmpgt", 1) | ("cmplt", 0))
 }
 
-/// `st` as a max / min where it is a select of x and a nonnegative scale of
+/// `st` as a max / min where it is a select of x and a positive target scale of
 /// x on x's sign.
 fn minmax(st: &Stmt, defs: &HashMap<String, Stmt>) -> Option<Stmt> {
     if st.op != "sel" || st.target.is_none() {
@@ -61,14 +62,13 @@ fn minmax(st: &Stmt, defs: &HashMap<String, Stmt>) -> Option<Stmt> {
     }
     let margs = mul.positional();
     let consts: Vec<f64> = margs.iter().filter_map(|a| num(a)).collect();
-    if margs.len() != 2
-        || consts.len() != 1
-        || !margs.iter().any(|a| a.as_name() == Some(x))
-        || consts[0] < 0.0
-    {
+    if margs.len() != 2 || consts.len() != 1 || !margs.iter().any(|a| a.as_name() == Some(x)) {
         return None;
     }
-    let a = consts[0];
+    let a = e8m15_value(consts[0]);
+    if a.is_nan() || a <= 0.0 {
+        return None;
+    }
     let op = if (positive == x) == (a <= 1.0) {
         "max"
     } else {
@@ -76,7 +76,9 @@ fn minmax(st: &Stmt, defs: &HashMap<String, Stmt>) -> Option<Stmt> {
     };
     let mut out = st.clone();
     out.op = op.into();
-    out.args = vec![Term::name(x), Term::name(scaled)];
+    // Ordered comparisons select q for zero and NaN. Min/max keep their
+    // first operand on equality or unordered inputs.
+    out.args = vec![Term::name(q), Term::name(p)];
     Some(out)
 }
 

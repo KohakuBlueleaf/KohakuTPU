@@ -193,6 +193,16 @@ pub struct Pool {
     pub wlead: i64,
     pub taps: i64,
     pub word_elems: u32,
+    pub buf_words: u32,
+    pub has_fn: bool,
+    pub ram: bool,
+    pub has_mant: bool,
+    pub fin_rcp: bool,
+    pub has_mx7: bool,
+    pub has_b: bool,
+    pub has_mask: bool,
+    pub has_r1: bool,
+    pub has_r2: bool,
 }
 
 impl Pool {
@@ -216,6 +226,16 @@ impl Pool {
             wlead: if schedule { 3 } else { sr.wlead as i64 },
             taps: sr.taps as i64,
             word_elems: m.die.word_bytes / 2,
+            buf_words: sr.buf_words,
+            has_fn: sr.profile.has_fn != 0,
+            ram: sr.profile.tab == "ram",
+            has_mant: sr.profile.has_mant != 0,
+            fin_rcp: sr.profile.fin_rcp != 0,
+            has_mx7: sr.profile.has_mx7 != 0,
+            has_b: sr.profile.has_b != 0,
+            has_mask: sr.profile.has_mask != 0,
+            has_r1: sr.profile.has_r1 != 0,
+            has_r2: sr.profile.has_r2 != 0,
         })
     }
 }
@@ -280,6 +300,10 @@ fn tap_of(v: &OpValue) -> Option<usize> {
 /// Schedule `prog` on `pool`: issue offsets on the modulo schedule, word-slot
 /// depths and result-tap depths (ISA.SR.030-032).
 pub fn schedule(prog: &[PoolOp], pool: &Pool) -> Result<Schedule, Refusal> {
+    schedule_program(prog, pool, true)
+}
+
+fn schedule_program(prog: &[PoolOp], pool: &Pool, executed: bool) -> Result<Schedule, Refusal> {
     if pool.f_lanes == 0 || !pool.word_elems.is_multiple_of(pool.f_lanes) {
         return refuse(
             "ISA.SR.030",
@@ -332,6 +356,18 @@ pub fn schedule(prog: &[PoolOp], pool: &Pool) -> Result<Schedule, Refusal> {
                 _ => return refuse("ISA.SR.022", format!("op {i}: field {name} takes a number")),
             }
         }
+        let field = |name| {
+            let width = lookup(O, name).map(|(_, _, width)| width).unwrap_or(0);
+            f.get(name).copied().unwrap_or(0) & ((1i64 << width) - 1)
+        };
+        if executed
+            && field("KIND") != 0
+            && (!pool.has_fn
+                || (!pool.ram && (field("FIX") != 0 || field("MANT") != 0 || field("CS") != 0))
+                || (field("MANT") != 0 && !pool.has_mant))
+        {
+            return refuse("ISA.SR.022", "function mode is unavailable on this profile");
+        }
         let mut taps: Vec<usize> = Vec::new();
         for s in ["A", "B", "C"] {
             let table = if s == "A" { &cmap.asrc } else { &cmap.bsrc };
@@ -362,6 +398,12 @@ pub fn schedule(prog: &[PoolOp], pool: &Pool) -> Result<Schedule, Refusal> {
                     return refuse("ISA.SR.022", format!("op {i}: {s} is a source, not {x}"))
                 }
             }
+        }
+        if executed
+            && !pool.has_b
+            && (value(&f, "A") == 1 || value(&f, "B") == 3 || value(&f, "C") == 3)
+        {
+            return refuse("ISA.SR.022", "B input is unavailable on this profile");
         }
         for (t, &kk) in taps.iter().enumerate() {
             let d = sig[i] - sig[kk] - pool.ldep;
@@ -399,19 +441,143 @@ pub struct Job {
     pub fin: Vec<BTreeMap<String, i64>>,
 }
 
+fn value(fields: &BTreeMap<String, i64>, name: &str) -> i64 {
+    fields.get(name).copied().unwrap_or(0)
+}
+
+fn effective(job: &Job) -> Result<Job, Refusal> {
+    let mut job = job.clone();
+    for (name, v) in &mut job.g {
+        let Some((_, _, width)) = lookup(G, name) else {
+            return refuse("ISA.SR.024", format!("no global field {name}"));
+        };
+        *v &= (1i64 << width) - 1;
+    }
+    for pass in &job.passes {
+        pack(P, pass)?;
+    }
+    for f in &mut job.fin {
+        for (name, (_, width)) in F {
+            if let Some(v) = f.get_mut(*name) {
+                *v &= (1i64 << width) - 1;
+            }
+        }
+    }
+    Ok(job)
+}
+
+fn executed_passes(job: &Job) -> usize {
+    if value(&job.g, "BUF") == 0 {
+        1
+    } else {
+        match value(&job.g, "NPASS") {
+            0 => 4,
+            n => n as usize + 1,
+        }
+    }
+}
+
+fn executes_program(job: &Job, pass: usize) -> bool {
+    pass < executed_passes(job)
+        && (pass != 0 || value(&job.g, "BUF") == 0 || value(&job.g, "NPASS") == 0)
+}
+
+/// Admit semantic requests against the selected hardware before encoding.
+pub fn validate(job: &Job, pool: &Pool) -> Result<(), Refusal> {
+    validate_effective(&effective(job)?, pool)
+}
+
+fn validate_effective(job: &Job, pool: &Pool) -> Result<(), Refusal> {
+    let g = |name| value(&job.g, name);
+    let encoded_nw = g("NW");
+    let (_, _, nw_width) = lookup(G, "NW").expect("NW configuration slot");
+    let nw = if encoded_nw == 0 {
+        1i64 << nw_width
+    } else {
+        encoded_nw
+    };
+    for (field, present) in [
+        ("BUF", pool.buf_words != 0),
+        ("USE_B", pool.has_b),
+        ("MASK", pool.has_mask),
+        ("R1", pool.has_r1),
+    ] {
+        if g(field) != 0 && !present {
+            return refuse(
+                "ISA.SR.024",
+                format!("{field} is unavailable on this profile"),
+            );
+        }
+    }
+    if g("BUF") != 0 && (nw > i64::from(pool.buf_words / 2) || encoded_nw == 0 || g("USE_B") != 0) {
+        return refuse(
+            "ISA.SR.048",
+            "buffered rows must fit half the buffer, have nonzero shell counts and use only A",
+        );
+    }
+    if g("OUT") >= 2 && (!pool.has_mx7 || nw % 8 != 0) {
+        return refuse(
+            "ISA.SR.046",
+            "MXFP7 requires packing support and whole eight-word groups",
+        );
+    }
+    for (index, pass) in job.passes.iter().enumerate() {
+        if executes_program(job, index) && value(pass, "R2EN") != 0 {
+            if !pool.has_r2 {
+                return refuse("ISA.SR.024", "R2 is unavailable on this profile");
+            }
+            if value(pass, "FINLEN") != 0 && nw < 4 {
+                return refuse("ISA.SR.048", "R2 finalise requires at least four words");
+            }
+        }
+    }
+    let active_fin = job
+        .passes
+        .iter()
+        .take(executed_passes(job))
+        .flat_map(|pass| {
+            let base = value(pass, "FINBASE") as usize;
+            let len = value(pass, "FINLEN") as usize;
+            (0..len).filter_map(move |offset| job.fin.get((base + offset) & 15))
+        });
+    for f in active_fin {
+        let op = value(f, "OP");
+        if !matches!(op, 0 | 8 | 9) && pool.f_lanes == 0 {
+            return refuse("ISA.SR.024", "arithmetic finalise requires pool lanes");
+        }
+        if matches!(op, 10 | 11) && !pool.fin_rcp {
+            return refuse(
+                "ISA.SR.024",
+                "reciprocal finalise is unavailable on this profile",
+            );
+        }
+        let sources: &[&str] = match op {
+            0 | 10 | 11 => &["A"],
+            3 | 4 => &["A", "C"],
+            5 | 8 | 9 => &["A", "B"],
+            _ => &["A", "B", "C"],
+        };
+        for source in sources {
+            let selected = value(f, source);
+            if (selected == 4 && !pool.has_r1) || (selected == 5 && !pool.has_r2) {
+                return refuse(
+                    "ISA.SR.024",
+                    "finalise statistic is unavailable on this profile",
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Every configuration word of `job`: `{address: value}`. Each pass's
 /// program (its NOPS ops from OPBASE) is scheduled on `pool`.
 pub fn words(job: &Job, pool: &Pool) -> Result<BTreeMap<u32, u32>, Refusal> {
+    let job = effective(job)?;
+    validate_effective(&job, pool)?;
     let cmap = map();
     let mask = |w: u32| (1i64 << w) - 1;
-    let mut g = BTreeMap::new();
-    for (k, v) in &job.g {
-        let Some((_, _, w)) = lookup(&cmap.g, k) else {
-            return refuse("ISA.SR.024", format!("no global field {k}"));
-        };
-        g.insert(k.clone(), v & mask(w));
-    }
-    let mut out = pack(&cmap.g, &g)?;
+    let mut out = pack(&cmap.g, &job.g)?;
     for (p, d) in job.passes.iter().enumerate() {
         let base = cmap.pass_base + cmap.pass_stride * p as u32;
         for (a, v) in pack(&cmap.p, d)? {
@@ -422,7 +588,11 @@ pub fn words(job: &Job, pool: &Pool) -> Result<BTreeMap<u32, u32>, Refusal> {
             let opbase = d.get("OPBASE").copied().unwrap_or(0).max(0) as usize;
             let end = (opbase + nops as usize).min(job.ops.len());
             let prog = &job.ops[opbase.min(end)..end];
-            for (i, f) in schedule(prog, pool)?.fields.into_iter().enumerate() {
+            for (i, f) in schedule_program(prog, pool, executes_program(&job, p))?
+                .fields
+                .into_iter()
+                .enumerate()
+            {
                 let mut masked = BTreeMap::new();
                 for (k, v) in f {
                     let Some((_, _, w)) = lookup(&cmap.o, &k) else {
@@ -438,8 +608,8 @@ pub fn words(job: &Job, pool: &Pool) -> Result<BTreeMap<u32, u32>, Refusal> {
     }
     for (i, f) in job.fin.iter().enumerate() {
         let mut w = 0u32;
-        for (k, (lo, wd)) in &cmap.f {
-            w |= ((f.get(*k).copied().unwrap_or(0) & mask(*wd)) as u32) << lo;
+        for (k, (lo, _)) in &cmap.f {
+            w |= (f.get(*k).copied().unwrap_or(0) as u32) << lo;
         }
         out.insert(cmap.fin_base + i as u32, w);
     }

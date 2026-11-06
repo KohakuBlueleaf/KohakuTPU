@@ -13,6 +13,9 @@ ktpu-l1.workspace = true
 ktpu-machine.workspace = true
 
 [dev-dependencies]
+ktpu-l2.workspace = true
+ktpu-verify.workspace = true
+ka-package.workspace = true
 ka-emu.workspace = true
 ktpu = { workspace = true, features = ["mutants"] }
 rayon.workspace = true

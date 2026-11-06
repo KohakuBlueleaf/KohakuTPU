@@ -18,6 +18,7 @@ tinygrad's own. Pinned while installed (the traps each one avoids):
 | buffer lifetime | last read | a schedule holds every buffer it names to its end: `run_linear` frees each KTPU intermediate after its last kernel |
 """
 
+import sys
 from dataclasses import replace
 
 from tinygrad import tensor
@@ -52,6 +53,7 @@ from kohakutpu.application.ktpugrad.captured import (
 )
 from kohakutpu.application.ktpugrad.device import (
     _CAPTURED_CALL,
+    MODULE,
     NAME,
     captured_call,
     register,
@@ -290,7 +292,7 @@ def _execute_eager(linear, ctx, used, inputs, held, rt):
                 b.deallocate()
 
 
-_saved: list | None = None
+_saved: tuple | None = None
 #: where `capture` collects asts while it runs
 _recording: list | None = None
 
@@ -348,27 +350,78 @@ def refresh_knobs() -> None:
 D.ON_DEVICE_INIT.append(refresh_knobs)
 
 
+_ABSENT = object()
+
+
+def _installation_state():
+    entries = [
+        (globals(), ("_saved", "FUSE_MODE", "FUSE_BUDGET")),
+        (rangeify.DEVICE_MAX_BUFS, (NAME,)),
+        (vars(rangeify), ("pm_remove_bufferize", "earliest_rewrites")),
+        (vars(realize), (SEAM,)),
+        (
+            vars(tensor),
+            (
+                RUN,
+                "create_linear_with_vars",
+                "_apply_map_to_tensors",
+                "transform_to_call",
+            ),
+        ),
+        (vars(eager_schedule), ("ENABLED",)),
+        (vars(graph_walk), ("ENABLED", "REWRITE")),
+        (vars(call_capture), ("ENABLED",)),
+        (sys.modules, (MODULE,)),
+    ]
+    module = sys.modules.get(MODULE)
+    if module is not None:
+        entries.append((vars(module), ("KTPUDevice",)))
+    mappings = [
+        (mapping, key, mapping.get(key, _ABSENT))
+        for mapping, keys in entries
+        for key in keys
+    ]
+    return [(v, v.value) for v, _ in _PINS], CapturedJit.__call__, mappings
+
+
+def _restore_installation(state):
+    pins, captured, mappings = state
+    for v, old in pins:
+        v.value = old  # pyright: ignore[reportAttributeAccessIssue]
+    CapturedJit.__call__ = captured
+    for mapping, key, old in reversed(mappings):
+        if old is _ABSENT:
+            mapping.pop(key, None)
+        else:
+            mapping[key] = old
+
+
 def install() -> None:
-    """Register KTPU and route lowering through the seam. Idempotent."""
-    global _saved
-    register()
-    if _saved is None:
-        _saved = [(v, v.value) for v, _ in _PINS]
-    for v, want in _PINS:
-        v.value = want  # pyright: ignore[reportAttributeAccessIssue]  (process-wide)
-    rangeify.DEVICE_MAX_BUFS[NAME] = MAX_BUFS
-    global FUSE_MODE, FUSE_BUDGET
-    FUSE_MODE = ENV.get(FUSE_ENV, "elementwise")
-    if FUSE_MODE not in FUSE_MODES:
-        raise ValueError(f"{FUSE_ENV}={FUSE_MODE!r}: one of {FUSE_MODES}")
-    FUSE_BUDGET = fusion.FusionBudget.environment()
+    """Publish a validated set of KTPU lowering hooks atomically."""
+    global _saved, FUSE_MODE, FUSE_BUDGET
+    mode = ENV.get(FUSE_ENV, "elementwise")
+    if mode not in FUSE_MODES:
+        raise ValueError(f"{FUSE_ENV}={mode!r}: one of {FUSE_MODES}")
+    budget = fusion.FusionBudget.environment()
+    state = _installation_state()
+    try:
+        register()
+        if _saved is None:
+            _saved = state
+        for v, want in _PINS:
+            v.value = want  # pyright: ignore[reportAttributeAccessIssue]
+        rangeify.DEVICE_MAX_BUFS[NAME] = MAX_BUFS
+        FUSE_MODE, FUSE_BUDGET = mode, budget
+        rangeify.pm_remove_bufferize = _PM_REMOVE if mode == "1" else _PM_KEEP
+        rangeify.earliest_rewrites = _PM_EARLIEST
+        setattr(realize, SEAM, to_program)
+        setattr(tensor, RUN, run_linear)
+        CapturedJit.__call__ = captured_call
+        refresh_knobs()
+    except BaseException:
+        _restore_installation(state)
+        raise
     fusion.DECISIONS.clear()
-    rangeify.pm_remove_bufferize = _PM_REMOVE if FUSE_MODE == "1" else _PM_KEEP
-    rangeify.earliest_rewrites = _PM_EARLIEST
-    setattr(realize, SEAM, to_program)
-    setattr(tensor, RUN, run_linear)
-    CapturedJit.__call__ = captured_call
-    refresh_knobs()
 
 
 def uninstall() -> None:
@@ -376,7 +429,7 @@ def uninstall() -> None:
     device stays registered (a live buffer may still be on it)."""
     global _saved
     if _saved is not None:
-        for v, old in _saved:
+        for v, old in _saved[0]:
             v.value = old  # pyright: ignore[reportAttributeAccessIssue]
         _saved = None
     rangeify.DEVICE_MAX_BUFS.pop(NAME, None)

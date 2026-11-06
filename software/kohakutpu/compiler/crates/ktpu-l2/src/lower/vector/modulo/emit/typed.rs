@@ -93,7 +93,8 @@ fn same_stmt(a: &Stmt, b: &Stmt) -> bool {
     a.op == b.op && a.commas == b.commas && terms(&a.args, &b.args)
 }
 
-pub(in crate::lower::vector) fn emit(
+#[doc(hidden)]
+pub fn emit(
     p: &Plan,
     stmts: &[Stmt],
     rings: &[Ring],
@@ -169,13 +170,13 @@ pub(in crate::lower::vector) fn emit(
                 continue;
             }
             if i == FILL || i == DRAIN {
+                if j >= trips {
+                    return Ok(None);
+                }
                 let (kind, engine, memory) = if i == FILL {
                     wait!("fill", "unpack", j - k);
                     ("load", "fill", ir::Memory::Fill)
                 } else {
-                    if j >= trips {
-                        return Ok(None);
-                    }
                     wait!("drain", "pack", j);
                     ("store", "drain", ir::Memory::Drain)
                 };

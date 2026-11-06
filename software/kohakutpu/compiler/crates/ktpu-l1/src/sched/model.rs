@@ -128,7 +128,7 @@ impl<'a> Ruled<'a> {
         if n < 3 {
             return Ok(written);
         }
-        let preds = preds(run, super::timing::chunks(self.machine));
+        let preds = preds(run, &self.isa, &self.facts);
         let texts = Self::texts(run);
         let mut enc = self.encoder();
         let mut core = self.core();

@@ -263,7 +263,10 @@ fn contiguous(base: i128, n: i128, stride: i128) -> Walk {
 /// [`MOVE_WORDS`] is several moves.
 pub fn copy(f: &Facts, src: i128, dst: i128, nbytes: i128) -> Result<Writes> {
     let wb = f.word_bytes as i128;
-    let words = nbytes.div_euclid(wb);
+    if wb <= 0 || nbytes < 0 || nbytes % wb != 0 {
+        return refuse!("L0.STEP.024", "copy length must be nonnegative whole words");
+    }
+    let words = nbytes / wb;
     let step = MOVE_WORDS as i128;
     let mut out = Vec::new();
     let mut at = 0;
@@ -294,8 +297,20 @@ pub fn convert(
     in_words: i128,
     out_words: i128,
 ) -> Result<Writes> {
-    let step = MOVE_WORDS as i128 / in_words;
     let wb = f.word_bytes as i128;
+    if entries < 0
+        || in_words < 1
+        || out_words < 1
+        || wb <= 0
+        || out_words > i128::from(i32::MAX) / wb
+        || in_words > MOVE_WORDS as i128
+    {
+        return refuse!(
+            "L0.STEP.024",
+            "entries require positive geometry within the move budget"
+        );
+    }
+    let step = MOVE_WORDS as i128 / in_words;
     let mut out = Vec::new();
     let mut at = 0;
     while at < entries {

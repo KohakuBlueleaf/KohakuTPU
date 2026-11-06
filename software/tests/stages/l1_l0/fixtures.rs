@@ -1,8 +1,15 @@
 //! L1 to L0: each single-node fixture's scheduled L1 against its packages.
 //! Interlink steps are machine/'s; a multi-node body stays on the L1 simulator.
 
+mod admission;
+mod branch_certification;
+mod branch_ordering;
 #[path = "../common.rs"]
 mod common;
+mod descriptor_initialization;
+mod mark_frontiers;
+mod package;
+mod tiled_readback;
 
 use std::collections::BTreeMap;
 use std::fmt::Write;

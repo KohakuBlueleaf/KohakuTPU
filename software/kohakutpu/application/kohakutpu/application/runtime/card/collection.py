@@ -3,7 +3,6 @@
 import dataclasses
 import json
 import pathlib
-import re
 import sys
 
 from kohakuaccel.driver.node.queue import NodeError
@@ -86,23 +85,43 @@ class Collection(Parts):
             n = min(wr - at, cap - off)
             buf[rec + off : rec + off + n] = self.mem.read_block(base + rec + off, n)
             at += n
-        got = _rs.debug_decode(bytes(buf), self.machine_json)
+        baselines = self.__dict__.setdefault("_debug_loss", {})
+        previous = baselines.get(node)
+        lost_before = (
+            previous[2]
+            if previous is not None and previous[0] == base and wr >= previous[1]
+            else 0
+        )
+        try:
+            got = _rs.debug_decode(bytes(buf), self.machine_json, lost_before)
+        except _rs.Refused as error:
+            if error.clause == "DBG.TRACE.002":
+                self.mem.write_block(base + DBG_H_RD, self.queue_layout.line_bytes(wr))
+                baselines[node] = (base, wr, h[7])
+            raise
         self.mem.write_block(
             base + DBG_H_RD, self.queue_layout.line_bytes(got["consumed"])
         )
+        baselines[node] = (base, wr, h[7])
         return got
 
+    def _failure_report(self, node: int, error: NodeError) -> dict | None:
+        try:
+            return self.debug_report(node)
+        except _rs.Refused as diagnostic:
+            error.add_note(f"failure diagnostics: {diagnostic!r}")
+            self.restart(nodes=(node,))
+            return None
+
     @staticmethod
-    def drained(report: dict | None, console: str = "") -> bool:
-        """Whether a failed run's quiesce drained (DBG.DUMP.002): the debug
-        image's FAIL records in `report`, else the production image's last
-        ``PKGF stray <n> outstanding <n>`` line in `console`."""
-        if report is not None:
-            return all(
-                p["fail"] is None or p["fail"]["drained"] for p in report["packages"]
-            )
-        left = re.findall(r"PKGF stray \d+ outstanding (\d+)", console)
-        return bool(left) and int(left[-1]) == 0
+    def drained(report: dict | None, console: str = "", *, tag=None) -> bool:
+        """A complete expected-tag FAIL is the post-quiesce stability proof."""
+        if report is None or tag is None:
+            return False
+        packages = [p for p in report["packages"] if p["tag"] == tag]
+        return bool(packages) and all(
+            p["fail"] is not None and p["fail"]["drained"] for p in packages
+        )
 
     def dump(self, buffers: dict, stable: bool = True) -> dict:
         """`buffers` (``{name: (address, bytes)}``, the caller's: a bound
@@ -116,13 +135,20 @@ class Collection(Parts):
         }
 
     def _debug_rerun(
-        self, node: int, raw: bytes, bindings, report: dict, timeout_cycles: int = 0
+        self,
+        node: int,
+        raw: bytes,
+        bindings,
+        report: dict,
+        timeout_cycles: int = 0,
+        *,
+        tag=None,
     ) -> dict:
         """RUL.075: a failed package once more, off the dispatch engine and
         traced, for exact step attribution, under the failed run's bound
         (`timeout_cycles`, 0 the boot block's); the firmware restarted first
         when the failure did not drain (RUL.082)."""
-        if not self.drained(report):
+        if not self.drained(report, tag=tag):
             self.restart()
         q = self.queues[node]
         try:
@@ -133,10 +159,16 @@ class Collection(Parts):
                 timeout_cycles=timeout_cycles,
                 flags=QL.RUN_F_TRACE | QL.RUN_F_NOENGINE,
             )
-        except NodeError:
-            pass
-        again = self.debug_report(node)
-        if any(p["fail"] and not p["fail"]["drained"] for p in again["packages"]):
+        except NodeError as error:
+            failed_tag = error.completion.tag
+        else:
+            failed_tag = None
+        try:
+            again = self.debug_report(node)
+        except _rs.Refused:
+            self.restart(nodes=(node,))
+            raise
+        if failed_tag is not None and not self.drained(again, tag=failed_tag):
             self.restart()
         return again
 
@@ -178,15 +210,17 @@ class Collection(Parts):
                 raise
             except NodeError as e:
                 try:
-                    self._segment(node, tag, e.console)
+                    self._segment(node, tag, e.console_bytes)
                     self._keep_failed(pkg, bindings, e, node)
-                    e.debug = self.debug_report(node) if self.debug else None
+                    e.debug = self._failure_report(node, e) if self.debug else None
                     if dump is not None:
                         # Before the rerun, which writes the same buffers.
-                        e.dump = self.dump(dump, self.drained(e.debug, e.console))
+                        e.dump = self.dump(
+                            dump, self.drained(e.debug, e.console, tag=tag)
+                        )
                     if e.debug is not None:
                         e.rerun = self._debug_rerun(
-                            node, plain[node][0].to_bytes(), bindings, e.debug
+                            node, plain[node][0].to_bytes(), bindings, e.debug, tag=tag
                         )
                 except Exception as diagnostic:  # noqa: BLE001
                     e.add_note(f"failure diagnostics: {diagnostic!r}")
@@ -217,10 +251,10 @@ class Collection(Parts):
                 e = contract_error(caught)
                 self._forget_residents((n,))
                 try:
-                    self._segment(n, tag, e.console)
+                    self._segment(n, tag, e.console_bytes)
                     self._keep_failed(pkg, plain[n][1], e, n)
-                    e.debug = self.debug_report(n) if self.debug else None
-                    stable = stable and self.drained(e.debug, e.console)
+                    e.debug = self._failure_report(n, e) if self.debug else None
+                    stable = stable and self.drained(e.debug, e.console, tag=tag)
                     if not faults and dump is not None:
                         e.dump = self.dump(dump, stable and k == len(tags) - 1)
                 except Exception as diagnostic:  # noqa: BLE001

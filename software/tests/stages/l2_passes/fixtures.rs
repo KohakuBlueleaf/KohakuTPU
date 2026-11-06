@@ -2,6 +2,7 @@
 
 #[path = "../common.rs"]
 mod common;
+mod select_semantics;
 
 use common::{card, fixtures, known, software, stage_suite, Fixture, Level, Pair};
 use ktpu::{Backend, CardStack};

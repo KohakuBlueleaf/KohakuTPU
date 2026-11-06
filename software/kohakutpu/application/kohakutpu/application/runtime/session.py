@@ -42,9 +42,12 @@ class DebugSession:
     """`card` (a `NodeCard`) for one budget of `seconds`. Each wait the
     firmware makes is bounded by `wait` seconds at the card's sysnode clock
     (RUL.033: the session's own budget), and each run's host wait is the time
-    left, which must exceed `wait` so a hang ends as the firmware's TIMEOUT
-    with its report, never as the host's (DBG.SESS.003). The budget counts the
-    card's clock (`clock` by default), the one its waits count."""
+    left under one absolute host deadline at each queue wait boundary.
+    Arbitrary callback work and individual transport operations are cooperative:
+    they cannot be preempted; card wait boundaries enforce the deadline.
+    The budget counts `clock` (the card clock by default). Session, queue and
+    native clocks must measure monotonic seconds at the same rate; their
+    origins may differ."""
 
     def __init__(
         self, card, seconds: float = 60.0, wait: float | None = None, clock=None
@@ -63,23 +66,85 @@ class DebugSession:
 
     # ------------------------------------------------------------ the session
     def __enter__(self) -> Self:
-        self.t0 = self.clock()
         card = self.card
-        self._keep = (card.timeout, {n: a.timeout for n, (_, a) in card.boots.items()})
         cycles = bound(self.wait, card.sys_hz / 1e6)
-        for _, args in card.boots.values():
-            args.timeout = cycles
-        card.load(debug=True)
+        self.t0 = self.clock()
+        self._end = self.t0 + self.seconds
+        self._keep = (card.timeout, {n: a.timeout for n, (_, a) in card.boots.items()})
+        self._policies = []
+        try:
+            card.timeout = self.seconds
+            for q in card.queues.values():
+                self._install_waits(q)
+            for _, args in card.boots.values():
+                args.timeout = cycles
+            card.load(debug=True)
+        except BaseException:
+            self._restore()
+            raise
         return self
 
     def __exit__(self, kind, err, tb) -> None:
         card = self.card
+        try:
+            _, timeouts = self._keep
+            for n, (_, args) in card.boots.items():
+                args.timeout = timeouts[n]
+            # A fatal firmware is left as it stopped, for the host to look at.
+            if not isinstance(err, SessionFatal):
+                card.load(debug=False)
+        finally:
+            self._restore()
+
+    def _remaining(self) -> float:
+        left = self._end - self.clock()
+        if left <= 0:
+            raise SessionBudget("DBG.SESS.005: debug session deadline exhausted")
+        return left
+
+    def _install_waits(self, q) -> None:
+        start, wait, ready = q._start, q.wait, q.wait_ready
+        missing = object()
+        prior = {
+            name: q.__dict__.get(name, missing)
+            for name in ("_start", "wait", "wait_ready")
+        }
+        self._policies.append((q, prior, missing))
+
+        def begin():
+            left = self._remaining()
+            clock, wall = start()
+            return clock - (self.seconds - left), wall
+
+        def complete(tag, timeout=None, check=True, service=None):
+            return wait(tag, timeout=self.seconds, check=check, service=service)
+
+        def boot(timeout=120.0):
+            return ready(self.seconds)
+
+        q._start, q.wait, q.wait_ready = begin, complete, boot
+        native = getattr(q, "native_exchange", None)
+        if native is not None:
+            submit = native._submit
+            prior = {"_submit": native.__dict__.get("_submit", missing)}
+            self._policies.append((native, prior, missing))
+
+            def exchange(execution, publishing):
+                return submit(execution, publishing, timeout=self._remaining())
+
+            native._submit = exchange
+
+    def _restore(self) -> None:
+        for q, prior, missing in reversed(self._policies):
+            for name, value in prior.items():
+                if value is missing:
+                    q.__dict__.pop(name, None)
+                else:
+                    setattr(q, name, value)
+        card = self.card
         card.timeout, timeouts = self._keep
         for n, (_, args) in card.boots.items():
             args.timeout = timeouts[n]
-        # A fatal firmware is left as it stopped, for the host to look at.
-        if not isinstance(err, SessionFatal):
-            card.load(debug=False)
 
     def left(self) -> float:
         """Seconds of the budget not yet spent."""
@@ -94,21 +159,17 @@ class DebugSession:
         """`fn()` within the budget: its result recorded, or its failure
         (`NodeError`, with the debug report read now when `fn` did not) and
         the session goes on. Raises :class:`SessionBudget` when the time left
-        does not exceed the firmware's wait, :class:`SessionFatal` on a FATAL
+        is exhausted, :class:`SessionFatal` on a FATAL
         firmware."""
-        left = self.left()
-        if left <= self.wait:
-            raise SessionBudget(
-                f"DBG.SESS.005: {left:.3f} s left of {self.seconds} s, "
-                f"the firmware's wait is {self.wait} s"
-            )
+        self._remaining()
         card = self.card
-        card.timeout = left
         try:
             rec = {"ok": True, "result": fn()}
+            self._remaining()
         except NodeError as e:
+            self._remaining()
             if e.debug is None and card.debug:
-                e.debug = card.debug_report()
+                e.debug = card._failure_report(card.nodes[0], e)
             rec = {
                 "ok": False,
                 "error": str(e),
@@ -116,7 +177,7 @@ class DebugSession:
                 "debug": e.debug,
                 "rerun": e.rerun,
                 "dump": e.dump,
-                "drained": card.drained(e.debug, e.console),
+                "drained": card.drained(e.debug, e.console, tag=e.completion.tag),
             }
         except FirmwareFatal as e:
             consoles = {n: loader.console() for n, (loader, _) in card.boots.items()}

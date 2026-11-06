@@ -20,31 +20,53 @@ class Placement:
             raise RuntimeError("graph placement is closed")
         signature = (int(nbytes), space, node, owner)
         index = cursors.get(signature, 0)
-        cursors[signature] = index + 1
-        key = (site, signature, index)
-        ref = self.slots.get(key)
-        if ref is not None:
-            arena, physical = ref
-            # A queued scratch owner releases only when its completion is observed.
-            conflicts = [s for s in self.dev.inflight if ref in s.references]
-            if conflicts:
-                self.dev.collect_through(conflicts[-1])
-            if physical in arena.released and arena.references[physical] == 1:
-                arena.reuse_pinned(physical)
-                line = self.dev.line_bytes
-                extent = max(line, (int(nbytes) + line - 1) // line * line)
-                try:
-                    return self.dev.mmu.register(physical, extent, arena)
-                except BaseException:
-                    arena.release(physical)
-                    raise
-        at = self.dev._alloc(nbytes, space, node, owner)
-        entry, physical = self.dev.mmu.resolve(at, owner=True)
-        ref = (entry.arena, physical)
-        entry.arena.retain(physical)
-        self.references.append(ref)
-        self.slots[key] = ref
-        return at
+        try:
+            cursors[signature] = index + 1
+            key = (site, signature, index)
+            ref = self.slots.get(key)
+            if ref is not None:
+                arena, physical = ref
+                # A queued scratch owner releases only when its completion is observed.
+                conflicts = [s for s in self.dev.inflight if ref in s.references]
+                if conflicts:
+                    self.dev.collect_through(conflicts[-1])
+                if physical in arena.released and arena.references[physical] == 1:
+                    arena.reuse_pinned(physical)
+                    line = self.dev.line_bytes
+                    extent = max(line, (int(nbytes) + line - 1) // line * line)
+                    try:
+                        return self.dev.mmu.register(physical, extent, arena)
+                    except BaseException:
+                        arena.release(physical)
+                        raise
+            at = self.dev._alloc(nbytes, space, node, owner)
+            prior = ref
+            retained = None
+            count = len(self.references)
+            try:
+                entry, physical = self.dev.mmu.resolve(at, owner=True)
+                ref = (entry.arena, physical)
+                entry.arena.retain(physical)
+                retained = ref
+                self.references.append(ref)
+                self.slots[key] = ref
+                return at
+            except BaseException:
+                if prior is None:
+                    self.slots.pop(key, None)
+                else:
+                    self.slots[key] = prior
+                del self.references[count:]
+                if retained is not None:
+                    retained[0].unretain(retained[1])
+                self.dev.free(at)
+                raise
+        except BaseException:
+            if index:
+                cursors[signature] = index
+            else:
+                cursors.pop(signature, None)
+            raise
 
     @property
     def nbytes(self):

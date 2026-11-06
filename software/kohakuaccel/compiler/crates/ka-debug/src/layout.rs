@@ -45,7 +45,7 @@ pub const RUN_NOENGINE: u64 = 8;
 pub const UNIT_OPS: [&str; 6] = ["DISPATCH", "AWAIT", "REPEAT", "FETCH", "SEND", "RECV"];
 
 /// Package step opcodes (`enum ka_step_op`, ka/package/format.h), by code.
-pub const OPS: [&str; 22] = [
+pub const OPS: [&str; 24] = [
     "END",
     "DISPATCH",
     "AWAIT",
@@ -68,4 +68,6 @@ pub const OPS: [&str; 22] = [
     "SEND",
     "RECV",
     "CTRL",
+    "ASSERT_ZERO",
+    "FRONTIER",
 ];

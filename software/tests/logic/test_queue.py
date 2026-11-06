@@ -6,13 +6,18 @@ import struct
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from kohakuaccel.driver.node.queue import client as CLIENT
 from kohakuaccel.driver.node.queue import layout as L
-from kohakuaccel.driver.node.queue.client import NAP_SHARE, FirmwareFatal, NodeQueue
+from kohakuaccel.driver.node.queue.client import (
+    NAP_SHARE,
+    FirmwareFatal,
+    NodeQueue,
+)
 from kohakuaccel.driver.node.queue.double import SpecFirmware
 from kohakutpu.application.runtime.offline import HostMemory
 from kohakutpu.stack.rs import _rs
@@ -270,3 +275,104 @@ def test_fatal_and_stdout_wake_the_poll():
         struct.pack_into("<Q", raw, 320, 64)
         os.pwrite(memory.fileno(), raw, 0)
         assert _rs.wait_tail(*args) == (bytes(raw), 1)
+
+
+@pytest.mark.parametrize("text", ["x" * 65, "é" * 33])
+def test_stdin_capacity(text):
+    mem = Memory()
+    q = NodeQueue(mem, 0, sq_n=2, cq_n=4, si_bytes=64, layout=LAYOUT)
+    q.init()
+    before = list(mem.writes)
+    with pytest.raises(ValueError, match="capacity"):
+        q.stdin("矇" * 33)
+    assert q.si_wr == 0 and mem.writes == before
+    q.stdin("a" * 64)
+    before = list(mem.writes)
+    with pytest.raises(ValueError, match="capacity"):
+        q.stdin("b")
+    assert q.si_wr == 64 and mem.writes == before
+    assert mem.read_block(q.geo["si"], 64) == b"a" * 64
+    mem.write_block(LAYOUT.si_rd, LAYOUT.line_bytes(2))
+    q.stdin("é")
+    assert q.si_wr == 66
+    assert mem.read_block(q.geo["si"], 2) == "é".encode()
+
+
+@pytest.mark.parametrize("bad", [-64, 0, 1, 1 << 32])
+@pytest.mark.parametrize("stdin", [False, True])
+def test_stdio_geometry_width(bad, stdin):
+    so, si = (128, bad) if stdin else (bad, 128)
+    with pytest.raises(ValueError):
+        LAYOUT.geometry(2, 4, so, si)
+    with pytest.raises(ValueError):
+        LAYOUT.info_line(4, 2, 4, so, si)
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_fatal_run_retains_allocations_until_sysnode_reset(native):
+    mem = Memory()
+    freed = []
+    q = NodeQueue(
+        mem,
+        0,
+        sq_n=2,
+        cq_n=4,
+        layout=LAYOUT,
+        spill=lambda size: 1 << 21,
+        unspill=freed.append,
+    )
+    q.native_run = _rs.QueueRun(LAYOUT) if native else None
+    q.init()
+    fw = SpecFirmware(mem, 0, layout=LAYOUT)
+    fw.boot()
+    package = q.prepare(b"held package".ljust(32, b"\0"))
+    tag = q.submit(package, [0x1000])
+    q.flush()
+    fw._fatal(0xE000000000000014)
+    with pytest.raises(FirmwareFatal):
+        q.poll()
+    package.close()
+    assert not freed and tag in q._package_tags
+    assert q.is_cached(package.key)
+    tail = q.sq_tail
+    for action in (lambda: q.submit(package), q.discard_packages, q.init):
+        with pytest.raises(RuntimeError, match="sysnode reset"):
+            action()
+    assert q.sq_tail == tail and not freed
+    q.init(sysnode_reset=True)
+    assert freed == [package.address]
+    assert not q._package_tags and not q.is_cached(package.key)
+
+
+class RefusePackage:
+    def run(self, pkg, binds):
+        return SimpleNamespace(status=LAYOUT.bad_arg, sent=0)
+
+
+def test_recoverable_refusal_retires_and_allows_success():
+    mem = Memory()
+    q = NodeQueue(mem, 0, sq_n=2, cq_n=4, layout=LAYOUT)
+    q.init()
+    fw = SpecFirmware(mem, 0, layout=LAYOUT)
+    fw.boot()
+    q.idle = fw.step
+    raw = b"safe refusal".ljust(32, b"\0")
+    fw.interp = RefusePackage()
+    refused = q.submit(raw)
+    assert not q.wait(refused, check=False).ok
+    assert refused not in q._package_tags
+    fw.interp = None
+    assert q.wait(q.submit(raw)).ok
+
+    fw.interp = RefusePackage()
+    refused = q.submit(raw)
+    succeeded = q.submit(raw)
+    q.flush()
+    fw.step()
+    fw.interp = None
+    fw.step()
+    q.poll()
+    assert refused not in q._package_tags and succeeded not in q._package_tags
+    assert not q.wait(refused, check=False).ok
+    assert q.wait(succeeded).ok
+    assert q.wait(q.submit(raw)).ok

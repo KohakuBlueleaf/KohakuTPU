@@ -561,7 +561,7 @@ def simulate_l2(
     """`name`'s L2 of `text` run with each parameter at its address, its bytes
     through `read(address, count)` and `write(address, bytes)`."""
 
-def debug_decode(region: bytes, machine_json: str) -> dict:
+def debug_decode(region: bytes, machine_json: str, lost_before: int = 0) -> dict:
     """A node's debug region (the debug firmware's per-step trace and
     report) decoded for the machine file `machine_json` (its text). Raises
     `Refused` (clause DBG.API.002 or DBG.TRACE.002)."""

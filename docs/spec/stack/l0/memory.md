@@ -17,21 +17,21 @@ executes packages; it does not allocate memory or apply relocations.
 that address. The driver's `SoftwareMMU` assigns non-reused virtual ranges and
 records the physical base, accessible extent, arena and allocation generation.
 Physical reuse does not revive a retired virtual range. Staging virtual ranges
-preserve their node and staging-domain bits.
+preserve their sysnode and staging-domain bits.
 
 A package buffer-table index is its local handle. The binding list supplies
 virtual bases in buffer-table order. `_rs.bind(..., translations=...)` accepts
 live `(virtual base, physical base, extent)` entries from the driver. Rust
 validates every handle and its entire buffer extent before ordinary or template
-binding. Unknown handles, overlaps, overflow and insufficient extents refuse
+binding. Unknown handles, overlapping virtual translations, overflow and insufficient extents refuse
 with `RUL.023`. An empty translation list is not a physical-address fallback.
 `Template.bind_handles` uses the same resolver. Host reads and writes also
 resolve virtual addresses. Bound wire packages contain physical payload fields
 and no buffer or relocation table.
 
-- **L0.MEM.007** `frozen` Handle translation preserves view offsets, refuses
+- **L0.MEM.007** `unproven` Handle translation preserves view offsets, refuses
   stale generations and does not alter the source package. Vector:
-  `RUL.023.handles`; mutant: `memory/identity-translation`.
+  `RUL.023.handles`; mutant: `memory/identity-translation`. (code: software/kohakuaccel/driver/kohakuaccel/driver/runtime/mmu.py:38-42, :89-150; software/kohakuaccel/compiler/crates/ka-package/src/format/bind.rs:31-68, :293-333)
 
 ## Exact extents
 
@@ -49,71 +49,35 @@ words. Matmul uses explicitly padded packed formats and product temporaries;
 column broadcast operands are explicitly expanded when the compute width
 exceeds their logical width.
 
-- **L0.MEM.008** `RTL` Flat/cast and reverse kernels preserve a sentinel starting
-  immediately after the destination word extent. Tier-0 vectors:
-  `RUL.020.flat_extent`, `RUL.020.reverse_extent`; tier-1 vectors:
-  `RUL.020.flat_sentinel`, `RUL.020.reverse_sentinel`. Separate allocations are
-  covered by `RUL.020.adjacent_cast` and `RUL.020.adjacent_reverse`; the guard
-  occupies the next physical reservation and a distinct handle. Their mutants restore
-  rounded-row destination accesses. `RUL.020.no_allocation_tail` is frozen.
+- **L0.MEM.008** `unproven` Flat/cast kernels with incomplete vector rows compute in padded scratch and copy only the declared destination word extent out. Reverse kernels with incomplete trips likewise use private output scratch and copy only destination words. These paths avoid rounded-row writes beyond the output extent; named sentinel vectors are not established as RTL evidence here. Mutants can disable the exact-extent paths. (code: software/kohakutpu/compiler/crates/ktpu-kernels/src/gen/vector.rs:1563-1594, :1627-1656; software/kohakutpu/compiler/crates/ktpu-kernels/src/gen/convert.rs:109-112; software/kohakutpu/compiler/crates/ktpu-kernels/src/gen/transpose.rs:260-318; evidence: Code inspection; no qualifying card or named RTL witness established for this complete statement.)
 
 ## Submission and completion
 
-- **L0.MEM.001** `frozen` Submissions retain distinct named allocations,
-  including interior views. Owner free does not recycle a referenced span.
-  Successful collection releases scratch ownership and submission references
-  once. Vector: `L0.BIND.027.dependencies`; mutant: `memory/free-immediate`.
+- **L0.MEM.001** `unproven` Submissions retain distinct referenced allocations, including interior views and scratch windows. Owner free does not recycle referenced storage. Successful collection releases its references once. When no submissions remain and recording is inactive, collection releases only scratch windows with no remaining references; recording pins can retain other windows. (code: software/kohakutpu/application/kohakutpu/application/runtime/device/allocation.py:86-93,134-147; software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py:192,223-235,400-428)
 - **L0.MEM.002** `unproven` Failed waits preserve reservations. Uncertain
   publication quarantines spans and refuses further runtime submissions. Device
   close first shuts down the card, then revokes all reservations, including
   recording pins. If card shutdown fails, reservations remain. Vector:
-  `L0.BIND.027.teardown`; mutant: `memory/no-teardown`.
-- **L0.MEM.003** `frozen` Allocation pressure collects oldest first, retrying
-  after each completion. `max_inflight` is positive or `None`; reaching it
-  collects oldest first. Host reads/writes drain work. Vector:
-  `API.MEM.005.oldest`; mutant: `memory/drain-all`.
-- **L0.MEM.009** `frozen` Runtime packages use the shared allocator, tagged
-  `package`. Every submitted tag retains its package before queue publication.
-  Polling a final completion releases that tag; the last reference returns the
-  package span. Progress completions do not retire it. The queue's local staging
-  fallback reuses coalesced free package spans. Vector: `L0.BIND.027.packages`;
-  mutant: `memory/no-package-retirement`.
+  `L0.BIND.027.teardown`; mutant: `memory/no-teardown`. (code: software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py:51-59, :359-375, :400-424; software/kohakutpu/application/kohakutpu/application/runtime/device/__init__.py:311-332)
+- **L0.MEM.003** `unproven` Allocation pressure collects oldest first and retries after each completion, then may evict idle packages. `max_inflight` is positive or `None`; reaching a finite limit collects oldest first. Host accesses collect in order through the last conflicting use of the accessed allocation: reads wait for writers, writes for all uses. (code: software/kohakutpu/application/kohakutpu/application/runtime/device/allocation.py:122-132, :168-198; software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py:61-80, :187-201; evidence: Code inspection; no qualifying card or named RTL witness established for this complete statement.)
+- **L0.MEM.009** `unproven` Runtime package allocations use the shared allocator with owner `package`. Submission retains a package tag before publication; final completion retires that tag, while progress does not. Pins and other tags retain storage. Eligible spilled packages may remain in a bounded resident cache; eviction calls `unspill` when supplied, or coalesces queue-local staging spans. (code: software/kohakutpu/application/kohakutpu/application/runtime/card/common.py:130-141; software/kohakuaccel/driver/kohakuaccel/driver/node/queue/client.py:827-831, :868-875, :997-1011, :1126-1190; evidence: Code inspection; no qualifying card or named RTL witness established for this complete statement.)
 
 ## Recording and TinyJit
 
-- **L0.MEM.004** `frozen` Recording uses the main heap. A `Recorded` log owns
-  pins for its host accesses and kernel bindings. Closing is idempotent; log
-  destruction releases pins. Replay refuses a closed log or one from another
-  device. Replay holds independent references during execution and quarantines
-  them after an uncertain failure. Vector: `L0.BIND.030.recording`; mutant:
-  `memory/no-record-pins`.
-- **L0.MEM.005** `RTL` TinyJit releases superseded captures before recapturing.
-  Each graph also owns placement pins on main-heap extents, indexed by kernel
-  call site, allocation signature and occurrence. Scratch and temporary spans
-  reuse their physical locations on recapture, independent of unrelated heap
-  allocations. Reuse waits for outstanding device uses and refuses spans held
-  by another recording. Each new owner gets a fresh virtual handle and generation.
-  Live forms retain their owners when graph destruction drops placement pins;
-  recording and in-flight pins independently delay physical reclamation.
-  Replay still requires two byte-identical event logs and equal storage/core
-  states; no address fields are ignored or rewritten during comparison.
-  Tier-0 `L0.MEM.005.jit_drop` kills `memory/no-jit-drop`;
-  tier-1 `L0.MEM.005.jit_card` uses the session's device, fragments its heap,
-  checks exact NumPy values and kills both `memory/no-jit-replay` and
-  `memory/no-stable-placement`. A one-kernel graph may execute directly instead
-  of creating a graph capture.
+- **L0.MEM.004** `unproven` Recording uses the main heap and `Recorded` owns pins. Closing is idempotent after successful cleanup, and destruction closes the log. Replay refuses closed or foreign-device logs. Ordinary replay retains independent references and quarantines them after uncertain publication; native replay uses its recording’s ownership and records uncertainty when the native run remains busy. (code: software/kohakutpu/application/kohakutpu/application/runtime/device/common.py:146-175; software/kohakutpu/application/kohakutpu/application/runtime/device/allocation.py:134-155; software/kohakutpu/application/kohakutpu/application/runtime/device/replay.py:52-107, :192-225; evidence: Code inspection; no qualifying card or named RTL witness established for this complete statement.)
+- **L0.MEM.005** `unproven` TinyJit closes superseded captures while retaining graph placement pins. Placement keys include call site, allocation signature and occurrence. Reuse collects through the last outstanding reference, then reuses the span only if its owner released it and its placement pin is the sole reference; otherwise allocation obtains and pins another span and updates the key. Placement close drops pins without revoking live owners. Replay admission requires equal entry states, event logs and exit states across consecutive captures without host reads; replay also requires the captured entry state. (code: software/kohakutpu/application/kohakutpu/application/runtime/memory/placement.py:18-69, :76-82; software/kohakutpu/application/kohakutpu/application/ktpugrad/device.py:405-434, :447-497; evidence: Code inspection; no qualifying card or named RTL witness established for this complete statement.)
 
 ## Accounting
 
-- **L0.MEM.006** `frozen` Every arena reservation has an owner tag and requested
+- **L0.MEM.006** `unproven` Every arena reservation has an owner tag and requested
   size. `Arena.stats()` reports requested and reserved usage, peak reserved
   bytes, cumulative allocation count, free bytes, largest free span, free span
   count, external fragmentation (`free - largest`) and owner totals. Pending
-  frees remain charged. Vector: `L0.BIND.028.counters`; mutant: `memory/no-peak`.
+  frees remain charged. Vector: `L0.BIND.028.counters`; mutant: `memory/no-peak`. (code: software/kohakutpu/application/kohakutpu/application/runtime/memory/arena.py:72-80, :124-166, :189-205)
 
 ## Boot regions and firmware
 
-The host allocates each node's queue from its staging arena with owner
+The host allocates each sysnode's queue from its staging arena with owner
 `firmware:queue:<node>`. Debug regions use shared DRAM with owner
 `firmware:debug:<node>`. The boot table carries base, extent and use: DEBUG=1,
 QUEUE=2. Queue regions survive image reloads and reserve their spans until
@@ -124,10 +88,7 @@ Firmware validates populated regions and requires a QUEUE region matching the
 queue header pointer, with space for the declared rings and completion records.
 An undersized region is refused before queue service becomes ready.
 
-- **L0.MEM.010** `RTL` Boot queue regions come from the allocator and their
-  bounds govern firmware queue accesses. Tier-0 vector: `RUL.024.boot_regions`,
-  mutant: `memory/no-region-validation`. Tier-1: `RUL.024.boot_region_card`,
-  mutant image: `kohakutpu_memory_mutant`.
+- **L0.MEM.010** `unproven` Fatal state fallback does not treat an arbitrary aligned boot queue pointer as writable. It validates boot identity and regions, locates the queue region, and requires a matching nonzero aligned base and extent covering the firmware state line before publishing. (code: software/kohakuaccel/firmware/queue/service.c:25-45; evidence: implementation inspection only; no card or named RTL witness established for this complete contract.)
 
 Dispatcher builds exclude `os/heap`. Opcodes 3..5 return `BAD_OP`; the local and
 remote queue clients expose no heap operations. Offset 0x340 is reserved ABI

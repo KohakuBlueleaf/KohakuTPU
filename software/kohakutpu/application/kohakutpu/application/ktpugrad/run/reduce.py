@@ -292,7 +292,7 @@ def _vector_choice(plan: Plan):
 
 # ------------------------------------------------------------ rows path
 #: What a padding lane holds so a reduction ignores it.
-IDENTITY = {"sum": 0.0, "max": -65504.0, "prod": 1.0}
+IDENTITY = {"sum": 0.0, "max": float("-inf"), "prod": 1.0}
 
 
 def _table_only(plan: Plan) -> list:

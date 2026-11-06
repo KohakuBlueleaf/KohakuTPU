@@ -38,14 +38,15 @@ const PAYLOAD_BYTES: u64 = 32;
 enum Owed {
     /// Payloads `[next, end)` (a DISPATCH).
     Words { next: u64, end: u64 },
-    /// `left` words of payloads the lowering appended (a REPEAT's).
-    Appended { left: u64 },
+    /// Reconstructed source words expected from a REPEAT.
+    Appended { repeat: Repeat },
     /// `left` words from absolute address `at` (a FETCH).
     Absolute { at: u64, left: u64 },
 }
 
 struct Node<'a> {
     low: &'a Package,
+    src: &'a Package,
     first_new: u64,
     owed: Vec<VecDeque<Owed>>,
     sent: Vec<u64>,
@@ -61,7 +62,8 @@ struct Node<'a> {
 /// each unit's runs waited for as L0.STEP.045 bounds them, and every WAIT
 /// names a unit of the package or the mover; refuses (RUL.046) any RING
 /// entry with silicon flaw F-003. A package without ENGINE steps is not
-/// checked.
+/// checked. The source is bound: descriptor ordering and non-overlap are
+/// established by binding before replay.
 pub fn check(src: &Package, low: &Package, f: &Facts) -> Result<()> {
     if mutant::on("l0.check/off") || !low.steps.iter().any(|s| s.op == Op::Engine) {
         return Ok(());
@@ -69,6 +71,7 @@ pub fn check(src: &Package, low: &Package, f: &Facts) -> Result<()> {
     let n = src.units.len();
     let mut node = Node {
         low,
+        src,
         first_new: src.payloads.len() as u64,
         owed: vec![VecDeque::new(); n],
         sent: vec![0; n],
@@ -86,7 +89,7 @@ pub fn check(src: &Package, low: &Package, f: &Facts) -> Result<()> {
                 end: s.arg + s.count,
             },
             Op::Repeat => Owed::Appended {
-                left: s.count * ((s.arg >> 32) & 0xFFFF),
+                repeat: Repeat::open(src, s)?,
             },
             Op::Fetch => Owed::Absolute {
                 at: s.arg,
@@ -94,9 +97,10 @@ pub fn check(src: &Package, low: &Package, f: &Facts) -> Result<()> {
             },
             _ => continue,
         };
-        let words = match owed {
+        let words = match &owed {
             Owed::Words { next, end } => end - next,
-            Owed::Appended { left } | Owed::Absolute { left, .. } => left,
+            Owed::Appended { repeat } => repeat.left(),
+            Owed::Absolute { left, .. } => *left,
         };
         if words == 0 {
             continue;
@@ -126,6 +130,76 @@ pub fn check(src: &Package, low: &Package, f: &Facts) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// A cursor over an immutable template and its increment descriptors.
+#[derive(Debug, Clone)]
+struct Repeat {
+    first: usize,
+    count: u64,
+    repeats: u64,
+    increments: u64,
+    cursor: u64,
+}
+
+impl Repeat {
+    fn open(src: &Package, s: &crate::format::Step) -> Result<Self> {
+        let first = (s.arg & 0xffff_ffff) as usize;
+        let repeats = (s.arg >> 32) & 0xffff;
+        let increments = s.arg >> 48;
+        let available = src.payloads.len().saturating_sub(first) as u64;
+        if first > src.payloads.len()
+            || s.count == 0
+            || repeats == 0
+            || s.count > available
+            || increments.div_ceil(2) > available - s.count
+        {
+            return refuse!(CLAUSE, "invalid source REPEAT extent");
+        }
+        for k in 0..increments {
+            let descriptor = src.payloads[first + s.count as usize + (k / 2) as usize];
+            let at = (k % 2) as u32 * 128;
+            let index = descriptor.get(at, 32);
+            let bit = descriptor.get(at + 32, 8) as u32;
+            let width = descriptor.get(at + 40, 8) as u32;
+            if index >= s.count || !(1..=64).contains(&width) || bit + width > 256 {
+                return refuse!(CLAUSE, "invalid source REPEAT field");
+            }
+        }
+        Ok(Self {
+            first,
+            count: s.count,
+            repeats,
+            increments,
+            cursor: 0,
+        })
+    }
+
+    fn left(&self) -> u64 {
+        self.count * self.repeats - self.cursor
+    }
+
+    fn next(&mut self, src: &Package) -> Result<Word> {
+        let index = self.cursor % self.count;
+        let repetition = self.cursor / self.count;
+        let mut word = src.payloads[self.first + index as usize];
+        for k in 0..self.increments {
+            let descriptor = src.payloads[self.first + self.count as usize + (k / 2) as usize];
+            let at = (k % 2) as u32 * 128;
+            if descriptor.get(at, 32) == index {
+                let bit = descriptor.get(at + 32, 8) as u32;
+                let width = descriptor.get(at + 40, 8) as u32;
+                let delta = descriptor.get(at + 64, 64);
+                let value = word.get(bit, width) as u128 + repetition as u128 * delta as u128;
+                if value >= 1u128 << width {
+                    return refuse!(CLAUSE, "source REPEAT field wraps");
+                }
+                word.set(bit, width, value as u64);
+            }
+        }
+        self.cursor += 1;
+        Ok(word)
+    }
 }
 
 impl Node<'_> {
@@ -183,7 +257,7 @@ impl Node<'_> {
         let Some(u) = self.unit(x, y) else {
             return refuse!(CLAUSE, "a word to ({x}, {y}): no unit of the package");
         };
-        if self.low.units[u].has_port() {
+        if self.src.units[u].has_port() {
             return refuse!(CLAUSE, "a mailbox word to unit {u}, which has a fetch port");
         }
         let mut word = Word::ZERO;
@@ -193,7 +267,7 @@ impl Node<'_> {
         self.run(u, 1, self.credit(u))?;
         match self.owed[u].front_mut() {
             Some(Owed::Words { next, end }) => {
-                if self.low.payloads.get(*next as usize) != Some(&word) {
+                if self.src.payloads.get(*next as usize) != Some(&word) {
                     return refuse!(CLAUSE, "unit {u} is sent a word other than payload {next}");
                 }
                 *next += 1;
@@ -201,9 +275,11 @@ impl Node<'_> {
                     self.owed[u].pop_front();
                 }
             }
-            Some(Owed::Appended { left }) => {
-                *left -= 1;
-                if *left == 0 {
+            Some(Owed::Appended { repeat }) => {
+                if repeat.next(self.src)? != word {
+                    return refuse!(CLAUSE, "unit {u} is sent an incorrect REPEAT word");
+                }
+                if repeat.left() == 0 {
                     self.owed[u].pop_front();
                 }
             }
@@ -223,7 +299,7 @@ impl Node<'_> {
         let Some(u) = self.unit(x, y) else {
             return refuse!(CLAUSE, "a fetch for ({x}, {y}): no unit of the package");
         };
-        let unit = self.low.units[u];
+        let unit = self.src.units[u];
         if !unit.has_port() || port != unit.fetch & 0xFFFF {
             return refuse!(
                 CLAUSE,
@@ -251,23 +327,38 @@ impl Node<'_> {
                         "unit {u}'s run (REL {rel}, at {at:#x}, {n}) is not payloads {next}..{end}"
                     );
                 }
+                for k in *next..*next + n {
+                    if !matches!(
+                        (
+                            self.low.payloads.get(k as usize),
+                            self.src.payloads.get(k as usize)
+                        ),
+                        (Some(low), Some(src)) if low == src
+                    ) {
+                        return refuse!(CLAUSE, "unit {u} fetches an incorrect DISPATCH word");
+                    }
+                }
                 *next += n;
                 if next == end {
                     self.owed[u].pop_front();
                 }
             }
-            Some(Owed::Appended { left }) => {
+            Some(Owed::Appended { repeat }) => {
                 let i = at / PAYLOAD_BYTES;
                 if !rel
                     || at % PAYLOAD_BYTES != 0
                     || i < self.first_new
                     || i + n > total
-                    || n > *left
+                    || n > repeat.left()
                 {
                     return refuse!(CLAUSE, "unit {u}'s run is not of appended payloads");
                 }
-                *left -= n;
-                if *left == 0 {
+                for k in i..i + n {
+                    if Some(&repeat.next(self.src)?) != self.low.payloads.get(k as usize) {
+                        return refuse!(CLAUSE, "unit {u} fetches an incorrect REPEAT word");
+                    }
+                }
+                if repeat.left() == 0 {
                     self.owed[u].pop_front();
                 }
             }
@@ -306,13 +397,13 @@ impl Node<'_> {
     }
 
     fn credit(&self, u: usize) -> u64 {
-        match self.low.units[u].credit {
+        match self.src.units[u].credit {
             0 => u64::MAX,
             c => c,
         }
     }
 
     fn unit(&self, x: u64, y: u64) -> Option<usize> {
-        self.low.units.iter().position(|u| u.x == x && u.y == y)
+        self.src.units.iter().position(|u| u.x == x && u.y == y)
     }
 }

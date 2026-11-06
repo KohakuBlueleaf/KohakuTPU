@@ -65,10 +65,11 @@ pub enum Op {
     Recv = 20,
     Ctrl = 21,
     AssertZero = 22,
+    Frontier = 23,
 }
 
 impl Op {
-    pub const ALL: [Op; 23] = [
+    pub const ALL: [Op; 24] = [
         Op::End,
         Op::Dispatch,
         Op::Await,
@@ -92,6 +93,7 @@ impl Op {
         Op::Recv,
         Op::Ctrl,
         Op::AssertZero,
+        Op::Frontier,
     ];
 
     pub fn from_code(code: u64) -> Option<Op> {
@@ -124,6 +126,7 @@ impl Op {
             "RECV",
             "CTRL",
             "ASSERT_ZERO",
+            "FRONTIER",
         ][self as usize]
     }
 

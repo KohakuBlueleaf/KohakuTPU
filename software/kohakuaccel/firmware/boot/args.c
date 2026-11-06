@@ -24,6 +24,11 @@ int ka_boot_check(void)
                   KA_MAX_UNITS);
         return KA_BOOT_ERR_UNITS;
     }
+    return ka_boot_regions_check();
+}
+
+int ka_boot_regions_check(void)
+{
     for (unsigned i = 0; i < KA_BOOT_REGIONS; ++i) {
         uint64_t base = ka_boot.regions[i].base, size = ka_boot.regions[i].size;
         uint64_t use = ka_boot.regions[i].use;

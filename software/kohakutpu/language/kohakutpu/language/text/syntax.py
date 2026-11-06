@@ -502,9 +502,9 @@ def fmt(t) -> str:
         case Str(text):
             return f'"{text}"'
         case Neg(x):
-            return f"-{fmt(x)}"
+            return f"-{_unary(x)}"
         case Not(x):
-            return f"!{fmt(x)}"
+            return f"!{_unary(x)}"
         case Offset(b, o):
             if _simple(b) and _simple(o):
                 return f"{fmt(b)}+{fmt(o)}"
@@ -512,7 +512,7 @@ def fmt(t) -> str:
         case BinOp(op, a, b):
             return f"{_paren(a, op, left=True)} {op} {_paren(b, op)}"
         case Pos(x):
-            return f"+{fmt(x)}"
+            return f"+{_unary(x)}"
         case Placed(x, space):
             return f"{fmt(x)} @{fmt(space)}"
         case Compare(op, a, b):
@@ -565,11 +565,17 @@ def _simple(t) -> bool:
 
 
 def _rank(t) -> int:
+    if isinstance(t, Compare):
+        return 0
     if isinstance(t, Offset):
         return 1
     if isinstance(t, BinOp):
         return _RANK[t.op]
     return 3
+
+
+def _unary(t) -> str:
+    return f"({fmt(t)})" if _rank(t) < 3 else fmt(t)
 
 
 def _paren(t, op: str, left: bool = False) -> str:

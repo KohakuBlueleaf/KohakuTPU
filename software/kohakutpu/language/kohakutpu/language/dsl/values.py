@@ -92,6 +92,30 @@ def _axis(k, n: int):
     )
 
 
+def _axes(key, shape, *, newaxis=True):
+    keys = key if isinstance(key, tuple) else (key,)
+    ellipses = sum(k is Ellipsis for k in keys)
+    consumed = sum(k is not None and k is not Ellipsis for k in keys)
+    if ellipses > 1:
+        raise DSLError(f"at most one ellipsis is allowed, at {at_caller()}")
+    if consumed > len(shape):
+        raise DSLError(f"too many indices for {list(shape)}, at {at_caller()}")
+    axes, d = [], 0
+    for k in keys:
+        if k is Ellipsis:
+            fill = len(shape) - consumed
+            axes.extend([("all",)] * fill)
+            d += fill
+        elif k is None:
+            if not newaxis:
+                raise DSLError(f"value views do not support new axes, at {at_caller()}")
+            axes.append(("new",))
+        else:
+            axes.append(_axis(k, shape[d]))
+            d += 1
+    return axes
+
+
 class View:
     """A region of a buffer: one entry an axis (leading first)."""
 
@@ -157,24 +181,7 @@ class Param:
         return len(self.spec.shape)
 
     def __getitem__(self, key: Any) -> View:
-        keys = key if isinstance(key, tuple) else (key,)
-        axes, d = [], 0
-        for k in keys:
-            if k is Ellipsis:
-                fill = self.ndim - sum(
-                    1 for x in keys if x is not None and x is not Ellipsis
-                )
-                axes += [("all",)] * fill
-                d += fill
-                continue
-            if d >= self.ndim and k is not None:
-                raise DSLError(
-                    f"{len(keys)} indices for {self.name}{list(self.shape)}, at {at_caller()}"
-                )
-            axes.append(_axis(k, self.shape[d] if k is not None else 1))
-            if k is not None:
-                d += 1
-        return View(self, axes)
+        return View(self, _axes(key, self.shape))
 
     def whole(self) -> View:
         return View(self, [("all",)] * self.ndim)
@@ -346,11 +353,23 @@ class Value:
     def assign(self, new: "Value") -> "Value":
         """Rebind this name to `new` (made by the statement just recorded): in
         `with kt.sticky()` the skipped path keeps the old contents."""
-        if new.stmt is None or new.stmt.target != new.name:
+        block = self.trace.stack[-1]
+        if (
+            new.trace is not self.trace
+            or new.stmt is None
+            or new.stmt.target != new.name
+            or not block
+            or block[-1] is not new.stmt
+        ):
             raise DSLError(
-                f"assign takes a value made by one statement, at {at_caller()}"
+                f"assign takes the latest value in the active block, at {at_caller()}"
             )
-        if new.shape != self.shape or new.space != self.space:
+        if (
+            new.shape != self.shape
+            or new.space != self.space
+            or new.dtype != self.dtype
+            or new.mode != self.mode
+        ):
             raise DSLError(
                 f"{self.name} is {self.type_text()}, the new value {new.type_text()}, "
                 f"at {at_caller()}"
@@ -360,8 +379,7 @@ class Value:
         return new
 
     def __getitem__(self, key: Any) -> "ValueView":
-        keys = key if isinstance(key, tuple) else (key,)
-        return ValueView(self, [_axis(k, n) for k, n in zip(keys, self.shape)])
+        return ValueView(self, _axes(key, self.shape, newaxis=False))
 
 
 class ValueView:
@@ -382,9 +400,25 @@ class ValueView:
         out += list(self.value.shape[len(self.axes) :])
         return tuple(out)
 
+    @property
+    def mode(self):
+        return self.value.mode
+
+    @property
+    def stat(self) -> bool:
+        return self.value.space == "reg" and len(self.shape) == 1
+
+    @property
+    def lane(self) -> bool:
+        return self.value.lane
+
+    @property
+    def row_bcast(self) -> bool:
+        return self.value.row_bcast
+
     def text(self) -> str:
         parts = []
-        for a in self.axes:
+        for axis, a in enumerate(self.axes):
             if a[0] == "all":
                 parts.append(":")
             elif a[0] == "idx":
@@ -393,17 +427,11 @@ class ValueView:
                 lo = a[1]
                 if isinstance(lo, int) and not E.is_sym(lo):
                     parts.append(
-                        f"{lo}:{lo + a[2]}"
-                        if self._cols(a)
-                        else f"{E.text(lo)} : +{a[2]}"
+                        f"{lo}:{lo + a[2]}" if axis == 1 else f"{E.text(lo)} : +{a[2]}"
                     )
                 else:
                     parts.append(f"{E.text(lo)} : +{a[2]}")
         return f"{self.value.name}[{', '.join(parts)}]"
-
-    def _cols(self, a) -> bool:
-        """A column-block slice prints `C0:C1` (the reducer reads constants)."""
-        return self.axes.index(a) == 1
 
 
 #: What vector math takes: a traced value, column blocks of one, or a number.

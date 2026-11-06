@@ -118,7 +118,7 @@ pub struct VcTiming {
 pub struct Sr {
     pub count: u32,
     pub profile: Option<SrProfile>,
-    pub buf_words: Runtime<Option<u32>>,
+    pub buf_words: Option<u32>,
     pub fifo_depth: Option<u32>,
     pub op_depth: Option<u32>,
     pub fin_depth: Option<u32>,
@@ -145,19 +145,27 @@ pub struct SrProfile {
     #[serde(rename = "H_TAPS")]
     pub h_taps: u32,
     #[serde(rename = "HAS_FN")]
-    pub has_fn: Runtime<u32>,
+    pub has_fn: u32,
     /// `ram` (loadable table) or `rom` (exp2 only).
     #[serde(rename = "TAB")]
-    pub tab: Runtime<String>,
+    pub tab: String,
     #[serde(rename = "HAS_MANT")]
-    pub has_mant: Runtime<u32>,
+    pub has_mant: u32,
     #[serde(rename = "FIN_RCP")]
-    pub fin_rcp: Runtime<u32>,
+    pub fin_rcp: u32,
     #[serde(rename = "F16_IEEE")]
     pub f16_ieee: Runtime<u32>,
     /// MXFP7 output (RUL.013).
     #[serde(rename = "HAS_MX7")]
-    pub has_mx7: Runtime<u32>,
+    pub has_mx7: u32,
+    #[serde(rename = "HAS_B")]
+    pub has_b: u32,
+    #[serde(rename = "HAS_MASK")]
+    pub has_mask: u32,
+    #[serde(rename = "HAS_R1")]
+    pub has_r1: u32,
+    #[serde(rename = "HAS_R2")]
+    pub has_r2: u32,
 }
 
 /// The SRU facts of a die that has SR units, every one present.
@@ -165,7 +173,7 @@ pub struct SrProfile {
 pub struct SrFacts {
     pub count: u32,
     pub profile: SrProfile,
-    pub buf_words: Runtime<u32>,
+    pub buf_words: u32,
     pub fifo_depth: u32,
     pub op_depth: u32,
     pub fin_depth: u32,
@@ -183,7 +191,7 @@ impl Sr {
         Some(SrFacts {
             count: self.count,
             profile: self.profile.clone()?,
-            buf_words: Runtime::new((*self.buf_words.runtime())?),
+            buf_words: self.buf_words?,
             fifo_depth: self.fifo_depth?,
             op_depth: self.op_depth?,
             fin_depth: self.fin_depth?,

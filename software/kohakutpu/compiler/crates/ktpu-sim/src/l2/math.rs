@@ -10,7 +10,7 @@ use ktpu_l1::text::{fmt, Stmt, Term};
 use super::node::holds;
 use super::view::{view, Layout};
 use super::{map, Rows, Sim, CORE_KEY};
-use crate::l1::term::int;
+use crate::l1::term::{int, Env};
 use crate::mem::WORD;
 use crate::num::{self, mx7};
 use crate::units::core::{lane_op, TAU};
@@ -31,8 +31,39 @@ pub struct Instance {
 
 /// An operand: a value, a statistic broadcast over its rows, or a number.
 enum Operand<'a> {
-    Value(&'a Rows),
+    Value(RowView<'a>),
     Number(u32),
+}
+
+/// A borrowed rectangle with the source row pitch.
+struct RowView<'a> {
+    rows: usize,
+    cols: usize,
+    pitch: usize,
+    v: &'a [u32],
+}
+
+impl RowView<'_> {
+    fn at(&self, r: usize, c: usize) -> u32 {
+        self.v[r * self.pitch + c]
+    }
+
+    fn owned(&self) -> Rows {
+        let v = if self.pitch == self.cols {
+            self.v[..self.rows * self.cols].to_vec()
+        } else {
+            self.v
+                .chunks(self.pitch)
+                .take(self.rows)
+                .flat_map(|row| row[..self.cols].iter().copied())
+                .collect()
+        };
+        Rows {
+            rows: self.rows,
+            cols: self.cols,
+            v,
+        }
+    }
 }
 
 impl Operand<'_> {
@@ -84,25 +115,49 @@ impl Instance {
         Ok(())
     }
 
-    fn operand<'a>(&'a self, t: &Term) -> R<Operand<'a>> {
+    fn operand<'a>(&'a self, t: &Term, env: &Env) -> R<Operand<'a>> {
         if let Some(x) = number(t) {
             return Ok(Operand::Number(num::lane(x)));
         }
-        let name = match t {
-            Term::View(n, _) => n.as_str(),
-            Term::Name(n) => n.as_str(),
+        let (name, axes): (&str, &[Term]) = match t {
+            Term::View(n, axes) => (n, axes),
+            Term::Name(n) => (n, &[]),
             other => return Err(format!("an operand, got {}", fmt(other))),
         };
-        self.values
-            .get(name)
-            .map(Operand::Value)
-            .ok_or(format!("no value {name}"))
+        let x = self.values.get(name).ok_or(format!("no value {name}"))?;
+        let whole = axes.iter().all(|a| {
+            matches!(a, Term::Slice(None, None) | Term::NewAxis) || a.as_name() == Some("*")
+        });
+        let (r0, rows, c0, cols) = if whole {
+            (0, x.rows as i64, 0, x.cols as i64)
+        } else {
+            let axes = axes
+                .iter()
+                .map(|a| match a {
+                    Term::NewAxis => Term::Slice(None, None),
+                    Term::Name(n) if n == "*" => Term::Slice(None, None),
+                    a => a.clone(),
+                })
+                .collect();
+            view(
+                &Term::View(name.to_string(), axes),
+                |_| Ok(vec![x.rows as i64, x.cols as i64]),
+                env,
+            )?
+            .rect()
+        };
+        Ok(Operand::Value(RowView {
+            rows: rows as usize,
+            cols: cols as usize,
+            pitch: x.cols,
+            v: &x.v[r0 as usize * x.cols + c0 as usize..],
+        }))
     }
 
     /// Every operand reads as `rows` x `cols`, a one-column value broadcast.
-    fn fits(&self, st: &Stmt, rows: usize, cols: usize) -> R<()> {
+    fn fits(&self, st: &Stmt, rows: usize, cols: usize, env: &Env) -> R<()> {
         for t in st.positional() {
-            if let Ok(Operand::Value(v)) = self.operand(t) {
+            if let Operand::Value(v) = self.operand(t, env)? {
                 if v.cols != 1 && (!rows.is_multiple_of(v.rows) || v.cols < cols) {
                     return Err(format!(
                         "{} {}: {}x{} read as {rows}x{cols}",
@@ -164,19 +219,19 @@ impl Instance {
                 self.put(st, got)
             }
             "send" => {
-                let Operand::Value(q) = self.operand(pos[0])? else {
+                let Operand::Value(q) = self.operand(pos[0], &sim.env)? else {
                     return Err("send VALUE -> mg[I]".into());
                 };
                 let key = sim.key(sim.node, sim.unit(pos[2])?);
-                sim.links.entry(key).or_default().push_back(q.clone());
+                sim.links.entry(key).or_default().push_back(q.owned());
                 Ok(())
             }
             "load" => self.load(sim, st),
             "unpack" => self.unpack(sim, st),
             "pack" => {
                 let (r, c) = shape(st)?;
-                self.fits(st, r, c)?;
-                let from = self.operand(pos[0])?;
+                self.fits(st, r, c, &sim.env)?;
+                let from = self.operand(pos[0], &sim.env)?;
                 let v: Vec<u32> = (0..r * c)
                     .map(|i| u32::from(num::to_f16(from.at(i / c, i % c))))
                     .collect();
@@ -194,9 +249,9 @@ impl Instance {
                 )
             }
             "store" => self.store(sim, st),
-            "rsum" | "rmax" => self.reduce(st),
-            "xlane" | "xrot" => self.shuffle(st),
-            _ => self.math(st),
+            "rsum" | "rmax" => self.reduce(sim, st),
+            "xlane" | "xrot" => self.shuffle(sim, st),
+            _ => self.math(sim, st),
         }
     }
 
@@ -281,7 +336,7 @@ impl Instance {
             return self.put(st, Rows { rows, cols, v });
         }
         if st.kw("lane").is_none() {
-            if let Ok(Operand::Value(x)) = self.operand(st.positional()[0]) {
+            if let Ok(Operand::Value(x)) = self.operand(st.positional()[0], &sim.env) {
                 if x.cols != cols && x.rows * x.cols == rows * cols {
                     // The same row-major values in the register shape: an
                     // L1 [2, 128] value unpacked as one [1, 256] row.
@@ -289,9 +344,9 @@ impl Instance {
                     return self.put(st, Rows { rows, cols, v });
                 }
             }
-            self.fits(st, rows, cols)?;
+            self.fits(st, rows, cols, &sim.env)?;
         }
-        let from = self.operand(st.positional()[0])?;
+        let from = self.operand(st.positional()[0], &sim.env)?;
         let v: Vec<u32> = match st.kw("lane") {
             Some(t) => {
                 let l = number(t).ok_or("lane=L")? as usize;
@@ -309,7 +364,7 @@ impl Instance {
         let v = sim.view(pos[0])?;
         let b = sim.buf(&v.name)?.clone();
         let (r0, vr, c0, vc) = v.rect();
-        let from = self.operand(pos[2])?;
+        let from = self.operand(pos[2], &sim.env)?;
         if let Layout::Mx7 { b: side, .. } = b.layout {
             for g in 0..vr / MG_LANES {
                 for k in 0..vc / MG_BLOCK {
@@ -328,7 +383,7 @@ impl Instance {
             }
             return Ok(());
         }
-        let statistic = matches!(from, Operand::Value(x) if x.cols == 1);
+        let statistic = matches!(&from, Operand::Value(x) if x.cols == 1);
         for i in 0..vr * vc {
             let (r, c) = if statistic {
                 (i as usize, 0)
@@ -343,10 +398,10 @@ impl Instance {
     }
 
     /// `rsum` exactly, rounded once; the lowered tree stays within its ulps.
-    fn reduce(&mut self, st: &Stmt) -> R<()> {
+    fn reduce(&mut self, sim: &Sim<'_>, st: &Stmt) -> R<()> {
         let (rows, _) = shape(st)?;
         let t = st.positional()[0];
-        let from = self.operand(t)?;
+        let from = self.operand(t, &sim.env)?;
         let Operand::Value(x) = from else {
             return Err(format!("a reduction of {}", fmt(t)));
         };
@@ -367,11 +422,11 @@ impl Instance {
         self.put(st, Rows { rows, cols: 1, v })
     }
 
-    fn shuffle(&mut self, st: &Stmt) -> R<()> {
+    fn shuffle(&mut self, sim: &Sim<'_>, st: &Stmt) -> R<()> {
         let (rows, cols) = shape(st)?;
-        self.fits(st, rows, cols)?;
+        self.fits(st, rows, cols, &sim.env)?;
         let pos = st.positional();
-        let from = self.operand(pos[0])?;
+        let from = self.operand(pos[0], &sim.env)?;
         let k = number(pos[1]).ok_or("OP X, K")? as usize;
         let mut v = Vec::with_capacity(rows * cols);
         for r in 0..rows {
@@ -388,11 +443,14 @@ impl Instance {
         self.put(st, Rows { rows, cols, v })
     }
 
-    fn math(&mut self, st: &Stmt) -> R<()> {
+    fn math(&mut self, sim: &Sim<'_>, st: &Stmt) -> R<()> {
         let (rows, cols) = shape(st)?;
-        self.fits(st, rows, cols)?;
+        self.fits(st, rows, cols, &sim.env)?;
         let pos = st.positional();
-        let ops: Vec<Operand<'_>> = pos.iter().map(|t| self.operand(t)).collect::<R<_>>()?;
+        let ops: Vec<Operand<'_>> = pos
+            .iter()
+            .map(|t| self.operand(t, &sim.env))
+            .collect::<R<_>>()?;
         let zero = Operand::Number(0);
         let arg = |i: usize| ops.get(i).unwrap_or(&zero);
         let sticky = Cell::new(false);

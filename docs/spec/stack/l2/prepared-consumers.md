@@ -57,7 +57,7 @@ form, not a refusal. Under `cost` a kernel that lowers is taken when its cycles
 are at most those of the materialized launches plus `vc.launch_gap` for each
 launch after the first.
 
-A kernel's cycles (`ktpu_l2::cost`) are read from its compiled L1, the node priced
+A kernel's cycles (`ktpu_l2::cost`) are read from its compiled L1, the sysnode priced
 from the same machine facts the timed model (`software/tests/perf/model`) reads:
 
 - `vc.launch_front` for the run, `vc.word_cycles` for each load;
@@ -68,12 +68,12 @@ from the same machine facts the timed model (`software/tests/perf/model`) reads:
   drain through the walk sent with it, `mover.copy_cost` for each contiguous run
   of the walk; it starts once its unit is free and its send is done;
 - each wait on a unit `vc.wait_cycles` once the unit is done;
-- each move `mover.move_cycles` on the node, then its commands in turn on the
+- each move `mover.move_cycles` on the sysnode, then its commands in turn on the
   mover: `mover.fill_cycles` before each fill and `mover.statement_cycles` before
   each other command after the first, `mover.copy_cost` (`mover.element_cycles` a
   run of a gather or scatter) for each contiguous run, capped at `mover.burst_max`
-  words, and its words; a posted move runs beside the node, one not posted waits
-  for every unit and holds the node until it is done;
+  words, and its words; a posted move runs beside the sysnode, one not posted waits
+  for every unit and holds the sysnode until it is done;
 - joined at the waits. Cluster programs take no time: both forms run the same
   ones.
 
@@ -88,12 +88,18 @@ by more than that and can miss closer ones.
 `runtime.costs` reads an immutable JSON deployment profile named by
 `KTPU_COST_PROFILE`. The file contains:
 
-- `schedule`: `finite_batch` and `overlap`, which must match current packing
-  settings;
+- `schedule`: the exact active scheduling dictionary, including `finite_batch`
+  and `overlap`, enabled flags `classifier_overlap`, `pipeline`,
+  `zero_classifier`, `stream_axes`, `fill_overlap`, `pull_tree`, `zero_reuse`,
+  `class_rows_direct`, `class_rows_route`, and `class_band` when not 1. Missing
+  or extra keys fail equality and retain ordinary execution.
+  (code: software/kohakutpu/application/kohakutpu/application/runtime/costs.py:29-59)
 - `recipes`: canonical JSON keys containing alternative kind, board, and the
   address-independent generator/layout recipe;
-- each record's `original` and `alternative` cycle costs, `verified` value
-  witness, and provenance.
+- each record's `original` and `alternative` costs and `verified` field.
+  Admission checks truthiness of `verified` and `alternative < original`,
+  not a numerical witness or provenance.
+  (code: software/kohakutpu/application/kohakutpu/application/runtime/costs.py:15-26)
 
 Only a verified, strictly cheaper alternative is admitted. This admitted view
 is cached per profile path and indexed by alternative kind and board; record

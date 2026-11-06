@@ -265,8 +265,15 @@ def run(
     nblk = shape["nblk"]
     rq = shape["out"][-1]  # a block's partials, whole words
     nbytes = 2 * int(np.prod(shape["out"]))
-    parts = [dev.alloc(nbytes), dev.alloc(nbytes)]
+    parts = []
     try:
+        for _ in range(2):
+            at = dev.alloc(nbytes)
+            try:
+                parts.append(at)
+            except BaseException:
+                dev.free(at)
+                raise
         info1 = dict(info, blocks=nblk)
         one = None
         if pend:

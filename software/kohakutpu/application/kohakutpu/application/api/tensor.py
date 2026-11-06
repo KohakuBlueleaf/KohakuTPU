@@ -630,9 +630,13 @@ def _realize(t: Tensor) -> None:
         st, key = _statistic(dev, t, e, leaves, view, info)
     else:
         st, key = _wide(dev, t, e, leaves, view, info), FLAT
-    st.wrote(key)
-    st.dtype = np.dtype(np.float16)
-    t._buf, t._node = Buf(st, np.float16), None
+    try:
+        st.wrote(key)
+        st.dtype = np.dtype(np.float16)
+        t._buf, t._node = Buf(st, np.float16), None
+    except BaseException:
+        st.free()
+        raise
 
 
 def _bind(dev, leaves, view, stat_space=False) -> tuple:
@@ -654,49 +658,59 @@ def _wide(dev, t, e, leaves, view, info) -> Storage:
                 f"rows of {W} (not whole 32-column blocks) with a broadcast operand",
             )
         st, out = _out_storage(dev, t, False)
-        binds = {
-            f"in{i}": FM.f16(dev, x.t.st, x.t.dtype, x.t.size)
-            for i, x in enumerate(leaves)
-        }
-        FM.generated.flat(
-            dev,
-            e,
-            tuple("f16" for _ in leaves),
-            t.size,
-            dict(binds, out=out),
-            info=info,
-        )
-        return st
+        try:
+            binds = {
+                f"in{i}": FM.f16(dev, x.t.st, x.t.dtype, x.t.size)
+                for i, x in enumerate(leaves)
+            }
+            FM.generated.flat(
+                dev,
+                e,
+                tuple("f16" for _ in leaves),
+                t.size,
+                dict(binds, out=out),
+                info=info,
+            )
+            return st
+        except BaseException:
+            st.free()
+            raise
     binds, ops = _bind(dev, leaves, view)
     st, out = _out_storage(dev, t, False)
     try:
-        RW.run(dev, e, ops, binds, R, W, Operand("full", pitch=W), out, info)
-    except (RW.RowsError, ValueError) as err:
+        try:
+            RW.run(dev, e, ops, binds, R, W, Operand("full", pitch=W), out, info)
+        except (RW.RowsError, ValueError) as err:
+            raise Unsupported("API.REF.007", str(err)) from None
+        return st
+    except BaseException:
         st.free()
-        raise Unsupported("API.REF.007", str(err)) from None
-    return st
+        raise
 
 
 def _statistic(dev, t, e, leaves, view, info) -> tuple:
     R = RW.rows_of(view)
     st, out = _out_storage(dev, t, True)
     try:
-        if view[-1] == 1:
-            # Statistics of statistics: R values a statistic, 16 a word.
-            binds, ops = _bind(dev, leaves, view, stat_space=True)
-            RW.run(dev, e, ops, binds, R, 32, Operand("row"), out, info)
-        else:
-            if view[-1] % 32:
-                raise Unsupported(
-                    "API.REF.007",
-                    f"a reduction of rows of {view[-1]}: whole 32-column blocks",
-                )
-            binds, ops = _bind(dev, leaves, view)
-            RW.run(dev, e, ops, binds, R, view[-1], Operand("row"), out, info)
-    except (RW.RowsError, ValueError) as err:
+        try:
+            if view[-1] == 1:
+                # Statistics of statistics: R values a statistic, 16 a word.
+                binds, ops = _bind(dev, leaves, view, stat_space=True)
+                RW.run(dev, e, ops, binds, R, 32, Operand("row"), out, info)
+            else:
+                if view[-1] % 32:
+                    raise Unsupported(
+                        "API.REF.007",
+                        f"a reduction of rows of {view[-1]}: whole 32-column blocks",
+                    )
+                binds, ops = _bind(dev, leaves, view)
+                RW.run(dev, e, ops, binds, R, view[-1], Operand("row"), out, info)
+        except (RW.RowsError, ValueError) as err:
+            raise Unsupported("API.REF.007", str(err)) from None
+        return st, FLAT
+    except BaseException:
         st.free()
-        raise Unsupported("API.REF.007", str(err)) from None
-    return st, FLAT
+        raise
 
 
 def _access(t: Tensor, slot: int, ranges: tuple, broadcast: bool = True) -> Access:
@@ -758,14 +772,17 @@ def _planned_rows(dev, t, e, leaves, view, info) -> tuple:
         reductions=reductions,
     )
     st = Storage(dev, 2 * t.size)
-    bufs = {0: st, **{i + 1: x.t.st for i, x in enumerate(leaves)}}
     try:
-        for run in R.execute(dev, plan, bufs):
-            run.info.update(info)
-    except (Refused, RW.RowsError, FM.FormError, ValueError) as err:
+        bufs = {0: st, **{i + 1: x.t.st for i, x in enumerate(leaves)}}
+        try:
+            for run in R.execute(dev, plan, bufs):
+                run.info.update(info)
+        except (Refused, RW.RowsError, FM.FormError, ValueError) as err:
+            raise Unsupported("API.REF.007", str(err)) from None
+        return st, next(iter(st.valid))
+    except BaseException:
         st.free()
-        raise Unsupported("API.REF.007", str(err)) from None
-    return st, next(iter(st.valid))
+        raise
 
 
 def _matmul(dev, t, prod: Prod, e, extras, view, info) -> tuple:
@@ -799,15 +816,18 @@ def _matmul(dev, t, prod: Prod, e, extras, view, info) -> tuple:
         batch=batch,
     )
     st = Storage(dev, 2 * t.size)
-    bufs[0] = st
     try:
-        runs = R.execute(dev, plan, bufs)
-        for run in runs:
-            run.info.update(info)
-    except (Refused, RW.RowsError, FM.FormError, ValueError) as err:
+        bufs[0] = st
+        try:
+            runs = R.execute(dev, plan, bufs)
+            for run in runs:
+                run.info.update(info)
+        except (Refused, RW.RowsError, FM.FormError, ValueError) as err:
+            raise Unsupported("API.REF.007", str(err)) from None
+        return st, next(iter(st.valid))
+    except BaseException:
         st.free()
-        raise Unsupported("API.REF.007", str(err)) from None
-    return st, next(iter(st.valid))
+        raise
 
 
 __all__ = [

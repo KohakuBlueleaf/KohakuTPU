@@ -15,4 +15,10 @@ static inline void ka_delay(uint64_t n)
     }
 }
 
+void ka_exit(uint64_t code) __attribute__((noreturn));
+void ka_on_fatal(uint64_t code, uint64_t a, uint64_t b);
+#define KA_EXIT_TRAP     0xE000000000000000UL
+#define KA_EXIT_BOOTARGS 0xE100000000000000UL
+#define KA_EXIT_STOP     0x5701000000000000UL
+
 #endif

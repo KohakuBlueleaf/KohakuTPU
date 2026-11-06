@@ -6,14 +6,16 @@
 
 use std::collections::{BTreeSet, HashMap};
 
+use ktpu_isa::layout::value;
+use ktpu_isa::unit::vector::VecIsa;
 use ktpu_machine::Machine;
 
 use super::model::Ruled;
 use super::timing;
 use crate::error::Result;
-use crate::lower::image::{words_of, IMEM_ROOM};
+use crate::lower::image::{words_of, CoreFacts, Encoder, IMEM_ROOM, UNKNOWN};
 use crate::mutant;
-use crate::text::{emit_at, fmt, read, Definition, Expander, Module, Stmt, Term};
+use crate::text::{emit_at, fmt, read, Definition, Expander, Module, Reader, Stmt, Term};
 
 /// A reordered run is kept only when the model times it this much faster.
 pub const MIN_GAIN: f64 = 0.01;
@@ -60,23 +62,44 @@ fn regs(t: &Term, out: &mut BTreeSet<String>) {
     }
 }
 
-/// The L1 words an unpack reads or a pack writes (`chunks`, `vc.chunks`,
-/// without `n=`), or None.
-fn l1_words(st: &Stmt, chunks: i128) -> Option<BTreeSet<i128>> {
-    for a in st.positional() {
-        if let Term::View(n, sl) = a {
-            if n == "l1" && !sl.is_empty() {
-                let off = match &sl[0] {
-                    Term::Int(v, _) => Some(*v),
-                    Term::Slice(Some(lo), _) => lo.as_int(),
-                    _ => None,
-                }?;
-                let n = st.kw("n").and_then(Term::as_int);
-                if n.is_none() && mutant::on("l1.sched/l1-words") {
+/// Absolute L1 footprints use the same normalized fields as image encoding.
+/// Relative operations also change their engine pointer and retain order.
+fn l1_words(st: &Stmt, isa: &VecIsa, facts: &CoreFacts) -> Option<BTreeSet<i128>> {
+    let reader = Reader::new("", "<schedule>");
+    let words = Encoder::new(&reader, isa, facts, UNKNOWN, None)
+        .encode(std::slice::from_ref(st))
+        .ok()?;
+    let mut stride = (1i128, 4i128);
+    for word in words {
+        let (op, fields) = isa.decode_word(word)?;
+        match op {
+            "USTR" | "PSTR" => {
+                stride = (value(&fields, "s0") as i128, value(&fields, "s1") as i128);
+            }
+            "VUNPK" | "VPACK" => {
+                if value(&fields, "rel") != 0 {
+                    return None;
+                }
+                let off = value(&fields, "off") as i128;
+                let n = i128::from(value(&fields, "n1")) + 1;
+                let n = match value(&fields, "mode") {
+                    2 => 2 * n,
+                    3 => 4,
+                    _ => n,
+                };
+                if st.kw("n").is_none() && mutant::on("l1.sched/l1-words") {
                     return Some([off].into());
                 }
-                return Some((off..off + n.unwrap_or(chunks)).collect());
+                return Some(
+                    (0..n)
+                        .map(|w| {
+                            (off + (w % 4) * stride.0 + (w / 4) * stride.1)
+                                .rem_euclid(i128::from(facts.l1_words))
+                        })
+                        .collect(),
+                );
             }
+            _ => {}
         }
     }
     None
@@ -92,7 +115,7 @@ struct Info {
     write: bool,
 }
 
-fn info(st: &Stmt, chunks: i128) -> Info {
+fn info(st: &Stmt, isa: &VecIsa, facts: &CoreFacts) -> Info {
     let pos = st.positional();
     let mut defs = BTreeSet::new();
     let mut uses = BTreeSet::new();
@@ -105,7 +128,7 @@ fn info(st: &Stmt, chunks: i128) -> Info {
             eng: if unpack { 'u' } else { 'p' },
             defs,
             uses,
-            l1: l1_words(st, chunks),
+            l1: l1_words(st, isa, facts),
             write: !unpack,
         };
     }
@@ -135,10 +158,9 @@ fn info(st: &Stmt, chunks: i128) -> Info {
 
 /// Each statement's predecessors in `run` (L1.SCHED.002): a register one
 /// defines and the other uses or defines; L1 words both touch, one writing;
-/// two unpack / pack statements either of whose words is unknown. `chunks`:
-/// the core's `vc.chunks`, the words an unpack or pack without `n=` moves.
-pub fn preds(run: &[Stmt], chunks: u32) -> Vec<BTreeSet<usize>> {
-    let info: Vec<Info> = run.iter().map(|st| info(st, chunks as i128)).collect();
+/// two unpack / pack statements either of whose words or pointer effects is unknown.
+pub fn preds(run: &[Stmt], isa: &VecIsa, facts: &CoreFacts) -> Vec<BTreeSet<usize>> {
+    let info: Vec<Info> = run.iter().map(|st| info(st, isa, facts)).collect();
     // The pair test runs for every two statements of the run: registers as
     // bit rows over the run's names, not string sets.
     let mut number: HashMap<&str, usize> = HashMap::new();

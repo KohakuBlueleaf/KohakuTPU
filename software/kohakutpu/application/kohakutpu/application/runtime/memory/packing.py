@@ -19,7 +19,7 @@ class NonfinitePackingError(NodeError):
         self.args = ("NONFINITE_FP16: vector MX7 output is invalid; " + self.args[0],)
 
     def __reduce__(self):
-        return (type(self), (self.completion, self.console))
+        return (type(self), (self.completion, self.console_bytes))
 
 
 def contract_error(error):

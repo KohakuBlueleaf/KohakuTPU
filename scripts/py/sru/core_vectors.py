@@ -62,20 +62,35 @@ def job(name, g, passes, ops=(), fin=()):
     return {"name": name, "G": gg, "P": ps, "OPS": store, "FIN": fins}
 
 
-def cfg_words(j, f_lanes, h_taps=2):
+def cfg_words(j, profile):
     job_dict = {"g": j["G"], "passes": j["P"], "ops": j["OPS"], "fin": j["FIN"]}
-    return dict(_rs.sru_words(json.dumps(job_dict), f_lanes, h_taps, C.MACHINE))
+    machine = json.loads(C.MACHINE)
+    sr = machine["machine"]["sr"]
+    sr["buf_words"] = profile["BUF_WORDS"]
+    sr["profile"] = {k: v for k, v in profile.items() if k != "BUF_WORDS"}
+    return dict(
+        _rs.sru_words(
+            json.dumps(job_dict),
+            profile["F_LANES"],
+            profile["H_TAPS"],
+            json.dumps(machine),
+        )
+    )
 
 
-def fma(a="X", b="K", c="K", **kw):
+#: An operand source: a register file name, or `H(k)`, history tap `k`.
+Src = str | tuple[str, int]
+
+
+def fma(a: Src = "X", b: Src = "K", c: Src = "K", **kw):
     return dict(KIND=0, A=a, B=b, C=c, **kw)
 
 
-def fun(a="X", b="K", **kw):
+def fun(a: Src = "X", b: Src = "K", **kw):
     return dict(KIND=1, A=a, B=b, **kw)
 
 
-def H(k):
+def H(k: int) -> Src:
     return ("H", k)
 
 
@@ -614,7 +629,7 @@ def main():
         a = rnd_words(rng, nw * nsr, scale)
         b = rnd_words(rng, nw * nsr, 1.0) if use_b else []
         outs = oracle.run_job(j, a, b, table, cols, rows, rom=rom, ieee=ieee)
-        for a_, v in cfg_words(j, prof["F_LANES"] or 16, prof["H_TAPS"]).items():
+        for a_, v in cfg_words(j, prof).items():
             emit(0, a_, v)
         emit(4, 0, 0)
         for wd in a:

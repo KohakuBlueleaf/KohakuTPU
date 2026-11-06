@@ -10,104 +10,123 @@ tags:
 
 The machine fact `conversion.fp16_mx7` is a versioned reliability contract,
 independent of vector-core geometry and mover transform support.
-`allowed_backends` controls admission; `preferred_backend` selects lowering.
-The machine generator reads board constraints from
-`scripts/py/machine/conversion.json`. `multimesh_v9t6` permits only `vector_mx7`.
-Models and other boards permit both implementations and prefer `mover_quant`.
+`allowed_backends` controls admission; `preferred_backend` supplies the default.
+An explicit operation backend selects an allowed backend. Without one, an
+`nk >= 2` destination selects vector packing; a read map or in-place padding
+also selects vector packing when allowed. Read maps and in-place padding
+with a non-vector backend, disallowed backends, and mover quantisation into
+paired destinations are refused. (code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:20-84)
 
-## Selection and identity
+The policy permits only vector packing on multimesh_v9t6; its default permits
+both backends and prefers mover quantisation. Environment or explicit
+`machine_of` backend selection changes the preference without widening the
+allowed list or overriding operation selection. A truthy explicit backend
+argument takes precedence over the environment. (code: scripts/py/machine/conversion.json:2-20; software/kohakutpu/application/kohakutpu/application/runtime/machine.py:76-95)
 
-`KTPU_FP16_MX7_BACKEND=mover_quant|vector_mx7` selects an allowed backend.
-`machine_of(..., packing_backend=...)` is the programmatic equivalent. Neither
-widens the board's allowed list. Direct DSL conversions also accept
-`quant(..., backend="vector_mx7", finite=True)`; text L2 uses
-`quant DST <- SRC backend=vector_mx7 finite=1`.
-
-The serialized machine, including conversion and scheduling facts, keys kernels,
-libraries and bound packages. Receiving-board admission checks MOVER and ENGINE
-QUANT commands even when optional checks are off. A mover-only policy rejects
-vector MX7 instructions. A cached artifact cannot substitute its own policy.
+Receiving-board reliability admission is independent of optional checker mode.
+Ordinary packages use the receiving card's serialized machine; launch recipes
+must match machine and sysnode placement. Admission verdicts cache package bytes,
+receiving machine, placement and bindings. Disallowing vector MX7 invokes lifted
+schedule verification; disallowing mover quant invokes command execution analysis
+with a dynamic-proof fallback. (code: software/kohakutpu/application/kohakutpu/application/runtime/packages.py:191-202, :217-236, :247-258; software/kohakutpu/compiler/crates/ktpu-verify/src/lines.rs:335-353)
 
 ## K pairs and the quantiser (RUL.099)
 
-The cluster merges a K pair's block partials at the larger exponent sum, so an
-all-zero block feeding an `nk` >= 2 contraction needs the E=0 field
-(NUM.MX7.008, NUM.ACC.008), which only the vector packs give it. A `quant`
-into an `nk` >= 2 destination therefore lowers through `vector_mx7`; one naming
-`backend=mover_quant` is refused (L2.MOV.018). On a board preferring
-`mover_quant`, contractions are planned under the pairing
-`ktpu_machine::PAIRING`: `unpaired` plans them `nk` = 1 so mover QUANT feeds
-them, `vector` keeps `nk` = 2 and quantises their operands on the vector
-cores. `matmul.plan`'s argument `pairing` (Python `KTPU_MX7_PAIRING`) selects
-the other; a board preferring `vector_mx7` pairs under either. The pairing is a
-plan argument, not a machine fact: a new `conversion` fact changes the schema
-hash every machine file carries.
+NUM.MX7.008 and NUM.ACC.008 describe paired-block zero handling.
+A quant destination with nk >= 2 selects vector_mx7 unless explicitly overridden;
+an explicit mover backend is refused and the selected backend must be allowed.
+PAIRING defaults to unpaired: on a mover-preferring machine that disallows pairing;
+vector permits pairing, as does either setting on a non-mover-preferring machine.
+Permission does not guarantee nk=2 for every contraction. (code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:20-84; software/kohakutpu/compiler/crates/ktpu-machine/src/pairing.rs:12-42)
 
 ## Finite input contract
 
-FP16 unpack preserves every finite encoding, including signed zero and
-subnormals. MX7 packing uses NUM.MX7.002/.003 and NUM.MX7.005's A/B entry order;
-into an `nk` >= 2 destination, on the input with every zero as 2^-24
-(NUM.MX7.008): one `vsel` a 4x32 entry after its unpack, against a scalar
-register holding 2^-24 (`seti s4`).
-Version 2 checks unproven inputs **on the card**, without host input transfers.
-Each loaded lane is classified before packing; the original numerical register
-is not modified. Since this vector ISA has no integer mask operation, the
-implementation uses the exact equivalent `abs(unpack(raw)) < 65536` of
-`(raw & 0x7c00) != 0x7c00`. Ordered comparison rejects both infinities and every
-NaN payload/sign. The full 65,536-encoding classifier has a model witness.
+The image unpacks inputs, waits, applies enabled zero lifting, classifies when
+checked, then packs. Zero lifting uses vector selection before classification.
+(code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing/image.rs:178-215; software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing/finish.rs:27-48)
 
-Predicated marker writes materialize invalid lanes. EXP2D's sticky reduction
-combines the markers; it is not itself predicated. A reserved vector register
-accumulates across RUN boundaries. Each participating VC drains one full-line
-status slot. After a barrier the node checks those slots using `ASSERT_ZERO`.
-A failing check ends the package with `CONTRACT` (0x24), detail 1
-(`NONFINITE_FP16`). Collection raises `NonfinitePackingError`, a `NodeError`
-subclass. The runtime invalidates the device's outstanding work; no successful
-result is published and failed output cannot be read as valid through the device.
+Checked vector packing classifies unpacked values before VPACK. When zero
+lifting is enabled, it replaces zero lanes before classification. The comparison
+classifier computes absolute values, compares them with 65536, writes invalid-lane
+markers under predicates, then feeds those markers to unpredicated EXP2D. The
+alternative classifier multiplies values by zero and feeds the result to EXP2D:
+finite inputs produce zero; infinities and NaNs produce NaN. Classification uses
+temporary registers; zero lifting does modify the numerical register beforehand.
+(code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing/image.rs:190-215;
+software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing/finish.rs:27-48, :55-101;
+src/kohakutpu/vector2/v2_alu.v:337-348)
 
-Padding is checked **after** materialization: nonfinite storage outside the live
-view is overwritten with zero and is not an input violation. A live nonfinite
-lane refuses even when the corresponding output would not subsequently be read.
-Signaling NaNs are never silently accepted as quieted output. There is no
-raw-integer NaN compatibility backend.
+Checked quantisation drains one status record per participating core. Inline
+checking barriers before loading/asserting records; deferred checking consumes
+pending records at quant_check, and ending with unchecked records is refused.
+Nonzero assertions produce CONTRACT (0x24), detail 1; card collection translates
+this to NonfinitePackingError, a NodeError subclass. Device collection records
+failure, discards later in-flight results and refuses subsequent device access;
+it does not publish a successful Run. This does not cancel already published
+hardware work or prohibit raw card reads and diagnostic dumps.
+(code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:98-134;
+software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/quant_status.rs:145-200;
+software/kohakuaccel/firmware/package/interp.c:1622-1626;
+software/kohakutpu/application/kohakutpu/application/runtime/memory/packing.py:14-32;
+software/kohakutpu/application/kohakutpu/application/runtime/card/collection.py:126-135, :175-190, :250-264;
+software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py:51-70, :391-431;
+software/kohakutpu/application/kohakutpu/application/runtime/device/allocation.py:187-198)
 
-`finite=True` / `finite=1` is an explicit caller proof and skips classification
-and status allocation. The caller must maintain this proof for **every** launch
-and replay; compilation does not prove tensor values. Omission selects the
-checked path. Version-1 policy still requires the explicit proof. Training
-provenance alone is not proof. Eager and TinyJit use the same checked package;
-recordings contain no finiteness read and recheck current data when replayed.
+Checking classifies supplied image values including generated padding, not all
+underlying storage. Entirely zero tiles issue no source descriptor or DMA;
+partial-row tiles describe only valid source rows. Storage outside the live view
+is not necessarily overwritten. (code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:712-727; software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing/image.rs:190-215)
+
+For vector quantisation, only integer finite=1 suppresses checking; deferred
+status with finite=1 is refused. This is caller proof, not tensor-value analysis.
+The ordinary unmapped vector path refuses checking under conversion version 1
+and checks contract-status/register/descriptor/EXP2D capabilities for version 2.
+(code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mod.rs:143-155;
+software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:149-171)
 
 ## Vector schedule
 
-`vector_slots=1|2`, `vector_cores=0..N`, and `vector_looped=false|true` are machine
-facts. Zero cores selects all available VCs; explicit values select 1 through N.
-Runtime overrides are `KTPU_MX7_SLOTS`, `KTPU_MX7_CORES`, and
-`KTPU_MX7_LOOPED=0|1`, or `machine_of`'s `packing_slots`, `packing_cores`, and
-`packing_looped` arguments. All participate in cache identity.
+`vector_slots`, `vector_cores` and `vector_looped` are machine facts.
+Explicit non-None packing_slots, packing_cores and packing_looped arguments
+override KTPU_MX7_SLOTS, KTPU_MX7_CORES and KTPU_MX7_LOOPED. Overrides are
+converted to integers; looped mode accepts only 0 or 1. Machine parsing accepts
+one or two slots and a nonnegative core count; packing refuses a resolved count
+outside the available vector cores. (code: software/kohakutpu/application/kohakutpu/application/runtime/machine.py:97-112;
+software/kohakutpu/compiler/crates/ktpu-machine/src/lib.rs:266-277;
+software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:261-267)
 
-Entries are partitioned contiguously over participating VCs. Each entry gathers
-four ordered pairs of FP16 words and drains four MX7 words at the original
-entry stride. An L1 slot reserves 128 input words followed by 64 output words;
-the second slot begins at word 192. The two-slot prologue, steady state and
-epilogue prefill the next slot while computing and draining the current slot.
-Completion waits protect reuse, and the epilogue never reads past the input.
-Checked batches use at most seven entries when emitting an actual two-slot pair
-to fit the vector skip displacement; single-slot batches use at most sixteen,
-even when two slots were requested but the partition is too small for a pair. Status occupies four
-words at L1 word 384.
+The ordinary scheduler groups adjacent entries into source-row bursts and partitions
+stream groups contiguously: core v receives floor(groups*v/cores) through
+floor(groups*(v+1)/cores), with core count capped by stream groups. Full entries
+contain four rows of two FP16 words and drain four MX7 words. Partial entries
+load live rows and words only and zero remaining lanes; entirely zero entries
+issue no source fill. (code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:511-553, :654-677, :712-738;
+software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing/image.rs:96-134, :352-356)
 
-The vector batch walk uses its architectural loop register. The bounded entry
-body is unrolled because the core has only one such register. Looped mode emits
-node affine loops over outer geometry, patching descriptor addresses from
-relocated literals; unrolled mode emits each outer iteration with constant
-buffer-relative descriptor offsets. The default is unrolled, with two slots and
-all available VCs. Each outer tile retires on its participating VCs before the
-next tile's instruction stream; VCs within a tile execute in parallel. This bounds
-completion debt without serializing the image's internal two-slot pipeline.
-Backedge dispatches use unit-specific runtime-frontier waits rather than static counts,
-and dynamic residency does not elide an image upload needed on a later trip.
-Software firmware must advertise package feature bit 0 (contract checks,
-immediate relocated loads and runtime-frontier waits); the runtime refuses an older ELF at boot. No RTL
-extension is required.
+Each software L1 slot reserves 128 input words and 64 output words; slot two
+begins at word 192. Two-slot images prefill the next slot, with completion waits
+protecting reuse and an epilogue handling the remaining pair and any odd final
+single batch. Batch size also depends on geometry, descriptor increments and
+instruction room. The normal cap is sixteen entries, partial entries cap at four,
+and checked two-slot partitions of at least fourteen groups per configured core
+cap at seven. stream_batch or zero_reuse for entirely zero pieces selects the
+sixteen-entry cap. Contiguous grouping has separate caps, and image-size pressure
+reduces batch size or grouping. A steady loop exceeding skip displacement can
+be specialised on whether it executes rather than always imposing a seven-entry
+cap. (code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing/image.rs:61-93, :308-341;
+software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:524-550, :579-593, :630-651, :672-690)
+
+With zero reuse enabled and no valid input rows, packed-zero output is prepared
+once and the immutable slot is drained repeatedly. (code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing/image.rs:218-259)
+
+With vector_looped enabled, ordinary packing emits sysnode counters and affine
+source/destination offsets for outer axes 0, 1 and 3. Otherwise it expands those
+axes using constant buffer-relative offsets. After issuing streams, each outer
+tile waits for all participating vector cores. (code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:748-795)
+
+When conversion version is at least 2, loading requires bit 0 in the ELF package
+feature word; absence raises AbiMismatch before stopping/booting sysnodes.
+Dispatcher exports KA_PKG_FEATURES in the sixth .ka_abi word.
+(code: software/kohakutpu/application/kohakutpu/application/runtime/card/__init__.py:322-337;
+software/kohakuaccel/firmware/apps/dispatcher/main.c:15-22;
+software/kohakuaccel/firmware/include/ka/package/format.h:11)

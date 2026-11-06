@@ -17,6 +17,7 @@
 
 #include <ka/boot/args.h>
 #include <ka/hal/control.h>
+#include <ka/hal/cpu.h>
 #include <ka/lib/stdio.h>
 #include <ka/os/task.h>
 #include <ka/package/interp.h>
@@ -53,6 +54,20 @@ const struct ka_unit_class *ka_unit_class(uint16_t type)
     return &generic;
 }
 
+static unsigned fatal_rings0;
+void ka_on_fatal(uint64_t code, uint64_t a, uint64_t b)
+{
+    (void)a; (void)b;
+    printf("L %u %u %u %" PRIu64 " %u %u %u\n", (unsigned)code,
+           dbl_clears, dbl_peak, dbl_gos, dbl_pending(),
+           dbl_rings - fatal_rings0, dbl_ring_drops);
+}
+void ka_exit(uint64_t code)
+{
+    (void)code;
+    exit(0);
+}
+
 static void run_list(char **files, int n, int chain, unsigned lost, int extra)
 {
     size_t bytes[MAX_LIST];
@@ -63,6 +78,7 @@ static void run_list(char **files, int n, int chain, unsigned lost, int extra)
     }
     dbl_gos = dbl_peak = dbl_clears = dbl_ring_drops = 0;
     unsigned rings0 = dbl_rings;
+    fatal_rings0 = rings0;
     dbl_lost = lost;
     int status = 0;
     for (int i = 0; i < n && !status; ++i) {

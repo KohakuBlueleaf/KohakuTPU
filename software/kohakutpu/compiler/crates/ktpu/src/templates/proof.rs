@@ -293,15 +293,18 @@ pub fn prove(
             simulation_bindings += 1;
             let first = ktpu_verify::schedule(&nodes, &ktpu_verify::Held::new(), &target)
                 .map_err(|e| Refusal::new("scheduling", e.to_string()))?;
-            let second = ktpu_verify::schedule(&nodes, &first.held, &target)
-                .map_err(|e| Refusal::new("rerun scheduling", e.to_string()))?;
-            if first.packages != nodes || second.packages != nodes {
-                return Err(Refusal {
-                    property: "dispatch order".into(),
-                    reason: "binding requires rescheduling; emitted package order is not proven"
-                        .into(),
-                    counterexample: Some(point.clone()),
-                });
+            for held in first.held_states() {
+                let second = ktpu_verify::schedule(&nodes, held, &target)
+                    .map_err(|e| Refusal::new("rerun scheduling", e.to_string()))?;
+                if first.packages != nodes || second.packages != nodes {
+                    return Err(Refusal {
+                        property: "dispatch order".into(),
+                        reason:
+                            "binding requires rescheduling; emitted package order is not proven"
+                                .into(),
+                        counterexample: Some(point.clone()),
+                    });
+                }
             }
             ktpu_verify::check_scheduled(&first, &[nodes], &target)
         };

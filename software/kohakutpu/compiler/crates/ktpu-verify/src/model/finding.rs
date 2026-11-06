@@ -74,10 +74,10 @@ impl Kind {
         }
     }
 
-    /// A kind a run is refused for (L1.VER.015): `model` and `loop` are
-    /// reported, not refused.
+    /// A kind a run is refused for (L1.VER.015). Model and bank findings
+    /// are informational; unsupported data-dependent control flow is refusing.
     pub fn refuses(self) -> bool {
-        !matches!(self, Kind::Loop | Kind::Model | Kind::Bank)
+        !matches!(self, Kind::Model | Kind::Bank)
     }
 }
 

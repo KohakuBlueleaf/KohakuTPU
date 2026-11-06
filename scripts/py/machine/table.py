@@ -337,11 +337,14 @@ def sr_param(img, name):
 
 
 def sr_profile(img):
-    """The board's SRU profile with the knobs the die builds and the board
-    does not name (HAS_MX7)."""
+    """The board profile and the remaining capability knobs of the die."""
     prof, src = img.board("sru")
-    mx7, mx7_src = sr_param(img, "HAS_MX7")
-    return {**prof, "HAS_MX7": mx7}, f"{src}; HAS_MX7 {mx7_src}"
+    prof = dict(prof)
+    sources = [src]
+    for name in ("HAS_MX7", "HAS_B", "HAS_MASK", "HAS_R1", "HAS_R2"):
+        prof[name], origin = sr_param(img, name)
+        sources.append(f"{name} {origin}")
+    return prof, "; ".join(sources)
 
 
 SIMT_ALU = "src/kohakumpe/simd/khs_fp32_alu.v"

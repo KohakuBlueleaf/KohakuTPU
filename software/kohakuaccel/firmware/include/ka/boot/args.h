@@ -65,6 +65,9 @@ extern volatile struct ka_bootargs ka_boot;
  * ka_boot_main_cycle. Called first by main. */
 int ka_boot_check(void);
 
+/* Validate every populated region extent, use and pairwise overlap. */
+int ka_boot_regions_check(void);
+
 /* The cycle counter as main started. */
 extern uint64_t ka_boot_main_cycle;
 

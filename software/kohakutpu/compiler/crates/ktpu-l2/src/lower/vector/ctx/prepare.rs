@@ -149,6 +149,8 @@ impl<'a> Ctx<'a> {
                 format!("a view {off} bytes in: a descriptor starts on a 32-byte word"),
             ));
         }
+        let validate = mapped.is_none() && looped && (self.trips.len() > 1 || self.classed);
+        let geometry = validate.then(|| (name.clone(), walk.0.clone(), words, kind, rows_w, vrows));
         let mut row_pitch = rows_w;
         if kind == Kind::Rows && mapped.is_none() {
             (walk, words, row_pitch) = self.span_read(o, walk, words, rows_w);
@@ -206,21 +208,28 @@ impl<'a> Ctx<'a> {
             }
         }
         let mut inc = 0;
-        if mapped.is_none() && looped && (self.trips.len() > 1 || self.classed) {
+        if let Some(geometry) = geometry {
             let first = first.unwrap();
             inc = if self.classed {
                 self.class_origin(o, &view, first + 1)? - off
             } else {
                 self.walk(o, &view, Some(first + 1), rows)?.1 - off
             };
-            let last = self.trips.last().copied().unwrap_or(first);
-            let end = self.walk(o, &view, Some(last), rows)?.1;
-            if end != off + inc * (last - first) {
-                return Err(self.fail(
-                    &o.st,
-                    "L2.VC.021",
-                    "the view is not affine in the loop variable",
-                ));
+            for &trip in &self.trips {
+                let (name, origin, walk, words, kind, rows_w, vrows) =
+                    self.walk(o, &view, Some(trip), rows)?;
+                let expected =
+                    i128::from(off) + i128::from(inc) * (i128::from(trip) - i128::from(first));
+                if i128::from(origin) != expected
+                    || origin % 32 != 0
+                    || (name, walk.0, words, kind, rows_w, vrows) != geometry
+                {
+                    return Err(self.fail(
+                        &o.st,
+                        "L2.VC.021",
+                        "the view is not affine with invariant geometry in the loop variable",
+                    ));
+                }
             }
             let step = self.t.step();
             if !(-step <= inc && inc < step) {
@@ -533,7 +542,7 @@ impl<'a> Ctx<'a> {
         let shape = &src_ty.shape;
         let lp = self.lp.clone().unwrap();
         let mut firsts = Vec::new();
-        for tt in [self.trips[0], *self.trips.last().unwrap()] {
+        for &tt in &self.trips {
             let v = value(self.body, &o.st, view, &bind(&self.env, &lp.var, tt))?;
             let ax = M::axes_of(&v, shape).map_err(|e| self.fail(&o.st, "L2.VC.009", e))?;
             let (lo, c0, c) = (ax[0].lo, ax[1].lo, ax[1].size);
@@ -547,7 +556,9 @@ impl<'a> Ctx<'a> {
             firsts.push(lo * shape[1] / self.t.vlmax);
         }
         let per = count_of(ty(o), self.t.vlmax);
-        if firsts[1] - firsts[0] != per * (self.trips.len() as i64 - 1) {
+        if firsts.iter().enumerate().any(|(i, &origin)| {
+            i128::from(origin) != i128::from(firsts[0]) + i128::from(per) * i as i128
+        }) {
             return Err(self.fail(
                 &o.st,
                 "L2.VC.009",

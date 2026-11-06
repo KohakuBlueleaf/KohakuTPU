@@ -16,6 +16,7 @@ import random
 
 import core_vectors as cv
 import oracle
+import profiles
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 
@@ -26,7 +27,7 @@ DATA_AT = 0x200000 // 32
 OUT_AT = 0x300000 // 32
 STORE_AT = 0x380000 // 32
 BENCH_X, BENCH_Y = 1, 1
-F_LANES = 16
+CU_PROFILE = dict(profiles.knobs("strong"), HAS_MANT=0, FIN_RCP=0, F16_IEEE=1)
 
 
 def ins_cfg(addr, value):
@@ -112,7 +113,7 @@ def main():
     insts.append(ins_load(2, 0, ROWS_AT, 64))
 
     def cfg_all(j):
-        for a, v in cv.cfg_words(j, F_LANES).items():
+        for a, v in cv.cfg_words(j, CU_PROFILE).items():
             insts.append(ins_cfg(a, v))
 
     # -- job 1: silu, A from memory, out to memory (sub-row stride 6 words)

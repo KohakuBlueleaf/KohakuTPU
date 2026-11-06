@@ -352,14 +352,20 @@ fn cache_root() -> Option<String> {
 /// debug_decode(region, machine_json) -> dict: a node's debug region (its
 /// per-step trace and report) decoded (`ka_debug::decode_json`).
 #[pyfunction]
+#[pyo3(signature = (region, machine_json, lost_before=0))]
 fn debug_decode<'py>(
     py: Python<'py>,
     region: &[u8],
     machine_json: &str,
+    lost_before: u64,
 ) -> PyResult<Bound<'py, PyAny>> {
     let m = machine(machine_json)?;
-    match ka_debug::decode_json(region, &*m) {
-        Ok(v) => py_value(py, &v),
+    match ka_debug::decode_since(region, &*m, lost_before) {
+        Ok(v) => {
+            let value =
+                serde_json::to_value(v).map_err(|e| PyValueError::new_err(e.to_string()))?;
+            py_value(py, &value)
+        }
         Err(e) => {
             let err = Refused::new_err(e.to_string());
             let _ = err.value(py).setattr("clause", &e.clause);
@@ -1158,13 +1164,22 @@ fn read_composed(
 ) -> PyResult<bool> {
     let m = machine(machine_json)?;
     let bad = |e: serde_json::Error| PyValueError::new_err(format!("a read's calls: {e}"));
-    let read = serde_json::from_str(read_json).map_err(bad)?;
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Calls {
+        One(Call),
+        Many(Vec<Call>),
+    }
+    let read = match serde_json::from_str::<Calls>(read_json).map_err(bad)? {
+        Calls::One(call) => vec![call],
+        Calls::Many(calls) => calls,
+    };
     let launches: Vec<Call> = serde_json::from_str(launches_json).map_err(bad)?;
     let mode = ktpu_kernels::gen::prepared::Composed::named(mode)
         .ok_or_else(|| PyValueError::new_err(format!("a composed mode {mode:?}")))?;
     let root = cache(None);
     let cost = |c: &Call| built_cycles(c, &m, &root);
-    Ok(ktpu_kernels::composed::composed(
+    Ok(ktpu_kernels::composed::sequences(
         mode, &read, &launches, &m, &cost,
     ))
 }

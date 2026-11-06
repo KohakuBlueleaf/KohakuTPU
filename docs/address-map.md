@@ -147,10 +147,7 @@ forwarding, so a host write carrying another mesh's id reaches `M_AXI_DRAM` with
 its full 40-bit address and lands in **local DRAM above 64 GB**, where nothing
 answers.
 
-The same asymmetry covers the aperture: `[39]` set on a host access does not
-reach the staging store either. Neither is the host's to issue. A host that wants
-bytes in another mesh writes them into that mesh's own window; a host that wants
-bytes in staging asks the control processor to move them.
+With converged staging enabled, the host memory window reaches DRAM and local staging. The host UP requester preserves its address through the common arbiter. Staging decode requires the special bit set, reserved bit clear, matching mesh and aperture 0; the selected request drives the staging store. The driver forms a staging host address as `window | unit_global_address`, retaining bit 39 and the mesh field. A mismatched mesh does not forward a host request over the interlink. (code: src/kohakuaccel/sysnode/core/mag.v:620-636, :1120-1126, :1157-1192; src/kohakuaccel/sysnode/core/mag_dram_port.v:139-145, :325-332, :621-625; software/kohakuaccel/driver/kohakuaccel/driver/transport/rebase.py:82-86)
 
 ## If the window and the address disagree
 

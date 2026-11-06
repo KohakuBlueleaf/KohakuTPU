@@ -6,7 +6,11 @@
 
 static int caps_at(unsigned x, unsigned y, uint64_t *caps)
 {
+    uint64_t t0 = ka_cycles();
     while (ka_nm_rd(KA_NM_STAT) & KA_NM_STAT_OFFERED) {
+        if (ka_cycles() - t0 >= KA_ENUM_WAIT) {
+            return -1;
+        }
     }
     ka_nm_wr(KA_NM_DST, KA_NM_TYPED(KA_T_CU_CTRL) | ((uint64_t)y << 8) | x);
     ka_nm_wr(KA_NM_ARG0, 0);
@@ -14,7 +18,7 @@ static int caps_at(unsigned x, unsigned y, uint64_t *caps)
     ka_nm_wr(KA_NM_ARG2, 0);
     ka_nm_wr(KA_NM_ARG3, 0); /* index 0, CU_CAPS */
     ka_nm_wr(KA_NM_GO, 1);
-    uint64_t t0 = ka_cycles();
+    t0 = ka_cycles();
     while (ka_cycles() - t0 < KA_ENUM_WAIT) {
         uint64_t h = ka_rx_rd(KA_RX_HDR);
         if (!(h >> 63)) {
@@ -34,7 +38,7 @@ static int caps_at(unsigned x, unsigned y, uint64_t *caps)
     return 0;
 }
 
-unsigned ka_enumerate(unsigned span, unsigned mesh, uint64_t *out, uint32_t *depth,
+int ka_enumerate(unsigned span, unsigned mesh, uint64_t *out, uint32_t *depth,
                       unsigned max)
 {
     unsigned n = 0;
@@ -47,7 +51,14 @@ unsigned ka_enumerate(unsigned span, unsigned mesh, uint64_t *out, uint32_t *dep
     for (unsigned y = 0; y <= span && n < max; ++y) {
         for (unsigned x = 0; x <= span && n < max; ++x) {
             uint64_t caps;
-            if ((x == 0 && y == 0) || !caps_at(x, y, &caps)) {
+            if (x == 0 && y == 0) {
+                continue;
+            }
+            int found = caps_at(x, y, &caps);
+            if (found < 0) {
+                return -1;
+            }
+            if (!found) {
                 continue;
             }
             out[n] = (caps >> 48) << 32 | (uint64_t)(mesh & 0xff) << 16 | y << 8 | x;

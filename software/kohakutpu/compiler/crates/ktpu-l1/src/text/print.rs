@@ -88,8 +88,8 @@ pub fn fmt(t: &Term) -> String {
             .collect::<Vec<_>>()
             .join("x"),
         Term::Str(s) => format!("\"{s}\""),
-        Term::Neg(x) => format!("-{}", fmt(x)),
-        Term::Not(x) => format!("!{}", fmt(x)),
+        Term::Neg(x) => format!("-{}", unary(x)),
+        Term::Not(x) => format!("!{}", unary(x)),
         Term::Offset(b, o) => {
             if simple(b) && simple(o) {
                 format!("{}+{}", fmt(b), fmt(o))
@@ -98,7 +98,7 @@ pub fn fmt(t: &Term) -> String {
             }
         }
         Term::BinOp(op, a, b) => format!("{} {op} {}", paren(a, *op, true), paren(b, *op, false)),
-        Term::Pos(x) => format!("+{}", fmt(x)),
+        Term::Pos(x) => format!("+{}", unary(x)),
         Term::Placed(x, s) => format!("{} @{}", fmt(x), fmt(s)),
         Term::Compare(op, a, b) => format!("{} {op} {}", fmt(a), fmt(b)),
         Term::Computed(p, i, None) => format!("{p}{{{}}}", fmt(i)),
@@ -151,9 +151,18 @@ fn op_rank(op: char) -> u8 {
 
 fn rank(t: &Term) -> u8 {
     match t {
+        Term::Compare(..) => 0,
         Term::Offset(..) => 1,
         Term::BinOp(op, ..) => op_rank(*op),
         _ => 3,
+    }
+}
+
+fn unary(t: &Term) -> String {
+    if rank(t) < 3 {
+        format!("({})", fmt(t))
+    } else {
+        fmt(t)
     }
 }
 

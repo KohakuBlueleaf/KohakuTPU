@@ -151,7 +151,7 @@ def _over_nodes(t, on: Unit, count: int, per: int, at, name) -> Iterator[E.Sym]:
             unit,
             node=_par_node(v, 0, share, on.kind, None if at is V.ANY else E.var(v)),
         )
-        with t.block(st, Scope(kind=on.kind)):
+        with t.block(st, Scope(kind=on.kind, node=t.scope.node)):
             yield cast(E.Sym, E.var(nv) * share + E.var(v))
 
 
@@ -181,7 +181,9 @@ def range(
             "pipe": pipe,
         },
     )
-    scope = Scope(kind=t.scope.kind, loop=True, sticky=t.scope.sticky)
+    scope = Scope(
+        kind=t.scope.kind, loop=True, sticky=t.scope.sticky, node=t.scope.node
+    )
     with t.block(st, scope):
         yield E.var(v)
 
@@ -211,7 +213,7 @@ def sticky() -> Iterator[None]:
             f"kt.sticky is a vector core's, in its stream loop, at {at_caller()}"
         )
     st = t.emit("if", "sticky", node={"kind": "sticky"})
-    with t.block(st, Scope(kind="vc", loop=True, sticky=True)):
+    with t.block(st, Scope(kind="vc", loop=True, sticky=True, node=t.scope.node)):
         yield
 
 
@@ -516,17 +518,16 @@ def _reg(x):
     unpacked here."""
     if isinstance(x, numbers.Real) and not isinstance(x, bool):
         return float(x)
-    if isinstance(x, ValueView):
-        return x
-    if not isinstance(x, Value):
+    base = x.value if isinstance(x, ValueView) else x
+    if not isinstance(base, Value):
         raise DSLError(
             f"vector math takes values and numbers, got {type(x).__name__}, at {at_caller()}"
         )
-    if x.space == "l1":
+    if base.space == "l1":
         return unpack(x)
-    if x.space != "reg":
+    if base.space != "reg":
         raise DSLError(
-            f"{x.name} is @{x.space}: a cluster's, not a core's register value, at {at_caller()}"
+            f"{base.name} is @{base.space}: a cluster's, not a core's register value, at {at_caller()}"
         )
     return x
 
@@ -541,7 +542,7 @@ def math(op: str, *args: V.Operand) -> Value:
     if len(args) != want:
         raise DSLError(f"{op} takes {want} operands, got {len(args)}, at {at_caller()}")
     regs = [_reg(a) for a in args]
-    vals = [r for r in regs if isinstance(r, Value)]
+    vals = [r for r in regs if isinstance(r, (Value, ValueView))]
     if not vals:
         raise DSLError(f"{op} of numbers alone: fold it in Python, at {at_caller()}")
     rows = [v for v in vals if not v.stat]
@@ -613,7 +614,8 @@ def reduce(op: str, x, *, valid_cols: int | None = None, carry: bool = False) ->
     _need("vc", op)
     if op not in REDUCE:
         raise DSLError(f"no reduction {op!r}: {', '.join(REDUCE)}, at {at_caller()}")
-    base = x.value if isinstance(x, ValueView) else _reg(x)
+    x = _reg(x)
+    base = x.value if isinstance(x, ValueView) else x
     if not isinstance(base, Value) or base.space != "reg" or base.stat:
         raise DSLError(f"{op} reduces register rows, at {at_caller()}")
     if valid_cols is not None and (
@@ -629,7 +631,7 @@ def reduce(op: str, x, *, valid_cols: int | None = None, carry: bool = False) ->
         op,
         [src],
         "f32",
-        (base.shape[0],),
+        ((x.shape if isinstance(x, ValueView) else base.shape)[0],),
         "reg",
         prefix="s",
         kw={
@@ -647,6 +649,8 @@ def store(view, x) -> None:
     _need("vc", "store")
     v = as_view(view)
     spec = v.param.spec
+    if isinstance(x, ValueView):
+        raise DSLError(f"store takes a whole value, at {at_caller()}")
     if (
         isinstance(x, Value)
         and x.space == "l1"

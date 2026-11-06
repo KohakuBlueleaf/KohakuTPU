@@ -20,7 +20,7 @@ struct ka_unit_state {
     uint32_t credit;   /* in flight at most */
     uint32_t inflight; /* sent, not retired */
     uint32_t expected; /* completions AWAITed so far */
-    uint32_t received; /* completions seen, retirements and acks alike */
+    uint32_t retired;  /* instruction retirements, excluding acknowledgements */
     uint32_t acks;     /* DATA_RECEIVED acknowledgements among them */
     uint32_t sent;
     uint32_t fetch;    /* 1 << 16 | port y << 8 | port x, or 0: see ka_engine_fetch */
@@ -59,13 +59,12 @@ int ka_engine_add(struct ka_engine *e, uint64_t word, uint32_t credit, uint32_t 
  * credit or the mailbox's room is spent. 0, or a status. */
 int ka_engine_send(struct ka_engine *e, unsigned u, const uint64_t w[4]);
 
-/* `ka_engine_send` when nothing needs waiting for: credit in hand, the last flit
- * taken, the completion queue under half full. Returns nonzero, having sent
- * nothing, when any of those fails; the caller then sends through
- * `ka_engine_send`, which waits. */
-static inline int ka_engine_send_now(struct ka_engine *e, unsigned u, const uint64_t w[4])
+/* An opened source with credit in hand, the last flit taken and the completion
+ * queue under half full. Returns nonzero without sending when it must wait;
+ * the owner then calls ka_engine_send_open. */
+static inline int ka_engine_send_ready(struct ka_engine *e, struct ka_unit_state *s,
+                                       const uint64_t w[4])
 {
-    struct ka_unit_state *s = &e->u[u];
     if (s->inflight >= s->credit || e->outstanding >= e->cap) {
         return 1;
     }
@@ -93,6 +92,15 @@ static inline int ka_engine_send_now(struct ka_engine *e, unsigned u, const uint
     ++e->sent;
     return 0;
 }
+
+/* Checked entry for callers without an opened source. */
+static inline int ka_engine_send_now(struct ka_engine *e, unsigned u, const uint64_t w[4])
+{
+    return u >= e->n ? 1 : ka_engine_send_ready(e, &e->u[u], w);
+}
+
+/* A source validated by its owner; waits for credit and mailbox room. */
+int ka_engine_send_open(struct ka_engine *e, unsigned u, const uint64_t w[4]);
 
 /* Have memory port `port` ({y,x} as y << 8 | x) stream the `n` (<= 255) words at
  * `addr` into unit `u` as instructions, counted as `n` sends. 0, or a status. */

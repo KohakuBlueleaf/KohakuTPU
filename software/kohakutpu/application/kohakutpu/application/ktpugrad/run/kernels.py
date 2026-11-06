@@ -99,28 +99,28 @@ def _materialise(dev, plan: Plan, bufs) -> list:
     sub = replace(sub, out_slot=key)
     n = int(np.prod([U.extent(r) for r in outside])) if outside else 1
     tmp = Storage(dev, max(32, 2 * n))
-    mult = _mult(outside)
-    read = Access(key, dtypes.half, tuple(zip(outside, mult)), 0)
-    reductions = {}
-
-    def swap(x, walk):
-        if x is leaf:
-            return X.Load(len(plan.accesses))
-        if isinstance(x, X.Reduce):
-            new = X.Reduce(x.op, walk(x.arg))
-            reductions[id(new)] = plan.reductions[id(x)]
-            return new
-        return None
-
-    outer_e = _rebuild(plan.expr, swap)
-    outer_e, outer_acc, remap2 = _prune(outer_e, [*plan.accesses, read])
-    left = {k: reductions[v] for k, v in remap2.items()}
-    rr = tuple(dict.fromkeys(r for rs in left.values() for r in rs))
-    outer = replace(
-        plan, expr=outer_e, accesses=outer_acc, reductions=left, reduce_ranges=rr
-    )
-    sub_bufs = {**bufs, key: tmp}
     try:
+        mult = _mult(outside)
+        read = Access(key, dtypes.half, tuple(zip(outside, mult)), 0)
+        reductions = {}
+
+        def swap(x, walk):
+            if x is leaf:
+                return X.Load(len(plan.accesses))
+            if isinstance(x, X.Reduce):
+                new = X.Reduce(x.op, walk(x.arg))
+                reductions[id(new)] = plan.reductions[id(x)]
+                return new
+            return None
+
+        outer_e = _rebuild(plan.expr, swap)
+        outer_e, outer_acc, remap2 = _prune(outer_e, [*plan.accesses, read])
+        left = {k: reductions[v] for k, v in remap2.items()}
+        rr = tuple(dict.fromkeys(r for rs in left.values() for r in rs))
+        outer = replace(
+            plan, expr=outer_e, accesses=outer_acc, reductions=left, reduce_ranges=rr
+        )
+        sub_bufs = {**bufs, key: tmp}
         runs = _vector(dev, sub, sub_bufs)
         runs += _vector(dev, outer, sub_bufs)
     finally:
@@ -156,41 +156,41 @@ def _narrow(dev, plan: Plan, bufs) -> list:
     key = ("narrow", id(best[1]))
     n = int(np.prod([U.extent(r) for r in rs])) if rs else 1
     tmp = Storage(dev, max(32, 2 * n))
-    sub = replace(
-        plan,
-        name=f"{plan.name}_n",
-        out_slot=key,
-        out_dtype=dtypes.half,
-        out_shape=tuple(U.extent(r) for r in rs),
-        out_ranges=tuple(rs),
-        expr=sub_e,
-        accesses=sub_acc,
-        reduce_ranges=(),
-        reductions={},
-    )
-    read = Access(key, dtypes.half, tuple(zip(rs, _mult(rs))), 0)
-    reductions = {}
-
-    def swap(x, walk):
-        if x is best[1]:
-            return X.Load(len(plan.accesses))
-        if isinstance(x, X.Reduce):
-            new = X.Reduce(x.op, walk(x.arg))
-            reductions[id(new)] = plan.reductions[id(x)]
-            return new
-        return None
-
-    outer_e, outer_acc, remap = _prune(
-        _rebuild(plan.expr, swap), [*plan.accesses, read]
-    )
-    outer = replace(
-        plan,
-        expr=outer_e,
-        accesses=outer_acc,
-        reductions={k: reductions[v] for k, v in remap.items()},
-    )
-    sub_bufs = {**bufs, key: tmp}
     try:
+        sub = replace(
+            plan,
+            name=f"{plan.name}_n",
+            out_slot=key,
+            out_dtype=dtypes.half,
+            out_shape=tuple(U.extent(r) for r in rs),
+            out_ranges=tuple(rs),
+            expr=sub_e,
+            accesses=sub_acc,
+            reduce_ranges=(),
+            reductions={},
+        )
+        read = Access(key, dtypes.half, tuple(zip(rs, _mult(rs))), 0)
+        reductions = {}
+
+        def swap(x, walk):
+            if x is best[1]:
+                return X.Load(len(plan.accesses))
+            if isinstance(x, X.Reduce):
+                new = X.Reduce(x.op, walk(x.arg))
+                reductions[id(new)] = plan.reductions[id(x)]
+                return new
+            return None
+
+        outer_e, outer_acc, remap = _prune(
+            _rebuild(plan.expr, swap), [*plan.accesses, read]
+        )
+        outer = replace(
+            plan,
+            expr=outer_e,
+            accesses=outer_acc,
+            reductions={k: reductions[v] for k, v in remap.items()},
+        )
+        sub_bufs = {**bufs, key: tmp}
         return _vector(dev, sub, sub_bufs) + _vector(dev, outer, sub_bufs)
     finally:
         tmp.free()
@@ -773,23 +773,23 @@ def _reordered(dev, plan: Plan, bufs, order: list) -> list:
     temporary so, then moved into the output (`_moved`)."""
     key = ("mmout", id(plan))
     t = Storage(dev, max(32, 2 * _size(order)))
-    t.dtype = np.float16
-    sub = replace(
-        plan,
-        out_slot=key,
-        out_dtype=dtypes.half,
-        out_ranges=tuple(order),
-        out_shape=tuple(U.extent(r) for r in order),
-        out_strides=None,
-        splits=(),
-    )
-    # The temporary over the output's own ranges: each joined range's stride
-    # given to the two it joins (`Plan.splits`, the last joined first).
-    coef = _dense(order)
-    for f, p, q in reversed(plan.splits):
-        c = coef.pop(f)
-        coef[p], coef[q] = c * U.extent(q), c
     try:
+        t.dtype = np.float16
+        sub = replace(
+            plan,
+            out_slot=key,
+            out_dtype=dtypes.half,
+            out_ranges=tuple(order),
+            out_shape=tuple(U.extent(r) for r in order),
+            out_strides=None,
+            splits=(),
+        )
+        # The temporary over the output's own ranges: each joined range's stride
+        # given to the two it joins (`Plan.splits`, the last joined first).
+        coef = _dense(order)
+        for f, p, q in reversed(plan.splits):
+            c = coef.pop(f)
+            coef[p], coef[q] = c * U.extent(q), c
         runs = _matmul(dev, sub, {**bufs, key: t})
         tplan, tbufs, finish = _half_target(dev, plan, bufs)
         runs += _moved(dev, tplan, tbufs, t, coef)
@@ -1022,20 +1022,20 @@ def _pad_rows(dev, plan: Plan, bufs, acc, batch, m, cols, mp: int, width: int):
     if held is not None:
         return held, []
     t = Storage(dev, max(32, 2 * step))
-    t.wrote(FLAT)
-    t.dtype = np.float16
-    if acc.slot is None:
-        laid = np.zeros(step, np.float16)
-        idx = np.zeros([U.extent(r) for r in order], np.int64)
-        for i, (r, s) in enumerate(zip(order, strides)):
-            shape = [1] * len(order)
-            shape[i] = U.extent(r)
-            idx = idx + s * np.arange(U.extent(r)).reshape(shape)
-        laid[idx] = _table_over(acc, order)
-        dev.write(t.addr, laid.tobytes())
-        return t, []
-    key = ("pad_rows", id(acc), id(plan))
     try:
+        t.wrote(FLAT)
+        t.dtype = np.float16
+        if acc.slot is None:
+            laid = np.zeros(step, np.float16)
+            idx = np.zeros([U.extent(r) for r in order], np.int64)
+            for i, (r, s) in enumerate(zip(order, strides)):
+                shape = [1] * len(order)
+                shape[i] = U.extent(r)
+                idx = idx + s * np.arange(U.extent(r)).reshape(shape)
+            laid[idx] = _table_over(acc, order)
+            dev.write(t.addr, laid.tobytes())
+            return t, []
+        key = ("pad_rows", id(acc), id(plan))
         runs = _vector(
             dev, _laid_plan(plan, key, acc, order, strides), {**bufs, key: t}
         )

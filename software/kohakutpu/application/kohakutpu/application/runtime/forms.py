@@ -437,22 +437,40 @@ class Pending:
         if self.storage is None:
             prev: Any = None
             temps = []
-            for i, s in enumerate(self.steps):
-                last = i == len(self.steps) - 1
-                out = Storage(self.dev, self.nbytes if last else max(32, 2 * s.m))
-                src = prev.addr if s.src is None else s.src
-                relayout(
-                    self.dev, src, s.n, s.walk, s.at, s.dwalk, s.m, out.addr, s.dat
-                )
+            try:
+                for i, s in enumerate(self.steps):
+                    last = i == len(self.steps) - 1
+                    out = Storage(self.dev, self.nbytes if last else max(32, 2 * s.m))
+                    try:
+                        src = prev.addr if s.src is None else s.src
+                        relayout(
+                            self.dev,
+                            src,
+                            s.n,
+                            s.walk,
+                            s.at,
+                            s.dwalk,
+                            s.m,
+                            out.addr,
+                            s.dat,
+                        )
+                        if prev is not None:
+                            temps.append(prev)
+                    except BaseException:
+                        out.free()
+                        raise
+                    prev = out
+                prev.wrote(FLAT)
+                prev.dtype = np.float16
+                self.storage = prev
+                return prev
+            except BaseException:
                 if prev is not None:
-                    temps.append(prev)
-                prev = out
-            for t in temps:
-                t.free()
-            prev.wrote(FLAT)
-            prev.dtype = np.float16
-            self.storage = prev
-            return prev
+                    prev.free()
+                raise
+            finally:
+                for t in temps:
+                    t.free()
         return self.storage
 
     def free(self) -> None:
@@ -525,14 +543,21 @@ def deferred(st: Storage) -> Step | None:
 def _relayouts(dev, steps: tuple, dst: int) -> None:
     """`steps` run as relayouts, the last into `dst`."""
     temps: list[Storage] = []
-    for i, s in enumerate(steps):
-        src = temps[-1].addr if s.src is None else s.src
-        if i < len(steps) - 1:
-            temps.append(Storage(dev, max(32, 2 * s.m)))
-        at = temps[-1].addr if i < len(steps) - 1 else dst
-        relayout(dev, src, s.n, s.walk, s.at, s.dwalk, s.m, at, s.dat)
-    for t in temps:
-        t.free()
+    try:
+        for i, s in enumerate(steps):
+            src = temps[-1].addr if s.src is None else s.src
+            if i < len(steps) - 1:
+                t = Storage(dev, max(32, 2 * s.m))
+                try:
+                    temps.append(t)
+                except BaseException:
+                    t.free()
+                    raise
+            at = temps[-1].addr if i < len(steps) - 1 else dst
+            relayout(dev, src, s.n, s.walk, s.at, s.dwalk, s.m, at, s.dat)
+    finally:
+        for t in temps:
+            t.free()
 
 
 def made_by(s: Step) -> dict:
@@ -580,11 +605,10 @@ def step_binds(dev, plans, prefix: str) -> dict:
     return out
 
 
-def _composed_quant(dev, steps, st, key, src, rows, cols, rp, cp, side, g, nk, batches):
-    """Whether the packing of `steps` is read composed, into form `key` of
-    `st` once. Rows not of whole words are one more step, as materialized."""
+def _composed_plan(dev, steps, src, rows, cols, rp, cp, side, g, nk, batches):
+    """A composed packing call, without allocating forms or uploading tables."""
     if COMPOSED == "off" or not PREPARED_QUANT:
-        return False
+        return None
     quant_src = src
     if cols % 16 or src.pitch % 16 or src.offset % 16:
         R, dp = batches * rows, -(-cols // 16) * 16
@@ -610,16 +634,11 @@ def _composed_quant(dev, steps, st, key, src, rows, cols, rp, cp, side, g, nk, b
     args = dict(quant["args"], prepared=prepared, composed=[0])
     read = {"gen": "matmul.quant_kernel", "args": args}
     if not composed(dev, read, [*map(relayout_call, steps), quant]):
-        return False
-    if key not in st.valid:
-        f = st.form(key, batches * rp * cp)
-        binds = {"p_x": steps[0].src, "q": f.addr}
-        generated.launch(dev, read["gen"], args, binds, kind="quant")
-        st.made(key)
-    return True
+        return None
+    return args
 
 
-def _prepared_quant(dev, steps, src, rows, cols, rp, cp, side, g, nk, batches):
+def _prepared_plan(dev, steps, src, rows, cols, rp, cp, side, g, nk, batches):
     recipe = (
         costs.prepared_quant(
             steps, src, rows, cols, rp, cp, side, g, nk, batches, dev.machine.board
@@ -657,35 +676,55 @@ def _prepared_quant(dev, steps, src, rows, cols, rp, cp, side, g, nk, batches):
         recipe.get("pad_strategy", "native"),
         prepared=[s.made_by() for s in measured],
     )
-    return call, {"p_x": steps[0].src, **step_binds(dev, plans, "p_")}
+    return call, plans
 
 
-def _stepped(dev, steps, holder, src, rows, cols, rp, cp, side, g, nk, batches):
-    """The address of the packing of the f16 values `steps` make, read
-    through them (composed, else a measured prepared recipe) into a form of
-    `holder`; None where neither takes them."""
+def quant_production(dev, steps, src, rows, cols, rp, cp, side, g, nk, batches):
+    """Select composed, prepared or materialized production without device allocation.
+
+    Planning may compile recipes; only execution binds their tables and outputs.
+    """
     args = (src, rows, cols, rp, cp, side, g, nk, batches)
-    key = ("composed_mx7", side, src, rows, cols, rp, cp, g, nk, batches)
-    if _composed_quant(dev, steps, holder, key, *args):
-        return holder.forms[key].addr
-    prepared = _prepared_quant(dev, steps, *args)
-    if prepared is None:
-        return None
-    key = ("prepared_mx7", side, src, rows, cols, rp, cp, g, nk, batches)
+    call = _composed_plan(dev, steps, *args)
+    if call is not None:
+        return "composed", call, None
+    prepared = _prepared_plan(dev, steps, *args)
+    if prepared is not None:
+        call, plans = prepared
+        return "prepared", call, plans
+    return "materialized", None, None
+
+
+def _produce_quant(dev, steps, holder, key, size, production):
+    mode, call, plans = production
     if key not in holder.valid:
-        f = holder.form(key, batches * rp * cp)
-        call, binds = prepared
-        generated.launch(
-            dev, "matmul.quant_kernel", call, dict(binds, q=f.addr), kind="quant"
-        )
+        f = holder.form(key, size)
+        binds = {"p_x": steps[0].src, "q": f.addr}
+        if mode == "prepared":
+            binds.update(step_binds(dev, plans, "p_"))
+        generated.launch(dev, "matmul.quant_kernel", call, binds, kind="quant")
         holder.made(key)
     return holder.forms[key].addr
 
 
+def _stepped(dev, steps, holder, src, rows, cols, rp, cp, side, g, nk, batches):
+    """Read the steps into a packed form when selected without materialization."""
+    production = quant_production(
+        dev, steps, src, rows, cols, rp, cp, side, g, nk, batches
+    )
+    mode = production[0]
+    if mode == "materialized":
+        return None
+    key = (f"{mode}_mx7", side, src, rows, cols, rp, cp, g, nk, batches)
+    return _produce_quant(dev, steps, holder, key, batches * rp * cp, production)
+
+
 def writer_quant(dev, key: tuple) -> dict | None:
-    """The `fused` quant step's packing (`fused::Step::Quant`) of form `key`
-    of a buffer's whole values, as `packed` launches it: rows not of whole
-    words read composed (None where that read does not lower)."""
+    """A fused writer quant step for whole values (None if it cannot lower).
+
+    This describes writer capability, not the standalone production policy
+    selected by `quant_production`.
+    """
     _, side, src, rows, cols, rp, cp, g, nk, batches = key
     out = {"side": side, "g": g, "nk": nk, "rp": rp, "cp": cp, "rows": rows}
     if cols % 16 == 0:
@@ -841,34 +880,17 @@ def packed(
             step = Step(base, n, walk, src.offset, ((R, dp), (cols, 1)), 0, R * dp)
             laid = Operand("full", pitch=dp)
             args = (laid, rows, dp, rp, cp, side, g, nk, batches)
-            if _composed_quant(dev, (step,), st, key, *args):
-                return f.addr
-            prepared = _prepared_quant(
-                dev,
-                (step,),
-                Operand("full", pitch=dp),
-                rows,
-                dp,
-                rp,
-                cp,
-                side,
-                g,
-                nk,
-                batches,
-            )
-            if prepared is not None:
-                call, binds = prepared
-                generated.launch(
-                    dev,
-                    "matmul.quant_kernel",
-                    call,
-                    dict(binds, q=f.addr),
-                    kind="quant",
+            production = quant_production(dev, (step,), *args)
+            if production[0] != "materialized":
+                return _produce_quant(
+                    dev, (step,), st, key, batches * rp * cp, production
                 )
-                st.made(key)
-                return f.addr
             t = Storage(dev, 2 * R * dp)
-            tmps.append(t)
+            try:
+                tmps.append(t)
+            except BaseException:
+                t.free()
+                raise
             relayout(
                 dev, base, n, walk, src.offset, ((R, dp), (cols, 1)), R * dp, t.addr
             )
@@ -957,10 +979,19 @@ def table(dev, arr, dtype: type = np.float16) -> int:
     got = dev.tables.get(key)
     if got is None:
         got = Storage(dev, max(a.nbytes, 32))
-        dev.write(got.addr, a.tobytes())
-        dev.tables[key] = got
-        entry, _ = dev.mmu.resolve(got.addr)
-        dev.constants.add((entry.arena, entry.physical))
+        ref = None
+        try:
+            dev.write(got.addr, a.tobytes())
+            entry, _ = dev.mmu.resolve(got.addr)
+            ref = (entry.arena, entry.physical)
+            dev.constants.add(ref)
+            dev.tables[key] = got
+        except BaseException:
+            dev.tables.pop(key, None)
+            if ref is not None:
+                dev.constants.discard(ref)
+            got.free()
+            raise
     return got.addr
 
 

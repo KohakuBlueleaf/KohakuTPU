@@ -103,7 +103,7 @@ int ka_engine_add(struct ka_engine *e, uint64_t word, uint32_t credit, uint32_t 
         c = e->cap;
     }
     s->credit = c ? c : 1;
-    s->inflight = s->expected = s->received = s->acks = s->sent = 0;
+    s->inflight = s->expected = s->retired = s->acks = s->sent = 0;
     s->fetch = fetch;
     if (s->x < 16 && s->y < 16 && !e->at[s->x][s->y]) {
         e->at[s->x][s->y] = (uint8_t)(e->n + 1);
@@ -143,8 +143,11 @@ static __attribute__((noinline)) unsigned drain_slow(struct ka_engine *e, uint64
 #endif
     enum ka_verdict v = s->cls->classify(KA_CQ_CODE(w), KA_CQ_ARG(w));
     unsigned retired = 0;
-    ++s->received;
-    s->acks += v == KA_V_ACK;
+    if (v == KA_V_ACK) {
+        ++s->acks;
+    } else {
+        ++s->retired;
+    }
     if (v != KA_V_ACK && s->inflight) {
         --s->inflight;
         retired = 1;
@@ -187,13 +190,15 @@ int ka_engine_drain(struct ka_engine *e)
 #ifdef KA_DEBUG
             ka_dbg_completion((unsigned)at - 1, w);
 #endif
-            ++s->received;
             if (code == KA_SIG_DATA_RECEIVED) {
                 ++s->acks;
             }
-            else if (s->inflight) {
-                --s->inflight;
-                ++retired;
+            else {
+                ++s->retired;
+                if (s->inflight) {
+                    --s->inflight;
+                    ++retired;
+                }
             }
             continue;
         }
@@ -249,6 +254,11 @@ int ka_engine_send(struct ka_engine *e, unsigned u, const uint64_t w[4])
     if (u >= e->n) {
         return ka_engine_fail(e, KA_ST_BAD_UNIT, u, 0);
     }
+    return ka_engine_send_open(e, u, w);
+}
+
+int ka_engine_send_open(struct ka_engine *e, unsigned u, const uint64_t w[4])
+{
     struct ka_unit_state *s = &e->u[u];
     if (!has_room(e, u) && wait_until(e, has_room, u, KA_WAIT_CREDIT)) {
         return e->status;
@@ -339,7 +349,7 @@ int ka_engine_fetch(struct ka_engine *e, unsigned u, unsigned port, uint64_t add
 
 static int awaited(struct ka_engine *e, unsigned u)
 {
-    return e->u[u].received >= e->u[u].expected;
+    return e->u[u].retired >= e->u[u].expected;
 }
 
 int ka_engine_await(struct ka_engine *e, unsigned u, uint32_t count)
@@ -358,7 +368,7 @@ static int all_quiet(struct ka_engine *e, unsigned unused)
         return 0;
     }
     for (unsigned i = 0; i < e->n; ++i) {
-        if (e->u[i].received < e->u[i].expected) {
+        if (e->u[i].retired < e->u[i].expected) {
             return 0;
         }
     }

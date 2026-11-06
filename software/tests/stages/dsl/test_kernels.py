@@ -10,6 +10,7 @@ import pytest
 import kohakutpu.language.dsl as kt
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.application.runtime.offline import HostMemory
+from kohakutpu.language.dsl import ops
 from kohakutpu.language.examples.dsl.cluster.linear import linear
 from kohakutpu.language.examples.dsl.vector.activation import activation
 from kohakutpu.language.examples.dsl.vector.glu import glu
@@ -274,3 +275,26 @@ def test_a_composed_statistic_is_the_shape_its_caller_allocates(machine):
     )
     out = next(p for p in graph["ports"] if p["name"] == "out")
     assert out["spec"]["shape"] == want["out"]
+
+
+@kt.kernel
+def sliced_reduction(x=kt.In(8, 64), y=kt.Out(4, 32), *, register=False):
+    for _core in kt.par(1, on=kt.vc):
+        value = kt.load(x[:, :], gt4=True)
+        if register:
+            value = kt.unpack(value)
+        band = value[4:8, 32:64]
+        total = kt.rsum(band)
+        kt.store(y[:, :], ops.math("add", band, total))
+
+
+@pytest.mark.parametrize("register", [False, True])
+def test_direct_view_reduction_lowers_and_evaluates(machine, register):
+    x = np.arange(512, dtype=np.float16).reshape(8, 64) / 512
+    traced = sliced_reduction.trace(
+        {"x": x}, machine=dsl_machine(machine), register=register
+    )
+    text = _rs.l2_of(json.dumps(traced.graph), machine.machine_json, rs._MUTANT.get())
+    got = on_the_simulator(traced, {"x": x}, text)["y"]
+    band = x[4:8, 32:64].astype(np.float64)
+    np.testing.assert_allclose(got, band + band.sum(axis=1, keepdims=True), rtol=1e-3)

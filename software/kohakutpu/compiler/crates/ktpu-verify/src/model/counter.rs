@@ -10,7 +10,7 @@
 
 use super::clock::Clock;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Counter {
     pub name: String,
     pub value: i64,

@@ -12,6 +12,7 @@ A comparison used only by one select need not materialize a floating-point
 0/1 mask. The typed vector lowering recognizes the adjacent sequence
 `compare p1; mask = 0; mask = 1 if p1; result = select(true, false, mask)`.
 It emits `result = false; compare p1; result = true if p1` instead.
+(code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/vector/gen/predicate.rs:31-105)
 
 The two result writes and the predicate read retain their dependencies through
 register allocation and scheduling. The rewrite runs before bank rotation in

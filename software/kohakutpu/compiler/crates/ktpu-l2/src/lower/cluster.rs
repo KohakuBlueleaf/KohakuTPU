@@ -210,7 +210,6 @@ pub fn lower(
                             let at = c.uses.get(&ii).copied().unwrap_or(ii);
                             posts.entry(at).or_default().push((nn, src));
                         }
-                        continue;
                     }
                     None => c.recv(op, env, links, ii, seg)?,
                 }

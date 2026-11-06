@@ -23,14 +23,15 @@ use crate::adapter::u256::U256;
 use crate::model::clock::Clock;
 use crate::model::finding::Kind;
 
-use super::{Pk, Sender, Sim, Sink, Take};
+use super::symbolic::Value;
+use super::{Pk, Sender, Sim, Sink, StepOutcome, Take};
 
 /// A fetch run's most words: its 8-bit count (L0.STEP.045).
 pub const FETCH_RUN: i64 = 255;
 const MASK: u64 = u64::MAX;
 
 /// A DISPATCH (or a REPEAT, written out, sent whole) of one segment.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Item {
     pub unit: usize,
     pub arg: usize,
@@ -40,7 +41,7 @@ pub(crate) struct Item {
     pub sent: i64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Segment {
     pub pkg: usize,
     pub start: usize,
@@ -54,8 +55,23 @@ pub(crate) struct Segment {
 pub(crate) enum NStep {
     Seg(usize),
     Op(Step),
+    JoinSeg(usize),
+    JoinOp(Step),
 }
 
+impl PartialEq for NStep {
+    fn eq(&self, other: &Self) -> bool {
+        match (*self, *other) {
+            (Self::Seg(a) | Self::JoinSeg(a), Self::Seg(b) | Self::JoinSeg(b)) => a == b,
+            (Self::Op(a) | Self::JoinOp(a), Self::Op(b) | Self::JoinOp(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for NStep {}
+
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Node {
     pub proc: usize,
     pub mesh: u32,
@@ -67,16 +83,16 @@ pub(crate) struct Node {
     fetch: Vec<bool>,
     sent: Vec<i64>,
     expected: Vec<i64>,
+    frontiers: HashMap<u32, (u16, i64)>,
     payloads: Vec<U256>,
     pub steps: Vec<NStep>,
     pub segments: Vec<Segment>,
     pub at: usize,
+    pub branches: HashMap<usize, (usize, usize)>,
     armed: bool,
     pub why: String,
-    /// Package registers: a value, or None once it holds data from memory.
-    regs: HashMap<u16, Option<u64>>,
-    /// JUMP step -> times taken on data
-    taken_on_data: HashMap<usize, u32>,
+    /// Concrete register values or finite-width symbolic expressions.
+    regs: HashMap<u16, Value>,
     pub rx: usize,
     pub rx_taken: i64,
     /// Where bursts the node sends come from, as a unit's key.
@@ -90,6 +106,30 @@ pub(crate) struct Node {
 }
 
 impl Node {
+    /// Forward targets and package ends are the possible joins of forked paths.
+    pub fn mark_joins(&mut self) {
+        let joins: Vec<usize> = self
+            .steps
+            .iter()
+            .enumerate()
+            .filter_map(|(at, step)| match step {
+                NStep::Op(s) | NStep::JoinOp(s) if s.op == op::JUMP && s.unit as usize > at => {
+                    Some(s.unit as usize)
+                }
+                NStep::Op(s) | NStep::JoinOp(s) if s.op == op::END => Some(at),
+                _ => None,
+            })
+            .collect();
+        for at in joins {
+            if let Some(step) = self.steps.get_mut(at) {
+                *step = match *step {
+                    NStep::Seg(s) | NStep::JoinSeg(s) => NStep::JoinSeg(s),
+                    NStep::Op(s) | NStep::JoinOp(s) => NStep::JoinOp(s),
+                };
+            }
+        }
+    }
+
     pub fn done(&self) -> bool {
         self.at >= self.steps.len()
     }
@@ -180,14 +220,15 @@ impl Sim<'_> {
             fetch: pkg.units.iter().map(|u| u.fetch >> 16 != 0).collect(),
             sent: vec![0; n],
             expected: vec![0; n],
+            frontiers: HashMap::default(),
             payloads: Vec::new(),
             steps: Vec::new(),
             segments: Vec::new(),
             at: 0,
+            branches: HashMap::default(),
             armed: false,
             why: String::new(),
             regs: HashMap::default(),
-            taken_on_data: HashMap::default(),
             rx: 0,
             rx_taken: 0,
             key: (mesh, 0, 0),
@@ -211,14 +252,16 @@ impl Sim<'_> {
     pub fn node_blocked(&self, i: usize) -> String {
         let nd = &self.nodes[i];
         match nd.steps[nd.at] {
-            NStep::Seg(s) => {
+            NStep::Seg(s) | NStep::JoinSeg(s) => {
                 let seg = &nd.segments[s];
                 format!(
                     "segment at package {} step {}: {}",
                     seg.pkg, seg.start, nd.why
                 )
             }
-            NStep::Op(s) => format!("step {} {} u{}: {}", nd.at, op::name(s.op), s.unit, nd.why),
+            NStep::Op(s) | NStep::JoinOp(s) => {
+                format!("step {} {} u{}: {}", nd.at, op::name(s.op), s.unit, nd.why)
+            }
         }
     }
 
@@ -227,10 +270,10 @@ impl Sim<'_> {
         self.counters[self.units[unit].done].value
     }
 
-    pub fn node_step(&mut self, i: usize) -> bool {
+    pub fn node_step(&mut self, i: usize) -> StepOutcome {
         let p = self.nodes[i].proc;
         if self.nodes[i].done() {
-            return false;
+            return StepOutcome::Blocked;
         }
         let host = self.nodes[i].host;
         if host > 0 {
@@ -239,17 +282,27 @@ impl Sim<'_> {
             let need = self.node_of.len() as i64;
             if !self.counters[c].reached(need) {
                 self.nodes[i].why = "the host waits for every node's package".into();
-                return false;
+                return StepOutcome::Blocked;
             }
             let cl = self.clock_to(c, need, &[]);
             self.tick(p, &[cl]);
             self.nodes[i].host = 0;
         }
         let s = match self.nodes[i].steps[self.nodes[i].at] {
-            NStep::Seg(s) => return self.segment(i, s),
+            NStep::Seg(s) => return self.segment(i, s).into(),
             NStep::Op(s) => s,
+            NStep::JoinSeg(s) => {
+                let nd = &mut self.nodes[i];
+                nd.steps[nd.at] = NStep::Seg(s);
+                return StepOutcome::Join;
+            }
+            NStep::JoinOp(s) => {
+                let nd = &mut self.nodes[i];
+                nd.steps[nd.at] = NStep::Op(s);
+                return StepOutcome::Join;
+            }
         };
-        match s.op {
+        let progress = match s.op {
             op::END | op::BARRIER => {
                 // Every word sent has completed (interp.c: ka_engine_barrier).
                 let mut rel = Vec::new();
@@ -264,7 +317,7 @@ impl Sim<'_> {
                             "barrier: {} {} of {} completed",
                             self.units[unit].name, self.counters[done].value, sent
                         );
-                        return false;
+                        return StepOutcome::Blocked;
                     }
                     rel.push(self.clock_to(done, sent, &[]));
                 }
@@ -286,14 +339,63 @@ impl Sim<'_> {
                 }
                 true
             }
-            op::AWAIT => {
+            op::FRONTIER if s.flags != 1 => {
+                let nd = &mut self.nodes[i];
+                let valid = match s.flags {
+                    0 if s.arg == 0
+                        && (s.count as usize) < nd.payloads.len()
+                        && (s.unit as usize) < nd.sent.len() =>
+                    {
+                        nd.frontiers
+                            .insert(s.count, (s.unit, nd.sent[s.unit as usize]));
+                        true
+                    }
+                    2 if s.unit == 0
+                        && s.arg <= nd.payloads.len() as u64
+                        && u64::from(s.count) <= nd.payloads.len() as u64 - s.arg =>
+                    {
+                        let end = s.arg + u64::from(s.count);
+                        nd.frontiers
+                            .retain(|&k, _| !(s.arg..end).contains(&u64::from(k)));
+                        true
+                    }
+                    _ => false,
+                };
+                if !valid {
+                    let name = nd.name.clone();
+                    self.find(Kind::Model, name, "invalid FRONTIER fields");
+                    return StepOutcome::Terminal;
+                }
+                self.tick(p, &[]);
+                self.nodes[i].at += 1;
+                true
+            }
+            op::AWAIT | op::FRONTIER => {
                 let u = s.unit as usize;
+                if s.op == op::FRONTIER && u >= self.nodes[i].units.len() {
+                    let name = self.nodes[i].name.clone();
+                    self.find(Kind::Model, name, "FRONTIER wait names an absent unit");
+                    return StepOutcome::Terminal;
+                }
                 let Some(unit) = self.nodes[i].units.get(u).copied().flatten() else {
                     self.nodes[i].at += 1;
-                    return true;
+                    return StepOutcome::Progress;
                 };
                 if !self.nodes[i].armed {
-                    if s.flags == flag::IMM {
+                    if s.op == op::FRONTIER {
+                        let saved = self.nodes[i].frontiers.get(&s.count).copied();
+                        let Some((_, target)) = saved.filter(|(unit, _)| *unit == s.unit) else {
+                            let name = self.nodes[i].name.clone();
+                            self.find(Kind::Model, name, "FRONTIER wait has no saved target");
+                            return StepOutcome::Terminal;
+                        };
+                        if s.arg != 0 || (s.count as usize) >= self.nodes[i].payloads.len() {
+                            let name = self.nodes[i].name.clone();
+                            self.find(Kind::Model, name, "invalid FRONTIER wait fields");
+                            return StepOutcome::Terminal;
+                        }
+                        self.nodes[i].expected[u] = self.nodes[i].expected[u].max(target);
+                    } else if s.flags == flag::IMM {
                         self.nodes[i].expected[u] = self.nodes[i].sent[u];
                     } else {
                         self.nodes[i].expected[u] += s.count as i64;
@@ -307,7 +409,7 @@ impl Sim<'_> {
                         "{}: {} of {} completions",
                         self.units[unit].name, self.counters[recv].value, want
                     );
-                    return false;
+                    return StepOutcome::Blocked;
                 }
                 // The unit completes at most the words this node sent it so far.
                 let cap = [(self.units[unit].completer, self.nodes[i].sent[u])];
@@ -326,7 +428,7 @@ impl Sim<'_> {
                         self.counters[rx].value - self.nodes[i].rx_taken,
                         s.count
                     );
-                    return false;
+                    return StepOutcome::Blocked;
                 }
                 let cl = self.clock_to(rx, want, &[]);
                 self.tick(p, &[cl]);
@@ -337,7 +439,7 @@ impl Sim<'_> {
             op::RING | op::WAIT_BELL | op::WAIT_SLOT | op::FETCH | op::SEND | op::ENGINE => {
                 self.node_other(i, s)
             }
-            op::LOAD | op::ALU | op::JUMP => self.node_register(i, s),
+            op::LOAD | op::ALU | op::JUMP => return self.node_register(i, s),
             _ => {
                 // MOVER, MWAIT, SETTLE, SIGNAL, CTRL, STORE, PATCH: nothing a
                 // unit waits on.
@@ -345,7 +447,8 @@ impl Sim<'_> {
                 self.nodes[i].at += 1;
                 true
             }
-        }
+        };
+        progress.into()
     }
 
     // ------------------------------------------------------------- segments
@@ -588,67 +691,81 @@ impl Sim<'_> {
         }
     }
 
-    /// LOAD, ALU, JUMP (interp.c load/alu/jump). A loaded value is data; a
-    /// JUMP on data is taken `TRIPS` times, then not.
-    fn node_register(&mut self, i: usize, s: Step) -> bool {
+    /// Register expressions retain their identities across forward successors.
+    fn node_register(&mut self, i: usize, s: Step) -> StepOutcome {
         let p = self.nodes[i].proc;
         self.tick(p, &[]);
-        let trips = crate::target::TRIPS;
         let nd = &mut self.nodes[i];
         if s.op == op::LOAD {
-            nd.regs.insert(
-                s.unit,
-                if s.flags == flag::IMM {
-                    nd.payloads.get(s.arg as usize).map(|w| w.bits(0, 64))
-                } else {
-                    None
-                },
-            );
+            let Some(word) = nd.payloads.get(s.arg as usize) else {
+                let name = nd.name.clone();
+                self.find(Kind::Model, name, "LOAD names an absent payload");
+                return StepOutcome::Terminal;
+            };
+            let base = word.bits(0, 64);
+            let value = if s.flags == flag::IMM {
+                Value::Known(base)
+            } else {
+                self.symbolic.fresh()
+            };
+            nd.regs.insert(s.unit, value);
             nd.at += 1;
-            return true;
+            return StepOutcome::Progress;
         }
-        let reg = |r: u32| nd.regs.get(&(r as u16)).copied().unwrap_or(Some(0));
+        let reg = |r: u32| nd.regs.get(&(r as u16)).copied().unwrap_or(Value::Known(0));
         let a = reg((s.count >> 8) & 0xF);
         let b = if s.flags & flag::IMM != 0 {
-            Some(s.arg)
+            Value::Known(s.arg)
         } else {
             reg((s.count >> 12) & 0xF)
         };
         if s.op == op::ALU {
             let v = match (a, b) {
-                (Some(a), Some(b)) => alu(s.count & 0xFF, a, b),
-                _ => None,
+                (Value::Known(a), Value::Known(b)) => alu(s.count & 0xFF, a, b).map(Value::Known),
+                _ => self.symbolic.alu(s.count & 0xFF, a, b),
+            };
+            let Some(v) = v else {
+                let name = nd.name.clone();
+                self.find(Kind::Model, name, "invalid ALU operation");
+                return StepOutcome::Terminal;
             };
             nd.regs.insert(s.unit, v);
             nd.at += 1;
-            return true;
+            return StepOutcome::Progress;
         }
         let c = s.count & 0xFF;
         let go = if c == 0 {
             true
         } else {
             match (a, b) {
-                (Some(a), Some(b)) => cond(c, a, b),
+                (Value::Known(a), Value::Known(b)) => cond(c, a, b),
                 _ => {
                     let at = nd.at;
-                    let n = nd.taken_on_data.get(&at).copied().unwrap_or(0);
-                    let go = n < trips;
-                    nd.taken_on_data.insert(at, n + u32::from(go));
-                    if !go {
-                        let name = nd.name.clone();
-                        self.find(
-                            Kind::Loop,
-                            name,
-                            format!("step {at}: a loop on data, checked for 0..{trips} trips"),
-                        );
+                    if s.unit as usize > at {
+                        let condition = self.symbolic.condition(c, a, b);
+                        let (taken, fallthrough) = self.symbolic.successors(condition);
+                        return StepOutcome::Fork {
+                            node: i,
+                            target: s.unit as usize,
+                            taken,
+                            fallthrough,
+                        };
                     }
-                    go
+                    let name = nd.name.clone();
+                    self.find(
+                        Kind::Loop,
+                        name,
+                        format!(
+                            "step {at}: data-dependent backward branch requires path exploration"
+                        ),
+                    );
+                    return StepOutcome::Terminal;
                 }
             }
         };
         let nd = &mut self.nodes[i];
         nd.at = if go { s.unit as usize } else { nd.at + 1 };
-        true
+        StepOutcome::Progress
     }
 
     /// Raw flits to a unit (interp.c send): a CU_DATA descriptor and its
@@ -830,11 +947,19 @@ impl Node {
             seg = None;
             at.insert(j, self.steps.len());
             if s.op == op::JUMP {
+                self.branches.insert(self.steps.len(), (index, jumps.len()));
                 jumps.push(self.steps.len());
             }
             let mut s = *s;
             if matches!(s.op, op::SEND | op::RECV | op::LOAD) {
                 s.arg += base as u64;
+            }
+            if s.op == op::FRONTIER {
+                if s.flags == 2 {
+                    s.arg += base as u64;
+                } else {
+                    s.count += base as u32;
+                }
             }
             self.steps.push(NStep::Op(s));
         }

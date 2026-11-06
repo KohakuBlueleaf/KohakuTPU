@@ -153,8 +153,10 @@ class Kernel:
         self.consts: dict = {}
         for p in sig.parameters.values():
             if isinstance(p.default, Port):
-                if p.kind is p.KEYWORD_ONLY:
-                    raise DSLError(f"{self.name}: buffer {p.name} is positional")
+                if p.kind is not p.POSITIONAL_OR_KEYWORD:
+                    raise DSLError(
+                        f"{self.name}: buffer {p.name} must be positional-or-keyword"
+                    )
                 self.ports[p.name] = p.default
             elif p.kind is p.KEYWORD_ONLY:
                 if p.default is p.empty:

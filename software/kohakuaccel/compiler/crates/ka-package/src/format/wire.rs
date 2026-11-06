@@ -263,6 +263,16 @@ impl Package {
                     "step {i} runtime AWAIT has reserved flags/count/argument"
                 );
             }
+            if s.op == Op::Frontier {
+                let valid = match s.flags {
+                    0 | 1 => s.unit < nunit && count < npay && s.arg == 0,
+                    2 => s.unit == 0 && arg + count <= npay,
+                    _ => false,
+                };
+                if !valid {
+                    return refuse!("L0.PKG.032", "step {i} has invalid FRONTIER fields");
+                }
+            }
             if s.op == Op::AssertZero && (s.flags != 0 || s.arg != 0) {
                 return refuse!(
                     "L0.PKG.032",

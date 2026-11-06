@@ -21,6 +21,7 @@ pub(crate) mod fx;
 pub(crate) mod memory;
 pub(crate) mod node;
 pub(crate) mod report;
+pub(crate) mod symbolic;
 pub(crate) mod units;
 
 use memory::Memory;
@@ -46,6 +47,30 @@ pub(crate) enum Pk {
     SrShell(usize),
 }
 
+pub(crate) enum StepOutcome {
+    Progress,
+    Blocked,
+    Terminal,
+    Join,
+    Fork {
+        node: usize,
+        target: usize,
+        taken: usize,
+        fallthrough: usize,
+    },
+}
+
+impl From<bool> for StepOutcome {
+    fn from(progress: bool) -> Self {
+        if progress {
+            Self::Progress
+        } else {
+            Self::Blocked
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Proc {
     pub kind: Pk,
     pub name: String,
@@ -54,18 +79,21 @@ pub(crate) struct Proc {
 }
 
 /// A word delivered to a unit, the clock it was sent with and its decoding.
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Word {
     pub word: U256,
     pub given: Clock,
     pub dec: Option<units::cluster::Decoded>,
 }
 
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Kinded {
     Mg(Box<Cluster>),
     Vc(Box<Vector>),
     Sr(Box<Row>),
 }
 
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Unit {
     pub key: (u32, u8, u8),
     pub name: String,
@@ -106,6 +134,7 @@ pub(crate) type Group = (u32, Vec<i64>);
 
 /// A non-leading sharer's arrival: (unit, group, lead, k, own arrival,
 /// own process).
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Window {
     pub unit: usize,
     pub group: Group,
@@ -126,8 +155,35 @@ pub(crate) enum Take {
     Slot(i64),
 }
 
+/// A package-local conditional's outcome, stable under segment reordering.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Decision {
+    pub mesh: u32,
+    pub run: usize,
+    pub branch: usize,
+    pub visit: usize,
+    pub taken: bool,
+}
+
+impl Decision {
+    fn same_site(&self, other: &Self) -> bool {
+        (self.mesh, self.run, self.branch, self.visit)
+            == (other.mesh, other.run, other.branch, other.visit)
+    }
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct Cursor {
+    proc: usize,
+    moved: bool,
+}
+
+#[derive(Clone)]
 pub(crate) struct Sim<'t> {
     pub t: &'t Target,
+    pub symbolic: symbolic::Symbolic,
+    pub path: Vec<Decision>,
+    pub choices: Vec<Decision>,
     pub procs: Vec<Proc>,
     /// Every process's name: the owner key of `Totals`, so one name each.
     proc_names: HashSet<String>,
@@ -168,6 +224,9 @@ impl<'t> Sim<'t> {
     pub fn new(t: &'t Target, totals: Option<Totals>) -> Self {
         Sim {
             t,
+            symbolic: symbolic::Symbolic::default(),
+            path: Vec::new(),
+            choices: Vec::new(),
             procs: Vec::new(),
             proc_names: HashSet::default(),
             counters: Vec::new(),
@@ -269,48 +328,222 @@ impl<'t> Sim<'t> {
         self.procs[p].clock.clone()
     }
 
-    /// Every process as far as it goes, round after round, until none can
-    /// take a step; then every process not at its end is in a deadlock (the
-    /// same one under every schedule).
-    pub fn run(&mut self, limit: u64) {
+    /// Explore forward alternatives with each process's scheduling cursor intact.
+    pub fn run(self, limit: u64) -> Vec<Self> {
         // Timed only with the stats on: wasm32 has no clock.
         let t0 = std::env::var_os("KTPU_VERIFY_STATS")
             .is_some()
             .then(std::time::Instant::now);
-        let mut rounds = 0u64;
-        let before = self.events;
-        self.run_rounds(limit, &mut rounds);
+        let mut rounds = 0;
+        let mut events = 0;
+        let leaves = self.explore(limit, &mut rounds, &mut events);
         crate::work::RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        crate::work::EVENTS.fetch_add(self.events - before, std::sync::atomic::Ordering::Relaxed);
+        crate::work::EVENTS.fetch_add(events, std::sync::atomic::Ordering::Relaxed);
         if let Some(t0) = t0 {
+            let Some(sim) = leaves.first() else {
+                return leaves;
+            };
             eprintln!(
                 "verify run: {} procs, {} events, {} rounds, {} counters, {:.3}s",
-                self.procs.len(),
-                self.events,
+                sim.procs.len(),
+                events,
                 rounds,
-                self.counters.len(),
+                sim.counters.len(),
                 t0.elapsed().as_secs_f64()
             );
         }
+        leaves
     }
 
-    fn run_rounds(&mut self, limit: u64, rounds: &mut u64) {
+    fn explore(mut self, limit: u64, rounds: &mut u64, events: &mut u64) -> Vec<Self> {
+        let mut pending = Vec::new();
+        let mut finished = Vec::new();
+        let mut joins: Vec<(Self, Cursor)> = Vec::new();
+        let mut cursor = Cursor::default();
         loop {
-            *rounds += 1;
-            let mut moved = false;
-            let mut p = 0;
-            while p < self.procs.len() {
-                while self.step(p) {
-                    moved = true;
-                    self.events += 1;
-                    if self.events > limit {
-                        self.find(Kind::Model, "machine", format!("over {limit} events"));
-                        return;
+            let before = self.events;
+            let outcome = self.run_rounds(limit, &mut cursor, rounds);
+            *events += self.events - before;
+            match outcome {
+                StepOutcome::Fork {
+                    node,
+                    target,
+                    taken,
+                    fallthrough,
+                } => {
+                    let nd = &self.nodes[node];
+                    let (run, branch) = nd.branches[&nd.at];
+                    let visit = self
+                        .path
+                        .iter()
+                        .filter(|d| (d.mesh, d.run, d.branch) == (nd.mesh, run, branch))
+                        .count();
+                    let decision = Decision {
+                        mesh: nd.mesh,
+                        run,
+                        branch,
+                        visit,
+                        taken: false,
+                    };
+                    let chosen = self.choices.iter().find(|d| d.same_site(&decision));
+                    if let Some(chosen) = chosen {
+                        let go = chosen.taken;
+                        let predicate = if go { taken } else { fallthrough };
+                        if predicate == 0 {
+                            let Some((next, next_cursor)) = pending.pop() else {
+                                return finished;
+                            };
+                            self = next;
+                            cursor = next_cursor;
+                        } else {
+                            self.choose(node, target, decision, go, predicate);
+                        }
+                    } else if taken == 0 {
+                        self.choose(node, target, decision, false, fallthrough);
+                    } else if fallthrough == 0 {
+                        self.choose(node, target, decision, true, taken);
+                    } else {
+                        for node in &mut self.nodes {
+                            node.mark_joins();
+                        }
+                        let mut other = self.clone();
+                        other.choose(node, target, decision.clone(), true, taken);
+                        self.choose(node, target, decision, false, fallthrough);
+                        if !pending
+                            .iter()
+                            .any(|(s, c): &(Self, Cursor)| *c == cursor && s.same_state(&other))
+                        {
+                            pending.push((other, cursor));
+                        }
                     }
                 }
-                p += 1;
+                StepOutcome::Join => {
+                    if !joins
+                        .iter()
+                        .any(|(s, c)| *c == cursor && s.same_state(&self))
+                    {
+                        joins.push((self.clone(), cursor));
+                        continue;
+                    }
+                    let Some((next, next_cursor)) = pending.pop() else {
+                        return finished;
+                    };
+                    self = next;
+                    cursor = next_cursor;
+                }
+                StepOutcome::Terminal => {
+                    if !finished.iter().any(|s: &Self| s.same_state(&self)) {
+                        finished.push(self);
+                    }
+                    let Some((next, next_cursor)) = pending.pop() else {
+                        return finished;
+                    };
+                    self = next;
+                    cursor = next_cursor;
+                }
+                StepOutcome::Progress | StepOutcome::Blocked => unreachable!("run boundary"),
             }
-            if moved {
+        }
+    }
+
+    fn choose(
+        &mut self,
+        node: usize,
+        target: usize,
+        mut decision: Decision,
+        taken: bool,
+        predicate: usize,
+    ) {
+        self.symbolic.predicate = predicate;
+        decision.taken = taken;
+        self.path.push(decision);
+        let nd = &mut self.nodes[node];
+        nd.at = if taken { target } else { nd.at + 1 };
+    }
+
+    /// Findings retain one witness path; it is not part of machine identity.
+    pub fn witness(&self, findings: &mut [Finding]) {
+        if self.path.is_empty() {
+            return;
+        }
+        let path = self
+            .path
+            .iter()
+            .map(|d| {
+                format!(
+                    "node {} run {} branch {} visit {} {}",
+                    d.mesh,
+                    d.run,
+                    d.branch,
+                    d.visit,
+                    if d.taken { "taken" } else { "fallthrough" }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        for finding in findings {
+            finding.text = format!("{} [path: {path}]", finding.text);
+        }
+    }
+
+    fn same_state(&self, other: &Self) -> bool {
+        self.symbolic == other.symbolic
+            && self.procs == other.procs
+            && self.proc_names == other.proc_names
+            && self.counters == other.counters
+            && self.names == other.names
+            && self.totals == other.totals
+            && self.findings == other.findings
+            && self.sequence_findings == other.sequence_findings
+            && self.events == other.events
+            && self.flagged == other.flagged
+            && self.units == other.units
+            && self.unit_at == other.unit_at
+            && self.nodes == other.nodes
+            && self.node_of == other.node_of
+            && self.feeder == other.feeder
+            && self.taken == other.taken
+            && self.waited == other.waited
+            && self.shares == other.shares
+            && self.arrived == other.arrived
+            && self.windows == other.windows
+            && self.acks == other.acks
+            && self.far_adds == other.far_adds
+            && self.choices == other.choices
+    }
+
+    fn run_rounds(&mut self, limit: u64, cursor: &mut Cursor, rounds: &mut u64) -> StepOutcome {
+        loop {
+            *rounds += 1;
+            while cursor.proc < self.procs.len() {
+                loop {
+                    match self.step(cursor.proc) {
+                        StepOutcome::Progress => {
+                            cursor.moved = true;
+                            self.events += 1;
+                            if self.events > limit {
+                                self.find(Kind::Model, "machine", format!("over {limit} events"));
+                                return StepOutcome::Terminal;
+                            }
+                        }
+                        fork @ StepOutcome::Fork { .. } => {
+                            cursor.moved = true;
+                            self.events += 1;
+                            if self.events > limit {
+                                self.find(Kind::Model, "machine", format!("over {limit} events"));
+                                return StepOutcome::Terminal;
+                            }
+                            return fork;
+                        }
+                        StepOutcome::Join => return StepOutcome::Join,
+                        StepOutcome::Blocked => break,
+                        StepOutcome::Terminal => return StepOutcome::Terminal,
+                    }
+                }
+                cursor.proc += 1;
+            }
+            cursor.proc = 0;
+            if std::mem::take(&mut cursor.moved) {
                 continue;
             }
             // Stuck: a scheduling node may send past its blocked item.
@@ -334,19 +567,21 @@ impl<'t> Sim<'t> {
                 self.find(Kind::Deadlock, name, text);
             }
         }
+        StepOutcome::Terminal
     }
 
-    fn step(&mut self, p: usize) -> bool {
-        match self.procs[p].kind {
+    fn step(&mut self, p: usize) -> StepOutcome {
+        let progress = match self.procs[p].kind {
             Pk::Port => false,
-            Pk::Node(i) => self.node_step(i),
+            Pk::Node(i) => return self.node_step(i),
             Pk::MgSeq(u) => self.mg_seq_step(u),
             Pk::MgDq(u) => self.mg_dq_step(u),
             Pk::VcCu(u) => self.vc_cu_step(u),
             Pk::VcFe(u) => self.vc_fe_step(u),
             Pk::VcEng(u, k) => self.vc_eng_step(u, k),
             Pk::SrShell(u) => self.sr_step(u),
-        }
+        };
+        progress.into()
     }
 
     fn relax(&mut self, p: usize) -> bool {

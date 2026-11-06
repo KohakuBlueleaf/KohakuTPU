@@ -214,7 +214,11 @@ impl<'a> NodeReader<'a> {
                         groups: n,
                     },
                 };
-                if let (MoverOp::Copy { .. }, Some(f)) = (&op, self.f001_facts()) {
+                if let (MoverOp::Copy { nbytes, .. }, Some(f)) = (&op, self.f001_facts()) {
+                    self.isa
+                        .mover
+                        .copy_words(*nbytes)
+                        .map_err(|e| self.at(st, e))?;
                     let flags = self
                         .isa
                         .mover

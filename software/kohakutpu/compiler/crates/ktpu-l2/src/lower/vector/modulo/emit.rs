@@ -5,7 +5,8 @@ use std::collections::{HashMap, HashSet};
 
 use super::*;
 
-pub(in crate::lower::vector) mod typed;
+#[doc(hidden)]
+pub mod typed;
 
 /// A load or store's K L1 slots: `base` the trip-0 buffer the generated code
 /// names, `slots` each copy's first word.

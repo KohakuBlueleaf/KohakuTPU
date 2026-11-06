@@ -135,7 +135,7 @@ impl<'a> NodeReader<'a> {
                             let Some(step) = steps.get(&ad) else {
                                 return Err(self.fail(
                                     st,
-                                    "L1.VC.010",
+                                    "L1.VC.011",
                                     format!("descriptor {ad} has no advance"),
                                 ));
                             };
@@ -183,7 +183,7 @@ impl<'a> NodeReader<'a> {
         if let Some((ad, _)) = unused {
             return Err(self.fail(
                 st,
-                "L1.VC.010",
+                "L1.VC.011",
                 format!("the advance of descriptor {ad} steps no descriptor base"),
             ));
         }
@@ -246,26 +246,26 @@ impl<'a> NodeReader<'a> {
         Ok(())
     }
 
-    /// The steps of `advances=((ad, step), ...)` by descriptor (L1.VC.010).
+    /// The steps of `advances=((ad, step), ...)` by descriptor (L1.VC.011).
     fn advance_steps(&self, st: &Stmt) -> Result<Option<BTreeMap<u32, u64>>> {
         let Some(term) = st.kw("advances") else {
             return Ok(None);
         };
         let Term::Tuple(entries) = term else {
-            return Err(self.fail(st, "L1.VC.010", "advances is a tuple of (ad, step)"));
+            return Err(self.fail(st, "L1.VC.011", "advances is a tuple of (ad, step)"));
         };
         let mut steps = BTreeMap::new();
         for entry in entries {
             let Term::Tuple(pair) = entry else {
-                return Err(self.fail(st, "L1.VC.010", "an advance is (ad, step)"));
+                return Err(self.fail(st, "L1.VC.011", "an advance is (ad, step)"));
             };
             let [ad, step] = pair.as_slice() else {
-                return Err(self.fail(st, "L1.VC.010", "an advance is (ad, step)"));
+                return Err(self.fail(st, "L1.VC.011", "an advance is (ad, step)"));
             };
             let ad = self.const_(st, ad)?;
             let step = self.const_(st, step)?;
             let Ok(ad) = u32::try_from(ad) else {
-                return Err(self.fail(st, "L1.VC.010", format!("no descriptor {ad}")));
+                return Err(self.fail(st, "L1.VC.011", format!("no descriptor {ad}")));
             };
             if !(0..=u64::MAX as i128).contains(&step) {
                 return Err(self.fail(st, "L0.STEP.041", "descriptor advance must be nonnegative"));
@@ -273,7 +273,7 @@ impl<'a> NodeReader<'a> {
             if steps.insert(ad, step as u64).is_some() {
                 return Err(self.fail(
                     st,
-                    "L1.VC.010",
+                    "L1.VC.011",
                     format!("descriptor {ad} has two advances"),
                 ));
             }

@@ -63,15 +63,20 @@ def attention(q: Tensor, k: Tensor, vt: Tensor, *, precise_scores=False) -> Tens
         "valid": kt.TensorSpec.make((h * sp, tp)),
     }
     padded = Storage(dev, 2 * h * sp * d)
-    out = Storage(dev, 2 * h * s * d)
+    out = None
     temporaries = []
     try:
+        out = Storage(dev, 2 * h * s * d)
         if precise_scores:
             dp = -(-d // 128) * 128
             for name, x, r, rp in (("q", q, s, sp), ("k", k, t, tp)):
                 repeat = 16 if name == "q" else 1
                 tmp = Storage(dev, 2 * h * rp * repeat * dp)
-                temporaries.append(tmp)
+                try:
+                    temporaries.append(tmp)
+                except BaseException:
+                    tmp.free()
+                    raise
                 F.relayout(
                     dev,
                     F.f16(dev, x.st, x.dtype, x.size),
@@ -98,11 +103,12 @@ def attention(q: Tensor, k: Tensor, vt: Tensor, *, precise_scores=False) -> Tens
             h * s * d,
             out.addr,
         )
-    except Exception:
-        out.free()
+        return Tensor((h, s, d), buf=Buf(out, np.float16))
+    except BaseException:
+        if out is not None:
+            out.free()
         raise
     finally:
         for tmp in temporaries:
             tmp.free()
         padded.free()
-    return Tensor((h, s, d), buf=Buf(out, np.float16))

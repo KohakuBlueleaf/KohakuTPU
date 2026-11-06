@@ -126,7 +126,7 @@ pub fn package(pkg: &Package, cores: &mut Cores) -> Result<Package> {
     if pkg.steps.iter().any(|s| {
         matches!(
             s.op,
-            Op::Repeat | Op::Jump | Op::Patch | Op::Send | Op::Engine
+            Op::Repeat | Op::Jump | Op::Patch | Op::Send | Op::Engine | Op::Frontier
         )
     }) {
         return super::dynamic::package(pkg, cores);

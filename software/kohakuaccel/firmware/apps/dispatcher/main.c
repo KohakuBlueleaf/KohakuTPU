@@ -43,9 +43,14 @@ int main(void)
     }
     if (!ka_boot.nunits && ka_boot.scan) {
         uint64_t units[KA_MAX_UNITS];
-        unsigned n = ka_enumerate((unsigned)ka_boot.scan, (unsigned)ka_boot.mesh, units,
+        int n = ka_enumerate((unsigned)ka_boot.scan, (unsigned)ka_boot.mesh, units,
                                   0, KA_MAX_UNITS);
-        for (unsigned i = 0; i < n; ++i) {
+        if (n < 0) {
+            uint64_t code = KA_EXIT_BOOTARGS | KA_BOOT_ERR_UNITS;
+            ka_on_fatal(code, 0, 0);
+            ka_exit(code);
+        }
+        for (unsigned i = 0; i < (unsigned)n; ++i) {
             ka_boot.units[i] = units[i];
         }
         ka_boot.nunits = n;

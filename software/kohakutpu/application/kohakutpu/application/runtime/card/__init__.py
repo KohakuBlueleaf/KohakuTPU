@@ -329,13 +329,14 @@ class NodeCard(Recording, Submission, Collection):
             )
         if debug and not got["debug"]:
             raise abi.AbiMismatch(f"{fw}: no debug features (DBG.SEL.003)")
+        reset = self._reset_quarantined(self.boots)
         self.abi, self.debug, self.fw = got, debug, fw
         record = self.record_layout(got["queue"])
         for i, (loader, args) in self.boots.items():
             loader.win.stop()
             self.queues[i].speak(got["queue"], record, layout=self.queue_layout)
             self.queues[i].track_ends = True
-            self.queues[i].init()
+            self.queues[i].init(sysnode_reset=reset)
             q = self.queues[i]
             args.regions = [(q.base, q.size, REGION_QUEUE)]
             if debug:
@@ -352,6 +353,7 @@ class NodeCard(Recording, Submission, Collection):
                 base, size = self.debug_regions[i]
                 # No header: the firmware writes its own at ready.
                 self.mem.write_block(base, bytes(DBG_LASTS))
+                self.__dict__.get("_debug_loss", {}).pop(i, None)
                 args.regions.append((base, size, REGION_DEBUG))
             loader.load(fw, args, self._place)
         for i in self.queues:
@@ -402,6 +404,21 @@ class NodeCard(Recording, Submission, Collection):
         for q in self.queues.values():
             q.alarm = seconds
 
+    def _reset_quarantined(self, nodes) -> bool:
+        """Revoke quarantined ownership with a hardware reset before queue reuse."""
+        for i in nodes:
+            if self.queues[i]._quarantined:
+                self._reset_sysnodes(i)
+                return True
+        return False
+
+    def _reset_sysnodes(self, node: int) -> None:
+        """Reset every sysnode, or refuse when this backend cannot certify it."""
+        raise RuntimeError(
+            "queue quarantined; certified hardware sysnode reset required; "
+            "this card backend cannot perform it"
+        )
+
     def restart(self, ready: float = 120.0, nodes=None) -> None:
         """Each node of `nodes` (every node by default) has its firmware
         started again from the image its instruction memory still holds,
@@ -409,12 +426,18 @@ class NodeCard(Recording, Submission, Collection):
         sysnode and mesh; DRAM, staging and the placed buffers survive).
         Queues re-initialised; the vector cores' resident images are
         forgotten, so the next run installs them again. Raises
-        `TimeoutError` when a node is not ready within `ready` seconds."""
+        `TimeoutError` when a node is not ready within `ready` seconds.
+        Quarantined ownership requires a hardware sysnode reset; that reset
+        affects every node, so all queues and firmware are restarted together.
+        Backends without a certified reset refuse with `RuntimeError`."""
         which = list(self.boots) if nodes is None else list(nodes)
+        reset = self._reset_quarantined(which)
+        if reset:
+            which = list(self.boots)
         for i in which:
             loader, args = self.boots[i]
             loader.win.stop()
-            self.queues[i].init()
+            self.queues[i].init(sysnode_reset=reset)
             self._forget(i)
             loader.restart(self.fw, args)
         for i in which:
@@ -690,6 +713,13 @@ class SiliconCard(NodeCard):
         if native_exchange:
             for queue in self.queues.values():
                 queue.native_exchange = NativeExchange(queue, t)
+
+    def _reset_sysnodes(self, node: int) -> None:
+        """Reload a wizard's dividers; every sysnode is held by all locks."""
+        clocks = CardClocks(self.t, self.board)
+        clocks.mesh(node).load()
+        if not all(mesh.locked() for mesh in clocks.meshes):
+            raise ClockMismatch("sysnode reset did not complete: wizard unlocked")
 
     def close(self) -> dict:
         """Stop every node's firmware; the card keeps its clocks."""

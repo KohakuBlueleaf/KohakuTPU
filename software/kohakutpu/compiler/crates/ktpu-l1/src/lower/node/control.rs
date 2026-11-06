@@ -104,7 +104,18 @@ impl<'a> NodeReader<'a> {
             self.p.jump(&target, cond, ra, rb, false);
             return Ok(());
         }
-        let k = self.const_(st, cb)?;
+        let k = self.const_(st, cb)? & MASK64;
+        let max = if matches!(lt, Cond::Lt) {
+            i64::MAX as i128
+        } else {
+            MASK64
+        };
+        if k == max && matches!(op.as_str(), ">" | "<=") {
+            if op == "<=" {
+                self.p.jump(&target, Cond::Always, 0, 0, true);
+            }
+            return Ok(());
+        }
         let (cond, k) = match op.as_str() {
             "==" => (Cond::Eq, k),
             "!=" => (Cond::Ne, k),

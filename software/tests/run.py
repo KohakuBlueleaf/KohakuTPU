@@ -88,13 +88,19 @@ SUITES = (
     ),
     Suite(
         "stages/l1_l0",
-        (f"{COMPILER}/ktpu-l1", f"{COMPILER}/ktpu-l0", f"{COMPILER}/ktpu-isa"),
+        (
+            f"{COMPILER}/ktpu-l1",
+            f"{COMPILER}/ktpu-l0",
+            f"{COMPILER}/ktpu-verify",
+            f"{COMPILER}/ktpu-isa",
+            f"{FRAMEWORK}/ka-package",
+        ),
         cargo=(("ktpu-sim", "l1_l0"),),
         pytest=False,
     ),
     Suite(
         "stages/l1_schedule",
-        (f"{COMPILER}/ktpu-l1/src/sched",),
+        (f"{COMPILER}/ktpu-l1/src/sched", f"{COMPILER}/ktpu-l1/src/text"),
         cargo=(("ktpu-sim", "l1_schedule"),),
         pytest=False,
     ),
@@ -126,11 +132,15 @@ SUITES = (
             "kohakutpu/application/kohakutpu/application/ktpugrad/captured",
             "kohakuaccel/driver",
             f"{COMPILER}/ktpu-py",
+            f"{FRAMEWORK}/ka-debug",
         ),
     ),
     Suite(
         "runtime",
-        ("kohakutpu/application/kohakutpu/application/runtime",),
+        (
+            "kohakutpu/application/kohakutpu/application/runtime",
+            "kohakutpu/application/kohakutpu/application/api",
+        ),
         per_test=20.0,
     ),
     Suite(

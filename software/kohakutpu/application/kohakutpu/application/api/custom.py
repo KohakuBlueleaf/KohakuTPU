@@ -51,28 +51,37 @@ def call(kernel: CustomKernel, *args: Tensor, **consts) -> tuple[Tensor, ...]:
         n: FM.for_port(dev, t.st, t.dtype, t.shape, specs[n]) for n, t in zip(ins, args)
     }
     results = []
-    for n in outs:
-        spec = specs[n]
-        if not spec.rowmajor or spec.dtype not in NUMPY:
-            raise Unsupported(
-                "API.REF.014",
-                f"{kernel.name}: output {n} is {spec.text()}; a Tensor holds row-major f16 / f32",
-            )
-        st = Storage(dev, spec.nbytes())
-        binds[n] = st.addr
-        results.append((n, st, spec))
-    dev.run(
-        compiled,
-        binds,
-        kind="custom",
-        info={"kernel": kernel.name, "compiled": compiled},
-    )
-    out = []
-    for _, st, spec in results:
-        st.wrote(FLAT)
-        st.dtype = np.dtype(NUMPY[spec.dtype])
-        out.append(Tensor(spec.shape, Buf(st, st.dtype)))
-    return tuple(out)
+    try:
+        for n in outs:
+            spec = specs[n]
+            if not spec.rowmajor or spec.dtype not in NUMPY:
+                raise Unsupported(
+                    "API.REF.014",
+                    f"{kernel.name}: output {n} is {spec.text()}; a Tensor holds row-major f16 / f32",
+                )
+            st = Storage(dev, spec.nbytes())
+            try:
+                results.append((n, st, spec))
+            except BaseException:
+                st.free()
+                raise
+            binds[n] = st.addr
+        dev.run(
+            compiled,
+            binds,
+            kind="custom",
+            info={"kernel": kernel.name, "compiled": compiled},
+        )
+        out = []
+        for _, st, spec in results:
+            st.wrote(FLAT)
+            st.dtype = np.dtype(NUMPY[spec.dtype])
+            out.append(Tensor(spec.shape, Buf(st, st.dtype)))
+        return tuple(out)
+    except BaseException:
+        for _, st, _ in results:
+            st.free()
+        raise
 
 
 class Function:

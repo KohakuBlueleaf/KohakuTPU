@@ -3,6 +3,7 @@
  * the top bit, retirements of a mapped source counted and every other signal
  * queued for the processor. A cycle passes at each access, and a word retires
  * RETIRE cycles after its GO. */
+#include <stdlib.h>
 #include <ka/hal/control.h>
 
 #include "hw_double.h"
@@ -23,10 +24,12 @@
 #define RING_SEND 32u /* cycles the interlink takes to send one ring */
 
 int dbl_engine;
+uint64_t dbl_offer_until, dbl_caps;
+static uint64_t rx_header, rx_p2, rx_p3;
 uint64_t dbl_first_go, dbl_last_go, dbl_gos;
 unsigned dbl_windows[4];
 unsigned dbl_retire = RETIRE, dbl_lost, dbl_peak, dbl_clears;
-unsigned dbl_rings, dbl_ring_drops;
+unsigned dbl_rings, dbl_ring_drops, dbl_fault_at;
 
 static unsigned ring_queued;
 static uint64_t ring_next;
@@ -47,6 +50,12 @@ static unsigned pending_head, pending_n;
 static uint64_t cq[CQ];
 static unsigned cq_head, cq_n;
 static unsigned owed[256]; /* {y, x}: words not yet retired */
+
+void dbl_signal(unsigned x, unsigned y, unsigned code)
+{
+    cq[(cq_head + cq_n++) % CQ] = (uint64_t)y << 52 | (uint64_t)x << 48 |
+                                 (uint64_t)code << 40;
+}
 
 static void retire(unsigned x, unsigned y)
 {
@@ -74,11 +83,24 @@ unsigned dbl_pending(void) { return pending_n; }
 static void go(void)
 {
     uint64_t dst = mb[KA_NM_DST];
+    if ((dst & (1UL << 24)) && ((dst >> 20) & 15) == KA_T_CU_CTRL) {
+        if (dbl_caps) {
+            rx_header = 1UL << 63 | (dst & 15) << 20 | ((dst >> 8) & 15) << 16 |
+                        (uint64_t)KA_T_CU_CTRL << 12;
+            rx_p2 = dbl_caps << 48;
+            rx_p3 = 2UL << 56 | (mb[KA_NM_ARG3] & (0xffUL << 48)) | dbl_caps >> 16;
+        }
+        return;
+    }
     int fetch = (dst >> 24) & 1;
     unsigned at = (unsigned)(mb[KA_NM_ARG2] >> 40);
     unsigned x = fetch ? at & 15 : dst & 15, y = fetch ? (at >> 4) & 15 : (dst >> 8) & 15;
     unsigned n = fetch ? mb[KA_NM_ARG3] & 255 : 1;
     for (unsigned k = 0; k < n; ++k) {
+        if (dbl_fault_at && dbl_gos + k + 1 == dbl_fault_at) {
+            dbl_signal(x, y, KA_SIG_FAULT);
+            continue;
+        }
         if (dbl_lost) {
             --dbl_lost;
             continue;
@@ -187,8 +209,11 @@ uint64_t dbl_rd(unsigned off)
         return (uint64_t)(dbl_rings & 0xffffu) << 32;
     }
     if (off == KA_R_NM + 8 * KA_NM_STAT) {
-        return cq_n;
+        return cq_n | (now < dbl_offer_until ? KA_NM_STAT_OFFERED : 0);
     }
+    if (off == KA_R_RX + 8 * KA_RX_HDR) return rx_header;
+    if (off == KA_R_RX + 8 * KA_RX_P2) return rx_p2;
+    if (off == KA_R_RX + 8 * KA_RX_P3) return rx_p3;
     if (off == KA_R_NM + 8 * KA_NM_HEAD) {
         return cq[cq_head];
     }
@@ -228,10 +253,24 @@ void dbl_wr(unsigned off, uint64_t v)
         cq_head = (cq_head + 1) % CQ;
         --cq_n;
     }
+    else if (off == KA_R_RX) {
+        rx_header = 0;
+    }
     else if (off >= KA_R_MV && off < KA_R_MV + KA_MV_SPAN) {
         write_mover(off - KA_R_MV, v);
     }
     else if (off >= KA_R_IL && off < KA_R_SIG) {
         write_il(off - KA_R_IL);
     }
+}
+
+__attribute__((weak, noreturn)) void ka_exit(uint64_t code)
+{
+    (void)code;
+    abort();
+}
+
+__attribute__((weak)) void ka_on_fatal(uint64_t code, uint64_t a, uint64_t b)
+{
+    (void)code; (void)a; (void)b;
 }

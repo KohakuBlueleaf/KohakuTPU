@@ -66,6 +66,7 @@ enum ka_step_op {
     KA_OP_RECV      = 20, /* count RX flits from unit (0xffff any) to payload arg's address */
     KA_OP_CTRL      = 21, /* count (control offset, value) pairs from payload arg */
     KA_OP_ASSERT_ZERO = 22, /* require reg[unit] == 0; count = contract code */
+    KA_OP_FRONTIER = 23, /* flags: 0 capture, 1 await, 2 clear scratch range */
 };
 
 /* Package registers: LOAD writes one, ALU computes, JUMP tests, PATCH writes

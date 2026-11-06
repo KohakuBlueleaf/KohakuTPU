@@ -48,38 +48,44 @@ class Storage:
     def __init__(self, dev, nbytes: int, addr: int | None = None, owned=True) -> None:
         self.dev = dev
         self.nbytes = int(nbytes)
-        self.addr = dev.alloc(nbytes) if addr is None else addr
-        self.owned = owned
-        self.forms: dict = {FLAT: Form(FLAT, self.addr, self.nbytes, False)}
-        self.valid: set = {FLAT}
-        #: the bytes last uploaded (or folded) while no kernel has written
-        #: since: what an f16 form of another element type is packed from
-        self.host: bytes | None = None
-        #: source element type of a host-materialized f16 form
-        self.host_f16_dtype: Any = None
-        #: the element type a kernel last wrote it as (numpy), else None
-        self.dtype: Any = None
-        #: valid forms whose padding (the elements a pitch adds) is zero:
-        #: claimed by the writer of those elements, cleared by any write
-        self.zeroed: set = set()
-        #: ``(site, row length)`` of the producer whose layout the current
-        #: forms are (`forms.hints`), None when no such producer wrote them
-        self.site: Any = None
-        self.view_refs: int = 0
-        self._freed: bool = False
-        #: what reads of these unchanged bytes made, by read: kept until a write
-        self.kept: dict = {}
-        #: these bytes are such a read's, so what reads them is kept too
-        self.derived: bool = False
-        #: the kept storage whose bytes and forms this one holds
-        self.shared: Storage | None = None
-        #: a graph's input slot: the host rewrites these bytes every call
-        self.varying: bool = False
-        #: the deferred forms of other storages read from these bytes: each
-        #: call makes one (`forms.defer`)
-        self.readers: list = []
-        #: the storage whose form this handle names (a read's alias of it)
-        self.owner: Storage | None = None
+        acquired = dev.alloc(nbytes) if addr is None else addr
+        try:
+            self.addr = acquired
+            self.owned = owned
+            self.forms: dict = {FLAT: Form(FLAT, self.addr, self.nbytes, False)}
+            self.valid: set = {FLAT}
+            #: the bytes last uploaded (or folded) while no kernel has written
+            #: since: what an f16 form of another element type is packed from
+            self.host: bytes | None = None
+            #: source element type of a host-materialized f16 form
+            self.host_f16_dtype: Any = None
+            #: the element type a kernel last wrote it as (numpy), else None
+            self.dtype: Any = None
+            #: valid forms whose padding (the elements a pitch adds) is zero:
+            #: claimed by the writer of those elements, cleared by any write
+            self.zeroed: set = set()
+            #: ``(site, row length)`` of the producer whose layout the current
+            #: forms are (`forms.hints`), None when no such producer wrote them
+            self.site: Any = None
+            self.view_refs: int = 0
+            self._freed: bool = False
+            #: what reads of these unchanged bytes made, by read: kept until a write
+            self.kept: dict = {}
+            #: these bytes are such a read's, so what reads them is kept too
+            self.derived: bool = False
+            #: the kept storage whose bytes and forms this one holds
+            self.shared: Storage | None = None
+            #: a graph's input slot: the host rewrites these bytes every call
+            self.varying: bool = False
+            #: the deferred forms of other storages read from these bytes: each
+            #: call makes one (`forms.defer`)
+            self.readers: list = []
+            #: the storage whose form this handle names (a read's alias of it)
+            self.owner: Storage | None = None
+        except BaseException:
+            if addr is None:
+                dev.free(acquired)
+            raise
 
     # ------------------------------------------------------------- derived
     @property
@@ -94,11 +100,16 @@ class Storage:
             return
         if isinstance(out, Storage):
             out = out._holder()
-        out.derived = True
-        out.view_refs += 1
-        self.kept[read] = out
+        previous = self.kept.get(read)
         if self.dev._recipe_recording is not None:
             self.dev._recipe_recording.on_keep()
+        self.kept[read] = out
+        out.derived = True
+        out.view_refs += 1
+        if previous is not None:
+            previous.view_refs -= 1
+            if previous.view_refs <= 0 and previous._freed:
+                previous.free()
 
     def _holder(self) -> "Storage":
         """What keeps these bytes unchanged: this handle shares it, so a write

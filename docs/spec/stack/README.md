@@ -7,17 +7,16 @@ tags:
 ---
 # The KohakuTPU software stack spec
 
-What the stack, firmware and driver guarantee, layer by layer, as numbered
-clauses. A frozen clause is a contract: a failure against it is a bug.
-Frozen 2026-10-22: every `silicon` and `RTL` clause below, and the rulings
-in `rulings.md`, which settle every disagreement the audit found.
+These pages describe the software stack, firmware and driver as numbered
+clauses. Each clause carries an evidence tag. The rulings in `rulings.md` state
+how specific disagreements between the code, documentation and RTL are resolved.
 
 ## Clauses
 
-Each clause is one list item:
+Each clause is one list item. This fenced example illustrates the syntax; it does not allocate another id or replace the clause on the package page:
 
 ```
-- **L0.PKG.003** `silicon` The header is 96 bytes ... (code: path:line; doc: page:line; evidence: ...)
+- **L0.PKG.003** `unproven` The package writer starts its tables after fw.package.header_bytes [96] and writes that value into the header size field. (code: software/kohakuaccel/compiler/crates/ka-package/src/facts.rs:111; software/kohakuaccel/compiler/crates/ka-package/src/format/wire.rs:46-51, :347-377; machines/multimesh_v9t6.json:602; evidence: host implementation inspection only)
 ```
 
 - **Id.** `<layer>.<area>.<nnn>`, never reused. The layers are L0, ISA, L1, L2,
@@ -31,13 +30,19 @@ Each clause is one list item:
     error paths count only where a card log shows them.
   - `RTL`: a test passes on a Verilated model of the RTL, or an RTL testbench
     covers it. The test is named. Behaviour-model and offline tests are not
-    evidence. The 2p.4 spec tests re-run each named test; a clause whose test
-    fails there becomes `unproven`.
-  - `unproven`: neither. Unproven clauses are listed so that the stack refuses
-    them by clause id until a test proves them.
+    evidence. Evidence tags are documentation metadata. The software test runner
+    selects explicitly registered suites; it does not discover tests from these
+    clauses or rewrite their tags. Its `anchors` and `machine` suites are
+    non-default suites. (code: software/tests/run.py:82-186)
+  - `unproven`: neither silicon nor named RTL-test evidence establishes the
+    clause. This tag records evidence status; it does not itself disable the
+    behaviour. The compiler refuses inputs at explicit validation checks and
+    reports the clause identifier selected by the check. (code:
+    software/kohakutpu/compiler/crates/ktpu-isa/src/unit/cluster.rs:391-423,
+    software/kohakutpu/compiler/crates/ktpu-l1/src/lower/sru.rs:97-145)
 - **Hardware facts are parameters.** A clause names a machine-schema
   parameter (`vc.lanes`, `vc.l1_words`, ...) and gives the v9t6 value in
-  brackets. The stack reads the parameter, never the number (2p.3).
+  brackets.
 - **Frozen** means `silicon` or `RTL`.
 
 ## Pages

@@ -109,8 +109,8 @@ fn sru_config<'py>(
 /// sru_words(job_json, f_lanes, h_taps, machine_json, mutant=None) ->
 /// list[(address, value)]: every configuration word of the job
 /// (`{"g", "passes", "ops", "fin"}`), each
-/// pass's program scheduled on a pool of `f_lanes` lanes and `h_taps`
-/// result taps with the machine's pool timing.
+/// pass's program scheduled on the machine's physical pool. The lane and
+/// tap arguments must agree with that pool.
 #[pyfunction]
 #[pyo3(signature = (job_json, f_lanes, h_taps, machine_json, mutant=None))]
 fn sru_words(
@@ -125,11 +125,13 @@ fn sru_words(
     let job: Job = serde_json::from_str(job_json)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("a job: {e}")))?;
     let run = || -> Result<BTreeMap<u32, u32>, Refusal> {
-        let pool = Pool {
-            f_lanes,
-            h_taps,
-            ..Pool::of(&m)?
-        };
+        let pool = Pool::of(&m)?;
+        if f_lanes != pool.f_lanes || h_taps != pool.h_taps {
+            return Err(Refusal::new(
+                "ISA.SR.024",
+                "pool arguments must match the machine profile",
+            ));
+        }
         config::words(&job, &pool)
     };
     let got = mutated(mutant, run)?.map_err(|r| refused(py, r))?;

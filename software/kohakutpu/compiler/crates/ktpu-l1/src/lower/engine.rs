@@ -154,6 +154,13 @@ pub fn compact(pkg: &Package) -> Result<Package> {
             _ => 0,
         };
         used.extend(s.arg..s.arg + count);
+        if s.op == Op::Frontier {
+            if s.flags == 2 {
+                used.extend(s.arg..s.arg + s.count);
+            } else {
+                used.insert(s.count);
+            }
+        }
         if s.op == Op::Send {
             used.extend(
                 (s.arg & 0xffff_ffff)
@@ -201,6 +208,10 @@ pub fn compact(pkg: &Package) -> Result<Package> {
                 s.arg = map.get(&s.arg).copied().unwrap_or(0)
             }
             Op::Send => s.arg = (s.arg & !0xffff_ffff) | map[&(s.arg & 0xffff_ffff)],
+            Op::Frontier if s.flags == 2 => {
+                s.arg = if s.count == 0 { 0 } else { map[&s.arg] };
+            }
+            Op::Frontier => s.count = map[&s.count],
             _ => {}
         }
     }

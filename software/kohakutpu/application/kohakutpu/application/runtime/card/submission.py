@@ -170,28 +170,29 @@ class Submission(Parts):
         if not order:
             # Text of runs nothing here waits for (a replay, a direct
             # `q.run`): not this run's.
-            q.read_stdout()
-            self._stdout[n] = ""
+            q.discard_stdout()
+            self._stdout[n] = b"" if q.record is not None else ""
         tag = q.submit(raw, bindings, publishing=self._publishing, **kw)
         order.append(tag)
         return tag
 
-    def _segment(self, n: int, tag: int, console: str = "") -> str:
+    def _segment(self, n: int, tag: int, console: bytes = b"") -> str:
         """Split each run's text at its record's stdout count (L0.NQ.052)."""
         q = self.queues[n]
         if getattr(q, "record", None) is None:
-            return self._segment_pkgt(n, tag, console)
+            return self._segment_pkgt(n, tag, console.decode("utf-8", "replace"))
         order, done = self._order.setdefault(n, []), self._segs.setdefault(n, {})
-        buf = self._stdout.pop(n, "") + console
+        buf = self._stdout.pop(n, b"") + console
         while tag in order:
             end = q.ends.pop(order[0], None)
             if end is None:
                 break
             start = q.console_at - len(buf)
             if end > q.console_at:
-                buf += q.read_stdout_to(end)
+                buf += q.read_stdout_bytes_to(end)
             take = max(0, end - start)
-            done[order.pop(0)], buf = buf[:take], buf[take:]
+            done[order.pop(0)] = buf[:take].decode("utf-8", "replace")
+            buf = buf[take:]
         self._stdout[n] = buf
         return done.pop(tag, "")
 

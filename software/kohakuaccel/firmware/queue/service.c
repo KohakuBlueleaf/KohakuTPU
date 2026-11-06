@@ -24,9 +24,18 @@ static struct {
 
 static void fw_state(uint64_t state, uint64_t code)
 {
-    uint64_t q = Q.q ? Q.q : ka_boot.queue;
-    if (!q || (q & (KA_Q_LINE - 1))) {
-        return;
+    uint64_t q = Q.q;
+    if (!q) {
+        uint64_t size = 0;
+        if (ka_boot.magic != KA_BOOT_MAGIC || ka_boot.version != KA_BOOT_VERSION ||
+            ka_boot_regions_check()) {
+            return;
+        }
+        q = ka_boot_region(KA_REGION_QUEUE, &size);
+        if (!q || q != ka_boot.queue || (q & (KA_Q_LINE - 1)) ||
+            size < KA_Q_FW + KA_Q_LINE) {
+            return;
+        }
     }
     ka_st64(q + KA_Q_FW + 8 * KA_QF_ABI, KA_Q_VERSION);
     ka_st64(q + KA_Q_FW + 8 * KA_QF_DONE, Q.done);
