@@ -685,6 +685,59 @@ pub fn call_split(
             "p1 preserves generator numerics; no requested precision or reduction-order option",
         );
     }
+    if gen == "attention.flash" {
+        let args = a.as_object().ok_or_else(|| {
+            ktpu_machine::Refusal::new("API.OP.001", "attention.flash expects an argument object")
+        })?;
+        let heads = args.get("heads").map_or(Some(10), Value::as_i64);
+        let queries = args.get("queries").map_or(Some(1024), Value::as_i64);
+        let (Some(heads), Some(queries)) = (heads, queries) else {
+            return fail("API.OP.001", "flash heads and queries must be integers");
+        };
+        if args
+            .keys()
+            .any(|key| !matches!(key.as_str(), "heads" | "queries"))
+            || !(1..=10).contains(&heads)
+            || !(128..=1024).contains(&queries)
+            || queries % 128 != 0
+        {
+            return fail(
+                "API.OP.001",
+                "flash expects 1..=10 heads and 128..=1024 queries in tiles of 128",
+            );
+        }
+        return crate::gen::attention::flash_split::plan(heads, queries, request, m);
+    }
+    if gen == "matmul.mm_kernel" || gen == "mm" {
+        let class = a.get("shape_class").map(class_of).transpose()?;
+        let mm = mm_plan(made_by(arg(a, "mm")?, "matmul.plan")?, m)?;
+        let e = expr::from_table(arg(a, "e")?)?;
+        let extras = operands(arg(a, "extras")?)?;
+        let out = operand(arg(a, "out")?)?;
+        let knobs = matmul::unrecorded()
+            .read(made_by(arg(a, "mm")?, "matmul.plan")?, matmul::Group::Plan)?
+            .read(a, matmul::Group::Kernel)?;
+        let made = if class.is_some() {
+            BTreeMap::new()
+        } else {
+            made_reads(a, m)?
+        };
+        let demands = if class.is_some() { vec![] } else { demands(a)? };
+        return matmul::split::kernel(
+            &matmul::split::Shape {
+                class: class.as_ref(),
+                mm: &mm,
+                e: &e,
+                extras: &extras,
+                out: &out,
+                knobs: &knobs,
+                made: &made,
+                demands: &demands,
+            },
+            request,
+            m,
+        );
+    }
     let kernel = crate::kernel::on_node(nodes.ids()[0], || call(gen, a, m))?;
     let features = CostFeatures::of_shares(std::slice::from_ref(&kernel), m)?;
     let tensors = kernel
@@ -742,6 +795,7 @@ pub fn call_split(
         request.force.as_deref(),
     )?;
     Ok(PlannedKernel {
+        l1: None,
         kernel,
         split,
         request: request.clone(),

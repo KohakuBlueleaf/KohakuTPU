@@ -17,6 +17,7 @@ use crate::trace::control::At;
 use crate::trace::{fail, Buf, Cond, Idx, Trace, View, R};
 
 mod ring;
+pub mod split;
 use ktpu_graph as g;
 use ktpu_machine::{Machine, Pairing};
 pub use ring::{resolve as ring_resolve, Ring};
@@ -1223,6 +1224,21 @@ pub fn mm_kernel_made(
     made: &BTreeMap<usize, prepared::Read>,
     demands: &[QDemand],
 ) -> R<Kernel> {
+    mm_kernel_build(mm, e, extras, out, knobs, mach, made, demands, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn mm_kernel_build(
+    mm: &Mm,
+    e: &E,
+    extras: &[Operand],
+    out: &Operand,
+    knobs: &Knobs,
+    mach: &Machine,
+    made: &BTreeMap<usize, prepared::Read>,
+    demands: &[QDemand],
+    split: Option<(&crate::split::SplitRequest, &crate::split::SplitOption)>,
+) -> R<Kernel> {
     if !packs_demands(mm, e, extras, out, knobs, mach, demands)? {
         return fail(
             "API.OP.007",
@@ -1233,19 +1249,11 @@ pub fn mm_kernel_made(
     let e = &computed(e, knobs);
     let hw = Hw::of(mach);
     let (clusters, cores) = (hw.mg, hw.vc);
-    let (ntm, ntn) = (mm.mp / mm.tm, mm.n / mm.tn);
-    let tiles = ntm * ntn;
     let batched = batches_tiles(mm, knobs, clusters);
     let lay_a = Side::A.layout(mm.tm / hw.band, mm.nk);
     let lay_b = Side::B.layout(mm.tn / hw.band, mm.nk);
     let nb_rows = if mm.shared { mm.n } else { mm.bt * mm.n };
-    let Laid {
-        operands,
-        pl,
-        ring,
-        segs,
-        ..
-    } = laid(mm, e, extras, out, knobs, mach, demands)?;
+    let Laid { pl, ring, segs, .. } = laid(mm, e, extras, out, knobs, mach, demands)?;
     let rows = if ring.depth > 0 {
         (mm.bt - 1) * mm.mp + ring::cover(mm, &ring, &segs)
     } else {
@@ -1317,11 +1325,104 @@ pub fn mm_kernel_made(
     if !demands.is_empty() {
         key_args.push(Py::Tuple(demands.iter().map(QDemand::py).collect()));
     }
+    if let Some((request, option)) = split {
+        key_args.push(Py::str(&option.id));
+        key_args.push(Py::Tuple(
+            request.nodes.ids().iter().copied().map(Py::Int).collect(),
+        ));
+        key_args.push(Py::Tuple(
+            option
+                .shards
+                .iter()
+                .map(|s| {
+                    Py::Tuple(vec![
+                        Py::Int(s.logical_node as i64),
+                        Py::Tuple(s.logical_origin.iter().copied().map(Py::Int).collect()),
+                        Py::str(&s.local_schedule),
+                    ])
+                })
+                .collect(),
+        ));
+    }
     let key = name("mm", key_args);
     let names: Vec<String> = ports.iter().map(|p| p.name.clone()).collect();
     let made_in = prepared::made_inputs(made);
     let ((ports, given), shapes) = prepared::made_ports((ports, given), &made_in, mach)?;
     let built: Vec<String> = ports.iter().map(|p| p.name.clone()).collect();
+    build(&key, mach, ports, given, |t, b| {
+        let canonical = if let Some((request, _)) = split.filter(|_| !made.is_empty()) {
+            let mut canonical = Vec::new();
+            t.on_node(request.nodes.ids()[0], |t| {
+                canonical = prepared::made_bufs(t, &names, &built, b, &made_in, &shapes, mach)?;
+                Ok(())
+            })?;
+            canonical
+        } else {
+            prepared::made_bufs(t, &names, &built, b, &made_in, &shapes, mach)?
+        };
+        if let Some((request, option)) = split {
+            let shape = split::Shape {
+                mm,
+                e,
+                extras,
+                out,
+                knobs,
+                made,
+                demands,
+                class: None,
+            };
+            split::emit(t, &canonical, &shape, request, option, mach)
+        } else {
+            emit_local(
+                t,
+                &canonical,
+                mm,
+                e,
+                extras,
+                out,
+                knobs,
+                mach,
+                made,
+                demands,
+                split::Origin::default(),
+            )
+        }
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_local(
+    t: &mut Trace,
+    b: &[Buf],
+    mm: &Mm,
+    e: &E,
+    extras: &[Operand],
+    out: &Operand,
+    knobs: &Knobs,
+    mach: &Machine,
+    made: &BTreeMap<usize, prepared::Read>,
+    demands: &[QDemand],
+    origin: split::Origin,
+) -> R<()> {
+    let hw = Hw::of(mach);
+    let (clusters, cores) = (hw.mg, hw.vc);
+    let (ntm, ntn) = (mm.mp / mm.tm, mm.n / mm.tn);
+    let tiles = ntm * ntn;
+    let batched = batches_tiles(mm, knobs, clusters);
+    let lay_a = Side::A.layout(mm.tm / hw.band, mm.nk);
+    let sa = [mm.bt * mm.mp, mm.kp];
+    let Laid {
+        operands,
+        pl,
+        ring,
+        segs,
+        ..
+    } = laid(mm, e, extras, out, knobs, mach, demands)?;
+    let f16 = takes_f16(mm.k, mm.nk, knobs, mach);
+    let product_origin = split::Origin {
+        a: if f16 && ring.quant == 0 { 0 } else { origin.a },
+        ..origin
+    };
     // The product tiles of `nb` batches from batch `bt` (`nb` > 1: from
     // batch 0) over the clusters.
     let products = |t: &mut Trace, b: &[Buf], h: &Buf, bt: &Idx, nb: i64| -> R<()> {
@@ -1339,10 +1440,10 @@ pub fn mm_kernel_made(
                 let (ti, tj) = (at.div(ntn), at.rem(ntn));
                 if per * ncl != all {
                     t.when(Cond::new(&tile, g::CmpOp::Lt, all), |t| {
-                        product_tile(t, b, h, mm, &bt, &ti, &tj, &hw)
+                        product_tile(t, b, h, mm, &bt, &ti, &tj, &hw, product_origin)
                     })
                 } else {
-                    product_tile(t, b, h, mm, &bt, &ti, &tj, &hw)
+                    product_tile(t, b, h, mm, &bt, &ti, &tj, &hw, product_origin)
                 }
             })
         })
@@ -1368,46 +1469,59 @@ pub fn mm_kernel_made(
             &hw,
         )
     };
-    build(&key, mach, ports, given, |t, b| {
-        let canonical = prepared::made_bufs(t, &names, &built, b, &made_in, &shapes, mach)?;
-        // An f16 A outside a quant ring: each batch quantised first.
-        let mut quantised = canonical.clone();
-        if f16 && ring.quant == 0 {
-            let qa = if knobs.activation_any {
-                t.buffer_in(&sa, g::Dtype::Mx7a, lay_a.clone(), g::BufSpace::Stage)?
-            } else {
-                t.buffer(&sa, g::Dtype::Mx7a, lay_a.clone())?
-            };
-            let padded = mm.m < mm.mp || mm.k < mm.kp;
-            for bi in 0..mm.bt {
-                let dst = qa.at(&[sl(bi * mm.mp, (bi + 1) * mm.mp), ALL])?;
-                let src = canonical[0].at(&[sl(bi * mm.m, (bi + 1) * mm.m), ALL])?;
-                quant_a(t, &dst, &src, padded, None)?;
-            }
-            quantised[0] = qa;
-        }
-        let b = &quantised[..];
-        if ring.depth > 0 {
-            return ring::schedule(t, b, mm, e, extras, out, &ring, &segs, demands, mach);
-        }
-        let tile = vec![(
-            "tile".to_string(),
-            g::LayoutValue::Ints(vec![mm.tm / hw.band, mm.tn / hw.band]),
-        )];
-        let h = t.buffer(&[mm.bt * mm.mp, mm.n], g::Dtype::F16, tile)?;
-        let batch = |t: &mut Trace, bt: &Idx| -> R<()> {
-            products(t, b, &h, bt, 1)?;
-            epilogue(t, b, &h, bt)
-        };
-        if batched {
-            products(t, b, &h, &Idx::Int(0), mm.bt)?;
-            t.range(mm.bt, |t, bt| epilogue(t, b, &h, &bt))
-        } else if mm.bt == 1 {
-            batch(t, &Idx::Int(0))
+    // An f16 A outside a quant ring: each batch quantised first.
+    let mut quantised = b.to_vec();
+    if f16 && ring.quant == 0 {
+        let qa = if knobs.activation_any {
+            t.buffer_in(&sa, g::Dtype::Mx7a, lay_a.clone(), g::BufSpace::Stage)?
         } else {
-            t.range(mm.bt, |t, bt| batch(t, &bt))
+            t.buffer(&sa, g::Dtype::Mx7a, lay_a.clone())?
+        };
+        let padded = mm.m < mm.mp || mm.k < mm.kp;
+        for bi in 0..mm.bt {
+            let dst = qa.at(&[sl(bi * mm.mp, (bi + 1) * mm.mp), ALL])?;
+            let src = b[0].at(&[
+                sl(origin.f16 + bi * mm.m, origin.f16 + (bi + 1) * mm.m),
+                ALL,
+            ])?;
+            quant_a(t, &dst, &src, padded, None)?;
         }
-    })
+        quantised[0] = qa;
+    }
+    let b = &quantised[..];
+    if ring.depth > 0 {
+        return ring::schedule(
+            t,
+            b,
+            mm,
+            e,
+            extras,
+            out,
+            &ring,
+            &segs,
+            demands,
+            mach,
+            made,
+            product_origin,
+        );
+    }
+    let tile = vec![(
+        "tile".to_string(),
+        g::LayoutValue::Ints(vec![mm.tm / hw.band, mm.tn / hw.band]),
+    )];
+    let h = t.buffer(&[mm.bt * mm.mp, mm.n], g::Dtype::F16, tile)?;
+    let batch = |t: &mut Trace, bt: &Idx| -> R<()> {
+        products(t, b, &h, bt, 1)?;
+        epilogue(t, b, &h, bt)
+    };
+    if batched {
+        products(t, b, &h, &Idx::Int(0), mm.bt)?;
+        t.range(mm.bt, |t, bt| epilogue(t, b, &h, &bt))
+    } else if mm.bt == 1 {
+        batch(t, &Idx::Int(0))
+    } else {
+        t.range(mm.bt, |t, bt| batch(t, &bt))
+    }
 }
 
 /// Whether a product without a ring runs every batch's tiles at once: with
@@ -1461,11 +1575,12 @@ fn product_tile(
     ti: &Idx,
     tj: &Idx,
     hw: &Hw,
+    origin: split::Origin,
 ) -> R<()> {
     let arow = bt.mul(mm.mp).add(ti.mul(mm.tm));
     let c0 = tj.mul(mm.tn);
     let dst = h.at(&[sl(&arow, arow.add(mm.tm)), sl(&c0, c0.add(mm.tn))])?;
-    product(t, b, mm, bt, &arow, tj, &dst, hw)
+    product(t, b, mm, bt, &arow, tj, &dst, hw, origin)
 }
 
 /// One tile, A rows from `arow`, B's N tile `tj` of batch `bt`: zero, a gemm
@@ -1480,6 +1595,7 @@ fn product(
     tj: &Idx,
     dst: &View,
     hw: &Hw,
+    origin: split::Origin,
 ) -> R<()> {
     let acc = t.zero(mm.tm, mm.tn)?;
     let brow = if mm.shared {
@@ -1487,11 +1603,13 @@ fn product(
     } else {
         bt.mul(mm.n).add(tj.mul(mm.tn))
     };
+    let brow = brow.add(origin.b);
+    let arow = arow.add(origin.a);
     let kc = mm.kc(hw);
     let mut acc = acc;
     t.range(mm.kp / kc, |t, k| {
         let k0 = k.mul(kc);
-        let a = t.fill(&b[0].at(&[sl(arow, arow.add(mm.tm)), sl(&k0, k0.add(kc))])?)?;
+        let a = t.fill(&b[0].at(&[sl(&arow, arow.add(mm.tm)), sl(&k0, k0.add(kc))])?)?;
         let bv = t.fill(&b[1].at(&[sl(&brow, brow.add(mm.tn)), sl(&k0, k0.add(kc))])?)?;
         acc = t.gemm(a, bv, acc)?;
         Ok(())

@@ -1,6 +1,6 @@
 //! `share` (L2.PASS.005): in a body over several nodes, a cluster fill whose
-//! view does not name the cluster's `par` variable becomes `share=cross`,
-//! except a B fill past `mg.shared_b_max` entries.
+//! view and execution scopes are uniform across the cluster `par` becomes
+//! `share=cross`, except a B fill past `mg.shared_b_max` entries.
 
 use ktpu_l1::text::{Stmt, Term};
 
@@ -20,16 +20,19 @@ pub fn share(p: &Program, t: &Target) -> Result<Program> {
         if s.op != "fill" || s.kw("share").is_some() {
             return Ok(vec![s]);
         }
-        let pars: Vec<&Stmt> = scopes
+        let Some(par) = scopes
             .iter()
-            .filter(|p| p.op == "par" && unit_of(p).as_deref() == Some("mg"))
-            .collect();
-        let Some(last) = pars.last() else {
+            .rposition(|p| p.op == "par" && unit_of(p).as_deref() == Some("mg"))
+        else {
             return Ok(vec![s]);
         };
-        let var = head(last).map(|h| h.0).unwrap_or_default();
+        let var = head(&scopes[par]).map(|h| h.0).unwrap_or_default();
         let view = s.positional()[0].clone();
-        if names(&[view]).contains(&var) {
+        if names(&[view]).contains(&var)
+            || scopes[par + 1..]
+                .iter()
+                .any(|scope| names(&scope.args).contains(&var))
+        {
             return Ok(vec![s]);
         }
         if let Some(Term::Placed(x, space)) = &s.annot {

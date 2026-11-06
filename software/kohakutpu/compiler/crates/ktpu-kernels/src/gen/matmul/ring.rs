@@ -247,6 +247,8 @@ pub(super) fn schedule(
     segs: &[(i64, i64, v::Plan)],
     demands: &[QDemand],
     mach: &Machine,
+    made: &BTreeMap<usize, prepared::Read>,
+    origin: split::Origin,
 ) -> R<()> {
     let hw = &Hw::of(mach);
     let wg = ring.tiles * mm.tn;
@@ -268,7 +270,11 @@ pub(super) fn schedule(
     operands.extend_from_slice(extras);
     let mut ins = vec![slots.clone()];
     ins.extend_from_slice(&b[2..2 + extras.len()]);
-    let bufs = v::Bufs::plain(ins, b[2 + extras.len()].clone());
+    let bufs = v::Bufs {
+        ins,
+        out: b[2 + extras.len()].clone(),
+        maps: prepared::mapped(made),
+    };
     let part = ring.part_rows(mm);
     let (start, count, pl) = segs.last().expect("a segment");
     let last =
@@ -305,7 +311,7 @@ pub(super) fn schedule(
         }
         None => None,
     };
-    let qa = quant_ring(t, b, mm, ring, mach)?;
+    let qa = quant_ring(t, b, mm, ring, mach, origin.f16)?;
     let mut bq = b.to_vec();
     if let Some(q) = &qa {
         bq[0] = q.slots.clone();
@@ -332,7 +338,20 @@ pub(super) fn schedule(
                     let srow = slot0.add(&lg).mul(mm.tm);
                     let c0 = tl.mul(mm.tn);
                     let dst = slots.at(&[sl(&srow, srow.add(mm.tm)), sl(&c0, c0.add(mm.tn))])?;
-                    product(t, &bq, mm, &bt, &arow, &tj0.add(&tl), &dst, hw)
+                    product(
+                        t,
+                        &bq,
+                        mm,
+                        &bt,
+                        &arow,
+                        &tj0.add(&tl),
+                        &dst,
+                        hw,
+                        split::Origin {
+                            a: if qa.is_some() { 0 } else { origin.a },
+                            ..origin
+                        },
+                    )
                 };
                 let live = |t: &mut Trace| {
                     if ragged {
@@ -458,13 +477,15 @@ pub(super) fn schedule(
     })?;
     if let Some(s) = &status {
         // Rows past the trips run, to rp: packed zeros.
-        let end = cover(mm, ring, segs);
+        let row = out.offset.div_euclid(out.pitch);
+        let col = out.offset.rem_euclid(out.pitch);
+        let end = row + cover(mm, ring, segs);
         for q in &qs {
             let rp = q.spec.shape[0];
-            if end < rp {
+            if origin.last_rows && end < rp {
                 let z = t.buffer(&[rp - end, mm.n], g::Dtype::F16, vec![])?;
                 t.fill_value(&z.whole(), 0, None, None)?;
-                let dst = q.at(&[sl(end, rp), ALL])?;
+                let dst = q.at(&[sl(end, rp), sl(col, col + mm.n)])?;
                 t.quant_scheduled(&dst, &z.whole(), true, QUANT_SCHEDULE, false)?;
             }
         }
@@ -480,6 +501,7 @@ pub(super) fn schedule(
 /// `rt % qa_slots`, quantised as the waves reach its first row group.
 struct QuantRing<'a> {
     a: &'a Buf,
+    origin: i64,
     slots: Buf,
     /// The deferred finite status, a slice a row tile (`ahead` 1).
     status: Option<Buf>,
@@ -497,6 +519,7 @@ fn quant_ring<'a>(
     mm: &'a Mm,
     ring: &'a Ring,
     mach: &Machine,
+    origin: i64,
 ) -> R<Option<QuantRing<'a>>> {
     if ring.quant == 0 {
         return Ok(None);
@@ -517,6 +540,7 @@ fn quant_ring<'a>(
     };
     Ok(Some(QuantRing {
         a: &b[0],
+        origin,
         slots,
         status,
         slice,
@@ -548,7 +572,7 @@ impl QuantRing<'_> {
             None => None,
         };
         let quant = |t: &mut Trace, rows: i64| -> R<()> {
-            let r0 = bt.mul(mm.m).add(ti.mul(mm.tm));
+            let r0 = bt.mul(mm.m).add(ti.mul(mm.tm)).add(self.origin);
             let src = self.a.at(&[sl(&r0, r0.add(rows)), ALL])?;
             quant_a(t, &dst, &src, rows < mm.tm || mm.k < mm.kp, status.as_ref())
         };

@@ -255,3 +255,83 @@ impl Instance {
         Ok(())
     }
 }
+
+/// Counted node-loop products retain the input allocation's packing and origins.
+pub(super) fn tiles(sim: &mut Sim<'_>, st: &Stmt) -> R<()> {
+    let args = st.positional();
+    let get = |term: &Term| -> R<super::view::Buf> {
+        let v = sim.view(term)?;
+        Ok(sim.buf(&v.name)?.clone())
+    };
+    let dst = get(args[0])?;
+    let a = get(args[2])?;
+    let b = get(st.kw("rhs").ok_or("gemm_tiles rhs=")?)?;
+    let arg = |key: &str| int(st.kw(key).ok_or("gemm_tiles dimension")?, &sim.env);
+    let origin = |key: &str| st.kw(key).map_or(Ok(0), |v| int(v, &sim.env));
+    let (bt, rows, cols, cores, shared) = (
+        arg("batches")?,
+        arg("rows")?,
+        arg("cols")?,
+        arg("clusters")?,
+        arg("shared")?,
+    );
+    let (arow, brow) = (origin("arow")?, origin("brow")?);
+    let Layout::Tile(gm, gn) = dst.layout else {
+        return Err("gemm_tiles needs tile output".into());
+    };
+    let Layout::Mx7 { nk, .. } = a.layout else {
+        return Err("gemm_tiles needs packed A".into());
+    };
+    if bt <= 0 || rows <= 0 || cols <= 0 || cores <= 0 || gm <= 0 || gn <= 0 || nk <= 0 {
+        return Err("invalid gemm_tiles extent".into());
+    }
+    let (tm, tn, kc) = (gm * LANES, gn * LANES, nk * KBLOCK);
+    let (ntm, ntn) = (rows / tm, cols / tn);
+    for tile in 0..bt * ntm * ntn {
+        let batch = tile / (ntm * ntn);
+        let mi = tile / ntn;
+        let ni = tile % ntn;
+        let key = sim.key(sim.node, tile % cores);
+        let mut c = sim.clusters.remove(&key).unwrap_or_default();
+        for chunk in 0..a.shape[1] / kc {
+            let ra = arow + mi * tm;
+            let rb = brow + if shared != 0 { 0 } else { batch * cols } + ni * tn;
+            for (side, buffer, row, groups) in [(false, &a, ra, gm), (true, &b, rb, gn)] {
+                c.run(
+                    &Word::Fill {
+                        b: side,
+                        bank: 0,
+                        eoff: 0,
+                        addr: buffer.entry(row / LANES, chunk * nk)?,
+                        n: (groups * nk) as usize,
+                    },
+                    sim.mem,
+                )?;
+            }
+            c.run(
+                &Word::Gemm {
+                    gm: gm as usize,
+                    gn: gn as usize,
+                    nk: nk as usize,
+                    abank: 0,
+                    bbank: 0,
+                    aoff: 0,
+                    boff: 0,
+                    acc: chunk != 0,
+                    anchor: ANCHOR,
+                    emit: None,
+                },
+                sim.mem,
+            )?;
+        }
+        c.run(
+            &Word::Drain {
+                addr: dst.element(tile * tm, 0)?,
+                n: (gm * gn) as usize,
+            },
+            sim.mem,
+        )?;
+        sim.clusters.insert(key, c);
+    }
+    Ok(())
+}

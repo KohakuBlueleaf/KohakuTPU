@@ -266,6 +266,8 @@ version = "0.1.0"
 dependencies = [
  "ktpu-graph",
  "ktpu-isa",
+ "ktpu-l1",
+ "ktpu-l2",
  "ktpu-machine",
  "serde",
  "serde_json",

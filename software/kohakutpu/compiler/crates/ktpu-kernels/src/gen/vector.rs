@@ -949,11 +949,12 @@ pub(super) fn band_store(
 ) -> R<()> {
     let (r, c) = &at.out;
     if out.kind == Kind::Row {
+        let r = r.add(out.offset);
         let keys = if pl.nblk > 1 {
             let block = c.div(pl.wc).add(cb);
-            vec![crate::trace::buffer::at(block), sl(r, r.add(pl.rows))]
+            vec![crate::trace::buffer::at(block), sl(&r, r.add(pl.rows))]
         } else {
-            vec![sl(r, r.add(pl.rows))]
+            vec![sl(&r, r.add(pl.rows))]
         };
         return t.store(&dst.at(&keys)?, v);
     }
@@ -1179,7 +1180,9 @@ pub fn rows_shape(
     let pl = plan(operands, out.kind, r, w, bands, None, quantum, hw)?;
     let pl = whole_band(e, operands, out, r, w, quantum, &pl, hw).unwrap_or(pl);
     let out = if out.kind == Kind::Row {
-        let rows = out.rows.max(stat_words(r, hw) * hw.stat_rows());
+        let rows = out
+            .rows
+            .max(stat_words(out.offset + r, hw) * hw.stat_rows());
         if pl.nblk > 1 {
             vec![pl.nblk, rows]
         } else {
@@ -1373,10 +1376,14 @@ pub(super) fn members_tail_band(
     for (m, s) in members.iter().zip(&inner) {
         let (out, s) = (&m.out, &s.dst);
         if out.kind == Kind::Row && pl.nblk > 1 {
-            let dst = m.dst.at(&[ALL, sl(row0, row0 + pl.rows)])?;
+            let dst = m
+                .dst
+                .at(&[ALL, sl(out.offset + row0, out.offset + row0 + pl.rows)])?;
             t.copy(&dst, &s.at(&[ALL, sl(0, pl.rows)])?, None, None)?;
         } else if out.kind == Kind::Row {
-            let dst = m.dst.at(&[sl(row0, row0 + pl.rows)])?;
+            let dst = m
+                .dst
+                .at(&[sl(out.offset + row0, out.offset + row0 + pl.rows)])?;
             t.copy(&dst, &s.at(&[sl(0, pl.rows)])?, None, None)?;
         } else {
             let (rr, cc) = out.divmod()?;

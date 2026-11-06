@@ -39,6 +39,8 @@ pub fn lower(body: &Body, op: &Op, env: &Env, target: &Target, tag: usize) -> Re
             env,
         )
     };
+    let origin = |key: &str| st.kw(key).map_or(Ok(0), |v| const_of(body, st, v, env));
+    let (arow, brow) = (origin("arow")?, origin("brow")?);
     let (bt, rows, cols, cores, shared) = (
         integer("batches")?,
         integer("rows")?,
@@ -95,20 +97,35 @@ pub fn lower(body: &Body, op: &Op, env: &Env, target: &Target, tag: usize) -> Re
     };
     let tiles_batch = product(ntm, ntn)?;
     let tiles = product(bt, tiles_batch)?;
-    if a.shape != [product(bt, rows)?, k]
-        || b.shape
-            != [
-                if shared != 0 {
-                    cols
-                } else {
-                    product(bt, cols)?
-                },
-                k,
-            ]
+    let aend = arow
+        .checked_add(product(bt, rows)?)
+        .ok_or_else(|| fail("gemm_tiles A extent overflow"))?;
+    let bend = brow
+        .checked_add(if shared != 0 {
+            cols
+        } else {
+            product(bt, cols)?
+        })
+        .ok_or_else(|| fail("gemm_tiles B extent overflow"))?;
+    if arow < 0
+        || brow < 0
+        || arow % tm != 0
+        || brow % tn != 0
+        || aend > a.shape[0]
+        || bend > b.shape[0]
+        || b.shape[1] != k
         || dst.shape != [product(tiles, tm)?, tn]
     {
-        return Err(fail("gemm_tiles buffer shapes do not match counts"));
+        return Err(fail("gemm_tiles rectangle does not fit its buffers"));
     }
+    let abase = product(
+        arow / tm,
+        product(chunks, product(gm * nk, memory::entry(target))?)?,
+    )?;
+    let bbase = product(
+        brow / tn,
+        product(chunks, product(gn * nk, memory::entry(target))?)?,
+    )?;
     let (ab, bb, db) = (
         gm * nk * memory::entry(target),
         gn * nk * memory::entry(target),
@@ -124,8 +141,8 @@ pub fn lower(body: &Body, op: &Op, env: &Env, target: &Target, tag: usize) -> Re
         let end = format!("done_{tag}_{core}");
         lines.extend([
             format!("r0 = set {core}"),
-            "r8 = set 0".into(),
-            "r9 = set 0".into(),
+            format!("r8 = set {}", -abase),
+            format!("r9 = set {}", -bbase),
             "r13 = set 0".into(),
             format!("label {tile_label}"),
             format!("goto {end} if r0 >= {tiles}"),

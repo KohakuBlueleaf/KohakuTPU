@@ -348,6 +348,24 @@ impl Trace {
         clusters: i64,
         shared: bool,
     ) -> R<()> {
+        self.gemm_tiles_at(dst, lhs, rhs, batches, rows, cols, clusters, shared, 0, 0)
+    }
+
+    /// A packed rectangle whose inputs retain their global allocation origins.
+    #[allow(clippy::too_many_arguments)]
+    pub fn gemm_tiles_at(
+        &mut self,
+        dst: &View,
+        lhs: &View,
+        rhs: &View,
+        batches: i64,
+        rows: i64,
+        cols: i64,
+        clusters: i64,
+        shared: bool,
+        arow: i64,
+        brow: i64,
+    ) -> R<()> {
         let kw = [
             ("rhs", Kw::Index(rhs)),
             ("batches", Kw::Int(Some(batches))),
@@ -355,6 +373,8 @@ impl Trace {
             ("cols", Kw::Int(Some(cols))),
             ("clusters", Kw::Int(Some(clusters))),
             ("shared", Kw::Int(Some(i64::from(shared)))),
+            ("arow", Kw::Int((arow != 0).then_some(arow))),
+            ("brow", Kw::Int((brow != 0).then_some(brow))),
         ];
         self.mover(g::MoverOp::GemmTiles, dst, Some(lhs), &kw, here())
     }

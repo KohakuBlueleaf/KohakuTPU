@@ -2,6 +2,7 @@
 //! Interlink steps are machine/'s; a multi-node body stays on the L1 simulator.
 
 mod admission;
+mod attention_flash;
 mod branch_certification;
 mod branch_ordering;
 #[path = "../common.rs"]

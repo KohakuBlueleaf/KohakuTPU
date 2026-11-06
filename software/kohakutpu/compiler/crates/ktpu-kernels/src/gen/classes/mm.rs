@@ -25,6 +25,19 @@ pub fn kernel(
     class: &ShapeClass,
     m: &Machine,
 ) -> R<Classed> {
+    kernel_split(mm, e, extras, out, class, m, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn kernel_split(
+    mm: &Mm,
+    e: &E,
+    extras: &[Operand],
+    out: &Operand,
+    class: &ShapeClass,
+    m: &Machine,
+    split: Option<(&crate::split::SplitRequest, &crate::split::SplitOption)>,
+) -> R<Classed> {
     let hw = Hw::of(m);
     if out.kind != Kind::Full || !expr::reduces(e).is_empty() {
         return fail(
@@ -91,113 +104,35 @@ pub fn kernel(
             class.py(),
         ],
     );
-    let tiled = vec![(
-        "tile".to_string(),
-        g::LayoutValue::Ints(vec![mm.tm / band, mm.tn / band]),
-    )];
-    let wb = hw.word_bytes;
-    let kernel = build(&key, m, ports, given, |t: &mut Trace, p: &[Buf]| {
-        let h = t.buffer(&[total, mm.tn], g::Dtype::F16, tiled)?;
-        t.gemm_tiles(
-            &h.whole(),
-            &p[0].whole(),
-            &p[1].whole(),
-            mm.bt,
-            mm.mp,
-            mm.n,
-            clusters,
-            mm.shared,
-        )?;
-        let mut staged = vec![];
-        for (i, o) in extras.iter().enumerate() {
-            let src = &p[2 + i];
-            if o.kind == Kind::Scalar {
-                staged.push(src.clone());
-                continue;
-            }
-            let item = Hw::item(o.dtype);
-            let buf = t.buffer(&[total, mm.tn], o.dtype, vec![])?;
-            let stride = if o.kind == Kind::Full {
-                o.pitch * item
-            } else {
-                0
+    let key = match split {
+        Some((request, option)) => name(
+            "mm_class_split",
+            vec![
+                Py::str(&key),
+                Py::str(&option.id),
+                Py::Tuple(request.nodes.ids().iter().copied().map(Py::Int).collect()),
+            ],
+        ),
+        None => key,
+    };
+    let kernel = build(&key, m, ports, given, |t, p| {
+        if let Some((request, option)) = split {
+            let knobs = crate::gen::matmul::unrecorded();
+            let made = std::collections::BTreeMap::new();
+            let shape = crate::gen::matmul::split::Shape {
+                mm,
+                e,
+                extras,
+                out,
+                knobs: &knobs,
+                made: &made,
+                demands: &[],
+                class: Some(class),
             };
-            let tile_row = mm.tn * item;
-            let tile = mm.tm * tile_row;
-            t.copy_classed(
-                &buf.whole(),
-                &src.whole(),
-                (
-                    &[
-                        (mm.bt * ntm, mm.tm * stride),
-                        (ntn, tile_row),
-                        (mm.tm, stride),
-                        (tile_row / wb, wb),
-                    ],
-                    Some(o.offset * item),
-                ),
-                (
-                    &[
-                        (mm.bt * ntm, ntn * tile),
-                        (ntn, tile),
-                        (mm.tm, tile_row),
-                        (tile_row / wb, wb),
-                    ],
-                    None,
-                ),
-                Some(1),
-            )?;
-            staged.push(buf);
+            crate::gen::matmul::split::emit(t, p, &shape, request, option, m)
+        } else {
+            emit(t, p, mm, e, extras, out, class, m, 0, 0)
         }
-        let dst = t.buffer(&[total, mm.tn], out.dtype, vec![])?;
-        let (hh, staged, dst2) = (&h, &staged, &dst);
-        t.par_classed(used, Par::default(), |t, c| {
-            let c2 = c.clone();
-            t.range(core_trips(trips, used, &c), |t, k| {
-                let row = trip_row(&c2, &k, used, band);
-                let hi = row.add(band);
-                let mut vals = HashMap::new();
-                let product = t.load(&hh.at(&[sl(&row, &hi), ALL])?, true)?;
-                vals.insert(0, Arg::Val(product));
-                for (i, o) in extras.iter().enumerate() {
-                    let v = if o.kind == Kind::Scalar {
-                        scalar(t, &staged[i], o, &hw)?
-                    } else {
-                        let view = staged[i].at(&[sl(&row, &hi), ALL])?;
-                        Arg::Val(t.load(&view, true)?)
-                    };
-                    vals.insert(i + 1, v);
-                }
-                let v = expr::emit(t, e, &vals)?;
-                store_over(t, dst2, &row, &Idx::Int(0), band, mm.tn, v)
-            })
-        })?;
-        let item = Hw::item(out.dtype);
-        let tile_row = mm.tn * item;
-        let tile = mm.tm * tile_row;
-        t.copy_classed(
-            &p[2 + extras.len()].whole(),
-            &dst.whole(),
-            (
-                &[
-                    (mm.bt * ntm, ntn * tile),
-                    (ntn, tile),
-                    (mm.tm, tile_row),
-                    (tile_row / wb, wb),
-                ],
-                None,
-            ),
-            (
-                &[
-                    (mm.bt * ntm, mm.tm * out.pitch * item),
-                    (ntn, tile_row),
-                    (mm.tm, out.pitch * item),
-                    (tile_row / wb, wb),
-                ],
-                Some(out.offset * item),
-            ),
-            Some(1),
-        )
     })?;
     Ok(Classed {
         kernel,
@@ -216,4 +151,136 @@ pub fn kernel(
             "core_policy": class.cores.name(),
         }),
     })
+}
+
+/// The class's fixed node loops over one output rectangle.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn emit(
+    t: &mut Trace,
+    p: &[Buf],
+    mm: &Mm,
+    e: &E,
+    extras: &[Operand],
+    out: &Operand,
+    class: &ShapeClass,
+    m: &Machine,
+    arow: i64,
+    brow: i64,
+) -> R<()> {
+    let hw = Hw::of(m);
+    let (ntm, ntn) = (mm.mp / mm.tm, mm.n / mm.tn);
+    let total = mm.bt * ntm * ntn * mm.tm;
+    let band = hw.band;
+    let trips = total / band;
+    let used = class.cores.used(hw.vc, trips);
+    let tiles = mm.bt * ntm * ntn;
+    let clusters = class.cores.used(hw.mg, tiles);
+    let tiled = vec![(
+        "tile".to_string(),
+        g::LayoutValue::Ints(vec![mm.tm / band, mm.tn / band]),
+    )];
+    let wb = hw.word_bytes;
+    let h = t.buffer(&[total, mm.tn], g::Dtype::F16, tiled)?;
+    t.gemm_tiles_at(
+        &h.whole(),
+        &p[0].whole(),
+        &p[1].whole(),
+        mm.bt,
+        mm.mp,
+        mm.n,
+        clusters,
+        mm.shared,
+        arow,
+        brow,
+    )?;
+    let mut staged = vec![];
+    for (i, o) in extras.iter().enumerate() {
+        let src = &p[2 + i];
+        if o.kind == Kind::Scalar {
+            staged.push(src.clone());
+            continue;
+        }
+        let item = Hw::item(o.dtype);
+        let buf = t.buffer(&[total, mm.tn], o.dtype, vec![])?;
+        let stride = if o.kind == Kind::Full {
+            o.pitch * item
+        } else {
+            0
+        };
+        let tile_row = mm.tn * item;
+        let tile = mm.tm * tile_row;
+        t.copy_classed(
+            &buf.whole(),
+            &src.whole(),
+            (
+                &[
+                    (mm.bt * ntm, mm.tm * stride),
+                    (ntn, tile_row),
+                    (mm.tm, stride),
+                    (tile_row / wb, wb),
+                ],
+                Some(o.offset * item),
+            ),
+            (
+                &[
+                    (mm.bt * ntm, ntn * tile),
+                    (ntn, tile),
+                    (mm.tm, tile_row),
+                    (tile_row / wb, wb),
+                ],
+                None,
+            ),
+            Some(1),
+        )?;
+        staged.push(buf);
+    }
+    let dst = t.buffer(&[total, mm.tn], out.dtype, vec![])?;
+    let (hh, staged, dst2) = (&h, &staged, &dst);
+    t.par_classed(used, Par::default(), |t, c| {
+        let c2 = c.clone();
+        t.range(core_trips(trips, used, &c), |t, k| {
+            let row = trip_row(&c2, &k, used, band);
+            let hi = row.add(band);
+            let mut vals = HashMap::new();
+            let product = t.load(&hh.at(&[sl(&row, &hi), ALL])?, true)?;
+            vals.insert(0, Arg::Val(product));
+            for (i, o) in extras.iter().enumerate() {
+                let v = if o.kind == Kind::Scalar {
+                    scalar(t, &staged[i], o, &hw)?
+                } else {
+                    let view = staged[i].at(&[sl(&row, &hi), ALL])?;
+                    Arg::Val(t.load(&view, true)?)
+                };
+                vals.insert(i + 1, v);
+            }
+            let v = expr::emit(t, e, &vals)?;
+            store_over(t, dst2, &row, &Idx::Int(0), band, mm.tn, v)
+        })
+    })?;
+    let item = Hw::item(out.dtype);
+    let tile_row = mm.tn * item;
+    let tile = mm.tm * tile_row;
+    t.copy_classed(
+        &p[2 + extras.len()].whole(),
+        &dst.whole(),
+        (
+            &[
+                (mm.bt * ntm, ntn * tile),
+                (ntn, tile),
+                (mm.tm, tile_row),
+                (tile_row / wb, wb),
+            ],
+            None,
+        ),
+        (
+            &[
+                (mm.bt * ntm, mm.tm * out.pitch * item),
+                (ntn, tile_row),
+                (mm.tm, out.pitch * item),
+                (tile_row / wb, wb),
+            ],
+            Some(out.offset * item),
+        ),
+        Some(1),
+    )
 }

@@ -92,3 +92,25 @@ read-back strips any padded-rows form.
 `build/v9f/vlt_card_v9_1n_v2`, rel err against float64 numpy under 2e-2;
 softmax 2.0e-4 in 1 kernel, layernorm 2.8e-4 in 1 kernel, linear + gelu
 3.9e-4 in quant, quant, mm).
+
+
+## 6. Attention
+
+`attention(q, k, vt, precise_scores=False)` accepts Q `[H,S,D]`, K `[H,T,D]`
+and transposed V `[H,D,T]`, with D in 64, 128, 192 or 256. Device packing pads
+queries and keys independently, a validity table masks absent keys, and only
+logical query rows are copied to the result. `precise_scores=True` selects the
+explicit score-computation path rather than the MXFP7 QK product; it does not
+request a flash motif.
+
+The eager implementation builds dense score and probability arrays. The Rust
+[attention ownership interface](../../spec/stack/templates.md#attention-ownership)
+has an explicit `call_split` L1 adapter for the reference flash packing, not
+an eager fast path. The hand `flash`, `flashd` and `srflash` programs are not
+methods selected by this API. There is no eager motif-selection or
+ineligibility call record.
+
+Code: `software/kohakutpu/application/kohakutpu/application/api/attention.py`
+(`attention`) and
+`software/kohakutpu/application/kohakutpu/application/kernels/attention.py`
+(`kernel`). This describes source behavior, not a measured performance result.

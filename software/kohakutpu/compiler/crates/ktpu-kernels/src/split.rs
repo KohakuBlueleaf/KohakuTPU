@@ -168,7 +168,10 @@ pub struct SplitOption {
 
 #[derive(Clone, Debug)]
 pub struct PlannedKernel {
+    /// Graph executable, or the port signature when `l1` is present.
     pub kernel: Kernel,
+    /// Authoritative executable for a hand L1 motif; bypasses graph lowering.
+    pub l1: Option<String>,
     pub split: SplitOption,
     pub request: SplitRequest,
 }

@@ -110,6 +110,7 @@ impl Sim<'_> {
             },
             "par" => self.par(st),
             "copy" => self.copy(st),
+            "gemm_tiles" => super::cluster::tiles(self, st),
             "fill" => self.fill(st),
             "gen" => {
                 let v = self.view(pos[0])?;

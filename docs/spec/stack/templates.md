@@ -29,7 +29,7 @@ plan and `emit_shares` emits no work for them. `Trace::on_node` emits an explici
 node scope for the granted physical ID; it does not infer nodes from unit counts.
 
 `call_split` is the planning entry; `call` retains its existing interface and
-path. Generators currently expose the `p1` compatibility option, explicitly
+path. Graph generators expose the `p1` compatibility option, explicitly
 placed on the first granted node, with `active_nodes=1` and the other granted
 shares empty. Kernel construction scopes the generator body before local unit
 pars are traced, so automatic unit-count expansion cannot escape that node;
@@ -63,6 +63,83 @@ Code: `software/kohakutpu/compiler/crates/ktpu-kernels/src/split.rs`
 and `software/kohakutpu/compiler/crates/ktpu-kernels/src/trace/control.rs`
 (`Trace::on_node`). Evidence: implementation and staged behavioural witnesses;
 no device result is asserted.
+
+## Attention ownership
+
+`gen::attention::AttentionSpec` records flattened batch/head count, independent
+query and key lengths, key and value widths, mask semantics and score precision.
+`assignments` enumerates head cuts, query-tile cuts per head, every head/query
+factor pair of the grant, and balanced contiguous flattened head/query-tile
+ranges. Each span carries global query coordinates, the complete key range and
+its head index. Empty participants remain in the assignment. The query ownership
+unit is supplied by the caller; valid endpoints exclude query padding.
+
+Assignments are logical ownership records, independent of physical packing.
+The `attention.flash` recorded generator is available through `call_split`
+with an empty argument object. It uses the reference template's ten heads,
+1024 queries and keys per head, and Dk=Dv=64. Q is pre-scaled by
+log2(e)/sqrt(64). It does not implement masking or precise-score attention.
+The eager API does not select this generator.
+
+The planner converts assignments to physical `SplitOption` records. IDs are
+`heads`, `query-rows`, `heads-query-PhxPq` (with numeric factors), and `balanced`.
+Every share reads its Q rows and all K/V of its heads and writes its Y rows.
+`validate_ownership` checks output lines before `choose_split` prices each
+complete local L1 schedule with the existing timing model. A forced option
+still undergoes validation and pricing. The returned `PlannedKernel.l1` is the
+authoritative executable; its `kernel.graph` holds port metadata only and must
+not be used as the executable. Graph generators return `l1=None` and retain
+their existing graph path.
+
+The flash adapter reads the original template text and substitutes only loop
+bounds, head-transition periods and address expressions. For a share with
+`nq` query tiles per head, local score tile T maps to head `h0 + T/nq` and
+query tile `q0 + T%nq`; the PV head period is `4*nq`. Local rings, bank
+selection, waits, marks, vector instructions and redo remain unchanged.
+The warm-up emits min(4, score tiles) and the close emits min(5, PV tiles).
+Scratch slots per logical rank occupy 1 MiB of S, 64 KiB of O partials and
+16 KiB of sums/offsets; the corresponding L1 parameters cover all slots.
+Each granted physical node has an explicit `node N` scope. Adjacent head spans
+with the same query range share one pipeline; other balanced spans use
+successive pipelines with private symbol names and the same node-local slots.
+
+Code: `software/kohakutpu/compiler/crates/ktpu-kernels/src/gen/attention/flash.rs`
+and `software/kohakutpu/compiler/crates/ktpu-kernels/src/gen/attention/flash_split.rs`.
+The L1 simulator witness in `software/tests/stages/l1_l0/attention_flash.rs`
+compares P=1 with the original hand template and forced P=2/4 head, query and
+hybrid splits with P=1, byte for byte. Its memory write census observes every
+output byte written exactly once. This is an authored witness, not a claim of
+a measured result or a certificate for other attention contracts.
+
+The hand L1 programs have distinct execution contracts. `flash` uses four MG
+roles, two vector cores, a four-score-tile DRAM ring and eight-tile partial-state
+rings, with sticky-overflow redo. `flashd` streams scores with credits and
+closing drains; its lazy-offset path does not provide that redo. `srflash` uses
+two MG pairs and two SR units. Their inner programs remain unchanged. Only
+flash has an executable adapter; flashd and srflash retain resource contracts.
+A logical assignment is not evidence for mapping four live MG roles onto two MGs.
+
+`AttentionMotif::bind_roles` checks these resource requirements before returning
+separate score and product MG bindings. It refuses fewer than four MGs rather
+than aliasing roles. The SR motif requires two SRs, while the vector motifs
+require two VCs. This resource contract alone does not establish numerical or
+schedule eligibility and is not yet called by eager selection. Its packing and
+state metadata describe the hand streams, not arbitrary shapes.
+
+Code: `software/kohakutpu/compiler/crates/ktpu-kernels/src/gen/attention/motif.rs`
+(`AttentionMotif`, `bind_roles`, `pack`, `state`). The DSL-stage role witness
+checks capacity refusal and distinct live MG bindings.
+
+Code: `software/kohakutpu/compiler/crates/ktpu-kernels/src/gen/attention.rs`
+(`AttentionSpec`, `assignments`); ownership witness:
+`software/tests/stages/dsl/attention.rs`. Hand programs:
+`software/kohakutpu/language/kohakutpu/language/examples/l1/fused/flash.ktpu`
+(`redo`, `scores`, `pv`, `flash.l1`),
+`software/kohakutpu/language/kohakutpu/language/examples/l1/fused/flashd.ktpu`
+(`srow`, `scores`, `pv`), and
+`software/kohakutpu/language/kohakutpu/language/examples/l1/sru/srflash.ktpu`
+(`scores`, `soft`, `pv`, `norm`). No performance result or numerical certificate
+is asserted by this ownership interface.
 
 ## Verification domain
 

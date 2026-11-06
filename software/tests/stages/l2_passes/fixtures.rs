@@ -48,3 +48,43 @@ fn the_passes_keep_every_fixture() {
         &known(include_str!("known.txt")),
     );
 }
+
+#[test]
+fn shared_fills_follow_each_instances_execution_scope() {
+    let source = r#"target ktpu.v9
+fn partial.l2(a: mx7a[4, 64] @dram(gm=1, nk=2), b: mx7b[32, 64] @dram(gn=8, nk=2), out: f16[8, 32] @dram(tile=1x8))
+    par n in 0..1 on node[n]
+        par u in 0..2 on mg[u]
+            for i in 0..(2-u)
+                acc = zero : f32[4, 32] @acc
+                av = fill a[0:4, 0:64] : mx7a[4, 64] @A
+                bv = fill b[0:32, 0:64] : mx7b[32, 64] @B
+                acc = gemm av, bv, acc : f32[4, 32] @acc
+                drain acc -> out[u*4:+4, 0:32]
+"#;
+    for (source, uniform) in [
+        (source.to_string(), false),
+        (source.replace("(2-u)", "2"), true),
+    ] {
+        let program =
+            ktpu_l2::Program::parse(&source, "partial", Some("partial")).expect("partial wave");
+        let target = ktpu_l2::target::Target::of(&card());
+        let shared = ktpu_l2::passes::share::share(&program, &target).expect("share inference");
+        assert_eq!(shared.text().contains("share=cross"), uniform);
+        // Execute the sole node's schedule on the single-node L1 simulator.
+        let (params, stmts) = ktpu_l2::passes::body_of(&shared).expect("share body");
+        let local = ktpu_l2::passes::write(&shared, &params, &stmts[0].body).expect("local share");
+        let l1 = ktpu_l2::lower::lower(&local, &target, &ktpu_l2::Search::default())
+            .expect("every shared stream has the same fills");
+        let pair = Pair {
+            name: "partial".into(),
+            before: (Level::L2, source),
+            after: (Level::L1, l1),
+        };
+        assert_eq!(
+            common::compare(&pair),
+            Ok(None),
+            "each live tile is computed"
+        );
+    }
+}
