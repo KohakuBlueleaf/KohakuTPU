@@ -45,6 +45,31 @@ pub struct CardStack {
 }
 
 impl CardStack {
+    /// Whole-card cold and retained proofs at the preparation-time physical
+    /// environment, including package sections and address-bearing input data.
+    pub fn check_memory(
+        &self,
+        p: &Programs,
+        m: &Machine,
+        memory: &ktpu_verify::MemoryContext,
+    ) -> Result<Vec<Finding>, Refusal> {
+        let builder = ktpu_l1::build::Builder::new(m).map_err(refusal)?;
+        let mut residents = cores(p, m)?;
+        let runs = (0..CHECKED_RUNS)
+            .map(|_| bound(&run(&builder, &p.programs, &mut residents, self.fetch(m))?))
+            .collect::<Result<Vec<_>, Refusal>>()?;
+        let findings = ktpu_verify::check_with_memory(&runs, &target(m)?, memory);
+        Ok(findings
+            .into_iter()
+            .map(|f| Finding {
+                kind: f.kind.name().to_string(),
+                clause: f.clause().to_string(),
+                at: f.at,
+                text: f.text,
+            })
+            .collect())
+    }
+
     fn fetch(&self, m: &Machine) -> Option<ktpu_l0::Coord> {
         (!self.node_fed).then(|| fetch_port(m))
     }
@@ -615,18 +640,19 @@ fn order(
     Ok(out)
 }
 
-/// Scheduling reorders dispatch segments; external fetches retain host address sites.
+/// Scheduling reorders dispatch segments; fetches and ALUs retain host address sites.
 fn ordered_steps(source: &[ktpu_l0::Step], ordered: &[ktpu_l0::Step]) -> Vec<ktpu_l0::Step> {
     let mut out = ordered.to_vec();
-    let fetches = source.iter().filter(|s| s.op == ktpu_l0::Op::Fetch);
-    for (step, source) in out
-        .iter_mut()
-        .filter(|s| s.op == ktpu_l0::Op::Fetch)
-        .zip(fetches)
-    {
-        if source.flags & ktpu_l0::format::F_MEM != 0 {
-            step.arg = source.arg;
-            step.flags = source.flags;
+    for op in [ktpu_l0::Op::Fetch, ktpu_l0::Op::Alu] {
+        for (step, source) in out
+            .iter_mut()
+            .filter(|s| s.op == op)
+            .zip(source.iter().filter(|s| s.op == op))
+        {
+            if source.flags & ktpu_l0::format::F_MEM != 0 {
+                step.arg = source.arg;
+                step.flags = source.flags;
+            }
         }
     }
     out
@@ -846,8 +872,21 @@ fn run(
             cores: cores.get_mut(&np.mesh),
             relocate: true,
         };
+        let stats = std::env::var_os("KTPU_VERIFY_STATS").is_some();
+        if stats {
+            eprintln!("verify build: node={} begin", np.mesh);
+        }
         let b = builder.build(np, opts).map_err(refusal)?;
-        out.insert(np.mesh, (b.build(false, false), b.bindings()));
+        let package = b.build(false, false);
+        if stats {
+            eprintln!(
+                "verify build: node={} steps={} payloads={}",
+                np.mesh,
+                package.steps.len(),
+                package.payloads.len()
+            );
+        }
+        out.insert(np.mesh, (package, b.bindings()));
     }
     Ok(out)
 }

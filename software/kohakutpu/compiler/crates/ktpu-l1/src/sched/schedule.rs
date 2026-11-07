@@ -11,11 +11,14 @@ use ktpu_isa::unit::vector::VecIsa;
 use ktpu_machine::Machine;
 
 use super::model::Ruled;
+use super::orders::Orders;
 use super::timing;
 use crate::error::Result;
 use crate::lower::image::{words_of, CoreFacts, Encoder, IMEM_ROOM, UNKNOWN};
 use crate::mutant;
-use crate::text::{emit_at, fmt, read, Definition, Expander, Module, Reader, Stmt, Term};
+use crate::text::module::read_with;
+use crate::text::parse::ReadCache;
+use crate::text::{emit_at, fmt, Definition, Expander, Module, Reader, Stmt, Term};
 
 /// A reordered run is kept only when the model times it this much faster.
 pub const MIN_GAIN: f64 = 0.01;
@@ -203,8 +206,8 @@ pub fn preds(run: &[Stmt], isa: &VecIsa, facts: &CoreFacts) -> Vec<BTreeSet<usiz
     preds
 }
 
-fn read_image(text: &str, name: &str, vregs: u32) -> Result<Module> {
-    let mut module = read(text, &format!("<{name}>"))?;
+fn read_image(text: &str, name: &str, vregs: u32, cache: &mut ReadCache) -> Result<Module> {
+    let mut module = read_with(text, &format!("<{name}>"), cache)?;
     module.vregs = vregs;
     Ok(module)
 }
@@ -220,6 +223,8 @@ struct Scheduled {
     name: String,
     nparams: usize,
     text: String,
+    /// The written order's read-back when timing has already consumed it.
+    parsed: Option<Module>,
     /// The order of the first price decided it.
     first: bool,
     /// A reordering, known to fit; else the written order.
@@ -233,10 +238,12 @@ fn images(
     copies: u32,
     prices: &[i64],
     machine: &Machine,
+    cache: &mut ReadCache,
+    orders: &Orders,
 ) -> Result<Vec<Scheduled>> {
     let r = module.reader();
     let regs = module.vregs;
-    let ruled = Ruled::new(&r, machine, regs, copies)?;
+    let ruled = Ruled::new(&r, machine, regs, copies)?.with_orders(orders);
     let macros = module.macro_table();
     let fill = (
         machine.vc.fill_alone.0 as i64,
@@ -248,18 +255,20 @@ fn images(
         let written = format!("{head}{}", emit_at(&body, 1, 48));
         let classed = body.iter().any(|s| s.kw("classed").is_some());
         let nparams = img.params.len();
-        let left = |text, first, tuned| Scheduled {
+        let left = |text, parsed, first, tuned| Scheduled {
             name: img.name.clone(),
             nparams,
             text,
+            parsed,
             first,
             tuned,
         };
         for &price in prices {
             let tuned = format!("{head}{}", emit_at(&ruled.block_at(&body, price)?, 1, 48));
             let mut faster = tuned != written;
+            let mut parsed = None;
             if faster {
-                let candidate = read_image(&tuned, &img.name, regs)?;
+                let candidate = read_image(&tuned, &img.name, regs, cache)?;
                 if !fits(&candidate, &img.name, nparams, machine) {
                     continue;
                 }
@@ -269,16 +278,24 @@ fn images(
                     } else {
                         timing::cycles_of(&candidate, &img.name, regs, copies, fill, machine)?
                     };
-                    let w = timing::cycles(&written, &img.name, regs, copies, fill, machine)?;
+                    let w = if mutant::on("l1.sched/timing-flat") {
+                        0
+                    } else {
+                        let module = read_image(&written, &img.name, regs, cache)?;
+                        let cycles =
+                            timing::cycles_of(&module, &img.name, regs, copies, fill, machine)?;
+                        parsed = Some(module);
+                        cycles
+                    };
                     faster = t < w;
                 }
             }
             return Ok(match faster {
-                true => left(tuned, price == 0, true),
-                false => left(written, price == 0, false),
+                true => left(tuned, None, price == 0, true),
+                false => left(written, parsed, price == 0, false),
             });
         }
-        Ok(left(written, false, false))
+        Ok(left(written, None, false, false))
     };
     module.images.values().map(image).collect()
 }
@@ -286,14 +303,28 @@ fn images(
 /// Whether every image of `module` stands within the room at price 0, on a
 /// core of `copies` register-file read copies.
 pub fn whole(module: &Module, copies: u32, machine: &Machine) -> Result<bool> {
-    for s in images(module, copies, &PRICES[..1], machine)? {
-        let room = s.tuned
-            || fits(
-                &read_image(&s.text, &s.name, module.vregs)?,
-                &s.name,
-                s.nparams,
-                machine,
-            );
+    whole_with_orders(module, copies, machine, &Orders::default())
+}
+
+/// [`whole`] sharing fresh-core run orders within one mutation scope. Each
+/// image still receives its own encoding, timing and capacity decision.
+pub fn whole_with_orders(
+    module: &Module,
+    copies: u32,
+    machine: &Machine,
+    orders: &Orders,
+) -> Result<bool> {
+    let mut cache = ReadCache::default();
+    for s in images(module, copies, &PRICES[..1], machine, &mut cache, orders)? {
+        let room = if s.tuned {
+            true
+        } else {
+            let parsed = match s.parsed {
+                Some(parsed) => parsed,
+                None => read_image(&s.text, &s.name, module.vregs, &mut cache)?,
+            };
+            fits(&parsed, &s.name, s.nparams, machine)
+        };
         if !s.first || !room {
             return Ok(false);
         }
@@ -312,7 +343,9 @@ pub fn schedule_module(module: &Module, machine: &Machine) -> Result<Module> {
         true => &PRICES[..1],
         false => &PRICES[..],
     };
-    let scheduled = images(module, module.vcopies, prices, machine)?;
+    let mut cache = ReadCache::default();
+    let orders = Orders::default();
+    let scheduled = images(module, module.vcopies, prices, machine, &mut cache, &orders)?;
     texts.extend(scheduled.into_iter().map(|s| s.text));
     for m in module.macros.values() {
         texts.push(format!(
@@ -334,5 +367,5 @@ pub fn schedule_module(module: &Module, machine: &Machine) -> Result<Module> {
             emit_at(&b.stmts, 1, 48)
         ));
     }
-    read(&texts.join("\n"), &module.file)
+    read_with(&texts.join("\n"), &module.file, &mut cache)
 }

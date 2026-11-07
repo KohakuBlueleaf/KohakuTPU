@@ -367,6 +367,7 @@ impl<'a> NodeReader<'a> {
         let label = self.name(st, label)?.to_string();
         let done = format!("{label}_done");
         let saved = source + extent;
+        let start = self.p.steps.len();
         self.p
             .store((0..3).map(|r| (saved + 8 * r, r)).collect(), true);
         if let Some(r) = nr {
@@ -431,6 +432,9 @@ impl<'a> NodeReader<'a> {
         ];
         let (writes, patches) = self.checked(st, mv, &fix)?;
         self.p.move_(writes, patches);
+        if mesh < 0 {
+            self.local_move();
+        }
         self.p.alu(1, Alu::Add, 1, word as u64, true);
         self.p.alu(2, Alu::Add, 2, word as u64, true);
         self.p.alu(0, Alu::Sub, 0, 1, true);
@@ -438,6 +442,18 @@ impl<'a> NodeReader<'a> {
         self.p.label(&done).map_err(ref_err)?;
         for r in 0..3 {
             self.p.load(r, saved + 8 * r, None, false);
+        }
+        let address = self.target.machine.die.address.runtime();
+        let route = ktpu_l0::build::LocalRoute {
+            shift: address.mesh_shift,
+            bits: address.mesh_bits,
+            special: address.special_bit,
+            mesh: self.target.mesh,
+        };
+        for step in &mut self.p.steps[start..] {
+            if let PStmt::Store { local, .. } | PStmt::Load { local, .. } = step {
+                *local = Some(route);
+            }
         }
         Ok(())
     }

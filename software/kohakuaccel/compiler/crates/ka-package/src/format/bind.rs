@@ -143,7 +143,8 @@ fn check_reloc(p: &Package, r: &Reloc, buf: &Buffer, base: u64) -> Result<()> {
         o.payload == r.payload
             && o.buffer == r.buffer
             && o.addend == r.addend
-            && o.shift == r.shift + r.width
+            && (o.shift == r.shift + r.width
+                || (o.shift > r.shift + r.width && o.bit + r.shift == r.bit + o.shift))
     });
     let v = field_value(r, base);
     if !continued && (v < 0 || (r.width < 64 && v >> r.width != 0)) {
@@ -186,12 +187,14 @@ impl Package {
             let bit = step.arg & 255;
             let width = (step.arg >> 8) & 255;
             for reloc in self.relocs.iter().filter(|r| {
-                r.payload == step.count && r.bit == bit && r.width == width && r.shift == 0
+                r.payload == step.count && r.bit == bit && r.width <= width && r.shift == 0
             }) {
                 let buffer = &self.buffers[reloc.buffer as usize];
-                let base = addrs[reloc.buffer as usize] as u128 & mask64(width as u32) as u128;
+                let boundary = reloc.width;
+                let base = addrs[reloc.buffer as usize] as u128 & mask64(boundary as u32) as u128;
                 if !mutant::on("l0.bind/unchecked")
-                    && (!(1..=64).contains(&width) || base + buffer.size as u128 > 1u128 << width)
+                    && (!(1..=64).contains(&width)
+                        || base + buffer.size as u128 > 1u128 << boundary)
                 {
                     return refuse!(
                         "L0.STEP.054",
@@ -291,11 +294,9 @@ impl Package {
     /// This package with every relocation applied: no buffer, no relocation,
     /// the bytes a run at `bindings` reads (L0.BIND.011, L0.BIND.034).
     pub fn bind(&self, bindings: &[u64]) -> Result<Package> {
-        for fetch in self
-            .steps
-            .iter()
-            .filter(|s| s.op == super::Op::Fetch && s.flags & super::F_MEM != 0)
-        {
+        for fetch in self.steps.iter().filter(|s| {
+            matches!(s.op, super::Op::Fetch | super::Op::Alu) && s.flags & super::F_MEM != 0
+        }) {
             if self
                 .steps
                 .iter()
@@ -309,10 +310,9 @@ impl Package {
         }
         let payloads = self.bound(bindings)?;
         let mut steps = self.steps.clone();
-        for step in steps
-            .iter_mut()
-            .filter(|s| s.op == super::Op::Fetch && s.flags & super::F_MEM != 0)
-        {
+        for step in steps.iter_mut().filter(|s| {
+            matches!(s.op, super::Op::Fetch | super::Op::Alu) && s.flags & super::F_MEM != 0
+        }) {
             let Some(word) = payloads.get(step.arg as usize) else {
                 return refuse!("L0.PKG.032", "fetch address payload outside table");
             };

@@ -3,13 +3,13 @@
 use std::collections::BTreeMap;
 
 use ktpu_graph as g;
-use ktpu_l1::text::read;
-use ktpu_machine::{Machine, Refusal, UnitKind};
+use ktpu_machine::{Machine, UnitKind};
 
 use super::flash::{Origins, Share};
 use super::motif::AttentionMotif;
 use super::{assignments, AttentionMask, AttentionPartition, AttentionPrecision, AttentionSpec};
 use crate::kernel::{layout, Kernel, Port};
+use crate::split::cost::LocalPrices;
 use crate::split::{
     choose_split, validate_ownership, CostEstimate, CostFeatures, LegalityWitness, LocalTiming,
     OutputLayout, PlannedKernel, Region, ShardRole, ShardTiles, SplitAxis, SplitOption,
@@ -229,6 +229,7 @@ pub(crate) fn plan_motif(
     };
     let kernel = signature(heads, motif, m)?;
     let mut options = Vec::new();
+    let mut prices = LocalPrices::new(m);
     let tq = motif.query_rows();
     let mut numerics = request.numerics.clone();
     numerics.precision = match motif {
@@ -331,11 +332,7 @@ pub(crate) fn plan_motif(
         for shard in &shards {
             if shard.role != ShardRole::Empty {
                 let text = emit(std::slice::from_ref(shard), request, heads, motif)?;
-                let module =
-                    read(&text, motif.name()).map_err(|e| Refusal::new(&e.clause, e.message))?;
-                let share =
-                    ktpu_l2::cost::cycles(&module, motif.name(), &ktpu_l2::target::Target::of(m))
-                        .map_err(|e| Refusal::new(&e.clause, e.message))?;
+                let share = prices.l1(text, motif.name())?;
                 cycles.push(share - m.vc.launch_front as i64);
             }
         }

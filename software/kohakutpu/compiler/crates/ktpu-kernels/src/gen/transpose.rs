@@ -168,7 +168,7 @@ fn emit_window(
     walks: Option<(&View, &View, i64, i64)>,
     hw: &Hw,
 ) -> R<()> {
-    let (lanes, vl, wb, band) = (hw.lanes, hw.vlmax, hw.word_bytes, hw.band);
+    let (lanes, wb) = (hw.lanes, hw.word_bytes);
     let s = swaps(hw)?;
     let (source_pitch, destination_pitch) = pitches.unwrap_or((2 * b, 2 * a));
     let (walk_x, walk_y, source_origin, destination_origin) = match walks {
@@ -217,6 +217,44 @@ fn emit_window(
             Some((dwalk, destination_origin)),
         );
     }
+    emit_gt4_window(
+        t,
+        walk_x,
+        mask,
+        m0,
+        walk_y,
+        nb,
+        a,
+        b,
+        class,
+        source_pitch,
+        destination_pitch,
+        source_origin,
+        destination_origin,
+        hw,
+    )
+}
+
+/// The exact lane-mask/GT4 schedule on named contiguous or pitched views.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn emit_gt4_window(
+    t: &mut Trace,
+    walk_x: &View,
+    mask: &Buf,
+    m0: i64,
+    walk_y: &View,
+    nb: i64,
+    a: i64,
+    b: i64,
+    class: Option<Cores>,
+    source_pitch: i64,
+    destination_pitch: i64,
+    source_origin: Option<i64>,
+    destination_origin: Option<i64>,
+    hw: &Hw,
+) -> R<()> {
+    let (lanes, vl, wb, band) = (hw.lanes, hw.vlmax, hw.word_bytes, hw.band);
+    let s = swaps(hw)?;
     let words = nb * a * b / lanes;
     let lines = words / (vl / lanes);
     let (p, rg, cw) = (source_pitch, a / band, b / lanes);
@@ -228,7 +266,6 @@ fn emit_window(
     let used = class.map(|c| c.used(hw.vc, trips));
     let padded = used.map_or(trips, |n| cdiv(trips, n) * n) * ROWS;
     let st = t.buffer(&[padded, vl], g::Dtype::F16, vec![])?;
-    let tt = t.buffer(&[padded, vl], g::Dtype::F16, vec![])?;
     let z = t.buffer(&[words, lanes], g::Dtype::F16, vec![])?;
     if class.is_some() {
         let seed = t.buffer(&[lanes], g::Dtype::F16, vec![])?;
@@ -242,9 +279,8 @@ fn emit_window(
             Some(1),
         )?;
     }
-    if class.is_none() && padded * (vl / lanes) > words {
-        t.fill_value(&st.whole(), 0, None, None)?;
-    }
+    // Nonclassed tail lanes stay within their own words during each XOR
+    // permutation; the final GT4 walk reads only the extracted words.
     let looped = class.is_some();
     let walk: &Walk = &[(nb, a * p), (rg, band * p), (cw, wb), (band, p)];
     let dwalk: &Walk = &[(nb, rg * cw * sw), (rg, cw * sw), (cw, sw)];
@@ -271,7 +307,7 @@ fn emit_window(
                 let x = t.xlane(Arg::Val(v), (1i64 << i) | (1i64 << (i as i64 + s)))?;
                 v = t.math(g::ValueOp::Sel, &[Arg::Val(*mi), Arg::Val(x), Arg::Val(v)])?;
             }
-            t.store(&tt.at(&[sl(&r, r.add(ROWS)), ALL])?, Arg::Val(v))
+            t.store(&st.at(&[sl(&r, r.add(ROWS)), ALL])?, Arg::Val(v))
         })
     };
     match used {
@@ -293,9 +329,9 @@ fn emit_window(
         (band, sub * wb),
     ];
     let dwalk: &Walk = &[(nb, sub * al * sw), (sub, al * sw), (al, sw)];
-    t.gt4_looped(&z.whole(), &tt.whole(), walk, dwalk, looped)?;
+    t.gt4_looped(&z.whole(), &st.whole(), walk, dwalk, looped)?;
     let walk: &Walk = &[(nb, sub * al * sw), (sub, al * sw), (band, wb), (al, sw)];
-    let destination_walk = if pitches.is_some() {
+    let destination_walk = if destination_pitch != 2 * a {
         vec![(nb * b, destination_pitch), (a / lanes, wb)]
     } else {
         vec![(words, wb)]

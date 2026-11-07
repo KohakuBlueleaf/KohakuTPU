@@ -174,10 +174,11 @@ pub(super) fn order_nodes(built_by: &mut IndexMap<i64, Vec<Stage>>) -> Vec<serde
                     .flat_map(|x| {
                         mem[&b][j].iter().filter_map(move |y| {
                             if sync::clash(x, y) {
+                                let ((xlo, xhi), (ylo, yhi)) = (x.range(), y.range());
                                 Some(serde_json::json!({
                                     "allocation": x.key.1,
-                                    "lo": x.lo.max(y.lo) / 64 * 64,
-                                    "hi": (x.hi.min(y.hi) + 63) / 64 * 64,
+                                    "lo": xlo.max(ylo),
+                                    "hi": xhi.min(yhi),
                                 }))
                             } else {
                                 None
@@ -231,7 +232,11 @@ pub(super) fn order_nodes(built_by: &mut IndexMap<i64, Vec<Stage>>) -> Vec<serde
                 let acc = to
                     .iter()
                     .flat_map(|(_, xs)| xs.iter())
-                    .map(|x| Access::new(FENCE, true, (&x.key.0, &x.key.1), x.lo, x.hi))
+                    .map(|x| {
+                        let mut f = Access::new(FENCE, true, (&x.key.0, &x.key.1), x.lo, x.hi);
+                        f.footprint = x.footprint.clone();
+                        f
+                    })
                     .collect();
                 let mut f = Stage::new(lines, vec![], acc);
                 f.fence = true;

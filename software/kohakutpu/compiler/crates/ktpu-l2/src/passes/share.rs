@@ -55,9 +55,36 @@ pub fn share(p: &Program, t: &Target) -> Result<Program> {
         let mut out = s.clone();
         out.args.push(Term::Assign(
             Box::new(Term::name("share")),
-            Box::new(Term::name("cross")),
+            Box::new(Term::name(mode(&scopes[par], t))),
         ));
         Ok(vec![out])
     })?;
     write(p, &params, &out)
+}
+
+/// `cross` pairs the k-th cluster of every memory port (L2.MG.005), so it needs
+/// each port to serve as many of the `par`'s clusters; otherwise the clusters
+/// share within their port. A range not known here keeps `cross`.
+fn mode(par: &Stmt, t: &Target) -> &'static str {
+    let Some((_, lo, hi)) = head(par) else {
+        return "cross";
+    };
+    let (Some(lo), Some(hi)) = (lo.as_int(), hi.as_int()) else {
+        return "cross";
+    };
+    let mut coords = t.mg.clone();
+    coords.sort();
+    let mut per_port = std::collections::BTreeMap::<(i64, i64), usize>::new();
+    for index in lo..hi {
+        let Some(&c) = usize::try_from(index).ok().and_then(|i| coords.get(i)) else {
+            return "cross";
+        };
+        *per_port.entry(t.nearest_port(c)).or_default() += 1;
+    }
+    let mut counts = per_port.values();
+    match counts.next() {
+        Some(first) if counts.all(|n| n == first) => "cross",
+        Some(_) => "port",
+        None => "cross",
+    }
 }

@@ -28,7 +28,7 @@ Ordinary packages use the receiving card's serialized machine; launch recipes
 must match machine and sysnode placement. Admission verdicts cache package bytes,
 receiving machine, placement and bindings. Disallowing vector MX7 invokes lifted
 schedule verification; disallowing mover quant invokes command execution analysis
-with a dynamic-proof fallback. (code: software/kohakutpu/application/kohakutpu/application/runtime/packages.py:192-203, :227-244, :248-260; software/kohakutpu/compiler/crates/ktpu-verify/src/lines.rs:335-353)
+with a dynamic-proof fallback. (code: software/kohakutpu/application/kohakutpu/application/runtime/packages.py:194-205, :229-246, :250-262; software/kohakutpu/compiler/crates/ktpu-verify/src/lines.rs:550-569)
 
 ## K pairs and the quantiser (RUL.099)
 
@@ -69,8 +69,8 @@ software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/quant_status.rs:160-2
 software/kohakuaccel/firmware/package/interp.c:1622-1626;
 software/kohakutpu/application/kohakutpu/application/runtime/memory/packing.py:14-32;
 software/kohakutpu/application/kohakutpu/application/runtime/card/collection.py:126-135, :175-190, :244-265;
-software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py:69-88, :434-486;
-software/kohakutpu/application/kohakutpu/application/runtime/device/allocation.py:190-201)
+software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py:69-88, :437-489;
+software/kohakutpu/application/kohakutpu/application/runtime/device/allocation.py:227-238)
 
 Checking classifies supplied image values including generated padding, not all
 underlying storage. Entirely zero tiles issue no source descriptor or DMA;

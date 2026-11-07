@@ -21,15 +21,18 @@ pub mod target;
 pub mod work;
 
 pub use adapter::u256::U256;
-pub use check::gate::{gate, key, overlaps, GateError, Mode, SOURCE_DIGEST as VERSION};
+pub use check::gate::{
+    gate, gate_with_memory, key, overlaps, GateError, Mode, SOURCE_DIGEST as VERSION,
+};
 pub use check::{
-    check, check_many, check_scheduled, l1_touched, schedule, Held, HeldCore, Nodes, ScheduleError,
-    Scheduled,
+    check, check_many, check_scheduled, check_with_memory, l1_touched, schedule, Held, HeldCore,
+    MemoryContext, Nodes, PackageStorage, ScheduleError, Scheduled,
 };
 pub use model::finding::{Finding, Kind};
 pub use target::{Facts, MeshUnits, Target, UnitKind};
 
 /// The finding kinds a run is refused for (L1.VER.015).
-pub const REFUSE: [&str; 10] = [
+pub const REFUSE: [&str; 11] = [
     "deadlock", "rest", "port", "race", "bounds", "route", "line", "cluster", "vector", "loop",
+    "model",
 ];

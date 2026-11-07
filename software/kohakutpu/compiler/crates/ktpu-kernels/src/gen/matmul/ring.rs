@@ -253,13 +253,21 @@ pub(super) fn schedule(
 ) -> R<()> {
     let hw = &Hw::of(mach);
     let wg = ring.tiles * mm.tn;
+    let mut layout = vec![(
+        "tile".to_string(),
+        g::LayoutValue::Ints(vec![mm.tm / hw.band, mm.tn / hw.band]),
+    )];
+    // The reduction root produces and consumes the product ring.
+    if let Some(plan) = peer {
+        layout.push((
+            "node".to_string(),
+            g::LayoutValue::Int(plan.nodes.ids()[plan.root]),
+        ));
+    }
     let slots = t.buffer_in(
         &[ring.depth * ring.lanes * mm.tm, wg],
         g::Dtype::F16,
-        vec![(
-            "tile".to_string(),
-            g::LayoutValue::Ints(vec![mm.tm / hw.band, mm.tn / hw.band]),
-        )],
+        layout,
         g::BufSpace::Stage,
     )?;
     let mut operands = vec![Operand {
@@ -395,7 +403,7 @@ pub(super) fn schedule(
                     continue;
                 }
                 peer::root(t, peer, |t| {
-                    t.par(cores, g::UnitKind::Vc, on, |t, u| {
+                    t.par_local(cores, g::UnitKind::Vc, on, |t, u| {
                         let (lg, p) = (u.div(ring.parts), u.rem(ring.parts));
                         let gi = w.mul(ring.lanes).add(&lg);
                         let packs = match &status {

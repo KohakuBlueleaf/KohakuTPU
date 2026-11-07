@@ -628,9 +628,32 @@ fn unlift_step(stmts: Vec<Stmt>) -> Vec<Stmt> {
         .collect()
 }
 
+/// Empty constant streams have no effects and need no representative tile.
+fn live_streams(stmts: Vec<Stmt>) -> Vec<Stmt> {
+    stmts
+        .into_iter()
+        .filter_map(|mut stmt| {
+            if stmt.op == "for"
+                && matches!(head(&stmt), Some((_, Term::Int(lo, _), Term::Int(hi, _))) if lo == hi)
+            {
+                return None;
+            }
+            let had_body = !stmt.body.is_empty();
+            stmt.body = live_streams(stmt.body);
+            if had_body
+                && stmt.body.is_empty()
+                && matches!(stmt.op.as_str(), "for" | "par" | "when")
+            {
+                return None;
+            }
+            Some(stmt)
+        })
+        .collect()
+}
+
 pub fn retile(p: &Program, t: &Target, search: &Search) -> Result<Program> {
     let (params, stmts) = body_of(p)?;
-    let stmts = unlift_step(stmts);
+    let stmts = unlift_step(live_streams(stmts));
     let r = p.module.reader();
     let top: Vec<Stmt> = stmts.iter().filter(|s| s.op == "buffer").cloned().collect();
     let mut shapes: HashMap<String, Vec<Term>> = HashMap::new();

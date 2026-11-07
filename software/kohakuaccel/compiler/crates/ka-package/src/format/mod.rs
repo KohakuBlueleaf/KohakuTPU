@@ -137,6 +137,10 @@ impl Op {
 
 /// Step flags. A MOVER step POSTED starts its moves and goes on.
 pub const F_POSTED: u8 = 1;
+/// MOVER preparation metadata: unit packs local-route shift, width and special bit.
+pub const F_LOCAL: u8 = 2;
+/// STORE / memory LOAD preparation metadata: local route in unit / count[31:16].
+pub const F_LOCAL_CPU: u8 = 1;
 /// ALU / JUMP: operand b is the argument, not register rb.
 pub const F_IMM: u8 = 2;
 /// STORE / CTRL: a pair's value names a register.
@@ -148,7 +152,8 @@ pub const F_CTRL: u8 = 16;
 /// WAIT_SLOT: take the count from the slot once it is reached.
 pub const F_CONSUME: u8 = 32;
 /// SEND: a CU_DATA descriptor payload, then `count` words from memory.
-/// Host FETCH: arg selects an address payload, resolved and cleared by bind.
+/// Host FETCH or immediate ALU: arg selects an address payload, resolved and
+/// cleared by bind.
 pub const F_MEM: u8 = 64;
 /// SEND: wait for the unit's DATA_RECEIVED.
 pub const F_ACK: u8 = 128;

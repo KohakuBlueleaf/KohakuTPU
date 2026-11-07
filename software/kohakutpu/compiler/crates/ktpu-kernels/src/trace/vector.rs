@@ -365,6 +365,32 @@ impl Trace {
         Ok(self.new_value(op, args, kw, ty, "s", None, at))
     }
 
+    /// Reduce a contiguous register-column window without another materialization.
+    /// The value view preserves the original FP32 probability rounding boundary.
+    #[track_caller]
+    pub fn reduce_columns(&mut self, op: Op, x: V, first: i64, columns: i64) -> R<V> {
+        let at = here();
+        self.need(Some(g::UnitKind::Vc), op.name())?;
+        let value = self.value(x).clone();
+        if !matches!(op, Op::Rsum | Op::Rmax)
+            || value.space != g::ValSpace::Reg
+            || value.shape.len() != 2
+            || first < 0
+            || columns <= 0
+            || first
+                .checked_add(columns)
+                .is_none_or(|end| end > value.shape[1])
+        {
+            return fail("DSL.VEC.030", "invalid register-column reduction");
+        }
+        let view = g::ValueView {
+            value: value.name,
+            axes: vec![g::Axis::All, g::Axis::Run(Idx::Int(first).graph(), columns)],
+        };
+        let ty = (g::Dtype::F32, vec![value.shape[0]], g::ValSpace::Reg, None);
+        Ok(self.new_value(op, vec![g::Operand::Vview(view)], vec![], ty, "s", None, at))
+    }
+
     /// `pN = pack X : DTYPE` (DSL.VEC.014, .016, .031). A statistic packs
     /// 16 a word; its `[R, 32]` form is not made (RUL.030).
     #[track_caller]

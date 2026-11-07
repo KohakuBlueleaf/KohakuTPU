@@ -13,6 +13,8 @@ use ktpu_machine::Machine;
 
 pub mod destination;
 pub mod local;
+pub mod prefix;
+pub mod rows;
 
 /// Words of `nbytes` and the f16 values a word holds: a buffer as words.
 fn words(nbytes: i64, hw: &Hw) -> (i64, i64) {

@@ -152,7 +152,7 @@ pub fn class_copy_loop(
             .args
             .retain(|arg| !matches!(arg, Term::Assign(k, _) if k.as_name() == Some("classed")));
         let (copies, accesses) = lower_op(body, &bulk, env, tg)?;
-        let mut lines = vec!["move".into()];
+        let mut lines = vec!["move local=1".into()];
         lines.extend(copies.iter().map(|copy| format!("    {copy}")));
         return Ok((lines, accesses));
     }
@@ -192,7 +192,7 @@ pub fn class_copy_loop(
             ]);
         }
         lines.extend([
-            "move advance=1".into(),
+            "move advance=1 local=1".into(),
             format!("    copy w({sn} + {soff} + r10, (1, 0)) -> w({dn} + {doff} + r11, (1, 0))"),
             "r0 = add r0, 1".into(),
             format!("goto linear_move_{tag} if r0 < {}", count(&sl)),
@@ -247,7 +247,7 @@ pub(super) fn class_walk_loop(
         lines.push(format!("r{axis} = set 0"));
         lines.push(format!("label class_move_{tag}_{axis}"));
     }
-    lines.push("move advance=1".into());
+    lines.push("move advance=1 local=1".into());
     lines.push(inner);
     for axis in (0..loops).rev() {
         lines.push(format!("r{axis} = add r{axis}, 1"));

@@ -16,6 +16,7 @@ from kohakutpu.application.runtime import device as card
 BOARD = "multimesh_v9t8"
 APPLICATION = pathlib.Path(__file__).resolve().parents[2] / "kohakutpu" / "application"
 sys.path.insert(0, str(APPLICATION))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 
 @pytest.fixture

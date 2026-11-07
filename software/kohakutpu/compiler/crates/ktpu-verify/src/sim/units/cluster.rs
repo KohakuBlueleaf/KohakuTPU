@@ -95,6 +95,31 @@ fn side(s: i64) -> &'static str {
 }
 
 impl Cluster {
+    pub(crate) fn retained(&self, stats: &mut crate::sim::stats::Retained) {
+        stats.add(format!("mg_queue/{}", self.dq), self.items.len());
+        stats.add(format!("mg_marks/{}", self.dq), self.marks.len());
+        stats.add(format!("mg_fills/{}", self.seq), self.fill_windows.len());
+        stats.clock(&self.swept);
+        for (_, _, clock) in &self.items {
+            stats.clock(clock);
+        }
+        for (_, clock) in &self.marks {
+            stats.clock(clock);
+        }
+        for (landed, sent, _) in &self.l1_bursts {
+            stats.clock(landed);
+            stats.clock(sent);
+        }
+        for (start, end) in &self.fill_windows {
+            stats.clock(start);
+            stats.clock(end);
+        }
+    }
+
+    pub(crate) fn next_word(&self) -> usize {
+        self.pc
+    }
+
     /// Every operand granule exists independently of an optional overwrite.
     pub(crate) fn complete_operand(&self, buf: i64, off: i64, n: i64) -> bool {
         if !matches!(buf, BUF_L1A | BUF_L1B) || off < 0 || n <= 0 {
@@ -130,6 +155,7 @@ impl Sim<'_> {
         let port = self.add_proc(Pk::Port, format!("{name} port"));
         let array = self.add_proc(Pk::Port, format!("{name} array port"));
         let seq = self.add_proc(Pk::MgSeq(ui), format!("{name} sequencer"));
+        let completer = self.add_proc(Pk::Port, format!("{name} acknowledged completion"));
         let dq = self.add_proc(Pk::MgDq(ui), format!("{name} drain queue"));
         Unit {
             key,
@@ -139,7 +165,7 @@ impl Sim<'_> {
             done,
             recv,
             acks,
-            completer: seq,
+            completer,
             landings: Vec::new(),
             words: Vec::new(),
             kind: Kinded::Mg(Box::new(Cluster {
@@ -427,6 +453,7 @@ impl Sim<'_> {
             rel.push(self.mg(u).swept.clone());
         }
         let clock = self.tick(seq, &rel);
+        self.fetched_word(u, pc, &clock, seq);
         if name == "FILL" && f.g("recv") == 0 {
             let s = f.g("sel") & 1;
             let sp = if s == 0 { Space::A } else { Space::B };
@@ -436,6 +463,29 @@ impl Sim<'_> {
             let unit = &mut self.units[u];
             unit.mem
                 .access(&mut self.findings, sp, ents, true, &clock, seq, &what);
+            let cfg = &self.t.isa.cluster.cfg;
+            let (_, x, y) = self.units[u].key;
+            let me = (i64::from(y) << cfg.pos_bits) | i64::from(x);
+            let width = cfg.coord_bits();
+            let mask = ktpu_isa::layout::mask(width) as i64;
+            let lead =
+                (0..f.g("npeer")).all(|k| ((f.g("peers") >> (width * k as u32)) & mask) >= me);
+            if lead {
+                let addr = (f.g("addr") | (f.g("addr_hi") << ktpu_isa::unit::cluster::ADDR_LO_BITS))
+                    as u64;
+                let bytes =
+                    (f.g("n") * self.t.facts.mg_entry_granules * self.t.facts.word_bytes) as u64;
+                self.dram_access(
+                    super::super::dram::interval(addr, bytes),
+                    false,
+                    &start,
+                    &clock,
+                    seq,
+                    format!("{} {what}", self.units[u].name),
+                );
+            }
+            // ISA.MG.012: FILL retires after every requested entry lands.
+            // Later sequencer work and its observed completion include the read.
             self.mg_mut(u).fill_windows.push((start, clock.clone()));
         } else if name == "GEMM" {
             let at = self.tick(array, std::slice::from_ref(&clock));
@@ -503,9 +553,7 @@ impl Sim<'_> {
         let c = self.mg_mut(u);
         c.pc += 1;
         c.why.clear();
-        let (done, recv) = (self.units[u].done, self.units[u].recv);
-        self.counters[done].add(1, &clock, seq);
-        self.counters[recv].add(1, &clock, seq);
+        self.unit_completed(u, &clock);
         true
     }
 
@@ -637,6 +685,19 @@ impl Sim<'_> {
             let sink = burst_sink(f, self.t.isa.cluster.cfg.pos_bits);
             let off = (f.g("addr") / self.t.facts.word_bytes + into) & 0xFFFF;
             self.send(Sender::Unit(u), sink, off, n, &clock, dq);
+        } else {
+            let word = self.t.facts.word_bytes as u64;
+            let addr =
+                (f.g("addr") | (f.g("addr_hi") << ktpu_isa::unit::cluster::ADDR_LO_BITS)) as u64;
+            self.memory_write(
+                self.units[u].key.0,
+                Some(u),
+                super::super::dram::interval(addr + into as u64 * word, n as u64 * word),
+                &clock,
+                &clock,
+                dq,
+                format!("{} drain {}", self.units[u].name, self.mg(u).head),
+            );
         }
         let c = self.mg_mut(u);
         c.into = upto;

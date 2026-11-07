@@ -21,6 +21,7 @@ pub mod destination;
 pub(crate) mod destination_walk;
 mod peer;
 mod ring;
+pub(crate) mod rows;
 pub mod split;
 use ktpu_graph as g;
 use ktpu_machine::{Machine, Pairing};

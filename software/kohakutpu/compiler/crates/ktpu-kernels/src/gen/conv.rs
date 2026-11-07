@@ -471,3 +471,133 @@ pub fn kernel(
         .find(|p| p.split.id == selected.id)
         .ok_or_else(|| ktpu_machine::Refusal::new("DSL.KERN.020", "no convolution option emitted"))
 }
+
+/// Bulk BHWC patch materialization for a contiguous batch window. Unlike the
+/// destination-owned halo emitter this retains one padded-image allocation and
+/// a constant-size mover schedule; both paths share checked convolution geometry.
+/// Output is local capacity, input remains the complete global allocation.
+pub fn unfold(
+    spec: &ConvSpec,
+    first_batch: i64,
+    batches: i64,
+    capacity: i64,
+    space: g::BufSpace,
+    m: &Machine,
+) -> R<Kernel> {
+    let geom = spec.geometry(m)?;
+    if spec.groups != 1
+        || first_batch < 0
+        || batches <= 0
+        || first_batch > spec.batch
+        || batches > spec.batch - first_batch
+    {
+        return fail(
+            "API.OP.001",
+            "bulk patches need a contiguous ungrouped batch window",
+        );
+    }
+    let rows = product(&[batches, geom.oh, geom.ow])?;
+    if capacity < rows || capacity % 4 != 0 {
+        return fail(
+            "API.OP.001",
+            "bulk patch capacity must cover complete four-row bands",
+        );
+    }
+    product(&[capacity, geom.kp, 2])?;
+    // geometry already checked both padded spatial additions and effective taps.
+    let hp = spec.height + 2 * spec.padding[0];
+    let wp = spec.width + 2 * spec.padding[1];
+    product(&[batches, hp, wp, spec.cin, 2])?;
+    let input = [geom.source / spec.cin, spec.cin];
+    let output = [capacity, geom.kp];
+    let ports = vec![
+        Port::input("x", &input, g::Dtype::F16),
+        Port::output("out", &output, g::Dtype::F16),
+    ];
+    let given = vec![("x".into(), f16(&input)?), ("out".into(), f16(&output)?)];
+    let key = name(
+        "conv_unfold",
+        vec![
+            Py::str(&format!("{spec:?}")),
+            Py::Int(first_batch),
+            Py::Int(batches),
+            Py::Int(capacity),
+            Py::str(&format!("{space:?}")),
+        ],
+    );
+    let mut kernel = build(&key, m, ports, given, |t, buffers| {
+        let hw = Hw::of(m);
+        let words = spec.cin / hw.lanes;
+        let origin = first_batch * spec.height * spec.width * spec.cin * 2;
+        let padded = spec.padding != [0, 0];
+        let source = if padded {
+            let image = t.buffer(&[batches * hp * wp, spec.cin], g::Dtype::F16, vec![])?;
+            t.fill_value(&image.whole(), 0, None, None)?;
+            let walk = [(batches * spec.height * spec.width * words, hw.word_bytes)];
+            let dwalk = [
+                (batches, hp * wp * spec.cin * 2),
+                (spec.height, wp * spec.cin * 2),
+                (spec.width * words, hw.word_bytes),
+            ];
+            let destination = (spec.padding[0] * wp + spec.padding[1]) * spec.cin * 2;
+            t.copy(
+                &image.whole(),
+                &buffers[0].whole(),
+                Some((&walk, Some(origin))),
+                Some((&dwalk, Some(destination))),
+            )?;
+            image
+        } else {
+            buffers[0].clone()
+        };
+        t.fill_value(&buffers[1].whole(), 0, None, None)?;
+        // Non-advancing spatial/tap axes do not encode irrelevant strides.
+        let step = |count: i64, factors: &[i64]| -> R<i64> {
+            if count == 1 {
+                Ok(0)
+            } else {
+                product(factors)
+            }
+        };
+        let walk = [
+            (batches, hp * wp * spec.cin * 2),
+            (geom.oh, step(geom.oh, &[spec.stride[0], wp, spec.cin, 2])?),
+            (geom.ow, step(geom.ow, &[spec.stride[1], spec.cin, 2])?),
+            (
+                spec.kh,
+                step(spec.kh, &[spec.dilation[0], wp, spec.cin, 2])?,
+            ),
+            (spec.kw, step(spec.kw, &[spec.dilation[1], spec.cin, 2])?),
+            (words, hw.word_bytes),
+        ];
+        // Collapse contiguous kernel columns to preserve the native five-level walk.
+        let compact = [
+            (batches, walk[0].1),
+            (geom.oh, walk[1].1),
+            (geom.ow, walk[2].1),
+            (spec.kh, walk[3].1),
+            (spec.kw * words, hw.word_bytes),
+        ];
+        let dwalk = [
+            (rows, geom.kp * 2),
+            (spec.kh * spec.kw * words, hw.word_bytes),
+        ];
+        t.copy(
+            &buffers[1].whole(),
+            &source.whole(),
+            Some((
+                if spec.dilation[1] == 1 {
+                    &compact
+                } else {
+                    &walk
+                },
+                Some(if padded { 0 } else { origin }),
+            )),
+            Some((&dwalk, None)),
+        )
+    })?;
+    for scratch in &mut kernel.graph.scratch {
+        scratch.spec.space = space;
+    }
+    Ok(kernel)
+}

@@ -269,6 +269,7 @@ class Device(Kernels, Allocation, Submission, Replay):
         }
         #: folded constants uploaded once, by content (`forms.table`)
         self.tables: dict = {}
+        self.table_epoch = 0
         #: Their spans, which no run writes.
         self.constants: set = set()
         #: Independent queue access sets overlap; scratch windows are writes.

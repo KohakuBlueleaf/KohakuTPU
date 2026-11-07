@@ -31,6 +31,9 @@ fn int_toks(v: i64) -> Vec<Tok> {
 
 /// `const + sum(coef * atom)`, positive terms first (DSL.IDX.006).
 fn sym_toks(s: &Sym) -> Vec<Tok> {
+    if s.terms.is_empty() {
+        return int_toks(s.konst);
+    }
     let mut parts: Vec<(bool, Vec<Tok>)> = Vec::new();
     for (a, c) in &s.terms {
         let mut t = atom_toks(a);

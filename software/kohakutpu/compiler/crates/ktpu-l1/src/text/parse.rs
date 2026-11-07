@@ -2,6 +2,8 @@
 //! indentation (4 columns a tab), comments, newlines inside brackets -- and
 //! the pest grammar (`ktpu.pest`) reads each logical line.
 
+use std::collections::HashMap;
+
 use pest::error::LineColLocation;
 
 use super::term::Stmt;
@@ -105,6 +107,28 @@ fn read_seen(text: &str) -> std::result::Result<Stmt, LineColLocation> {
     Ok(st)
 }
 
+/// Successful logical lines within one synchronous read/schedule invocation.
+/// Locations and bodies belong to each occurrence, not the cached grammar result.
+#[derive(Default)]
+pub(crate) struct ReadCache {
+    lines: HashMap<String, Stmt>,
+}
+
+impl ReadCache {
+    fn read(&mut self, text: &str) -> std::result::Result<Stmt, LineColLocation> {
+        #[cfg(feature = "mutants")]
+        if BOTH.load(std::sync::atomic::Ordering::Relaxed) {
+            return read(text);
+        }
+        if let Some(st) = self.lines.get(text) {
+            return Ok(st.clone());
+        }
+        let st = read(text)?;
+        self.lines.insert(text.to_string(), st.clone());
+        Ok(st)
+    }
+}
+
 const TXT_ERR: &str = "L1.TXT.014";
 const TXT_DEDENT: &str = "L1.TXT.015";
 const TAB: usize = 4;
@@ -192,6 +216,11 @@ enum Tok {
 
 /// `Stmt` trees for `text`; an error names the line and column (L1.TXT.014).
 pub fn parse(text: &str, file: &str) -> Result<Vec<Stmt>> {
+    parse_with(text, file, &mut ReadCache::default())
+}
+
+/// Read-back within a fixed grammar/mutant scope, sharing successful line parses.
+pub(crate) fn parse_with(text: &str, file: &str, cache: &mut ReadCache) -> Result<Vec<Stmt>> {
     let source = if text.ends_with('\n') {
         text.to_string()
     } else {
@@ -226,7 +255,7 @@ pub fn parse(text: &str, file: &str) -> Result<Vec<Stmt>> {
         toks.push(Tok::Line(k));
     }
     let mut at = 0;
-    let out = block(&lines, &toks, &mut at, &source, file)?;
+    let out = block(&lines, &toks, &mut at, &source, file, cache)?;
     if at < toks.len() {
         let k = match toks[at] {
             Tok::Line(k) | Tok::Indent(k) => k,
@@ -251,6 +280,7 @@ fn block(
     at: &mut usize,
     source: &str,
     file: &str,
+    cache: &mut ReadCache,
 ) -> Result<Vec<Stmt>> {
     let mut out: Vec<Stmt> = Vec::new();
     while *at < toks.len() {
@@ -272,11 +302,11 @@ fn block(
                     ));
                 };
                 *at += 1;
-                last.body = block(lines, toks, at, source, file)?;
+                last.body = block(lines, toks, at, source, file, cache)?;
             }
             Tok::Line(k) => {
                 *at += 1;
-                out.push(line(&lines[k], source, file)?);
+                out.push(line(&lines[k], source, file, cache)?);
             }
         }
     }
@@ -313,9 +343,9 @@ fn mutated(text: &str) -> String {
     out
 }
 
-fn line(l: &Logical, source: &str, file: &str) -> Result<Stmt> {
+fn line(l: &Logical, source: &str, file: &str, cache: &mut ReadCache) -> Result<Stmt> {
     let text = mutated(&l.text);
-    let mut st = read(&text).map_err(|at| {
+    let mut st = cache.read(&text).map_err(|at| {
         let (line, col) = match at {
             LineColLocation::Pos((_, c)) => (l.line, c as u32),
             LineColLocation::Span((_, c), _) => (l.line, c as u32),

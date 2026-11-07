@@ -218,6 +218,12 @@ impl Trace {
         layout: Vec<(String, g::LayoutValue)>,
         space: g::BufSpace,
     ) -> R<Buf> {
+        let mut layout = layout;
+        if space == g::BufSpace::Stage && !layout.iter().any(|(key, _)| key == "node") {
+            if let Some(node) = self.stage_node {
+                layout.push(("node".into(), g::LayoutValue::Int(node)));
+            }
+        }
         let s = spec(shape, dtype, layout, space)?;
         let n = self.fresh("h");
         self.scratch.push((n.clone(), s.clone()));

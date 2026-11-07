@@ -981,7 +981,9 @@ def table(dev, arr, dtype: type = np.float16) -> int:
         got = Storage(dev, max(a.nbytes, 32))
         ref = None
         try:
-            dev.write(got.addr, a.tobytes())
+            raw = a.tobytes()
+            dev.write(got.addr, raw)
+            got.host = raw
             entry, _ = dev.mmu.resolve(got.addr)
             ref = (entry.arena, entry.physical)
             dev.constants.add(ref)

@@ -24,6 +24,17 @@ pub struct Shape {
     pub tokens: bool,
 }
 
+/// A cut must be a boundary for both stages, including non-power-of-two tiles.
+pub(crate) fn common_quantum(a: i64, b: i64) -> R<i64> {
+    let (mut x, mut y) = (a, b);
+    while y != 0 {
+        (x, y) = (y, x % y);
+    }
+    (a / x)
+        .checked_mul(b)
+        .ok_or_else(|| ktpu_machine::Refusal::new("API.OP.001", "common row quantum exceeds i64"))
+}
+
 /// Shift by logical rows, preserving scalar and column broadcasts.
 pub fn shifted(o: &Operand, row: i64) -> Operand {
     Operand {
@@ -250,11 +261,7 @@ pub fn kernel_options(
                 .scratch
                 .iter()
                 .map(|scratch| Region {
-                    allocation: if request.nodes.ids() == [0] {
-                        scratch.name.clone()
-                    } else {
-                        format!("share{}_{}", kernels.len(), scratch.name)
-                    },
+                    allocation: scratch.name.clone(),
                     bytes: 0..(scratch.spec.shape.iter().product::<i64>()
                         * Hw::item(scratch.spec.dtype)) as u64,
                 })
@@ -273,6 +280,25 @@ pub fn kernel_options(
             signature.clone()
         } else {
             let mut kernel = crate::gen::chain::shares(&signature, kernels)?;
+            for (index, share) in option
+                .shards
+                .iter_mut()
+                .filter(|share| share.role != ShardRole::Empty)
+                .enumerate()
+            {
+                let names = crate::gen::chain::sequence::scope(&kernel, index)?;
+                for region in &mut share.scratch_regions {
+                    region.allocation = names
+                        .get(&region.allocation)
+                        .ok_or_else(|| {
+                            ktpu_machine::Refusal::new(
+                                "DSL.KERN.020",
+                                "missing private share scope",
+                            )
+                        })?
+                        .clone();
+                }
+            }
             kernel.graph.name = name(
                 "row_shares",
                 vec![

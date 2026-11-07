@@ -79,10 +79,7 @@ impl Share {
                 "y + t*4K",
                 format!("y + (t/{per_head})*128K + (t % {per_head})*4K"),
             ),
-            (
-                "for T in 0..4\n        expand scores(T)",
-                format!("for T in 0..{}\n        expand scores(T)", (nt / 4).min(4)),
-            ),
+            ("for T in 0..4", format!("for T in 0..{}", (nt / 4).min(4))),
             ("for t in 0..321", format!("for t in 0..{}", nt + 1)),
             ("after(t, 320)", format!("after(t, {nt})")),
             ("runp(t, 320)", format!("runp(t, {nt})")),

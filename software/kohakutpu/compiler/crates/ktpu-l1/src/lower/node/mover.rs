@@ -6,6 +6,11 @@ use ktpu_isa::unit::mover::MOVE_WORDS;
 
 impl<'a> NodeReader<'a> {
     pub(super) fn move_(&mut self, st: &Stmt) -> Result<()> {
+        let local = match st.kw("local").map(Term::as_int) {
+            None | Some(Some(0)) => false,
+            Some(Some(1)) => true,
+            _ => return Err(self.fail(st, "L1.MOV.016", "local= is 0 or 1")),
+        };
         let pos = st.positional();
         let posted = pos.len() == 1 && pos[0].as_name() == Some("posted");
         if (!pos.is_empty() && !posted) || st.body.is_empty() {
@@ -42,7 +47,11 @@ impl<'a> NodeReader<'a> {
                     "advance requires blocking moves with whole 40-bit base patches",
                 ));
             }
-            self.p.steps.push(PStmt::MoveAdvance { writes, patches });
+            self.p.steps.push(PStmt::MoveAdvance {
+                writes,
+                patches,
+                local: None,
+            });
         } else if posted && on("l1.node/post-blocks") {
             let token = self
                 .p
@@ -60,7 +69,64 @@ impl<'a> NodeReader<'a> {
         } else {
             self.p.move_(writes, patches);
         }
+        if local {
+            self.local_move();
+        }
         Ok(())
+    }
+
+    pub(super) fn local_move(&mut self) {
+        let address = self.target.machine.die.address.runtime();
+        let route = ktpu_l0::build::LocalRoute {
+            shift: address.mesh_shift,
+            bits: address.mesh_bits,
+            special: address.special_bit,
+            mesh: self.target.mesh,
+        };
+        let step = self.p.steps.last_mut().expect("emitted mover statement");
+        let advance = matches!(step, PStmt::MoveAdvance { .. });
+        match step {
+            PStmt::Move {
+                writes,
+                patches,
+                local,
+            }
+            | PStmt::MoveAdvance {
+                writes,
+                patches,
+                local,
+            }
+            | PStmt::Post {
+                writes,
+                patches,
+                local,
+                ..
+            } => {
+                *local = Some(route);
+                if !advance {
+                    for patch in patches {
+                        let (reg, value) = writes[patch.word];
+                        let bit = if reg == u64::from(R_HDR) { 4 } else { 0 };
+                        let ordinary = (value >> bit) & (1u64 << route.special) == 0;
+                        if ordinary && (reg == u64::from(R_HDR) || reg == u64::from(R_INDEX)) {
+                            // Address patches exclude the statically selected route.
+                            patch.segments = patch
+                                .segments
+                                .iter()
+                                .flat_map(|&segment| {
+                                    if segment.0 == bit && segment.1 == 40 && segment.2 == 0 {
+                                        vec![(bit, route.shift, 0)]
+                                    } else {
+                                        vec![segment]
+                                    }
+                                })
+                                .collect();
+                        }
+                    }
+                }
+            }
+            _ => unreachable!("emitted mover statement"),
+        }
     }
 
     pub(super) fn writes_of(&self, st: &Stmt, op: &MoverOp) -> Result<Vec<(u64, u64)>> {

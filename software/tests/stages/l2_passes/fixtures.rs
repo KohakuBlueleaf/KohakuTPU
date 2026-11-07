@@ -88,3 +88,29 @@ fn partial.l2(a: mx7a[4, 64] @dram(gm=1, nk=2), b: mx7b[32, 64] @dram(gn=8, nk=2
         );
     }
 }
+
+#[test]
+fn empty_row_streams_emit_no_work_and_keep_live_siblings() {
+    let live = r#"    par c in 0..1 on vc[c]
+        for t in 0..1
+            h = load x[t*4:+4, 0:32] : f16[4, 32] @l1(gt4)
+            v = unpack h : f32[4, 32] @reg(gt4)
+            q = pack v : f16[4, 32] @l1(gt4)
+            store y[t*4:+4, 0:32] <- q
+"#;
+    let header = "target ktpu.v9\nfn empty_rows.l2(x: f16[4, 32] @dram, y: f16[4, 32] @dram)\n";
+    let dead = live.replace("for t in 0..1", "for t in 0..0");
+    let target = ktpu_l2::target::Target::of(&card());
+    let lower = |source: String| {
+        let program = ktpu_l2::Program::parse(&source, "empty_rows", Some("empty_rows"))
+            .expect("row streams");
+        let search = ktpu_l2::Search::default();
+        let tiled = ktpu_l2::passes::retile::retile(&program, &target, &search)
+            .expect("empty row streams need no tile");
+        ktpu_l2::lower::lower(&tiled, &target, &search).expect("live sibling lowers")
+    };
+    assert_eq!(
+        lower(format!("{header}{dead}{live}")),
+        lower(format!("{header}{live}"))
+    );
+}

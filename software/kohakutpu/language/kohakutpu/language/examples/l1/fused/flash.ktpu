@@ -30,7 +30,8 @@ target ktpu.v9
 # sub-row's S refills fetch the next tile's first sub-row, so a RUN with
 # pre = 0 starts on resident slots (its S descriptor then starts a sub-row
 # in). P goes out MX7, two blocks a drain, into the L1 A of the P V cluster
-# mg[1 + 2h] (granule pg on).
+# mg[1 + 2h] (granule pg on). One complete final entry is published with
+# COUNT after either path; its receive acquires the preceding stream.
 #
 # With comb, the RUN also writes y of rows 16h.. of the tile 5 back, a half
 # sub-row (4 rows x 32 columns) a sub-row of its own (`ca`, `cm`, `cb` in
@@ -44,7 +45,7 @@ image flash_p(s, ir, pg, h, pre, comb, pf, oa, li, ya, io)
     desc a0 = s walk=(32, 32)
     desc a1 = ir walk=((32, 8), (4K, 8))
     desc a2 = pg walk=(32, 32)
-    desc a3 = pg walk=(32, 32)
+    desc a3 = peer(pg + 508, count=1) walk=(32, 4)
     desc a6 = io walk=(32, 8)
     when pf == 1
         desc a4 = oa walk=((32, 8), (4K, 2), (256, 2), (512, 4))
@@ -53,7 +54,6 @@ image flash_p(s, ir, pg, h, pre, comb, pf, oa, li, ya, io)
         desc a7 = ya walk=(32, 64)
     ainc a0 += 1K
     ainc a2 += 32
-    ainc a3 += 32
     seti k3 = 49156.0
     seti s3 = 49152.0
     seti s9 = pre
@@ -86,6 +86,7 @@ image flash_p(s, ir, pg, h, pre, comb, pf, oa, li, ya, io)
     getstk s11
     expand redo(h)
     vsync drain on=pack
+    vdrain a3 <- l1[316] to=mg[1 + 2*h] buf=0
     vdrain a6 <- l1[352]
     vsync pack on=drain
     expand ipack()
@@ -133,8 +134,14 @@ macro blk(j, h, nxt)
     for r in 0..4
         vpack v{8 + 4*(j % 2) + r} -> l1[256 + 32*(j/2) + 16*(j % 2) + 4*r] mx7a
     when j % 2 == 1
-        vsync drain on=pack
-        vdrain a2 <- l1[256 + 32*(j/2)] rel to=mg[1 + 2*h] buf=0
+        when nxt == 1
+            vsync drain on=pack
+            vdrain a2 <- l1[256 + 32*(j/2)] rel to=mg[1 + 2*h] buf=0
+        when nxt == 0
+            when j == 3
+                ainc a2 += -480
+            vsync drain on=pack
+            vdrain a2 <- l1[256 + 32*(j/2)] rel to=mg[1 + 2*h] buf=0
 
 # Slot t into register bank t % 2, then the slot refilled with the next
 # sub-row's block t (every fill but the youngest three is done).
@@ -180,7 +187,7 @@ macro ipack()
 # The rare path, when the sticky flag is set: S walked twice more from the
 # tile's start (a0 rewound by a dummy fill), first for each sub-row's row max
 # over the half (I' to l1[352 + i]), then for P again with I', over the same
-# granules of the P V cluster (a3). Scratch l1[384..511] (ir and y are not
+# granules of the P V cluster (a2). Scratch l1[384..511] (ir and y are not
 # live; y's drain is waited for).
 macro redo(h)
     skipz s11
@@ -218,6 +225,7 @@ macro redo(h)
         vsync unpack on=pack
         uptr 352
         uinc 1
+        ainc a2 += 32
         seti s12 = 8
         loop s12
             vsync fill on=unpack
@@ -238,7 +246,7 @@ macro redo(h)
                     for r in 0..4
                         vpack v{8 + 4*b + r} -> l1[256 + 32*half + 16*b + 4*r] mx7a
                 vsync drain on=pack
-                vdrain a3 <- l1[256 + 32*half] rel to=mg[1 + 2*h] buf=0
+                vdrain a2 <- l1[256 + 32*half] rel to=mg[1 + 2*h] buf=0
 
 # The combine: y of rows 16h.. from the two halves' O, l and I. l_a, l_b,
 # I_a, I_b of all 32 rows are at l1[320] (a sub-tile a sub-row, rows in lanes
@@ -308,8 +316,8 @@ image flash_y(h, oa, li, ya)
 # MXFP7 ones (B packing) into the P V clusters' L1 B1, entries 0..15: the
 # l columns of P V.
 image flash_ones()
-    desc a0 = 1024 walk=(32, 64)
-    desc a1 = 1024 walk=(32, 64)
+    desc a0 = peer(1024, count=1) walk=(32, 64)
+    desc a1 = peer(1024, count=1) walk=(32, 64)
     vmul v30, k1, k1
     for e in 0..16
         vpack v30 -> l1[4*e] mx7b
@@ -348,6 +356,7 @@ macro scores(T)
 macro pv(t)
     for kh in 0..2
         send mg[1 + 2*kh]
+            fill A{t % 2} recv n=1
             gemm 8x16x16 a=A{t % 2} aoff=128*((t/2) % 2) b=B0 emit=o + (2*(t % 8) + kh)*4K
             drain o + (2*(t % 8) + kh)*4K n=128 fused
             gemm 8x1x16 a=A{t % 2} aoff=128*((t/2) % 2) b=B1
@@ -374,6 +383,7 @@ macro vload(H)
 macro pvv(t, H)
     for kh in 0..2
         send mg[1 + 2*kh]
+            fill A{t % 2} recv n=1
             gemm 8x16x16 a=A{t % 2} aoff=128*((t/2) % 2) b=B0 emit=o + (2*(t % 8) + kh)*4K
             drain o + (2*(t % 8) + kh)*4K n=128 fused
             fill B0 <- v + (2*H + kh)*32K n=128
@@ -445,7 +455,9 @@ fn flash.l1(q: mx7a[10240, 64] @dram(gm=32, nk=1), k: mx7b[10240, 64] @dram(gn=1
     # 10 heads: 320 tiles of 32 rows, 80 scores tiles of 128.
     send vc[0]
         run flash_ones()
-    wait vc[0]
+    for kh in 0..2
+        send mg[1 + 2*kh]
+            fill B1 recv n=16
     expand vload(0)
     for T in 0..4
         expand scores(T)
@@ -455,6 +467,9 @@ fn flash.l1(q: mx7a[10240, 64] @dram(gm=32, nk=1), k: mx7b[10240, 64] @dram(gn=1
     for h in 0..2
         send vc[h]
             run flash_p(s + h*128K, s + h*128K, 0, h, 1, 0, 0, 0, 0, 0, li + 7*1K + 512 + h*256)
+    for h in 0..2
+        send mg[1 + 2*h]
+            fill A0 recv n=1
     for t in 0..321
         when t > 0
             when t % 32 == 0

@@ -4,7 +4,9 @@ import json
 
 import pytest
 
+from kohakutpu.application.kernels.template import GraphKernel
 from kohakutpu.application.runtime.machine import machine_of
+from kohakutpu.stack import kernel as K
 from kohakutpu.stack.rs import _rs
 
 PLAN = {
@@ -49,4 +51,27 @@ def test_a_price_is_the_card_builds_cycles(call):
     graph = _rs.generate(call["gen"], json.dumps(call["args"]), machine)
     built = _rs.compile(graph, machine, fetch=True)
     assert price is not None
+    assert price == _rs.graph_cycles(graph, machine)
     assert price == _rs.l1_cycles(built["l1"], built["name"], machine)
+
+
+def test_graph_compile_cache_distinguishes_programs_with_the_same_display_text():
+    machine = machine_of("multimesh_v9t8")
+    args = {"src_rows": 8, "dst_rows": 4, "width": 32, "rows": 4, "initialize": False}
+    traces = []
+    for origin in (0, 4):
+        source = json.loads(
+            _rs.generate(
+                "convert.prefix_kernel",
+                json.dumps({**args, "src_first": origin}),
+                machine.machine_json,
+            )
+        )
+        source["name"] = "cached_input_prefix"
+        traces.append(GraphKernel(source).trace(machine=K.dsl_machine(machine)))
+    first, second = (K.compile(trace, machine=machine) for trace in traces)
+    expected = _rs.compile(traces[1].graph_json, machine.machine_json, fetch=True)
+    assert first.l1_text != second.l1_text
+    assert second.l1_text == expected["l1"]
+    assert K.compile(traces[0], machine=machine) is first
+    assert K.compile(traces[1], machine=machine) is second

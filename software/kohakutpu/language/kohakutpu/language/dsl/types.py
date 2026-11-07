@@ -98,6 +98,7 @@ class Machine:
     chunk: int  # chunks a vector register (vc.chunks)
     sig_bits: int  # vector lane significand, including the implicit one
     packing_backend: str  # conversion.fp16_mx7.preferred_backend
+    line_bytes: int = 64  # card.dram.line_bytes
 
     @classmethod
     def of(cls, m, nodes: int = 1) -> "Machine":
@@ -111,6 +112,7 @@ class Machine:
             chunk=m.vc.chunks,
             sig_bits=m.vc.sig_bits,
             packing_backend=m.conversion.fp16_mx7.preferred_backend,
+            line_bytes=m.card.dram.line_bytes,
         )
 
     def total(self, kind: str) -> int:

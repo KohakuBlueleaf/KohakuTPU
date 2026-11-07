@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::Instant;
 
+use ktpu::{Backend, CardStack};
 use ktpu_isa::{Isa, Machine as Card, UnitKind};
 use ktpu_l0::{Facts, Package};
 use ktpu_l1::text::{read, Module, Term};
@@ -24,6 +25,125 @@ use ktpu_sim::num;
 use ktpu_sim::num::mx7::{self, Entry};
 use ktpu_sim::Dram;
 use rayon::prelude::*;
+
+fn proof_phase(name: &str, phase: &str) {
+    if std::env::var_os("KTPU_VERIFY_STATS").is_some() {
+        eprintln!("verify phase {name}: {phase}");
+    }
+}
+
+/// The emitted card program must prove its physical accesses for the cold
+/// package and retained replay, with all sysnode packages present together.
+pub fn verify_card_l2(
+    text: &str,
+    name: &str,
+    card: &Card,
+    binds: BTreeMap<String, i128>,
+    memory: &ktpu_verify::MemoryContext,
+) {
+    let backend = CardStack::default();
+    proof_phase(name, "parse");
+    let l2 = backend.parse_l2(text).expect("card L2");
+    proof_phase(name, "passes");
+    let passed = backend.passes(&l2, name, card).expect("card passes");
+    proof_phase(name, "lower");
+    let l1 = backend.lower(&passed, name, card).expect("card L1");
+    verify_card_module(&l1, name, card, binds, memory);
+}
+
+/// A supplied L1 delivery motif is the program that is certified, rather than
+/// the graph's alternative L2 lowering.
+pub fn verify_card_l1(
+    text: &str,
+    name: &str,
+    card: &Card,
+    binds: BTreeMap<String, i128>,
+    memory: &ktpu_verify::MemoryContext,
+) {
+    let backend = CardStack::default();
+    let module = backend.parse_l1(text).expect("card L1 motif");
+    verify_card_module(&module, name, card, binds, memory);
+}
+
+fn verify_card_module(
+    module: &Module,
+    name: &str,
+    card: &Card,
+    mut binds: BTreeMap<String, i128>,
+    memory: &ktpu_verify::MemoryContext,
+) {
+    let mut backend = CardStack::default();
+    proof_phase(name, "schedule");
+    let scheduled = backend.schedule(module, card).expect("card schedule");
+    // L1.BODY.005 and L0.MEM.007: generated storage has physical addresses;
+    // staging retains its actual node/aperture, while DRAM has one card arena.
+    // Explicit caller bindings, including aliases, are never rebased here.
+    let body = scheduled.body(name, "l1").expect("scheduled body");
+    let address = card.die.address.runtime();
+    let special = 1u64 << address.special_bit;
+    let route = ((1u64 << address.mesh_bits) - 1) << address.mesh_shift;
+    let topology = ktpu_machine::card::Card::of(card, None, None).expect("card topology");
+    let mut next = BTreeMap::<u64, u64>::new();
+    for (param, ty) in &body.params {
+        let buffer = ktpu_l1::layout::buffer::Buffer::of(ty).expect("buffer layout");
+        if let Some(&base) = binds.get(param) {
+            let base = u64::try_from(base).expect("physical binding");
+            let (base, domain) = if base & special == 0 {
+                (base & !route & !(1u64 << address.reserved_bit), 0)
+            } else {
+                (base, base & !((1u64 << address.aperture_shift) - 1))
+            };
+            let end = base
+                .checked_add(buffer.bytes(card).expect("buffer extent"))
+                .expect("physical buffer extent");
+            let at = next.entry(domain).or_insert(domain | 4096);
+            *at = (*at).max(end.div_ceil(4096) * 4096);
+        }
+    }
+    for (param, ty) in &body.params {
+        if binds.contains_key(param) {
+            continue;
+        }
+        let buffer = ktpu_l1::layout::buffer::Buffer::of(ty).expect("scratch layout");
+        let bytes = buffer.bytes(card).expect("scratch extent");
+        let domain = if buffer.space == "stage" {
+            let node = buffer.layout.get("node").and_then(|v| v.int()).unwrap_or(0);
+            let node = u32::try_from(node).expect("staging node");
+            topology.stage_addr(0, node).expect("staging owner")
+        } else {
+            0
+        };
+        let at = next.entry(domain).or_insert(domain | 4096);
+        let end = at
+            .checked_add(bytes.max(1))
+            .expect("physical scratch extent");
+        if buffer.space == "stage" {
+            // L0.MEM.007: the whole allocation, not only its base address,
+            // must fit the destination's staging SRAM. Caller spans may have
+            // advanced this arena, but cannot enlarge its physical capacity.
+            assert!(
+                end - domain <= topology.stage_bytes,
+                "generated staging extent"
+            );
+        }
+        binds.insert(param.clone(), i128::from(*at));
+        *at = end.div_ceil(4096) * 4096;
+    }
+    backend.binds = Some(binds);
+    proof_phase(name, "programs");
+    let programs = backend
+        .programs(&scheduled, name, None, card)
+        .expect("card programs");
+    proof_phase(name, "build and check memory");
+    let findings = backend
+        .check_memory(&programs, card, memory)
+        .expect("card verification");
+    proof_phase(name, "checked");
+    assert!(
+        !findings.iter().any(|f| backend.refuses(f)),
+        "{name}: {findings:?}"
+    );
+}
 
 const ALIGN: i64 = 4096;
 /// A float op a stage rewrites stays this near (PRECISION, not identity).

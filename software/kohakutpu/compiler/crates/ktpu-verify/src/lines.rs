@@ -15,7 +15,14 @@ mod dynamic;
 /// Maximum node steps and destination runs in a static line proof.
 pub const LIMIT: usize = 2_000_000;
 
-#[derive(Clone, Copy, Default)]
+type Footprint = Vec<(u64, u64)>;
+
+pub(crate) struct MemoryFootprints {
+    pub reads: Result<Footprint, String>,
+    pub writes: Result<Footprint, String>,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 struct Dim {
     count: u64,
     stride: i64,
@@ -23,7 +30,7 @@ struct Dim {
     step: i64,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 struct Walker {
     base: u64,
     ndim: usize,
@@ -32,12 +39,13 @@ struct Walker {
     xid: u64,
 }
 
-#[derive(Default)]
-struct Mover {
+#[derive(Clone, Default, PartialEq, Eq)]
+pub(crate) struct Mover {
     walkers: [Walker; 2],
     dim: (usize, usize, Dim),
     selector: usize,
     row: (u64, u64),
+    index: (u64, u64),
     owners: BTreeMap<u64, usize>,
     stream: usize,
     seen: BTreeSet<(usize, usize)>,
@@ -56,6 +64,181 @@ fn fail(mesh: u32, text: impl Into<String>) -> Finding {
 }
 
 impl Mover {
+    /// Decode the same register stream for the card-wide happens-before proof.
+    pub(crate) fn command(
+        &mut self,
+        reg: u64,
+        value: u64,
+        t: &Target,
+        indices: impl Fn(u64) -> Option<u32>,
+    ) -> Result<Option<MemoryFootprints>, String> {
+        self.policy_only = true;
+        self.put(reg, value, t, 0, &mut Vec::new())?;
+        if reg != 0 || value & (1 << 16) == 0 {
+            return Ok(None);
+        }
+        let footprints = match self.footprints(value, t, indices) {
+            Ok(footprints) => footprints,
+            Err(why) => MemoryFootprints {
+                reads: Err(why.clone()),
+                writes: Err(why),
+            },
+        };
+        Ok(Some(footprints))
+    }
+
+    /// A decoded GO retires independently of the physical proof's budget.
+    /// Its read and write obligations remain refusing until resolved.
+    fn footprints(
+        &self,
+        value: u64,
+        t: &Target,
+        indices: impl Fn(u64) -> Option<u32>,
+    ) -> Result<MemoryFootprints, String> {
+        let mode = value & 7;
+        let modes = &t.isa.mover.modes;
+        let word = t.facts.word_bytes as u64;
+        let dst = points(&self.walkers[1])?;
+        let mut reads = Vec::new();
+        let mut writes = Vec::new();
+        let mut unresolved_read = false;
+        let mut unresolved_write = false;
+        let span = |at: i128, bytes: u64| -> Result<(u64, u64), String> {
+            let lo = u64::try_from(at).map_err(|_| "mover address overflow")?;
+            Ok((lo, lo.checked_add(bytes).ok_or("mover interval overflow")?))
+        };
+        if mode == modes.gather as u64 || mode == modes.scatter as u64 {
+            let count = self.index.1;
+            let words = self.row.1;
+            if count == 0 || words == 0 || count.saturating_mul(words) > LIMIT as u64 {
+                return Err("indexed mover footprint exceeds proof budget or has no rows".into());
+            }
+            let points = if mode == modes.gather as u64 {
+                &dst
+            } else {
+                &points(&self.walkers[0])?
+            };
+            if points.len() != (count * words) as usize {
+                return Err("indexed row count does not cover the walker".into());
+            }
+            // ISA.MV.050: the index cache fetches complete card words,
+            // including the unused lanes in the final word.
+            reads.push(span(
+                i128::from(self.index.0),
+                (count * 4).div_ceil(word) * word,
+            )?);
+            for row in 0..count {
+                let raw = indices(self.index.0 + row * 4);
+                // ISA.MV.051: fp32 row preparation validates the index even
+                // when the destination window suppresses every data element.
+                unresolved_read |= value & (1 << 17) != 0 && raw.is_none();
+                let index = raw
+                    .map(|raw| -> Result<u32, String> {
+                        if value & (1 << 17) != 0 {
+                            let number = f32::from_bits(raw);
+                            if !number.is_finite()
+                                || number < 0.0
+                                || number.fract() != 0.0
+                                || f64::from(number) > f64::from(u32::MAX)
+                            {
+                                return Err("invalid floating mover index".into());
+                            }
+                            Ok(number as u32)
+                        } else {
+                            Ok(raw)
+                        }
+                    })
+                    .transpose()?;
+                for w in 0..words {
+                    let (at, valid) = points[(row * words + w) as usize];
+                    // ISA.MV.029/.033/.038: a masked gather destination
+                    // suppresses both data accesses. A masked scatter source
+                    // supplies IMM but still writes its indexed destination.
+                    if mode == modes.gather as u64 {
+                        if !valid {
+                            continue;
+                        }
+                        writes.push(span(at, word)?);
+                        unresolved_read |= index.is_none();
+                    } else {
+                        if valid {
+                            reads.push(span(at, word)?);
+                        }
+                        unresolved_write |= index.is_none();
+                    }
+                    if let Some(index) = index {
+                        let base = if mode == modes.gather as u64 {
+                            self.walkers[0].base
+                        } else {
+                            self.walkers[1].base
+                        };
+                        let indexed = i128::from(base)
+                            + i128::from(index) * i128::from(self.row.0)
+                            + i128::from(w * word);
+                        if mode == modes.gather as u64 {
+                            reads.push(span(indexed, word)?);
+                        } else {
+                            writes.push(span(indexed, word)?);
+                        }
+                    }
+                }
+            }
+        } else if mode == modes.fill as u64 || mode == modes.generate as u64 {
+            for (at, valid) in dst {
+                if valid {
+                    writes.push(span(at, word)?);
+                }
+            }
+        } else if mode == modes.transform as u64 {
+            let src = points(&self.walkers[0])?;
+            let (input, output) = match self.walkers[0].xid {
+                0 => (4, 4),
+                1 => (t.isa.mover.f16_entry_words, t.isa.mover.mx7_entry_words),
+                2 => (t.isa.mover.gt4_words, t.isa.mover.gt4_words),
+                _ => return Err("unknown transform footprint".into()),
+            };
+            if input <= 0 || src.len() != dst.len().saturating_mul(input as usize) {
+                return Err("transform source does not cover its destination entries".into());
+            }
+            for (at, valid) in src {
+                if valid {
+                    reads.push(span(at, word)?);
+                }
+            }
+            for (at, valid) in dst {
+                if valid {
+                    writes.push(span(at, output as u64 * word)?);
+                }
+            }
+        } else if mode == modes.copy as u64 || mode == modes.transpose as u64 {
+            let src = points(&self.walkers[0])?;
+            for (k, (at, valid)) in dst.into_iter().enumerate() {
+                let (from, readable) = src[k % src.len()];
+                // ISA.MV.027/.029: K_SKIP has neither a read nor a write;
+                // source padding of an enabled destination writes IMM only.
+                if valid {
+                    if readable {
+                        reads.push(span(from, word)?);
+                    }
+                    writes.push(span(at, word)?);
+                }
+            }
+        } else {
+            return Err("unknown mover footprint".into());
+        }
+        let resolved = |ranges, unknown| {
+            if unknown {
+                Err("indexed mover footprint requires an index-domain disjointness proof".into())
+            } else {
+                Ok(ranges)
+            }
+        };
+        Ok(MemoryFootprints {
+            reads: resolved(reads, unresolved_read),
+            writes: resolved(writes, unresolved_write),
+        })
+    }
+
     fn put(
         &mut self,
         reg: u64,
@@ -99,6 +282,7 @@ impl Mover {
                     (signed(v >> 2, 16), (v >> 18) & 0xffff);
             }
             0x50 => self.row = (v & 0xffff_ffff, (v >> 32) & 0xffff),
+            0x30 => self.index = (v & ((1 << 40) - 1), (v >> 40) & 0xffff),
             0 if v & (1 << 16) != 0 => self.go(v & 7, t, mesh, out)?,
             _ => {}
         }
@@ -311,6 +495,37 @@ fn runs(w: &Walker, bytes: u64, id: usize) -> Result<Vec<(u64, u64)>, String> {
     }
     out.sort_unstable();
     Ok(out)
+}
+
+/// Ordered walker points retain window membership for read padding and masked stores.
+fn points(w: &Walker) -> Result<Vec<(i128, bool)>, String> {
+    let mut points = vec![(i128::from(w.base), [0i64; 2])];
+    for d in &w.dims[..w.ndim] {
+        let count = d.count.max(1) as usize;
+        if points.len().saturating_mul(count) > LIMIT {
+            return Err("mover footprint exceeds the global DRAM proof budget".into());
+        }
+        let mut next = Vec::with_capacity(points.len() * count);
+        for (at, axes) in points {
+            for i in 0..count {
+                let mut a = axes;
+                if (1..=2).contains(&d.axis) {
+                    a[d.axis - 1] += i as i64 * d.step;
+                }
+                next.push((at + i as i128 * i128::from(d.stride), a));
+            }
+        }
+        points = next;
+    }
+    Ok(points
+        .into_iter()
+        .map(|(at, axes)| {
+            let valid = w.windows.iter().zip(axes).all(|(&(base, extent), a)| {
+                extent == 0 || (0..extent as i64).contains(&(base + a))
+            });
+            (at, valid)
+        })
+        .collect())
 }
 
 fn alu(op: u64, a: u64, b: u64) -> Option<u64> {

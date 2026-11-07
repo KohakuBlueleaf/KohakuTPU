@@ -27,6 +27,17 @@ def graph(generator, arguments, machine, mutant):
     return checked_graph(generator, arguments, machine, source)
 
 
+def template_graph(generator, arguments, machine):
+    return json.loads(
+        graph(
+            generator,
+            json.dumps(arguments, sort_keys=True),
+            rs.machine_json(machine),
+            rs._MUTANT.get(),
+        )
+    )
+
+
 def checked_graph(generator, arguments, machine, source):
     """Qualify ring scratch at the cached generation boundary."""
     ring = (
@@ -253,7 +264,7 @@ def from_output(dev, graph_data, output, traced=None):
                     TensorSpec.make(
                         p["spec"]["shape"],
                         p["spec"]["dtype"],
-                        dict(p["spec"].get("layout", [])),
+                        {k: next(iter(v.values())) for k, v in p["spec"]["layout"]},
                         p["spec"].get("space", "dram"),
                     ),
                 )

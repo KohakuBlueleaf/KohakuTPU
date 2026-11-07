@@ -21,6 +21,28 @@ pub enum Val {
 
 pub type Env = HashMap<String, Val>;
 
+trait Bindings {
+    fn get(&self, name: &str) -> Option<&Val>;
+}
+
+impl Bindings for Env {
+    fn get(&self, name: &str) -> Option<&Val> {
+        HashMap::get(self, name)
+    }
+}
+
+/// Lexical bindings shadow their borrowed parent without copying it.
+struct Scope<'a> {
+    parent: &'a dyn Bindings,
+    local: Env,
+}
+
+impl Bindings for Scope<'_> {
+    fn get(&self, name: &str) -> Option<&Val> {
+        self.local.get(name).or_else(|| self.parent.get(name))
+    }
+}
+
 /// Expands statements against `macros` (`name -> (params, body)`);
 /// `unroll_all` makes every `for` unroll (an L1 body has no loop the hardware
 /// runs except `loop`).
@@ -144,14 +166,22 @@ impl<'a> Expander<'a> {
     }
 
     pub fn stmts(&mut self, stmts: &[Stmt], env: &Env) -> Result<Vec<Stmt>> {
+        self.stmts_in(stmts, env)
+    }
+
+    fn stmts_in(&mut self, stmts: &[Stmt], env: &dyn Bindings) -> Result<Vec<Stmt>> {
         let mut out = Vec::new();
         for st in stmts {
-            out.extend(self.stmt(st, env)?);
+            out.extend(self.stmt_in(st, env)?);
         }
         Ok(out)
     }
 
     pub fn stmt(&mut self, st: &Stmt, env: &Env) -> Result<Vec<Stmt>> {
+        self.stmt_in(st, env)
+    }
+
+    fn stmt_in(&mut self, st: &Stmt, env: &dyn Bindings) -> Result<Vec<Stmt>> {
         if st.op == "for" && st.target.is_none() && self.unrolls(st) {
             return self.for_(st, env);
         }
@@ -162,12 +192,12 @@ impl<'a> Expander<'a> {
                     .reader
                     .fail(st, "L1.EXP.003", "wanted `when CONDITION`"));
             };
-            let v = self.term(cond, env, st)?;
+            let v = self.term_in(cond, env, st)?;
             let Term::Int(c, _) = v else {
                 if !self.unroll_all {
                     let mut kept = st.with_body(Vec::new());
                     kept.args = vec![v];
-                    kept.body = self.stmts(&st.body, env)?;
+                    kept.body = self.stmts_in(&st.body, env)?;
                     return Ok(vec![kept]);
                 }
                 return Err(self.reader.fail(
@@ -177,7 +207,7 @@ impl<'a> Expander<'a> {
                 ));
             };
             return if c != 0 {
-                self.stmts(&st.body, env)
+                self.stmts_in(&st.body, env)
             } else {
                 Ok(Vec::new())
             };
@@ -198,24 +228,24 @@ impl<'a> Expander<'a> {
         out.args = st
             .args
             .iter()
-            .map(|a| self.term(a, env, st))
+            .map(|a| self.term_in(a, env, st))
             .collect::<Result<_>>()?;
         out.annot = match &st.annot {
             None => None,
-            Some(a) => Some(self.term(a, env, st)?),
+            Some(a) => Some(self.term_in(a, env, st)?),
         };
         if let Some(Val::Term(Term::Name(n))) = env.get(&st.op) {
             out.op = n.clone();
         }
         out.target = match &st.target {
-            Some(t @ Term::Computed(..)) => Some(self.term(t, env, st)?),
+            Some(t @ Term::Computed(..)) => Some(self.term_in(t, env, st)?),
             Some(Term::Name(n)) => match env.get(n) {
                 Some(Val::Term(Term::Name(m))) => Some(Term::Name(m.clone())),
                 _ => Some(Term::Name(n.clone())),
             },
             other => other.clone(),
         };
-        out.body = self.stmts(&st.body, env)?;
+        out.body = self.stmts_in(&st.body, env)?;
         Ok(vec![out])
     }
 
@@ -231,7 +261,7 @@ impl<'a> Expander<'a> {
                 .any(|p| p.as_name() == Some("unroll"))
     }
 
-    fn for_(&mut self, st: &Stmt, env: &Env) -> Result<Vec<Stmt>> {
+    fn for_(&mut self, st: &Stmt, env: &dyn Bindings) -> Result<Vec<Stmt>> {
         let pos = st.positional();
         let (var, dom) = match pos.first() {
             Some(Term::Member(lhs, rhs)) => match lhs.as_ref() {
@@ -252,7 +282,7 @@ impl<'a> Expander<'a> {
                 ))
             }
         };
-        let dom = self.term(dom, env, st)?;
+        let dom = self.term_in(dom, env, st)?;
         let Some((lo, hi)) = const_span(&dom) else {
             return Err(self.reader.fail(
                 st,
@@ -264,15 +294,18 @@ impl<'a> Expander<'a> {
         if lo >= hi {
             return Ok(out);
         }
-        let mut inner = env.clone();
+        let mut inner = Scope {
+            parent: env,
+            local: Env::new(),
+        };
         for v in lo..hi {
-            inner.insert(var.clone(), Val::Int(v));
-            out.extend(self.stmts(&st.body, &inner)?);
+            inner.local.insert(var.clone(), Val::Int(v));
+            out.extend(self.stmts_in(&st.body, &inner)?);
         }
         Ok(out)
     }
 
-    fn expand(&mut self, st: &Stmt, env: &Env) -> Result<Vec<Stmt>> {
+    fn expand(&mut self, st: &Stmt, env: &dyn Bindings) -> Result<Vec<Stmt>> {
         if on("l1.expand/drop-expand") {
             return Ok(Vec::new());
         }
@@ -304,25 +337,34 @@ impl<'a> Expander<'a> {
                 format!("macro {} expands itself", call.0),
             ));
         }
-        let mut inner = env.clone();
+        let mut inner = Scope {
+            parent: env,
+            local: Env::new(),
+        };
         for (p, a) in params.iter().zip(call.1) {
-            inner.insert(p.clone(), value(self.term(a, env, st)?));
+            inner
+                .local
+                .insert(p.clone(), value(self.term_in(a, env, st)?));
         }
-        let out = self.stmts(body, &inner)?;
+        let out = self.stmts_in(body, &inner)?;
         self.depth -= 1;
         Ok(out)
     }
 
-    fn terms(&self, ts: &[Term], env: &Env, st: &Stmt) -> Result<Vec<Term>> {
-        ts.iter().map(|t| self.term(t, env, st)).collect()
+    fn terms(&self, ts: &[Term], env: &dyn Bindings, st: &Stmt) -> Result<Vec<Term>> {
+        ts.iter().map(|t| self.term_in(t, env, st)).collect()
     }
 
-    fn bx(&self, t: &Term, env: &Env, st: &Stmt) -> Result<Box<Term>> {
-        Ok(Box::new(self.term(t, env, st)?))
+    fn bx(&self, t: &Term, env: &dyn Bindings, st: &Stmt) -> Result<Box<Term>> {
+        Ok(Box::new(self.term_in(t, env, st)?))
     }
 
     /// `t` against `env`, folded.
     pub fn term(&self, t: &Term, env: &Env, st: &Stmt) -> Result<Term> {
+        self.term_in(t, env, st)
+    }
+
+    fn term_in(&self, t: &Term, env: &dyn Bindings, st: &Stmt) -> Result<Term> {
         Ok(match t {
             Term::Name(n) => match env.get(n) {
                 Some(v) => lit(v),
@@ -334,23 +376,23 @@ impl<'a> Expander<'a> {
             | Term::Dims(_)
             | Term::Arrow(_)
             | Term::NewAxis => t.clone(),
-            Term::Neg(x) => match self.term(x, env, st)? {
+            Term::Neg(x) => match self.term_in(x, env, st)? {
                 Term::Int(v, _) => Term::int(-v),
                 Term::Float(v) => Term::Float(-v),
                 v => Term::Neg(Box::new(v)),
             },
-            Term::Not(x) => match self.term(x, env, st)? {
+            Term::Not(x) => match self.term_in(x, env, st)? {
                 Term::Int(v, _) => Term::int((v == 0) as i128),
                 v => Term::Not(Box::new(v)),
             },
             Term::Pos(x) => Term::Pos(self.bx(x, env, st)?),
-            Term::Offset(a, b) => add(self.term(a, env, st)?, self.term(b, env, st)?),
+            Term::Offset(a, b) => add(self.term_in(a, env, st)?, self.term_in(b, env, st)?),
             Term::BinOp(op, a, b) => {
-                let (a, b) = (self.term(a, env, st)?, self.term(b, env, st)?);
+                let (a, b) = (self.term_in(a, env, st)?, self.term_in(b, env, st)?);
                 self.bin(*op, a, b, st)?
             }
             Term::Compare(op, a, b) => {
-                let (x, y) = (self.term(a, env, st)?, self.term(b, env, st)?);
+                let (x, y) = (self.term_in(a, env, st)?, self.term_in(b, env, st)?);
                 match (&x, &y) {
                     (Term::Int(p, _), Term::Int(q, _)) => {
                         Term::int(compare_int(op, *p, *q) as i128)
@@ -362,7 +404,7 @@ impl<'a> Expander<'a> {
                 }
             }
             Term::Computed(prefix, index, slices) => {
-                let i = self.term(index, env, st)?;
+                let i = self.term_in(index, env, st)?;
                 let Term::Int(iv, _) = i else {
                     if !self.unroll_all {
                         let kept = match slices {

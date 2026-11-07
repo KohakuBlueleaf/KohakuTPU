@@ -212,9 +212,15 @@ impl<'a> Ctx<'a> {
                 .descs
                 .iter()
                 .filter_map(|d| {
-                    d.buffer
-                        .as_ref()
-                        .map(|name| mem(u, d.kind == "store", name, 0, i64::MAX))
+                    d.buffer.as_ref().map(|name| {
+                        mem(
+                            u,
+                            d.kind == "store",
+                            name,
+                            0,
+                            self.body.buffers[name].nbytes(self.t),
+                        )
+                    })
                 })
                 .collect();
         }
@@ -235,14 +241,25 @@ impl<'a> Ctx<'a> {
                 out.push(Access::new(u, true, (&d.to, "rx"), 0, 1));
                 continue;
             }
+            let name = d.buffer.as_deref().unwrap();
+            if d.mapped.is_none() && d.mapped_span.is_none() {
+                // The words the walk reaches each trip, not its bounding range.
+                let mut levels = d.walk.0.clone();
+                if d.inc != 0 && trips > 1 {
+                    levels.push((d.inc, trips));
+                }
+                out.push(Access::strided(
+                    u,
+                    d.kind == "store",
+                    name,
+                    d.off,
+                    &levels,
+                    32,
+                ));
+                continue;
+            }
             let (lo, hi) = d.span(if d.inc != 0 { trips } else { 1 });
-            out.push(mem(
-                u,
-                d.kind == "store",
-                d.buffer.as_deref().unwrap(),
-                lo,
-                hi,
-            ));
+            out.push(mem(u, d.kind == "store", name, lo, hi));
         }
         for x in self.plan.values() {
             match x {

@@ -16,7 +16,7 @@ how specific disagreements between the code, documentation and RTL are resolved.
 Each clause is one list item. This fenced example illustrates the syntax; it does not allocate another id or replace the clause on the package page:
 
 ```
-- **L0.PKG.003** `unproven` The package writer starts its tables after fw.package.header_bytes [96] and writes that value into the header size field. (code: software/kohakuaccel/compiler/crates/ka-package/src/facts.rs:111; software/kohakuaccel/compiler/crates/ka-package/src/format/wire.rs:46-51, :347-377; machines/multimesh_v9t6.json:602; evidence: host implementation inspection only)
+- **L0.PKG.003** `unproven` The package writer starts its tables after fw.package.header_bytes [96] and writes that value into the header size field. (code: software/kohakuaccel/compiler/crates/ka-package/src/facts.rs:111; software/kohakuaccel/compiler/crates/ka-package/src/format/wire.rs:55-61, :373-403; machines/multimesh_v9t6.json:602; evidence: host implementation inspection only)
 ```
 
 - **Id.** `<layer>.<area>.<nnn>`, never reused. The layers are L0, ISA, L1, L2,
@@ -33,7 +33,7 @@ Each clause is one list item. This fenced example illustrates the syntax; it doe
     evidence. Evidence tags are documentation metadata. The software test runner
     selects explicitly registered suites; it does not discover tests from these
     clauses or rewrite their tags. Its `anchors` and `machine` suites are
-    non-default suites. (code: software/tests/run.py:82-191)
+    non-default suites. (code: software/tests/run.py:85-202)
   - `unproven`: neither silicon nor named RTL-test evidence establishes the
     clause. This tag records evidence status; it does not itself disable the
     behaviour. The compiler refuses inputs at explicit validation checks and

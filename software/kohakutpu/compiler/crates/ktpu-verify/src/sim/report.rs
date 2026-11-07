@@ -181,29 +181,11 @@ impl Sim<'_> {
             }
             let (seq, port) = (c.seq, unit.port);
             let ends: Vec<u32> = windows.iter().map(|(_, e)| e.at(seq)).collect();
-            // A FILL of this cluster's own starts at its sequencer's previous
-            // event: those starts only grow. A shared FILL's starts at its lead's.
-            let own: Vec<bool> = windows
-                .iter()
-                .map(|(s, e)| s.at(seq) as i64 >= e.at(seq) as i64 - 1)
-                .collect();
-            let shared: Vec<usize> = (0..own.len()).filter(|&i| !own[i]).collect();
+            let starts = Minima::new(windows.iter().map(|(start, _)| start.at(port)));
             for (landed, sent, what) in &c.l1_bursts {
                 let at = landed.at(port);
                 let first = ends.partition_point(|&e| e <= sent.at(seq));
-                let mut bad = None;
-                for i in first..windows.len() {
-                    if at > windows[i].0.at(port) {
-                        bad = Some(i);
-                        break;
-                    }
-                    if own[i] {
-                        let later = &shared[shared.partition_point(|&j| j <= i)..];
-                        bad = later.iter().copied().find(|&j| at > windows[j].0.at(port));
-                        break;
-                    }
-                }
-                if let Some(b) = bad {
+                if let Some(b) = starts.first_below(first, at) {
                     out.push(Finding::new(
                         Kind::Port,
                         unit.name.clone(),
@@ -213,5 +195,41 @@ impl Sim<'_> {
             }
         }
         out
+    }
+}
+
+/// Range minima preserve nonmonotone shared-FILL start clocks.
+struct Minima {
+    tree: Vec<u32>,
+    leaves: usize,
+}
+
+impl Minima {
+    fn new(values: impl ExactSizeIterator<Item = u32>) -> Self {
+        let leaves = values.len().max(1).next_power_of_two();
+        let mut tree = vec![u32::MAX; 2 * leaves];
+        for (i, value) in values.enumerate() {
+            tree[leaves + i] = value;
+        }
+        for i in (1..leaves).rev() {
+            tree[i] = tree[2 * i].min(tree[2 * i + 1]);
+        }
+        Self { tree, leaves }
+    }
+
+    fn first_below(&self, start: usize, ceiling: u32) -> Option<usize> {
+        self.find(1, 0, self.leaves, start, ceiling)
+    }
+
+    fn find(&self, node: usize, lo: usize, hi: usize, start: usize, ceiling: u32) -> Option<usize> {
+        if hi <= start || self.tree[node] >= ceiling {
+            return None;
+        }
+        if hi - lo == 1 {
+            return Some(lo);
+        }
+        let mid = lo + (hi - lo) / 2;
+        self.find(2 * node, lo, mid, start, ceiling)
+            .or_else(|| self.find(2 * node + 1, mid, hi, start, ceiling))
     }
 }

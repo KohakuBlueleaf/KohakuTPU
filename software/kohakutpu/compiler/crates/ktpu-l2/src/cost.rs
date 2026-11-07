@@ -24,6 +24,14 @@ pub fn of_program(p: &Program, m: &Machine) -> Result<i64> {
 
 /// The cycles of `fn name.l1` of `module`: its slowest node's.
 pub fn cycles(module: &Module, name: &str, t: &Target) -> Result<i64> {
+    let local = local_cycles(module, name, t)?;
+    Ok(t.machine.vc.launch_front as i64 + local.into_iter().max().unwrap_or(0))
+}
+
+/// Complete node budgets in top-level node-statement order, excluding launch.
+/// An unscoped function has one local budget. All nodes use the same module
+/// context as `cycles`, including its cluster-dependent memory timing policy.
+pub fn local_cycles(module: &Module, name: &str, t: &Target) -> Result<Vec<i64>> {
     let body = module.body(name, "l1")?;
     let clusters = body.stmts.iter().any(sends_to_clusters);
     let mut timed = module.clone();
@@ -49,18 +57,20 @@ pub fn cycles(module: &Module, name: &str, t: &Target) -> Result<i64> {
     let nodes: Vec<&Stmt> = body.stmts.iter().filter(|s| s.op == "node").collect();
     if nodes.is_empty() {
         let flat = expand(&body.stmts)?;
-        return Ok((front + clock.run(&flat)?).round() as i64);
+        return Ok(vec![
+            (front + clock.run(&flat)?).round() as i64 - t.machine.vc.launch_front as i64,
+        ]);
     }
-    let mut slowest: f64 = 0.0;
+    let mut local = Vec::with_capacity(nodes.len());
     for node in nodes {
         clock.now = 0.0;
         clock.busy.clear();
         clock.descs.clear();
         clock.imem.clear();
         let flat = expand(&node.body)?;
-        slowest = slowest.max(clock.run(&flat)?);
+        local.push((front + clock.run(&flat)?).round() as i64 - t.machine.vc.launch_front as i64);
     }
-    Ok((front + slowest).round() as i64)
+    Ok(local)
 }
 
 fn sends_to_clusters(st: &Stmt) -> bool {

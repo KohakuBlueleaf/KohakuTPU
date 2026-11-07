@@ -321,3 +321,28 @@ fn partial_population_reduction_ignores_centered_padding() {
     let pair = lower(&fixture, &m).expect("partial population lowers");
     assert_eq!(common::compare(&pair), Ok(None));
 }
+
+#[test]
+fn vector_copy_pieces_acquire_shared_destination_lines() {
+    let fixture = Fixture {
+        label: "shared-line-copy-pieces".into(),
+        name: "reverse_words".into(),
+        source: r#"target ktpu.v9
+fn reverse_words.l2(x: f16[258, 16] @dram, y: f16[260, 16] @dram)
+    copy y <- x walk=((258, 32),) dwalk=((258, -32),) dat=8256
+"#
+        .into(),
+    };
+    let card = common::card();
+    let pair = lower(&fixture, &card).expect("vector copy pieces");
+    common::verify_card_l1(
+        &pair.after.1,
+        &fixture.name,
+        &card,
+        [("x".into(), 0x1000), ("y".into(), 0x10000)]
+            .into_iter()
+            .collect(),
+        &ktpu_verify::MemoryContext::default(),
+    );
+    assert_eq!(common::compare(&pair), Ok(None));
+}

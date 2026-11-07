@@ -10,10 +10,71 @@ use crate::adapter::isa::Fields;
 use crate::model::clock::Clock;
 use crate::model::finding::Kind;
 
+use super::dram::{Footprint, GlobalDram};
 use super::memory::What;
 use super::{pair, Group, Kinded, Sender, Sim, Sink, Window};
 
+#[derive(Clone, Default, PartialEq, Eq)]
+pub(crate) struct Card {
+    pub dram: GlobalDram,
+    pub packages: super::package_memory::Packages,
+    pub context: crate::check::memory::MemoryContext,
+    pub values: super::values::Values,
+    pub visibility: super::visibility::Visibility,
+}
+
 impl Sim<'_> {
+    /// Physical DRAM aliases ignore route mesh bits; special apertures retain
+    /// the destination encoded in their address, never the issuing sysnode.
+    #[allow(clippy::too_many_arguments)]
+    pub fn dram_access(
+        &mut self,
+        footprint: Result<Footprint, String>,
+        write: bool,
+        start: &Clock,
+        done: &Clock,
+        owner: usize,
+        what: String,
+    ) {
+        let address = self.t.machine.die.address.runtime();
+        let special = 1u64 << address.special_bit;
+        let meshes = (((1u64 << address.mesh_bits) - 1) << address.mesh_shift)
+            | (1u64 << address.reserved_bit);
+        let footprint = footprint.and_then(|ranges| {
+            ranges
+                .into_iter()
+                .map(|(lo, hi)| {
+                    if lo == hi {
+                        return Ok((lo, hi));
+                    }
+                    if (lo ^ (hi - 1)) & (special | meshes) != 0 {
+                        return Err("physical interval crosses an address aperture".into());
+                    }
+                    if lo & special == 0 {
+                        Ok((lo & !meshes, ((hi - 1) & !meshes) + 1))
+                    } else {
+                        Ok((lo, hi))
+                    }
+                })
+                .collect()
+        });
+        if write {
+            if let Ok(ranges) = &footprint {
+                self.card.values.invalidate(ranges);
+            }
+        }
+        self.card.dram.access(
+            &mut self.memory_findings,
+            footprint,
+            write,
+            start,
+            done,
+            owner,
+            what,
+            special,
+        );
+    }
+
     pub fn ports(&self, mesh: u32) -> Vec<(u8, u8)> {
         self.t
             .mesh(mesh)
@@ -181,7 +242,8 @@ impl Sim<'_> {
         let group: Group = (mesh, members);
         let lead = group.1[0];
         if !self.arrived.contains_key(&(seq, pc)) {
-            let t = self.tick(seq, &[]);
+            let given = self.units[u].words[pc].given.clone();
+            let t = self.tick(seq, &[given]);
             let mine = self
                 .shares
                 .entry(group.clone())

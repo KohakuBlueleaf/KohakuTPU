@@ -12,12 +12,13 @@ fn get(f: &Decoded, name: &str) -> i64 {
 }
 
 fn chunks(f: &Decoded) -> [(u32, u32); 4] {
-    ["a", "b", "c", "d"].map(|x| {
-        (
-            get(f, &format!("{x}_base")) as u32,
-            get(f, &format!("{x}_stride")) as u32,
-        )
-    })
+    [
+        ("a_base", "a_stride"),
+        ("b_base", "b_stride"),
+        ("c_base", "c_stride"),
+        ("d_base", "d_stride"),
+    ]
+    .map(|(base, stride)| (get(f, base) as u32, get(f, stride) as u32))
 }
 
 fn source(sel: i64, reg: i64) -> R<Src> {
@@ -45,7 +46,7 @@ fn waiter(code: i64) -> R<Waiter> {
 fn word(isa: &VecIsa, w: u64, next: u64) -> R<Inst> {
     let (name, f) = isa
         .decode_word_reference(w)
-        .ok_or(format!("{w:#x} is no core word"))?;
+        .ok_or_else(|| format!("{w:#x} is no core word"))?;
     let g = |n: &str| get(&f, n);
     Ok(match name {
         "CHK" => Inst::Config(Config::Chk(chunks(&f))),
@@ -161,7 +162,7 @@ fn word(isa: &VecIsa, w: u64, next: u64) -> R<Inst> {
         },
         "VWAIT" | "VCFG" => return Err(format!("{name} in this simulator")),
         math => Inst::Math {
-            op: MathOp::parse(&math.to_lowercase()).ok_or(format!("no word {math}"))?,
+            op: MathOp::parse(&math.to_lowercase()).ok_or_else(|| format!("no word {math}"))?,
             vd: g("vd") as u32,
             a: source(g("sa"), g("va"))?,
             b: source(g("sb"), g("vb"))?,
@@ -175,6 +176,37 @@ fn word(isa: &VecIsa, w: u64, next: u64) -> R<Inst> {
 /// The program from `pc`, past its last forward reach to a VHALT, with loop
 /// and skip counts in instructions (a VSETI is two words, ISA.VC.165).
 pub fn program(isa: &VecIsa, imem: &[u64], pc: usize) -> R<Vec<Inst>> {
+    decode_program(imem, pc, |_, w, next| word(isa, w, next))
+}
+
+/// One decoded instruction per IMEM slot; VSETI also depends on its next word.
+#[derive(Default)]
+pub(crate) struct Cache {
+    slots: Vec<Option<(u64, u64, Inst)>>,
+}
+
+impl Cache {
+    pub(crate) fn program(&mut self, isa: &VecIsa, imem: &[u64], pc: usize) -> R<Vec<Inst>> {
+        self.slots.resize_with(imem.len(), || None);
+        decode_program(imem, pc, |at, w, next| {
+            let slot = &mut self.slots[at];
+            if let Some((old, following, inst)) = slot {
+                if *old == w && *following == next {
+                    return Ok(inst.clone());
+                }
+            }
+            let inst = word(isa, w, next)?;
+            *slot = Some((w, next, inst.clone()));
+            Ok(inst)
+        })
+    }
+}
+
+fn decode_program(
+    imem: &[u64],
+    pc: usize,
+    mut decode: impl FnMut(usize, u64, u64) -> R<Inst>,
+) -> R<Vec<Inst>> {
     let mut out = Vec::new();
     let mut index = vec![usize::MAX; imem.len() + 1];
     let mut reach = pc;
@@ -183,9 +215,9 @@ pub fn program(isa: &VecIsa, imem: &[u64], pc: usize) -> R<Vec<Inst>> {
     loop {
         let w = *imem
             .get(at)
-            .ok_or(format!("pc {at} past instruction memory"))?;
+            .ok_or_else(|| format!("pc {at} past instruction memory"))?;
         let next = imem.get(at + 1).copied().unwrap_or(0);
-        let inst = word(isa, w, next)?;
+        let inst = decode(at, w, next)?;
         index[at] = out.len();
         let size = if matches!(inst, Inst::Seti { .. }) {
             2

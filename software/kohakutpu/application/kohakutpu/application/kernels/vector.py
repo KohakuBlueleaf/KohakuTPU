@@ -34,6 +34,7 @@ from kohakutpu.application.kernels.classes.base import (
 )
 from kohakutpu.application.kernels.template import template
 from kohakutpu.language import dsl as kt
+from kohakutpu.language.dsl.types import ITEM
 from kohakutpu.stack.rs import _rs
 
 #: How `split` deals trips over cores: ktpu-kernels' `vector::defaults`.
@@ -186,18 +187,58 @@ def rows_stage(
     instances: over the cores for row-major buffers, a tile row each for a
     tiled one of several tile columns (a row walk there is affine only
     inside one tile row)."""
-    for cb in range(pl.nblk):
-        if pl.nblk > 1 and tile_rows is not None:
-            per = tile_rows // pl.rows
-            n = -(-pl.nb // per)
-            at = kt.ANY if n > cores else None
+    if pl.nblk > 1 and tile_rows is not None and pl.rp > tile_rows:
+        per = tile_rows // pl.rows
+        n = -(-pl.nb // per)
+        at = kt.ANY if n > cores else None
+        for cb in range(pl.nblk):
             for u in kt.par(n, on=kt.vc, at=at):
-                first = functools.partial(operator.mul, per)  # band of instance c
-                _rows_trips(bufs, e, operands, out, pl, u, first, per, row0, cb)
-            continue
-        n, start, trips = split(pl.nb, cores)
+                tile_first = functools.partial(operator.mul, per)
+                _rows_trips(bufs, e, operands, out, pl, u, tile_first, per, row0, cb)
+        return
+    group = (
+        -(-kt.machine().line_bytes // (pl.rows * ITEM[out.dtype]))
+        if out.kind == "row"
+        else 1
+    )
+    groups = -(-pl.nb // group)
+    n, start, trips = split(groups, cores)
+    by_blocks, _, _ = split(pl.nblk, cores)
+    if by_blocks > n:
+        for first_block in range(0, pl.nblk, by_blocks):
+            for c in kt.par(min(by_blocks, pl.nblk - first_block), on=kt.vc):
+                _rows_trips(
+                    bufs,
+                    e,
+                    operands,
+                    out,
+                    pl,
+                    c,
+                    lambda c: 0,
+                    pl.nb,
+                    row0,
+                    c + first_block,
+                )
+        return
+    for cb in range(pl.nblk):
+        plane = cb * bufs["out"].spec.shape[1] if pl.nblk > 1 else 0
+        phase = (
+            (row0 + out.offset + plane) // pl.rows % group if out.kind == "row" else 0
+        )
+
+        def first(c, phase=phase):
+            nonfirst = (c + n - 1) // n
+            return start(c) * group - phase * nonfirst
+
         for c in kt.par(n, on=kt.vc):
-            _rows_trips(bufs, e, operands, out, pl, c, start, trips(c), row0, cb)
+            nonfirst = (c + n - 1) // n
+            last = (c + 1) // n
+            count = (
+                trips(c) * group
+                - phase * (1 - nonfirst)
+                + last * (phase + pl.nb - groups * group)
+            )
+            _rows_trips(bufs, e, operands, out, pl, c, first, count, row0, cb)
 
 
 def _rows_trips(bufs, e, operands, out, pl: Plan, c, start, trips, row0, cb) -> None:

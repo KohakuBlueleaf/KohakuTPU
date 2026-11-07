@@ -169,12 +169,19 @@ class Kernels(Parts):
                 self, template_call.generator, template_call.arguments
             )
             compiled = replace(self.kernel(source), selection=selection)
-        elif self.library is None:
+        elif self.library is None and not hasattr(self.card, "compile_graph"):
             with rs.compiler_owner(self):
                 compiled = K.specialise(kernel, given, machine=self.machine, **consts)
         else:
-            traced = kernel.trace(given, machine=K.dsl_machine(self.machine), **consts)
-            compiled = self.kernel(traced.graph_json, traced.graph, traced)
+            # The trace compiles its own graph inside its scope.
+            made = []
+            kernel.trace(
+                given,
+                machine=K.dsl_machine(self.machine),
+                check=lambda t: made.append(self.kernel(t.graph_json, t.graph, t)),
+                **consts,
+            )
+            (compiled,) = made
         if cached:
             hit_kind = (
                 "class"

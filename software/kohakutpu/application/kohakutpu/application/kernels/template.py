@@ -9,6 +9,8 @@ from functools import wraps
 from inspect import signature
 
 from kohakutpu.application.plan.emit import expr
+from kohakutpu.language import dsl as kt
+from kohakutpu.language.dsl import TensorSpec, Traced
 
 
 @dataclass(frozen=True)
@@ -53,3 +55,49 @@ def template(generator, fields):
         return build
 
     return decorate
+
+
+class GraphKernel(kt.Kernel):
+    """Existing custom-call protocol over a generated graph, without a second ABI."""
+
+    def __init__(self, graph, *, selection=None, template_call=None):
+        self.generated = graph
+        self.selection = dict(selection or {})
+        self.name = graph["name"]
+        self.consts = {}
+        self.template_call = template_call
+        self.ports = {
+            p["name"]: (kt.In if p["role"] == "in" else kt.Out)(
+                *p["spec"]["shape"],
+                dtype=p["spec"]["dtype"],
+                layout={k: next(iter(v.values())) for k, v in p["spec"]["layout"]},
+                space=p["spec"]["space"],
+            )
+            for p in graph["ports"]
+        }
+
+    def trace(self, given=None, *, machine=None, check=None, **consts):
+        params = tuple(
+            (
+                p["name"],
+                TensorSpec.make(
+                    p["spec"]["shape"],
+                    p["spec"]["dtype"],
+                    {k: next(iter(v.values())) for k, v in p["spec"]["layout"]},
+                    p["spec"]["space"],
+                ),
+            )
+            for p in self.generated["ports"]
+        )
+        result = Traced(
+            self.name,
+            "",
+            params,
+            {p["name"]: p["role"] for p in self.generated["ports"]},
+            {},
+            machine if machine is not None else kt.machine(),
+            graph=self.generated,
+        )
+        if check is not None:
+            check(result)
+        return result

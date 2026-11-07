@@ -14,7 +14,8 @@ use rayon::prelude::*;
 
 use super::ctx::Ctx;
 use candidate::lower_band;
-use ktpu_l1::sched::schedule::whole;
+use ktpu_l1::sched::orders::Orders;
+use ktpu_l1::sched::schedule::whole_with_orders;
 mod candidate;
 use super::modulo as MO;
 use super::range::{self, Ranges};
@@ -83,6 +84,8 @@ type Image = ([u8; 32], String, usize);
 #[derive(Debug, Default)]
 pub struct Fits {
     whole: Mutex<HashMap<Image, Arc<OnceLock<bool>>>>,
+    /// Run scheduling is shared across image names, loop counts and candidates.
+    orders: Mutex<Vec<(crate::mutant::State, Arc<Orders>)>>,
     /// Images scheduled and encoded so far.
     made: AtomicUsize,
 }
@@ -94,8 +97,20 @@ impl Fits {
         let make = || {
             self.made.fetch_add(1, Ordering::Relaxed);
             crate::work::FITTED.fetch_add(1, Ordering::Relaxed);
+            let active = crate::mutant::current();
+            let orders = {
+                let mut scopes = self.orders.lock().unwrap();
+                match scopes.iter().find(|(scope, _)| *scope == active) {
+                    Some((_, orders)) => orders.clone(),
+                    None => {
+                        let orders = Arc::new(Orders::default());
+                        scopes.push((active, orders.clone()));
+                        orders
+                    }
+                }
+            };
             throttled(module, t)
-                .and_then(|m| whole(&m, m.vcopies, &t.machine))
+                .and_then(|m| whole_with_orders(&m, m.vcopies, &t.machine, &orders))
                 .unwrap_or(false)
         };
         if on("l2.vector/fit-each") {
@@ -337,7 +352,7 @@ impl Search {
                     "template probe exceeds register pressure and has no replayable cache key",
                 ));
             }
-            Err(VErr::Pressure) => return self.search(body, par, env, name, plan, land, t),
+            Err(VErr::Pressure) => return self.search(body, par, env, name, plan, land, t, None),
             Err(VErr::Fail(e)) => return Err(e),
             Err(VErr::Value(m)) => return Err(value_error(body, par, m)),
         };
@@ -375,7 +390,7 @@ impl Search {
                 format!("{name}: no representative image for this probe; split the class"),
             ));
         }
-        let best = self.search(body, par, env, name, plan, land, t)?;
+        let best = self.search(body, par, env, name, plan, land, t, Some(probe))?;
         let mut ch = self.chosen.lock().unwrap();
         let parts = parts_named(&best.parts, name, "\0");
         ch.insert(key, (renamed(&best.text, "\0"), parts, best.cycles));
@@ -395,6 +410,7 @@ impl Search {
         plan: &Plan,
         land: Option<i64>,
         t: &Target,
+        probe: Option<Cand>,
     ) -> Result<Best> {
         let mut shapes: Vec<(usize, bool, bool, bool, bool)> = Vec::new();
         if self.strategy != Strategy::Modulo {
@@ -449,9 +465,17 @@ impl Search {
             ))
         };
         let active = crate::mutant::current();
+        let reuse_probe =
+            !each && !on("l2.vector/fit-each") && !ktpu_l1::mutant::on("l1.sched/unstable");
         let lowered: Vec<VResult<Cand>> = shapes
             .par_iter()
-            .map(|&(band, remat, ahead, hold, pin)| {
+            .enumerate()
+            .map(|(index, &(band, remat, ahead, hold, pin))| {
+                if index == 0 && reuse_probe {
+                    if let Some(probe) = &probe {
+                        return Ok(probe.clone());
+                    }
+                }
                 crate::mutant::scoped(active, || {
                     self.band(
                         body, par, env, name, t, band, remat, ahead, plan, land, hold, pin,

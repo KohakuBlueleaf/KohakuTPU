@@ -13,6 +13,7 @@ mod common;
 mod descriptor_initialization;
 mod drain_bursts;
 mod f014;
+mod global_dram;
 mod long_remote;
 mod mark_frontiers;
 mod package;

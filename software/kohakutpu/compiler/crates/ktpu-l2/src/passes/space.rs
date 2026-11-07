@@ -40,6 +40,87 @@ fn respaced(s: &Stmt, to: &str) -> Stmt {
     out
 }
 
+/// Physical users of implicit scratch, after node scopes are instantiated.
+fn scratch_nodes(body: &Body) -> Result<BTreeMap<String, BTreeSet<i64>>> {
+    fn names(t: &Term, buffers: &BTreeSet<String>, out: &mut BTreeSet<String>) {
+        match t {
+            Term::Name(n) => {
+                out.insert(n.clone());
+            }
+            Term::View(n, axes) => {
+                out.insert(n.clone());
+                for t in axes {
+                    names(t, buffers, out);
+                }
+            }
+            Term::Neg(x) | Term::Not(x) | Term::Pos(x) | Term::Typed(_, x) | Term::Kw(_, x) => {
+                names(x, buffers, out);
+            }
+            Term::Offset(a, b)
+            | Term::BinOp(_, a, b)
+            | Term::Placed(a, b)
+            | Term::Compare(_, a, b)
+            | Term::AddAssign(a, b)
+            | Term::Span(a, b)
+            | Term::Assign(a, b)
+            | Term::Member(a, b) => {
+                names(a, buffers, out);
+                names(b, buffers, out);
+            }
+            Term::Computed(n, index, axes) => {
+                out.extend(
+                    buffers
+                        .iter()
+                        .filter(|name| name.starts_with(n.as_str()))
+                        .cloned(),
+                );
+                names(index, buffers, out);
+                for t in axes.iter().flatten() {
+                    names(t, buffers, out);
+                }
+            }
+            Term::Call(_, args) | Term::Tuple(args) => {
+                for t in args {
+                    names(t, buffers, out);
+                }
+            }
+            Term::Slice(lo, hi) => {
+                for t in lo.iter().chain(hi) {
+                    names(t, buffers, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn scan(node: &Node, buffers: &BTreeSet<String>, out: &mut BTreeSet<String>) {
+        for arg in &node.st().args {
+            names(arg, buffers, out);
+        }
+        for child in node.body() {
+            scan(child, buffers, out);
+        }
+    }
+    let buffers = body.scratch.keys().cloned().collect();
+    let mut out: BTreeMap<String, BTreeSet<i64>> = BTreeMap::new();
+    for stage in instances(body)? {
+        let mut used = BTreeSet::new();
+        match &stage.x {
+            StageX::Op(node, _) => scan(node, &buffers, &mut used),
+            StageX::Par(parts) => {
+                for part in parts {
+                    scan(&part.par, &buffers, &mut used);
+                }
+            }
+        }
+        for name in used {
+            if body.scratch.contains_key(&name) {
+                out.entry(name).or_default().insert(stage.node);
+            }
+        }
+    }
+    Ok(out)
+}
+
 pub fn space(p: &Program, t: &Target) -> Result<Program> {
     if crate::mutant::on("l2.passes/space-off") {
         return Ok(p.clone());
@@ -58,8 +139,9 @@ pub fn space(p: &Program, t: &Target) -> Result<Program> {
                 .collect();
         }
     }
+    let owners = scratch_nodes(&p.body()?)?;
     let r = p.module.reader();
-    // Sized as placed in DRAM with its layout kept: an MXFP7 scratch's size is its packing's.
+    // Size follows the packing layout independently of the memory placement.
     let nbytes = |s: &Stmt| -> Result<i64> {
         let at = if crate::mutant::on("l2.passes/space-layout-dropped") {
             let Some(Term::Placed(x, _)) = &s.annot else {
@@ -67,29 +149,79 @@ pub fn space(p: &Program, t: &Target) -> Result<Program> {
             };
             Term::Placed(x.clone(), Box::new(Term::name("dram")))
         } else {
-            respaced(s, "dram")
-                .annot
-                .expect("a scratch buffer is placed")
+            s.annot.clone().expect("a scratch buffer is placed")
         };
         let b = Buffer::of(&at).map_err(|e| r.fail(s, "L2.PASS.004", e))?;
         Ok(b.nbytes(t))
     };
-    // Every scratch of a kernel shares one staging window: the room is theirs together.
-    let mut used = 0;
+    // The one physical node that touches a scratch buffer, when there is one.
+    let owner = |s: &Stmt| {
+        s.target_name()
+            .and_then(|name| owners.get(name))
+            .filter(|nodes| nodes.len() == 1)
+            .and_then(|nodes| nodes.first())
+            .copied()
+    };
+    // Each physical node owns one staging window. A staging buffer that names
+    // no node lives in the window of its one physical user (node 0 otherwise).
+    let mut used = BTreeMap::<i64, i64>::new();
+    let mut unowned = BTreeSet::new();
     for s in stmts
         .iter()
         .filter(|s| space_of(s).as_deref() == Some("stage"))
     {
-        used += nbytes(s)?;
+        let buffer = Buffer::of(s.annot.as_ref().expect("placed scratch"))
+            .map_err(|e| r.fail(s, "L2.PASS.004", e))?;
+        let node = match buffer.layout.get("node") {
+            Some(value) => value.int(),
+            None => {
+                if let Some(name) = s.target_name() {
+                    unowned.insert(name.to_string());
+                }
+                owner(s).unwrap_or(0)
+            }
+        };
+        *used.entry(node).or_default() += nbytes(s)?;
     }
     let mut out = Vec::new();
     for s in stmts {
         let sp = space_of(&s);
-        if sp.as_deref() == Some("mem") || sp.as_deref() == Some("any") {
+        if sp.as_deref() == Some("stage")
+            && s.target_name().is_some_and(|name| unowned.contains(name))
+        {
+            let node = owner(&s).unwrap_or(0);
+            let mut placed = s.clone();
+            if let Some(Term::Placed(_, space)) = &mut placed.annot {
+                let at = Term::Assign(
+                    Box::new(Term::name("node")),
+                    Box::new(Term::int(node as i128)),
+                );
+                match space.as_mut() {
+                    Term::Call(_, args) => args.push(at),
+                    space => *space = Term::Call("stage".into(), vec![at]),
+                }
+            }
+            out.push(placed);
+        } else if sp.as_deref() == Some("mem") || sp.as_deref() == Some("any") {
             let size = nbytes(&s)?;
-            let fits = used + size <= t.stage_room();
-            used += if fits { size } else { 0 };
-            out.push(respaced(&s, if fits { "stage" } else { "dram" }));
+            let node = owner(&s).unwrap_or(0);
+            let room = used.entry(node).or_default();
+            let fits = *room + size <= t.stage_room();
+            *room += if fits { size } else { 0 };
+            let mut placed = respaced(&s, if fits { "stage" } else { "dram" });
+            if fits {
+                if let Some(Term::Placed(_, space)) = &mut placed.annot {
+                    let owner = Term::Assign(
+                        Box::new(Term::name("node")),
+                        Box::new(Term::int(node as i128)),
+                    );
+                    match space.as_mut() {
+                        Term::Call(_, args) => args.push(owner),
+                        space => *space = Term::Call("stage".into(), vec![owner]),
+                    }
+                }
+            }
+            out.push(placed);
         } else {
             out.push(s);
         }

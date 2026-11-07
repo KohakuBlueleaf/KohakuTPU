@@ -9,11 +9,58 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use crate::mutant::on;
 
 /// The unit of a fence's accesses: what it waits for, never waited on.
 pub const FENCE: &str = "fence";
+
+/// Memory ownership is line-granular (L2.ORDER.009).
+const LINE: i64 = 64;
+
+/// Most elements a footprint enumerates before it stands as its bounding range.
+const ELEMENTS: i64 = 1 << 17;
+
+/// A strided memory footprint inside `[lo, hi)`: `step` bytes at `start` plus
+/// every combination of `levels` `(stride, count)`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Footprint {
+    pub start: i64,
+    pub levels: Vec<(i64, i64)>,
+    pub step: i64,
+}
+
+impl Footprint {
+    /// The sorted lines it touches, or None when it holds too many elements.
+    fn lines(&self) -> Option<Vec<i64>> {
+        let count = self
+            .levels
+            .iter()
+            .try_fold(1i64, |n, &(_, c)| n.checked_mul(c.max(1)))?;
+        if count > ELEMENTS || self.step <= 0 {
+            return None;
+        }
+        let mut starts = vec![self.start];
+        for &(stride, n) in &self.levels {
+            let mut next = Vec::with_capacity(starts.len() * n.max(1) as usize);
+            for &s in &starts {
+                for i in 0..n.max(1) {
+                    next.push(s + i * stride);
+                }
+            }
+            starts = next;
+        }
+        let mut lines = Vec::new();
+        for s in starts {
+            let (first, last) = (s.div_euclid(LINE), (s + self.step - 1).div_euclid(LINE));
+            lines.extend(first..=last);
+        }
+        lines.sort_unstable();
+        lines.dedup();
+        Some(lines)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Access {
@@ -25,6 +72,8 @@ pub struct Access {
     pub hi: i64,
     /// a streamed transfer's ring: credits and counts order it
     pub flow: bool,
+    /// the exact memory footprint within `[lo, hi)`, when known
+    pub footprint: Option<Arc<Footprint>>,
 }
 
 impl Access {
@@ -36,6 +85,65 @@ impl Access {
             lo,
             hi,
             flow: false,
+            footprint: None,
+        }
+    }
+
+    /// A memory access of `step` bytes at `start` over `levels`, its range the
+    /// footprint's bounds.
+    pub fn strided(
+        unit: &str,
+        write: bool,
+        buf: &str,
+        start: i64,
+        levels: &[(i64, i64)],
+        step: i64,
+    ) -> Self {
+        let (mut lo, mut hi) = (start, start);
+        for &(stride, n) in levels {
+            let reach = (n.max(1) - 1) * stride;
+            if reach >= 0 {
+                hi += reach;
+            } else {
+                lo += reach;
+            }
+        }
+        let mut a = Access::new(unit, write, ("mem", buf), lo, hi + step);
+        a.footprint = Some(Arc::new(Footprint {
+            start,
+            levels: levels.to_vec(),
+            step,
+        }));
+        a
+    }
+
+    /// This access moved by `delta` bytes, its footprint with it.
+    pub fn shifted(&self, delta: i64) -> Option<Self> {
+        let mut a = self.clone();
+        a.lo = a.lo.checked_add(delta)?;
+        a.hi = a.hi.checked_add(delta)?;
+        if let Some(f) = &a.footprint {
+            let mut f = (**f).clone();
+            f.start = f.start.checked_add(delta)?;
+            a.footprint = Some(Arc::new(f));
+        }
+        Some(a)
+    }
+
+    /// The lines it touches: its footprint's, else every line of its range.
+    fn lines(&self) -> Option<Vec<i64>> {
+        self.footprint.as_ref().and_then(|f| f.lines())
+    }
+
+    /// Memory ownership is line-granular; unit-local ranges retain their units.
+    pub fn range(&self) -> (i64, i64) {
+        if matches!(self.key.0.as_str(), "mem" | "bound_dram") && self.lo < self.hi {
+            (
+                self.lo.div_euclid(64) * 64,
+                ((self.hi - 1).div_euclid(64) * 64).saturating_add(64),
+            )
+        } else {
+            (self.lo, self.hi)
         }
     }
 
@@ -60,19 +168,56 @@ pub fn clash(a: &Access, b: &Access) -> bool {
         return false;
     }
     let whole = on("l2.sync/whole-buffer");
-    let (alo, ahi, blo, bhi) = if whole {
-        (0, 1 << 40, 0, 1 << 40)
-    } else {
-        (a.lo, a.hi, b.lo, b.hi)
-    };
     let flows = !on("l2.sync/flow-clashes") && a.flow && b.flow;
     if a.key != b.key || !(a.write || b.write) || flows {
         return false;
     }
+    let (alo, ahi, blo, bhi) = if whole {
+        (0, 1 << 40, 0, 1 << 40)
+    } else {
+        let ((alo, ahi), (blo, bhi)) = (a.range(), b.range());
+        (alo, ahi, blo, bhi)
+    };
     if alo >= bhi || blo >= ahi {
         return false;
     }
-    !(a.unit == b.unit && own(a) && own(b))
+    if a.unit == b.unit && own(a) && own(b) {
+        return false;
+    }
+    whole || !matches!(a.key.0.as_str(), "mem" | "bound_dram") || lines_meet(a, b)
+}
+
+/// Whether two memory accesses share a line, each by its exact footprint where
+/// it has one (a column share and its neighbour meet in range, not in lines).
+fn lines_meet(a: &Access, b: &Access) -> bool {
+    let range_lines = |x: &Access| {
+        let (lo, hi) = x.range();
+        (lo.div_euclid(LINE), (hi - 1).div_euclid(LINE))
+    };
+    match (a.lines(), b.lines()) {
+        (None, None) => true,
+        (Some(set), None) => {
+            let (first, last) = range_lines(b);
+            let at = set.partition_point(|&l| l < first);
+            set.get(at).is_some_and(|&l| l <= last)
+        }
+        (None, Some(set)) => {
+            let (first, last) = range_lines(a);
+            let at = set.partition_point(|&l| l < first);
+            set.get(at).is_some_and(|&l| l <= last)
+        }
+        (Some(x), Some(y)) => {
+            let (mut i, mut j) = (0, 0);
+            while i < x.len() && j < y.len() {
+                match x[i].cmp(&y[j]) {
+                    std::cmp::Ordering::Equal => return true,
+                    std::cmp::Ordering::Less => i += 1,
+                    std::cmp::Ordering::Greater => j += 1,
+                }
+            }
+            false
+        }
+    }
 }
 
 /// The marks `mark-counter` numbers, from 0 a run.
@@ -156,14 +301,16 @@ pub fn schedule(stages: &[Stage]) -> Vec<String> {
         if st.pos.contains_key(&s) {
             continue;
         }
-        if !needs(stages, &st, s).is_empty() && stages[s].group.is_some() {
+        let mut pending = needs(stages, &st, s);
+        if !pending.is_empty() && stages[s].group.is_some() {
             for j in ahead(stages, s) {
                 if !st.pos.contains_key(&j) && hoistable(stages, &st, j) {
                     emit(stages, &mut st, j);
                 }
             }
+            pending = needs(stages, &st, s);
         }
-        emit(stages, &mut st, s);
+        emit_ready(stages, &mut st, s, pending);
     }
     let mut out = Vec::new();
     for ln in &st.out {
@@ -181,10 +328,11 @@ pub fn schedule(stages: &[Stage]) -> Vec<String> {
             return out;
         }
     }
+    let blocking_mover = stages.iter().any(|s| s.blocking_mover);
     let posts: Vec<&String> = st
         .order
         .iter()
-        .filter(|&&s| !stages.iter().any(|s| s.blocking_mover) || !complete(&st, s, "mover"))
+        .filter(|&&s| !blocking_mover || !complete(&st, s, "mover"))
         .filter_map(|&s| stages[s].post.as_ref())
         .collect();
     if let Some(p) = posts.last() {
@@ -240,7 +388,11 @@ fn hoistable(stages: &[Stage], st: &State, j: usize) -> bool {
         }
         for a in &stages[k].accesses {
             for b in &stages[j].accesses {
-                if a.key == b.key && (a.write || b.write) && a.lo < b.hi && b.lo < a.hi {
+                if a.key != b.key || !(a.write || b.write) {
+                    continue;
+                }
+                let ((alo, ahi), (blo, bhi)) = (a.range(), b.range());
+                if alo < bhi && blo < ahi {
                     return false;
                 }
             }
@@ -250,10 +402,15 @@ fn hoistable(stages: &[Stage], st: &State, j: usize) -> bool {
 }
 
 fn emit(stages: &[Stage], st: &mut State, s: usize) {
+    let pending = needs(stages, st, s);
+    emit_ready(stages, st, s, pending);
+}
+
+fn emit_ready(stages: &[Stage], st: &mut State, s: usize, pending: Vec<(usize, &Access)>) {
     // unit -> latest emission position to wait through; ordered by position.
     let mut waits: BTreeMap<String, usize> = BTreeMap::new();
     let mut first_seen: Vec<String> = Vec::new();
-    for (p, a) in needs(stages, st, s) {
+    for (p, a) in pending {
         let unit = if a.unit == "mover" {
             "mover"
         } else {

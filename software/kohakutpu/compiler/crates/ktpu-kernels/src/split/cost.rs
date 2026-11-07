@@ -1,6 +1,6 @@
 //! Unfitted local-schedule timing; no measured speedup is implied.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 
 use super::SplitOption;
@@ -111,6 +111,41 @@ impl CostFeatures {
             dispatch_intercept: front,
         })
     }
+}
+
+/// Exact L1 prices within one planning invocation and its fixed mutant scope.
+/// Each miss starts a fresh timing clock; only complete successful prices persist.
+pub(crate) struct LocalPrices {
+    target: ktpu_l2::target::Target,
+    l1: HashMap<(String, String), i64>,
+}
+
+impl LocalPrices {
+    pub(crate) fn new(machine: &Machine) -> Self {
+        Self {
+            target: ktpu_l2::target::Target::of(machine),
+            l1: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn l1(&mut self, text: String, name: &str) -> R<i64> {
+        let key = (text, name.to_string());
+        if let Some(&cycles) = self.l1.get(&key) {
+            return Ok(cycles);
+        }
+        let module =
+            ktpu_l1::text::read(&key.0, name).map_err(|e| Refusal::new(&e.clause, e.message))?;
+        let cycles = ktpu_l2::cost::cycles(&module, name, &self.target)
+            .map_err(|e| Refusal::new(&e.clause, e.message))?;
+        self.l1.insert(key, cycles);
+        Ok(cycles)
+    }
+}
+
+/// Complete emitted node budgets, excluding the launch intercept. Compilation
+/// is performed once; every local price retains the complete module context.
+pub(crate) fn graph_nodes(graph: &ktpu_graph::Graph, machine: &Machine) -> R<BTreeMap<i64, i64>> {
+    ktpu_graph::node_cycles(graph, machine)
 }
 
 pub trait CostModel {

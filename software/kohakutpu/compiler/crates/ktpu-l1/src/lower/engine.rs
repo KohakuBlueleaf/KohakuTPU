@@ -150,6 +150,7 @@ pub fn compact(pkg: &Package) -> Result<Package> {
         let count = match s.op {
             Op::Engine => s.count.div_ceil(3),
             Op::Dispatch | Op::Mover | Op::Store | Op::Ctrl => s.count,
+            Op::Alu | Op::Fetch if s.flags & ktpu_l0::format::F_MEM != 0 => 1,
             Op::Load | Op::Recv => 1,
             _ => 0,
         };
@@ -204,6 +205,9 @@ pub fn compact(pkg: &Package) -> Result<Package> {
     }
     for s in &mut out.steps {
         match s.op {
+            Op::Alu | Op::Fetch if s.flags & ktpu_l0::format::F_MEM != 0 => {
+                s.arg = map[&s.arg];
+            }
             Op::Engine | Op::Dispatch | Op::Mover | Op::Store | Op::Ctrl | Op::Load | Op::Recv => {
                 s.arg = map.get(&s.arg).copied().unwrap_or(0)
             }

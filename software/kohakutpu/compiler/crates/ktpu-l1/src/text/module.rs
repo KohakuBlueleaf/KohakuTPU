@@ -4,7 +4,7 @@
 
 use indexmap::IndexMap;
 
-use super::parse::parse;
+use super::parse::{parse_with, ReadCache};
 use super::term::{Stmt, Term};
 use crate::error::{Error, Result};
 use crate::mutant::on;
@@ -172,13 +172,18 @@ pub fn macro_params(r: &Reader, st: &Stmt, head: &Term) -> Result<Vec<String>> {
 
 /// The module of a `.ktpu` text.
 pub fn read(text: &str, file: &str) -> Result<Module> {
+    read_with(text, file, &mut ReadCache::default())
+}
+
+/// Read modules within one fixed grammar/mutant scope.
+pub(crate) fn read_with(text: &str, file: &str, cache: &mut ReadCache) -> Result<Module> {
     let r = Reader::new(text, file);
     let mut m = Module {
         source: text.to_string(),
         file: file.to_string(),
         ..Module::default()
     };
-    for st in parse(text, file)? {
+    for st in parse_with(text, file, cache)? {
         let pos = st.positional();
         match st.op.as_str() {
             "target" => {

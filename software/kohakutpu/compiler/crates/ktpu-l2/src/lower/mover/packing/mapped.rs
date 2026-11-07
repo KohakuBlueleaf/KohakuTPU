@@ -273,7 +273,8 @@ struct Schedule {
     sn: String,
     dn: String,
     source_bytes: i64,
-    dest_bytes: i64,
+    /// The bytes of the destination this quant writes: its view's entries.
+    dest_span: (i64, i64),
     dtype: &'static str,
     streams: Vec<Vec<Job>>,
     options: Options,
@@ -418,6 +419,7 @@ fn schedule(
     let dax = M::axes_of(&dv, &db.shape).map_err(|s| err(&s))?;
     let ((base, sl, dl), dest_flag) =
         xform::quant(db, &dax, 2 * window.pitch, tg).map_err(|s| err(&s))?;
+    let (_, dest_lo, dest_hi) = span_of(&dn, base, &dl, M::entry(tg));
     if sb.dtype != "f16"
         || sb.shape.iter().product::<i64>() < map.elements.iter().copied().max().unwrap_or(-1) + 1
     {
@@ -654,7 +656,7 @@ fn schedule(
     }
     Ok(Some(Schedule {
         source_bytes: sb.shape.iter().product::<i64>() * 2,
-        dest_bytes: db.nbytes(tg),
+        dest_span: (dest_lo, dest_hi),
         sn,
         dn,
         dtype,
@@ -737,14 +739,16 @@ pub(super) fn quant(
         }
         waves.push(wave);
     }
+    // Each core runs its own stream in order; streams write disjoint
+    // destinations, so a core never waits for another between jobs.
     for wave in 0..waves.iter().map(Vec::len).max().unwrap_or(0) {
         for stream in &waves {
             if let Some(job) = stream.get(wave) {
                 lines.extend(job.clone());
             }
         }
-        lines.extend(units.iter().map(|unit| format!("wait {unit}")));
     }
+    lines.extend(units.iter().map(|unit| format!("wait {unit}")));
     let mut accesses = Vec::new();
     if let Some(status) = &status {
         let name = format!("{}.read_status_{tag}", body.name);
@@ -752,11 +756,15 @@ pub(super) fn quant(
         finite_status(status, &name, &units, &mut lines, &mut accesses);
     }
     for unit in &units {
-        for (write, name, size) in [
-            (false, plan.sn.as_str(), plan.source_bytes),
-            (true, plan.dn.as_str(), plan.dest_bytes),
+        let (lo, hi) = plan.dest_span;
+        for (write, span) in [
+            (
+                false,
+                span_of(&plan.sn, 0, &[(plan.source_bytes / 32, 32)], 32),
+            ),
+            (true, (plan.dn.clone(), lo, hi)),
         ] {
-            let mut a = mem_of(write, span_of(name, 0, &[(size / 32, 32)], 32));
+            let mut a = mem_of(write, span);
             a.unit = unit.clone();
             accesses.push(a);
         }

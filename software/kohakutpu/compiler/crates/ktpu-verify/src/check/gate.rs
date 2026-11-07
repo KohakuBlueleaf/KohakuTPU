@@ -1,5 +1,5 @@
 //! The gate before a run (L1.VER.005): refuse, warn or off, with findings
-//! cached by a key that names no absolute address.
+//! cached by the bound card's physical address environment.
 
 use std::fs;
 use std::io::Write as _;
@@ -9,7 +9,7 @@ use std::str::FromStr;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use super::{check, Nodes};
+use super::{check_with_memory, MemoryContext, Nodes};
 use ktpu_l0::Package;
 
 use crate::model::finding::{Finding, Kind};
@@ -53,21 +53,40 @@ pub enum GateError {
 /// `check`'s findings for a run about to start. `Refuse` errs when any
 /// finding is of a refusing kind, `Warn` returns them all, `Off` checks
 /// nothing. With `cache` (a directory and the run's `key`), the findings
-/// are kept in `<dir>/<key>.json` and read back for the same key.
+/// are keyed by the caller namespace and the complete physical proof input.
 pub fn gate(
     runs: &[Nodes],
     t: &Target,
     mode: Mode,
     cache: Option<(&Path, &str)>,
 ) -> Result<Vec<Finding>, GateError> {
+    gate_with_memory(runs, t, &MemoryContext::default(), mode, cache)
+}
+
+/// The physical bindings, slot program, retained runs, and initialized address
+/// data all participate in cache identity (round-i verification).
+pub fn gate_with_memory(
+    runs: &[Nodes],
+    t: &Target,
+    memory: &MemoryContext,
+    mode: Mode,
+    cache: Option<(&Path, &str)>,
+) -> Result<Vec<Finding>, GateError> {
     if mode == Mode::Off {
         return Ok(Vec::new());
     }
-    let path = cache.map(|(dir, key)| dir.join(format!("{key}.json")));
+    let path = cache.map(|(dir, namespace)| {
+        let mut h = Sha256::new();
+        h.update(SOURCE_DIGEST.as_bytes());
+        h.update(t.digest_text().as_bytes());
+        h.update(format!("{runs:?}{memory:?}").as_bytes());
+        let digest: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        dir.join(format!("{namespace}.{digest}.json"))
+    });
     let found = match path.as_deref().and_then(load) {
         Some(found) => found,
         None => {
-            let found = check(runs, t);
+            let found = check_with_memory(runs, t, memory);
             if let Some(p) = &path {
                 store(p, &found);
             }
@@ -135,14 +154,16 @@ pub fn overlaps(pkg: &Package, bindings: &[u64]) -> Vec<(usize, usize, i128)> {
 }
 
 /// A digest of what `check` decides from: the checker's source, the
-/// target, and each node's first package as built against empty vector
-/// cores (relocatable: no absolute address) with its bindings' overlaps.
+/// target, and each sysnode's first package against empty vector cores.
+/// Physical bindings are card-wide: cross-sysnode aliases and staging routes
+/// participate in the same certificate (round-i verification).
 pub fn key(first: &std::collections::BTreeMap<u32, (Package, Vec<u64>)>, t: &Target) -> String {
     let mut h = Sha256::new();
     h.update(SOURCE_DIGEST.as_bytes());
     h.update(t.digest_text().as_bytes());
     for (mesh, (pkg, bindings)) in first {
         h.update(mesh.to_string().as_bytes());
+        h.update(format!("{bindings:?}").as_bytes());
         h.update(format!("{pkg:?}").as_bytes());
         h.update(format!("{:?}", overlaps(pkg, bindings)).as_bytes());
         // Partial ownership depends on line phase and rounded-line neighbours.

@@ -6,8 +6,9 @@
 //!   words in requests of at most min(room, 255), room = min(credit, fetch
 //!   depth), each only once all of it fits (L0.STEP.007, L0.STEP.045).
 //! * `AWAIT u n` raises u's expected count by n and waits until u's
-//!   completions (acknowledgements included) reach it; `BARRIER` and a
-//!   package's end wait until every word sent has completed.
+//!   instruction retirements reach it (L0.STEP.020). DATA_RECEIVED belongs
+//!   to SEND ACK, not retirement. `BARRIER` and a package's end wait until
+//!   every word sent has completed.
 //!
 //! Consecutive DISPATCH / REPEAT steps form a segment: the words of
 //! different units in it are unordered, each unit's in order. A node made
@@ -16,6 +17,8 @@
 //! earliest item heading its unit's queue that can move; `packages` returns
 //! the packages in the order it sent.
 
+mod engine;
+
 use crate::sim::fx::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::adapter::package::{flag, op, Package, Step, PATCH_STEPS};
@@ -23,6 +26,7 @@ use crate::adapter::u256::U256;
 use crate::model::clock::Clock;
 use crate::model::finding::Kind;
 
+use super::package_memory::{Location, Section};
 use super::symbolic::Value;
 use super::{Pk, Sender, Sim, Sink, StepOutcome, Take};
 
@@ -74,9 +78,15 @@ impl Eq for NStep {}
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Node {
     pub proc: usize,
+    mover: crate::lines::Mover,
+    mover_proc: usize,
+    moves: Vec<Clock>,
+    move_base: usize,
+    engine: engine::Engine,
     pub mesh: u32,
     pub name: String,
     pub pkgs: Vec<Package>,
+    raw_steps: Vec<Vec<Step>>,
     pub free: bool,
     pub units: Vec<Option<usize>>,
     credit: Vec<i64>,
@@ -85,11 +95,16 @@ pub(crate) struct Node {
     expected: Vec<i64>,
     frontiers: HashMap<u32, (u16, i64)>,
     payloads: Vec<U256>,
+    locations: Vec<Location>,
+    step_sources: HashMap<usize, Vec<(usize, usize)>>,
+    payload_bases: Vec<usize>,
+    step_targets: HashMap<(usize, usize), usize>,
     pub steps: Vec<NStep>,
     pub segments: Vec<Segment>,
     pub at: usize,
     pub branches: HashMap<usize, (usize, usize)>,
     armed: bool,
+    fetched: u32,
     pub why: String,
     /// Concrete register values or finite-width symbolic expressions.
     regs: HashMap<u16, Value>,
@@ -106,6 +121,36 @@ pub(crate) struct Node {
 }
 
 impl Node {
+    pub(crate) fn retained(&self, stats: &mut super::stats::Retained) {
+        self.engine.retained(stats);
+        stats.add(format!("moves/{}", self.mesh), self.moves.len());
+        for clock in &self.moves {
+            stats.clock(clock);
+        }
+        for (_, clock) in &self.ends {
+            stats.clock(clock);
+        }
+        stats.add(format!("payloads/{}", self.mesh), self.payloads.len());
+        stats.add(format!("steps/{}", self.mesh), self.steps.len());
+        stats.add(
+            format!("dispatch_logs/{}", self.mesh),
+            self.segments
+                .iter()
+                .map(|s| s.logs.iter().map(Vec::len).sum::<usize>())
+                .sum(),
+        );
+        eprintln!(
+            "verify node {}: pc={} step={:?}",
+            self.mesh,
+            self.at,
+            self.steps.get(self.at)
+        );
+    }
+
+    pub(crate) fn pending_engine(&self) -> Option<usize> {
+        self.engine.pending().then_some(self.engine.proc)
+    }
+
     /// Forward targets and package ends are the possible joins of forked paths.
     pub fn mark_joins(&mut self) {
         let joins: Vec<usize> = self
@@ -176,6 +221,8 @@ impl Sim<'_> {
         let ni = self.nodes.len();
         let name = format!("node {mesh}");
         let proc = self.add_proc(Pk::Node(ni), name.clone());
+        let mover_proc = self.add_proc(Pk::Port, format!("{name} mover"));
+        let engine_proc = self.add_proc(Pk::Port, format!("{name} dispatch engine"));
         self.node_of.insert(mesh, ni);
         let pkg = pkgs[0].clone();
         if pkgs.iter().any(|p| p.units != pkg.units) {
@@ -207,9 +254,15 @@ impl Sim<'_> {
         let cap = self.t.facts.unbounded;
         let mut node = Node {
             proc,
+            mover: crate::lines::Mover::default(),
+            mover_proc,
+            moves: Vec::new(),
+            move_base: 0,
+            engine: engine::Engine::new(engine_proc, n, &self.t.machine),
             mesh,
             name: name.clone(),
             pkgs: Vec::new(),
+            raw_steps: Vec::new(),
             free,
             units,
             credit: pkg
@@ -222,11 +275,16 @@ impl Sim<'_> {
             expected: vec![0; n],
             frontiers: HashMap::default(),
             payloads: Vec::new(),
+            locations: Vec::new(),
+            step_sources: HashMap::default(),
+            payload_bases: Vec::new(),
+            step_targets: HashMap::default(),
             steps: Vec::new(),
             segments: Vec::new(),
             at: 0,
             branches: HashMap::default(),
             armed: false,
+            fetched: 0,
             why: String::new(),
             regs: HashMap::default(),
             rx: 0,
@@ -239,7 +297,22 @@ impl Sim<'_> {
         };
         for (i, p) in pkgs.iter().enumerate() {
             node.load(p, i);
+            let storage = self.card.context.packages.get(&(mesh, i));
+            let source =
+                storage
+                    .map(|s| Location::Physical(s.payloads))
+                    .unwrap_or(Location::Private {
+                        mesh,
+                        run: i,
+                        section: Section::Payloads,
+                        offset: 0,
+                    });
+            let first = node.locations.len();
+            for k in first..node.payloads.len() {
+                node.locations.push(source.offset((k - first) as u64 * 32));
+            }
         }
+        node.raw_steps = pkgs.iter().map(|p| p.steps.clone()).collect();
         node.pkgs = pkgs;
         node.rx = self.counter(&format!("rx:{name}"));
         if let Some(&(x, y)) = self.ports(mesh).first() {
@@ -271,6 +344,20 @@ impl Sim<'_> {
     }
 
     pub fn node_step(&mut self, i: usize) -> StepOutcome {
+        let engine = match self.engine_dispatch(i) {
+            Ok(progress) => progress,
+            Err(why) => {
+                self.find(Kind::Model, self.nodes[i].name.clone(), why);
+                return StepOutcome::Terminal;
+            }
+        };
+        match self.node_cpu_step(i) {
+            StepOutcome::Blocked if engine => StepOutcome::Progress,
+            result => result,
+        }
+    }
+
+    fn node_cpu_step(&mut self, i: usize) -> StepOutcome {
         let p = self.nodes[i].proc;
         if self.nodes[i].done() {
             return StepOutcome::Blocked;
@@ -288,8 +375,20 @@ impl Sim<'_> {
             self.tick(p, &[cl]);
             self.nodes[i].host = 0;
         }
+        if let Some(step) = self.nodes[i].engine.step {
+            return self.node_engine(i, step);
+        }
+        if let Err(why) = self.node_step_sources(i) {
+            self.find(Kind::Model, self.nodes[i].name.clone(), why);
+            return StepOutcome::Terminal;
+        }
         let s = match self.nodes[i].steps[self.nodes[i].at] {
-            NStep::Seg(s) => return self.segment(i, s).into(),
+            NStep::Seg(s) => {
+                if !self.engine_drain(i) {
+                    return StepOutcome::Blocked;
+                }
+                return self.segment(i, s).into();
+            }
             NStep::Op(s) => s,
             NStep::JoinSeg(s) => {
                 let nd = &mut self.nodes[i];
@@ -302,6 +401,15 @@ impl Sim<'_> {
                 return StepOutcome::Join;
             }
         };
+        if !matches!(s.op, op::ENGINE | op::ALU | op::JUMP | op::PATCH) {
+            if !self.engine_drain(i) {
+                return StepOutcome::Blocked;
+            }
+        }
+        if let Err(why) = self.node_payload_sources(i, s) {
+            self.find(Kind::Model, self.nodes[i].name.clone(), why);
+            return StepOutcome::Terminal;
+        }
         let progress = match s.op {
             op::END | op::BARRIER => {
                 // Every word sent has completed (interp.c: ka_engine_barrier).
@@ -321,6 +429,9 @@ impl Sim<'_> {
                     }
                     rel.push(self.clock_to(done, sent, &[]));
                 }
+                if let Some(done) = self.nodes[i].moves.last() {
+                    rel.push(done.clone());
+                }
                 let clock = self.tick(p, &rel);
                 let nd = &mut self.nodes[i];
                 nd.at += 1;
@@ -332,6 +443,8 @@ impl Sim<'_> {
                     let n = self.procs[p].n;
                     nd.ends.push((n, clock.clone()));
                     nd.regs.clear();
+                    nd.move_base = nd.moves.len();
+                    nd.engine.end(&nd.sent);
                     let k = nd.ends.len();
                     nd.host = k;
                     let c = self.counter(&format!("host:{k}"));
@@ -402,18 +515,20 @@ impl Sim<'_> {
                     }
                     self.nodes[i].armed = true;
                 }
-                let recv = self.units[unit].recv;
+                let done = self.units[unit].done;
                 let want = self.nodes[i].expected[u];
-                if !self.counters[recv].reached(want) {
+                if !self.counters[done].reached(want) {
                     self.nodes[i].why = format!(
                         "{}: {} of {} completions",
-                        self.units[unit].name, self.counters[recv].value, want
+                        self.units[unit].name, self.counters[done].value, want
                     );
                     return StepOutcome::Blocked;
                 }
-                // The unit completes at most the words this node sent it so far.
+                // L0.STEP.020/.021 and L0.DE.006/.009: the saved/delta
+                // frontier consumes instruction-completion signals, not burst
+                // ACKs. Only sent instructions can contribute to this wait.
                 let cap = [(self.units[unit].completer, self.nodes[i].sent[u])];
-                let cl = self.clock_to(recv, want, &cap);
+                let cl = self.clock_to(done, want, &cap);
                 self.tick(p, &[cl]);
                 self.nodes[i].armed = false;
                 self.nodes[i].at += 1;
@@ -431,22 +546,27 @@ impl Sim<'_> {
                     return StepOutcome::Blocked;
                 }
                 let cl = self.clock_to(rx, want, &[]);
-                self.tick(p, &[cl]);
+                let clock = self.tick(p, &[cl]);
+                self.node_memory(i, s.arg as usize, u64::from(s.count) * 32, true, &clock);
                 self.nodes[i].rx_taken = want;
                 self.nodes[i].at += 1;
                 true
             }
-            op::RING | op::WAIT_BELL | op::WAIT_SLOT | op::FETCH | op::SEND | op::ENGINE => {
+            op::ENGINE => return self.node_engine(i, s),
+            op::RING | op::WAIT_BELL | op::WAIT_SLOT | op::FETCH | op::SEND => {
                 self.node_other(i, s)
             }
             op::LOAD | op::ALU | op::JUMP => return self.node_register(i, s),
-            _ => {
-                // MOVER, MWAIT, SETTLE, SIGNAL, CTRL, STORE, PATCH: nothing a
-                // unit waits on.
+            op::ASSERT_ZERO => return self.node_assert_zero(i, s),
+            op::MOVER | op::MWAIT => self.node_mover(i, s),
+            op::STORE => self.node_store(i, s),
+            op::PATCH => self.node_patch(i, s),
+            op::SETTLE | op::SIGNAL | op::CTRL => {
                 self.tick(p, &[]);
                 self.nodes[i].at += 1;
                 true
             }
+            _ => self.node_other(i, s),
         };
         progress.into()
     }
@@ -562,8 +682,29 @@ impl Sim<'_> {
                 (it.arg, it.sent)
             };
             for j in 0..n {
-                let w = self.nodes[i].payloads[arg + (sent + j) as usize];
+                let mut w = self.nodes[i].payloads[arg + (sent + j) as usize];
+                let index = arg + (sent + j) as usize;
+                let location = self.nodes[i].locations[index].clone();
+                match self.package_value(&location, w, 32, &clock) {
+                    Ok(value) => w = value,
+                    Err(why) => self.find(Kind::Model, self.nodes[i].name.clone(), why),
+                }
                 self.deliver(unit, w, clock.clone());
+                if self.nodes[i].fetch[u] {
+                    if let Some(word) = self.units[unit].words.last_mut() {
+                        word.source = Some(location);
+                    }
+                } else {
+                    self.package_access(
+                        &location,
+                        32,
+                        false,
+                        &clock,
+                        &clock,
+                        p,
+                        format!("{} dispatch payload {index}", self.nodes[i].name),
+                    );
+                }
             }
             let nd = &mut self.nodes[i];
             let log = nd.log.as_mut().expect("a segment's log");
@@ -632,9 +773,18 @@ impl Sim<'_> {
         let mesh = self.nodes[i].mesh;
         match s.op {
             op::RING => {
-                let clock = self.tick(p, &[]);
+                let sent = self.tick(p, &[]);
+                let clock = if s.arg & (1 << 16) != 0 {
+                    let mut arrival = self.release_clock(mesh, u32::from(s.unit), &sent);
+                    if let Some(done) = self.nodes[i].moves.last() {
+                        arrival.join(done);
+                    }
+                    arrival
+                } else {
+                    sent
+                };
                 let slot = self.counter(&format!("slot:{}:{}", s.unit, s.count));
-                self.counters[slot].add((s.arg & 0xFFFF) as i64, &clock, p);
+                self.counters[slot].add(((s.arg & 0xFFFF) as i64).max(1), &clock, p);
                 let bell = self.counter(&format!("bell:{}:{}", s.unit, mesh));
                 self.counters[bell].add(1, &clock, p);
                 self.nodes[i].at += 1;
@@ -676,6 +826,7 @@ impl Sim<'_> {
                 true
             }
             op::SEND => self.node_send(i, s),
+            op::FETCH => self.node_fetch(i, s),
             _ => {
                 let at = self.nodes[i].at;
                 let name = self.nodes[i].name.clone();
@@ -691,10 +842,80 @@ impl Sim<'_> {
         }
     }
 
+    /// ASSERT_ZERO continues only under its successful runtime contract. It
+    /// reads a register, not memory, and supplies no synchronization edge.
+    fn node_assert_zero(&mut self, i: usize, s: Step) -> StepOutcome {
+        let nd = &self.nodes[i];
+        let value = nd.regs.get(&s.unit).copied().unwrap_or(Value::Known(0));
+        let condition = self.symbolic.condition(1, value, Value::Known(0));
+        let (success, _) = self.symbolic.successors(condition);
+        if success == 0 {
+            self.find(
+                Kind::Model,
+                self.nodes[i].name.clone(),
+                format!("ASSERT_ZERO contract {} cannot succeed", s.count),
+            );
+            return StepOutcome::Terminal;
+        }
+        self.symbolic.predicate = success;
+        let p = self.nodes[i].proc;
+        self.tick(p, &[]);
+        self.nodes[i].regs.insert(s.unit, Value::Known(0));
+        self.nodes[i].at += 1;
+        StepOutcome::Progress
+    }
+
     /// Register expressions retain their identities across forward successors.
     fn node_register(&mut self, i: usize, s: Step) -> StepOutcome {
         let p = self.nodes[i].proc;
-        self.tick(p, &[]);
+        let clock = self.tick(p, &[]);
+        if s.op == op::LOAD && s.flags != flag::IMM && s.flags & ktpu_l0::format::F_CTRL == 0 {
+            let footprint = self.nodes[i]
+                .payloads
+                .get(s.arg as usize)
+                .ok_or_else(|| "LOAD names an absent payload".to_string())
+                .and_then(|w| {
+                    let offset = if s.flags & ktpu_l0::format::F_INDEXED != 0 {
+                        match self.nodes[i].regs.get(&((s.count & 15) as u16)) {
+                            Some(Value::Symbolic(_)) => return Err("unknown LOAD footprint".into()),
+                            Some(Value::Known(v)) => *v,
+                            None => 0,
+                        }
+                    } else {
+                        0
+                    };
+                    self.cpu_interval(w.bits(0, 64).wrapping_add(offset), 8)
+                });
+            self.dram_access(
+                footprint,
+                false,
+                &clock,
+                &clock,
+                p,
+                format!("{} LOAD step {}", self.nodes[i].name, self.nodes[i].at),
+            );
+        }
+        let loaded =
+            if s.op == op::LOAD && s.flags != flag::IMM && s.flags & ktpu_l0::format::F_CTRL == 0 {
+                self.nodes[i].payloads.get(s.arg as usize).and_then(|word| {
+                    let offset = if s.flags & ktpu_l0::format::F_INDEXED != 0 {
+                        match self.nodes[i].regs.get(&((s.count & 15) as u16)) {
+                            Some(Value::Known(v)) => *v,
+                            Some(Value::Symbolic(_)) => return None,
+                            None => 0,
+                        }
+                    } else {
+                        0
+                    };
+                    self.card.values.get(
+                        self.physical(word.bits(0, 64).wrapping_add(offset)),
+                        8,
+                        &clock,
+                    )
+                })
+            } else {
+                None
+            };
         let nd = &mut self.nodes[i];
         if s.op == op::LOAD {
             let Some(word) = nd.payloads.get(s.arg as usize) else {
@@ -705,6 +926,8 @@ impl Sim<'_> {
             let base = word.bits(0, 64);
             let value = if s.flags == flag::IMM {
                 Value::Known(base)
+            } else if let Some(value) = loaded {
+                Value::Known(value)
             } else {
                 self.symbolic.fresh()
             };
@@ -720,6 +943,15 @@ impl Sim<'_> {
             reg((s.count >> 12) & 0xF)
         };
         if s.op == op::ALU {
+            if self.stats_enabled && !matches!((a, b), (Value::Known(_), Value::Known(_))) {
+                eprintln!(
+                    "verify symbolic ALU: node={} pc={} op={} a={a:?} b={b:?} storage={:?}",
+                    nd.mesh,
+                    nd.at,
+                    s.count & 0xFF,
+                    self.symbolic.storage()
+                );
+            }
             let v = match (a, b) {
                 (Value::Known(a), Value::Known(b)) => alu(s.count & 0xFF, a, b).map(Value::Known),
                 _ => self.symbolic.alu(s.count & 0xFF, a, b),
@@ -776,6 +1008,16 @@ impl Sim<'_> {
         let unit = self.nodes[i].units.get(s.unit as usize).copied().flatten();
         if !self.nodes[i].armed {
             let kind = (s.arg >> 32) & 0xF;
+            let clock = self.tick(p, &[]);
+            if s.flags & flag::MEM != 0 {
+                self.node_memory(
+                    i,
+                    (s.arg & 0xFFFF_FFFF) as usize + 1,
+                    u64::from(s.count) * 32,
+                    false,
+                    &clock,
+                );
+            }
             match (kind, unit) {
                 (8, Some(u)) => {
                     let d = self.nodes[i].payloads[(s.arg & 0xFFFF_FFFF) as usize];
@@ -805,19 +1047,15 @@ impl Sim<'_> {
                             format!("step {at}: {n} words under a descriptor of {words}"),
                         );
                     }
-                    let clock = self.tick(p, &[]);
                     self.send(Sender::Node(i), sink, d.bits(232, 16) as i64, n, &clock, p);
                 }
                 (7, Some(u)) => {
                     // CU_CTRL: the unit's control port answers each flit with one.
-                    let clock = self.tick(p, &[]);
                     let rx = self.nodes[i].rx;
                     let port = self.units[u].port;
                     self.counters[rx].add(s.count as i64, &clock, port);
                 }
-                _ => {
-                    self.tick(p, &[]);
-                }
+                _ => {}
             }
             self.nodes[i].armed = true;
             if s.flags & flag::ACK != 0 && unit.is_some() {
@@ -837,6 +1075,496 @@ impl Sim<'_> {
         self.nodes[i].armed = false;
         self.nodes[i].at += 1;
         true
+    }
+
+    fn node_fetch(&mut self, i: usize, s: Step) -> bool {
+        let p = self.nodes[i].proc;
+        let u = s.unit as usize;
+        let Some(unit) = self.nodes[i].units.get(u).copied().flatten() else {
+            self.find(
+                Kind::Model,
+                self.nodes[i].name.clone(),
+                "FETCH names an absent unit",
+            );
+            self.nodes[i].at += 1;
+            return true;
+        };
+        let limit = self.nodes[i].credit[u]
+            .min(self.t.facts.fetch_depth)
+            .min(FETCH_RUN);
+        let n = i64::from(s.count - self.nodes[i].fetched).min(limit);
+        let need = self.nodes[i].sent[u] + n - limit;
+        if !self.counters[self.units[unit].done].reached(need) {
+            self.nodes[i].why = "FETCH waits for instruction credits".into();
+            return false;
+        }
+        let released = self.clock_to(self.units[unit].done, need, &[]);
+        let clock = self.tick(p, &[released]);
+        for k in 0..n as u32 {
+            let at = s.arg + u64::from(self.nodes[i].fetched + k) * 32;
+            let mut word = U256([0; 4]);
+            for limb in 0..4 {
+                let physical = self.physical(at + limb * 8);
+                let Some(value) = self.card.values.get(physical, 8, &clock) else {
+                    self.find(
+                        Kind::Model,
+                        self.nodes[i].name.clone(),
+                        "FETCH instruction has no visible known bytes",
+                    );
+                    self.nodes[i].at += 1;
+                    self.nodes[i].fetched = 0;
+                    return true;
+                };
+                word.set_bits(limb as u32 * 64, 64, value);
+            }
+            self.deliver(unit, word, clock.clone());
+            if let Some(word) = self.units[unit].words.last_mut() {
+                word.source = Some(Location::Physical(at));
+            }
+        }
+        self.nodes[i].sent[u] += n;
+        self.nodes[i].fetched += n as u32;
+        if self.nodes[i].fetched == s.count {
+            self.nodes[i].fetched = 0;
+            self.nodes[i].at += 1;
+        }
+        true
+    }
+
+    fn node_step_sources(&mut self, i: usize) -> Result<(), String> {
+        let nd = &self.nodes[i];
+        let sources = nd.step_sources.get(&nd.at).cloned().unwrap_or_default();
+        let p = nd.proc;
+        let clock = self.tick(p, &[]);
+        for (run, raw) in sources {
+            let nd = &self.nodes[i];
+            let s = nd.raw_steps[run][raw];
+            let location = self.step_location(i, run, raw);
+            let word = U256([
+                u64::from(s.op)
+                    | (u64::from(s.flags) << 8)
+                    | (u64::from(s.unit) << 16)
+                    | (u64::from(s.count) << 32),
+                s.arg,
+                0,
+                0,
+            ]);
+            self.package_access(
+                &location,
+                16,
+                false,
+                &clock,
+                &clock,
+                p,
+                format!("sysnode {} step {raw}", self.nodes[i].mesh),
+            );
+            let value = self.package_value(&location, word, 16, &clock)?;
+            if value != word {
+                let changed = Step::new(
+                    value.bits(0, 8) as u8,
+                    value.bits(16, 16) as u16,
+                    value.bits(32, 32) as u32,
+                    value.bits(64, 64),
+                    value.bits(8, 8) as u8,
+                );
+                self.replace_step(i, run, raw, changed)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn step_location(&self, i: usize, run: usize, raw: usize) -> Location {
+        let nd = &self.nodes[i];
+        match self.card.context.packages.get(&(nd.mesh, run)) {
+            Some(storage) => Location::Physical(storage.steps + raw as u64 * 16),
+            None => Location::Private {
+                mesh: nd.mesh,
+                run,
+                section: Section::Steps,
+                offset: raw as u64 * 16,
+            },
+        }
+    }
+
+    fn replace_step(
+        &mut self,
+        i: usize,
+        run: usize,
+        raw: usize,
+        mut s: Step,
+    ) -> Result<(), String> {
+        let nd = &mut self.nodes[i];
+        let at = *nd
+            .step_targets
+            .get(&(run, raw))
+            .ok_or("PATCH step target absent")?;
+        if let NStep::Seg(segment) | NStep::JoinSeg(segment) = nd.steps[at] {
+            if s.op != op::DISPATCH {
+                return Err("patched dispatch changes its control-flow class".into());
+            }
+            let index = raw - nd.segments[segment].start;
+            let item = nd.segments[segment]
+                .items
+                .get_mut(index)
+                .ok_or("patched dispatch item absent")?;
+            item.unit = s.unit as usize;
+            item.arg = nd.payload_bases[run] + s.arg as usize;
+            item.count = i64::from(s.count);
+            nd.raw_steps[run][raw] = s;
+            return Ok(());
+        }
+        nd.raw_steps[run][raw] = s;
+        if s.op == op::JUMP {
+            s.unit = *nd
+                .step_targets
+                .get(&(run, s.unit as usize))
+                .ok_or("patched JUMP target absent")? as u16;
+        }
+        if matches!(
+            s.op,
+            op::LOAD | op::STORE | op::MOVER | op::SEND | op::RECV | op::ENGINE
+        ) {
+            s.arg += nd.payload_bases[run] as u64;
+        }
+        if s.op == op::PATCH && s.arg & PATCH_STEPS == 0 {
+            s.count += nd.payload_bases[run] as u32;
+        }
+        nd.steps[at] = NStep::Op(s);
+        Ok(())
+    }
+
+    fn node_payload_sources(&mut self, i: usize, s: Step) -> Result<(), String> {
+        let (first, count) = match s.op {
+            op::LOAD | op::RECV => (s.arg as usize, 1),
+            op::STORE | op::MOVER | op::CTRL => (s.arg as usize, s.count as usize),
+            op::SEND => (
+                (s.arg & 0xFFFF_FFFF) as usize,
+                if s.flags & flag::MEM != 0 {
+                    2
+                } else {
+                    s.count as usize
+                },
+            ),
+            _ => return Ok(()),
+        };
+        let p = self.nodes[i].proc;
+        let clock = self.tick(p, &[]);
+        for index in first..first + count {
+            let location = self.nodes[i]
+                .locations
+                .get(index)
+                .cloned()
+                .ok_or("payload source outside package")?;
+            let initial = self.nodes[i].payloads[index];
+            self.package_access(
+                &location,
+                32,
+                false,
+                &clock,
+                &clock,
+                p,
+                format!("{} payload {index}", self.nodes[i].name),
+            );
+            self.nodes[i].payloads[index] = self.package_value(&location, initial, 32, &clock)?;
+        }
+        Ok(())
+    }
+
+    fn node_mover(&mut self, i: usize, s: Step) -> bool {
+        let p = self.nodes[i].proc;
+        if s.op == op::MWAIT {
+            let target = self.nodes[i].move_base + s.count as usize;
+            if target > self.nodes[i].moves.len() {
+                self.nodes[i].why = format!("mover completion {target} not issued");
+                return false;
+            }
+            let rel = if target == 0 {
+                Vec::new()
+            } else {
+                vec![self.nodes[i].moves[target - 1].clone()]
+            };
+            self.tick(p, &rel);
+        } else {
+            let issue = self.tick(p, &[]);
+            for k in 0..s.count as usize {
+                let Some(word) = self.nodes[i].payloads.get(s.arg as usize + k).copied() else {
+                    self.find(
+                        Kind::Model,
+                        self.nodes[i].name.clone(),
+                        "MOVER payload out of bounds",
+                    );
+                    break;
+                };
+                for half in [0, 128] {
+                    let reg = word.bits(half, 64);
+                    if reg == ktpu_l0::format::MOVER_SKIP {
+                        continue;
+                    }
+                    let value = word.bits(half + 64, 64);
+                    self.mover_write(i, reg, value, &issue);
+                }
+            }
+            if s.flags & ktpu_l0::format::F_POSTED == 0 {
+                let rel: Vec<_> = self.nodes[i].moves.last().cloned().into_iter().collect();
+                self.tick(p, &rel);
+            }
+        }
+        self.nodes[i].at += 1;
+        true
+    }
+
+    fn mover_write(&mut self, i: usize, reg: u64, value: u64, issue: &Clock) {
+        let address = self.t.machine.die.address.runtime();
+        let special = 1u64 << address.special_bit;
+        let routes = ((1u64 << address.mesh_bits) - 1) << address.mesh_shift;
+        let mut seen = self.clock_of(self.nodes[i].mover_proc);
+        seen.join(issue);
+        let values = &self.card.values;
+        let footprints = self.nodes[i].mover.command(reg, value, self.t, |at| {
+            let at = if at & special == 0 {
+                at & !routes & !(1u64 << address.reserved_bit)
+            } else {
+                at
+            };
+            values.get(at, 4, &seen).map(|value| value as u32)
+        });
+        let footprints = match footprints {
+            Ok(None) => return,
+            Ok(Some(footprints)) => footprints,
+            Err(why) => {
+                self.find(Kind::Model, self.nodes[i].name.clone(), why);
+                return;
+            }
+        };
+        let mp = self.nodes[i].mover_proc;
+        let start = self.tick(mp, std::slice::from_ref(issue));
+        let read = self.tick(mp, &[]);
+        let done = self.tick(mp, &[]);
+        let what = format!(
+            "{} mover GO {}",
+            self.nodes[i].name,
+            self.nodes[i].moves.len()
+        );
+        self.dram_access(
+            footprints.reads,
+            false,
+            &start,
+            &read,
+            mp,
+            format!("{what} read"),
+        );
+        let acknowledged = self.memory_write(
+            self.nodes[i].mesh,
+            None,
+            footprints.writes,
+            &read,
+            &done,
+            mp,
+            format!("{what} write"),
+        );
+        // ISA.MV.011/.080: the next GO starts after I_DRAIN
+        // has consumed local responses. L0.STEP.026/.027 acquire
+        // this completion only at a nonposted move or MWAIT.
+        self.procs[mp].clock.join(&acknowledged);
+        self.nodes[i].moves.push(acknowledged);
+    }
+
+    fn cpu_interval(&self, base: u64, bytes: u64) -> Result<super::dram::Footprint, String> {
+        let address = self.t.machine.die.address.runtime();
+        let base = if base & (1u64 << address.special_bit) == 0 {
+            base & !(1u64 << address.reserved_bit)
+        } else {
+            base
+        };
+        super::dram::interval(base, bytes)
+    }
+
+    fn node_memory(&mut self, i: usize, payload: usize, bytes: u64, write: bool, clock: &Clock) {
+        let nd = &self.nodes[i];
+        let footprint = nd
+            .payloads
+            .get(payload)
+            .ok_or_else(|| "memory operation names an absent payload".to_string())
+            .and_then(|w| self.cpu_interval(w.bits(0, 64), bytes));
+        let (p, mesh) = (nd.proc, nd.mesh);
+        let what = format!("{} memory step {}", nd.name, nd.at);
+        if write {
+            let ack = self.memory_write(mesh, None, footprint, clock, clock, p, what);
+            self.procs[p].clock.join(&ack);
+        } else {
+            self.dram_access(footprint, false, clock, clock, p, what);
+        }
+    }
+
+    fn node_store(&mut self, i: usize, s: Step) -> bool {
+        let p = self.nodes[i].proc;
+        let clock = self.tick(p, &[]);
+        let mut footprint = Ok(Vec::new());
+        for k in 0..s.count as usize {
+            let Some(w) = self.nodes[i].payloads.get(s.arg as usize + k) else {
+                footprint = Err("STORE payload out of bounds".into());
+                break;
+            };
+            for half in [0, 128] {
+                let base = w.bits(half, 64);
+                if base != ktpu_l0::format::MOVER_SKIP {
+                    footprint = footprint.and_then(|mut ranges| {
+                        ranges.extend(self.cpu_interval(base, 8)?);
+                        Ok(ranges)
+                    });
+                }
+            }
+        }
+        let ack = self.memory_write(
+            self.nodes[i].mesh,
+            None,
+            footprint,
+            &clock,
+            &clock,
+            p,
+            format!("{} STORE step {}", self.nodes[i].name, self.nodes[i].at),
+        );
+        self.procs[p].clock.join(&ack);
+        for k in 0..s.count as usize {
+            let Some(w) = self.nodes[i].payloads.get(s.arg as usize + k).copied() else {
+                break;
+            };
+            for half in [0, 128] {
+                let address = w.bits(half, 64);
+                if address == ktpu_l0::format::MOVER_SKIP {
+                    continue;
+                }
+                let value = w.bits(half + 64, 64);
+                let value = if s.flags & ktpu_l0::format::F_REG != 0 {
+                    match self.nodes[i].regs.get(&((value & 15) as u16)) {
+                        Some(Value::Known(value)) => Some(*value),
+                        Some(Value::Symbolic(_)) => None,
+                        None => Some(0),
+                    }
+                } else {
+                    Some(value)
+                };
+                if let Some(value) = value {
+                    self.stored_value(self.nodes[i].mesh, p, address, &value.to_le_bytes());
+                }
+            }
+        }
+        self.nodes[i].at += 1;
+        true
+    }
+
+    fn node_patch(&mut self, i: usize, s: Step) -> bool {
+        if let Err(why) = self.patch_value(i, s) {
+            self.find(Kind::Model, self.nodes[i].name.clone(), why);
+        }
+        self.nodes[i].at += 1;
+        true
+    }
+
+    fn patch_value(&mut self, i: usize, s: Step) -> Result<(), String> {
+        let p = self.nodes[i].proc;
+        let clock = self.tick(p, &[]);
+        let bit = (s.arg & 255) as u32;
+        let width = ((s.arg >> 8) & 255) as u32;
+        let shift = ((s.arg >> 16) & 255) as u32;
+        let steps = s.arg & PATCH_STEPS != 0;
+        if width == 0 || width > 64 || shift >= 64 || bit + width > if steps { 128 } else { 256 } {
+            return Err("invalid PATCH field".into());
+        }
+        let run = self.nodes[i]
+            .step_sources
+            .get(&self.nodes[i].at)
+            .and_then(|sources| sources.first())
+            .map(|&(run, _)| run)
+            .ok_or("PATCH has no package origin")?;
+        let (location, initial) = if steps {
+            let original = self.nodes[i].raw_steps[run]
+                .get(s.count as usize)
+                .ok_or("PATCH step out of bounds")?;
+            (
+                self.step_location(i, run, s.count as usize),
+                U256([
+                    u64::from(original.op)
+                        | (u64::from(original.flags) << 8)
+                        | (u64::from(original.unit) << 16)
+                        | (u64::from(original.count) << 32),
+                    original.arg,
+                    0,
+                    0,
+                ]),
+            )
+        } else {
+            (
+                self.nodes[i]
+                    .locations
+                    .get(s.count as usize)
+                    .cloned()
+                    .ok_or("PATCH payload out of bounds")?,
+                *self.nodes[i]
+                    .payloads
+                    .get(s.count as usize)
+                    .ok_or("PATCH payload out of bounds")?,
+            )
+        };
+        let mut word =
+            self.package_value(&location, initial, if steps { 16 } else { 32 }, &clock)?;
+        let value = match self.nodes[i].regs.get(&s.unit) {
+            Some(Value::Known(value)) => *value >> shift,
+            Some(Value::Symbolic(_)) => {
+                return Err("unknown patched footprint requires an ownership proof".into())
+            }
+            None => 0,
+        };
+        let value = if s.arg & (1 << 26) != 0 {
+            word.bits(bit, width).wrapping_add(value)
+        } else {
+            value
+        };
+        let first = bit / 64;
+        let limbs = (bit + width - 1) / 64 - first + 1;
+        let touched = location.offset(u64::from(first) * 8);
+        self.package_access(
+            &touched,
+            u64::from(limbs) * 8,
+            false,
+            &clock,
+            &clock,
+            p,
+            format!("{} PATCH read", self.nodes[i].name),
+        );
+        word.set_bits(bit, width, value);
+        self.package_access(
+            &touched,
+            u64::from(limbs) * 8,
+            true,
+            &clock,
+            &clock,
+            p,
+            format!("{} PATCH write", self.nodes[i].name),
+        );
+        if let Location::Physical(base) = location {
+            for limb in first..first + limbs {
+                self.stored_value(
+                    self.nodes[i].mesh,
+                    p,
+                    base + u64::from(limb) * 8,
+                    &word.bits(limb * 64, 64).to_le_bytes(),
+                );
+            }
+        }
+        if steps {
+            let step = Step::new(
+                word.bits(0, 8) as u8,
+                word.bits(16, 16) as u16,
+                word.bits(32, 32) as u32,
+                word.bits(64, 64),
+                word.bits(8, 8) as u8,
+            );
+            self.replace_step(i, run, s.count as usize, step)?;
+        } else {
+            self.nodes[i].payloads[s.count as usize] = word;
+        }
+        Ok(())
     }
 
     /// What the node leaves behind: flits no RECV took.
@@ -896,6 +1624,7 @@ impl Node {
     /// step index moved past the packages before.
     fn load(&mut self, pkg: &Package, index: usize) {
         let base = self.payloads.len();
+        self.payload_bases.push(base);
         self.payloads.extend(pkg.payloads.iter().copied());
         let first = self.steps.len();
         let mut at: HashMap<usize, usize> = HashMap::default();
@@ -920,6 +1649,10 @@ impl Node {
                     }
                 };
                 at.insert(j, self.steps.len() - 1);
+                self.step_sources
+                    .entry(self.steps.len() - 1)
+                    .or_default()
+                    .push((index, j));
                 self.segments[si].end = j + 1;
                 let item = if s.op == op::DISPATCH {
                     Item {
@@ -946,13 +1679,23 @@ impl Node {
             }
             seg = None;
             at.insert(j, self.steps.len());
+            self.step_sources
+                .entry(self.steps.len())
+                .or_default()
+                .push((index, j));
             if s.op == op::JUMP {
                 self.branches.insert(self.steps.len(), (index, jumps.len()));
                 jumps.push(self.steps.len());
             }
             let mut s = *s;
-            if matches!(s.op, op::SEND | op::RECV | op::LOAD) {
+            if matches!(
+                s.op,
+                op::SEND | op::RECV | op::LOAD | op::STORE | op::MOVER | op::ENGINE
+            ) {
                 s.arg += base as u64;
+            }
+            if s.op == op::PATCH && s.arg & PATCH_STEPS == 0 {
+                s.count += base as u32;
             }
             if s.op == op::FRONTIER {
                 if s.flags == 2 {
@@ -967,6 +1710,9 @@ impl Node {
         if self.steps.len() == first || !ends {
             at.insert(pkg.steps.len(), self.steps.len());
             self.steps.push(NStep::Op(Step::new(op::END, 0, 0, 0, 0)));
+        }
+        for (&raw, &lowered) in &at {
+            self.step_targets.insert((index, raw), lowered);
         }
         for k in jumps {
             if let NStep::Op(s) = &mut self.steps[k] {

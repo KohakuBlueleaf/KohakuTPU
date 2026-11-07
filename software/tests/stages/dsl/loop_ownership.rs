@@ -23,15 +23,38 @@ fn looped_shares_queue_vector_instances_on_the_granted_nodes() {
     t.on_nodes(&request.nodes, |t, rank| {
         t.range_pipe(2, Some(2), |t, wave| {
             t.par(instances, UnitKind::Vc, At::Any, |t, core| {
-                let row = rank.mul(2).add(&wave).mul(instances).add(core).mul(4);
-                let view = [sl(&row, row.add(4)), ALL];
-                let value = t.load(&x.at(&view)?, true)?;
-                t.store(&out.at(&view)?, value.into())
+                let first = rank.mul(2).add(&wave).mul(instances).add(core).mul(4);
+                t.range(2, |t, trip| {
+                    let row = first.add(&trip.mul(2));
+                    let view = [sl(&row, row.add(2)), ALL];
+                    let value = t.load(&x.at(&view)?, true)?;
+                    t.store(&out.at(&view)?, value.into())
+                })
             })
         })
     })
     .expect("looped shares");
-    let graph = t.graph().expect("graph");
+    let mut graph = serde_json::to_value(t.graph().expect("graph")).expect("graph JSON");
+    fn symbolic_origins(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(object) => {
+                if let Some(serde_json::Value::Array(axes)) = object.get_mut("axes") {
+                    axes[1] = serde_json::json!({"run": [{"const": 0, "terms": []}, 32]});
+                }
+                for child in object.values_mut() {
+                    symbolic_origins(child);
+                }
+            }
+            serde_json::Value::Array(array) => array.iter_mut().for_each(symbolic_origins),
+            _ => {}
+        }
+    }
+    symbolic_origins(&mut graph);
+    let graph = serde_json::from_value(graph).expect("symbolic view origins");
+    let text = ktpu_graph::lower(&graph)
+        .expect("symbolic-origin text")
+        .text();
+    ktpu_l1::text::read(&text, "symbolic-origins.l2").expect("readable view operands");
     let program = ktpu_graph::program(&graph, &m).expect("program");
     let body = program.body().expect("body");
     for stage in ktpu_l2::ir::instances(&body).expect("instances") {

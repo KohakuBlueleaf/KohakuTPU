@@ -42,12 +42,15 @@ ALL_BUDGET = 120.0
 class Suite:
     """One stage: `name`, the tests' directory under tests/, its cargo tests
     `((package, target, ...), ...)`, its budgets in seconds, the sources that
-    select it, the environment it needs. `default` needs no Verilated model."""
+    select it, the environment it needs. `default` needs no Verilated model.
+    `heavy` names the tests that build a whole package, each with its own
+    per-test budget `((test, seconds), ...)`."""
 
     name: str
     sources: tuple
     budget: float = 30.0
     per_test: float = 1.0
+    heavy: tuple = ()
     cargo: tuple = ()
     pytest: bool = True
     default: bool = True
@@ -123,6 +126,13 @@ SUITES = (
     Suite(
         "stages/dsl",
         ("kohakutpu/language", f"{COMPILER}/ktpu-kernels", f"{COMPILER}/ktpu-graph"),
+        budget=40.0,
+        heavy=(
+            (
+                "test_kernels.test_a_whole_row_band_is_taken_only_where_the_lowering_buffers_fit",
+                2.0,
+            ),
+        ),
         cargo=(("ktpu-sim", "dsl_split"),),
     ),
     Suite(
@@ -136,6 +146,7 @@ SUITES = (
             "kohakutpu/application/kohakutpu/application/ktpugrad/captured",
             "kohakuaccel/driver",
             f"{COMPILER}/ktpu-py",
+            "kohakutpu/compiler/kohakutpu/stack",
             f"{FRAMEWORK}/ka-debug",
         ),
     ),
@@ -145,8 +156,16 @@ SUITES = (
             "kohakutpu/application/kohakutpu/application/runtime",
             "kohakutpu/application/kohakutpu/application/api",
             "kohakutpu/application/kohakutpu/application/kernels/attention.py",
+            "kohakutpu/application/kohakutpu/application/kernels/native",
         ),
+        budget=60.0,
         per_test=20.0,
+        heavy=(
+            (
+                "test_attention.test_native_fast_projection_attention_keeps_materialized_stage_bytes",
+                45.0,
+            ),
+        ),
     ),
     Suite(
         "firmware/host",
@@ -378,7 +397,8 @@ def run(suite: Suite, jobs: int, mutants: str | None) -> dict:
     if suite.pytest and code == 0:
         code, tests = run_python(suite, jobs, report, env)
     seconds = time.monotonic() - t0
-    slow = [(name, t) for name, t in tests if t > suite.per_test]
+    limits = dict(suite.heavy)
+    slow = [(name, t) for name, t in tests if t > limits.get(name, suite.per_test)]
     budgeted = mutants or (seconds <= suite.budget and not slow)
     result = {
         "suite": suite.name,

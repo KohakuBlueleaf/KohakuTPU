@@ -628,7 +628,15 @@ fn rectangle(
     hw: &Hw,
 ) -> R<()> {
     let end = b0 + blocks;
-    let (by_rows, by_blocks) = (split(pl.nb, cores), split(blocks, cores));
+    // Group statistic trips by write lines; L2 orders remaining conflicts.
+    let group = members
+        .iter()
+        .filter(|m| m.out.kind == Kind::Row)
+        .map(|m| cdiv(hw.line_bytes, pl.rows * Hw::item(m.out.dtype)))
+        .max()
+        .unwrap_or(1);
+    let groups = cdiv(pl.nb, group);
+    let (by_rows, by_blocks) = (split(groups, cores), split(blocks, cores));
     if by_blocks.cores > by_rows.cores {
         let mut next = b0;
         while next < end {
@@ -655,7 +663,27 @@ fn rectangle(
     }
     for cb in b0..end {
         t.par(by_rows.cores, g::UnitKind::Vc, At::Var, |t, c| {
-            let (first, trips) = (by_rows.start(&c), by_rows.trips(&c));
+            let phase = members
+                .iter()
+                .find(|m| m.out.kind == Kind::Row)
+                .map(|m| {
+                    let row = origin(&Idx::Int(0), &Idx::Int(cb * pl.wc)).out.0;
+                    let plane = if pl.nblk > 1 {
+                        cb * m.dst.spec.shape[1]
+                    } else {
+                        0
+                    };
+                    row.add(m.out.offset + plane).div(pl.rows).rem(group)
+                })
+                .unwrap_or(Idx::Int(0));
+            let nonfirst = c.add(by_rows.cores - 1).div(by_rows.cores);
+            let last = c.add(1).div(by_rows.cores);
+            let first = by_rows.start(&c).mul(group).sub(phase.mul(&nonfirst));
+            let trips = by_rows
+                .trips(&c)
+                .mul(group)
+                .sub(phase.mul(Idx::Int(1).sub(nonfirst)))
+                .add(last.mul(phase.add(pl.nb - groups * group)));
             rows_trips(
                 t,
                 bufs,

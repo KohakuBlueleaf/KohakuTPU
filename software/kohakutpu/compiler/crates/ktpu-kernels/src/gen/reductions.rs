@@ -263,6 +263,96 @@ fn ports(ops: &[v::Operand], r: i64, w: i64, out_shape: &[i64], hw: &Hw) -> R<Po
     Ok((ports, given))
 }
 
+/// Emit a complete wide fold into named buffers, retaining every FP16 partial
+/// boundary and the odd middle block (API.ROW.003, DSL.SPEC.008).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn wide_fold(
+    t: &mut Trace,
+    inputs: &[Buf],
+    out_buf: Buf,
+    e: &E,
+    ops: &[v::Operand],
+    r: i64,
+    w: i64,
+    out: &v::Operand,
+    hw: &Hw,
+) -> R<()> {
+    let reds = expr::reduces(e);
+    if reds.len() != 1 {
+        return crate::trace::fail("API.OP.001", "a wide fold contains one reduction");
+    }
+    let red = reds[0].clone();
+    let Expr::Reduce(op, _) = red.as_ref() else {
+        unreachable!()
+    };
+    let mut keep = Vec::new();
+    let post = substitute(e, &red, &mut keep);
+    let part = v::Operand::new(v::Kind::Row);
+    let pl = v::plan(ops, v::Kind::Row, r, w, None, None, hw.stat_rows(), hw)?;
+    let nblk = pl.nblk;
+    let rq = part.rows.max(v::stat_words(r, hw) * hw.stat_rows());
+    let mode = mode();
+    let s0_2d = t.buffer(&[nblk, rq], g::Dtype::F16, vec![])?;
+    let s0 = t.buffer(&[nblk * rq], g::Dtype::F16, vec![])?;
+    let s1 = t.buffer(&[nblk * rq], g::Dtype::F16, vec![])?;
+    let partials = |t: &mut Trace| -> R<()> {
+        let ins = inputs.to_vec();
+        emit(t, ins, s0_2d.clone(), &red, ops, r, w, &part, hw)?;
+        t.copy(&s0.whole(), &s0_2d.whole(), None, None)
+    };
+    if mode != Some("wrong_order") {
+        partials(t)?;
+    }
+    let (mut src, mut dst) = (s0.clone(), s1);
+    let pair = both(fold(*op), expr::load(0), expr::load(1));
+    let mut width = nblk;
+    while width > 1 {
+        let half = width / 2;
+        let n = half * rq;
+        let second = if mode == Some("alias_members") {
+            0
+        } else {
+            width - half
+        };
+        let o = [
+            v::Operand { rows: n, ..part },
+            v::Operand {
+                rows: n,
+                offset: second * rq,
+                ..part
+            },
+        ];
+        if mode == Some("drop_member") && width == nblk {
+            std::mem::swap(&mut src, &mut dst);
+            width -= half;
+            continue;
+        }
+        let ins = vec![src.clone(), src.clone()];
+        emit(t, ins, dst.clone(), &pair, &o, n, hw.kblock, &part, hw)?;
+        if width - half > half {
+            let at = half * rq;
+            t.copy(
+                &dst.at(&[sl(at, at + rq)])?,
+                &src.at(&[sl(at, at + rq)])?,
+                None,
+                None,
+            )?;
+        }
+        std::mem::swap(&mut src, &mut dst);
+        width -= half;
+    }
+    if mode == Some("wrong_order") {
+        partials(t)?;
+    }
+    let mut ins = vec![src];
+    let mut post_ops = vec![v::Operand { rows: r, ..part }];
+    for &i in &keep {
+        ins.push(inputs[i].clone());
+        post_ops.push(ops[i]);
+    }
+    emit(t, ins, out_buf, &post, &post_ops, r, hw.kblock, out, hw)
+}
+
 /// `launch_reductions.wide_fold_kernel`: `e`, holding one reduction across
 /// a row of `w` columns wider than one column block, over [r, w] into
 /// `out`. The block partials go to an [nblk, rq] scratch, fold pairwise
@@ -277,16 +367,8 @@ pub fn wide_fold_kernel(
     m: &Machine,
 ) -> R<(Kernel, i64)> {
     let hw = Hw::of(m);
-    let red = expr::reduces(e)[0].clone();
-    let Expr::Reduce(op, _) = red.as_ref() else {
-        unreachable!()
-    };
-    let mut keep = Vec::new();
-    let post = substitute(e, &red, &mut keep);
-    let part = v::Operand::new(v::Kind::Row);
     let pl = v::plan(ops, v::Kind::Row, r, w, None, None, hw.stat_rows(), &hw)?;
     let nblk = pl.nblk;
-    let rq = part.rows.max(v::stat_words(r, &hw) * hw.stat_rows());
     let out_shape = if out.kind == v::Kind::Row {
         vec![out.rows.max(v::stat_words(r, &hw) * hw.stat_rows())]
     } else {
@@ -307,68 +389,18 @@ pub fn wide_fold_kernel(
             mode_py(),
         ],
     );
-    let mode = mode();
     let k = build(&key, m, ports, given, |t, p| {
-        let s0_2d = t.buffer(&[nblk, rq], g::Dtype::F16, vec![])?;
-        let s0 = t.buffer(&[nblk * rq], g::Dtype::F16, vec![])?;
-        let s1 = t.buffer(&[nblk * rq], g::Dtype::F16, vec![])?;
-        let partials = |t: &mut Trace| -> R<()> {
-            let ins = p[..ops.len()].to_vec();
-            emit(t, ins, s0_2d.clone(), &red, ops, r, w, &part, &hw)?;
-            t.copy(&s0.whole(), &s0_2d.whole(), None, None)
-        };
-        if mode != Some("wrong_order") {
-            partials(t)?;
-        }
-        let (mut src, mut dst) = (s0.clone(), s1);
-        let pair = both(fold(*op), expr::load(0), expr::load(1));
-        let mut width = nblk;
-        while width > 1 {
-            let half = width / 2;
-            let n = half * rq;
-            let second = if mode == Some("alias_members") {
-                0
-            } else {
-                width - half
-            };
-            let o = [
-                v::Operand { rows: n, ..part },
-                v::Operand {
-                    rows: n,
-                    offset: second * rq,
-                    ..part
-                },
-            ];
-            if mode == Some("drop_member") && width == nblk {
-                std::mem::swap(&mut src, &mut dst);
-                width -= half;
-                continue;
-            }
-            let ins = vec![src.clone(), src.clone()];
-            emit(t, ins, dst.clone(), &pair, &o, n, hw.kblock, &part, &hw)?;
-            if width - half > half {
-                let at = half * rq;
-                t.copy(
-                    &dst.at(&[sl(at, at + rq)])?,
-                    &src.at(&[sl(at, at + rq)])?,
-                    None,
-                    None,
-                )?;
-            }
-            std::mem::swap(&mut src, &mut dst);
-            width -= half;
-        }
-        if mode == Some("wrong_order") {
-            partials(t)?;
-        }
-        let mut ins = vec![src];
-        let mut post_ops = vec![v::Operand { rows: r, ..part }];
-        for &i in &keep {
-            ins.push(p[i].clone());
-            post_ops.push(ops[i]);
-        }
-        let out_buf = p[ops.len()].clone();
-        emit(t, ins, out_buf, &post, &post_ops, r, hw.kblock, out, &hw)
+        wide_fold(
+            t,
+            &p[..ops.len()],
+            p[ops.len()].clone(),
+            e,
+            ops,
+            r,
+            w,
+            out,
+            &hw,
+        )
     })?;
     Ok((k, nblk))
 }

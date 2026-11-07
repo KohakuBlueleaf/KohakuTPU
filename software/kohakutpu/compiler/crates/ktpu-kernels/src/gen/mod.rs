@@ -35,6 +35,8 @@ pub struct Hw {
     pub l1_words: i64,
     /// Bytes of a memory word (`die.word_bytes`).
     pub word_bytes: i64,
+    /// Bytes whose writes share one DRAM ownership line.
+    pub line_bytes: i64,
     /// f16 values a word holds, and a statistic word's rows (`vc.lanes`).
     pub lanes: i64,
     /// Values a vector register holds (`vc.vlmax`).
@@ -73,6 +75,7 @@ impl Hw {
                 m.vc.l1_words as i64
             },
             word_bytes: m.die.word_bytes as i64,
+            line_bytes: m.card.dram.line_bytes as i64,
             lanes: m.vc.lanes as i64,
             vlmax: m.vc.vlmax as i64,
             descriptors: m.vc.descriptors as i64,

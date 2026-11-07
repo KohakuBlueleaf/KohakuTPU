@@ -17,12 +17,18 @@ use crate::model::finding::{Finding, Kind};
 use crate::target::{Target, UnitKind};
 
 pub(crate) mod card;
+pub(crate) mod dram;
 pub(crate) mod fx;
 pub(crate) mod memory;
 pub(crate) mod node;
+pub(crate) mod package_memory;
 pub(crate) mod report;
+mod retire;
+pub(crate) mod stats;
 pub(crate) mod symbolic;
 pub(crate) mod units;
+pub(crate) mod values;
+pub(crate) mod visibility;
 
 use memory::Memory;
 use node::Node;
@@ -82,6 +88,7 @@ pub(crate) struct Proc {
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Word {
     pub word: U256,
+    pub source: Option<package_memory::Location>,
     pub given: Clock,
     pub dec: Option<units::cluster::Decoded>,
 }
@@ -175,12 +182,14 @@ impl Decision {
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 struct Cursor {
     proc: usize,
+    quantum: u16,
     moved: bool,
 }
 
 #[derive(Clone)]
 pub(crate) struct Sim<'t> {
     pub t: &'t Target,
+    pub card: card::Card,
     pub symbolic: symbolic::Symbolic,
     pub path: Vec<Decision>,
     pub choices: Vec<Decision>,
@@ -191,9 +200,15 @@ pub(crate) struct Sim<'t> {
     names: IndexMap<String, usize>,
     totals: Option<Totals>,
     pub findings: Vec<Finding>,
+    /// Physical proof obligations do not stop architectural dispatch progress.
+    /// Admission includes every obligation, including unresolved footprints.
+    pub memory_findings: Vec<Finding>,
     /// Secondary initialization diagnostics, after routing/counter failures.
     pub sequence_findings: Vec<Finding>,
     pub events: u64,
+    next_retirement: u64,
+    pub(crate) stats_enabled: bool,
+    next_stats: u64,
     /// What a finding reported once is keyed by.
     pub flagged: HashSet<i64>,
     pub units: Vec<Unit>,
@@ -224,6 +239,7 @@ impl<'t> Sim<'t> {
     pub fn new(t: &'t Target, totals: Option<Totals>) -> Self {
         Sim {
             t,
+            card: card::Card::default(),
             symbolic: symbolic::Symbolic::default(),
             path: Vec::new(),
             choices: Vec::new(),
@@ -233,8 +249,12 @@ impl<'t> Sim<'t> {
             names: IndexMap::new(),
             totals,
             findings: Vec::new(),
+            memory_findings: Vec::new(),
             sequence_findings: Vec::new(),
             events: 0,
+            next_retirement: 1024,
+            stats_enabled: std::env::var_os("KTPU_VERIFY_STATS").is_some(),
+            next_stats: 1024,
             flagged: HashSet::default(),
             units: Vec::new(),
             unit_at: HashMap::default(),
@@ -360,10 +380,22 @@ impl<'t> Sim<'t> {
         let mut finished = Vec::new();
         let mut joins: Vec<(Self, Cursor)> = Vec::new();
         let mut cursor = Cursor::default();
+        if self.stats_enabled {
+            self.retained_stats("start");
+        }
         loop {
             let before = self.events;
             let outcome = self.run_rounds(limit, &mut cursor, rounds);
             *events += self.events - before;
+            if self.stats_enabled {
+                eprintln!(
+                    "verify branches: pending={} joins={} finished={}",
+                    pending.len(),
+                    joins.len(),
+                    finished.len()
+                );
+                self.retained_stats("boundary");
+            }
             match outcome {
                 StepOutcome::Fork {
                     node,
@@ -418,6 +450,10 @@ impl<'t> Sim<'t> {
                     }
                 }
                 StepOutcome::Join => {
+                    if pending.is_empty() {
+                        joins.clear();
+                        continue;
+                    }
                     if !joins
                         .iter()
                         .any(|(s, c)| *c == cursor && s.same_state(&self))
@@ -487,15 +523,18 @@ impl<'t> Sim<'t> {
     }
 
     fn same_state(&self, other: &Self) -> bool {
-        self.symbolic == other.symbolic
+        self.card == other.card
+            && self.symbolic == other.symbolic
             && self.procs == other.procs
             && self.proc_names == other.proc_names
             && self.counters == other.counters
             && self.names == other.names
             && self.totals == other.totals
             && self.findings == other.findings
+            && self.memory_findings == other.memory_findings
             && self.sequence_findings == other.sequence_findings
             && self.events == other.events
+            && self.next_retirement == other.next_retirement
             && self.flagged == other.flagged
             && self.units == other.units
             && self.unit_at == other.unit_at
@@ -517,6 +556,10 @@ impl<'t> Sim<'t> {
             *rounds += 1;
             while cursor.proc < self.procs.len() {
                 loop {
+                    if cursor.quantum == 256 {
+                        cursor.quantum = 0;
+                        break;
+                    }
                     match self.step(cursor.proc) {
                         StepOutcome::Progress => {
                             cursor.moved = true;
@@ -525,8 +568,10 @@ impl<'t> Sim<'t> {
                                 self.find(Kind::Model, "machine", format!("over {limit} events"));
                                 return StepOutcome::Terminal;
                             }
+                            cursor.quantum += 1;
                         }
                         fork @ StepOutcome::Fork { .. } => {
+                            cursor.quantum += 1;
                             cursor.moved = true;
                             self.events += 1;
                             if self.events > limit {
@@ -536,13 +581,24 @@ impl<'t> Sim<'t> {
                             return fork;
                         }
                         StepOutcome::Join => return StepOutcome::Join,
-                        StepOutcome::Blocked => break,
+                        StepOutcome::Blocked => {
+                            cursor.quantum = 0;
+                            break;
+                        }
                         StepOutcome::Terminal => return StepOutcome::Terminal,
                     }
                 }
                 cursor.proc += 1;
             }
             cursor.proc = 0;
+            if self.stats_enabled && self.events >= self.next_stats {
+                self.retained_stats("sweep");
+                self.next_stats = self.events.saturating_mul(2);
+            }
+            if self.events >= self.next_retirement {
+                self.retire_memory();
+                self.next_retirement = self.events + 1024;
+            }
             if std::mem::take(&mut cursor.moved) {
                 continue;
             }
@@ -717,7 +773,12 @@ impl<'t> Sim<'t> {
             Kinded::Mg(_) => units::cluster::decode(&self.t.isa, &word),
             _ => None,
         };
-        self.units[u].words.push(Word { word, given, dec });
+        self.units[u].words.push(Word {
+            word,
+            given,
+            dec,
+            source: None,
+        });
     }
 }
 

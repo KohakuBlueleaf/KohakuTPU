@@ -84,7 +84,7 @@ fn merge_segs(groups: &[Vec<Vec<String>>]) -> Vec<String> {
 pub(super) fn close(mut stages: Vec<Stage>) -> Vec<Stage> {
     if let Some(last) = stages.last_mut() {
         if last.post.is_some() {
-            last.lines[0] = "move".into();
+            last.lines[0] = "move local=1".into();
             last.post = None;
             last.closes = true;
         }

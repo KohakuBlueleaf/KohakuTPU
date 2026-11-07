@@ -29,6 +29,51 @@ pub struct AddrField {
     pub value: u64,
 }
 
+/// Route ordinary memory through the executing mesh without relocating route bits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalRoute {
+    pub shift: u32,
+    pub bits: u32,
+    pub special: u32,
+    pub mesh: u32,
+}
+
+impl LocalRoute {
+    pub fn packed(self) -> u64 {
+        u64::from(self.shift) | (u64::from(self.bits) << 6) | (u64::from(self.special) << 10)
+    }
+
+    pub fn apply(self, word: &mut Word, fields: &mut [AddrField]) {
+        let mask = ((1u64 << self.bits) - 1) << self.shift;
+        for field in fields {
+            if field.value & (1u64 << self.special) != 0 {
+                continue;
+            }
+            let routed = (field.value & !mask) | (u64::from(self.mesh) << self.shift);
+            for &(bit, width, shift) in &field.segments {
+                word.set(bit, width, routed >> shift);
+            }
+            field.segments = self.segments(&field.segments);
+        }
+    }
+
+    pub fn segments(self, segments: &[Segment]) -> Vec<Segment> {
+        let end = self.shift + self.bits;
+        let mut out = Vec::new();
+        for &(bit, width, shift) in segments {
+            let lo_end = (shift + width).min(self.shift);
+            if shift < lo_end {
+                out.push((bit, lo_end - shift, shift));
+            }
+            let hi = shift.max(end);
+            if hi < shift + width {
+                out.push((bit + hi - shift, shift + width - hi, hi));
+            }
+        }
+        out
+    }
+}
+
 /// A project's report on one payload of one unit type: every address field
 /// and its value (`isa.fields.addresses`; the mover's is `mover::addresses`).
 pub trait Addresses {
@@ -240,9 +285,12 @@ impl PackageBuilder {
         addresses: Option<&dyn Addresses>,
         unit_type: &str,
     ) -> usize {
-        let idx = self.payloads.len();
-        let mut word = word;
         let fields = addresses.map_or_else(Vec::new, |a| a.fields(&word, unit_type));
+        self.payload_fields(word, fields)
+    }
+
+    fn payload_fields(&mut self, mut word: Word, fields: Vec<AddrField>) -> usize {
+        let idx = self.payloads.len();
         for f in fields {
             let Some((base, size)) = self.span_of(f.value) else {
                 continue;
@@ -483,9 +531,19 @@ impl PackageBuilder {
     /// Framework memory fields use the same span rule as project fields.
     /// Control offsets have no memory fields. Returns the first payload index.
     fn addressed(&mut self, words: &[Word], relocate: bool, halves: &[u32]) -> usize {
+        self.addressed_routed(words, relocate, halves, None)
+    }
+
+    fn addressed_routed(
+        &mut self,
+        words: &[Word],
+        relocate: bool,
+        halves: &[u32],
+        local: Option<LocalRoute>,
+    ) -> usize {
         let first = self.payloads.len();
-        for w in words {
-            let fields: Vec<AddrField> = halves
+        for &w in words {
+            let mut fields: Vec<AddrField> = halves
                 .iter()
                 .map(|&h| (h, w.limb(h)))
                 .filter(|&(_, v)| v != MOVER_SKIP)
@@ -494,8 +552,12 @@ impl PackageBuilder {
                     value: v,
                 })
                 .collect();
+            let mut w = w;
+            if let Some(route) = local {
+                route.apply(&mut w, &mut fields);
+            }
             let fns = Halves(fields);
-            self.payload(*w, relocate.then_some(&fns as &dyn Addresses), "");
+            self.payload(w, relocate.then_some(&fns as &dyn Addresses), "");
         }
         first
     }
@@ -503,12 +565,27 @@ impl PackageBuilder {
     /// 64-bit stores `(address, value)` in order (L0.STEP.047); with
     /// `from_regs` each value names a register.
     pub fn store(&mut self, ps: &[(u64, u64)], from_regs: bool, relocate: bool) {
+        self.store_routed(ps, from_regs, relocate, None);
+    }
+
+    pub fn store_routed(
+        &mut self,
+        ps: &[(u64, u64)],
+        from_regs: bool,
+        relocate: bool,
+        local: Option<LocalRoute>,
+    ) {
         let words = pairs(ps);
-        let first = self.addressed(&words, relocate, &[0, 128]);
-        let flags = if from_regs { F_REG } else { 0 };
+        let first = self.addressed_routed(&words, relocate, &[0, 128], local);
+        let flags = if from_regs { F_REG } else { 0 }
+            | if local.is_some() {
+                crate::format::F_LOCAL_CPU
+            } else {
+                0
+            };
         self.steps.push(Step::new(
             Op::Store,
-            0,
+            local.map_or(0, LocalRoute::packed),
             words.len() as u64,
             first as u64,
             flags,
@@ -540,16 +617,36 @@ impl PackageBuilder {
     /// Register `reg` := the 64 bits at `address` (+ register `index`), or the
     /// control register at offset `address` with `ctrl` (L0.STEP.049).
     pub fn load(&mut self, reg: u64, address: u64, index: Option<u64>, ctrl: bool, relocate: bool) {
-        let flags = if index.is_some() { F_INDEXED } else { 0 } | if ctrl { F_CTRL } else { 0 };
-        let first = self.addressed(
+        self.load_routed(reg, address, index, ctrl, relocate, None);
+    }
+
+    pub fn load_routed(
+        &mut self,
+        reg: u64,
+        address: u64,
+        index: Option<u64>,
+        ctrl: bool,
+        relocate: bool,
+        local: Option<LocalRoute>,
+    ) {
+        let local = local.filter(|_| !ctrl);
+        let flags = if index.is_some() { F_INDEXED } else { 0 }
+            | if ctrl { F_CTRL } else { 0 }
+            | if local.is_some() {
+                crate::format::F_LOCAL_CPU
+            } else {
+                0
+            };
+        let first = self.addressed_routed(
             &[Word::from_u64(address)],
             relocate,
             if ctrl { &[] } else { &[0] },
+            local,
         );
         self.steps.push(Step::new(
             Op::Load,
             reg,
-            index.unwrap_or(0),
+            index.unwrap_or(0) | (local.map_or(0, LocalRoute::packed) << 16),
             first as u64,
             flags,
         ));
@@ -664,6 +761,16 @@ impl PackageBuilder {
         addresses: Option<&dyn Addresses>,
         posted: bool,
     ) {
+        self.mover_routed(writes, addresses, posted, None);
+    }
+
+    pub fn mover_routed(
+        &mut self,
+        writes: &[(u64, u64)],
+        addresses: Option<&dyn Addresses>,
+        posted: bool,
+        local: Option<LocalRoute>,
+    ) {
         let first = self.payloads.len();
         let swapped: Vec<(u64, u64)>;
         let writes = if mutant::on("l0.build/mover_swapped") {
@@ -672,14 +779,24 @@ impl PackageBuilder {
         } else {
             writes
         };
-        for w in padded(writes, (MOVER_SKIP, 0)) {
-            self.payload(w, addresses, "mover");
+        for mut w in padded(writes, (MOVER_SKIP, 0)) {
+            let mut fields = addresses.map_or_else(Vec::new, |a| a.fields(&w, "mover"));
+            if let Some(route) = local {
+                route.apply(&mut w, &mut fields);
+            }
+            self.payload_fields(w, fields);
         }
         let posted = posted && !mutant::on("l0.build/never_posted");
-        let flags = if posted { F_POSTED } else { 0 };
+        let flags = if posted { F_POSTED } else { 0 }
+            | if local.is_some() {
+                crate::format::F_LOCAL
+            } else {
+                0
+            };
+        let route = local.map_or(0, LocalRoute::packed);
         self.steps.push(Step::new(
             Op::Mover,
-            0,
+            route,
             (self.payloads.len() - first) as u64,
             first as u64,
             flags,

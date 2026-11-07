@@ -17,6 +17,7 @@ thread_local! {
 
 use ktpu_machine::Machine;
 
+use super::orders::Orders;
 use super::schedule::{movable, preds, MIN_GAIN};
 use super::timing::{Core, MOp};
 use crate::error::Result;
@@ -32,6 +33,8 @@ pub struct Ruled<'a> {
     isa: VecIsa,
     facts: CoreFacts,
     copies: u32,
+    context: ([u8; 32], u32, u32),
+    orders: Option<&'a Orders>,
 }
 
 impl<'a> Ruled<'a> {
@@ -47,7 +50,15 @@ impl<'a> Ruled<'a> {
             isa: isa_for(machine, vregs)?,
             facts: CoreFacts::of(machine, vregs),
             copies,
+            context: (machine.digest_bytes(), vregs, copies),
+            orders: None,
         })
+    }
+
+    /// Share successful run orders within the caller's mutation scope.
+    pub fn with_orders(mut self, orders: &'a Orders) -> Self {
+        self.orders = Some(orders);
+        self
     }
 
     fn encoder(&self) -> Encoder<'_> {
@@ -123,8 +134,16 @@ impl<'a> Ruled<'a> {
     /// [`Ruled::order`] with each configuration word a statement takes added
     /// to its start at `price` cycles (L1.SCHED.007).
     pub fn priced(&self, run: &[Stmt], price: i64) -> Result<Vec<usize>> {
-        let mut got = self.list_order(run, price)?;
-        if mutant::on("l1.sched/unstable") {
+        let unstable = mutant::on("l1.sched/unstable");
+        let mut got = match self.orders {
+            Some(orders) if run.len() >= 3 && !unstable => {
+                orders.get(self.context, price, emit_at(run, 0, 48), || {
+                    self.list_order(run, price)
+                })?
+            }
+            _ => self.list_order(run, price)?,
+        };
+        if unstable {
             let calls = CALLS.with(|c| {
                 c.set(c.get() + 1);
                 c.get()

@@ -271,6 +271,7 @@ fn compact(pkg: &mut Package) -> Result<()> {
     for step in &mut pkg.steps {
         let count = match step.op {
             Op::Dispatch | Op::Mover | Op::Store | Op::Ctrl => step.count,
+            Op::Alu | Op::Fetch if step.flags & ktpu_l0::format::F_MEM != 0 => 1,
             Op::Load | Op::Recv => 1,
             _ => continue,
         };

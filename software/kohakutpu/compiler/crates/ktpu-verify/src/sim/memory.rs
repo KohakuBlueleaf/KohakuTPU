@@ -12,6 +12,9 @@ use std::rc::Rc;
 use crate::model::clock::Clock;
 use crate::model::finding::{Finding, Kind};
 
+mod ranges;
+use ranges::Ranges;
+
 /// Race findings kept per unit.
 pub const LIMIT: u32 = 8;
 /// Locations below this are held in a vector indexed by location; others
@@ -121,7 +124,7 @@ impl fmt::Display for What {
 
 #[derive(Clone, PartialEq, Eq)]
 struct Access {
-    clock: Clock,
+    epoch: u32,
     proc: usize,
     what: What,
 }
@@ -159,18 +162,44 @@ impl Readers {
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Memory {
     name: String,
-    /// Per space (`Space as usize`): location -> its last write.
+    l1: Ranges,
+    /// Cluster spaces (`Space as usize`): location -> its last write.
     writes: [Locs<Option<Event>>; 4],
-    /// Per space: location -> its reads since the last write.
+    /// Cluster spaces: location -> its reads since the last write.
     reads: [Locs<Readers>; 4],
     found: u32,
     seen: HashSet<(String, String)>,
 }
 
 impl Memory {
+    pub(crate) fn retained(&self, stats: &mut crate::sim::stats::Retained) {
+        self.l1.retained(stats);
+        for locs in &self.writes {
+            stats.add("local_write_slots", locs.dense.len() + locs.sparse.len());
+            for event in locs
+                .dense
+                .iter()
+                .flatten()
+                .chain(locs.sparse.values())
+                .flatten()
+            {
+                stats.object("local_events", Rc::as_ptr(event) as usize);
+            }
+        }
+        for locs in &self.reads {
+            stats.add("local_read_slots", locs.dense.len() + locs.sparse.len());
+            for readers in locs.dense.iter().flatten().chain(locs.sparse.values()) {
+                for (_, event) in readers.first.iter().chain(&readers.more) {
+                    stats.object("local_events", Rc::as_ptr(event) as usize);
+                }
+            }
+        }
+    }
+
     pub fn new(name: &str) -> Self {
         Memory {
             name: name.to_string(),
+            l1: Ranges::default(),
             writes: Default::default(),
             reads: Default::default(),
             found: 0,
@@ -189,8 +218,22 @@ impl Memory {
         proc: usize,
         what: &What,
     ) {
+        if space == Space::L1 {
+            let mut ranges: Vec<(i64, i64)> = Vec::new();
+            for loc in locs {
+                if let Some(last) = ranges.last_mut() {
+                    if last.1 == loc {
+                        last.1 += 1;
+                        continue;
+                    }
+                }
+                ranges.push((loc, loc + 1));
+            }
+            self.access_l1(out, ranges, write, clock, proc, what);
+            return;
+        }
         let e: Event = Rc::new(Access {
-            clock: clock.clone(),
+            epoch: clock.at(proc),
             proc,
             what: what.clone(),
         });
@@ -198,7 +241,7 @@ impl Memory {
         for loc in locs {
             let key = (space, loc);
             if let Some(Some(w)) = self.writes[s].get(loc) {
-                if w.clock.at(w.proc) > clock.at(w.proc) {
+                if w.epoch > clock.at(w.proc) {
                     let w = w.clone();
                     self.race(out, key, &w, &e);
                 }
@@ -206,7 +249,7 @@ impl Memory {
             if write {
                 if let Some(rs) = self.reads[s].remove(loc) {
                     for (_, r) in rs.all() {
-                        if r.clock.at(r.proc) > clock.at(r.proc) {
+                        if r.epoch > clock.at(r.proc) {
                             self.race(out, key, &r, &e);
                         }
                     }
@@ -218,23 +261,65 @@ impl Memory {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn access_l1(
+        &mut self,
+        out: &mut Vec<Finding>,
+        ranges: impl IntoIterator<Item = (i64, i64)>,
+        write: bool,
+        clock: &Clock,
+        proc: usize,
+        what: &What,
+    ) {
+        let event = Rc::new(Access {
+            epoch: clock.at(proc),
+            proc,
+            what: what.clone(),
+        });
+        let Self {
+            name,
+            l1,
+            found,
+            seen,
+            ..
+        } = self;
+        l1.access(ranges, write, clock, &event, |loc, previous| {
+            Self::report(name, found, seen, out, (Space::L1, loc), previous, &event);
+        });
+    }
+
     fn race(&mut self, out: &mut Vec<Finding>, key: (Space, i64), a: &Access, b: &Access) {
+        Self::report(&self.name, &mut self.found, &mut self.seen, out, key, a, b);
+    }
+
+    fn report(
+        name: &str,
+        found: &mut u32,
+        seen: &mut HashSet<(String, String)>,
+        out: &mut Vec<Finding>,
+        key: (Space, i64),
+        a: &Access,
+        b: &Access,
+    ) {
         let pair = (a.what.to_string(), b.what.to_string());
-        if self.seen.contains(&pair) || self.found >= LIMIT {
+        if seen.contains(&pair) || *found >= LIMIT {
             return;
         }
         let text = format!(
             "{} {}: {} and {} are not ordered",
             key.0, key.1, pair.0, pair.1
         );
-        self.seen.insert(pair);
-        self.found += 1;
-        out.push(Finding::new(Kind::Race, self.name.clone(), text));
+        seen.insert(pair);
+        *found += 1;
+        out.push(Finding::new(Kind::Race, name, text));
     }
 
     /// The locations of `space` with a read since their last write, and
     /// those written, sorted.
     pub fn touched(&self, space: Space) -> (Vec<i64>, Vec<i64>) {
+        if space == Space::L1 {
+            return self.l1.touched();
+        }
         let s = space as usize;
         (self.reads[s].locations(), self.writes[s].locations())
     }

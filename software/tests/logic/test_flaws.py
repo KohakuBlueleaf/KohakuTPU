@@ -211,10 +211,14 @@ fn rows.l1(x: f16[64, 48] @dram, i: i32[8] @dram, y: f16[16, 64] @dram)
 def test_a_split_gather_row_off_an_index_word_still_encodes():
     """L1.MOV.019 / ISA.MV.054: two three-word rows 128 bytes apart split into
     an even body and a lone tail a row; the second row's pieces read the list
-    from its word, the first row masked."""
+    from its word, the first row masked. L1.VER.013 requires the index
+    values used to resolve physical source addresses before certification."""
     doc = machine("multimesh_v9t8")
     op = "gather x + 0 -> w(y + 0, (2, 128), (3, 32)) index=i + 0 n=2 pitch=96 words=3"
-    got = rs.compile(INDEXED.format(op=op), "rows", json.dumps(doc), l1=True)
+    source = INDEXED.format(op=op).replace(
+        "    move\n", "    store i <- 4294967296\n    move\n"
+    )
+    got = rs.compile(source, "rows", json.dumps(doc), l1=True)
     assert got["f001"]["split"] == 4, got["f001"]
     assert not got["verdict"]["refused"], got["verdict"]
 

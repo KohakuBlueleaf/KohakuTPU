@@ -10,18 +10,25 @@ pub mod op {
     pub const DISPATCH: u8 = 1;
     pub const AWAIT: u8 = 2;
     pub const BARRIER: u8 = 3;
+    pub const MOVER: u8 = 4;
     pub const RING: u8 = 5;
     pub const WAIT_BELL: u8 = 6;
+    pub const SIGNAL: u8 = 7;
+    pub const SETTLE: u8 = 8;
     pub const REPEAT: u8 = 9;
+    pub const MWAIT: u8 = 10;
     pub const ENGINE: u8 = 11;
     pub const FETCH: u8 = 12;
     pub const WAIT_SLOT: u8 = 13;
+    pub const STORE: u8 = 14;
     pub const LOAD: u8 = 15;
     pub const ALU: u8 = 16;
     pub const JUMP: u8 = 17;
     pub const PATCH: u8 = 18;
     pub const SEND: u8 = 19;
     pub const RECV: u8 = 20;
+    pub const CTRL: u8 = 21;
+    pub const ASSERT_ZERO: u8 = 22;
     pub const FRONTIER: u8 = 23;
 
     /// The opcode's name (`"WAIT_BELL"`).

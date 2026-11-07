@@ -750,6 +750,23 @@ pub(crate) fn kernel_with_timing(
     mach: &Machine,
     price_unsplit: bool,
 ) -> R<crate::split::PlannedKernel> {
+    kernel_with_policy(
+        shape,
+        request,
+        mach,
+        price_unsplit,
+        super::super::chain::quant::Backend::Generator,
+    )
+}
+
+/// Price and emit the selected quant schedule as part of every complete option.
+pub(crate) fn kernel_with_policy(
+    shape: &Shape<'_>,
+    request: &SplitRequest,
+    mach: &Machine,
+    price_unsplit: bool,
+    backend: super::super::chain::quant::Backend,
+) -> R<crate::split::PlannedKernel> {
     use crate::split::cost::{select_split, ChoiceCache};
     use crate::split::PlannedKernel;
     use std::sync::OnceLock;
@@ -764,17 +781,17 @@ pub(crate) fn kernel_with_timing(
         let mut unforced = request.clone();
         unforced.force = None;
         let key = format!(
-            "{shape:?}/{unforced:?}/{:?}/{}",
+            "{shape:?}/{unforced:?}/{backend:?}/{:?}/{}",
             mach.digest_bytes(),
             pricing_mutants(),
         );
         CHOICES
             .get_or_init(ChoiceCache::default)
             .choose(key, request.force.as_deref(), || {
-                price_options(shape, &unforced, mach)
+                price_options(shape, &unforced, mach, backend)
             })?
     };
-    let kernel = build_option(shape, request, &split, mach)?;
+    let kernel = build_option(shape, request, &split, mach, backend)?;
     let l1 = if matches!(split.axis, SplitAxis::BPass { .. }) {
         let emitted = b_pass::emit(&kernel, &split, request, mach)?;
         emitted.manifest(&mut split, request);
@@ -820,7 +837,12 @@ fn pricing_mutants() -> String {
     active.join("/")
 }
 
-fn price_options(shape: &Shape<'_>, request: &SplitRequest, mach: &Machine) -> R<Vec<SplitOption>> {
+fn price_options(
+    shape: &Shape<'_>,
+    request: &SplitRequest,
+    mach: &Machine,
+    backend: super::super::chain::quant::Backend,
+) -> R<Vec<SplitOption>> {
     use crate::split::cost::price_option;
     use crate::split::{CostFeatures, LocalTiming};
 
@@ -828,7 +850,7 @@ fn price_options(shape: &Shape<'_>, request: &SplitRequest, mach: &Machine) -> R
     let mut priced = Vec::new();
     for mut option in options {
         if matches!(option.axis, SplitAxis::BPass { .. }) {
-            let kernel = build_option(shape, request, &option, mach)?;
+            let kernel = build_option(shape, request, &option, mach, backend)?;
             let emitted = b_pass::emit(&kernel, &option, request, mach)?;
             emitted.manifest(&mut option, request);
             option.cost = emitted.price(&kernel.graph.name, request, mach)?;
@@ -837,7 +859,7 @@ fn price_options(shape: &Shape<'_>, request: &SplitRequest, mach: &Machine) -> R
         }
         let mut kernels = Vec::new();
         if option.conversions != 0 || matches!(option.axis, SplitAxis::K) {
-            let whole = build_option(shape, request, &option, mach)?;
+            let whole = build_option(shape, request, &option, mach, backend)?;
             let cycles = g::cycles(&whole.graph, mach)? - mach.vc.launch_front as i64;
             let active = option.active_nodes;
             priced.push(price_option(
@@ -856,7 +878,7 @@ fn price_options(shape: &Shape<'_>, request: &SplitRequest, mach: &Machine) -> R
             if part.shards.iter().all(|s| s.role == ShardRole::Empty) {
                 continue;
             }
-            kernels.push(build_option(shape, request, &part, mach)?);
+            kernels.push(build_option(shape, request, &part, mach, backend)?);
         }
         priced.push(price_option(
             option,
@@ -994,6 +1016,7 @@ fn build_option(
     request: &SplitRequest,
     option: &SplitOption,
     mach: &Machine,
+    backend: super::super::chain::quant::Backend,
 ) -> R<Kernel> {
     let placement = if request.nodes.ids() == [0] {
         None
@@ -1001,7 +1024,7 @@ fn build_option(
         Some((request, option))
     };
     if let Some(class) = shape.class {
-        return Ok(crate::gen::classes::mm::kernel_split(
+        let kernel = crate::gen::classes::mm::kernel_split(
             shape.mm,
             shape.e,
             shape.extras,
@@ -1010,9 +1033,10 @@ fn build_option(
             mach,
             placement,
         )?
-        .kernel);
+        .kernel;
+        return super::super::chain::quant::kernel(kernel, backend, mach);
     }
-    mm_kernel_build(
+    let kernel = mm_kernel_build(
         shape.mm,
         shape.e,
         shape.extras,
@@ -1022,7 +1046,8 @@ fn build_option(
         shape.made,
         shape.demands,
         placement,
-    )
+    )?;
+    super::super::chain::quant::kernel(kernel, backend, mach)
 }
 
 fn private_byte(shape: &Shape<'_>, share: &ShardTiles, byte: u64) -> i64 {

@@ -299,8 +299,8 @@ L1 maintains `held` for write deduplication, but validates `want` before merging
 it (`software/kohakutpu/compiler/crates/ktpu-l1/src/lower/sru.rs:440-483`): this
 is not a proof of arbitrary omitted retained words across submissions.
 `ka-package` `send_raw` accepts words and dispatches them via `b.send`
-(`software/kohakuaccel/compiler/crates/ka-package/src/program.rs:306-319`,
-:809-817). Generic package DISPATCH/FETCH, firmware and OS execution likewise
+(`software/kohakuaccel/compiler/crates/ka-package/src/program.rs:316-330`,
+:854-863). Generic package DISPATCH/FETCH, firmware and OS execution likewise
 do not decode the SRU's complete retained image. Runtime raw transport/debug
 writes can modify hardware outside a semantic Job's lifetime.
 
@@ -322,7 +322,7 @@ under backpressure, and count only accepted valid data beats.
 (`software/kohakutpu/compiler/crates/ktpu-l1/src/lower/image/desc.rs:169-232`),
 then `image/memory.rs:174-182` emits two drains. It is not a readiness guarantee
 for arbitrary raw flits, descriptor patches or refill gaps. Raw SEND transports
-words without that descriptor analysis (`ka-package/src/program.rs:809-817`
+words without that descriptor analysis (`ka-package/src/program.rs:854-863`
 under `software/kohakuaccel/compiler/crates`): raw flits are a debug path.
 
 F-004 includes the distance **equal to** half the range

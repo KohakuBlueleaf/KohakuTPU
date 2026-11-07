@@ -10,7 +10,7 @@
 //! counter reached its target. Counters: granules landed by COUNT bursts
 //! (RX) and credits received (CR), both kept across RUNs.
 
-use ktpu_isa::unit::vector::VecCu;
+use ktpu_isa::unit::vector::{VecCu, DIM_BOUND_BITS, DIM_STRIDE_BITS};
 use ktpu_isa::{Isa, W256};
 
 use crate::adapter::isa::{Fields, VOp, CR, HALT_WORD, RX};
@@ -37,7 +37,7 @@ fn core_word(isa: &Isa, word: u64) -> Option<(VOp, Fields)> {
 use crate::model::clock::Clock;
 use crate::model::finding::Kind;
 use crate::sim::fx::FxHashMap as HashMap;
-use crate::sim::memory::{Memory, Space, What};
+use crate::sim::memory::{Memory, What};
 use crate::sim::{Kinded, Pk, Sender, Sim, Sink, Unit};
 
 /// Engines, in the order the checker keeps them: FILL, DRAIN, UNPACK,
@@ -164,7 +164,7 @@ enum SVal {
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Entry {
     pub op: VOp,
-    f: Fields,
+    decoded: CoreDecoded,
     clock: Clock,
     deps: Vec<usize>,
     guard: Option<Guard>,
@@ -173,8 +173,10 @@ pub(crate) struct Entry {
     /// A `rel` transfer's running offset (AINC).
     roff: i64,
     conditional: bool,
-    /// (L1 words, writes, what) it touches.
-    l1: Option<(Vec<i64>, bool, What)>,
+    /// (Exact L1 word ranges, writes, what) it touches.
+    l1: Option<(Vec<(i64, i64)>, bool, What)>,
+    dram: Option<Result<super::super::dram::Footprint, String>>,
+    pc: i64,
 }
 
 #[derive(Default, Clone, PartialEq, Eq)]
@@ -260,7 +262,112 @@ fn walk_len(mode: i64, chunks: i64, pack: bool) -> i64 {
     n + i64::from(on(WALK))
 }
 
+/// A consecutive local walk visits at most one lap of the circular L1.
+fn local_contiguous(base: i64, words: i64, l1: i64) -> Vec<(i64, i64)> {
+    let base = base.rem_euclid(l1);
+    let words = words.min(l1);
+    let first = words.min(l1 - base);
+    let mut ranges = vec![(base, base + first)];
+    if first < words {
+        ranges.push((0, words - first));
+    }
+    ranges
+}
+
+/// Four lanes per row; a row's modular origin repeats after l1/gcd(s1,l1).
+/// Ranges retain first-visit order for location-bearing diagnostics.
+fn local_strided(base: i64, words: i64, s0: i64, s1: i64, l1: i64) -> Vec<(i64, i64)> {
+    if s0 == 0 && (0..=1).contains(&s1) {
+        return local_contiguous(base, 1 + ((words - 1) / 4) * s1, l1);
+    }
+    if s0 == 1 && (0..=4).contains(&s1) {
+        let rows = words / 4;
+        let tail = words % 4;
+        let mut extent = if rows == 0 { 0 } else { (rows - 1) * s1 + 4 };
+        if tail != 0 {
+            extent = extent.max(rows * s1 + tail);
+        }
+        return local_contiguous(base, extent, l1);
+    }
+    let (mut a, mut b) = (l1, s1.rem_euclid(l1));
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    let words = words.min(4 * (l1 / a));
+    let mut ranges: Vec<(i64, i64)> = Vec::new();
+    for w in 0..words {
+        let at = (base + (w % 4) * s0 + (w / 4) * s1).rem_euclid(l1);
+        if let Some(last) = ranges.last_mut() {
+            if last.0 <= at && at <= last.1 {
+                last.1 = last.1.max(at + 1);
+                continue;
+            }
+        }
+        ranges.push((at, at + 1));
+    }
+    ranges
+}
+
 impl Vector {
+    pub(crate) fn retained(&self, stats: &mut crate::sim::stats::Retained) {
+        stats.add(format!("vc_entries/{}", self.cu), self.entries.len());
+        stats.add(
+            format!("vc_entry_capacity/{}", self.cu),
+            self.entries.capacity(),
+        );
+        for entry in &self.entries {
+            stats.object("vc_decoded", std::rc::Rc::as_ptr(&entry.decoded) as usize);
+            stats.clock(&entry.clock);
+            if let Some(done) = &entry.done {
+                stats.clock(done);
+            }
+            stats.add("vc_dependencies", entry.deps.len());
+            stats.add(
+                "vc_l1_ranges",
+                entry.l1.as_ref().map_or(0, |(words, _, _)| words.len()),
+            );
+            stats.add(
+                "vc_dram_intervals",
+                entry
+                    .dram
+                    .as_ref()
+                    .and_then(|r| r.as_ref().ok())
+                    .map_or(0, Vec::len),
+            );
+        }
+        for (kind, finished) in self.fe.finished.iter().enumerate() {
+            stats.add(format!("vc_finished/{}/{kind}", self.cu), finished.len());
+            for clock in finished {
+                stats.clock(clock);
+            }
+        }
+    }
+
+    pub(crate) fn next_word(&self) -> usize {
+        self.cu_pc
+    }
+
+    fn dram_walk(
+        &self,
+        ad: i64,
+        roff: i64,
+        word_bytes: u64,
+    ) -> Result<super::super::dram::Footprint, String> {
+        let base = self
+            .desc
+            .get(&(ad, 0))
+            .copied()
+            .ok_or("DMA base is unknown")?;
+        let dims = (1..=self.dims).map(|fld| {
+            let value = self.desc.get(&(ad, i64::from(fld))).copied().unwrap_or(0);
+            let stride =
+                (value >> DIM_BOUND_BITS) << (64 - DIM_STRIDE_BITS) >> (64 - DIM_STRIDE_BITS);
+            let count = value as u64 & ktpu_isa::layout::mask(DIM_BOUND_BITS);
+            (stride, count)
+        });
+        super::super::dram::walk(i128::from(base) + i128::from(roff), dims, word_bytes)
+    }
+
     fn walk_words(&self, ad: i64) -> i64 {
         let n: i64 = (1..=self.dims)
             .map(|fld| {
@@ -268,8 +375,8 @@ impl Vector {
                     & ktpu_isa::layout::mask(ktpu_isa::unit::vector::DIM_BOUND_BITS) as i64)
                     .max(1)
             })
-            .product();
-        n + i64::from(on(WALK))
+            .fold(1i64, i64::saturating_mul);
+        n.saturating_add(i64::from(on(WALK)))
     }
 
     fn finished_upto(&self, kind: usize, upto: i64) -> (bool, Vec<Clock>) {
@@ -287,7 +394,7 @@ impl Vector {
     fn deps(&mut self, e: usize) {
         let Vector { entries, fe, .. } = self;
         let regs = &mut fe.regs;
-        let (op, f) = (entries[e].op, &entries[e].f);
+        let (op, f) = (entries[e].op, &entries[e].decoded.1);
         let mut deps = Vec::new();
         if op.is_math() {
             let reads = reads(op, f);
@@ -372,6 +479,7 @@ impl Sim<'_> {
         let acks = self.counter(&format!("acks:{name}"));
         let port = self.add_proc(Pk::Port, format!("{name} port"));
         let cu = self.add_proc(Pk::VcCu(ui), format!("{name} CU"));
+        let completer = self.add_proc(Pk::Port, format!("{name} acknowledged completion"));
         let fe = self.add_proc(Pk::VcFe(ui), format!("{name} front end"));
         let mut eng = vec![0; if self.t.facts.vc_dualq { 7 } else { 5 }];
         for (k, slot) in eng.iter_mut().enumerate() {
@@ -386,7 +494,7 @@ impl Sim<'_> {
             done,
             recv,
             acks,
-            completer: cu,
+            completer,
             landings: Vec::new(),
             words: Vec::new(),
             kind: Kinded::Vc(Box::new(Vector {
@@ -464,10 +572,9 @@ impl Sim<'_> {
         }
         let port = self.units[u].port;
         let unit = &mut self.units[u];
-        unit.mem.access(
+        unit.mem.access_l1(
             &mut self.findings,
-            Space::L1,
-            off..off + n,
+            [(off, off + n)],
             true,
             clock,
             port,
@@ -508,7 +615,6 @@ impl Sim<'_> {
 
     /// A word at a time while the core is idle.
     pub(crate) fn vc_cu_step(&mut self, u: usize) -> bool {
-        let (done, recv) = (self.units[u].done, self.units[u].recv);
         let v = self.vc(u);
         let cu = v.cu;
         if v.running {
@@ -518,8 +624,7 @@ impl Sim<'_> {
             let fe = self.clock_of(v.fe_proc);
             self.vc_mut(u).running = false;
             let clock = self.tick(cu, &[fe]);
-            self.counters[done].add(1, &clock, cu);
-            self.counters[recv].add(1, &clock, cu);
+            self.unit_completed(u, &clock);
             return true;
         }
         let pc = v.cu_pc;
@@ -530,12 +635,12 @@ impl Sim<'_> {
         let given = self.units[u].words[pc].given.clone();
         self.vc_mut(u).cu_pc += 1;
         let clock = self.tick(cu, &[given]);
+        self.fetched_word(u, pc, &clock, cu);
         if !on("verify.vector/off") {
             if let Err(text) = crate::vector::cu(self.t, W256(word.0)) {
                 let name = self.procs[cu].name.clone();
                 self.find(Kind::Vector, name, text);
-                self.counters[done].add(1, &clock, cu);
-                self.counters[recv].add(1, &clock, cu);
+                self.unit_completed(u, &clock);
                 return true;
             }
         }
@@ -562,8 +667,7 @@ impl Sim<'_> {
                 return true;
             }
         }
-        self.counters[done].add(1, &clock, cu);
-        self.counters[recv].add(1, &clock, cu);
+        self.unit_completed(u, &clock);
         true
     }
 
@@ -696,7 +800,23 @@ impl Sim<'_> {
                     .map(|&p| self.clock_of(p))
                     .collect();
                 self.tick(fp, &rel);
-                self.vc_mut(u).fe.halted = true;
+                // All engine completions are now in the front-end clock.
+                // Only RUN-local dependency ordinals retire here; memory,
+                // process clocks, RX/CR targets and fill tracking persist.
+                let v = self.vc_mut(u);
+                v.entries.clear();
+                for engine in &mut v.eng {
+                    engine.items.clear();
+                    engine.kinds.clear();
+                    engine.head = 0;
+                }
+                v.fe.count.fill(0);
+                for finished in &mut v.fe.finished {
+                    finished.clear();
+                }
+                v.fe.regs.clear();
+                v.fe.marks.clear();
+                v.fe.halted = true;
                 return true;
             }
             VOp::Vseti => {
@@ -834,11 +954,21 @@ impl Sim<'_> {
             }
         }
         let clock = self.tick(fp, &[]);
+        if matches!(op, VOp::Vfill | VOp::Vdrain)
+            && self.vc(u).walk_words(f.g("ad")) > super::super::dram::LIMIT as i64
+        {
+            self.vc_model(
+                u,
+                "DMA footprint exceeds the global DRAM proof budget".into(),
+            );
+            return self.vc_halt(u);
+        }
         let footprint = self.vc_footprint(u, op, f, pc);
+        let word_bytes = self.t.facts.word_bytes as u64;
         let v = self.vc_mut(u);
         let mut entry = Entry {
             op,
-            f: f.clone(),
+            decoded: dec.clone(),
             clock,
             deps: Vec::new(),
             guard: None,
@@ -846,12 +976,17 @@ impl Sim<'_> {
             roff: 0,
             conditional: op == VOp::Vdrain && v.fe.conditional_drains.contains(&pc),
             l1: None,
+            dram: None,
+            pc,
         };
         if matches!(op, VOp::Vfill | VOp::Vdrain) && f.g("rel") != 0 {
             let ad = f.g("ad");
             entry.roff = v.fe.roff.get(&ad).copied().unwrap_or(0);
             let inc = v.ainc.get(&ad).copied().unwrap_or(0);
             v.fe.roff.insert(ad, entry.roff + inc);
+        }
+        if op == VOp::Vfill || (op == VOp::Vdrain && f.g("node") == 0) {
+            entry.dram = Some(v.dram_walk(f.g("ad"), entry.roff, word_bytes));
         }
         entry.l1 = footprint;
         v.entries.push(entry);
@@ -882,7 +1017,7 @@ impl Sim<'_> {
         op: VOp,
         f: &Fields,
         pc: i64,
-    ) -> Option<(Vec<i64>, bool, What)> {
+    ) -> Option<(Vec<(i64, i64)>, bool, What)> {
         let l1 = self.vc_l1();
         let what = What::AtPc(op.name(), pc);
         let v = self.vc_mut(u);
@@ -903,14 +1038,12 @@ impl Sim<'_> {
                     *ptr = (*ptr + inc) & (l1 - 1);
                 }
                 let n = walk_len(f.g("mode"), f.g("n1") + 1, pack);
-                let words = (0..n)
-                    .map(|w| (base + (w % 4) * s0 + (w / 4) * s1).rem_euclid(l1))
-                    .collect();
+                let words = local_strided(base, n, s0, s1, l1);
                 Some((words, pack, what))
             }
             VOp::Vfill | VOp::Vdrain => {
                 let n = v.walk_words(f.g("ad"));
-                let words = (0..n).map(|w| (f.g("off") + w).rem_euclid(l1)).collect();
+                let words = local_contiguous(f.g("off"), n, l1);
                 Some((words, op == VOp::Vfill, what))
             }
             _ => None,
@@ -956,6 +1089,8 @@ impl Sim<'_> {
                 self.counters[ctr].reached(want),
                 vec![self.clock_to(ctr, want, &[])],
             ),
+            // ISA.VC.128/.144/.146: VFILL means landed reads, VDRAIN
+            // means local source consumption, not external write responses.
             Guard::Finished { kind, upto } => self.vc(u).finished_upto(kind, upto),
         }
     }
@@ -1021,18 +1156,12 @@ impl Sim<'_> {
         let p = v.eng_procs[k];
         let clock = self.tick(p, &rel);
         let entry = &mut self.vc_mut(u).entries[e];
-        let (op, f, roff) = (entry.op, entry.f.clone(), entry.roff);
+        let (op, decoded, roff) = (entry.op, entry.decoded.clone(), entry.roff);
+        let f = &decoded.1;
         if let Some((words, write, what)) = entry.l1.take() {
             let unit = &mut self.units[u];
-            unit.mem.access(
-                &mut self.findings,
-                Space::L1,
-                words,
-                write,
-                &clock,
-                p,
-                &what,
-            );
+            unit.mem
+                .access_l1(&mut self.findings, words, write, &clock, p, &what);
         }
         if op == VOp::Vpost {
             self.post(u, (f.g("dst_x"), f.g("dst_y")), f.g("n"), &clock, p);
@@ -1043,14 +1172,41 @@ impl Sim<'_> {
         {
             // A peer drain by the node bit alone, as the core decides (RUL.052).
             let conditional = self.vc(u).entries[e].conditional;
-            self.vc_peer(u, k, &f, roff, &clock, conditional);
+            self.vc_peer(u, k, f, roff, &clock, conditional);
         }
+        let start = clock.clone();
         let clock = if op == VOp::Vfill {
             let words = self.vc(u).walk_words(f.g("ad"));
             self.vc_fill_landed(u, words, &clock)
         } else {
             clock
         };
+        if let Some(footprint) = self.vc_mut(u).entries[e].dram.take() {
+            let owner = if op == VOp::Vfill {
+                self.vc(u).landing
+            } else {
+                p
+            };
+            let what = format!(
+                "{} {} pc {}",
+                self.units[u].name,
+                op.name(),
+                self.vc(u).entries[e].pc
+            );
+            if op == VOp::Vdrain {
+                self.memory_write(
+                    self.units[u].key.0,
+                    Some(u),
+                    footprint,
+                    &start,
+                    &clock,
+                    p,
+                    what,
+                );
+            } else {
+                self.dram_access(footprint, false, &start, &clock, owner, what);
+            }
+        }
         let v = self.vc_mut(u);
         v.entries[e].done = Some(clock.clone());
         let head = v.eng[k].head;
@@ -1085,6 +1241,8 @@ impl Sim<'_> {
                 ),
             );
         }
+        // ISA.VC.128: a completed VFILL has received every source word.
+        // Queue dispatch alone has not; VSYNC/VBAR acquire this landing.
         self.tick(landing, std::slice::from_ref(taken))
     }
 

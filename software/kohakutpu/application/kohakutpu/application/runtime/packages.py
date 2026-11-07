@@ -22,6 +22,8 @@ REFUSE = (
     "line",
     "cluster",
     "vector",
+    "loop",
+    "model",
 )
 GATES = ("refuse", "warn", "off")
 

@@ -12,7 +12,7 @@ tags:
 `ktpu-verify` decides, before a package reaches a card, whether
 it can hang, whether it leaves state that changes its next run, whether two
 streams can collide on a unit's receive port, and whether any two accesses to
-a unit's local memory are unordered. It does so by running the packages once on
+a unit's local memory or shared physical memory are unordered. It does so by running the packages once on
 an abstract machine. This page defines that machine and proves that the one
 run answers each question for **every** timing the hardware can take.
 
@@ -26,21 +26,50 @@ emit a dispatch order that deadlocks.
 | `deadlock` | some process can never reach its end, under every schedule | Theorem 1 + Theorem 2 |
 | `rest` | a counter is left above what its waiters took (credits, landed granules, doorbells, a DATA_RECEIVED later than its package): the next run starts from another state | Theorem 4 |
 | `port` | two bursts from different senders into one unit are not ordered, so their flits can interleave in the unit's one receive register; a burst can queue behind a shared fill's responses at a sharer not yet in its FILL; or an L1 burst can land while a memory FILL's responses arrive (one entry-assembly register) | §7.3 |
-| `race` | two accesses to one L1 location, at least one a write, with neither happening before the other | §7.2 |
+| `race` | conflicting local or physical byte accesses without their required causal or same-source write order | §7.2, §7.5 |
+| `line` | independent writers partially own one physical DRAM write line without serialization | §7.5 |
 | `bounds` | a burst the receiver rejects (past its buffer), or a peer drain past 256 words (F_LEN) | direct |
 | `route` | a credit or a burst aimed where no unit is | direct |
 | `loop` | a node loop whose trip count is data: checked for 0..`trips` trips (§5.2) | bounded |
-| `model` | something the machine does not decide: a FETCH step (words written at run time), a VWAIT / VPOST / peer VDRAIN under a data-dependent skip (Lemma 4) | — |
+| `model` | an unresolved footprint, unavailable instruction value, unsupported operation, or exhausted proof budget; refuses certification | §7.5 |
 
 Entry points:
 
-- `ktpu_verify::check_runs` checks the first run and rerun of a package set.
-- `ktpu_verify::schedule` orders dispatches (§6). The Rust stack builds,
-  orders and verifies packages before returning them through `_rs.compile`.
+- `ktpu_verify::check` checks a sequence of whole-card package sets.
+- `ktpu_verify::check_with_memory` additionally accepts physical package sections
+  and initialized address-bearing input bytes. `CardStack::check_memory` builds
+  the cold and retained packages against this preparation-time context.
+- `ktpu_verify::schedule` orders dispatches (§6), not physical admission.
+  An indexed GO retains its architectural completion even when its input bytes
+  are unavailable or its footprint exceeds the proof budget. These are
+  unresolved `model` obligations, not missing mover completions. `check`,
+  `check_scheduled` and `check_with_memory` include them in the refusing verdict;
+  an order is not a certificate. The Rust stack returns both packages and the
+  verification findings through `_rs.compile`.
 - `kohakutpu.application.runtime.packages.findings` applies the runtime gate
   to the compiled verdict: `refuse` raises `Refused` for unsafe findings,
   `warn` returns them, and `off` suppresses reporting. Rust owns the order
   and verifier caches. Python does not rebuild or reverify a package.
+
+### Bound arguments and symbolic storage
+
+A package proof covers the supplied bound instructions and physical memory
+context. Shape-class generation emits literal loop bounds and initializes its
+node counters from those literals; count-driven F-016 copies preserve those
+registers in locally acknowledged spill storage. Their arithmetic remains
+concrete throughout the bound proof. Unknown loads are never assigned a
+representative value. A bound proof is not a certificate for other class points.
+Offline template `proof::prove` retains its exhaustive finite-box obligations and
+certified parameter-independence reductions; sampled verification is not a
+universal certificate.
+
+Forward symbolic alternatives share one append-only BDD arena. Predicates remain
+branch-local; fresh inputs, node identities and interned word identities belong
+to the shared arena. Creating a branch or retained continuation copies an arena
+handle, not its tables. Arithmetic and feasible-successor predicates remain
+exact. A mutex protects arena allocation across host users; recursive BDD apply
+runs under one outer operation lock. This does not claim a polynomial bound for
+arbitrary symbolic multiplication or division.
 
 ## 2. The machine
 
@@ -51,6 +80,7 @@ Every process is sequential and deterministic.
 | process | one per | actions |
 |---|---|---|
 | node | mesh | the package's steps (`ktpu-verify/src/sim/node/`) |
+| dispatch engine | mesh | queued mailbox, mover and interlink writes and explicit modular counter waits |
 | CU | vector core | IMEM / DESC words; a RUN; its completion at VHALT |
 | front end | vector core | fetch, scalars, VLOOP, VSKIPZ, marks; dispatch into an engine queue |
 | F, D, U, M, P engine | vector core | its queue in order (`vec_cu.v`, `v2_core.v`) |
@@ -58,6 +88,26 @@ Every process is sequential and deterministic.
 | drain queue | cluster | the write port: bursts of what sweeps emitted and drains sent |
 | port | unit | none of its own: each burst landing is one of its events |
 | array | cluster | none of its own: each sweep's L1 reads are one of its events |
+
+The CPU enqueues ENGINE entries from the package's current code and value bytes.
+The dispatch engine has its own clock and bounded FIFO. Enqueue completion lets
+the CPU proceed to the next step without acquiring engine execution. Reusing a
+FIFO slot acquires the entry that freed it; firmware reads an entry's bytes before
+its push waits for room. A code word is read once for its three entry slots.
+
+A mailbox GO delivers its instruction, or requests the encoded relative/absolute
+fetch. It introduces no implicit instruction-credit wait. Fetched instruction
+bytes retain their physical or private package provenance. Mover entries use the
+same register decoder, footprints and response clocks as ordinary MOVER steps.
+An engine interlink write waits for the mover frontier. Unsupported control codes
+and unavailable instruction bytes retain the ordinary refusing model finding.
+
+ENGINE WAIT uses the machine counter width and acquires the earliest satisfying
+completion frontier following its previously observed frontier. Eager simulation
+of later completions cannot turn an old modular target into a later epoch's
+publication. CPU fallback drains acquire the engine frontier; direct ALU, JUMP
+and PATCH execution does not. Each retained package has its own payload origin
+and completion baseline, while the hardware mailbox state persists.
 
 ### 2.2 Counters and guards
 
@@ -81,7 +131,7 @@ Every wait in the hardware is one of these guards:
 | wait (hardware) | counter | threshold (own history) |
 |---|---|---|
 | node DISPATCH: a word / a fetch request of n | unit completions | sent + n − credit |
-| node AWAIT u n | unit completions + DATA_RECEIVED from u | expected (+n) |
+| node AWAIT u n | instruction retirements from u (not DATA_RECEIVED) | expected (+n) |
 | node BARRIER, package end | unit completions | sent |
 | node RECV n | flits landed at the node | taken + n |
 | node WAIT_BELL m n / WAIT_SLOT s n | doorbells from m / slot s | consumed + n |
@@ -198,6 +248,19 @@ that: one port's landings are ordered events, and a landing's COUNT carries
 the port's clock.
 
 ## 5. Data-dependent control
+
+The software contract in [L0 steps](../../spec/stack/l0/steps.md) defines
+`ASSERT_ZERO`: a zero register continues; a nonzero register ends the package
+with `CONTRACT`. The verifier intersects the successful continuation with that
+zero predicate. A certainly failing guard is a refusing finding. No memory is
+read by the assertion itself, and it joins no producer clock: the producer must
+already have been synchronized before the status LOAD. A certificate does not
+replace the runtime numerical contract check or authorize replay after a failed
+package; failure/quarantine remains the runtime's responsibility.
+
+Instruction waits follow L0.STEP.020: `AWAIT` and saved-frontier waits consume
+instruction retirements only. `DATA_RECEIVED` is consumed by a SEND ACK wait and
+cannot substitute for a producer's retirement or release its DRAM accesses.
 
 ### 5.1 Vector skips
 
@@ -371,6 +434,213 @@ arriving after its package ended counts in the next one. Each DATA_RECEIVED
 the node counts is attributed to the package whose step sent the burst it
 answers (the latest node event in the burst's clock). Its landing must happen
 before that package's end. Otherwise it is reported as `rest`.
+
+### 7.5 Shared physical memory
+
+**L1.VER.009, L1.VER.017 and the cross-sysnode verification contract:** one
+`GlobalDram` belongs to the card. Its canonical intervals are shared by every
+sysnode. Ordinary flat-card DRAM keys discard ingress route bits; staging keys
+retain their encoded destination and address. CPU cached and uncached aliases
+name the same bytes. No shared-DRAM key contains the issuing mesh.
+
+An access has a resolved byte footprint, a start clock and a completion clock.
+RAW and WAR conflict unless one completion happens before the other start.
+WAW additionally respects one source's ordered write-response stream; it does
+not publish that stream to a reader. Read/read is independent. DRAM write
+intervals are also rounded to physical 64-byte boundaries for ownership: disjoint bytes within a line still require
+one writer or proved serialization. Staging is not a DRAM read/modify/write line.
+
+MG fills, the shared-fill leader, plain and emitting drains, VC descriptor walks,
+mover and transform reads/writes, CPU protocol accesses, fetched instructions,
+package descriptors and PATCH limbs all use this tracker. Footprints are sorted
+and coalesced into intervals, not expanded into individual DRAM bytes or lines.
+Byte intervals and rounded write-line intervals retain persistent histories by
+completion process and access direction. Each history is a binary forest whose
+blocks retain the last completion and the componentwise minimum start. The last
+completion bounds a same-owner block from above; the minimum start bounds it from
+below even when fetch and DMA lifetimes nest. A block is skipped only if all its
+accesses are proved ordered in one direction. Read/read and same-stream WAW need
+no query, but their records remain available to subsequent conflicting accesses.
+Splitting an interval shares history roots instead of copying earlier accesses.
+At scheduler sweep boundaries, a branch-local vector-clock minimum bounds every
+future physical-access start. Continuing processes, queued dispatch-engine work
+and the send clocks of unconsumed physical instruction fetches contribute to it.
+An empty unit queue resumes only from a future send, whose producer contributes
+its clock. Response-only ports have no independent actions. The shared-FILL
+leader remains at its arrival until it registers the physical read; nonleaders
+retain their separate port-collision windows without registering another read.
+Completed history prefixes below this minimum are retired, including empty
+intervals. The minimum is never joined into an execution clock.
+
+Response histories retain the last mark at or below the minimum issuer epoch
+and every later mark, preserving predecessor queries rather than advancing their
+publication. Saved alternatives share immutable roots and retain their own live
+histories. Join checkpoints are unnecessary once no unexplored alternative
+remains. Each process receives at most 256 progress events per sweep; fork
+resumption preserves its quantum. Collection runs after at least 1024 events at
+a sweep boundary, so a nonblocking producer cannot monopolize the interpreter
+and postpone every consumer and collection indefinitely.
+
+With P clock components, H historical interval insertions and M response marks,
+unretired history storage is O((U + V)P), where U and V are the live suffixes of
+H and M (V includes one predecessor per stream). A collector rebuilds changed
+suffixes, shares their access events, and releases discarded tree roots. A
+prefix with no newly eligible event needs only its forest/oldest-leaf lookup.
+Response collection checks the second-oldest mark: the oldest is the retained
+predecessor, so an unchanged query floor needs no traversal of the live suffix.
+Global access completion records store the owner's epoch, not a full completion
+clock; the full start clock and minimum-start summaries remain available for
+both ordering directions.
+Program storage, counter increments, port-report evidence and live symbolic
+alternatives are separate retained state; an unsynchronized process can pin
+history. Collection does not turn unresolved history into a certificate or
+impose a smaller admission limit.
+Exhausting the bounded walk/interval proof produces `model`, never a clean verdict.
+
+A successful VHALT joins every engine and fill-landing clock before releasing
+RUN-local dependency entries, queue ordinals and finished-kind histories. Each
+subsequent RUN starts after that joined clock. Register/memory provenance,
+response histories, RX/CR targets and fill tracking persist. Fault halts do not
+release unfinished queues. Queue storage is proportional to the largest RUN,
+not the sum of completed RUNs; immutable decoded fields are shared by instruction
+word. A local-memory access retains only its owner's event number, the component
+used by its race comparison, rather than another full vector-clock root.
+
+P3 port checking indexes FILL-start port epochs with range minima. For each
+incoming burst it skips the FILL-completion prefix observed by the sender and
+finds the first remaining start earlier than its landing. Shared FILL starts may
+be nonmonotone. With F FILLs and B bursts the index takes O(F) space and
+O(F + B log F) work without dropping any collision window.
+
+`KTPU_VERIFY_STATS=1` enables a retained-state census at run boundaries and
+geometrically spaced scheduler sweeps. It names counter owners, response streams,
+interval histories, instruction queues, VC entries and capacities, known-value
+publications and symbolic arenas. Clock backing allocations are deduplicated by
+identity within the sampled branch. Branch counts are separate; these figures
+are not process RSS or a union over all saved alternatives. Stage harness phase
+markers distinguish lowering/building from verification. Dynamic IMEM residency
+analysis also reports block-input states, distinct shared memory roots and cells.
+It retains must-known states only at control-flow block entries and derives
+per-instruction elimination masks by replaying each block from its fixed-point
+input. Read-only blocks share a memory root; only a changed cell or intersection
+copies it. Straight-line step count therefore does not multiply retained IMEM
+state. Both incoming paths, loop backedges, opaque units and patched cells keep
+their ordinary must-known semantics. The census adds no proof edges, limits, or
+device instructions and is disabled by default.
+
+**Round-i verification lines 234–236 / L1.VER.009/.017:** bounded proof work must
+retain every physical conflict and refuse unknown footprints. For a fixed target,
+memory-proof work is `O(R log R + I log S + C)`: R candidate footprint runs before
+normalization, I touched intervals and eligible response-stream queries, S stored
+interval/history/response records, and C visited causal-index nodes, conflict
+reports and vector-clock component work. Report deduplication uses expected
+constant-time hashing. C is not just the number of diagnostic strings: sparse
+unordered leaves can require internal history-node comparisons. Genuine conflicting
+histories can exhaust the budget and remain refusing. Footprint enumeration is
+bounded before allocation. Descriptor dimensions translate and merge intervals;
+a contiguous dimension extends its interval directly, including negative strides.
+The logical word-count budget is checked independently of this compression.
+Contiguous walks therefore take O(rank) footprint work without expanding their
+individual words, bytes or lines. Symbolic alternatives are
+separate proofs; cold scheduling, retained scheduling and combined execution all
+retain the same checks.
+
+**ISA.MV.027/.029/.033/.038/.050/.051:** physical footprints follow issued
+transactions. A masked COPY or GATHER destination suppresses both payload
+accesses; an enabled COPY destination with a masked source writes IMM without
+reading it. SCATTER with a masked source still writes IMM to its indexed
+destination. The index cache reads complete card words, including unused lanes
+of its final word, independently of destination masking. Unknown u32 indices
+need no source-domain proof for wholly masked GATHER rows, but enabled indexed
+accesses require visible values or a disjointness proof. fp32 index validation
+also applies to masked rows; an unresolved validation remains `model`.
+
+**ISA.VC.124/.125/.128 and L0.MEM.007:** every issued VFILL contributes its
+physical read walk, including a prefetch whose result no arithmetic consumes.
+Relative offsets advance at dispatch and reset at RUN. Allocator alignment gaps
+are not an accessible tail. Local VSYNC/VMARK and a final package barrier do not
+retroactively order a read against another VC's earlier writes. Numerical
+agreement alone cannot certify these physical accesses.
+
+**ISA.VC.128 and the memory-response contract:** a vector drain's local retirement
+is not its external commit. Response processes are distinct from MG/VC execution
+and from each other at different destinations. An ACK_FENCE completion carries
+local write responses; an internal VSYNC does not. A fenced ring drains preceding
+CPU/mover work and carries the destination's inbound write responses. It cannot
+release unacknowledged compute work still inside the mesh. The sender learns no
+receiver-arrival clock merely by enqueueing a ring. Acquires and consumed markers
+carry the observed clocks. Host submission order supplies no dependency.
+
+#### Memory-ordering edges
+
+Round-i verification requires real causality, not simulator visitation order.
+The following contracts apply to all MG/VC and node access sites:
+
+| Operation | Required ordering and model edge | Authority |
+|---|---|---|
+| Two writes from one source to its fixed memory port | Complete bursts issue in source order. WAW on the same response stream is ordered even while acknowledgements are outstanding. No execution clock acquires that completion. | [Memory protocol §7.1](../../spec/memory-protocol.md#71-guaranteed); `src/kohakuaccel/sysnode/core/mag_mem_port.v:605-634,904-913,952-958` |
+| Read and write, including one unit's FILL after DRAIN | Independent read/write machines offer no program-order fence. A queued VDRAIN sync only frees its local source storage. | [Memory protocol §7.2](../../spec/memory-protocol.md); ISA.VC.128/.142/.144; ISA.MG.030/.032 |
+| Completed FILL before a write | VFILL completion carries the landing clock; a VSYNC/VBAR that consumes it orders subsequent work. MG FILL retires after its completed-entry count reaches its request. | `docs/spec/stack/isa/vector.md:173,184-188`; `docs/spec/stack/isa/cluster.md:71`; `src/kohakutpu/matmul/mx_cluster_cu.v:940-950` |
+| Observed CU instruction completion | The endpoint signal joins acknowledged local memory writes, not CU_DATA landings or remote posted writes. The sequencer and core do not acquire the signal just by continuing. | L0.STEP.012; [Compute-unit port §3.3](../../spec/compute-unit-port.md); `src/kohakuaccel/noc/endpoint/noc_cu_base.v:219-233,368-387` |
+| `wait U upto=mark`, AWAIT, FRONTIER and DE WAIT | Consume the selected instruction-retirement frontier, not DATA_RECEIVED and not other units' frontiers. End barriers consume all issued frontiers. | L0.STEP.020/.021/.022; L0.DE.006/.009/.017 |
+| Mover GO, MWAIT and nonposted move | I_DRAIN consumes outstanding reads/writes before I_DONE. The next GO is after it; the node acquires only the requested completion or an all-done boundary. POSTED itself exports no completion. | ISA.MV.011/.080/.093; L0.STEP.026/.027 |
+| CPU/mover remote write response | Route bits select the destination before DRAM alias normalization. The remote response is posted, for DRAM as well as staging; only destination publication includes remote commit. CU ordinary DRAM requests instead reach the issuing mesh. | `docs/spec/stack/l0/steps.md:187-189`; `docs/spec/stack/isa/mover.md:27`; `src/kohakuaccel/sysnode/core/mag.v:796-802,995-998`; `src/kohakuaccel/sysnode/interlink/mag_ilink.v:359-362,550-575` |
+| Fenced ring and consumption | Arrival publishes CPU/mover writes and the completed CU frontier released by the sender; the receiving WAIT_SLOT/WAIT_BELL consumes it. Sending alone acquires nothing. | L0.STEP.031/.034/.035/.048; `docs/spec/node-queue.md:260-261` |
+| Xache home | A home serializes service but does not select a causal order among independent sources. Reads and writes use different engines. No home-wide clock join is introduced. | `docs/spec/memory-protocol.md:464-467`; `docs/projects/kohakuaxi/xbar-cache.md:238-249`; `src/kohakuaxi/xache/engine/kx_wr_engine.v:129-170` |
+
+The endpoint's RTL allows datapath progress while a signal awaits writes
+(`sig_go = sig_pend && wr_clear`, with `send_ready` gated by `sig_go`, not
+`sig_pend`). Consequently a pending completion is not an internal FILL fence.
+A completed-write response is exported only at the observed completion or release.
+Response histories are indexed by `(issuer, destination)` and by local unit / issuing
+mesh. Their monotonically issued event numbers select a prefix by predecessor
+search; its last response clock already contains every earlier response on that
+stream. Completion and release join that one clock, not the entire write history.
+CPU/mover publication uses the last eligible destination response; CU publication
+uses only the prefix covered by the acquired retirement. Known STORE bytes use the
+same indexed response. No lookup joins a later write, another unit or another route.
+
+Write FIFO order is a WAW relation, not completion-before-start for all events.
+The interval index therefore retains older posted writes; a query skips a block
+only when a genuine completion-before-start relation covers all its accesses. A read can precede a later write and
+still race an earlier posted write. Independent sources, including units on one
+sysnode, retain the 64-byte ownership obligation; sharing Xache is not a waiver.
+
+The card-stage harness preserves supplied physical aliases and allocates generated
+staging in its declared node's aperture (node zero when unspecified). Generated
+DRAM uses one physical arena irrespective of symbolic memory-space spelling.
+This implements L1.BODY.001/.006 and L0.MEM.007: an address bound to an L1 parameter
+is already physical, not a space-relative offset to reinterpret in the verifier.
+The complete generated staging allocation must fit that node’s staging capacity;
+validating only the aperture prefix is insufficient. Known STORE values use the
+same response destination as the write access for their publication provenance.
+
+### 7.6 Physical proof context and retained state
+
+`MemoryContext` fixes physical package section locations and initialized input
+bytes at preparation. An unplaced package has its own pinned, allocator-owned
+storage identity, disjoint from tensor allocations. Its step and payload sections
+have separate `(mesh, run, section)` identities and section-local 64-bit limb
+indices. L0.STEP.053/.072 PATCH accesses complete aligned limbs; step and payload
+fetches are aligned 16/32-byte records, so limb overlap is exact for private
+storage. A placed package instead uses its actual step and payload byte addresses.
+Its aliases participate in the same byte proof. This is the managed runtime allocation contract, not a claim that arbitrary
+caller-chosen addresses are private.
+
+Only address-bearing values are interpreted. CPU stores establish bytes with
+publication clocks; DMA writes invalidate known values. A LOAD or indexed walk
+uses an exact value only after its defining event. Unknown indices or patched
+addresses without an ownership proof produce `model`. Known index tables are
+accepted and their reads are instrumented, so modifying a table needs the same
+ordering as modifying data. STOREs into placed descriptors change the subsequently
+executed footprint. PATCH touches complete 64-bit limbs, not just the selected bits.
+
+Whole-card scheduling continuations retain visible memory values and invalidations
+as well as unit residents. Run-specific package placements retain their run ordinals.
+The actual proof executes cold and retained packages together with memory history
+intact. Its cache identity includes every bound package, target/source digest,
+physical context and event instructions; a single-sysnode or differently bound
+certificate cannot certify another alias environment or slot program.
 
 ## 8. Reruns
 

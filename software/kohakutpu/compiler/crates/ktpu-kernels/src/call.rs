@@ -316,6 +316,13 @@ fn kept(s: &Value, members: usize) -> R<Vec<bool>> {
 }
 
 fn fused_step(s: &Value) -> R<fused::Step> {
+    let folded = s.get("fold").map_or(Ok(false), |_| boolean(s, "fold"))?;
+    if folded && !indexed(s.get("made").unwrap_or(&Value::Null))?.is_empty() {
+        return fail(
+            "API.OP.001",
+            "a complete fused fold reads ordinary operands",
+        );
+    }
     Ok(match arg(s, "kind")?.as_str() {
         Some("flat") => {
             let exprs = exprs(arg(s, "exprs")?)?;
@@ -334,6 +341,7 @@ fn fused_step(s: &Value) -> R<fused::Step> {
             }
         }
         Some("rows") => fused::Step::Rows {
+            fold: folded,
             r: int(s, "R")?,
             w: int(s, "W")?,
             exprs: exprs(arg(s, "exprs")?)?,
@@ -384,6 +392,21 @@ fn fused_step(s: &Value) -> R<fused::Step> {
             src: text(s, "src")?,
             dst: text(s, "dst")?,
         },
+        Some("attention") => fused::Step::Attention(
+            serde_json::from_value(arg(s, "attention")?.clone()).map_err(|error| {
+                ktpu_machine::Refusal::new("API.OP.001", format!("attention stage: {error}"))
+            })?,
+        ),
+        Some("planes") => {
+            fused::Step::Planes(serde_json::from_value(arg(s, "planes")?.clone()).map_err(
+                |error| ktpu_machine::Refusal::new("API.OP.001", format!("plane stage: {error}")),
+            )?)
+        }
+        Some("prefix") => fused::Step::Prefix {
+            src: text(s, "src")?,
+            dst: text(s, "dst")?,
+            boundary: convert::prefix::Prefix::parse(arg(s, "boundary")?)?,
+        },
         _ => return fail("API.OP.001", format!("a fused stage {s}")),
     })
 }
@@ -392,6 +415,16 @@ fn fused_package(a: &Value) -> R<fused::Package> {
     let list =
         |k: &str| -> R<Vec<Value>> { Ok(arg(a, k)?.as_array().cloned().unwrap_or_default()) };
     Ok(fused::Package {
+        scratch_space: a
+            .get("scratch_space")
+            .map(|value| {
+                serde_json::from_value(value.clone())
+                    .map_err(|e| ktpu_machine::Refusal::new("API.OP.001", e.to_string()))
+            })
+            .transpose()?,
+        balance_stages: a
+            .get("balance_stages")
+            .map_or(Ok(false), |_| boolean(a, "balance_stages"))?,
         ports: list("ports")?
             .iter()
             .map(|p| Ok((named(p)?, boolean(p, "written")?)))
@@ -705,15 +738,164 @@ pub fn class_info(gen: &str, a: &Value, m: &Machine) -> R<Value> {
     Ok(info)
 }
 
-/// Common independent domain of row-only composites.
-fn row_domain(gen: &str, a: &Value) -> R<Option<i64>> {
+fn has_product(gen: &str, a: &Value) -> R<bool> {
     match gen {
-        "vector.rows_kernel" => Ok(Some(int(a, "R")?)),
+        "matmul.mm_kernel" => Ok(true),
         "kernel.chain" => {
             let first = arg(a, "first")?;
             let second = arg(a, "second")?;
-            let left = row_domain(&text(first, "gen")?, arg(first, "args")?)?;
-            let right = row_domain(&text(second, "gen")?, arg(second, "args")?)?;
+            Ok(has_product(&text(first, "gen")?, arg(first, "args")?)?
+                || has_product(&text(second, "gen")?, arg(second, "args")?)?)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// Products whose independent row domain is represented by ordinary f16 A.
+/// Other product forms retain the dependent-stage planner and its split options.
+fn row_product(a: &Value, m: &Machine) -> R<Option<matmul::Mm>> {
+    if a.get("shape_class").is_some()
+        || !demands(a)?.is_empty()
+        || !indexed(a.get("made").unwrap_or(&Value::Null))?.is_empty()
+    {
+        return Ok(None);
+    }
+    let mm = mm_plan(made_by(arg(a, "mm")?, "matmul.plan")?, m)?;
+    let knobs = matmul::unrecorded().read(a, matmul::Group::Kernel)?;
+    let out = operand(arg(a, "out")?)?;
+    let extras = operands(arg(a, "extras")?)?;
+    let quantum = if vector::holds_stat(&extras, out.kind) {
+        vector::split::common_quantum(mm.quantum, Hw::of(m).stat_rows())?
+    } else {
+        mm.quantum
+    };
+    Ok((mm.bt == 1
+        && mm.m == mm.mp
+        && mm.m % quantum == 0
+        && mm.tm >= quantum
+        && matmul::takes_f16(mm.k, mm.nk, &knobs, m)
+        && out.kind == Kind::Full
+        && out.pitch == mm.n
+        && out.offset == 0
+        && extras.iter().all(|o| o.kind != Kind::Tile))
+    .then_some(mm))
+}
+
+/// An elementwise chain consumer with exactly the linked input and identical
+/// row-major output coordinates. Materialization is retained by the emitter.
+fn wave_consumer(a: &Value, m: &Machine) -> R<Option<chain::wave::Consumer>> {
+    let enabled = a
+        .get("materialized_pointwise")
+        .map_or(Ok(false), |_| boolean(a, "materialized_pointwise"))?;
+    if !enabled {
+        return Ok(None);
+    }
+    if boolean(a, "keep")? || text(a, "from")? != "in0" {
+        return Ok(None);
+    }
+    let first = arg(a, "first")?;
+    if text(first, "gen")? != "matmul.mm_kernel" || row_product(arg(first, "args")?, m)?.is_none() {
+        return Ok(None);
+    }
+    let second = arg(a, "second")?;
+    if text(second, "gen")? != "vector.rows_kernel" {
+        return Ok(None);
+    }
+    let args = arg(second, "args")?;
+    if args.get("shape_class").is_some() {
+        return Ok(None);
+    }
+    let r = int(args, "R")?;
+    let w = int(args, "W")?;
+    let inputs = operands(arg(args, "operands")?)?;
+    let output = operand(arg(args, "out")?)?;
+    let plain = |o: &Operand| {
+        o.kind == Kind::Full
+            && o.dtype == g::Dtype::F16
+            && o.pitch == w
+            && o.offset == 0
+            && (o.rows == 0 || o.rows == r)
+    };
+    if inputs.len() != 1 || !plain(&inputs[0]) || !plain(&output) {
+        return Ok(None);
+    }
+    let expression = expr::from_table(arg(args, "e")?)?;
+    if !expr::reduces(&expression).is_empty() || expr::loads(&expression).iter().any(|i| *i != 0) {
+        return Ok(None);
+    }
+    Ok(Some(chain::wave::Consumer {
+        expression,
+        output: "out".into(),
+        rows: r,
+        width: w,
+        bands: args.get("bands").and_then(Value::as_i64),
+    }))
+}
+
+/// Generate each stage on the same row owner; private edges do not cross nodes.
+fn row_kernel_at(gen: &str, a: &Value, first: i64, count: i64, m: &Machine) -> R<Kernel> {
+    match gen {
+        "matmul.mm_kernel" => {
+            let mm = mm_plan(made_by(arg(a, "mm")?, "matmul.plan")?, m)?;
+            let kernel = matmul::rows::kernel(
+                &mm,
+                &expr::from_table(arg(a, "e")?)?,
+                &operands(arg(a, "extras")?)?,
+                &operand(arg(a, "out")?)?,
+                &matmul::unrecorded().read(a, matmul::Group::Kernel)?,
+                first,
+                count,
+                m,
+            )?;
+            chain::quant::kernel(kernel, chain::quant::Backend::read(a)?, m)
+        }
+        "kernel.chain" => {
+            let part = |key: &str| -> R<Kernel> {
+                let part = arg(a, key)?;
+                row_kernel_at(&text(part, "gen")?, arg(part, "args")?, first, count, m)
+            };
+            let left = arg(a, "first")?;
+            let shape = composite_shape(&text(left, "gen")?, arg(left, "args")?, m)?;
+            let to = text(a, "to")?;
+            let compact = shape.writes.iter().any(|tensor| {
+                tensor.name == to
+                    && tensor.operand.offset == 0
+                    && tensor.planes == [0]
+                    && (tensor.operand.kind == Kind::Row
+                        || tensor.operand.kind == Kind::Full
+                            && tensor.operand.pitch == tensor.width)
+            });
+            let kernel = chain::row_kernel(
+                part("first")?,
+                part("second")?,
+                &text(a, "from")?,
+                &to,
+                boolean(a, "keep")?,
+                first,
+                count,
+                compact.then_some(shape.quantum),
+                wave_consumer(a, m)?.as_ref(),
+                chain::link::View::read(a)?,
+                m,
+            )?;
+            let (kernel, _) = chain::finish(kernel, a, m, true)?;
+            chain::pooled_ordered(kernel, a, m)
+        }
+        _ => call(gen, &shifted_rows_call(gen, a, first, count, m)?, m),
+    }
+}
+
+/// Common independent domain of typed row compositions.
+fn row_domain(gen: &str, a: &Value, m: &Machine) -> R<Option<i64>> {
+    match gen {
+        "vector.rows_kernel" => Ok(Some(int(a, "R")?)),
+        "prepared.rows_kernel" => Ok(prepared_row_made(a)?.map(|_| int(a, "R")).transpose()?),
+        "matmul.mm_kernel" => Ok(row_product(a, m)?.map(|mm| mm.m)),
+        "kernel.chain" => {
+            let first = arg(a, "first")?;
+            let second = arg(a, "second")?;
+            let left = row_domain(&text(first, "gen")?, arg(first, "args")?, m)?;
+            let right = row_domain(&text(second, "gen")?, arg(second, "args")?, m)?;
             Ok(left.filter(|_| left == right))
         }
         "fused.kernel" => {
@@ -758,9 +940,74 @@ fn row_operands_at(a: &mut Value, key: &str, first: i64) -> R<()> {
     Ok(())
 }
 
+/// The made operands of a `prepared.rows_kernel` whose every read is one
+/// relayout leading with the kernel's row axis (source and destination walks
+/// both `R` rows outermost), so a row share is the same relayout on its rows.
+/// None when any made operand reads otherwise.
+fn prepared_row_made(a: &Value) -> R<Option<Vec<usize>>> {
+    let rows = int(a, "R")?;
+    let mut made = Vec::new();
+    let Some(object) = a.get("made").and_then(Value::as_object) else {
+        return Ok(Some(made));
+    };
+    for (index, reads) in object {
+        let Ok(index) = index.parse::<usize>() else {
+            return Ok(None);
+        };
+        let [read] = reads.as_array().map(Vec::as_slice).unwrap_or(&[]) else {
+            return Ok(None);
+        };
+        let by = &read["made_by"];
+        let leading = |key: &str| by["args"][key][0][0].as_i64() == Some(rows);
+        if by["gen"] != "relayout.plan"
+            || !leading("walk")
+            || !leading("dwalk")
+            || by["args"]["dat"].as_i64() != Some(0)
+            || by["args"]["m"].as_i64().is_none()
+        {
+            return Ok(None);
+        }
+        made.push(index);
+    }
+    Ok(Some(made))
+}
+
 fn shifted_rows_call(gen: &str, a: &Value, first: i64, count: i64, m: &Machine) -> R<Value> {
     let mut local = a.clone();
     match gen {
+        "prepared.rows_kernel" => {
+            let Some(made) = prepared_row_made(a)? else {
+                return fail("API.OP.001", "a made operand that does not lead with rows");
+            };
+            let rows = int(a, "R")?;
+            let out = operand(arg(a, "out")?)?;
+            let ops = operands(arg(a, "operands")?)?;
+            local["R"] = count.into();
+            for (i, o) in ops.iter().enumerate() {
+                if !made.contains(&i) {
+                    operand_field(
+                        &mut local["operands"][i],
+                        "offset",
+                        vector::split::shifted(o, first).offset,
+                    );
+                }
+            }
+            operand_field(
+                &mut local["out"],
+                "offset",
+                vector::split::shifted(&out, first).offset,
+            );
+            for i in made {
+                let args = &mut local["made"][i.to_string()][0]["made_by"]["args"];
+                let row_stride = args["walk"][0][1].as_i64().unwrap_or(0);
+                let at = args["at"].as_i64().unwrap_or(0);
+                let total = args["m"].as_i64().unwrap_or(0);
+                args["walk"][0][0] = count.into();
+                args["dwalk"][0][0] = count.into();
+                args["at"] = (at + first * row_stride).into();
+                args["m"] = (total / rows * count).into();
+            }
+        }
         "vector.rows_kernel" => {
             let signature = call(gen, a, m)?;
             let out = operand(arg(a, "out")?)?;
@@ -808,7 +1055,7 @@ fn shifted_rows_call(gen: &str, a: &Value, first: i64, count: i64, m: &Machine) 
 
 fn composite_shape(gen: &str, a: &Value, m: &Machine) -> R<vector::split::Shape> {
     let hw = Hw::of(m);
-    let Some(rows) = row_domain(gen, a)? else {
+    let Some(rows) = row_domain(gen, a, m)? else {
         return fail("API.OP.001", "row composite needs one independent domain");
     };
     let mut shape = vector::split::Shape {
@@ -840,6 +1087,71 @@ fn composite_shape(gen: &str, a: &Value, m: &Machine) -> R<vector::split::Shape>
             }
             shape.writes.push(tensor);
         }
+        "prepared.rows_kernel" => {
+            let Some(made) = prepared_row_made(a)? else {
+                return fail("API.OP.001", "a made operand that does not lead with rows");
+            };
+            let ops = operands(arg(a, "operands")?)?;
+            let out = operand(arg(a, "out")?)?;
+            let w = int(a, "W")?;
+            if vector::holds_stat(&ops, out.kind) {
+                shape.quantum = hw.stat_rows();
+            }
+            let k = call(gen, a, m)?;
+            for (i, o) in ops.iter().enumerate() {
+                if !made.contains(&i) {
+                    shape.reads.push(row_tensor(format!("in{i}"), *o, w));
+                    continue;
+                }
+                // A made operand's source is read whole by the relayout.
+                let port = k
+                    .graph
+                    .ports
+                    .iter()
+                    .find(|p| p.name == format!("x{i}"))
+                    .ok_or_else(|| {
+                        ktpu_machine::Refusal::new("DSL.KERN.020", "a made operand's source port")
+                    })?;
+                let elements = port.spec.shape.iter().product::<i64>();
+                shape.reads.push(row_tensor(
+                    port.name.clone(),
+                    Operand {
+                        dtype: g::Dtype::F16,
+                        ..Operand::new(Kind::Col)
+                    },
+                    elements,
+                ));
+            }
+            shape.writes.push(row_tensor("out".into(), out, w));
+        }
+        "matmul.mm_kernel" => {
+            let mm = mm_plan(made_by(arg(a, "mm")?, "matmul.plan")?, m)?;
+            let extras = operands(arg(a, "extras")?)?;
+            let out = operand(arg(a, "out")?)?;
+            shape.quantum = if vector::holds_stat(&extras, out.kind) {
+                vector::split::common_quantum(mm.quantum, hw.stat_rows())?
+            } else {
+                mm.quantum
+            };
+            shape
+                .reads
+                .push(row_tensor("a".into(), Operand::full(mm.k, mm.m), mm.k));
+            shape.reads.push(row_tensor(
+                "b".into(),
+                Operand {
+                    dtype: g::Dtype::U8,
+                    ..Operand::new(Kind::Col)
+                },
+                mm.n * mm.kp,
+            ));
+            shape.reads.extend(
+                extras
+                    .iter()
+                    .enumerate()
+                    .map(|(i, o)| row_tensor(format!("in{}", i + 1), *o, mm.n)),
+            );
+            shape.writes.push(row_tensor("out".into(), out, mm.n));
+        }
         "kernel.chain" => {
             let first = arg(a, "first")?;
             let second = arg(a, "second")?;
@@ -852,6 +1164,14 @@ fn composite_shape(gen: &str, a: &Value, m: &Machine) -> R<vector::split::Shape>
             }
             right.reads.retain(|t| t.name != from);
             let k = call(gen, a, m)?;
+            for tensor in left.reads.iter_mut().chain(&mut left.writes) {
+                tensor.name = k.graph.consts["chain"]["first_ports"][&tensor.name]
+                    .as_str()
+                    .ok_or_else(|| {
+                        ktpu_machine::Refusal::new("DSL.KERN.020", "chain first port mapping")
+                    })?
+                    .to_string();
+            }
             for tensor in right.reads.iter_mut().chain(&mut right.writes) {
                 tensor.name = k.graph.consts["chain"]["ports"][&tensor.name]
                     .as_str()
@@ -860,7 +1180,7 @@ fn composite_shape(gen: &str, a: &Value, m: &Machine) -> R<vector::split::Shape>
                     })?
                     .to_string();
             }
-            shape.quantum = left.quantum.max(right.quantum);
+            shape.quantum = vector::split::common_quantum(left.quantum, right.quantum)?;
             shape.reads = left.reads;
             shape.reads.extend(right.reads);
             shape.writes = left.writes;
@@ -926,6 +1246,8 @@ fn same_row_read(producer: &Operand, consumer: &Operand) -> bool {
 fn row_local(gen: &str, a: &Value, m: &Machine) -> R<bool> {
     match gen {
         "vector.rows_kernel" => Ok(true),
+        "prepared.rows_kernel" => Ok(prepared_row_made(a)?.is_some()),
+        "matmul.mm_kernel" => Ok(row_product(a, m)?.is_some()),
         "kernel.chain" => {
             let first = arg(a, "first")?;
             let second = arg(a, "second")?;
@@ -991,7 +1313,6 @@ fn row_sequence(
         OutputLayout, PlannedKernel, ShardRole, ShardTiles, SplitAxis, SplitOption,
     };
     let p = request.nodes.ids().len();
-    let mut cycles = vec![0; p];
     let mut active = vec![false; p];
     let mut shards: Vec<ShardTiles> = (0..p)
         .map(|logical_node| ShardTiles {
@@ -1023,7 +1344,6 @@ fn row_sequence(
     let mut events = Vec::new();
     let mut conversions = 0;
     for plan in &plans {
-        let mut local = plan.split.cost.local_cycles.iter();
         for rank in 0..p {
             if plan
                 .split
@@ -1031,9 +1351,6 @@ fn row_sequence(
                 .iter()
                 .any(|s| s.logical_node == rank && s.role != ShardRole::Empty)
             {
-                cycles[rank] += local.next().copied().ok_or_else(|| {
-                    ktpu_machine::Refusal::new("L2.COST.001", "missing active row-stage timing")
-                })?;
                 active[rank] = true;
             }
         }
@@ -1106,6 +1423,44 @@ fn row_sequence(
             ],
         );
     }
+    let node_cycles = crate::split::cost::graph_nodes(&kernel.graph, m)?;
+    if node_cycles
+        .keys()
+        .any(|node| !request.nodes.ids().contains(node))
+    {
+        return fail(
+            "DSL.KERN.020",
+            "composed row schedule escaped the node grant",
+        );
+    }
+    let cycles: Vec<_> = request
+        .nodes
+        .ids()
+        .iter()
+        .map(|node| node_cycles.get(node).copied().unwrap_or(0))
+        .collect();
+    let total_cycles = cycles.iter().copied().max().unwrap_or(0) + m.vc.launch_front as i64;
+    if p == 1 {
+        let public = |name: &str| kernel.graph.ports.iter().any(|p| p.name == name);
+        shards[0].read_regions.retain(|r| public(&r.allocation));
+        shards[0].write_regions.retain(|r| public(&r.allocation));
+        shards[0].scratch_regions = kernel
+            .graph
+            .scratch
+            .iter()
+            .map(|s| {
+                let elements = s.spec.shape.iter().product::<i64>();
+                let bytes = match s.spec.dtype {
+                    g::Dtype::Mx7a | g::Dtype::Mx7b => m.mx7_bytes(elements),
+                    dtype => elements * Hw::item(dtype),
+                };
+                crate::split::Region {
+                    allocation: s.name.clone(),
+                    bytes: 0..bytes as u64,
+                }
+            })
+            .collect();
+    }
     let option = SplitOption {
         id: "rows".into(),
         axis: SplitAxis::Rows,
@@ -1140,7 +1495,7 @@ fn row_sequence(
             cost
         }
     }
-    let timing = SequenceTiming(ktpu_graph::cycles(&kernel.graph, m)?);
+    let timing = SequenceTiming(total_cycles);
     let split = choose_split(vec![(option, features)], &timing, request.force.as_deref())?;
     Ok(PlannedKernel {
         kernel,
@@ -1174,6 +1529,49 @@ fn rename_regions(plan: &mut crate::split::PlannedKernel, names: &BTreeMap<Strin
     }
 }
 
+/// Sequence members may have dependent row stages and overlapping writes.
+/// Preserve their order and merge their actual final output ownership.
+fn split_sequence(
+    a: &Value,
+    request: &crate::split::SplitRequest,
+    m: &Machine,
+) -> R<crate::split::PlannedKernel> {
+    let descriptors = arg(a, "members")?.as_array().ok_or_else(|| {
+        ktpu_machine::Refusal::new("API.OP.001", "sequence members must be an array")
+    })?;
+    let mut local = request.clone();
+    local.force = None;
+    let mut plans = descriptors
+        .iter()
+        .map(|descriptor| {
+            chain::sequence::deferred(descriptor)?;
+            call_split_with_timing(
+                &text(descriptor, "gen")?,
+                arg(descriptor, "args")?,
+                &local,
+                m,
+                true,
+            )
+        })
+        .collect::<R<Vec<_>>>()?;
+    let mut kernel = chain::sequence::kernel(plans.iter().map(|p| p.kernel.clone()).collect())?;
+    for (index, plan) in plans.iter_mut().enumerate() {
+        rename_regions(plan, &chain::sequence::scope(&kernel, index)?);
+    }
+    if request.nodes.ids().len() == 1 {
+        kernel = chain::placed(call("kernel.sequence", a, m)?, request.nodes.ids()[0])?;
+    } else {
+        let (pooled, aliases) = chain::sequence::finish_mapped(kernel, a, m)?;
+        kernel = pooled;
+        for plan in &mut plans {
+            rename_regions(plan, &aliases);
+        }
+    }
+    let mut result = row_sequence(kernel, plans, request, m)?;
+    chain::sequence::scratch_regions(&result.kernel, &request.nodes, &mut result.split.shards, m)?;
+    Ok(result)
+}
+
 fn split_row_chain(
     a: &Value,
     request: &crate::split::SplitRequest,
@@ -1191,11 +1589,25 @@ fn split_row_chain(
             true,
         )
     };
-    let first = part("first")?;
+    let mut first = part("first")?;
     let mut second = part("second")?;
     let from = text(a, "from")?;
     let to = text(a, "to")?;
     let keep = boolean(a, "keep")?;
+    if let Some(binding) = chain::link::Binding::of(
+        &first.kernel,
+        &second.kernel,
+        &from,
+        &to,
+        chain::link::View::read(a)?,
+        m,
+    )? {
+        second.kernel = binding.apply(second.kernel)?;
+        second.l1 = None;
+        for share in &mut second.split.shards {
+            binding.regions(&mut share.read_regions)?;
+        }
+    }
     let mut kernel = chain::kernel(
         first.kernel.clone(),
         second.kernel.clone(),
@@ -1222,10 +1634,18 @@ fn split_row_chain(
         names.insert(original.name.clone(), composed.name.clone());
     }
     rename_regions(&mut second, &names);
-    if !keep && request.nodes.ids() != [0] {
+    if !keep && request.nodes.ids().len() > 1 {
         if let Some(link) = kernel.graph.scratch.iter_mut().find(|s| s.name == to) {
             link.spec.space = g::BufSpace::Dram;
         }
+    }
+    let (mut kernel, mapping) = chain::finish(kernel, a, m, request.nodes.ids().len() == 1)?;
+    rename_regions(&mut first, &mapping);
+    rename_regions(&mut second, &mapping);
+    if request.nodes.ids().len() == 1 {
+        kernel = chain::placed(call("kernel.chain", a, m)?, request.nodes.ids()[0])?;
+    } else {
+        kernel = chain::ordered(kernel, a, m)?;
     }
     row_sequence(kernel, vec![first, second], request, m)
 }
@@ -1254,9 +1674,11 @@ fn split_row_package(
         let mut stage = stage.clone();
         stage["read"] = read.into();
         stage["written"] = (!read).into();
-        let mut package = serde_json::json!({
-            "ports": ports, "scratch": [], "staged": [stage], "steps": []
-        });
+        let mut package = a.clone();
+        package["ports"] = serde_json::json!(ports);
+        package["scratch"] = serde_json::json!([]);
+        package["staged"] = serde_json::json!([stage]);
+        package["steps"] = serde_json::json!([]);
         let destination = text(&stage, if read { "scratch" } else { "port" })?;
         if let Some(list) = package["ports"].as_array_mut() {
             for port in list {
@@ -1292,10 +1714,16 @@ fn split_row_package(
         }
     }
     for step in steps {
-        let mut package = serde_json::json!({
-            "ports": ports, "scratch": [], "staged": [], "steps": [step]
-        });
-        let outs = names(arg(&step, "outs")?);
+        let mut package = a.clone();
+        package["ports"] = serde_json::json!(ports);
+        package["scratch"] = serde_json::json!([]);
+        package["staged"] = serde_json::json!([]);
+        package["steps"] = serde_json::json!([step]);
+        let outs = if text(&step, "kind")? == "prefix" {
+            vec![text(&step, "dst")?]
+        } else {
+            names(arg(&step, "outs")?)
+        };
         if let Some(list) = package["ports"].as_array_mut() {
             for port in list {
                 port["written"] = outs.contains(&text(port, "name")?).into();
@@ -1320,13 +1748,7 @@ fn split_row_package(
     }
     let mut kernel = chain::shares(&signature, plans.iter().map(|p| p.kernel.clone()).collect())?;
     for (index, plan) in plans.iter_mut().enumerate() {
-        let names = plan
-            .kernel
-            .graph
-            .scratch
-            .iter()
-            .map(|s| (s.name.clone(), format!("share{index}_{}", s.name)))
-            .collect();
+        let names = chain::sequence::scope(&kernel, index)?;
         rename_regions(plan, &names);
     }
     for buffer in scratch {
@@ -1536,9 +1958,15 @@ fn row_split(
         crate::split::validate_ownership(&got.split.output)?;
         return Ok(Some(got));
     }
+    let product_chain = gen == "kernel.chain" && has_product(gen, a)?;
+    if product_chain && request.force.as_deref() != Some("row-local") {
+        return Ok(Some(split_row_chain(a, request, m)?));
+    }
     if gen == "vector.rows_kernel"
-        || (matches!(gen, "fused.kernel" | "kernel.chain")
-            && row_domain(gen, a)?.is_some()
+        || (matches!(
+            gen,
+            "fused.kernel" | "kernel.chain" | "prepared.rows_kernel"
+        ) && row_domain(gen, a, m)?.is_some()
             && row_local(gen, a, m)?)
     {
         let mut shape = composite_shape(gen, a, m)?;
@@ -1554,24 +1982,68 @@ fn row_split(
                 }
             }
         }
-        return Ok(Some(vector::split::kernel(
-            &shape,
-            signature,
-            request,
-            m,
-            |first, count| call(gen, &shifted_rows_call(gen, a, first, count, m)?, m),
-        )?));
+        let mut local_request = request.clone();
+        if product_chain {
+            local_request.force = Some("rows".into());
+        }
+        let mut planned =
+            vector::split::kernel(&shape, signature, &local_request, m, |first, count| {
+                row_kernel_at(gen, a, first, count, m)
+            })?;
+        if product_chain {
+            planned.split.id = "row-local".into();
+            planned.request = request.clone();
+        }
+        return Ok(Some(planned));
     }
     if gen == "kernel.chain" {
         return Ok(Some(split_row_chain(a, request, m)?));
     }
+    if gen == "kernel.sequence" && request.force.as_deref() != Some("p1") {
+        return Ok(Some(split_sequence(a, request, m)?));
+    }
     if gen == "fused.kernel" {
         let package = fused_package(a)?;
+        if a.get("group_ends").is_some() {
+            return fused::groups::split(&package, a, request, m);
+        }
+        if package.staged.is_empty()
+            && package.scratch.is_empty()
+            && fused::planes::independent(&package)
+        {
+            return Ok(Some(fused::planes::split(
+                &package,
+                &a.to_string(),
+                request,
+                m,
+            )?));
+        }
+        if package.staged.is_empty()
+            && package.scratch.is_empty()
+            && matches!(package.steps.as_slice(), [fused::Step::Prefix { .. }])
+        {
+            if let fused::Step::Prefix { src, dst, boundary } = &package.steps[0] {
+                boundary.validate(m)?;
+                if src == dst && !boundary.independent_alias() {
+                    return Ok(None);
+                }
+            }
+            return Ok(Some(fused::prefix_split(
+                &package,
+                &a.to_string(),
+                request,
+                m,
+            )?));
+        }
         if !package.steps.is_empty()
-            && package
-                .steps
-                .iter()
-                .all(|s| matches!(s, fused::Step::Rows { .. } | fused::Step::Flat { .. }))
+            && package.steps.iter().all(|s| {
+                matches!(
+                    s,
+                    fused::Step::Rows { .. }
+                        | fused::Step::Flat { .. }
+                        | fused::Step::Prefix { .. }
+                )
+            })
         {
             return Ok(Some(split_row_package(a, request, m)?));
         }
@@ -1587,7 +2059,7 @@ pub fn call_split(
     request: &crate::split::SplitRequest,
     m: &Machine,
 ) -> R<crate::split::PlannedKernel> {
-    call_split_with_timing(gen, a, request, m, false)
+    ktpu_graph::with_cycle_cache(|| call_split_with_timing(gen, a, request, m, false))
 }
 
 /// Sequence stages need local timing even when their only option is unsplit.
@@ -1625,6 +2097,12 @@ pub(crate) fn call_split_with_timing(
             "DSL.KERN.020",
             "p1 preserves generator numerics; no requested precision or reduction-order option",
         );
+    }
+    if gen == "convert.prefix_kernel" && request.force.as_deref() != Some("p1") {
+        return convert::prefix::Prefix::read(a, m)?.split(request, m);
+    }
+    if gen == "convert.rows_kernel" && request.force.as_deref() != Some("p1") {
+        return convert::rows::Boundary::read(a, m)?.split(request, m);
     }
     if gen == "groupnorm.kernel" {
         let spec = serde_json::from_value(arg(a, "spec")?.clone()).map_err(|e| {
@@ -1701,7 +2179,7 @@ pub(crate) fn call_split_with_timing(
             made_reads(a, m)?
         };
         let demands = if class.is_some() { vec![] } else { demands(a)? };
-        return matmul::split::kernel_with_timing(
+        return matmul::split::kernel_with_policy(
             &matmul::split::Shape {
                 class: class.as_ref(),
                 mm: &mm,
@@ -1715,6 +2193,7 @@ pub(crate) fn call_split_with_timing(
             request,
             m,
             price_unsplit,
+            chain::quant::Backend::read(a)?,
         );
     }
     if gen == "transpose.transpose_kernel" && request.force.as_deref() != Some("p1") {
@@ -1975,8 +2454,17 @@ pub(crate) fn call_split_with_timing(
 
 /// The kernel of one recorded generator call, built for `m`.
 pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
+    ktpu_graph::with_cycle_cache(|| construct(gen, a, m))
+}
+
+fn construct(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
     if a.get("shape_class").is_some() || gen == "lanes.class_kernel" {
-        return Ok(classed(gen, a, m)?.kernel);
+        let kernel = classed(gen, a, m)?.kernel;
+        return if gen == "matmul.mm_kernel" {
+            chain::quant::kernel(kernel, chain::quant::Backend::read(a)?, m)
+        } else {
+            Ok(kernel)
+        };
     }
     let e = |k: &str| expr::from_table(arg(a, k)?);
     Ok(match gen {
@@ -1993,6 +2481,29 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
                 force: Some("domains".into()),
             };
             crate::gen::groupnorm::kernel(&spec, &request, m)?.kernel
+        }
+        "conv.unfold_kernel" => {
+            let spec: crate::gen::conv::ConvSpec = serde_json::from_value(arg(a, "spec")?.clone())
+                .map_err(|e| {
+                    ktpu_machine::Refusal::new("API.OP.001", format!("convolution descriptor: {e}"))
+                })?;
+            let space = match a
+                .get("scratch_space")
+                .and_then(Value::as_str)
+                .unwrap_or("dram")
+            {
+                "stage" => ktpu_graph::BufSpace::Stage,
+                "dram" => ktpu_graph::BufSpace::Dram,
+                _ => return fail("API.OP.001", "bulk patch scratch must be stage or dram"),
+            };
+            crate::gen::conv::unfold(
+                &spec,
+                int(a, "first_batch")?,
+                int(a, "batches")?,
+                int(a, "capacity")?,
+                space,
+                m,
+            )?
         }
         "conv.patch_kernel" => {
             let spec = serde_json::from_value(arg(a, "spec")?.clone()).map_err(|e| {
@@ -2088,7 +2599,7 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
             let mm = mm_plan(made_by(arg(a, "mm")?, "matmul.plan")?, m)?;
             let extras = operands(arg(a, "extras")?)?;
             let knobs = matmul::unrecorded().read(a, matmul::Group::Kernel)?;
-            matmul::mm_kernel_made(
+            let kernel = matmul::mm_kernel_made(
                 &mm,
                 &e("e")?,
                 &extras,
@@ -2097,9 +2608,32 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
                 m,
                 &made_reads(a, m)?,
                 &demands(a)?,
-            )?
+            )?;
+            chain::quant::kernel(kernel, chain::quant::Backend::read(a)?, m)?
         }
-        "fused.kernel" => fused::kernel(&fused_package(a)?, &a.to_string(), m)?,
+        "fused.kernel" => {
+            let package = fused_package(a)?;
+            fused::groups::boundaries(a, package.steps.len())?;
+            if a.get("quant_backend").is_some() || a.get("pipeline_lookahead").is_some() {
+                fused::scheduled(&package, a, &a.to_string(), m)?
+            } else {
+                fused::kernel(&package, &a.to_string(), m)?
+            }
+        }
+        "kernel.sequence" => {
+            let descriptors = arg(a, "members")?.as_array().ok_or_else(|| {
+                ktpu_machine::Refusal::new("API.OP.001", "sequence members must be an array")
+            })?;
+            let members = descriptors
+                .iter()
+                .map(|descriptor| {
+                    chain::sequence::deferred(descriptor)?;
+                    call(&text(descriptor, "gen")?, arg(descriptor, "args")?, m)
+                })
+                .collect::<R<Vec<_>>>()?;
+            let kernel = chain::sequence::kernel(members)?;
+            chain::sequence::finish(kernel, a, m)?
+        }
         "kernel.chain" => {
             let part = |k: &str| -> R<Kernel> {
                 let p = arg(a, k)?;
@@ -2107,14 +2641,23 @@ pub fn call(gen: &str, a: &Value, m: &Machine) -> R<Kernel> {
                 call(&gen, arg(p, "args")?, m)
             };
             let text = |k: &str| arg(a, k).map(|v| v.as_str().unwrap_or_default().to_string());
-            chain::kernel(
+            let mut kernel = chain::scheduled(
                 part("first")?,
                 part("second")?,
                 &text("from")?,
                 &text("to")?,
                 boolean(a, "keep")?,
-            )?
+                wave_consumer(a, m)?.as_ref(),
+                chain::link::View::read(a)?,
+                m,
+            )?;
+            chain::input_boundary(&mut kernel, a, m)?;
+            chain::crop_boundary(&mut kernel, a, m)?;
+            let (kernel, _) = chain::finish(kernel, a, m, true)?;
+            chain::pooled_ordered(kernel, a, m)?
         }
+        "convert.rows_kernel" => convert::rows::Boundary::read(a, m)?.kernel(m)?,
+        "convert.prefix_kernel" => convert::prefix::Prefix::read(a, m)?.kernel(m)?,
         "convert.copy_kernel" => convert::copy_kernel(int(a, "nbytes")?, m)?,
         "convert.walk_kernel" => convert::walk_kernel(
             int(a, "src_bytes")?,

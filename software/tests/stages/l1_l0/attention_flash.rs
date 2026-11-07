@@ -3,11 +3,13 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex, OnceLock};
 
+use ktpu::{Backend, CardStack};
 use ktpu_isa::{Isa, Machine as Card, UnitKind};
 
 use ktpu_kernels::call_split;
-use ktpu_kernels::gen::attention::flash::TEMPLATE;
+use ktpu_kernels::gen::attention::flash::{Origins, Share, TEMPLATE};
 use ktpu_kernels::split::{
     validate_ownership, DispatchProfile, NodeSet, NumericContract, OutputRequirement, SplitRequest,
 };
@@ -52,6 +54,36 @@ pub(super) fn seed_values(
     values
 }
 
+type SeedKey = (u32, usize, bool, u16, bool);
+
+fn packed_seed(
+    salt: u32,
+    entries: usize,
+    transpose: bool,
+    magnitude: u16,
+    positive: bool,
+) -> Arc<Vec<u8>> {
+    static SEEDS: OnceLock<Mutex<BTreeMap<SeedKey, Arc<Vec<u8>>>>> = OnceLock::new();
+    let key = (salt, entries, transpose, magnitude, positive);
+    let mut seeds = SEEDS
+        .get_or_init(Mutex::default)
+        .lock()
+        .expect("seed cache");
+    seeds
+        .entry(key)
+        .or_insert_with(|| {
+            let mut bytes = Vec::with_capacity(entries * mx7::ENTRY_BYTES);
+            for index in 0..entries {
+                let values = seed_values(salt, index, magnitude, positive);
+                for word in mx7::entry(&values).write(transpose) {
+                    bytes.extend_from_slice(&word);
+                }
+            }
+            Arc::new(bytes)
+        })
+        .clone()
+}
+
 pub(super) fn execute_seeded(
     text: &str,
     card: &Card,
@@ -74,6 +106,20 @@ pub(super) fn execute_seeded(
         at += (buffer.bytes() + 4095) / 4096 * 4096;
         spans.push((name, buffer));
     }
+    let backend = CardStack {
+        binds: Some(binds.clone()),
+        ..CardStack::default()
+    };
+    let checked = backend
+        .programs(&module, name, None, card)
+        .expect("card programs");
+    let findings = backend
+        .check(&checked, card)
+        .expect("whole-card verification");
+    assert!(
+        !findings.iter().any(|f| backend.refuses(f)),
+        "flash cold/retained packages: {findings:?}"
+    );
     let mut mem = Dram::new(at as usize);
     mem.bytes.fill(0xCD);
     let mut output = 0..0;
@@ -96,19 +142,14 @@ pub(super) fn execute_seeded(
             ("v", Some(value)) => (value, true),
             _ => (magnitude, false),
         };
-        for (index, bytes) in mem.bytes[start..end]
-            .chunks_mut(mx7::ENTRY_BYTES)
-            .enumerate()
-        {
-            let values = seed_values(salt, index, amplitude, positive);
-            for (word, target) in mx7::entry(&values)
-                .write(buffer.dtype == "mx7b")
-                .iter()
-                .zip(bytes.chunks_mut(WORD))
-            {
-                target.copy_from_slice(word);
-            }
-        }
+        let seed = packed_seed(
+            salt,
+            (end - start) / mx7::ENTRY_BYTES,
+            buffer.dtype == "mx7b",
+            amplitude,
+            positive,
+        );
+        mem.bytes[start..end].copy_from_slice(&seed);
     }
     assert!(!output.is_empty(), "the output allocation is watched");
     mem.watch_writes(output.clone())
@@ -287,4 +328,26 @@ fn flash_splits_match_one_share_and_write_each_output_word_once() {
             }
         }
     }
+}
+
+#[test]
+fn corrected_flash_publications_close_on_retained_replay() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(5)
+        .expect("repository");
+    let machine =
+        ktpu_machine::Machine::load(root.join("machines/multimesh_v9t8.json")).expect("machine");
+    let text = Share {
+        heads: 0..1,
+        query_tiles: 0..2,
+        origins: Origins::default(),
+    }
+    .text()
+    .expect("flash share")
+    .replace(
+        "getstk s11\n    expand redo(h)",
+        "seti s11 = 1\n    expand redo(h)",
+    );
+    execute_seeded(&text, &machine, 1, 1, 256, 0x3400, None, 2);
 }

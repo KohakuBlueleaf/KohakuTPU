@@ -5,12 +5,20 @@ into `@stage` slots (`KTPU_MM_QUANT_RING`)."""
 
 import numpy as np
 import pytest
+from native_mlp_reference import convolution_graph
+from native_schedule import graph_cycles, prices
 from tinygrad.tensor import Tensor
 
 from kohakutpu.application import ktpugrad
+from kohakutpu.application.api.custom import call as eager_call
+from kohakutpu.application.api.tensor import tensor
 from kohakutpu.application.kernels import matmul as MM
+from kohakutpu.application.kernels.native import conv as C
+from kohakutpu.application.kernels.template import GraphKernel
 from kohakutpu.application.runtime import device as card
 from kohakutpu.application.runtime import forms as FM
+from kohakutpu.application.runtime import generated
+from kohakutpu.application.runtime.call import call
 
 RNG = np.random.default_rng(6)
 
@@ -87,6 +95,8 @@ def test_an_f16_a_lowers_to_the_card(monkeypatch, tmp_path, name):
 @pytest.mark.parametrize("shape", SHAPES, ids=lambda s: "x".join(map(str, s)))
 @pytest.mark.parametrize("name", list(KNOBS))
 def test_an_f16_a_computes_the_packed_bytes(board, monkeypatch, name, shape):
+    if name == "ring2" and shape == SHAPES[0]:
+        return native_convolution_case(board, monkeypatch)
     m, k, n = shape
     x = RNG.standard_normal((m, k)).astype(np.float16)
     w = (RNG.standard_normal((n, k)) / 8).astype(np.float16)
@@ -98,3 +108,82 @@ def test_an_f16_a_computes_the_packed_bytes(board, monkeypatch, name, shape):
     got, packed = linear(monkeypatch, x, w, b)
     assert packed == 0
     assert got == want, name
+
+
+def native_convolution_case(dev, monkeypatch):
+    """Local convolution chunks and padded tails preserve the materialized bytes."""
+
+    batch, cout, kh, kw = 2, 32, 3, 3
+    chunked = dev.machine.board == "multimesh_v9t6"
+    height, width, cin, stride = (20, 29, 32, 1) if chunked else (5, 5, 16, 2)
+    oh, ow = (height - 1) // stride + 1, (width - 1) // stride + 1
+    rows = batch * oh * ow
+    capacity = -(-rows // 4) * 4
+    kpad = -(-(kh * kw * cin) // 32) * 32
+    rng = np.random.default_rng(48)
+    arrays = {
+        "p_x": (rng.standard_normal((batch * height * width, cin)) / 4).astype(
+            np.float16
+        ),
+        "c_b": (rng.standard_normal((cout, kpad)) / 8).astype(np.float16),
+        "c_in1": (rng.standard_normal(cout) / 4).astype(np.float16),
+        "c_in2": (rng.standard_normal((capacity, cout)) / 4).astype(np.float16),
+    }
+    args = (batch, height, width, cin, cout, kh, kw, dev.machine)
+    source = convolution_graph(
+        *args, stride=stride, padding=1, activation="relu", residual=True
+    )
+    expected, baseline = call(dev, GraphKernel(source), arrays)
+    kernel = C.kernel(*args, stride=stride, padding=1, activation="relu", residual=True)
+    descriptor = kernel.template_call
+    assert descriptor is not None
+    assert descriptor.generator == ("kernel.sequence" if chunked else "kernel.chain")
+    if chunked:
+        assert len(descriptor.arguments["members"]) == 2
+    got = eager_call(kernel, *(tensor(value) for value in arrays.values()))[0].numpy()
+    local_run = dev.runs[-1]
+    assert got.tobytes() == expected["c_out"].tobytes()
+    before, after = prices(baseline, local_run, machine=dev.machine)
+    assert after <= before, (before, after)
+    print("native_local_convolution_p1_cycles", {"before": before, "after": after})
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            generated.rs._rs,
+            "generate",
+            lambda *args: (_ for _ in ()).throw(AssertionError("cache miss")),
+        )
+        _, cached = generated.invocation(
+            dev, descriptor.generator, descriptor.arguments
+        )
+        assert cached["active_nodes"] == 1
+
+
+def convolution_schedule_cycles(
+    dev,
+    *,
+    batch=2,
+    height=20,
+    width=32,
+    cin=32,
+    cout=32,
+    edge_space="stage",
+    ring_depth=2,
+):
+    """Uncollected complete chunk/pressure-case prices; no simulator launch."""
+
+    assert len(dev.card.nodes) == 1
+    args = (batch, height, width, cin, cout, 3, 3, dev.machine)
+    options: dict = dict(
+        padding=1,
+        activation="gelu",
+        residual=True,
+        edge_space=edge_space,
+        ring_depth=ring_depth,
+    )
+    costs = []
+    for source in (
+        convolution_graph(*args, **options),
+        C.kernel(*args, **options).generated,
+    ):
+        costs.append(graph_cycles(source, dev.machine))
+    return {"before": costs[0], "after": costs[1]}

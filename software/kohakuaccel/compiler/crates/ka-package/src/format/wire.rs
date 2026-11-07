@@ -11,9 +11,18 @@ use crate::facts::Facts;
 use crate::mutant;
 use crate::refuse;
 use crate::units::machine_units;
-use crate::word::Word;
+use crate::word::{Word, WordOps};
 
 const MASK32: u64 = 0xFFFF_FFFF;
+
+fn local_route(step: &Step) -> Option<u64> {
+    match step.op {
+        Op::Mover if step.flags & super::F_LOCAL != 0 => Some(step.unit),
+        Op::Store if step.flags & super::F_LOCAL_CPU != 0 => Some(step.unit),
+        Op::Load if step.flags & super::F_LOCAL_CPU != 0 => Some(step.count >> 16),
+        _ => None,
+    }
+}
 
 fn u64_at(data: &[u8], at: usize) -> u64 {
     let mut le = [0u8; 8];
@@ -206,7 +215,24 @@ impl Package {
             {
                 return refuse!("L0.PKG.032", "step {i} names unit {} of {nunit}", s.unit);
             }
-            if s.op == Op::Fetch && s.flags & super::F_MEM != 0 && arg >= npay {
+            if let Some(route) = local_route(s) {
+                let shift = route & 63;
+                let bits = (route >> 6) & 15;
+                let special = (route >> 10) & 63;
+                if bits == 0
+                    || shift + bits > u64::from(f.addr_bits)
+                    || (shift <= special && special < shift + bits)
+                    || special >= u64::from(f.addr_bits)
+                    || u64::from(f.mesh) >= 1u64 << bits
+                    || (s.op == Op::Load && s.flags & (super::F_CTRL | F_IMM) != 0)
+                {
+                    return refuse!("L0.PKG.032", "invalid local memory route metadata");
+                }
+            }
+            if matches!(s.op, Op::Fetch | Op::Alu)
+                && s.flags & super::F_MEM != 0
+                && (arg >= npay || (s.op == Op::Alu && s.flags & F_IMM == 0))
+            {
                 return past();
             }
             if s.op == Op::Fetch && !self.units[s.unit as usize].has_port() {
@@ -390,7 +416,7 @@ impl Package {
     }
 
     /// The wire bytes of a one-mesh package for mesh `f.mesh`: its units and
-    /// buffers moved there, nothing else written, every unit named on `f`.
+    /// buffers and local memory routes moved there, every unit named on `f`.
     pub fn rehomed(data: &[u8], f: &Facts) -> Result<Vec<u8>> {
         let pkg = Package::from_bytes(data, f)?;
         let meshes = pkg.units.iter().map(|u| u.mesh);
@@ -424,6 +450,62 @@ impl Package {
         }
         for i in 0..pkg.buffers.len() {
             put_mesh(&mut out, buffers + i * BUFFER_BYTES + 24, 8);
+        }
+        // Local-route metadata applies to literals as well as relocated fields.
+        let payloads = u64_at(data, 8 * 9) as usize;
+        for step in &pkg.steps {
+            let Some(route) = local_route(step) else {
+                continue;
+            };
+            let shift = (route & 63) as u32;
+            let bits = ((route >> 6) & 15) as u32;
+            let special = ((route >> 10) & 63) as u32;
+            let mask = ((1u64 << bits) - 1) << shift;
+            let count = if step.op == Op::Load { 1 } else { step.count };
+            for index in step.arg..step.arg + count {
+                let at = payloads + index as usize * PAYLOAD_BYTES;
+                let mut word = Word::from_le_bytes(
+                    out[at..at + PAYLOAD_BYTES]
+                        .try_into()
+                        .expect("payload extent"),
+                );
+                let fields = if step.op == Op::Mover {
+                    crate::mover::addresses(f, &word)
+                } else {
+                    let halves: &[u32] = if step.op == Op::Store {
+                        &[0, 128]
+                    } else {
+                        &[0]
+                    };
+                    halves
+                        .iter()
+                        .filter_map(|&bit| {
+                            let value = word.get(bit, 64);
+                            (value != super::MOVER_SKIP).then(|| crate::build::AddrField {
+                                segments: vec![(bit, 64, 0)],
+                                value,
+                            })
+                        })
+                        .collect()
+                };
+                for field in fields {
+                    let relocated_route = field.segments.iter().any(|&(bit, _, _)| {
+                        pkg.relocs.iter().any(|r| {
+                            r.payload == index
+                                && r.bit <= u64::from(bit + shift)
+                                && r.bit + r.width >= u64::from(bit + shift + bits)
+                        })
+                    });
+                    if field.value & (1u64 << special) != 0 || relocated_route {
+                        continue;
+                    }
+                    let value = (field.value & !mask) | (u64::from(f.mesh) << shift);
+                    for (bit, width, shift) in field.segments {
+                        word.set(bit, width, value >> shift);
+                    }
+                }
+                out[at..at + PAYLOAD_BYTES].copy_from_slice(&word.to_le_bytes());
+            }
         }
         if pkg.signature != 0 {
             out[8..16].copy_from_slice(&signature(&words).to_le_bytes());

@@ -11,6 +11,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyInt, PyList};
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use super::super::LruMap;
@@ -698,7 +699,54 @@ fn package_admit(
     admit_package(&p, mesh, &t)
 }
 
+/// Whole-card preparation proof over exact bound packages and owned input bytes.
+#[pyfunction]
+fn package_check_memory(
+    runs: Vec<BTreeMap<u32, Vec<u8>>>,
+    machine_json: &str,
+    initial: BTreeMap<u64, Vec<u8>>,
+) -> PyResult<String> {
+    let m = machine(machine_json)?;
+    let target = ktpu_verify::Target::from_machine(&m, None).map_err(PyValueError::new_err)?;
+    let runs = runs
+        .into_iter()
+        .map(|packages| {
+            packages
+                .into_iter()
+                .map(|(mesh, raw)| {
+                    let f = facts(machine_json, mesh)?;
+                    let package = Package::from_bytes(&raw, &f)
+                        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+                    Ok((mesh, package))
+                })
+                .collect::<PyResult<ktpu_verify::Nodes>>()
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let memory = ktpu_verify::MemoryContext {
+        initial,
+        ..ktpu_verify::MemoryContext::default()
+    };
+    let found = ktpu_verify::check_with_memory(&runs, &target, &memory);
+    let findings: Vec<_> = found
+        .iter()
+        .map(|f| {
+            serde_json::json!({
+                "kind": f.kind.name(),
+                "at": f.at,
+                "text": f.text,
+                "clause": f.clause(),
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "findings": findings,
+        "refused": found.iter().any(|f| f.kind.refuses()),
+    })
+    .to_string())
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(package_check_memory, m)?)?;
     m.add_function(wrap_pyfunction!(package_admit, m)?)?;
     m.add_function(wrap_pyfunction!(package_signature, m)?)?;
     m.add_function(wrap_pyfunction!(package_link, m)?)?;

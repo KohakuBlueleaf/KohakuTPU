@@ -7,15 +7,19 @@ use rayon::prelude::*;
 
 use crate::adapter::l0::{from_l0, to_l0};
 use crate::adapter::package::Package;
+use crate::model::clock::Clock;
 use crate::model::finding::{Finding, Kind};
 use crate::mutant::on;
 use crate::sim::symbolic::Symbolic;
+use crate::sim::values::Values;
 use crate::sim::{Decision, Kinded, Sim, EVENT_LIMIT};
 use crate::target::Target;
 
 pub use crate::sim::Totals;
 
 pub mod gate;
+pub mod memory;
+pub use memory::{MemoryContext, PackageStorage};
 
 /// One node's bound package per mesh.
 pub type Nodes = BTreeMap<u32, ktpu_l0::Package>;
@@ -63,6 +67,8 @@ struct Continuation {
     totals: Totals,
     path: Vec<Decision>,
     symbolic: Symbolic,
+    values: Option<Values>,
+    memory_findings: Vec<Finding>,
 }
 
 /// Each node's package (bound) run on the abstract machine with each node
@@ -72,7 +78,14 @@ struct Continuation {
 /// program already orders well is left as written (L1.VER.002).
 pub fn schedule(pkgs: &Nodes, held: &Held, t: &Target) -> Result<Scheduled, ScheduleError> {
     let own: BTreeMap<u32, Package> = pkgs.iter().map(|(&m, p)| (m, from_l0(p))).collect();
-    let (ordered, continuations) = order(&own, held, &Symbolic::default(), t)?;
+    let (ordered, continuations) = order(
+        &own,
+        held,
+        &Symbolic::default(),
+        t,
+        &MemoryContext::default(),
+        None,
+    )?;
     let packages = pkgs
         .iter()
         .map(|(&m, p)| {
@@ -92,9 +105,15 @@ fn order(
     held: &Held,
     symbolic: &Symbolic,
     t: &Target,
+    context: &MemoryContext,
+    values: Option<&Values>,
 ) -> Result<(BTreeMap<u32, Package>, Vec<Continuation>), ScheduleError> {
     let mut sim = Sim::new(t, None);
     sim.symbolic = symbolic.clone();
+    sim.initialize_memory(context);
+    if let Some(values) = values {
+        sim.card.values = values.clone();
+    }
     for (&mesh, cores) in held {
         for core in cores {
             let Some(u) = sim.unit((mesh, core.coord.0, core.coord.1)) else {
@@ -126,6 +145,7 @@ fn order(
             .cloned()
             .collect();
         if !stuck.is_empty() {
+            stuck.extend(sim.memory_findings.clone());
             sim.witness(&mut stuck);
             return Err(ScheduleError { findings: stuck });
         }
@@ -137,6 +157,16 @@ fn order(
             totals: sim.tally(),
             path: sim.path.clone(),
             symbolic: sim.symbolic.clone(),
+            memory_findings: sim.memory_findings.clone(),
+            values: Some({
+                let mut terminal = Clock::new();
+                for node in &sim.nodes {
+                    if let Some((_, end)) = node.ends.last() {
+                        terminal.join(end);
+                    }
+                }
+                sim.card.values.after(&terminal)
+            }),
         })
         .collect();
     let mut sim = leaves.remove(0);
@@ -187,9 +217,11 @@ fn run<'t>(
     t: &'t Target,
     totals: Option<Totals>,
     choices: Vec<Decision>,
+    context: &MemoryContext,
 ) -> Vec<Sim<'t>> {
     let mut sim = Sim::new(t, totals);
     sim.choices = choices;
+    sim.initialize_memory(context);
     for (&mesh, ps) in pkgs {
         sim.add_node(mesh, ps.clone(), false);
     }
@@ -201,13 +233,21 @@ fn run<'t>(
 /// left, then all run back to back on a fresh machine with the totals of a
 /// first run (L1.VER.004). Empty means none of the finding kinds can happen.
 pub fn check(runs: &[Nodes], t: &Target) -> Vec<Finding> {
+    check_with_memory(runs, t, &MemoryContext::default())
+}
+
+/// Check physically placed package sections and initialized index/protocol data.
+/// The context is immutable input; simulation writes invalidate or replace it.
+pub fn check_with_memory(runs: &[Nodes], t: &Target, context: &MemoryContext) -> Vec<Finding> {
     let initial = Continuation {
         held: Held::new(),
         totals: Totals::new(),
         path: Vec::new(),
         symbolic: Symbolic::default(),
+        values: None,
+        memory_findings: Vec::new(),
     };
-    let mut out = checked(vec![(BTreeMap::new(), initial)], runs, t);
+    let mut out = checked(vec![(BTreeMap::new(), initial)], runs, t, context);
     line_findings(runs, t, &mut out);
     out
 }
@@ -215,9 +255,12 @@ pub fn check(runs: &[Nodes], t: &Target) -> Vec<Finding> {
 fn line_findings(runs: &[Nodes], t: &Target, out: &mut Vec<Finding>) {
     for nodes in runs {
         for (&mesh, pkg) in nodes {
-            for f in crate::lines::check(pkg, mesh, t) {
-                if !out.contains(&f) {
-                    out.push(f);
+            // Ownership is decided by the shared timed interval proof. The
+            // independent conversion policy remains mandatory at admission.
+            if let Err(why) = crate::lines::admit(pkg, mesh, t) {
+                let finding = Finding::new(Kind::Line, format!("sysnode {mesh}"), why);
+                if !out.contains(&finding) {
+                    out.push(finding);
                 }
             }
         }
@@ -243,26 +286,38 @@ pub fn check_scheduled(first: &Scheduled, rest: &[Nodes], t: &Target) -> Vec<Fin
             .map(|c| (pkgs.clone(), c))
             .collect()
     };
-    let mut out = checked(states, rest, t);
+    let mut out = checked(states, rest, t, &MemoryContext::default());
     line_findings(std::slice::from_ref(&first.packages), t, &mut out);
     line_findings(rest, t, &mut out);
     out
 }
 
 /// Every retained state travels with its dispatch history and counter totals.
-fn checked(states: Vec<(Queued, Continuation)>, runs: &[Nodes], t: &Target) -> Vec<Finding> {
-    let states = match ordered(states, runs, t) {
+fn checked(
+    states: Vec<(Queued, Continuation)>,
+    runs: &[Nodes],
+    t: &Target,
+    context: &MemoryContext,
+) -> Vec<Finding> {
+    let states = match ordered(states, runs, t, context) {
         Err(findings) => return findings,
         Ok(got) => got,
     };
     let mut findings = Vec::new();
     for (pkgs, mut continuation) in states {
         if on("verify.check/totals-prepass") {
-            let first = run(&pkgs, t, None, continuation.path.clone());
+            let first = run(&pkgs, t, None, continuation.path.clone(), context);
             continuation.totals = first[0].tally();
         }
-        for sim in run(&pkgs, t, Some(continuation.totals), continuation.path) {
+        for sim in run(
+            &pkgs,
+            t,
+            Some(continuation.totals),
+            continuation.path,
+            context,
+        ) {
             let mut out = sim.findings.clone();
+            out.extend(sim.memory_findings.clone());
             if !out.iter().any(|f| f.kind == Kind::Deadlock) {
                 out.extend(sim.rest());
                 out.extend(sim.port_findings());
@@ -287,6 +342,7 @@ fn ordered(
     mut states: Vec<(Queued, Continuation)>,
     runs: &[Nodes],
     t: &Target,
+    context: &MemoryContext,
 ) -> Result<Vec<(Queued, Continuation)>, Vec<Finding>> {
     for nodes in runs {
         let own: BTreeMap<u32, Package> = nodes.iter().map(|(&m, p)| (m, from_l0(p))).collect();
@@ -294,22 +350,43 @@ fn ordered(
         for (pkgs, mut before) in states {
             let offsets: BTreeMap<u32, usize> =
                 pkgs.iter().map(|(&mesh, ps)| (mesh, ps.len())).collect();
-            let (ordered, after) =
-                order(&own, &before.held, &before.symbolic, t).map_err(|mut e| {
-                    if !before.path.is_empty() {
-                        let path = format!("prior path: {:?}", before.path);
-                        for finding in &mut e.findings {
-                            finding.text = format!("{} [{path}]", finding.text);
-                        }
+            let mut local = context.clone();
+            local.packages = context
+                .packages
+                .iter()
+                .filter_map(|(&(mesh, run), storage)| {
+                    (run == offsets.get(&mesh).copied().unwrap_or(0))
+                        .then_some(((mesh, 0), storage.clone()))
+                })
+                .collect();
+            let (ordered, after) = order(
+                &own,
+                &before.held,
+                &before.symbolic,
+                t,
+                &local,
+                before.values.as_ref(),
+            )
+            .map_err(|mut e| {
+                if !before.path.is_empty() {
+                    let path = format!("prior path: {:?}", before.path);
+                    for finding in &mut e.findings {
+                        finding.text = format!("{} [{path}]", finding.text);
                     }
-                    e.findings
-                })?;
+                }
+                let mut findings = before.memory_findings.clone();
+                findings.extend(e.findings);
+                findings
+            })?;
             let mut pkgs = pkgs;
             for (mesh, p) in ordered {
                 pkgs.entry(mesh).or_default().push(p);
             }
             let mut after = after.into_iter().peekable();
             while let Some(mut continuation) = after.next() {
+                continuation
+                    .memory_findings
+                    .extend(before.memory_findings.clone());
                 let (packages, mut totals, mut path) = if after.peek().is_none() {
                     (
                         std::mem::take(&mut pkgs),
@@ -363,7 +440,7 @@ pub fn check_many(kernels: &[Vec<Nodes>], t: &Target) -> Vec<Vec<Finding>> {
 /// unit name, after one plain run of `pkgs` (scheduled packages).
 pub fn l1_touched(pkgs: &Nodes, t: &Target) -> Vec<(String, Vec<i64>, Vec<i64>)> {
     let own = pkgs.iter().map(|(&m, p)| (m, vec![from_l0(p)])).collect();
-    let sims = run(&own, t, None, Vec::new());
+    let sims = run(&own, t, None, Vec::new(), &MemoryContext::default());
     if sims.len() == 1 {
         return sims[0]
             .units

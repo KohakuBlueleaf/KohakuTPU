@@ -6,7 +6,7 @@
 //! into L1 and drains them along the destination's walk.
 
 use super::*;
-use crate::lower::sync::Stage;
+use crate::lower::sync::{clash, Stage};
 use ktpu_isa::unit::vector::DIM_STRIDE_MAX;
 
 /// Whether copy `op`, on a machine with F-001 and vector cores, has a mover
@@ -100,9 +100,33 @@ pub fn vector_copy(
     let cores = tg.vc.len().min(pieces.len());
     let units: Vec<String> = (0..cores).map(|v| format!("vc[{v}]")).collect();
     let mut lines = Vec::new();
+    let mut pending: Vec<Access> = Vec::new();
     for (i, (offs, walks)) in pieces.iter().enumerate() {
+        let unit = &units[i % cores];
+        let mut accesses = [
+            mem_of(
+                false,
+                span_of(&sn, soff + offs[1], &walks[1], tg.word_bytes),
+            ),
+            mem_of(true, span_of(&dn, doff + offs[0], &walks[0], tg.word_bytes)),
+        ];
+        for a in &mut accesses {
+            a.unit = unit.clone();
+        }
+        for prior in &units {
+            let conflict = pending.iter().filter(|a| &a.unit == prior).any(|a| {
+                accesses
+                    .iter()
+                    .any(|b| (a.unit != b.unit || (a.write && !b.write)) && clash(a, b))
+            });
+            if conflict {
+                lines.push(format!("wait {prior}"));
+                pending.retain(|a| &a.unit != prior);
+            }
+        }
+        pending.extend(accesses);
         lines.extend([
-            format!("send {}", units[i % cores]),
+            format!("send {unit}"),
             format!(
                 "    desc a0 = {sn} + {} walk={}",
                 soff + offs[1],

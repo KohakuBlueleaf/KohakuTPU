@@ -61,10 +61,19 @@ class Compiled:
     def l1_text(self):
         return self.l1.source
 
+    @functools.cached_property
+    def requires_memory(self):
+        """Whether the compile-time proof needs preparation's memory inputs."""
+        return any(f["kind"] == "model" for f in self.verdict["findings"])
+
     def programs(self, binds, node=None):
         """Each mesh's program at `binds`; given `node`, a one-mesh kernel on
         that node, keyed by it."""
         key = (node, *sorted(binds.items()))
+        if self.requires_memory:
+            owner = rs._COMPILER_OWNER.get()
+            context = None if owner is None else (owner, owner.table_epoch)
+            key = (context, key)
         got = self._progs.get(key)
         if got is None:
             got = self._prebuilt(binds, node)
@@ -143,7 +152,52 @@ class Compiled:
                 recipe=recipe,
                 long_remote=p["f015"]["long_remote"],
             )
+        owner = rs._COMPILER_OWNER.get()
+        if owner is not None and any(f.kind == "model" for f in found):
+            out = self._initialized(out, owner, self.bound is not None or apart)
         return {None: out[0]} if not moved and list(out) == [0] else out
+
+    @staticmethod
+    def _initialized(programs, owner, physical):
+        """Prove bound packages using the runtime's owned constant-table bytes."""
+        if not owner.tables:
+            return programs
+        bound = {
+            n: (
+                p
+                if physical
+                else replace(p, translations=owner.mmu.translations_for(p.bindings))
+            )
+            for n, p in programs.items()
+        }
+        addresses = {
+            at if physical else owner.mmu.resolve(at)[1]
+            for p in programs.values()
+            for at in p.bindings
+        }
+        initial = {}
+        for table in owner.tables.values():
+            _, at = owner.mmu.resolve(table.addr)
+            raw = table.host
+            if raw is not None and any(at <= a < at + len(raw) for a in addresses):
+                initial[at] = raw
+        if not initial:
+            return programs
+        machine = next(iter(programs.values())).machine_json
+        cores = {n: rs._rs.Cores(machine) for n in bound}
+        runs = [
+            {n: p.bound(True, cores=cores[n]) for n, p in bound.items()}
+            for _ in range(2)
+        ]
+        verdict = json.loads(rs._rs.package_check_memory(runs, machine, initial))
+        found = tuple(
+            build.Finding(f["kind"], f["at"], f["text"], f["clause"])
+            for f in verdict["findings"]
+        )
+        return {
+            n: replace(p, findings=found, refused=verdict["refused"])
+            for n, p in programs.items()
+        }
 
 
 @functools.lru_cache(maxsize=COMPILED_KEPT)
@@ -192,6 +246,7 @@ def compile(source, name=None, machine=None, level="l2"):
     text: Any = traced.text if traced else module.source if module else source
     if name is None:
         name = traced.name if traced else (module or M.read(text)).names()[0]
+    compiled_source = traced.graph_json if traced else text
     owner = rs._COMPILER_OWNER.get()
     native_recipe = False if owner is None else owner.native_recipe
     wire_recipe = False if owner is None else owner.wire_recipe
@@ -200,7 +255,7 @@ def compile(source, name=None, machine=None, level="l2"):
     )
     # Include the mutation and zero-sign contexts so a warm compile cannot hide either.
     key = (
-        text,
+        compiled_source,
         name,
         rs.machine_json(machine),
         level,
@@ -213,9 +268,7 @@ def compile(source, name=None, machine=None, level="l2"):
     if key in _cache:
         _cache.move_to_end(key)
         return _cache[key]
-    rust = rs.compile(
-        traced.graph_json if traced else text, name, machine, l1=level == "l1"
-    )
+    rust = rs.compile(compiled_source, name, machine, l1=level == "l1")
     if rust["bound"] is not None and not BOUND_FALLBACK:
         raise TextError(
             f"order: STACK.RELOC: {rust['bound']}", name=f"<{name}.{level}>"

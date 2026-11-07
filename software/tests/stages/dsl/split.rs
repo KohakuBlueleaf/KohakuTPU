@@ -1,5 +1,8 @@
 //! Kernel split contracts exercised by the DSL stage.
 
+#[path = "../common.rs"]
+mod common;
+
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
@@ -69,7 +72,7 @@ fn request(m: &Machine) -> SplitRequest {
 #[test]
 fn destination_copy_preserves_global_origins_and_single_word_writers() {
     let m = machine();
-    for (nbytes, classed) in [(32, false), (289, false), (289, true)] {
+    for (nbytes, classed) in [(289, false), (289, true)] {
         let mut args = json!({"nbytes": nbytes});
         if classed {
             args["shape_class"] = json!({
@@ -78,8 +81,18 @@ fn destination_copy_preserves_global_origins_and_single_word_writers() {
         }
         let baseline = ktpu_kernels::call("convert.copy_kernel", &args, &m).expect("P=1");
         let input = |i| 0x2800u16 | ((i * 37) as u16 & 0x3ff);
-        let (want, _) = simulate_named_inputs(&baseline, "dst", &|_, _, _, _, _| 0, &input);
-        for grant in [vec![3], vec![3, 1], vec![3, 1, 0, 2]] {
+        let elements = baseline
+            .graph
+            .ports
+            .iter()
+            .find(|p| p.name == "dst")
+            .expect("destination")
+            .spec
+            .shape
+            .iter()
+            .product::<i64>();
+        let want: Vec<_> = (0..elements).flat_map(|i| input(i).to_le_bytes()).collect();
+        for grant in [vec![3], vec![3, 1, 0, 2]] {
             let mut request = request(&m);
             request.nodes = NodeSet::new(grant, &m).expect("grant");
             request.force = Some("destination-tiles".into());
@@ -115,6 +128,417 @@ fn destination_copy_preserves_global_origins_and_single_word_writers() {
                 request.nodes.ids().len().min((nbytes + 63) as usize / 64),
             );
         }
+    }
+    for classed in [true, false] {
+        let width = 32;
+        let src_rows = 16;
+        let (dst_rows, dst_pitch, src_first, dst_first, rows, copied) = if classed {
+            (18, 64, 3, 1, 16, 13)
+        } else {
+            (13, 32, 0, 0, 13, 13)
+        };
+        let generator = if classed {
+            "fused.kernel"
+        } else {
+            "convert.rows_kernel"
+        };
+        let src_name = if classed { "input" } else { "src" };
+        let dst_name = if classed { "result" } else { "dst" };
+        let args = if classed {
+            json!({
+                "ports": [
+                    {"name": src_name, "shape": [src_rows, width], "dtype": "f16", "written": false},
+                    {"name": dst_name, "shape": [dst_rows, dst_pitch], "dtype": "f16", "written": true}
+                ], "scratch": [], "staged": [],
+                "steps": [
+                    {"kind": "prefix", "src": src_name, "dst": dst_name, "boundary": {
+                        "src_rows": src_rows, "dst_rows": dst_rows, "width": width,
+                        "src_pitch": width, "dst_pitch": dst_pitch,
+                        "src_first": src_first, "dst_first": dst_first,
+                        "rows": rows, "copied_rows": copied, "classed": true
+                    }},
+                    {"kind": "prefix", "src": src_name, "dst": dst_name, "boundary": {
+                        "src_rows": src_rows, "dst_rows": dst_rows, "width": width,
+                        "src_pitch": width, "dst_pitch": dst_pitch,
+                        "dst_first": dst_first + copied - 1, "rows": 1,
+                        "copied_rows": 0, "initialize": true
+                    }}
+                ]
+            })
+        } else {
+            json!({"src_rows": src_rows, "dst_rows": dst_rows, "width": width})
+        };
+        if classed {
+            let mut aliased = args.clone();
+            aliased["steps"][0]["src"] = json!(dst_name);
+            aliased["steps"][0]["boundary"]["src_rows"] = json!(dst_rows);
+            aliased["steps"][0]["boundary"]["src_pitch"] = json!(dst_pitch);
+            let error = ktpu_kernels::call("fused.kernel", &aliased, &m)
+                .expect_err("initialization cannot erase a copied source");
+            assert_eq!(error.clause, "API.OP.001");
+        }
+        let source = f16(&[src_rows, width]).expect("source rows");
+        let destination = f16(&[dst_rows, dst_pitch]).expect("destination rows");
+        let mut t = Trace::new("row_boundary_reference", Facts::of(&m), &m.die.target);
+        let src = t
+            .port(src_name, ktpu_graph::Role::In, source.clone())
+            .expect("src");
+        let dst = t
+            .port(dst_name, ktpu_graph::Role::Out, destination.clone())
+            .expect("dst");
+        let walk = [(copied * width / 16, 32)];
+        if classed {
+            let rectangle = dst
+                .at(&[
+                    ktpu_kernels::trace::buffer::sl(dst_first, dst_first + rows),
+                    ktpu_kernels::trace::buffer::sl(0, width),
+                ])
+                .expect("destination prefix");
+            t.fill_value(&rectangle, 0, None, None)
+                .expect("initialize capacity prefix");
+            let destination_walk = [(copied, dst_pitch * 2), (width / 16, 32)];
+            t.copy_classed(
+                &dst.whole(),
+                &src.whole(),
+                (&walk, Some(src_first * width * 2)),
+                (&destination_walk, Some(dst_first * dst_pitch * 2)),
+                Some(1),
+            )
+            .expect("pitched logical prefix");
+            t.fill_value(
+                &dst.at(&[
+                    ktpu_kernels::trace::buffer::sl(dst_first + copied - 1, dst_first + copied),
+                    ktpu_kernels::trace::buffer::sl(0, width),
+                ])
+                .expect("cleared row"),
+                0,
+                None,
+                None,
+            )
+            .expect("clear final copied row");
+        } else {
+            t.copy(
+                &dst.whole(),
+                &src.whole(),
+                Some((&walk, None)),
+                Some((&walk, None)),
+            )
+            .expect("logical prefix");
+        }
+        let reference = ktpu_kernels::kernel::Kernel {
+            graph: t.graph().expect("explicit boundary"),
+            given: vec![(src_name.into(), source), (dst_name.into(), destination)],
+        };
+        let local = ktpu_kernels::call(generator, &args, &m).expect("row boundary");
+        assert_eq!(
+            ktpu_graph::cycles(&local.graph, &m).expect("typed boundary cycles"),
+            ktpu_graph::cycles(&reference.graph, &m).expect("explicit boundary cycles"),
+        );
+        let input = |i| 0x2800u16 | ((i * 37) as u16 & 0x3ff);
+        let touched = |i| {
+            let row = i / dst_pitch;
+            row >= dst_first && row < dst_first + rows && i % dst_pitch < width
+        };
+        let expected: Vec<_> = (0..dst_rows * dst_pitch)
+            .flat_map(|i| {
+                let row = i / dst_pitch - dst_first;
+                let col = i % dst_pitch;
+                let value = if !touched(i) {
+                    0x5a5a
+                } else if row < copied - i64::from(classed) {
+                    input((src_first + row) * width + col)
+                } else {
+                    0
+                };
+                value.to_le_bytes()
+            })
+            .collect();
+        let seeded: Vec<_> = (0..dst_rows * dst_pitch)
+            .flat_map(|_| 0x5a5au16.to_le_bytes())
+            .collect();
+        let check = |actual: Vec<u8>, writes: Vec<u32>| {
+            assert_eq!(actual, expected);
+            for (byte, count) in writes.iter().enumerate() {
+                assert_eq!(*count > 0, touched(byte as i64 / 2));
+            }
+        };
+        let (actual, writes) = simulate_named_tables(
+            &local,
+            dst_name,
+            &|_, _, _, _, _| 0,
+            &input,
+            &[(dst_name, seeded.clone())],
+        );
+        check(actual, writes);
+        let mut req = request(&m);
+        req.nodes = NodeSet::new(vec![3, 1, 0, 2], &m).expect("boundary owners");
+        req.force = Some(if classed { "rows" } else { "destination-tiles" }.into());
+        let plan = call_split(generator, &args, &req, &m).expect("distributed boundary");
+        assert_eq!(plan.split.active_nodes, 4);
+        validate_ownership(&plan.split.output).expect("boundary ownership");
+        for share in &plan.split.shards {
+            for region in &share.read_regions {
+                assert_eq!(region.allocation, src_name);
+                assert!(region.bytes.end <= (src_rows * width * 2) as u64);
+            }
+        }
+        let (actual, writes) = simulate_named_tables(
+            &plan.kernel,
+            dst_name,
+            &|_, _, _, _, _| 0,
+            &input,
+            &[(dst_name, seeded)],
+        );
+        check(actual, writes);
+    }
+    let copy = json!({"gen": "convert.copy_kernel", "args": {"nbytes": 128}});
+    let sequence = ktpu_kernels::call(
+        "kernel.sequence",
+        &json!({"members": [copy.clone(), copy]}),
+        &m,
+    )
+    .expect("ordered typed sequence");
+    ktpu_graph::program(&sequence.graph, &m).expect("hygienic sequence graph");
+    assert!(ktpu_kernels::call("kernel.sequence", &json!({"members": []}), &m).is_err());
+    assert!(ktpu_kernels::call(
+        "kernel.sequence",
+        &json!({"members": [{
+            "gen": "convert.copy_kernel", "args": {"nbytes": 128, "quant_backend": "vector_mx7"}
+        }]}),
+        &m
+    )
+    .is_err());
+    assert!(ktpu_kernels::call(
+        "convert.prefix_kernel",
+        &json!({
+            "src_rows": 4, "dst_rows": 4, "width": 32, "rows": 4, "dst_first": 1
+        }),
+        &m
+    )
+    .is_err());
+    // Reuse the two removed trivial-copy baseline simulations for a complete
+    // global-input/product/global-output boundary composition.
+    let product = json!({"gen": "matmul.mm_kernel", "args": {
+        "mm": {"made_by": {"gen": "matmul.plan", "args": {
+            "bt": 1, "m": 16, "n": 32, "k": 32,
+            "pad_m": false, "dense_n": true, "n_tiles": 1
+        }}},
+        "activation_any": true, "ring_depth": 1,
+        "extras": [],
+        "e": {"nodes": [{"load": 0}, {"const": 0.5},
+            {"op": "mul", "args": [0, 1]}], "root": 2},
+        "out": {"kind": "full", "dtype": "f16", "pitch": 32, "rows": 16, "offset": 0}
+    }});
+    let input_boundary = json!({"gen": "convert.prefix_kernel", "args": {
+        "src_rows": 20, "dst_rows": 16, "width": 32,
+        "src_first": 4, "rows": 16, "initialize": false
+    }});
+    let output_boundary = json!({"gen": "convert.prefix_kernel", "args": {
+        "src_rows": 16, "dst_rows": 32, "width": 32,
+        "dst_first": 7, "rows": 13, "initialize": false
+    }});
+    let emitter = |descriptor: &serde_json::Value| {
+        ktpu_kernels::call(
+            descriptor["gen"].as_str().expect("generator"),
+            &descriptor["args"],
+            &m,
+        )
+        .expect("explicit stage")
+    };
+    let explicit_output = ktpu_kernels::gen::chain::kernel(
+        emitter(&product),
+        emitter(&output_boundary),
+        "src",
+        "out",
+        false,
+    )
+    .expect("uncontracted output boundary");
+    let explicit = ktpu_kernels::gen::chain::kernel(
+        emitter(&input_boundary),
+        explicit_output,
+        "a",
+        "dst",
+        false,
+    )
+    .expect("uncontracted input boundary");
+    let descriptor = json!({
+        "first": input_boundary,
+        "second": {"gen": "kernel.chain", "args": {
+            "first": product, "second": output_boundary,
+            "from": "src", "to": "out", "keep": false
+        }},
+        "from": "a", "to": "dst", "keep": false
+    });
+    let mut complete = descriptor.clone();
+    complete["second"]["args"]["second"]["args"]["rows"] = json!(16);
+    let direct =
+        ktpu_kernels::call("kernel.chain", &complete, &m).expect("complete global row chunk");
+    assert!(!direct.graph.body.iter().any(|stmt| matches!(
+        stmt.node,
+        ktpu_graph::Node::Mover {
+            op: ktpu_graph::MoverOp::Copy,
+            ..
+        }
+    )));
+    ktpu_graph::program(&direct.graph, &m).expect("bounded complete chunk graph");
+    let mut next_complete = complete.clone();
+    next_complete["first"]["args"]["src_first"] = json!(0);
+    next_complete["second"]["args"]["second"]["args"]["dst_first"] = json!(0);
+    let lookahead = ktpu_kernels::call(
+        "kernel.sequence",
+        &json!({
+            "members": [
+                {"gen": "kernel.chain", "args": complete},
+                {"gen": "kernel.chain", "args": next_complete}
+            ],
+            "pipeline_lookahead": true
+        }),
+        &m,
+    )
+    .expect("proved tail lookahead");
+    ktpu_graph::program(&lookahead.graph, &m).expect("lookahead dependencies");
+    // Aliased quant storage can keep the last product wave dependent. The
+    // optional pass must retain the legal schedule rather than force a move.
+    assert_eq!(lookahead.graph.ports, direct.graph.ports);
+    let optimized = ktpu_kernels::call("kernel.chain", &descriptor, &m)
+        .expect("input view and streamed global output");
+    assert!(!optimized.graph.scratch.iter().any(|s| s.name == "dst"));
+    assert!(optimized
+        .graph
+        .scratch
+        .iter()
+        .any(|s| s.name.contains("boundary_tail")));
+    assert_eq!(
+        optimized
+            .graph
+            .body
+            .iter()
+            .filter(|s| matches!(
+                s.node,
+                ktpu_graph::Node::Mover {
+                    op: ktpu_graph::MoverOp::Copy,
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    assert!(
+        ktpu_graph::cycles(&optimized.graph, &m).expect("optimized complete price")
+            <= ktpu_graph::cycles(&explicit.graph, &m).expect("explicit complete price")
+    );
+    let simulate = |kernel: &ktpu_kernels::kernel::Kernel| {
+        let output = &kernel
+            .graph
+            .ports
+            .iter()
+            .find(|p| p.role == ktpu_graph::Role::Out)
+            .expect("global output")
+            .name;
+        let sentinel: Vec<_> = (0..32 * 32).flat_map(|_| 0x5a5au16.to_le_bytes()).collect();
+        simulate_named_tables(
+            kernel,
+            output,
+            &|_, _, _, _, k| 0x3400u16 + (k % 7) as u16,
+            &|i| 0x2800u16 | ((i * 37) as u16 & 0x3ff),
+            &[(output.as_str(), sentinel)],
+        )
+    };
+    let mut pitched_descriptor = descriptor.clone();
+    pitched_descriptor["first"]["args"]["dst_pitch"] = json!(64);
+    pitched_descriptor["link_view"] = json!("prefix");
+    let pitched = ktpu_kernels::call("kernel.chain", &pitched_descriptor, &m)
+        .expect("pitched activation prefix link");
+    assert!(!pitched.graph.scratch.iter().any(|s| s.name == "dst"));
+    assert_eq!(
+        pitched.graph.body, optimized.graph.body,
+        "a single bounded quant reads the original logical prefix, not its capacity copy"
+    );
+    assert!(
+        ktpu_graph::cycles(&pitched.graph, &m).expect("pitched complete price")
+            <= ktpu_graph::cycles(&explicit.graph, &m).expect("materialized complete price")
+    );
+    let mut next_output = output_boundary.clone();
+    next_output["args"]["dst_first"] = json!(20);
+    next_output["args"]["rows"] = json!(11);
+    let mut next_input = input_boundary.clone();
+    next_input["args"]["src_first"] = json!(0);
+    let next_explicit = ktpu_kernels::gen::chain::kernel(
+        emitter(&product),
+        emitter(&next_output),
+        "src",
+        "out",
+        false,
+    )
+    .expect("next explicit output prefix");
+    let next_explicit =
+        ktpu_kernels::gen::chain::kernel(emitter(&next_input), next_explicit, "a", "dst", false)
+            .expect("next explicit input prefix");
+    let explicit_sequence =
+        ktpu_kernels::gen::chain::sequence::kernel(vec![explicit, next_explicit])
+            .expect("explicit two-chunk schedule");
+    let mut next_descriptor = pitched_descriptor.clone();
+    next_descriptor["first"]["args"]["src_first"] = json!(0);
+    next_descriptor["second"]["args"]["second"] = next_output;
+    let sequence_descriptor = json!({"members": [
+        {"gen": "kernel.chain", "args": pitched_descriptor},
+        {"gen": "kernel.chain", "args": next_descriptor}
+    ]});
+    let sequence = ktpu_kernels::call("kernel.sequence", &sequence_descriptor, &m)
+        .expect("typed two-chunk schedule");
+    assert!(
+        ktpu_graph::cycles(&sequence.graph, &m).expect("complete typed sequence price")
+            <= ktpu_graph::cycles(&explicit_sequence.graph, &m).expect("complete reference price")
+    );
+    let (expected, _) = simulate(&explicit_sequence);
+    let (actual, writes) = simulate(&sequence);
+    assert_eq!(actual, expected);
+    for (byte, count) in writes.iter().enumerate() {
+        let row = byte / 64;
+        assert_eq!(*count, u32::from((7..31).contains(&row)));
+    }
+    let mut req = request(&m);
+    req.nodes = NodeSet::new(vec![3, 1, 0, 2], &m).expect("pitched owners");
+    req.force = Some("rows".into());
+    let distributed = call_split("kernel.sequence", &sequence_descriptor, &req, &m)
+        .expect("dependent pitched row stages");
+    assert_eq!(distributed.split.active_nodes, 4);
+    validate_ownership(&distributed.split.output).expect("pitched output owners");
+    assert_eq!(
+        distributed.split.cost.makespan,
+        ktpu_graph::cycles(&distributed.kernel.graph, &m).expect("complete emitted cost")
+    );
+    assert_eq!(distributed.split.cost.local_cycles.len(), 4);
+    let mut linked_reads = BTreeMap::new();
+    for scratch in &distributed.kernel.graph.scratch {
+        if scratch.name.ends_with("_dst") && scratch.spec.shape == [16, 64] {
+            linked_reads.insert(scratch.name.clone(), vec![false; 16 * 64]);
+        }
+    }
+    assert!(!linked_reads.is_empty(), "pitched links are retained");
+    for share in &distributed.split.shards {
+        for region in &share.read_regions {
+            if let Some(covered) = linked_reads.get_mut(&region.allocation) {
+                assert!(region.bytes.start % 128 < 64);
+                assert!(region.bytes.end <= (region.bytes.start / 128) * 128 + 64);
+                for byte in region.bytes.clone() {
+                    let row = (byte / 128) as usize;
+                    assert!(row < 16);
+                    covered[row * 64 + (byte % 128) as usize] = true;
+                }
+            }
+        }
+    }
+    for (allocation, covered) in linked_reads {
+        assert!(
+            covered.iter().all(|read| *read),
+            "missing linked input bytes in {allocation}"
+        );
+    }
+    let (actual, writes) = simulate(&distributed.kernel);
+    assert_eq!(actual, expected);
+    for (byte, count) in writes.iter().enumerate() {
+        assert_eq!(*count, u32::from((7..31).contains(&(byte / 64))));
     }
     let ordinary = ktpu_kernels::call("convert.copy_kernel", &json!({"nbytes": 128}), &m)
         .expect("ordinary call");
@@ -321,6 +745,28 @@ fn simulate_named_executable(
         end += (b.bytes() + 4095) / 4096 * 4096;
         buffers.push((name.clone(), b));
     }
+    let mut proof_memory = ktpu_verify::MemoryContext::default();
+    for (name, bytes) in tables {
+        proof_memory
+            .initial
+            .insert(binds[*name] as u64, bytes.clone());
+    }
+    let proof_binds = binds
+        .iter()
+        .map(|(name, &at)| (name.clone(), i128::from(at)))
+        .collect();
+    match l1 {
+        Some(source) => {
+            common::verify_card_l1(source, &text.name, &machine(), proof_binds, &proof_memory)
+        }
+        None => common::verify_card_l2(
+            &text.text(),
+            &text.name,
+            &machine(),
+            proof_binds,
+            &proof_memory,
+        ),
+    }
     let mut mem = Dram::new(end as usize);
     for (name, b) in &buffers {
         if l1.is_some()
@@ -371,35 +817,6 @@ fn simulate_named_executable(
     if let Some(executable) = &executable {
         let card = machine();
         let facts = Facts::of(&card);
-        let bound: BTreeMap<_, _> = binds
-            .iter()
-            .map(|(k, v)| (k.clone(), i128::from(*v)))
-            .collect();
-        let programs = ktpu_l1::build::programs(
-            executable,
-            &text.name,
-            &bound,
-            &card,
-            Some(card.nodes()),
-            None,
-        )
-        .expect("bound delivery programs");
-        let builder = ktpu_l1::build::Builder::new(&card).expect("package builder");
-        let packages: BTreeMap<_, _> = programs
-            .iter()
-            .map(|p| {
-                (
-                    p.mesh,
-                    builder
-                        .build(p, ktpu_l1::build::Opts::default())
-                        .expect("delivery package")
-                        .build(false, false),
-                )
-            })
-            .collect();
-        let target = ktpu_verify::Target::from_machine(&card, Some(card.nodes())).expect("target");
-        let findings = ktpu_verify::check(&[packages], &target);
-        assert!(!findings.iter().any(|f| f.kind.refuses()), "{findings:?}");
         let mut simulator = ktpu_sim::machine::Machine::of_meshes(
             mem,
             card.nodes() as usize,
@@ -631,13 +1048,13 @@ fn matmul_class_splits_keep_counted_products_and_global_inputs() {
     let m = machine();
     let args = json!({
         "mm": {"made_by": {"gen": "matmul.plan", "args": {
-            "bt": 2, "m": 197, "n": 192, "k": 64, "shared": false,
+            "bt": 2, "m": 37, "n": 160, "k": 64, "shared": false,
             "n_tile": "auto", "waves": true
         }}},
         "shape_class": {"kblock": 32, "max_block": 256, "policy": "exact", "cores": "min"},
         "e": {"nodes": [{"load": 0}], "root": 0},
         "extras": [],
-        "out": {"kind": "full", "dtype": "f16", "offset": 0, "pitch": 192, "rows": 400}
+        "out": {"kind": "full", "dtype": "f16", "offset": 0, "pitch": 160, "rows": 80}
     });
     let baseline = ktpu_kernels::call("matmul.mm_kernel", &args, &m).expect("class P=1");
     let (want, _) = simulate_matmul(&baseline);
@@ -1000,6 +1417,564 @@ fn row_composites_keep_statistics_and_broadcasts_at_global_origins() {
 }
 
 #[test]
+fn fused_complete_fold_keeps_odd_partials_and_global_row_origins() {
+    let m = machine();
+    let full = json!({"kind": "full", "dtype": "f16", "offset": 0, "pitch": 384, "rows": 128});
+    let stat = json!({"kind": "row", "dtype": "f16", "offset": 0, "pitch": 0, "rows": 128});
+    let mean = json!({"nodes": [{"load": 0}, {"reduce": "sum", "arg": 0},
+        {"const": 0.0026041666666666665}, {"op": "mul", "args": [1, 2]}], "root": 3});
+    let mut reference = ktpu_kernels::call(
+        "reductions.wide_fold_kernel",
+        &json!({"R": 128, "W": 384, "e": mean, "operands": [full], "out": stat}),
+        &m,
+    )
+    .expect("complete reference fold");
+    for scratch in &mut reference.graph.scratch {
+        scratch.spec.space = ktpu_graph::BufSpace::Stage;
+    }
+    let args = json!({
+        "ports": [
+            {"name": "in0", "shape": [128, 384], "dtype": "f16", "written": false},
+            {"name": "out", "shape": [128], "dtype": "f16", "written": true}
+        ],
+        "scratch": [], "staged": [], "scratch_space": "stage",
+        "steps": [{"kind": "rows", "fold": true, "R": 128, "W": 384,
+            "exprs": [mean], "operands": [full], "ins": ["in0"],
+            "out_operands": [stat], "outs": ["out"]}]
+    });
+    let simulate = |k: &ktpu_kernels::kernel::Kernel| {
+        simulate_named_inputs(k, "out", &|_, _, _, _, _| 0, &|i| {
+            0x2000 | ((i / 384) as u16 * 16) | (i as u16 & 15)
+        })
+    };
+    let (want, _) = simulate(&reference);
+    let local = ktpu_kernels::call("fused.kernel", &args, &m).expect("fused fold");
+    let (actual, writes) = simulate(&local);
+    assert_eq!(actual, want);
+    assert!(writes.iter().all(|&n| n == 1));
+    assert_eq!(
+        ktpu_graph::cycles(&local.graph, &m).expect("fused schedule"),
+        ktpu_graph::cycles(&reference.graph, &m).expect("reference schedule")
+    );
+    // A complete fold's singleton phases rotate without changing its work.
+    let mut balanced_args = args.clone();
+    balanced_args["steps"][0]["R"] = json!(16);
+    balanced_args["scratch_space"] = json!("mem");
+    let mut placed =
+        ktpu_kernels::call("fused.kernel", &balanced_args, &m).expect("small complete fold");
+    let mut singleton = 0;
+    for stmt in &mut placed.graph.body {
+        if let ktpu_graph::Node::Par { lo, hi, unit, .. } = &mut stmt.node {
+            if unit.kind == ktpu_graph::UnitKind::Vc
+                && *lo == ktpu_graph::Index::Int(0)
+                && *hi == ktpu_graph::Index::Int(1)
+            {
+                unit.index = Some(ktpu_graph::Index::Int(singleton % Facts::of(&m).vc));
+                singleton += 1;
+            }
+        }
+    }
+    assert!(
+        singleton >= 2,
+        "the complete fold exercises successive singleton phases"
+    );
+    balanced_args["balance_stages"] = json!(true);
+    let balanced =
+        ktpu_kernels::call("fused.kernel", &balanced_args, &m).expect("balanced complete fold");
+    assert_eq!(balanced.graph.body, placed.graph.body);
+    assert_eq!(
+        ktpu_graph::cycles(&balanced.graph, &m).expect("balanced price"),
+        ktpu_graph::cycles(&placed.graph, &m).expect("explicit placement price")
+    );
+    let mut req = request(&m);
+    req.nodes = NodeSet::new(vec![3, 1, 0, 2], &m).expect("grant");
+    req.force = Some("rows".into());
+    let split = call_split("fused.kernel", &args, &req, &m).expect("fold row owners");
+    assert_eq!(split.split.active_nodes, 4);
+    validate_ownership(&split.split.output).expect("one writer per statistic line");
+    let (actual, writes) = simulate(&split.kernel);
+    assert_eq!(actual, want);
+    assert!(writes.iter().all(|&n| n == 1));
+}
+
+#[test]
+fn product_chains_keep_quant_and_ring_work_on_each_row_owner() {
+    let m = machine();
+    let product = |width, columns| {
+        json!({
+            "gen": "matmul.mm_kernel", "args": {
+                "mm": {"made_by": {"gen": "matmul.plan", "args": {
+                    "bt": 1, "m": 64, "n": columns, "k": width,
+                    "pad_m": false, "dense_n": true
+                }}},
+                "activation_any": true, "ring_depth": 2,
+                "quant_backend": "vector_mx7",
+                "e": {"nodes": [{"load": 0}, {"load": 1},
+                    {"op": "add", "args": [0, 1]}], "root": 2},
+                "extras": [{"kind": "col", "dtype": "f16", "offset": 0, "pitch": 0, "rows": 0}],
+                "out": {"kind": "full", "dtype": "f16", "offset": 0, "pitch": columns, "rows": 64}
+            }
+        })
+    };
+    // A single row tile and many column waves share packed activation
+    // capacity. Only the completed middle columns may quantize early.
+    let mut window_args = json!({
+        "first": product(64, 512), "second": product(512, 32),
+        "from": "a", "to": "out", "keep": false, "link_space": "stage"
+    });
+    for side in ["first", "second"] {
+        window_args[side]["args"]["quant_backend"] = json!("mover_quant");
+        window_args[side]["args"]["ring_depth"] = json!(1);
+        window_args[side]["args"]["mm"]["made_by"]["args"]["m"] = json!(16);
+        window_args[side]["args"]["out"]["rows"] = json!(16);
+    }
+    window_args["first"]["args"]["mm"]["made_by"]["args"]["n_tiles"] = json!(16);
+    window_args["second"]["args"]["mm"]["made_by"]["args"]["n_tiles"] = json!(1);
+    let unsplit_windows =
+        ktpu_kernels::call("kernel.chain", &window_args, &m).expect("shared complete quant stage");
+    // A real product's final pipeline iteration still consumes its packed
+    // activation. Repacking the next input into that same allocation must not
+    // cross the iteration, even if a positional native rewrite did so.
+    let input_quant = unsplit_windows
+        .graph
+        .body
+        .iter()
+        .find(|stmt| {
+            matches!(
+                stmt.node,
+                ktpu_graph::Node::Mover {
+                    op: ktpu_graph::MoverOp::Quant,
+                    ..
+                }
+            )
+        })
+        .expect("activation packing")
+        .clone();
+    let product_wave = unsplit_windows
+        .graph
+        .body
+        .iter()
+        .find(|stmt| matches!(stmt.node, ktpu_graph::Node::For { pipe: Some(_), .. }))
+        .expect("product pipeline");
+    assert!(
+        !ktpu_kernels::gen::chain::independent_tail(
+            product_wave,
+            std::slice::from_ref(&input_quant),
+        ),
+        "next activation cannot overwrite the final wave's packed input"
+    );
+    let mut private_quant = input_quant.clone();
+    if let ktpu_graph::Node::Mover { dst, .. } = &mut private_quant.node {
+        dst.buffer = "independent_next_activation".into();
+    }
+    assert!(
+        ktpu_kernels::gen::chain::independent_tail(
+            product_wave,
+            std::slice::from_ref(&private_quant),
+        ),
+        "a truly independent activation buffer is eligible"
+    );
+    // Read/read sharing is legal: repack from an allocation the tail only
+    // reads, into unrelated storage. Treating all touches as writes loses it.
+    if let (ktpu_graph::Node::Mover { dst, .. }, ktpu_graph::Node::Mover { src: Some(src), .. }) =
+        (&input_quant.node, &mut private_quant.node)
+    {
+        src.buffer = dst.buffer.clone();
+    }
+    assert!(
+        ktpu_kernels::gen::chain::independent_tail(
+            product_wave,
+            std::slice::from_ref(&private_quant),
+        ),
+        "shared immutable reads do not create a dependency"
+    );
+    // The same effect proof drives ordinary fast attention transfers. A real
+    // computation blocks aliased repacking, but disjoint transfers move ahead.
+    let no_outputs = std::collections::HashSet::new();
+    let mut blocked = vec![product_wave.clone(), input_quant.clone()];
+    assert!(!ktpu_kernels::gen::chain::hoist_inputs(
+        &mut blocked,
+        &no_outputs
+    ));
+    // Unlike the tail-only probe above, use a source that no iteration can
+    // write: whole-wave motion must not infer immutability from its final trip.
+    let mut immutable_quant = private_quant.clone();
+    if let ktpu_graph::Node::Mover { src: Some(src), .. } = &mut immutable_quant.node {
+        src.buffer = "immutable_next_source".into();
+    }
+    let mut independent = vec![product_wave.clone(), immutable_quant.clone()];
+    assert!(ktpu_kernels::gen::chain::hoist_inputs(
+        &mut independent,
+        &no_outputs
+    ));
+    assert_eq!(independent[0], immutable_quant);
+    let mut public = vec![product_wave.clone(), immutable_quant.clone()];
+    let ktpu_graph::Node::Mover { dst, .. } = &private_quant.node else {
+        unreachable!()
+    };
+    assert!(!ktpu_kernels::gen::chain::hoist_inputs(
+        &mut public,
+        &std::collections::HashSet::from([dst.buffer.clone()]),
+    ));
+    let mut ready = vec![immutable_quant.clone(), product_wave.clone()];
+    assert!(ktpu_kernels::gen::chain::advance_compute(
+        &mut ready,
+        &no_outputs
+    ));
+    assert_eq!(ready, vec![product_wave.clone(), immutable_quant.clone()]);
+    let mut needs_input = vec![input_quant.clone(), product_wave.clone()];
+    assert!(!ktpu_kernels::gen::chain::advance_compute(
+        &mut needs_input,
+        &no_outputs
+    ));
+    let mut public = vec![immutable_quant.clone(), product_wave.clone()];
+    assert!(!ktpu_kernels::gen::chain::advance_compute(
+        &mut public,
+        &std::collections::HashSet::from([dst.buffer.clone()]),
+    ));
+    // Status records are writes too; they cannot alias the active input.
+    if let (ktpu_graph::Node::Mover { dst, .. }, ktpu_graph::Node::Mover { kw, .. }) =
+        (&input_quant.node, &mut private_quant.node)
+    {
+        kw.push(("status".into(), ktpu_graph::Attr::View(dst.clone())));
+    }
+    assert!(
+        !ktpu_kernels::gen::chain::independent_tail(
+            product_wave,
+            std::slice::from_ref(&private_quant),
+        ),
+        "finite-status storage is a real write dependency"
+    );
+    window_args["pipeline_lookahead"] = json!(true);
+    let windows = ktpu_kernels::call("kernel.chain", &window_args, &m)
+        .expect("completed quant column windows");
+    assert!(
+        ktpu_graph::cycles(&windows.graph, &m).expect("window schedule price")
+            <= ktpu_graph::cycles(&unsplit_windows.graph, &m).expect("unsplit schedule price")
+    );
+    let candidate = ktpu_kernels::gen::chain::pipeline_candidate(&unsplit_windows, &m)
+        .expect("legal pooled window candidate");
+    let candidate_price = ktpu_graph::cycles(&candidate.graph, &m).expect("window candidate price");
+    let baseline_price = ktpu_graph::cycles(&unsplit_windows.graph, &m).expect("baseline price");
+    let selected_price = ktpu_graph::cycles(&windows.graph, &m).expect("selected price");
+    assert!(selected_price <= candidate_price.min(baseline_price),
+        "all complete candidates compete: baseline={baseline_price}, windows={candidate_price}, selected={selected_price}");
+    let quants = candidate
+        .graph
+        .body
+        .iter()
+        .filter(|stmt| {
+            matches!(
+                stmt.node,
+                ktpu_graph::Node::Mover {
+                    op: ktpu_graph::MoverOp::Quant,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(
+        quants, 4,
+        "one input quant and three complete packed column windows"
+    );
+    ktpu_graph::program(&candidate.graph, &m).expect("fresh window scopes");
+    window_args["pipeline_lookahead"] = json!(false);
+    let mut checked_args = json!({
+        "members": [{"gen": "kernel.chain", "args": window_args}],
+        "quant_backend": "vector_mx7", "pipeline_lookahead": false
+    });
+    let checked_baseline = ktpu_kernels::call("kernel.sequence", &checked_args, &m)
+        .expect("decorated complete baseline");
+    checked_args["pipeline_lookahead"] = json!(true);
+    let checked = ktpu_kernels::call("kernel.sequence", &checked_args, &m)
+        .expect("status-safe quant-window sequence");
+    assert!(
+        ktpu_graph::cycles(&checked.graph, &m).expect("decorated selected price")
+            <= ktpu_graph::cycles(&checked_baseline.graph, &m).expect("decorated baseline price")
+    );
+    let decorated_windows = ktpu_kernels::gen::chain::quant::kernel(
+        candidate,
+        ktpu_kernels::gen::chain::quant::Backend::Vector,
+        &m,
+    )
+    .expect("decorate actual split windows");
+    for (tested, split_windows) in [(&decorated_windows, true), (&checked, false)] {
+        let mut records = Vec::new();
+        for stmt in &tested.graph.body {
+            if let ktpu_graph::Node::Mover {
+                op: ktpu_graph::MoverOp::Quant,
+                kw,
+                ..
+            } = &stmt.node
+            {
+                let record = kw
+                    .iter()
+                    .find_map(|(key, value)| match (key.as_str(), value) {
+                        ("status", ktpu_graph::Attr::View(view)) => Some(view.clone()),
+                        _ => None,
+                    })
+                    .expect("each scheduled quant owns a status slice");
+                assert!(
+                    !records.contains(&record),
+                    "quant windows cannot share status records"
+                );
+                records.push(record);
+            }
+        }
+        assert!(records.len() >= 2);
+        if split_windows {
+            assert_eq!(
+                records.len(),
+                4,
+                "split windows each need their own finite record"
+            );
+        }
+        assert_eq!(
+            tested
+                .graph
+                .body
+                .iter()
+                .filter(|stmt| matches!(
+                    stmt.node,
+                    ktpu_graph::Node::Mover {
+                        op: ktpu_graph::MoverOp::QuantCheck,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert!(matches!(
+            tested.graph.body.last().expect("final check").node,
+            ktpu_graph::Node::Mover {
+                op: ktpu_graph::MoverOp::QuantCheck,
+                ..
+            }
+        ));
+        ktpu_graph::program(&tested.graph, &m).expect("status slices and final check");
+    }
+    let mut args = json!({
+        "first": product(64, 128), "second": product(128, 32),
+        "from": "a", "to": "out", "keep": false
+    });
+    let simulate = |k: &ktpu_kernels::kernel::Kernel| {
+        simulate_named_inputs(
+            k,
+            &k.graph
+                .ports
+                .iter()
+                .find(|port| port.role == ktpu_graph::Role::Out)
+                .expect("chain output")
+                .name,
+            &|_, group, block, lane, col| {
+                0x2400 | ((group * 17 + block * 31 + lane * 7 + col) as u16 & 0x3ff)
+            },
+            &|i| 0x2400 + (i / 64) as u16 * 8 + (i as u16 & 7),
+        )
+    };
+    let first =
+        ktpu_kernels::call("matmul.mm_kernel", &args["first"]["args"], &m).expect("first product");
+    let second = ktpu_kernels::call("matmul.mm_kernel", &args["second"]["args"], &m)
+        .expect("second product");
+    // Explicit straight-line schedules: each quant records finite status and
+    // the product finishes before the status reduction.
+    let reference = |part: &serde_json::Value| {
+        let mut plain = part["args"].clone();
+        plain
+            .as_object_mut()
+            .expect("arguments")
+            .remove("quant_backend");
+        let mut kernel =
+            ktpu_kernels::call("matmul.mm_kernel", &plain, &m).expect("ordinary product");
+        let mut graph = serde_json::to_value(&kernel.graph).expect("graph");
+        let record = ktpu_machine::packing::quant_status_bytes(m.quant_cores()) / 2;
+        let body = graph["body"].as_array_mut().expect("schedule");
+        let mut records = 0;
+        for stmt in body.iter_mut() {
+            if stmt["kind"] != "mover" || stmt["op"] != "quant" {
+                continue;
+            }
+            let kw = stmt["kw"].as_array_mut().expect("quant attributes");
+            kw.retain(|pair| pair[0] != "backend" && pair[0] != "status");
+            kw.push(json!(["backend", {"str": "vector_mx7"}]));
+            kw.push(json!(["status", {"view": {
+                "buffer": "reference_status",
+                "axes": [{"run": [records * record, record]}]
+            }}]));
+            for (key, value) in [
+                ("finite_batch", 4),
+                ("overlap", 1),
+                ("pipeline", 1),
+                ("zero_classifier", 1),
+                ("stream_axes", 1),
+                ("fill_overlap", 1),
+                ("zero_reuse", 1),
+            ] {
+                if !kw.iter().any(|pair| pair[0] == key) {
+                    kw.push(json!([key, {"int": value}]));
+                }
+            }
+            records += 1;
+        }
+        body.push(json!({
+            "kind": "mover", "op": "quant_check",
+            "dst": {"buffer": "reference_status", "axes": ["all"]},
+            "src": null, "flags": [], "kw": [], "where": "<reference>"
+        }));
+        graph["scratch"]
+            .as_array_mut()
+            .expect("scratch")
+            .push(json!({
+                "name": "reference_status", "spec": {
+                    "shape": [records * record], "dtype": "f16",
+                    "layout": [], "space": "stage"
+                }
+            }));
+        kernel.graph = serde_json::from_value(graph).expect("reference graph");
+        kernel
+    };
+    let emitted =
+        ktpu_kernels::gen::chain::kernel(first.clone(), second.clone(), "a", "out", false)
+            .expect("separate stage allocations");
+    let separate = ktpu_kernels::gen::chain::kernel(
+        reference(&args["first"]),
+        reference(&args["second"]),
+        "a",
+        "out",
+        false,
+    )
+    .expect("explicit quant schedules");
+    assert_eq!(
+        ktpu_graph::cycles(&emitted.graph, &m).expect("typed quant schedule"),
+        ktpu_graph::cycles(&separate.graph, &m).expect("explicit quant schedule"),
+    );
+    let full = json!({"kind": "full", "dtype": "f16", "offset": 0, "pitch": 128, "rows": 64});
+    let activation = json!({
+        "gen": "vector.rows_kernel", "args": {
+            "R": 64, "W": 128, "operands": [full], "out": full,
+            "e": {"nodes": [{"load": 0}, {"const": 0.50390625},
+                {"op": "mul", "args": [0, 1]}], "root": 2}
+        }
+    });
+    let activation_kernel = ktpu_kernels::call("vector.rows_kernel", &activation["args"], &m)
+        .expect("materialized pointwise stage");
+    let reference_first = ktpu_kernels::gen::chain::kernel(
+        reference(&args["first"]),
+        activation_kernel,
+        "in0",
+        "out",
+        false,
+    )
+    .expect("explicit separate activation");
+    let separate = ktpu_kernels::gen::chain::kernel(
+        reference_first,
+        reference(&args["second"]),
+        "a",
+        "c2_out",
+        false,
+    )
+    .expect("explicit three-stage schedule");
+    args["first"] = json!({"gen": "kernel.chain", "args": {
+        "first": args["first"].clone(), "second": activation,
+        "from": "in0", "to": "out", "keep": false,
+        "materialized_pointwise": true
+    }});
+    args["to"] = json!("c2_out");
+    let baseline = ktpu_kernels::call("kernel.chain", &args, &m).expect("local chain");
+    fn rounded_stream(body: &[ktpu_graph::Stmt]) -> bool {
+        use ktpu_graph::{Node, Operand, ValueOp};
+        for (index, stmt) in body.iter().enumerate() {
+            if let Node::Value {
+                op: ValueOp::Unpack,
+                target,
+                args,
+                ..
+            } = &stmt.node
+            {
+                let [Operand::Value(packed)] = args.as_slice() else {
+                    continue;
+                };
+                let stored_pack = body[..index]
+                    .iter()
+                    .any(|s| matches!(&s.node, Node::Store { src, .. } if src == packed))
+                    && body[..index].iter().any(|s| {
+                        matches!(&s.node, Node::Value { op: ValueOp::Pack, target, ty, .. }
+                        if target == packed && ty.dtype == ktpu_graph::Dtype::F16)
+                    });
+                let consumer = body[index + 1..].iter().any(|s| {
+                    matches!(&s.node, Node::Value { op: ValueOp::Mul, args, .. }
+                        if args.contains(&Operand::Value(target.clone()))
+                            && args.contains(&Operand::Float(ktpu_graph::Number::F(0.50390625))))
+                });
+                if stored_pack && consumer {
+                    return true;
+                }
+            }
+            if stmt.node.body().is_some_and(rounded_stream) {
+                return true;
+            }
+        }
+        false
+    }
+    assert!(
+        baseline.graph.body.iter().any(|stmt| {
+            matches!(&stmt.node, ktpu_graph::Node::For { pipe: Some(_), body, .. }
+                if rounded_stream(body))
+        }),
+        "the pointwise consumer reads the stored FP16 pack inside the producer stream"
+    );
+    let stage_bytes = |k: &ktpu_kernels::kernel::Kernel| {
+        k.graph
+            .scratch
+            .iter()
+            .filter(|s| s.spec.space == ktpu_graph::BufSpace::Stage)
+            .map(|s| {
+                s.spec.shape.iter().product::<i64>() * ktpu_kernels::gen::Hw::item(s.spec.dtype)
+            })
+            .sum::<i64>()
+    };
+    assert!(stage_bytes(&baseline) < stage_bytes(&separate));
+    assert!(
+        ktpu_graph::cycles(&baseline.graph, &m).expect("shared schedule")
+            <= ktpu_graph::cycles(&separate.graph, &m).expect("separate schedule")
+    );
+    let (want, _) = simulate(&separate);
+    assert_eq!(simulate(&baseline).0, want);
+    let mut req = request(&m);
+    req.nodes = NodeSet::new(vec![0], &m).expect("single owner");
+    req.force = Some("row-local".into());
+    let local = call_split("kernel.chain", &args, &req, &m).expect("local selection");
+    assert_eq!(
+        ktpu_graph::cycles(&local.kernel.graph, &m).expect("local schedule"),
+        ktpu_graph::cycles(&baseline.graph, &m).expect("original schedule")
+    );
+    req.nodes = NodeSet::new(vec![3, 1, 0, 2], &m).expect("row owners");
+    let distributed = call_split("kernel.chain", &args, &req, &m).expect("local chains");
+    assert_eq!(distributed.split.active_nodes, 4);
+    validate_ownership(&distributed.split.output).expect("output owners");
+    for share in &distributed.split.shards {
+        for region in &share.scratch_regions {
+            assert!(distributed
+                .kernel
+                .graph
+                .scratch
+                .iter()
+                .any(|s| s.name == region.allocation));
+        }
+    }
+    // A private FP16 edge and both products' rings stay off global DRAM.
+    assert!(distributed
+        .kernel
+        .graph
+        .scratch
+        .iter()
+        .all(|s| s.spec.space != ktpu_graph::BufSpace::Dram));
+    let (actual, writes) = simulate(&distributed.kernel);
+    assert_eq!(actual, want);
+    assert!(writes.iter().all(|&n| n == 1));
+}
+
+#[test]
 fn row_chain_publishes_a_statistic_before_cross_row_broadcast() {
     let m = machine();
     let full = json!({"kind": "full", "dtype": "f16", "offset": 0, "pitch": 32, "rows": 197});
@@ -1089,6 +2064,46 @@ fn staged_row_flat_package_keeps_shared_statistics_and_exact_copies() {
     let (actual, writes) = simulate_matmul(&got.kernel);
     assert_eq!(actual, want);
     assert!(writes.iter().all(|&n| n == 1));
+}
+
+#[test]
+fn prepared_row_shares_read_their_rows_through_the_relayout() {
+    // ViT's patch embedding: a transposed, padded conv output read composed
+    // through a relayout, plus a bias column and a position table, written
+    // one row below the class token.
+    let m = machine();
+    let (rows, width, padded) = (40, 64, 48);
+    let args = json!({
+        "R": rows, "W": width, "alias": {}, "composed": [0],
+        "e": {"nodes": [{"load": 0}, {"load": 1}, {"op": "add", "args": [0, 1]},
+                        {"load": 2}, {"op": "add", "args": [2, 3]}], "root": 4},
+        "made": {"0": [{"made_by": {"gen": "relayout.plan", "args": {
+            "at": 1, "dat": 0, "dwalk": [[rows, width], [width, 1]], "keep": false,
+            "m": rows * width, "src_n": width * padded, "tree": true,
+            "walk": [[rows, 1], [width, padded]], "z0": 0}}}]},
+        "operands": [
+            {"dtype": "f16", "kind": "full", "offset": 0, "pitch": width, "rows": 0},
+            {"dtype": "f16", "kind": "col", "offset": 0, "pitch": 0, "rows": 0},
+            {"dtype": "f16", "kind": "full", "offset": 0, "pitch": width, "rows": 0}
+        ],
+        "out": {"dtype": "f16", "kind": "full", "offset": width, "pitch": width, "rows": 0}
+    });
+    let baseline = ktpu_kernels::call("prepared.rows_kernel", &args, &m).expect("one owner");
+    let (want, once) = simulate_matmul(&baseline);
+    let mut req = request(&m);
+    req.nodes = NodeSet::new(vec![3, 1, 0, 2], &m).expect("grant");
+    req.force = Some("rows".into());
+    let got = call_split("prepared.rows_kernel", &args, &req, &m).expect("row shares");
+    assert_eq!(got.split.active_nodes, 4);
+    validate_ownership(&got.split.output).expect("one writer a row");
+    let (actual, writes) = simulate_matmul(&got.kernel);
+    assert_eq!(
+        actual, want,
+        "each share reads its own rows of the relayout"
+    );
+    // The class-token row stays unwritten; every other word once, as one owner.
+    assert_eq!(writes, once);
+    assert!(writes.iter().all(|&n| n <= 1));
 }
 
 #[test]
@@ -1191,7 +2206,7 @@ fn conv_patch_owners_preserve_halo_reads_and_group_slices() {
             }
         }
     }
-    for grant in [vec![0], vec![3, 1], vec![3, 1, 0, 2]] {
+    for grant in [vec![0], vec![3, 1, 0, 2]] {
         let mut req = request(&m);
         req.nodes = NodeSet::new(grant, &m).expect("grant");
         req.force = Some("rows".into());
@@ -1203,6 +2218,46 @@ fn conv_patch_owners_preserve_halo_reads_and_group_slices() {
         assert!(
             writes.iter().all(|&n| n == 1),
             "one patch producer per destination word"
+        );
+    }
+    // Replace the intermediate grant with the bulk window emitter. The global
+    // input batch origin, spatial halo, K padding and row capacity all differ.
+    let bulk = json!({"spec": {
+        "batch": 3, "height": 3, "width": 5, "cin": 16, "cout": 32,
+        "kh": 3, "kw": 3, "stride": [1, 2], "padding": [1, 1],
+        "dilation": [1, 1], "groups": 1
+    }, "first_batch": 1, "batches": 1, "capacity": 12, "scratch_space": "stage"});
+    let kernel = ktpu_kernels::call("conv.unfold_kernel", &bulk, &m).expect("bulk batch view");
+    let (actual, _) = simulate_named_inputs(&kernel, "out", &|_, _, _, _, _| 0, &tag);
+    let mut expected = Vec::new();
+    for row in 0..12 {
+        for col in 0..160 {
+            let kh = col / 48;
+            let kw = col / 16 % 3;
+            let ih = row / 3 - 1 + kh;
+            let iw = row % 3 * 2 - 1 + kw;
+            let bits = if row < 9 && col < 144 && (0..3).contains(&ih) && (0..5).contains(&iw) {
+                tag((15 + ih * 5 + iw) * 16 + col % 16)
+            } else {
+                0
+            };
+            expected.extend_from_slice(&bits.to_le_bytes());
+        }
+    }
+    assert_eq!(actual, expected);
+    assert!(kernel
+        .graph
+        .scratch
+        .iter()
+        .all(|buffer| buffer.spec.space == ktpu_graph::BufSpace::Stage));
+    for (key, value) in [("first_batch", 3), ("capacity", 8), ("batches", 0)] {
+        let mut invalid = bulk.clone();
+        invalid[key] = json!(value);
+        assert_eq!(
+            ktpu_kernels::call("conv.unfold_kernel", &invalid, &m)
+                .expect_err("invalid bulk extent")
+                .clause,
+            "API.OP.001"
         );
     }
 }
@@ -1428,7 +2483,277 @@ fn destination_pack_tail_matches_single_node_and_writes_each_word_once() {
 #[test]
 fn destination_transpose_matches_single_node_and_writes_each_word_once() {
     let m = machine();
-    for (a, b, classed) in [(64, 96, false), (48, 128, false), (64, 96, true)] {
+    let planes = json!({
+        "ports": [
+            {"name": "x", "shape": [34, 32], "dtype": "f16", "written": false},
+            {"name": "mask", "shape": [2, 128], "dtype": "f16", "written": false},
+            {"name": "y", "shape": [64, 32], "dtype": "f16", "written": true}
+        ], "scratch": [], "staged": [], "scratch_space": "stage",
+        "steps": [{"kind": "planes", "planes": {
+            "src": "x", "dst": "y", "mask": "mask", "batches": 2, "groups": 2,
+            "rows": 17, "columns": 16, "padded_rows": 32,
+            "source_offset": 0, "batch_stride": 17 * 32,
+            "group_stride": 16, "row_stride": 32
+        }}]
+    });
+    let input = |i| 0x2800u16 | ((i * 37) as u16 & 0x3ff);
+    let expected: Vec<_> = (0..4 * 16 * 32)
+        .flat_map(|i| {
+            let plane = i / (16 * 32);
+            let col = i / 32 % 16;
+            let row = i % 32;
+            let value = if row < 17 {
+                input((plane / 2 * 17 + row) * 32 + plane % 2 * 16 + col)
+            } else {
+                0
+            };
+            value.to_le_bytes()
+        })
+        .collect();
+    let mut singleton = planes.clone();
+    singleton["steps"][0]["planes"]["rows"] = json!(1);
+    singleton["steps"][0]["planes"]["row_stride"] = json!(1i64 << 62);
+    let bounded = ktpu_kernels::call("fused.kernel", &singleton, &m)
+        .expect("singleton strides never advance");
+    ktpu_graph::program(&bounded.graph, &m).expect("no overflowing byte stride");
+    let local = ktpu_kernels::call("fused.kernel", &planes, &m).expect("strided plane transpose");
+    let mut req = request(&m);
+    req.nodes = NodeSet::new(vec![3, 1, 0, 2], &m).expect("plane owners");
+    req.force = Some("planes".into());
+    let distributed = call_split("fused.kernel", &planes, &req, &m).expect("plane partition");
+    assert_eq!(distributed.split.active_nodes, 4);
+    validate_ownership(&distributed.split.output).expect("one plane writer");
+    for (index, shard) in distributed.split.shards.iter().enumerate() {
+        for row in 0..17 {
+            let start = ((index / 2 * 17 + row) * 32 + index % 2 * 16) as u64 * 2;
+            assert!(shard.read_regions.iter().any(|r| {
+                r.allocation == "x" && r.bytes.start == start && r.bytes.end == start + 32
+            }));
+        }
+    }
+    for kernel in [&local, &distributed.kernel] {
+        let (actual, writes) = simulate_named_inputs(kernel, "y", &|_, _, _, _, _| 0, &input);
+        assert_eq!(actual, expected);
+        assert!(writes.iter().all(|&count| count == 1));
+    }
+    // Extra key tiles are masked. The inverse layout preserves other public
+    // batches/heads, including when independent stages have separate owners.
+    let mut attention_outputs = Vec::new();
+    for (keys, blocked) in [(64, false), (192, true)] {
+        let args = json!({
+            "ports": [
+                {"name": "q", "shape": [128, 64], "dtype": "f16", "written": false},
+                {"name": "k", "shape": [2 * keys, 64], "dtype": "f16", "written": false},
+                {"name": "vt", "shape": [128, keys], "dtype": "f16", "written": false},
+                {"name": "tail", "shape": [16], "dtype": "f16", "written": false},
+                {"name": "y", "shape": [51, 192], "dtype": "f16", "written": true}
+            ], "scratch": [{"name": "result", "shape": [128, 64], "dtype": "f16"}],
+            "staged": [], "scratch_space": "stage",
+            "steps": [
+                {"kind": "attention", "attention": {
+                    "q": "q", "k": "k", "vt": "vt", "out": "result", "tail": "tail",
+                    "heads": 2, "queries": 64, "keys": keys, "dim": 64,
+                    "query_tile": 16, "query_cores": 2, "key_tile": 64, "valid_keys": 17,
+                    "block_rows": 32, "blocked": blocked, "compact_mask": true,
+                    "head_group": if blocked { 0 } else { 1 }
+                }},
+                {"kind": "planes", "planes": {
+                    "scatter": true, "src": "result", "dst": "y", "mask": null,
+                    "batches": 2, "groups": 1, "rows": 17, "columns": 64,
+                    "padded_rows": 64, "source_offset": 17 * 192 + 64,
+                    "batch_stride": 17 * 192, "group_stride": 64, "row_stride": 192
+                }}
+            ]
+        });
+        if !blocked {
+            let mut masks = args.clone();
+            masks["ports"].as_array_mut().expect("ports").extend([
+                json!({"name": "kw", "shape": [384, 64], "dtype": "f16", "written": false}),
+                json!({"name": "vw", "shape": [128, 192], "dtype": "f16", "written": false}),
+            ]);
+            masks["scratch"]
+                .as_array_mut()
+                .expect("scratch")
+                .push(json!({"name": "discard", "shape": [128, 64], "dtype": "f16"}));
+            masks["steps"][0]["attention"]["valid_keys"] = json!(64);
+            let mut first = masks["steps"][0].clone();
+            first["attention"]["k"] = json!("kw");
+            first["attention"]["vt"] = json!("vw");
+            first["attention"]["keys"] = json!(192);
+            first["attention"]["out"] = json!("discard");
+            masks["steps"]
+                .as_array_mut()
+                .expect("steps")
+                .insert(0, first);
+            let masks = ktpu_kernels::call("fused.kernel", &masks, &m)
+                .expect("distinct compact mask domains");
+            let body = serde_json::to_value(&masks.graph.body).expect("mask schedule");
+            let initialized: Vec<_> = body
+                .as_array()
+                .expect("body")
+                .iter()
+                .filter_map(|stmt| {
+                    let attrs = stmt.get("kw")?.as_array()?;
+                    (stmt["op"] == "gt4"
+                        && attrs.iter().any(|attr| {
+                            attr[0] == "walk"
+                                && attr[1] == json!({"walk": [[1, 0], [1, 0], [4, 32], [4, 0]]})
+                        }))
+                    .then(|| stmt["dst"]["buffer"].clone())
+                })
+                .collect();
+            assert_eq!(
+                initialized.len(),
+                2,
+                "different score domains initialize different masks"
+            );
+        }
+        let mut mutated_tail = args.clone();
+        mutated_tail["steps"]
+            .as_array_mut()
+            .unwrap()
+            .insert(1, json!({"kind": "copy", "src": "tail", "dst": "tail"}));
+        let error = ktpu_kernels::call("fused.kernel", &mutated_tail, &m)
+            .expect_err("a cached tail cannot be a package write destination");
+        assert_eq!(error.clause, "API.OP.001");
+        let mut aliased_merge = args.clone();
+        aliased_merge["steps"][0]["attention"]["merge"] = args["steps"][1]["planes"].clone();
+        aliased_merge["steps"][0]["attention"]["merge"]["dst"] = json!("k");
+        let error = ktpu_kernels::call("fused.kernel", &aliased_merge, &m)
+            .expect_err("streaming output cannot overwrite keys");
+        assert_eq!(error.clause, "API.OP.001");
+        let kernel = if blocked {
+            ktpu_kernels::call("fused.kernel", &args, &m)
+                .expect("materialized blocked attention and partial inverse planes")
+        } else {
+            let mut grouped = args.clone();
+            grouped["ports"][0]["name"] = json!("group0_pq");
+            let mut steps = Vec::new();
+            for (source, private, rows, cols) in [
+                ("group0_pq", "pq", 64, 64),
+                ("k", "pk", keys, 64),
+                ("vt", "pv", 64, keys),
+            ] {
+                grouped["scratch"]
+                    .as_array_mut()
+                    .expect("scratch")
+                    .push(json!({
+                        "name": private, "shape": [2 * rows, cols], "dtype": "f16"
+                    }));
+                steps.push(json!({"kind": "planes", "planes": {
+                    "src": source, "dst": private, "mask": null,
+                    "batches": 2, "groups": 1, "rows": rows, "columns": cols,
+                    "padded_rows": rows, "source_offset": 0,
+                    "batch_stride": rows * cols, "group_stride": rows * cols,
+                    "row_stride": cols
+                }}));
+            }
+            let mut attention = args["steps"][0].clone();
+            attention["attention"]["q"] = json!("pq");
+            attention["attention"]["k"] = json!("pk");
+            attention["attention"]["vt"] = json!("pv");
+            steps.push(attention);
+            steps.push(args["steps"][1].clone());
+            grouped["steps"] = json!(steps);
+            grouped["group_ends"] = json!([5]);
+            let mut group_request = request(&m);
+            group_request.nodes = NodeSet::new(vec![3, 1, 0, 2], &m).expect("permuted grant");
+            group_request.force = Some("groups".into());
+            let selected = call_split("fused.kernel", &grouped, &group_request, &m)
+                .expect("independent planar attention groups");
+            assert_eq!(selected.split.active_nodes, 2);
+            validate_ownership(&selected.split.output).expect("partial scatter owners");
+            for shard in selected
+                .split
+                .shards
+                .iter()
+                .filter(|s| s.role == ktpu_kernels::split::ShardRole::Compute)
+            {
+                assert!(!shard.read_regions.is_empty());
+                assert!(!shard.scratch_regions.is_empty());
+            }
+            selected.kernel
+        };
+        let seed = vec![0x55u8; 51 * 192 * 2];
+        let values = |rows: i64, cols: i64, f: &dyn Fn(i64, i64) -> u16| -> Vec<u8> {
+            (0..rows)
+                .flat_map(|row| (0..cols).flat_map(move |col| f(row, col).to_le_bytes()))
+                .collect()
+        };
+        let q = values(128, 64, &|r, c| 0x3000 | (((r + c) % 5) as u16 * 32));
+        let k = values(2 * keys, 64, &|r, c| {
+            0x3000 | (((r % keys + c + r / keys) % 7) as u16 * 32)
+        });
+        let vt = values(128, keys, &|r, c| {
+            0x3000 | (((r % 64 + c + r / 64) % 11) as u16 * 32)
+        });
+        let tail = values(1, 16, &|_, c| if c == 0 { 0x3c00 } else { 0 });
+        let (bytes, writes) = simulate_named_tables(
+            &kernel,
+            "y",
+            &|_, _, _, _, _| 0,
+            &input,
+            &[
+                ("y", seed.clone()),
+                (if blocked { "q" } else { "group0_pq" }, q),
+                ("k", k),
+                ("vt", vt),
+                ("tail", tail),
+            ],
+        );
+        for row in 0..51 {
+            for word in 0..12 {
+                let written = row >= 17 && (4..8).contains(&word);
+                let start = (row * 192 + word * 16) * 2;
+                assert!(writes[start..start + 32]
+                    .iter()
+                    .all(|&count| count == u32::from(written)));
+                if !written {
+                    assert_eq!(&bytes[start..start + 32], &seed[start..start + 32]);
+                }
+            }
+        }
+        let value = |bits| ktpu_sim::num::value(ktpu_sim::num::from_f16(bits)) as f32;
+        for plane in 0..2 {
+            for query in 0..17 {
+                let scores: Vec<f32> = (0..17)
+                    .map(|key| {
+                        (0..64)
+                            .map(|col| {
+                                let q =
+                                    value(0x3000 | (((plane * 64 + query + col) % 5) as u16 * 32));
+                                let k = value(0x3000 | (((key + col + plane) % 7) as u16 * 32));
+                                q * k
+                            })
+                            .sum::<f32>()
+                            / 8.0
+                    })
+                    .collect();
+                let maximum = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                let weights: Vec<f32> = scores.iter().map(|x| (x - maximum).exp()).collect();
+                let sum: f32 = weights.iter().sum();
+                for col in 0..64 {
+                    let expected: f32 = weights
+                        .iter()
+                        .enumerate()
+                        .map(|(key, weight)| {
+                            weight * value(0x3000 | (((col + key + plane) % 11) as u16 * 32))
+                        })
+                        .sum::<f32>()
+                        / sum;
+                    let offset = (((plane + 1) * 17 + query) * 192 + 64 + col) * 2;
+                    let actual = value(u16::from_le_bytes([bytes[offset], bytes[offset + 1]]));
+                    assert!(
+                        actual.is_finite() && (actual - expected).abs() < 0.01,
+                        "materialized attention {actual} vs independent f32 {expected}"
+                    );
+                }
+            }
+        }
+        attention_outputs.push(bytes);
+    }
+    assert_eq!(attention_outputs[0], attention_outputs[1]);
+    for (a, b, classed) in [(64, 96, true)] {
         let mut args = json!({"nb": 1, "A": a, "B": b});
         if classed {
             args["shape_class"] = json!({
@@ -1631,5 +2956,57 @@ fn destination_indexed_schedules_keep_one_owner_for_layered_writes() {
         req.force = Some("destination-tiles".into());
         let error = call_split(generator, &args, &req, &m).expect_err("no table repartition");
         assert!(error.to_string().contains("p1"));
+    }
+}
+
+#[test]
+fn classed_lanes_publish_selected_lanes_and_preserve_the_rest() {
+    let m = machine();
+    let plan = ktpu_kernels::gen::lanes::plan(
+        256,
+        &[(16, 16), (8, 1)],
+        0,
+        &[(16, 16), (8, 1)],
+        8,
+        256,
+        true,
+        &m,
+    )
+    .expect("kept lane plan");
+    let tables = ktpu_kernels::gen::classes::lanes::tables(&plan, &m);
+    let table = tables.first().expect("lane class");
+    let classed = ktpu_kernels::gen::classes::lanes::kernel(
+        &table.class,
+        plan.src_words,
+        plan.dst_words,
+        ktpu_kernels::gen::classes::Cores::All,
+        &m,
+    )
+    .expect("classed lane kernel");
+    let kept = |i: i64| 0x3000u16 | ((i * 13) as u16 & 0x3ff);
+    let inputs = [
+        (
+            "index",
+            table.index.iter().flat_map(|x| x.to_le_bytes()).collect(),
+        ),
+        (
+            "mask",
+            table.masks.iter().flat_map(|x| x.to_le_bytes()).collect(),
+        ),
+        (
+            "dst",
+            (0..256).flat_map(|i| kept(i).to_le_bytes()).collect(),
+        ),
+    ];
+    let seed = |i: i64| 0x2800u16 | ((i * 37) as u16 & 0x3ff);
+    let (actual, _) =
+        simulate_named_tables(&classed.kernel, "dst", &|_, _, _, _, _| 0, &seed, &inputs);
+    for (i, value) in actual.chunks_exact(2).enumerate() {
+        let expected = if i % 16 < 8 {
+            kept(i as i64)
+        } else {
+            seed(i as i64 - 8)
+        };
+        assert_eq!(u16::from_le_bytes([value[0], value[1]]), expected);
     }
 }

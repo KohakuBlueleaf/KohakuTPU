@@ -260,7 +260,9 @@ fn flat_band<'a>(
             }
             let p = phase_period(&c);
             let period = if p.is_multiple_of(2) { p } else { p * 2 };
-            let (passes, rest) = (c.trips.len() / period, c.trips.len() % period);
+            // The epilogue owns the terminal trip; loop passes all prefetch.
+            let passes = (c.trips.len() - 1) / period;
+            let rest = c.trips.len() - passes * period;
             if passes > 0 {
                 let reg = format!("s{}", t.loop_s());
                 g.fixed(ir::seti(&reg, Term::int(passes as i128)));
@@ -268,12 +270,7 @@ fn flat_band<'a>(
                 g.code.push(ir::Event::Open);
                 for phase in 0..period {
                     c.phase = phase;
-                    c.iteration_typed(
-                        &mut g,
-                        &lp.body,
-                        phase % 2,
-                        phase + 1 < period || rest != 0 || passes > 1,
-                    )?;
+                    c.iteration_typed(&mut g, &lp.body, phase % 2, true)?;
                 }
                 g.code.push(ir::Event::Close);
             }

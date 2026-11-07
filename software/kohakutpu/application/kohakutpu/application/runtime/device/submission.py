@@ -295,7 +295,8 @@ class Submission(Parts):
                     ):
                         continue
                     candidate = generated.from_output(self, json.loads(source), output)
-                    programs = candidate.programs(full, self.home)
+                    with rs.compiler_owner(self):
+                        programs = candidate.programs(full, self.home)
                     if all(p.matches_environment(self.mmu) for p in programs.values()):
                         submitted_compiled = candidate
                         progs = {
@@ -336,9 +337,11 @@ class Submission(Parts):
                     while len(self.kernels) > KERNELS_KEPT:
                         self.kernels.popitem(last=False)
                 submitted_compiled = exact
+                with rs.compiler_owner(self):
+                    programs = exact.programs(full, self.home)
                 progs = {
                     n: replace(p, translations=self.mmu.translations_for(p.bindings))
-                    for n, p in exact.programs(full, self.home).items()
+                    for n, p in programs.items()
                 }
                 self.counters["class_hits"] -= 1
                 self.counters["exact_hits"] += 1

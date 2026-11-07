@@ -1,6 +1,7 @@
 //! L1 -> L1: the image scheduler and the core timing it ranks by.
 
 pub mod model;
+pub mod orders;
 pub mod schedule;
 pub mod timing;
 

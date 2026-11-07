@@ -5,17 +5,12 @@ from dataclasses import asdict
 
 from kohakutpu.application.kernels.native import generated as G
 from kohakutpu.application.kernels.native import linear as L
-from kohakutpu.application.kernels.native.composition import (
-    GraphKernel,
-    compose,
-    sequence,
-)
+from kohakutpu.application.kernels.template import GraphKernel, TemplateCall
 from kohakutpu.application.kernels.vector import Operand
 from kohakutpu.application.plan.emit import expr
 from kohakutpu.application.runtime import generated
 from kohakutpu.language import dsl as kt
 from kohakutpu.stack import rs
-from kohakutpu.stack.kernel import dsl_machine
 
 
 def unfold_kernel(
@@ -161,60 +156,34 @@ def kernel(
             for b in range(1, batch + 1)
             if batch % b == 0 and b * per_batch * k_pad * 2 <= 665600
         )
-        chunks = []
+        members = []
         for b0 in range(0, batch, chunk_b):
-            u_graph = (
-                unfold_kernel(
-                    chunk_b,
-                    height,
-                    width,
-                    cin_pad,
-                    kh,
-                    kw,
-                    stride,
-                    padding,
-                    batch_offset=b0,
-                    total_batch=batch,
-                )
-                .trace(
-                    {"x": (batch * height * width, cin_pad)},
-                    machine=dsl_machine(machine),
-                )
-                .graph
-            )
-            u_graph = dict(
-                u_graph,
-                scratch=[
-                    dict(s, spec=dict(s["spec"], space="stage"))
-                    for s in u_graph["scratch"]
-                ],
-            )
-            p_graph = G.linear_graph(
-                chunk_b * per_batch,
-                k_pad,
+            call = local_call(
+                batch,
+                height,
+                width,
+                cin_pad,
                 cout_pad,
+                kh,
+                kw,
                 machine,
-                activation,
-                residual,
-                ring_depth,
-                out_offset=b0 * per_batch * cout_pad,
+                stride=stride,
+                padding=padding,
+                activation=activation,
+                residual=residual,
+                ring_depth=ring_depth,
+                patch_space="stage",
+                first_batch=b0,
+                batches=chunk_b,
                 out_rows=rows_pad,
             )
-            chunks.append(compose(u_graph, p_graph, "out", ("a",), "stage"))
-        return GraphKernel(sequence(chunks, space="stage"))
-    unfold = (
-        unfold_kernel(batch, height, width, cin_pad, kh, kw, stride, padding)
-        .trace({"x": (batch * height * width, cin_pad)}, machine=dsl_machine(machine))
-        .graph
-    )
+            members.append({"gen": call.generator, "args": call.arguments})
+        call = TemplateCall("kernel.sequence", {"members": members})
+        return GraphKernel(
+            G.graph(call.generator, call.arguments, machine), template_call=call
+        )
     patch_space = (
         "stage" if edge_space == "stage" and rows_pad * k_pad * 2 <= 665600 else "dram"
-    )
-    unfold = dict(
-        unfold,
-        scratch=[
-            dict(s, spec=dict(s["spec"], space=patch_space)) for s in unfold["scratch"]
-        ],
     )
     eff_ring = (
         1
@@ -222,7 +191,98 @@ def kernel(
         and rows_pad * k_pad * 3 + ring_depth * machine.count("MG") * 25600 > 1048576
         else ring_depth
     )
-    product = G.linear_graph(
-        rows_pad, k_pad, cout_pad, machine, activation, residual, eff_ring
+    call = local_call(
+        batch,
+        height,
+        width,
+        cin_pad,
+        cout_pad,
+        kh,
+        kw,
+        machine,
+        stride=stride,
+        padding=padding,
+        activation=activation,
+        residual=residual,
+        ring_depth=eff_ring,
+        patch_space=patch_space,
+        first_batch=0,
+        batches=batch,
+        out_rows=rows_pad,
     )
-    return GraphKernel(compose(unfold, product, "out", ("a",), patch_space))
+    return GraphKernel(
+        G.graph(call.generator, call.arguments, machine), template_call=call
+    )
+
+
+def local_call(
+    batch,
+    height,
+    width,
+    cin,
+    cout,
+    kh,
+    kw,
+    machine,
+    *,
+    stride,
+    padding,
+    activation,
+    residual,
+    ring_depth,
+    patch_space,
+    first_batch,
+    batches,
+    out_rows,
+):
+    """One retained bulk patch/product chunk, with global input and output views."""
+    oh = (height + 2 * padding - kh) // stride + 1
+    ow = (width + 2 * padding - kw) // stride + 1
+    capacity = -(-(batches * oh * ow) // 4) * 4
+    kpad = -(-(kh * kw * cin) // 32) * 32
+    unfold = TemplateCall(
+        "conv.unfold_kernel",
+        {
+            "spec": {
+                "batch": batch,
+                "height": height,
+                "width": width,
+                "cin": cin,
+                "cout": cout,
+                "kh": kh,
+                "kw": kw,
+                "stride": [stride, stride],
+                "padding": [padding, padding],
+                "dilation": [1, 1],
+                "groups": 1,
+            },
+            "first_batch": first_batch,
+            "batches": batches,
+            "capacity": capacity,
+            "scratch_space": patch_space,
+        },
+    )
+    product = G.linear_call(
+        capacity,
+        kpad,
+        cout,
+        machine,
+        activation,
+        residual,
+        ring_depth,
+        out_offset=first_batch * oh * ow * cout,
+        out_rows=out_rows,
+    )
+    call = G.chain_call(
+        unfold,
+        product,
+        "a",
+        "out",
+        [("first", "x", "p_x")]
+        + [
+            ("second", name, "c_" + name)
+            for name in ["b", "in1"] + (["in2"] if residual else []) + ["out"]
+        ],
+    )
+    call.arguments["link_space"] = patch_space
+    return call

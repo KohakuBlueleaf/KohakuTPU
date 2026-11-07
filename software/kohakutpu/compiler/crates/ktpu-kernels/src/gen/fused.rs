@@ -12,7 +12,7 @@ use ktpu_graph as g;
 use ktpu_machine::Machine;
 
 use super::matmul::{self, QDemand, QUANT_SCHEDULE};
-use super::{cdiv, prepared, relayout, vector as v, Hw};
+use super::{cdiv, convert::prefix::Prefix, prepared, reductions, relayout, vector as v, Hw};
 use crate::expr::{self, Expr, E};
 use crate::kernel::{build, Kernel, Port};
 use crate::pyrepr::{name, Py};
@@ -21,6 +21,7 @@ use crate::trace::control::At;
 use crate::trace::{fail, Arg, Buf, Cond, Idx, Trace, View, R, V};
 
 /// A named buffer of a package.
+#[derive(Clone)]
 pub struct Named {
     pub name: String,
     pub shape: Vec<i64>,
@@ -57,6 +58,8 @@ pub enum Step {
     /// `exprs` over [r, w] rows of `operands` into `outs`, read as
     /// `out_operands`; operand i of `made` read composed from its source `ins[i]`.
     Rows {
+        /// Fold all column-block partials, with an FP16 boundary at each level.
+        fold: bool,
         r: i64,
         w: i64,
         exprs: Vec<E>,
@@ -94,6 +97,16 @@ pub enum Step {
         src: String,
         dst: String,
     },
+    /// Independent strided planes, optionally transposed with caller masks.
+    Planes(planes::Planes),
+    /// FP16 materialized planar QK/softmax/PV stages on named buffers.
+    Attention(attention::Attention),
+    /// A bounded pitched copy and optional initialization on named buffers.
+    Prefix {
+        src: String,
+        dst: String,
+        boundary: Prefix,
+    },
 }
 
 /// A consumer's MXFP7 packing of one packed rows member, written into `port`.
@@ -106,11 +119,19 @@ pub struct Packing {
 /// A package: its ports (each with whether it is written), scratches and
 /// stages in order.
 pub struct Package {
+    /// Placement of private storage, including each member's temporaries.
+    pub scratch_space: Option<g::BufSpace>,
+    /// Place successive singleton VC stages on successive local cores.
+    pub balance_stages: bool,
     pub ports: Vec<(Named, bool)>,
     pub scratch: Vec<Named>,
     pub staged: Vec<Staged>,
     pub steps: Vec<Step>,
 }
+
+pub(crate) mod attention;
+pub(crate) mod groups;
+pub(crate) mod planes;
 
 type Env = HashMap<String, Buf>;
 
@@ -557,6 +578,7 @@ fn tiled_ports(p: &Package, hw: &Hw) -> R<HashMap<String, Vec<i64>>> {
             out_operands,
             outs,
             made,
+            ..
         } = step
         else {
             continue;
@@ -578,7 +600,7 @@ fn tiled_ports(p: &Package, hw: &Hw) -> R<HashMap<String, Vec<i64>>> {
 
 /// The kernel of `p`, its ports bound by name.
 pub fn kernel(p: &Package, key: &str, m: &Machine) -> R<Kernel> {
-    kernel_at(p, key, None, m)
+    kernel_at(p, key, None, m, true)
 }
 
 /// One complete-VL range of a flat stage in the package's global buffers.
@@ -593,11 +615,101 @@ pub(crate) fn flat_range_kernel(
         "flat_range",
         vec![Py::str(key), Py::Int(first), Py::Int(count)],
     );
-    kernel_at(p, &key, Some((first, count)), m)
+    kernel_at(p, &key, Some((first, count)), m, true)
 }
 
-fn kernel_at(p: &Package, key: &str, range: Option<(i64, i64)>, m: &Machine) -> R<Kernel> {
+/// Complete local storage/ordering selection at the package boundary.
+pub(crate) fn scheduled(p: &Package, a: &serde_json::Value, key: &str, m: &Machine) -> R<Kernel> {
+    let kernel = unfinalized(p, key, m)?;
+    super::chain::sequence::finish(kernel, a, m)
+}
+
+pub(crate) fn unfinalized(p: &Package, key: &str, m: &Machine) -> R<Kernel> {
+    kernel_at(p, key, None, m, false)
+}
+
+fn kernel_at(
+    p: &Package,
+    key: &str,
+    range: Option<(i64, i64)>,
+    m: &Machine,
+    pool: bool,
+) -> R<Kernel> {
     let hw = Hw::of(m);
+    for step in &p.steps {
+        if let Step::Planes(planes) = step {
+            planes.validate(p, m)?;
+        }
+        if let Step::Attention(attention) = step {
+            if let Some(merge) = &attention.merge {
+                merge.validate(p, m)?;
+            }
+            if attention.compact_mask
+                && attention.tail.as_ref().is_some_and(|name| {
+                    !p.ports
+                        .iter()
+                        .any(|(buffer, written)| &buffer.name == name && !written)
+                        || p.steps.iter().any(|step| match step {
+                            Step::Flat { outs, .. } | Step::Rows { outs, .. } => {
+                                outs.contains(name)
+                            }
+                            Step::Packed { outs, packs, .. } => {
+                                outs.contains(name) || packs.iter().any(|pack| &pack.port == name)
+                            }
+                            Step::Quant { port, .. } => port == name,
+                            Step::Copy { dst, .. } | Step::Prefix { dst, .. } => dst == name,
+                            Step::Planes(planes) => &planes.dst == name,
+                            Step::Attention(attention) => {
+                                &attention.out == name
+                                    || attention
+                                        .merge
+                                        .as_ref()
+                                        .is_some_and(|merge| &merge.dst == name)
+                            }
+                        })
+                })
+            {
+                return fail(
+                    "API.OP.001",
+                    "reused attention mask needs an immutable public tail",
+                );
+            }
+            if p.ports
+                .iter()
+                .any(|(buffer, written)| buffer.name == attention.out && !written)
+            {
+                return fail("API.OP.001", "attention output must be writable");
+            }
+        }
+        if let Step::Prefix { src, dst, boundary } = step {
+            boundary.validate(m)?;
+            for (name, shape) in [
+                (src, [boundary.src_rows, boundary.src_pitch]),
+                (dst, [boundary.dst_rows, boundary.dst_pitch]),
+            ] {
+                let declared = p
+                    .ports
+                    .iter()
+                    .map(|(buffer, _)| buffer)
+                    .chain(p.scratch.iter())
+                    .find(|buffer| &buffer.name == name);
+                if !declared
+                    .is_some_and(|buffer| buffer.dtype == g::Dtype::F16 && buffer.shape == shape)
+                {
+                    return fail(
+                        "API.OP.001",
+                        "fused prefix must match its named FP16 allocations",
+                    );
+                }
+            }
+            if src == dst && boundary.initializes_source() {
+                return fail(
+                    "API.OP.001",
+                    "prefix initialization overlaps its copied source",
+                );
+            }
+        }
+    }
     let tiled = tiled_ports(p, &hw)?;
     let mut ports = Vec::new();
     let mut given = Vec::new();
@@ -632,7 +744,7 @@ fn kernel_at(p: &Package, key: &str, range: Option<(i64, i64)>, m: &Machine) -> 
         names.push(name.clone());
     }
     let key = name("rows", vec![Py::str("fused"), Py::str(key)]);
-    build(&key, m, ports, given, |t, b| {
+    let mut kernel = build(&key, m, ports, given, |t, b| {
         let mut env: Env = names.iter().cloned().zip(b.iter().cloned()).collect();
         for s in &p.scratch {
             let buf = t.buffer(&s.shape, s.dtype, vec![])?;
@@ -648,6 +760,7 @@ fn kernel_at(p: &Package, key: &str, range: Option<(i64, i64)>, m: &Machine) -> 
                 Some((&walk, None)),
             )?;
         }
+        let mut attention_masks = attention::MaskCache::new();
         for step in &p.steps {
             match step {
                 Step::Flat {
@@ -674,6 +787,7 @@ fn kernel_at(p: &Package, key: &str, range: Option<(i64, i64)>, m: &Machine) -> 
                     &hw,
                 )?,
                 Step::Rows {
+                    fold,
                     r,
                     w,
                     exprs,
@@ -682,19 +796,38 @@ fn kernel_at(p: &Package, key: &str, range: Option<(i64, i64)>, m: &Machine) -> 
                     out_operands,
                     outs,
                     made,
-                } => members(
-                    t,
-                    &env,
-                    *r,
-                    *w,
-                    exprs,
-                    operands,
-                    ins,
-                    out_operands,
-                    outs,
-                    made,
-                    &hw,
-                )?,
+                } => {
+                    if *fold {
+                        let inputs = bufs(&env, ins);
+                        for ((e, out), dst) in exprs.iter().zip(out_operands).zip(outs) {
+                            reductions::wide_fold(
+                                t,
+                                &inputs,
+                                env[dst].clone(),
+                                e,
+                                operands,
+                                *r,
+                                *w,
+                                out,
+                                &hw,
+                            )?;
+                        }
+                    } else {
+                        members(
+                            t,
+                            &env,
+                            *r,
+                            *w,
+                            exprs,
+                            operands,
+                            ins,
+                            out_operands,
+                            outs,
+                            made,
+                            &hw,
+                        )?;
+                    }
+                }
                 Step::Packed {
                     r,
                     w,
@@ -730,6 +863,12 @@ fn kernel_at(p: &Package, key: &str, range: Option<(i64, i64)>, m: &Machine) -> 
                 Step::Copy { src, dst } => {
                     t.copy(&env[dst].whole(), &env[src].whole(), None, None)?
                 }
+                Step::Planes(planes) => planes.emit(t, &env, range, &hw)?,
+                Step::Attention(attention) => attention.emit(t, &env, m, &mut attention_masks)?,
+                Step::Prefix { src, dst, boundary } => {
+                    let (first, count) = range.unwrap_or((0, boundary.rows));
+                    boundary.emit_into(t, &env[src], &env[dst], first, count, &hw)?;
+                }
             }
         }
         for s in p.staged.iter().filter(|s| s.written) {
@@ -742,5 +881,86 @@ fn kernel_at(p: &Package, key: &str, range: Option<(i64, i64)>, m: &Machine) -> 
             )?;
         }
         Ok(())
+    })?;
+    if let Some(space) = p.scratch_space {
+        for scratch in &mut kernel.graph.scratch {
+            scratch.spec.space = space;
+        }
+    }
+    if p.balance_stages {
+        balance_stages(&mut kernel.graph.body, hw.vc);
+    }
+    if pool {
+        super::chain::reuse_stage(kernel, m)
+    } else {
+        Ok(kernel)
+    }
+}
+
+/// Local instance placement; each explicitly scoped sysnode has its own cursor.
+fn balance_stages(body: &mut [g::Stmt], cores: i64) {
+    let mut next = 0;
+    for stmt in body {
+        if let g::Node::Par {
+            lo, hi, unit, body, ..
+        } = &mut stmt.node
+        {
+            if unit.kind == g::UnitKind::Node {
+                balance_stages(body, cores);
+            } else if unit.kind == g::UnitKind::Vc
+                && *lo == g::Index::Int(0)
+                && *hi == g::Index::Int(1)
+            {
+                unit.index = Some(g::Index::Int(next % cores));
+                next += 1;
+            }
+        }
+    }
+}
+
+/// Destination-owned prefix stage with the package's global public signature.
+/// The shared prefix planner supplies exact reads, padding-only owners and
+/// destination-line writes; only allocation names differ in a fused package.
+pub(crate) fn prefix_split(
+    p: &Package,
+    key: &str,
+    request: &crate::split::SplitRequest,
+    m: &Machine,
+) -> R<crate::split::PlannedKernel> {
+    let [Step::Prefix { src, dst, boundary }] = p.steps.as_slice() else {
+        return fail("API.OP.001", "a prefix split needs one boundary stage");
+    };
+    let signature = kernel(p, key, m)?;
+    let rename = |region: &mut crate::split::Region| {
+        region.allocation = if region.allocation == "src" {
+            src.clone()
+        } else {
+            dst.clone()
+        };
+    };
+    let mut options = boundary.options(request, m)?;
+    for option in &mut options {
+        for region in &mut option.output.valid_region {
+            rename(region);
+        }
+        for (_, region) in &mut option.output.ownership {
+            rename(region);
+        }
+        for shard in &mut option.shards {
+            for region in shard
+                .read_regions
+                .iter_mut()
+                .chain(&mut shard.write_regions)
+            {
+                rename(region);
+            }
+        }
+    }
+    v::split::kernel_options(options, signature, request, m, |first, count| {
+        let key = name(
+            "prefix_range",
+            vec![Py::str(key), Py::Int(first), Py::Int(count)],
+        );
+        kernel_at(p, &key, Some((first, count)), m, true)
     })
 }

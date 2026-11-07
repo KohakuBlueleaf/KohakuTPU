@@ -265,7 +265,7 @@ pub fn lower_bound(
                 let (got, acc) = mover::lower(&body, op, env, t)?;
                 pending.protect(&body, &op.st, &acc)?;
                 if *blocking {
-                    let mut lines = vec!["move".into()];
+                    let mut lines = vec!["move local=1".into()];
                     lines.extend(got.iter().map(|l| format!("{IND}{l}")));
                     let mut stage = Stage::new(lines, vec![], acc);
                     stage.group = s.tag;
@@ -282,7 +282,7 @@ pub fn lower_bound(
                     }
                 }
                 let tok = format!("mv{}", built.len());
-                let mut lines = vec![format!("{tok} = move posted")];
+                let mut lines = vec![format!("{tok} = move posted local=1")];
                 lines.extend(got.iter().map(|l| format!("{IND}{l}")));
                 let mut st = Stage::new(lines, vec![], acc);
                 st.group = s.tag;
@@ -308,16 +308,19 @@ pub fn lower_bound(
             for access in &mut stage.accesses {
                 if access.key.0 == "mem" {
                     if let Some(base) = bindings.get(&access.key.1) {
+                        if let Some(f) = &access.footprint {
+                            let mut f = (**f).clone();
+                            f.start = base.checked_add(f.start).ok_or_else(|| {
+                                crate::ir::Error::new("L2.ORDER.009", "bound access overflow")
+                            })?;
+                            access.footprint = Some(std::sync::Arc::new(f));
+                        }
                         access.lo = base.checked_add(access.lo).ok_or_else(|| {
                             crate::ir::Error::new("L2.ORDER.009", "bound access overflow")
                         })?;
                         access.hi = base.checked_add(access.hi).ok_or_else(|| {
                             crate::ir::Error::new("L2.ORDER.009", "bound access overflow")
                         })?;
-                        if access.lo < access.hi {
-                            access.lo = access.lo.div_euclid(64) * 64;
-                            access.hi = ((access.hi - 1).div_euclid(64) + 1) * 64;
-                        }
                         access.key = ("bound_dram".to_string(), String::new());
                     }
                 }
@@ -524,6 +527,7 @@ fn par_stage(
             acc.push(write.clone());
             records.push((s, write));
         };
+        let mut outstanding: Vec<usize> = Vec::new();
         for i in insts {
             let classed = i.par().st.kw("classed").is_some();
             if !classed && vector::idle(body, i.par(), &i.env)? {
@@ -549,6 +553,25 @@ fn par_stage(
             let img = format!("{}_n{}_vc{idx}_{}", body.name, i.node, images.len());
             let (parts, params, got) =
                 vector::lower(body, i.par(), &i.env, &img, links, land, t, search)?;
+            let mut waited = Vec::new();
+            for &at in &outstanding {
+                let a = &acc[at];
+                if !waited.contains(&a.unit)
+                    && got
+                        .iter()
+                        .any(|b| sync::clash(a, b) && (a.unit != unit || !(a.write && b.write)))
+                {
+                    lines.push(format!("wait {}", a.unit));
+                    waited.push(a.unit.clone());
+                }
+            }
+            outstanding.retain(|&at| !waited.contains(&acc[at].unit));
+            outstanding.extend(
+                got.iter()
+                    .enumerate()
+                    .filter(|(_, a)| a.key.0 == "mem")
+                    .map(|(at, _)| acc.len() + at),
+            );
             acc.extend(got);
             units.push(format!("vc[{idx}]"));
             let repeat = if let Some(count) = i.par().st.kw("repeats") {

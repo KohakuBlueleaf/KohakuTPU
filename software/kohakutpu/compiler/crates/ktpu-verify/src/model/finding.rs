@@ -74,10 +74,10 @@ impl Kind {
         }
     }
 
-    /// A kind a run is refused for (L1.VER.015). Model and bank findings
-    /// are informational; unsupported data-dependent control flow is refusing.
+    /// L1.VER.015 and round-i verification: unknown or budget-limited proofs
+    /// refuse certification. Bank placement diagnostics remain informational.
     pub fn refuses(self) -> bool {
-        !matches!(self, Kind::Model | Kind::Bank)
+        !matches!(self, Kind::Bank)
     }
 }
 

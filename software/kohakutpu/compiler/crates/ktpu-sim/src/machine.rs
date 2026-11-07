@@ -30,6 +30,7 @@ const IMEM_WORDS: usize = 1024;
 pub struct Vc {
     pub core: Core,
     imem: Vec<u64>,
+    decoded: Option<(Rc<Isa>, decode::Cache)>,
     queue: VecDeque<VcWord>,
     pub sent: u64,
     pub done: u64,
@@ -145,6 +146,7 @@ impl Machine {
                 .map(|_| Vc {
                     core: Core::new(regs),
                     imem: vec![0; IMEM_WORDS],
+                    decoded: None,
                     queue: VecDeque::new(),
                     sent: 0,
                     done: 0,
@@ -314,8 +316,15 @@ impl Machine {
                         }
                         VcWord::RunAt(pc) => {
                             let isa = self.isa.as_ref().ok_or("CU words with no ISA")?;
+                            if v.decoded
+                                .as_ref()
+                                .is_none_or(|(old, _)| !Rc::ptr_eq(old, isa))
+                            {
+                                v.decoded = Some((isa.clone(), decode::Cache::default()));
+                            }
+                            let (_, cache) = v.decoded.as_mut().expect("decoder ISA");
                             v.core
-                                .start(Rc::new(decode::program(&isa.vector, &v.imem, pc)?));
+                                .start(Rc::new(cache.program(&isa.vector, &v.imem, pc)?));
                         }
                     }
                     return Ok(());

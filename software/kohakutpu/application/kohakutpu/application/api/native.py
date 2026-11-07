@@ -255,15 +255,13 @@ def layernorm(
         return x.layernorm(scale, shift, eps).realize()
     rows, width = x.size // x.shape[-1], x.shape[-1]
     k = (
-        G.GraphKernel(
-            G.rows_graph(
-                "layernorm",
-                rows,
-                width,
-                D.device().machine,
-                eps,
-                balance_norm=balance_norm,
-            )
+        G.rows_kernel(
+            "layernorm",
+            rows,
+            width,
+            D.device().machine,
+            eps,
+            balance_norm=balance_norm,
         )
         if backend == "generated"
         else R.kernel("layernorm", rows, width, D.device().machine.count("VC"), eps)

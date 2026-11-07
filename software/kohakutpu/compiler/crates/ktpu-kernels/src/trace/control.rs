@@ -84,7 +84,9 @@ impl Trace {
             Some(&physical),
             None,
         );
-        self.block(
+        let previous = self.stage_node;
+        self.stage_node = (ids.len() == 1).then_some(ids[0]);
+        let result = self.block(
             node,
             here(),
             Scope {
@@ -92,7 +94,9 @@ impl Trace {
                 ..Scope::default()
             },
             |t| body(t, rank),
-        )
+        );
+        self.stage_node = previous;
+        result
     }
 
     /// Emit a share on one physical sysnode, independently of local unit counts.
@@ -114,7 +118,10 @@ impl Trace {
             node: true,
             ..Scope::default()
         };
-        self.block(node, here(), scope, body)
+        let previous = self.stage_node.replace(id);
+        let result = self.block(node, here(), scope, body);
+        self.stage_node = previous;
+        result
     }
 
     /// `par v in 0..n on KIND[v]` (DSL.CTRL.001, .011). More `mg` / `vc`
@@ -158,6 +165,43 @@ impl Trace {
             node: on == g::UnitKind::Node || self.scope().node,
         };
         self.block(node, at_line, scope, |t| body(t, sym.clone()))
+    }
+
+    /// Local virtual unit instances, even on a machine with several nodes.
+    /// Typed generators use this when ownership belongs to an enclosing split
+    /// plan: placement may queue virtual instances but cannot invent owners.
+    #[track_caller]
+    pub fn par_local(
+        &mut self,
+        n: i64,
+        on: g::UnitKind,
+        at: At,
+        body: impl FnOnce(&mut Trace, Idx) -> R<()>,
+    ) -> R<()> {
+        let units = match on {
+            g::UnitKind::Mg => self.facts.mg,
+            g::UnitKind::Vc => self.facts.vc,
+            g::UnitKind::Node => return fail("DSL.CTRL.001", "local units are MG or VC"),
+        };
+        if n <= 0 || self.scope().kind.is_some() || at == At::Var && n > units {
+            return fail("DSL.CTRL.001", "invalid local unit instances");
+        }
+        let name = self.fresh(prefix(on));
+        let index = var(&name);
+        let node = par_node(
+            &name,
+            &Idx::Int(0),
+            &Idx::Int(n),
+            on,
+            (at == At::Var).then_some(&index),
+            None,
+        );
+        let scope = Scope {
+            kind: Some(on),
+            node: self.scope().node,
+            ..Scope::default()
+        };
+        self.block(node, here(), scope, |t| body(t, index))
     }
 
     /// `par v in 0..n on vc[v] classed=1 ..`: this node's vector cores, one

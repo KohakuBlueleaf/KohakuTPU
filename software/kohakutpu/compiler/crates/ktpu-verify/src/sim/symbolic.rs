@@ -1,5 +1,7 @@
 //! Finite 64-bit values and path predicates as reduced ordered decision diagrams.
 
+use std::sync::{Arc, Mutex};
+
 use super::fx::FxHashMap as HashMap;
 
 /// Concrete operands do not consult the symbolic arena.
@@ -19,17 +21,32 @@ struct Branch {
     high: Bit,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Branches retain their own predicate and share immutable node/word identities.
+#[derive(Clone, Debug)]
 pub(crate) struct Symbolic {
+    arena: Arc<Mutex<Arena>>,
+    pub predicate: Bit,
+}
+
+impl PartialEq for Symbolic {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.arena, &other.arena) && self.predicate == other.predicate
+    }
+}
+
+impl Eq for Symbolic {}
+
+#[derive(Debug)]
+struct Arena {
     nodes: Vec<Branch>,
     unique: HashMap<Branch, Bit>,
     cache: HashMap<(Bit, Bit, Bit), Bit>,
     inputs: usize,
     words: Vec<Word>,
-    pub predicate: Bit,
+    word_ids: HashMap<Word, usize>,
 }
 
-impl Default for Symbolic {
+impl Default for Arena {
     fn default() -> Self {
         Self {
             nodes: vec![
@@ -48,12 +65,21 @@ impl Default for Symbolic {
             cache: HashMap::default(),
             inputs: 0,
             words: Vec::new(),
-            predicate: 1,
+            word_ids: HashMap::default(),
         }
     }
 }
 
-impl Symbolic {
+impl Arena {
+    pub(crate) fn storage(&self) -> (usize, usize, usize, usize) {
+        (
+            self.nodes.len(),
+            self.unique.len(),
+            self.cache.len(),
+            self.words.len(),
+        )
+    }
+
     fn node(&mut self, var: (usize, usize), low: Bit, high: Bit) -> Bit {
         if low == high {
             return low;
@@ -65,6 +91,9 @@ impl Symbolic {
         let id = self.nodes.len();
         self.nodes.push(branch);
         self.unique.insert(branch, id);
+        if self.nodes.len().is_power_of_two() && std::env::var_os("KTPU_VERIFY_STATS").is_some() {
+            eprintln!("verify symbolic storage: {:?}", self.storage());
+        }
         id
     }
 
@@ -133,8 +162,12 @@ impl Symbolic {
                     .fold(0, |v, (i, &b)| v | (b as u64) << i),
             );
         }
+        if let Some(&id) = self.word_ids.get(&bits) {
+            return Value::Symbolic(id);
+        }
         let id = self.words.len();
         self.words.push(bits);
+        self.word_ids.insert(bits, id);
         Value::Symbolic(id)
     }
 
@@ -199,14 +232,6 @@ impl Symbolic {
             }
             _ => 0,
         }
-    }
-
-    /// Both roots include the entire incoming path condition.
-    pub fn successors(&mut self, condition: Bit) -> (Bit, Bit) {
-        let taken = self.and(self.predicate, condition);
-        let not = self.not(condition);
-        let fallthrough = self.and(self.predicate, not);
-        (taken, fallthrough)
     }
 
     pub fn alu(&mut self, op: u32, a: Value, b: Value) -> Option<Value> {
@@ -286,5 +311,44 @@ impl Symbolic {
             _ => return None,
         };
         Some(self.value(bits))
+    }
+}
+
+impl Default for Symbolic {
+    fn default() -> Self {
+        Self {
+            arena: Arc::new(Mutex::new(Arena::default())),
+            predicate: 1,
+        }
+    }
+}
+
+impl Symbolic {
+    pub(crate) fn storage(&self) -> (usize, usize, usize, usize) {
+        self.arena.lock().expect("symbolic arena").storage()
+    }
+
+    pub fn fresh(&mut self) -> Value {
+        self.arena.lock().expect("symbolic arena").fresh()
+    }
+
+    pub fn condition(&mut self, c: u32, a: Value, b: Value) -> Bit {
+        self.arena
+            .lock()
+            .expect("symbolic arena")
+            .condition(c, a, b)
+    }
+
+    /// Both roots include the entire incoming path condition.
+    pub fn successors(&mut self, condition: Bit) -> (Bit, Bit) {
+        let mut arena = self.arena.lock().expect("symbolic arena");
+        let taken = arena.and(self.predicate, condition);
+        let not = arena.not(condition);
+        let fallthrough = arena.and(self.predicate, not);
+        (taken, fallthrough)
+    }
+
+    pub fn alu(&mut self, op: u32, a: Value, b: Value) -> Option<Value> {
+        self.arena.lock().expect("symbolic arena").alu(op, a, b)
     }
 }

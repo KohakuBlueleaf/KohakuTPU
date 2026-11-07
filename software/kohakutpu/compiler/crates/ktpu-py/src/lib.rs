@@ -1292,6 +1292,14 @@ fn l1_cycles(l1_text: &str, name: &str, machine_json: &str) -> PyResult<i64> {
         .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
+/// Complete graph price through scheduled L1, without packages or simulation.
+#[pyfunction]
+fn graph_cycles(source: &str, machine_json: &str) -> PyResult<i64> {
+    let m = machine(machine_json)?;
+    let graph = ktpu_graph::parse(source).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    ktpu_graph::cycles(&graph, &m).map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
 /// call_cycles(call_json, machine_json) -> int | None: the admission price
 /// through scheduled L1, without package construction or verification.
 #[pyfunction]
@@ -1363,6 +1371,7 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_composed, m)?)?;
     m.add_function(wrap_pyfunction!(call_cycles, m)?)?;
     m.add_function(wrap_pyfunction!(l1_cycles, m)?)?;
+    m.add_function(wrap_pyfunction!(graph_cycles, m)?)?;
     m.add_function(wrap_pyfunction!(pairs_blocks, m)?)?;
     m.add_function(wrap_pyfunction!(relayout_plan, m)?)?;
     m.add_function(wrap_pyfunction!(lanes_plan, m)?)?;

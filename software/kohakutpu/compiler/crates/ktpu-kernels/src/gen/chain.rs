@@ -8,6 +8,26 @@
 //! which none meets a name of the first, so chains nest. The graph's
 //! `consts.chain.ports` maps each second port to its name in the chain.
 
+mod crop;
+mod forward;
+mod index;
+mod input;
+pub(crate) mod link;
+mod lookahead;
+mod policy;
+pub mod quant;
+mod reuse;
+mod rows;
+pub mod sequence;
+pub(crate) mod wave;
+mod windows;
+
+pub(crate) use crop::apply as crop_boundary;
+pub(crate) use input::apply as input_boundary;
+pub use lookahead::{advance_compute, hoist_inputs, independent_tail};
+pub(crate) use policy::finish;
+pub(crate) use reuse::kernel as reuse_stage;
+
 use std::collections::{BTreeMap, HashSet};
 
 use ktpu_graph as g;
@@ -35,6 +55,25 @@ fn names_in(v: &Value, keys: &[&str], out: &mut HashSet<String>) {
         }
         Value::Array(xs) => xs.iter().for_each(|x| names_in(x, keys, out)),
         _ => {}
+    }
+}
+
+/// Definitions owned by a region, excluding references to enclosing binders.
+/// JSON `var` keys also encode free index references and are not declarations.
+fn bound_names(body: &[g::Stmt], out: &mut HashSet<String>) {
+    for stmt in body {
+        match &stmt.node {
+            g::Node::Par { var, .. } | g::Node::For { var, .. } => {
+                out.insert(var.clone());
+            }
+            g::Node::Value { target, .. } => {
+                out.insert(target.clone());
+            }
+            _ => {}
+        }
+        if let Some(body) = stmt.node.body() {
+            bound_names(body, out);
+        }
     }
 }
 
@@ -90,7 +129,7 @@ pub fn kernel(first: Kernel, second: Kernel, from: &str, to: &str, keep: bool) -
         Ok(b) => b,
         Err(e) => return fail("API.OP.001", format!("kernel.chain: {e}")),
     };
-    names_in(&body, &["target", "var"], &mut own);
+    bound_names(&second.graph.body, &mut own);
     let mut taken: HashSet<String> = first.graph.ports.iter().map(|p| p.name.clone()).collect();
     taken.extend(first.graph.scratch.iter().map(|p| p.name.clone()));
     match serde_json::to_value(&first.graph.body) {
@@ -151,7 +190,15 @@ pub fn kernel(first: Kernel, second: Kernel, from: &str, to: &str, keep: bool) -
         .filter(|p| p.name != from)
         .map(|p| (p.name.clone(), to_name(&p.name)))
         .collect();
+    let first_ports: BTreeMap<_, _> = first
+        .graph
+        .ports
+        .iter()
+        .filter(|p| keep || p.name != to)
+        .map(|p| (p.name.clone(), p.name.clone()))
+        .collect();
     graph.consts = json!({"chain": {
+        "first_ports": first_ports,
         "first": first.graph.consts,
         "second": second.graph.consts,
         "ports": ports,
@@ -169,34 +216,134 @@ pub fn kernel(first: Kernel, second: Kernel, from: &str, to: &str, keep: bool) -
     Ok(Kernel { graph, given })
 }
 
+/// Compose typed stages and retain a materialized pointwise consumer within
+/// producer waves where the shared scheduling proof applies.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn scheduled(
+    first: Kernel,
+    second: Kernel,
+    from: &str,
+    to: &str,
+    keep: bool,
+    consumer: Option<&wave::Consumer>,
+    view: link::View,
+    machine: &ktpu_machine::Machine,
+) -> R<Kernel> {
+    let producer_len = first.graph.body.len();
+    let same_domain = port(&first, to)?.spec == port(&second, from)?.spec;
+    let second = if let Some(binding) = link::Binding::of(&first, &second, from, to, view, machine)?
+    {
+        binding.apply(second)?
+    } else {
+        second
+    };
+    let mut kernel = kernel(first, second, from, to, keep)?;
+    if !keep && same_domain {
+        if let Some(consumer) = consumer {
+            wave::apply(&mut kernel, producer_len, to, consumer, machine)?;
+        }
+    }
+    Ok(kernel)
+}
+
+/// Compose one independent row owner's stages. The caller supplies the
+/// producer's physical row quantum; private edges retain whole statistic words.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn row_kernel(
+    first: Kernel,
+    second: Kernel,
+    from: &str,
+    to: &str,
+    keep: bool,
+    origin: i64,
+    count: i64,
+    quantum: Option<i64>,
+    consumer: Option<&wave::Consumer>,
+    view: link::View,
+    machine: &ktpu_machine::Machine,
+) -> R<Kernel> {
+    let mut result = scheduled(first, second, from, to, keep, consumer, view, machine)?;
+    if !keep {
+        if let Some(quantum) = quantum {
+            rows::compact(
+                &mut result,
+                to,
+                origin,
+                super::cdiv(count, quantum) * quantum,
+            )?;
+        }
+    }
+    Ok(result)
+}
+
 /// Independently node-scoped schedules sharing the invocation's global ports.
 /// Values, loops and scratch remain private to each schedule.
 pub(crate) fn shares(signature: &Kernel, kernels: Vec<Kernel>) -> R<Kernel> {
-    let mut result = signature.clone();
-    result.graph.body.clear();
-    result.graph.scratch.clear();
-    for (rank, kernel) in kernels.into_iter().enumerate() {
-        let mut own: HashSet<String> = kernel
-            .graph
-            .scratch
-            .iter()
-            .map(|p| p.name.clone())
-            .collect();
-        let mut body = serde_json::to_value(&kernel.graph.body)
-            .map_err(|e| ktpu_machine::Refusal::new("DSL.KERN.020", e.to_string()))?;
-        names_in(&body, &["target", "var"], &mut own);
-        let rename = |n: &str| format!("share{rank}_{n}");
-        renamed(&mut body, &own, &rename);
-        let body: Vec<g::Stmt> = serde_json::from_value(body)
-            .map_err(|e| ktpu_machine::Refusal::new("DSL.KERN.020", e.to_string()))?;
-        result.graph.body.extend(body);
-        for scratch in kernel.graph.scratch {
-            result.graph.scratch.push(g::Scratch {
-                name: rename(&scratch.name),
-                ..scratch
-            });
-        }
+    sequence::scoped(signature, kernels)
+}
+
+/// Place an already composed local schedule on its granted physical sysnode.
+pub(crate) fn placed(mut kernel: Kernel, node: i64) -> R<Kernel> {
+    if node == 0 {
+        return Ok(kernel);
     }
-    result.graph.name = name("row_shares", vec![Py::str(&signature.graph.name)]);
-    Ok(result)
+    let mut taken: HashSet<_> = kernel.graph.ports.iter().map(|p| p.name.clone()).collect();
+    taken.extend(kernel.graph.scratch.iter().map(|s| s.name.clone()));
+    let value = serde_json::to_value(&kernel.graph.body)
+        .map_err(|e| ktpu_machine::Refusal::new("API.OP.001", e.to_string()))?;
+    names_in(&value, &NAMED, &mut taken);
+    let var = (0..)
+        .map(|i| format!("chain_node_{i}"))
+        .find(|n| taken.insert(n.clone()))
+        .expect("an unused node variable");
+    let body = std::mem::take(&mut kernel.graph.body);
+    kernel.graph.body.push(g::Stmt {
+        at: "<chain node>".into(),
+        node: g::Node::Par {
+            var,
+            lo: g::Index::Int(0),
+            hi: g::Index::Int(1),
+            unit: g::UnitRef {
+                kind: g::UnitKind::Node,
+                index: Some(g::Index::Int(node)),
+            },
+            classed: false,
+            class_band: None,
+            repeats: None,
+            advances: vec![],
+            body,
+        },
+    });
+    Ok(kernel)
+}
+
+/// Optional phase ordering is shared by typed chains and typed sequences.
+pub(crate) fn ordered(kernel: Kernel, args: &Value, machine: &ktpu_machine::Machine) -> R<Kernel> {
+    match args.get("pipeline_lookahead") {
+        None | Some(Value::Bool(false)) => Ok(kernel),
+        Some(Value::Bool(true)) => lookahead::kernel(kernel, machine),
+        _ => fail("API.OP.001", "pipeline_lookahead must be boolean"),
+    }
+}
+
+/// Joint storage/ordering choice for a chain whose quant policy is already set.
+pub(crate) fn pooled_ordered(
+    kernel: Kernel,
+    args: &Value,
+    machine: &ktpu_machine::Machine,
+) -> R<Kernel> {
+    let enabled = match args.get("pipeline_lookahead") {
+        None | Some(Value::Bool(false)) => false,
+        Some(Value::Bool(true)) => true,
+        _ => return fail("API.OP.001", "pipeline_lookahead must be boolean"),
+    };
+    sequence::select(kernel, quant::Backend::Generator, enabled, true, machine)
+        .map(|(kernel, _)| kernel)
+}
+
+/// Complete legal pooled/windowed alternative, before cost selection.
+/// Callers comparing schedules must price this and the unmodified schedule.
+pub fn pipeline_candidate(kernel: &Kernel, machine: &ktpu_machine::Machine) -> R<Kernel> {
+    let (pooled, _) = reuse::candidate(kernel, true)?;
+    lookahead::candidate(&pooled, quant::Backend::Generator, machine)
 }

@@ -1,7 +1,9 @@
 //! One lanes class: padded duplicate members and fixed tap instructions.
 
 use super::{core_trips, trip_row, Classed, Cores};
-use crate::gen::lanes::{entries, rows, Class, Plan, Rows, ROWS};
+use crate::gen::lanes::{
+    destination_step, entries, indexed_destination, rows, Class, Plan, Rows, ROWS,
+};
 use crate::gen::{cdiv, Hw};
 use crate::kernel::{build, Port};
 use crate::pyrepr::{name, Py};
@@ -36,15 +38,26 @@ pub fn tables(pl: &Plan, m: &Machine) -> Vec<Tables> {
     for c in &pl.classes {
         let taps = c.taps.len() as i64;
         let (ne, nr) = (entries(c, &hw), padded_rows(c, &hw));
-        let old = &pl.index[offset..offset + ((taps + 1) * hf * ne) as usize];
-        let mut index = vec![0f32; ((taps + 1) * hf * nr) as usize];
+        let old_step = destination_step(cdiv(c.words, hf), m);
+        let nd = if old_step == 1 { ne } else { rows(c, &hw) };
+        let old_len = hf * (taps * ne + nd * old_step);
+        let old = &pl.index[offset..offset + old_len as usize];
+        let step = destination_step(nr, m);
+        let mut index = vec![0f32; ((taps + step) * hf * nr) as usize];
         for k in 0..nr * hf {
             let k_old = k.min(c.words - 1);
             let (r, j) = (k_old / hf, k_old % hf);
             let (dest_r, dest_j) = (k / hf, k % hf);
             for t in 0..=taps {
-                index[((t * hf + dest_j) * nr + dest_r) as usize] =
-                    old[((t * hf + j) * ne + r) as usize];
+                let (source, dest) = if t == taps {
+                    (
+                        taps * hf * ne + (j * nd + r) * old_step,
+                        taps * hf * nr + (dest_j * nr + dest_r) * step,
+                    )
+                } else {
+                    ((t * hf + j) * ne + r, (t * hf + dest_j) * nr + dest_r)
+                };
+                index[dest as usize] = old[source as usize];
             }
         }
         let end = first + (taps * hw.vlmax) as usize;
@@ -64,12 +77,13 @@ pub fn kernel(c: &Class, src_words: i64, dst_words: i64, cores: Cores, m: &Machi
     let hw = Hw::of(m);
     let hf = hw.vlmax / hw.lanes;
     let nr = padded_rows(c, &hw);
+    let step = destination_step(nr, m);
     let trips = nr / ROWS;
     let used = cores.used(hw.vc, trips);
     let padded = cdiv(trips, used) * used * ROWS;
     let taps = c.taps.len() as i64;
     let (ss, ds) = ([src_words, hw.lanes], [dst_words, hw.lanes]);
-    let is = [(taps + 1) * hf * nr];
+    let is = [(taps + step) * hf * nr];
     let ms = [taps, hw.vlmax];
     let ports = vec![
         Port::input("src", &ss, g::Dtype::F16),
@@ -120,8 +134,8 @@ pub fn kernel(c: &Class, src_words: i64, dst_words: i64, cores: Cores, m: &Machi
                 t.gather(&v, &src.whole(), &list(k as i64, j)?, true, None)?;
             }
             if c.keep {
-                let v = out.at(&zero, &whole, cols(j))?;
-                t.gather(&v, &dst.whole(), &list(taps, j)?, true, None)?;
+                let base = taps * hf * nr + j * nr * step;
+                indexed_destination(t, dst, &out, index, base, j, nr, step, true, &hw)?;
             }
         }
         for first in (0..taps).step_by(group as usize) {
@@ -159,8 +173,8 @@ pub fn kernel(c: &Class, src_words: i64, dst_words: i64, cores: Cores, m: &Machi
             })?;
         }
         for j in 0..hf {
-            let v = out.at(&zero, &whole, cols(j))?;
-            t.scatter(&dst.whole(), &v, &list(taps, j)?, true, None)?;
+            let base = taps * hf * nr + j * nr * step;
+            indexed_destination(t, dst, &out, index, base, j, nr, step, false, &hw)?;
         }
         Ok(())
     })?;

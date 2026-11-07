@@ -199,7 +199,9 @@ fn register_counted_copy_keeps_the_extent_and_live_node_registers() {
                         other => panic!("unexpected copy ALU {other:?}"),
                     };
                 }
-                Stmt::Store { pairs, from_regs } => {
+                Stmt::Store {
+                    pairs, from_regs, ..
+                } => {
                     for (at, v) in pairs {
                         saved.insert(*at, if *from_regs { regs[*v as usize] } else { *v });
                     }
@@ -222,7 +224,9 @@ fn register_counted_copy_keeps_the_extent_and_live_node_registers() {
                         next = labels[name];
                     }
                 }
-                Stmt::Move { writes, patches } => {
+                Stmt::Move {
+                    writes, patches, ..
+                } => {
                     let mut raw: Vec<_> = writes.iter().map(|(r, v)| (*r as u32, *v)).collect();
                     for patch in patches {
                         let value = regs[patch.reg as usize].wrapping_add(patch.konst);

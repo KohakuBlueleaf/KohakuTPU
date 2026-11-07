@@ -59,6 +59,9 @@ pub fn index(x: &Index) -> String {
 }
 
 fn sym(s: &Sym) -> String {
+    if s.terms.is_empty() {
+        return s.konst.to_string();
+    }
     let mut parts: Vec<(bool, String)> = Vec::new();
     for (a, c) in &s.terms {
         let t = atom(a);

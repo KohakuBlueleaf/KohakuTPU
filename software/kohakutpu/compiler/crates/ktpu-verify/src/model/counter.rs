@@ -46,6 +46,12 @@ impl Counter {
         marks.push((last + n, clock.clone()));
     }
 
+    pub(crate) fn histories(&self) -> impl Iterator<Item = (usize, &[(i64, Clock)])> {
+        self.owners
+            .iter()
+            .map(|(owner, marks)| (*owner, marks.as_slice()))
+    }
+
     pub fn reached(&self, target: i64) -> bool {
         self.value >= target
     }

@@ -331,6 +331,7 @@ fn compact(pkg: &mut Package, original: &Package) -> Result<()> {
     for s in &pkg.steps {
         let (first, count) = match s.op {
             Op::Dispatch | Op::Mover | Op::Store | Op::Ctrl => (s.arg, s.count),
+            Op::Alu | Op::Fetch if s.flags & F_MEM != 0 => (s.arg, 1),
             Op::Load | Op::Recv => (s.arg, 1),
             Op::Frontier if s.flags == 2 => (s.arg, s.count),
             Op::Frontier => (s.count, 1),
@@ -369,6 +370,9 @@ fn compact(pkg: &mut Package, original: &Package) -> Result<()> {
     }
     for s in &mut pkg.steps {
         match s.op {
+            Op::Alu | Op::Fetch if s.flags & F_MEM != 0 => {
+                s.arg = map[&s.arg];
+            }
             Op::Dispatch | Op::Mover | Op::Store | Op::Ctrl | Op::Load | Op::Recv => {
                 s.arg = map.get(&s.arg).copied().unwrap_or(0);
             }

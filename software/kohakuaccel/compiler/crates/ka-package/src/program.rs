@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::build::{Addresses, Increment, PackageBuilder, Segment};
+use crate::build::{Addresses, Increment, LocalRoute, PackageBuilder, Segment};
 use crate::error::Result;
 use crate::facts::{Coord, Facts};
 use crate::format::{signature, Alu, Cond, ANY_UNIT};
@@ -66,6 +66,7 @@ pub enum Stmt {
     Store {
         pairs: Vec<(u64, u64)>,
         from_regs: bool,
+        local: Option<LocalRoute>,
     },
     Ctrl {
         pairs: Vec<(u64, u64)>,
@@ -76,6 +77,7 @@ pub enum Stmt {
         address: u64,
         index: Option<u64>,
         ctrl: bool,
+        local: Option<LocalRoute>,
     },
     Alu {
         rd: u64,
@@ -131,15 +133,18 @@ pub enum Stmt {
     Move {
         writes: Vec<(u64, u64)>,
         patches: Vec<Patch>,
+        local: Option<LocalRoute>,
     },
     MoveAdvance {
         writes: Vec<(u64, u64)>,
         patches: Vec<Patch>,
+        local: Option<LocalRoute>,
     },
     Post {
         writes: Vec<(u64, u64)>,
         token: usize,
         patches: Vec<Patch>,
+        local: Option<LocalRoute>,
     },
     WaitMoves(usize),
     Fetch {
@@ -245,7 +250,11 @@ impl Program {
     }
 
     pub fn store(&mut self, pairs: Vec<(u64, u64)>, from_regs: bool) -> &mut Self {
-        self.steps.push(Stmt::Store { pairs, from_regs });
+        self.steps.push(Stmt::Store {
+            pairs,
+            from_regs,
+            local: None,
+        });
         self
     }
 
@@ -260,6 +269,7 @@ impl Program {
             address,
             index,
             ctrl,
+            local: None,
         });
         self
     }
@@ -395,7 +405,11 @@ impl Program {
     /// A mover step the node waits for, then for every unit; a patch's word is
     /// the index of its write.
     pub fn move_(&mut self, writes: Vec<(u64, u64)>, patches: Vec<Patch>) -> &mut Self {
-        self.steps.push(Stmt::Move { writes, patches });
+        self.steps.push(Stmt::Move {
+            writes,
+            patches,
+            local: None,
+        });
         self
     }
 
@@ -408,6 +422,7 @@ impl Program {
             .filter(|s| matches!(s, Stmt::Post { .. }))
             .count();
         self.steps.push(Stmt::Post {
+            local: None,
             writes,
             token,
             patches,
@@ -469,6 +484,7 @@ struct Lowering<'a> {
     /// Past a label a step may run again.
     looping: bool,
     address_literals: Vec<(usize, u64)>,
+    mover_literals: Vec<(usize, u64)>,
     tmp: u64,
 }
 
@@ -501,6 +517,7 @@ impl<'a> Lowering<'a> {
             jumps: Vec::new(),
             looping: false,
             address_literals: Vec::new(),
+            mover_literals: Vec::new(),
             tmp: if crate::mutant::on("l0.program/tmp_reg") {
                 f.regs - 2
             } else {
@@ -562,11 +579,33 @@ impl<'a> Lowering<'a> {
 
     /// A MOVER step's pair i is payload first + i / 2, its value at bit
     /// (i % 2) * 128 + 64.
-    fn mover_patches(&mut self, patches: &[Patch]) -> Result<()> {
+    fn mover_patches(&mut self, writes: &[(u64, u64)], patches: &[Patch]) -> Result<()> {
         let first = self.b.payloads.len() as u64;
         for p in patches {
+            let (reg, value) = writes[p.word];
+            let field = Word([reg, value, crate::format::MOVER_SKIP, 0]);
+            let address = self.addresses.is_some_and(|a| {
+                a.fields(&field, "mover").iter().any(|f| {
+                    f.segments
+                        .iter()
+                        .any(|s| p.segments.iter().any(|p| p.0 + 64 == s.0))
+                })
+            });
+            let address = address
+                && self
+                    .b
+                    .spans
+                    .iter()
+                    .any(|&(base, size)| p.konst >= base && p.konst - base < size);
+            let mut patch = p.clone();
+            if address {
+                self.mover_literals.push((self.b.steps.len(), p.konst));
+                self.b.alu(self.tmp, Alu::Add, p.reg, 0, true)?;
+                patch.reg = self.tmp;
+                patch.konst = 0;
+            }
             self.patch(
-                p,
+                &patch,
                 first + (p.word / 2) as u64,
                 false,
                 (p.word % 2) as u64 * 128 + 64,
@@ -757,9 +796,13 @@ impl<'a> Lowering<'a> {
                     self.flush(None)?;
                     self.b.wait_slot(*slot, *count, *consume)?;
                 }
-                Stmt::Store { pairs, from_regs } => {
+                Stmt::Store {
+                    pairs,
+                    from_regs,
+                    local,
+                } => {
                     self.flush(None)?;
-                    self.b.store(pairs, *from_regs, true);
+                    self.b.store_routed(pairs, *from_regs, true, *local);
                 }
                 Stmt::Ctrl { pairs, from_regs } => {
                     self.flush(None)?;
@@ -770,9 +813,11 @@ impl<'a> Lowering<'a> {
                     address,
                     index,
                     ctrl,
+                    local,
                 } => {
                     self.flush(None)?;
-                    self.b.load(*reg, *address, *index, *ctrl, true);
+                    self.b
+                        .load_routed(*reg, *address, *index, *ctrl, true, *local);
                 }
                 Stmt::Alu { rd, op, ra, b, imm } => {
                     self.flush(None)?;
@@ -856,7 +901,11 @@ impl<'a> Lowering<'a> {
                     self.await_all();
                     self.b.barrier();
                 }
-                Stmt::MoveAdvance { writes, patches } => {
+                Stmt::MoveAdvance {
+                    writes,
+                    patches,
+                    local,
+                } => {
                     self.flush(None)?;
                     let first = self.b.payloads.len() as u64;
                     for p in patches {
@@ -872,14 +921,18 @@ impl<'a> Lowering<'a> {
                             )?;
                         }
                     }
-                    self.b.mover(writes, self.addresses, false);
+                    self.b.mover_routed(writes, self.addresses, false, *local);
                     self.gos += gos(writes);
                     self.b.barrier();
                 }
-                Stmt::Move { writes, patches } => {
+                Stmt::Move {
+                    writes,
+                    patches,
+                    local,
+                } => {
                     self.flush(None)?;
-                    self.mover_patches(patches)?;
-                    self.b.mover(writes, self.addresses, false);
+                    self.mover_patches(writes, patches)?;
+                    self.b.mover_routed(writes, self.addresses, false, *local);
                     self.gos += gos(writes);
                     self.b.barrier();
                 }
@@ -887,10 +940,11 @@ impl<'a> Lowering<'a> {
                     writes,
                     token,
                     patches,
+                    local,
                 } => {
                     self.flush(None)?;
-                    self.mover_patches(patches)?;
-                    self.b.mover(writes, self.addresses, true);
+                    self.mover_patches(writes, patches)?;
+                    self.b.mover_routed(writes, self.addresses, true, *local);
                     self.gos += gos(writes);
                     self.posts.insert(*token, self.gos);
                 }
@@ -934,6 +988,12 @@ impl<'a> Lowering<'a> {
         for (at, value) in std::mem::take(&mut self.address_literals) {
             self.b.address(self.tmp, value);
             self.b.steps[at] = self.b.steps.pop().unwrap();
+        }
+        for (at, value) in std::mem::take(&mut self.mover_literals) {
+            self.b.address(self.tmp, value);
+            let literal = self.b.steps.pop().expect("address literal");
+            self.b.steps[at].arg = literal.arg;
+            self.b.steps[at].flags |= crate::format::F_MEM;
         }
         for (at, name) in std::mem::take(&mut self.jumps) {
             let Some(&target) = self.labels.get(&name) else {

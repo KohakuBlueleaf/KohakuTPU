@@ -157,6 +157,17 @@ class Allocation(Parts):
                 else:
                     self._record_pins.append(ref)
 
+    def _invalidate_table_proofs(self):
+        self.table_epoch += 1
+        for cache in (
+            self.eager_recipes,
+            self.eager_schedules,
+            self.eager_calls,
+            self.eager_sequences,
+        ):
+            if cache is not None:
+                cache.clear()
+
     def free(self, addr: int) -> None:
         if self.closed or launch_boundary.held_free(self, addr):
             return
@@ -165,6 +176,11 @@ class Allocation(Parts):
         entry, physical = self.mmu.resolve(addr, owner=True)
         if physical != entry.physical:
             raise ValueError("RUL.023: only an allocation's base can be freed")
+        ref = (entry.arena, physical)
+        if ref in self.constants:
+            self.constants.discard(ref)
+            self.tables = {k: t for k, t in self.tables.items() if t.addr != addr}
+            self._invalidate_table_proofs()
         entry.arena.release(physical)
         self.mmu.retire(addr)
 
@@ -184,7 +200,28 @@ class Allocation(Parts):
             > entry.arena.live[entry.physical]
         ):
             raise ValueError("host write line exceeds allocation reservation")
+        table = old = None
+        if (entry.arena, entry.physical) in self.constants:
+            self._invalidate_table_proofs()
+            for key, value in self.tables.items():
+                if value.addr == entry.virtual:
+                    table, old = value, value.host
+                    del self.tables[key]
+                    self.tables[("written", value.addr, self.table_epoch)] = value
+                    value.host = None
+                    break
         self.card.write(physical, raw + bytes(pad))
+        if table is not None:
+            offset = physical - entry.physical
+            data = raw + bytes(pad)
+            if offset == 0 and len(data) >= table.nbytes:
+                table.host = data[: table.nbytes]
+            elif old is not None:
+                table.host = (
+                    old[:offset] + data + old[offset + len(data) :]
+                    if offset < len(old)
+                    else old
+                )[: len(old)]
         self.counters["bytes_in"] += len(raw)
 
     def read(self, addr: int, nbytes: int) -> bytes:

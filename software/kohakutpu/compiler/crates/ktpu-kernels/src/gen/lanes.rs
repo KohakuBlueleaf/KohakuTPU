@@ -36,7 +36,8 @@ pub struct Class {
 }
 
 /// A relayout: its classes, their fp32 index lists (per class, per tap
-/// then the destination, per column block, `entries(class)` each), the
+/// then the destination, per column block; tap lists hold `entries(class)`.
+/// Multi-row destination lists on F-001 machines hold word-spaced indices), the
 /// taps' lane masks (`mask_rows` x `vc.vlmax` f16 bits).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plan {
@@ -52,6 +53,15 @@ pub struct Plan {
 /// Words a scratch row holds.
 fn half(hw: &Hw) -> i64 {
     hw.vlmax / hw.lanes
+}
+
+/// Elements between destination indices; single-word commands start on a word.
+pub(super) fn destination_step(rows: i64, m: &Machine) -> i64 {
+    if m.flaws.f001.present && rows > 1 {
+        i64::from(m.die.word_bytes) / 4
+    } else {
+        1
+    }
 }
 
 /// Rows of a class's scratch: whole trips of [`ROWS`].
@@ -168,9 +178,17 @@ pub fn plan(
             keep: *kept,
         };
         let ne = entries(&c, &hw);
+        let step = destination_step(cdiv(c.words, hf), mach);
         let nt = sig.len() as i64;
-        let mut ix = vec![0f32; ((nt + 1) * hf * ne) as usize];
-        let at = |t: i64, j: i64, r: i64| ((t * hf + j) * ne + r) as usize;
+        let nd = if step == 1 { ne } else { rows(&c, &hw) };
+        let mut ix = vec![0f32; (hf * (nt * ne + nd * step)) as usize];
+        let at = |t: i64, j: i64, r: i64| {
+            if t == nt {
+                (nt * hf * ne + (j * nd + r) * step) as usize
+            } else {
+                ((t * hf + j) * ne + r) as usize
+            }
+        };
         for (k, (w, qs)) in members.iter().enumerate() {
             let (r, j) = ((k as i64) / hf, (k as i64) % hf);
             for (t, q) in qs.iter().enumerate() {
@@ -291,12 +309,45 @@ pub fn relayout_kernel(pl: &Plan, m: &Machine) -> R<Kernel> {
         let scratch = t.buffer(&[most, hw.vlmax], g::Dtype::F16, vec![])?;
         let (mut at, mut m0) = (0, 0);
         for c in &pl.classes {
-            class(t, c, src, dst, index, at, mask, m0, &scratch, &hw)?;
-            at += (c.taps.len() as i64 + 1) * half(&hw) * entries(c, &hw);
+            let step = destination_step(cdiv(c.words, half(&hw)), m);
+            class(t, c, src, dst, index, at, mask, m0, &scratch, step, &hw)?;
+            let ne = entries(c, &hw);
+            let nd = if step == 1 { ne } else { rows(c, &hw) };
+            at += half(&hw) * (c.taps.len() as i64 * ne + nd * step);
             m0 += c.taps.len() as i64;
         }
         Ok(())
     })
+}
+
+/// Transfer a destination column using its dense or word-spaced index list.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn indexed_destination(
+    t: &mut Trace,
+    dst: &Buf,
+    out: &Rows,
+    index: &Buf,
+    base: i64,
+    column: i64,
+    n: i64,
+    step: i64,
+    read: bool,
+    hw: &Hw,
+) -> R<()> {
+    let count = if step == 1 { n } else { 1 };
+    for row in 0..if step == 1 { 1 } else { n } {
+        let columns = sl(hw.lanes * column, hw.lanes * (column + 1));
+        let words = out.at(&Idx::Int(row), &Idx::Int(row + count), columns)?;
+        let lo = base + row * step;
+        let per_word = hw.word_bytes / 4;
+        let list = index.at(&[sl(lo, lo + cdiv(count, per_word) * per_word)])?;
+        if read {
+            t.gather(&words, &dst.whole(), &list, true, None)?;
+        } else {
+            t.scatter(&dst.whole(), &words, &list, true, None)?;
+        }
+    }
+    Ok(())
 }
 
 /// One class: gather its taps' words, assemble, scatter.
@@ -311,6 +362,7 @@ fn class(
     mask: &Buf,
     m0: i64,
     scratch: &Buf,
+    step: i64,
     hw: &Hw,
 ) -> R<()> {
     let (nr, ne, hf, lanes) = (rows(c, hw), entries(c, hw), half(hw), hw.lanes);
@@ -329,6 +381,7 @@ fn class(
         let lo = at + (k * hf + j) * ne;
         index.at(&[sl(lo, lo + ne)])
     };
+    let nd = if step == 1 { ne } else { nr };
     let blocks: Vec<(i64, i64)> = (0..hf)
         .filter(|j| *j < c.words)
         .map(|j| (j, cdiv(c.words - j, hf)))
@@ -341,8 +394,8 @@ fn class(
             t.gather(&v, &src.whole(), &lists(k as i64, j)?, true, None)?;
         }
         if c.keep {
-            let v = out.at(&zero, &Idx::Int(n), cols(j))?;
-            t.gather(&v, &dst.whole(), &lists(nt, j)?, true, None)?;
+            let base = at + nt * hf * ne + j * nd * step;
+            indexed_destination(t, dst, &out, index, base, j, n, step, true, hw)?;
         }
     }
     let group = (hw.descriptors - 2) / 2;
@@ -352,8 +405,8 @@ fn class(
         g0 += group;
     }
     for &(j, n) in &blocks {
-        let v = out.at(&zero, &Idx::Int(n), cols(j))?;
-        t.scatter(&dst.whole(), &v, &lists(nt, j)?, true, None)?;
+        let base = at + nt * hf * ne + j * nd * step;
+        indexed_destination(t, dst, &out, index, base, j, n, step, false, hw)?;
     }
     Ok(())
 }
