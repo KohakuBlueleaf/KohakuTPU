@@ -3,10 +3,13 @@
 mod access_order;
 #[path = "../common.rs"]
 mod common;
+mod dependency_index;
 mod events;
 mod fill_throttle;
+mod matrix_cost;
 mod modulo_memory_effects;
 mod quant_status_nodes;
+mod quantiser_readback;
 mod release_frontier;
 mod statistic_fold;
 mod stream_credit;

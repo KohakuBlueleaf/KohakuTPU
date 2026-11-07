@@ -890,7 +890,7 @@ fn row_kernel_at(gen: &str, a: &Value, first: i64, count: i64, m: &Machine) -> R
 /// Common independent domain of typed row compositions.
 fn row_domain(gen: &str, a: &Value, m: &Machine) -> R<Option<i64>> {
     match gen {
-        "vector.rows_kernel" => Ok(Some(int(a, "R")?)),
+        "vector.rows_kernel" | "reductions.wide_fold_kernel" => Ok(Some(int(a, "R")?)),
         "prepared.rows_kernel" => Ok(prepared_row_made(a)?.map(|_| int(a, "R")).transpose()?),
         "matmul.mm_kernel" => Ok(row_product(a, m)?.map(|mm| mm.m)),
         "kernel.chain" => {
@@ -1042,7 +1042,7 @@ fn shifted_rows_call(gen: &str, a: &Value, first: i64, count: i64, m: &Machine) 
                 args["m"] = (total / rows * count).into();
             }
         }
-        "vector.rows_kernel" => {
+        "vector.rows_kernel" | "reductions.wide_fold_kernel" => {
             let signature = call(gen, a, m)?;
             let out = operand(arg(a, "out")?)?;
             if out.kind == Kind::Row {
@@ -1100,6 +1100,18 @@ fn composite_shape(gen: &str, a: &Value, m: &Machine) -> R<vector::split::Shape>
         tokens: false,
     };
     match gen {
+        "reductions.wide_fold_kernel" => {
+            let ops = operands(arg(a, "operands")?)?;
+            let out = operand(arg(a, "out")?)?;
+            let w = int(a, "W")?;
+            shape.quantum = hw.stat_rows();
+            shape.reads = ops
+                .iter()
+                .enumerate()
+                .map(|(i, o)| row_tensor(format!("in{i}"), *o, w))
+                .collect();
+            shape.writes.push(row_tensor("out".into(), out, hw.kblock));
+        }
         "vector.rows_kernel" => {
             let ops = operands(arg(a, "operands")?)?;
             let out = operand(arg(a, "out")?)?;
@@ -1279,7 +1291,7 @@ fn same_row_read(producer: &Operand, consumer: &Operand) -> bool {
 /// Scratch dependencies must remain within one row owner's domain.
 fn row_local(gen: &str, a: &Value, m: &Machine) -> R<bool> {
     match gen {
-        "vector.rows_kernel" => Ok(true),
+        "vector.rows_kernel" | "reductions.wide_fold_kernel" => Ok(true),
         "prepared.rows_kernel" => Ok(prepared_row_made(a)?.is_some()),
         "matmul.mm_kernel" => Ok(row_product(a, m)?.is_some()),
         "kernel.chain" => {
@@ -1996,7 +2008,7 @@ fn row_split(
     if product_chain && request.force.as_deref() != Some("row-local") {
         return Ok(Some(split_row_chain(a, request, m)?));
     }
-    if gen == "vector.rows_kernel"
+    if matches!(gen, "vector.rows_kernel" | "reductions.wide_fold_kernel")
         || (matches!(
             gen,
             "fused.kernel" | "kernel.chain" | "prepared.rows_kernel"

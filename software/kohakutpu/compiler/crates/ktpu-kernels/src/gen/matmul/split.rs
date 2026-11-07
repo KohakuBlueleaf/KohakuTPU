@@ -155,6 +155,76 @@ pub(super) fn local(shape: &Shape<'_>, share: &ShardTiles, mach: &Machine) -> R<
     )
 }
 
+/// Resolve the typed local geometry used for both pricing and emission.
+fn local_option(shape: &Shape<'_>, share: &ShardTiles, axis: &SplitAxis, mach: &Machine) -> R<Mm> {
+    match *axis {
+        SplitAxis::Tiled { tm, tn } => Ok(Mm {
+            bt: 1,
+            m: share.valid_extent[0],
+            mp: share.padded_extent[0],
+            n: share.valid_extent[1],
+            tm,
+            tn,
+            shared: true,
+            ..*shape.mm
+        }),
+        _ => local(shape, share, mach),
+    }
+}
+
+/// Independent output owners with every common legal local rectangle. K chunks,
+/// producer packing, row padding and destination ownership remain unchanged.
+fn joint_options(
+    shape: &Shape<'_>,
+    options: &[SplitOption],
+    mach: &Machine,
+) -> R<Vec<SplitOption>> {
+    if shape.class.is_some() || !expr::reduces(shape.e).is_empty() || shape.out.kind == Kind::Row {
+        return Ok(vec![]);
+    }
+    let hw = Hw::of(mach);
+    let mm = shape.mm;
+    let mut joint = Vec::new();
+    for original in options {
+        let shares: Vec<_> = original
+            .shards
+            .iter()
+            .filter(|s| s.role != ShardRole::Empty)
+            .collect();
+        let Some(rows) = shares.iter().map(|s| s.padded_extent[0]).min() else {
+            continue;
+        };
+        let most = rows
+            .min(MAX_TM)
+            .min(hw.bank / mm.nk * hw.band)
+            .min(ring_rows(mach).max(mm.quantum));
+        for tm in (mm.quantum..=most).step_by(mm.quantum as usize) {
+            if tm % hw.band != 0 || shares.iter().any(|s| s.padded_extent[0] % tm != 0) {
+                continue;
+            }
+            for tn in (hw.kblock..=hw.max_block()).step_by(hw.kblock as usize) {
+                if (tm / hw.band) * (tn / hw.band) > hw.acc_subtiles
+                    || (tn / hw.band) * mm.nk > hw.bank
+                    || shares.iter().any(|s| s.valid_extent[1] % tn != 0)
+                {
+                    continue;
+                }
+                let mut option = original.clone();
+                option.id = format!("{}-tile-{tm}x{tn}", original.id);
+                option.axis = SplitAxis::Tiled { tm, tn };
+                for share in &mut option.shards {
+                    if share.role != ShardRole::Empty {
+                        share.local_schedule =
+                            local_option(shape, share, &option.axis, mach)?.py().repr();
+                    }
+                }
+                joint.push(option);
+            }
+        }
+    }
+    Ok(joint)
+}
+
 /// M flattens batch row tiles; N and every factorization use column tiles.
 /// Whole physical write lines and packing scale groups have a single owner.
 pub fn split_options(
@@ -182,7 +252,10 @@ pub fn split_options(
         |unit, d| lcm(unit, hw.kblock * d.nk),
     );
     let nt = mm.n / column_unit;
-    let mut axes = vec![(SplitAxis::M, p, 1, "m".to_string())];
+    let mut axes = vec![
+        (SplitAxis::Unsplit, 1, 1, "p1".to_string()),
+        (SplitAxis::M, p, 1, "m".to_string()),
+    ];
     let columns = expr::reduces(shape.e).is_empty() && shape.out.kind != Kind::Row;
     if columns {
         axes.push((SplitAxis::N, 1, p, "n".into()));
@@ -428,6 +501,8 @@ pub fn split_options(
             },
         });
     }
+    let joint = joint_options(shape, &options, mach)?;
+    options.extend(joint);
     if p > 1 && mm.kp > 0 && shape.class.is_none() {
         let assignments: Vec<_> = options
             .iter()
@@ -671,7 +746,7 @@ pub(crate) fn emit(
                 "a matmul share needs batch, row and column origins",
             );
         };
-        let local = local(shape, share, mach)?;
+        let local = local_option(shape, share, &option.axis, mach)?;
         let grow = batch * mm.mp + row;
         let extras: Vec<_> = shape.extras.iter().map(|o| shifted(o, grow, col)).collect();
         let out = if option.conversions != 0 && shape.demands.is_empty() {
@@ -767,30 +842,47 @@ pub(crate) fn kernel_with_policy(
     price_unsplit: bool,
     backend: super::super::chain::quant::Backend,
 ) -> R<crate::split::PlannedKernel> {
-    use crate::split::cost::{select_split, ChoiceCache};
+    use crate::split::cost::ChoiceCache;
     use crate::split::PlannedKernel;
     use std::sync::OnceLock;
 
     static CHOICES: OnceLock<ChoiceCache> = OnceLock::new();
-    let mut split = if request.nodes.ids().len() == 1 {
-        select_split(
-            split_options(shape, request, mach)?,
-            request.force.as_deref(),
-        )?
-    } else {
-        let mut unforced = request.clone();
-        unforced.force = None;
-        let key = format!(
-            "{shape:?}/{unforced:?}/{backend:?}/{:?}/{}",
-            mach.digest_bytes(),
-            pricing_mutants(),
-        );
+    let mut unforced = request.clone();
+    unforced.force = None;
+    let key = format!(
+        "{shape:?}/{unforced:?}/{backend:?}/{:?}/{}",
+        mach.digest_bytes(),
+        pricing_mutants(),
+    );
+    let mut split =
         CHOICES
             .get_or_init(ChoiceCache::default)
             .choose(key, request.force.as_deref(), || {
-                price_options(shape, &unforced, mach, backend)
-            })?
-    };
+                let bounds = request.force.is_none() && pricing_mutants().is_empty();
+                let candidates = split_options(shape, &unforced, mach)?
+                    .into_iter()
+                    .filter(|option| request.force.as_deref().is_none_or(|id| id == option.id))
+                    .map(|option| {
+                        let floor = bounds
+                            .then(|| resource_floor(shape, &unforced, &option, mach))
+                            .flatten();
+                        (option, floor)
+                    })
+                    .collect();
+                let mut equivalent = BTreeMap::<String, CostEstimate>::new();
+                crate::split::cost::price_bounded(candidates, |mut option| {
+                    let key = ordinary_schedule_key(&option, &unforced);
+                    if let Some(cost) = key.as_ref().and_then(|key| equivalent.get(key)) {
+                        option.cost = cost.clone();
+                        return Ok(option);
+                    }
+                    let option = price_option(shape, &unforced, option, mach, backend)?;
+                    if let Some(key) = key {
+                        equivalent.insert(key, option.cost.clone());
+                    }
+                    Ok(option)
+                })
+            })?;
     let kernel = build_option(shape, request, &split, mach, backend)?;
     let l1 = if matches!(split.axis, SplitAxis::BPass { .. }) {
         let emitted = b_pass::emit(&kernel, &split, request, mach)?;
@@ -837,56 +929,153 @@ fn pricing_mutants() -> String {
     active.join("/")
 }
 
-fn price_options(
+/// Model-service bound before graph construction. Ordinary products retain two
+/// fills and one sweep per tile/K chunk. K owners retain their own chunks;
+/// B-pass replaces B fills and serializes local budgets. Epilogue, delivery,
+/// drain and dependency costs are omitted, never estimated upward.
+pub fn resource_floor(
     shape: &Shape<'_>,
     request: &SplitRequest,
+    option: &SplitOption,
+    mach: &Machine,
+) -> Option<i64> {
+    if shape.class.is_some() || !pricing_mutants().is_empty() {
+        return None;
+    }
+    let hw = Hw::of(mach);
+    let params = ktpu_l2::cost::resource::Params::planning(mach);
+    let serial = matches!(option.axis, SplitAxis::BPass { .. });
+    let unscoped = request.nodes.ids() == [0] && !matches!(option.axis, SplitAxis::Tiled { .. });
+    let mut owners = BTreeMap::<usize, [u64; 3]>::new();
+    for share in option
+        .shards
+        .iter()
+        .filter(|s| s.role != ShardRole::Empty)
+        .take(if unscoped { 1 } else { usize::MAX })
+    {
+        let mm = if unscoped || matches!(option.axis, SplitAxis::K) {
+            *shape.mm
+        } else {
+            local_option(shape, share, &option.axis, mach).ok()?
+        };
+        let positive = [
+            mm.bt, mm.mp, mm.n, mm.tm, mm.tn, mm.nk, hw.band, hw.kblock, hw.mg,
+        ];
+        if positive.iter().any(|&n| n <= 0) || mm.kp <= 0 {
+            return None;
+        }
+        let chunks = if matches!(option.axis, SplitAxis::K) {
+            *share.padded_extent.get(2)? / mm.kc(&hw)
+        } else {
+            mm.kp / mm.kc(&hw)
+        };
+        let tiles = u64::try_from(mm.bt)
+            .ok()?
+            .checked_mul(u64::try_from(mm.mp / mm.tm).ok()?)?
+            .checked_mul(u64::try_from(mm.n / mm.tn).ok()?)?;
+        let issues = tiles.checked_mul(u64::try_from(chunks).ok()?)?;
+        let gm = u64::try_from(mm.tm / hw.band).ok()?;
+        let gn = u64::try_from(mm.tn / hw.band).ok()?;
+        let nk = u64::try_from(mm.nk).ok()?;
+        let entries =
+            issues
+                .checked_mul(nk)?
+                .checked_mul(if serial { gm } else { gm.checked_add(gn)? })?;
+        let steps = issues.checked_mul(nk)?.checked_mul(gm)?.checked_mul(gn)?;
+        let total = owners.entry(share.logical_node).or_default();
+        for (sum, count) in total.iter_mut().zip([entries, issues, steps]) {
+            *sum = sum.checked_add(count)?;
+        }
+    }
+    let mut floor = 0.0f64;
+    for [entries, issues, steps] in owners.into_values() {
+        let local = params.matrix_floor(entries, issues, steps, u32::try_from(hw.mg).ok()?)?;
+        floor = if serial {
+            floor + local
+        } else {
+            floor.max(local)
+        };
+    }
+    floor += mach.vc.launch_front as f64;
+    // Leave a relative margin for floating point arithmetic and accumulated
+    // task-clock rounding. Beyond exact integer conversion no pruning is used.
+    if !floor.is_finite() || !(0.0..=(1u64 << 52) as f64).contains(&floor) {
+        return None;
+    }
+    Some((floor * (1.0 - 1e-10)).floor() as i64 - 1)
+}
+
+/// Within one fixed shape/grant/backend, ordinary emission consults local
+/// geometry, origins and boundary ownership, not the diagnostic split axis/ID.
+fn ordinary_schedule_key(option: &SplitOption, request: &SplitRequest) -> Option<String> {
+    if matches!(option.axis, SplitAxis::K | SplitAxis::BPass { .. }) {
+        return None;
+    }
+    if request.nodes.ids() == [0] && !matches!(option.axis, SplitAxis::Tiled { .. }) {
+        return Some("unscoped".into());
+    }
+    let shares: Vec<_> = option
+        .shards
+        .iter()
+        .map(|share| {
+            (
+                share.logical_node,
+                &share.logical_origin,
+                &share.valid_extent,
+                &share.padded_extent,
+                &share.local_schedule,
+                &share.role,
+            )
+        })
+        .collect();
+    Some(format!(
+        "{:?}",
+        (shares, option.conversions, &option.output.ownership)
+    ))
+}
+
+fn price_option(
+    shape: &Shape<'_>,
+    request: &SplitRequest,
+    mut option: SplitOption,
     mach: &Machine,
     backend: super::super::chain::quant::Backend,
-) -> R<Vec<SplitOption>> {
-    use crate::split::cost::price_option;
+) -> R<SplitOption> {
     use crate::split::{CostFeatures, LocalTiming};
 
-    let options = split_options(shape, request, mach)?;
-    let mut priced = Vec::new();
-    for mut option in options {
-        if matches!(option.axis, SplitAxis::BPass { .. }) {
-            let kernel = build_option(shape, request, &option, mach, backend)?;
-            let emitted = b_pass::emit(&kernel, &option, request, mach)?;
-            emitted.manifest(&mut option, request);
-            option.cost = emitted.price(&kernel.graph.name, request, mach)?;
-            priced.push(option);
-            continue;
-        }
-        let mut kernels = Vec::new();
-        if option.conversions != 0 || matches!(option.axis, SplitAxis::K) {
-            let whole = build_option(shape, request, &option, mach, backend)?;
-            let cycles = g::cycles(&whole.graph, mach)? - mach.vc.launch_front as i64;
-            let active = option.active_nodes;
-            priced.push(price_option(
-                option,
-                &CostFeatures {
-                    share_cycles: vec![cycles; active],
-                    dispatch_intercept: mach.vc.launch_front as i64,
-                },
-                &LocalTiming,
-            )?);
-            continue;
-        }
-        for node in 0..option.p {
-            let mut part = option.clone();
-            part.shards.retain(|s| s.logical_node == node);
-            if part.shards.iter().all(|s| s.role == ShardRole::Empty) {
-                continue;
-            }
-            kernels.push(build_option(shape, request, &part, mach, backend)?);
-        }
-        priced.push(price_option(
-            option,
-            &CostFeatures::of_shares(&kernels, mach)?,
-            &LocalTiming,
-        )?);
+    if matches!(option.axis, SplitAxis::BPass { .. }) {
+        let kernel = build_option(shape, request, &option, mach, backend)?;
+        let emitted = b_pass::emit(&kernel, &option, request, mach)?;
+        emitted.manifest(&mut option, request);
+        option.cost = emitted.price(&kernel.graph.name, request, mach)?;
+        return Ok(option);
     }
-    Ok(priced)
+    let whole = build_option(shape, request, &option, mach, backend)?;
+    let budgets = g::node_cycles(&whole.graph, mach)?;
+    let mut share_cycles = Vec::new();
+    for (rank, physical) in request.nodes.ids().iter().enumerate() {
+        if option
+            .shards
+            .iter()
+            .any(|share| share.logical_node == rank && share.role != ShardRole::Empty)
+        {
+            let cycles = budgets.get(physical).copied().ok_or_else(|| {
+                ktpu_machine::Refusal::new(
+                    "L2.COST.001",
+                    "an active ownership share has no emitted physical-sysnode budget",
+                )
+            })?;
+            share_cycles.push(cycles);
+        }
+    }
+    crate::split::cost::price_option(
+        option,
+        &CostFeatures {
+            share_cycles,
+            dispatch_intercept: mach.vc.launch_front as i64,
+        },
+        &LocalTiming,
+    )
 }
 
 /// Assign every destination line to the first producer touching it. A repair
@@ -1018,7 +1207,8 @@ fn build_option(
     mach: &Machine,
     backend: super::super::chain::quant::Backend,
 ) -> R<Kernel> {
-    let placement = if request.nodes.ids() == [0] {
+    let placement = if request.nodes.ids() == [0] && !matches!(option.axis, SplitAxis::Tiled { .. })
+    {
         None
     } else {
         Some((request, option))

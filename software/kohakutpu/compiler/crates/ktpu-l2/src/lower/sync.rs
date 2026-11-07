@@ -13,6 +13,9 @@ use std::sync::Arc;
 
 use crate::mutant::on;
 
+mod index;
+pub(crate) use index::AccessIndex;
+
 /// The unit of a fence's accesses: what it waits for, never waited on.
 pub const FENCE: &str = "fence";
 
@@ -26,14 +29,32 @@ const ELEMENTS: i64 = 1 << 17;
 /// every combination of `levels` `(stride, count)`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Footprint {
-    pub start: i64,
-    pub levels: Vec<(i64, i64)>,
-    pub step: i64,
+    start: i64,
+    levels: Vec<(i64, i64)>,
+    step: i64,
+    /// Its sorted lines, made once; None past [`ELEMENTS`].
+    lines: Option<Arc<Vec<i64>>>,
 }
 
 impl Footprint {
+    pub fn new(start: i64, levels: Vec<(i64, i64)>, step: i64) -> Self {
+        let mut f = Footprint {
+            start,
+            levels,
+            step,
+            lines: None,
+        };
+        f.lines = f.enumerate().map(Arc::new);
+        f
+    }
+
+    /// Source geometry of this immutable footprint.
+    pub fn geometry(&self) -> (i64, &[(i64, i64)], i64) {
+        (self.start, &self.levels, self.step)
+    }
+
     /// The sorted lines it touches, or None when it holds too many elements.
-    fn lines(&self) -> Option<Vec<i64>> {
+    fn enumerate(&self) -> Option<Vec<i64>> {
         let count = self
             .levels
             .iter()
@@ -112,11 +133,7 @@ impl Access {
             }
         }
         let mut a = Access::new(unit, write, ("mem", buf), lo, hi + step);
-        a.footprint = Some(Arc::new(Footprint {
-            start,
-            levels: levels.to_vec(),
-            step,
-        }));
+        a.footprint = Some(Arc::new(Footprint::new(start, levels.to_vec(), step)));
         a
     }
 
@@ -126,9 +143,8 @@ impl Access {
         a.lo = a.lo.checked_add(delta)?;
         a.hi = a.hi.checked_add(delta)?;
         if let Some(f) = &a.footprint {
-            let mut f = (**f).clone();
-            f.start = f.start.checked_add(delta)?;
-            a.footprint = Some(Arc::new(f));
+            let start = f.start.checked_add(delta)?;
+            a.footprint = Some(Arc::new(Footprint::new(start, f.levels.clone(), f.step)));
         }
         Some(a)
     }
@@ -147,9 +163,9 @@ impl Access {
         a.hi = a.hi.checked_add(reach.max(0))?;
         if count > 1 && step != 0 {
             if let Some(f) = &a.footprint {
-                let mut f = (**f).clone();
-                f.levels.push((step, count));
-                a.footprint = Some(Arc::new(f));
+                let mut levels = f.levels.clone();
+                levels.push((step, count));
+                a.footprint = Some(Arc::new(Footprint::new(f.start, levels, f.step)));
             }
         }
         Some(a)
@@ -171,8 +187,10 @@ impl Access {
     }
 
     /// The lines it touches: its footprint's, else every line of its range.
-    fn lines(&self) -> Option<Vec<i64>> {
-        self.footprint.as_ref().and_then(|f| f.lines())
+    fn lines(&self) -> Option<&[i64]> {
+        self.footprint
+            .as_ref()
+            .and_then(|f| f.lines.as_deref().map(Vec::as_slice))
     }
 
     /// Memory ownership is line-granular; unit-local ranges retain their units.
@@ -204,14 +222,21 @@ fn own(a: &Access) -> bool {
 
 /// Whether two accesses conflict (L2.ORDER.003).
 pub fn clash(a: &Access, b: &Access) -> bool {
-    if on("l2.sync/never-clash") {
-        return false;
-    }
+    may_clash(a, b) && overlap(a, b)
+}
+
+/// Resource/owner modes, independent of their addressed intervals.
+fn may_clash(a: &Access, b: &Access) -> bool {
+    !on("l2.sync/never-clash")
+        && a.key == b.key
+        && (a.write || b.write)
+        && (on("l2.sync/flow-clashes") || !a.flow || !b.flow)
+        && !(a.unit == b.unit && own(a) && own(b))
+}
+
+/// Geometry of accesses whose resource/owner modes can conflict.
+fn overlap(a: &Access, b: &Access) -> bool {
     let whole = on("l2.sync/whole-buffer");
-    let flows = !on("l2.sync/flow-clashes") && a.flow && b.flow;
-    if a.key != b.key || !(a.write || b.write) || flows {
-        return false;
-    }
     let (alo, ahi, blo, bhi) = if whole {
         (0, 1 << 40, 0, 1 << 40)
     } else {
@@ -219,9 +244,6 @@ pub fn clash(a: &Access, b: &Access) -> bool {
         (alo, ahi, blo, bhi)
     };
     if alo >= bhi || blo >= ahi {
-        return false;
-    }
-    if a.unit == b.unit && own(a) && own(b) {
         return false;
     }
     whole || !matches!(a.key.0.as_str(), "mem" | "bound_dram") || lines_meet(a, b)
@@ -336,19 +358,24 @@ fn mark(s: usize, unit: &str) -> String {
 /// its conflicts need; a `pipe` group's later iterations sent ahead where they
 /// need no wait. Ends with a barrier (L2.ORDER.004-.006).
 pub fn schedule(stages: &[Stage]) -> Vec<String> {
+    let effects: Vec<_> = stages
+        .iter()
+        .map(|stage| AccessIndex::new(&stage.accesses))
+        .collect();
     let mut st = State::default();
     for s in 0..stages.len() {
         if st.pos.contains_key(&s) {
             continue;
         }
-        let mut pending = needs(stages, &st, s);
+        let mut pending = needs(&effects, &st, s);
         if !pending.is_empty() && stages[s].group.is_some() {
             for j in ahead(stages, s) {
-                if !st.pos.contains_key(&j) && hoistable(stages, &st, j) {
-                    emit(stages, &mut st, j);
+                if !st.pos.contains_key(&j) && hoistable(stages, &effects, &st, j) {
+                    let pending = needs(&effects, &st, j);
+                    emit_ready(stages, &mut st, j, pending);
                 }
             }
-            pending = needs(stages, &st, s);
+            pending = needs(&effects, &st, s);
         }
         emit_ready(stages, &mut st, s, pending);
     }
@@ -387,17 +414,15 @@ fn complete(st: &State, p: usize, unit: &str) -> bool {
 }
 
 /// `(earlier stage, access)` emitted, not yet complete, that `s` must wait for.
-fn needs<'a>(stages: &'a [Stage], st: &State, s: usize) -> Vec<(usize, &'a Access)> {
+fn needs<'a>(effects: &[AccessIndex<'a>], st: &State, s: usize) -> Vec<(usize, &'a Access)> {
     let mut got = Vec::new();
     for &p in &st.order {
-        for a in &stages[p].accesses {
-            if a.unit == FENCE || complete(st, p, &a.unit) {
-                continue;
-            }
-            if stages[s].accesses.iter().any(|b| clash(a, b)) {
-                got.push((p, a));
-            }
-        }
+        got.extend(
+            effects[p]
+                .pending(&effects[s], |unit| unit == FENCE || complete(st, p, unit))
+                .into_iter()
+                .map(|access| (p, access)),
+        );
     }
     got
 }
@@ -415,8 +440,8 @@ fn ahead(stages: &[Stage], s: usize) -> Vec<usize> {
         .collect()
 }
 
-fn hoistable(stages: &[Stage], st: &State, j: usize) -> bool {
-    if !needs(stages, st, j).is_empty() {
+fn hoistable(stages: &[Stage], effects: &[AccessIndex<'_>], st: &State, j: usize) -> bool {
+    if !needs(effects, st, j).is_empty() {
         return false;
     }
     for k in 0..j {
@@ -426,24 +451,11 @@ fn hoistable(stages: &[Stage], st: &State, j: usize) -> bool {
         if stages[k].fence || stages[k].units.iter().any(|u| stages[j].units.contains(u)) {
             return false;
         }
-        for a in &stages[k].accesses {
-            for b in &stages[j].accesses {
-                if a.key != b.key || !(a.write || b.write) {
-                    continue;
-                }
-                let ((alo, ahi), (blo, bhi)) = (a.range(), b.range());
-                if alo < bhi && blo < ahi {
-                    return false;
-                }
-            }
+        if effects[k].blocks(&effects[j]) {
+            return false;
         }
     }
     true
-}
-
-fn emit(stages: &[Stage], st: &mut State, s: usize) {
-    let pending = needs(stages, st, s);
-    emit_ready(stages, st, s, pending);
 }
 
 fn emit_ready(stages: &[Stage], st: &mut State, s: usize, pending: Vec<(usize, &Access)>) {

@@ -21,6 +21,7 @@ pub(super) fn lower_band(
     land: Option<i64>,
     hold: bool,
     pin: bool,
+    quantiser_readback: bool,
     fits: &Fits,
 ) -> VResult<Cand> {
     crate::work::LOWERED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -29,7 +30,20 @@ pub(super) fn lower_band(
     }
 
     crate::lower::vector::ctx::band::typed::lower_band(
-        body, par, env, name, t, band, remat, ahead, plan, land, hold, pin, fits,
+        body,
+        par,
+        env,
+        name,
+        t,
+        band,
+        remat,
+        ahead,
+        plan,
+        land,
+        hold,
+        pin,
+        quantiser_readback,
+        fits,
     )
     .map(|(m, p, a)| (Arc::new(m), p, a))
 }
@@ -110,8 +124,9 @@ pub(super) fn modulo(
     plan: &Plan,
     land: Option<i64>,
     t: &Target,
+    quantiser_readback: bool,
 ) -> VResult<std::result::Result<Cand, String>> {
-    modulo_module(body, par, env, name, plan, land, t)
+    modulo_module(body, par, env, name, plan, land, t, quantiser_readback)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -123,6 +138,7 @@ fn modulo_module(
     plan: &Plan,
     land: Option<i64>,
     t: &Target,
+    quantiser_readback: bool,
 ) -> VResult<std::result::Result<Cand, String>> {
     if let Some((m, p, a)) = super::super::fold::lower(body, par, env, name, t)? {
         return Ok(Ok((Arc::new(m), p, a)));
@@ -145,6 +161,7 @@ fn modulo_module(
     }
     let mut c = Ctx::new(body, t, env, Some(lp.clone()))?;
     c.ahead = true;
+    c.quantiser_readback = quantiser_readback;
     c.band = 1 << 10;
     c.remat = false;
     c.plan = plan.clone();

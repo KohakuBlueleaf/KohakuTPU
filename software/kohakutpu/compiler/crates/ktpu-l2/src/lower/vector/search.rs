@@ -47,6 +47,25 @@ impl Strategy {
     }
 }
 
+/// Only an MX7 pack consults the producer-order policy. Without one the
+/// two policies construct the same image, including pressure and fit results.
+fn quantiser_orders(par: &RPar) -> &'static [bool] {
+    fn packs(nodes: &[Arc<Node>]) -> bool {
+        nodes.iter().any(|node| {
+            (node.op_name() == "pack"
+                && node
+                    .ty()
+                    .is_some_and(|ty| matches!(ty.dtype.as_str(), "mx7a" | "mx7b")))
+                || packs(node.body())
+        })
+    }
+    if !on("l2.vector/no-quantiser-order") && packs(&par.body) {
+        &[false, true]
+    } else {
+        &[false]
+    }
+}
+
 /// The most choices kept (by one candidate's image, name blanked).
 const CHOSEN_KEPT: usize = 4096;
 /// A search's result under the name `\0`: text, continuations, cycles.
@@ -245,9 +264,23 @@ impl Search {
         land: Option<i64>,
         hold: bool,
         pin: bool,
+        quantiser_readback: bool,
     ) -> VResult<Cand> {
         lower_band(
-            body, par, env, name, t, band, remat, ahead, plan, land, hold, pin, &self.fits,
+            body,
+            par,
+            env,
+            name,
+            t,
+            band,
+            remat,
+            ahead,
+            plan,
+            land,
+            hold,
+            pin,
+            quantiser_readback,
+            &self.fits,
         )
     }
 
@@ -319,8 +352,9 @@ impl Search {
             } else {
                 band as usize
             };
-            let (module, params, accesses) = lower_band(
-                body, par, env, name, t, band, false, false, plan, land, true, true, &self.fits,
+            let (mut module, mut params, mut accesses) = lower_band(
+                body, par, env, name, t, band, false, false, plan, land, true, true, false,
+                &self.fits,
             )
             .map_err(|e| match e {
                 VErr::Fail(e) => e,
@@ -329,12 +363,39 @@ impl Search {
                 }
                 VErr::Value(m) => value_error(body, par, m),
             })?;
+            let price = |module: &Module| {
+                encode::cycles(
+                    module,
+                    name,
+                    body.vregs,
+                    body.vcopies,
+                    body.fill,
+                    &t.machine,
+                )
+            };
+            let mut cycles = price(&module)?;
+            for &order in quantiser_orders(par).iter().skip(1) {
+                match lower_band(
+                    body, par, env, name, t, band, false, false, plan, land, true, true, order,
+                    &self.fits,
+                ) {
+                    Ok((alternative, ap, aa)) => {
+                        let cost = price(&alternative)?;
+                        if cost < cycles && self.fits.whole(&alternative, ap.len(), t) {
+                            (module, params, accesses, cycles) = (alternative, ap, aa, cost);
+                        }
+                    }
+                    Err(VErr::Pressure) => {}
+                    Err(VErr::Fail(e)) => return Err(e),
+                    Err(VErr::Value(message)) => return Err(value_error(body, par, message)),
+                }
+            }
             return Ok(Best {
                 text: module.source.clone(),
                 parts: Vec::new(),
                 params,
                 accesses,
-                cycles: 0,
+                cycles,
             });
         }
         let (hold, pin) = (
@@ -342,7 +403,7 @@ impl Search {
             self.pin_given().unwrap_or(true),
         );
         let probe = self.band(
-            body, par, env, name, t, 1, false, true, plan, land, hold, pin,
+            body, par, env, name, t, 1, false, true, plan, land, hold, pin, false,
         );
         let probe = match probe {
             Ok(p) => p,
@@ -412,7 +473,8 @@ impl Search {
         t: &Target,
         probe: Option<Cand>,
     ) -> Result<Best> {
-        let mut shapes: Vec<(usize, bool, bool, bool, bool)> = Vec::new();
+        let orders = quantiser_orders(par);
+        let mut shapes: Vec<(usize, bool, bool, bool, bool, bool)> = Vec::new();
         if self.strategy != Strategy::Modulo {
             let (pre, lp) = split(body, par)?;
             let mut all = pre.clone();
@@ -438,7 +500,9 @@ impl Search {
                                     self.hold_given().unwrap_or(hold),
                                     self.pin_given().unwrap_or(pin),
                                 );
-                                shapes.push((band, remat, ahead, hold, pin));
+                                for &order in orders {
+                                    shapes.push((band, remat, ahead, hold, pin, order));
+                                }
                             }
                         }
                     }
@@ -470,7 +534,7 @@ impl Search {
         let lowered: Vec<VResult<Cand>> = shapes
             .par_iter()
             .enumerate()
-            .map(|(index, &(band, remat, ahead, hold, pin))| {
+            .map(|(index, &(band, remat, ahead, hold, pin, order))| {
                 if index == 0 && reuse_probe {
                     if let Some(probe) = &probe {
                         return Ok(probe.clone());
@@ -478,7 +542,7 @@ impl Search {
                 }
                 crate::mutant::scoped(active, || {
                     self.band(
-                        body, par, env, name, t, band, remat, ahead, plan, land, hold, pin,
+                        body, par, env, name, t, band, remat, ahead, plan, land, hold, pin, order,
                     )
                 })
             })
@@ -530,22 +594,24 @@ impl Search {
         }
         let mut why = None;
         if self.strategy != Strategy::Band && !on("l2.vector/no-modulo") {
-            match candidate::modulo(body, par, env, name, plan, land, t) {
-                Ok(Ok(c)) => {
-                    let cycles = match cands.iter().find(|(d, _)| d.0.source == c.0.source) {
-                        Some((_, cycles)) if !each => *cycles,
-                        _ => {
-                            let (module, cycles) = timed(&c.0)?;
-                            read.entry(c.0.source.clone()).or_insert(module);
-                            cycles
-                        }
-                    };
-                    cands.push((c, cycles));
+            for &order in orders {
+                match candidate::modulo(body, par, env, name, plan, land, t, order) {
+                    Ok(Ok(c)) => {
+                        let cycles = match cands.iter().find(|(d, _)| d.0.source == c.0.source) {
+                            Some((_, cycles)) if !each => *cycles,
+                            _ => {
+                                let (module, cycles) = timed(&c.0)?;
+                                read.entry(c.0.source.clone()).or_insert(module);
+                                cycles
+                            }
+                        };
+                        cands.push((c, cycles));
+                    }
+                    Ok(Err(w)) => why = Some(w),
+                    Err(VErr::Pressure) => {}
+                    Err(VErr::Fail(e)) => return Err(e),
+                    Err(VErr::Value(m)) => return Err(value_error(body, par, m)),
                 }
-                Ok(Err(w)) => why = Some(w),
-                Err(VErr::Pressure) => {}
-                Err(VErr::Fail(e)) => return Err(e),
-                Err(VErr::Value(m)) => return Err(value_error(body, par, m)),
             }
         }
         if cands.is_empty() && !on("l2.vector/registers-unrefused") {

@@ -89,8 +89,9 @@ impl Emitted {
                 remote_payloads: t.remote_payloads,
                 relay_words: t.relay_words,
                 bank_events: t.handshakes,
-                compute_cycles: t.issues,
-                private_fill_bytes: t.private_fill_bytes,
+                // Local resource timing includes MG sweeps and private fills.
+                compute_cycles: 0,
+                private_fill_bytes: 0,
             },
             machine,
         )

@@ -211,13 +211,30 @@ pub fn kernel(
     m: &Machine,
     local: impl FnMut(i64, i64) -> R<Kernel>,
 ) -> R<PlannedKernel> {
-    kernel_options(
-        split_options(shape, request, m)?,
-        signature,
-        request,
-        m,
-        local,
-    )
+    let mut options = split_options(shape, request, m)?;
+    let mut single = request.clone();
+    single.nodes = crate::split::NodeSet::new(vec![request.nodes.ids()[0]], m)?;
+    for mut option in split_options(shape, &single, m)? {
+        option.id = "p1".into();
+        option.axis = SplitAxis::Unsplit;
+        option.p = request.nodes.ids().len();
+        for node in 1..option.p {
+            option.shards.push(ShardTiles {
+                logical_node: node,
+                tile_ranges: vec![],
+                logical_origin: vec![0],
+                valid_extent: vec![0],
+                padded_extent: vec![0],
+                read_regions: vec![],
+                write_regions: vec![],
+                scratch_regions: vec![],
+                local_schedule: "empty".into(),
+                role: ShardRole::Empty,
+            });
+        }
+        options.insert(0, option);
+    }
+    kernel_options(options, signature, request, m, local)
 }
 
 /// Emit and price local schedules for precomputed global ownership options.

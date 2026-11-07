@@ -185,6 +185,26 @@ pub fn price_option(
     Ok(option)
 }
 
+/// Compile candidates in lower-bound order. A strict bound comparison preserves
+/// all equal-price tie breakers. Missing bounds always receive a complete price.
+pub fn price_bounded(
+    mut candidates: Vec<(SplitOption, Option<i64>)>,
+    mut price: impl FnMut(SplitOption) -> R<SplitOption>,
+) -> R<Vec<SplitOption>> {
+    candidates.sort_by(|(a, af), (b, bf)| (af.unwrap_or(0), &a.id).cmp(&(bf.unwrap_or(0), &b.id)));
+    let mut best = i64::MAX;
+    let mut priced = Vec::new();
+    for (option, floor) in candidates {
+        if floor.is_some_and(|floor| floor > best) {
+            continue;
+        }
+        let option = price(option)?;
+        best = best.min(option.cost.makespan);
+        priced.push(option);
+    }
+    Ok(priced)
+}
+
 /// Forced options are still priced; ties never depend on enumeration order.
 pub fn choose_split(
     options: Vec<(SplitOption, CostFeatures)>,
@@ -227,9 +247,11 @@ fn selected(priced: &[SplitOption], force: Option<&str>) -> R<SplitOption> {
     }
 }
 
-/// Process-lifetime prices, shared across callers and forced selections.
+/// Process-lifetime prices. Automatic entries serve forced selections whose
+/// exact price they contain. A bound-pruned option is priced when forced; a
+/// forced entry never stands in for an automatic candidate comparison.
 #[derive(Default)]
-pub struct ChoiceCache(Mutex<HashMap<String, Vec<SplitOption>>>);
+pub struct ChoiceCache(Mutex<HashMap<(String, Option<String>), Vec<SplitOption>>>);
 
 impl ChoiceCache {
     pub fn choose(
@@ -239,7 +261,15 @@ impl ChoiceCache {
         price: impl FnOnce() -> R<Vec<SplitOption>>,
     ) -> R<SplitOption> {
         let mut cache = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let choices = match cache.entry(key) {
+        if let Some(id) = force {
+            if let Some(option) = cache
+                .get(&(key.clone(), None))
+                .and_then(|choices| choices.iter().find(|option| option.id == id))
+            {
+                return Ok(option.clone());
+            }
+        }
+        let choices = match cache.entry((key, force.map(str::to_owned))) {
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::hash_map::Entry::Vacant(entry) => {
                 let mut choices = price()?;

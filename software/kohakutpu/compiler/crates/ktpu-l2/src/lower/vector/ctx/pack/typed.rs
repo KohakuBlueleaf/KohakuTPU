@@ -61,15 +61,19 @@ impl Ctx<'_> {
                 for &r in rows {
                     let tsym = g.sym();
                     let reg = symbol(&src.regs[&r]);
+                    let direct = self.quantiser_readback
+                        && only
+                        && with_tree(g, |g| tt::quantiser_order(g, &reg, &tsym, true));
+                    let checked_reg = if direct { &tsym } else { &reg };
                     if classify {
                         // Inf/NaN * 0 is NaN, which EXP2D latches; a finite value gives
                         // 2^0. The f16 pack saturates, so this is its f16 value's check.
                         let flag = g.sym();
                         let (f, k0) = (flag.operand(Select::Whole), Term::name("k0"));
-                        let at = vec![reg.operand(Select::Whole), k0.clone()];
+                        let at = vec![checked_reg.operand(Select::Whole), k0.clone()];
                         g.op(
                             ir::math("vmul", f.clone(), at, vec![]),
-                            vec![flag.clone(), reg.clone()],
+                            vec![flag.clone(), checked_reg.clone()],
                         );
                         g.op(
                             ir::math("vexp2d", f.clone(), vec![f, k0], vec![]),
@@ -77,7 +81,8 @@ impl Ctx<'_> {
                         );
                     }
                     // Zeros lift in the move to quantiser order, or in place.
-                    let ordered = only && with_tree(g, |g| tt::quantiser_order(g, &reg, &tsym));
+                    let ordered = direct
+                        || (only && with_tree(g, |g| tt::quantiser_order(g, &reg, &tsym, false)));
                     if !ordered {
                         for i in 0..4 {
                             for q in 0..2 {

@@ -19,10 +19,23 @@ pub(in crate::lower::vector) fn lower_band(
     land: Option<i64>,
     hold: bool,
     pin: bool,
+    quantiser_readback: bool,
     fits: &crate::lower::vector::search::Fits,
 ) -> VResult<(Module, Vec<String>, Vec<Access>)> {
     let (c, g) = flat_band(
-        body, par, env, t, band, remat, ahead, plan, land, hold, pin, false,
+        body,
+        par,
+        env,
+        t,
+        band,
+        remat,
+        ahead,
+        plan,
+        land,
+        hold,
+        pin,
+        false,
+        quantiser_readback,
     )?;
     let events = banks::typed::rotate(
         signed(&c, par, crate::lower::vector::gen::predicate::fuse(g.code))?,
@@ -45,7 +58,19 @@ pub(in crate::lower::vector) fn lower_band(
     }
     // One synchronized trip avoids duplicating the body for ping-pong buffers.
     let (c, g) = flat_band(
-        body, par, env, t, band, remat, ahead, plan, land, hold, pin, true,
+        body,
+        par,
+        env,
+        t,
+        band,
+        remat,
+        ahead,
+        plan,
+        land,
+        hold,
+        pin,
+        true,
+        quantiser_readback,
     )?;
     let events = banks::typed::rotate(
         signed(&c, par, crate::lower::vector::gen::predicate::fuse(g.code))?,
@@ -82,11 +107,13 @@ fn flat_band<'a>(
     hold: bool,
     pin: bool,
     serial: bool,
+    quantiser_readback: bool,
 ) -> VResult<(Ctx<'a>, Emitter)> {
     let (pre, lp) = crate::lower::vector::split(body, par)?;
     let mut c = Ctx::new(body, t, env, lp.clone())?;
     c.classed = par.st.kw("classed").is_some();
     c.serial = serial;
+    c.quantiser_readback = quantiser_readback;
     c.ahead = ahead;
     c.band = band;
     c.remat = remat;

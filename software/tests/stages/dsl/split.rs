@@ -670,10 +670,18 @@ fn selection_prices_the_slowest_share_and_forcing_keeps_its_price() {
 
 #[path = "attention.rs"]
 mod attention;
+#[path = "bounded_matmul.rs"]
+mod bounded_matmul;
+#[path = "joint_matmul.rs"]
+mod joint_matmul;
 #[path = "loop_ownership.rs"]
 mod loop_ownership;
 #[path = "prepared_split.rs"]
 mod prepared_split;
+#[path = "split_cost.rs"]
+mod split_cost;
+#[path = "wide_fold_split.rs"]
+mod wide_fold_split;
 
 fn simulate_matmul(kernel: &ktpu_kernels::kernel::Kernel) -> (Vec<u8>, Vec<u32>) {
     simulate_matmul_inputs(

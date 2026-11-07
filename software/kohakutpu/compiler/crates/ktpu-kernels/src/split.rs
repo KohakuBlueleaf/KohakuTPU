@@ -84,6 +84,11 @@ pub enum SplitAxis {
         pm: usize,
         pn: usize,
     },
+    /// Explicit local rectangles within independent global output shares.
+    Tiled {
+        tm: i64,
+        tn: i64,
+    },
     BPass {
         pm: usize,
         pn: usize,

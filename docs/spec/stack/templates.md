@@ -16,7 +16,7 @@ input forms, numerical contract, dispatch profile and an optional forced option
 ID. `SplitOption` records the axis, participant and active-node counts, shares,
 physical output ownership, symbolic events, legality witness and cost. A
 `PlannedKernel` carries the executable graph or an authoritative L1 executable.
-(code: ktpu-kernels/src/split.rs:18-36, :40-69, :112-176)
+(code: ktpu-kernels/src/split.rs:18-36, :40-69, :115-182)
 
 Physical regions are byte runs over allocation identities. `validate_ownership`
 requires distinct writers to own distinct 64-byte lines and the byte union to
@@ -25,7 +25,7 @@ canonical physical identities; this ownership check alone is not a numerical or
 all-agent happens-before certificate. `partition_tiles(T,P)` uses balanced cuts
 `p*q+ceil(p*r/P)`, where `q=T/P` and `r=T%P`. Empty shares stay in the plan but
 `emit_shares` emits no work for them. Explicit sysnode scopes place each nonempty share on its granted
-physical ID. (code: ktpu-kernels/src/split.rs:180-200, :204-276, :278-293)
+physical ID. (code: ktpu-kernels/src/split.rs:185-205, :209-281, :283-298)
 
 `call_split` dispatches to family planners. Graph families expose distributed
 options where their ownership and local schedules permit them; generators with
@@ -35,8 +35,8 @@ unsupported consumer forms, explicit scale groups and unsupported numerical
 contracts rather than claiming a conversion it does not emit. Input-form labels
 and mapped-read capabilities remain request metadata; generator arguments select
 the reads. A split plan is not a certificate for a new binding, topology or
-consumer form. (code: ktpu-kernels/src/call.rs:2088-2140, :2141-2198,
-:2199-2386, :2387-2487)
+consumer form. (code: ktpu-kernels/src/call.rs:2100-2152, :2153-2210,
+:2211-2398, :2399-2499)
 
 ### Pricing and selection
 
@@ -48,23 +48,25 @@ epilogues and waits are part of the emitted schedule. Estimates retain revision,
 provenance, uncertainty and `measured=false`: they are model prices, not device
 measurements. Selection orders by makespan, conversion count, event count and
 option ID. A forced ID must name an eligible option; priced planners still price
-that option. Cached choices retain prices across forced selections. Forcing
-is selection, not a request to measure an otherwise unpriced local path: the
-matmul one-node planner selects its ownership option without pricing unless
-its caller requests `price_unsplit` for a dependent sequence. The generic local
-`p1` path likewise computes timing only when `price_unsplit` is requested. These
-default cost records are not measured zero-cycle execution times.
-(code: ktpu-kernels/src/split/cost.rs:10-35, :94-186, :189-252;
-ktpu-kernels/src/gen/matmul/split.rs:775-805;
-ktpu-kernels/src/call.rs:2475-2487)
+that option. Matmul filters forced IDs before emitting or compiling a candidate,
+including one-sysnode choices. Cached comparisons can serve a forced request when they contain its exact
+price; a bound-pruned legal option is priced when forced. A forced-only entry
+cannot stand in for an automatic comparison. An
+unknown forced ID uses the existing DSL.KERN.020 refusal without compiling other
+options. Automatic matmul selection compares every legal option by exact price or a proven lower bound. The generic local
+`p1` path computes timing only when `price_unsplit` is requested; its default cost
+record is not a measured zero-cycle execution time.
+(code: ktpu-kernels/src/split/cost.rs;
+ktpu-kernels/src/gen/matmul/split.rs;
+ktpu-kernels/src/call.rs)
 
 Dependent work is priced as dependent work. Matmul K reductions and output-line
 assembly use the complete composed graph, B delivery uses its emitted transport
 model, convolution uses the patch/product sequence, and GroupNorm includes its
 population tree and normalization. These are not independent-share divisions.
 Row-stage sequences likewise use the complete composed graph for makespan while
-retaining per-node local costs. (code: ktpu-kernels/src/gen/matmul/split.rs:840-890;
-ktpu-kernels/src/call.rs:1460-1476, :1515-1540;
+retaining per-node local costs. (code: ktpu-kernels/src/gen/matmul/split.rs:1037-1079;
+ktpu-kernels/src/call.rs:1472-1488, :1527-1552;
 ktpu-kernels/src/gen/conv.rs:447-473;
 ktpu-kernels/src/gen/groupnorm/distributed.rs:410-438, :535-567)
 
@@ -106,6 +108,17 @@ and machine digest, with at most 32 entries per thread. Nested constructors shar
 the scope; results do not survive its exit. This reduces repeated lowering of an
 identical schedule without changing any candidate's cost or emitted instructions.
 
+### Independent complete folds
+
+`reductions.wide_fold_kernel` exposes its independent output-row domain to the
+row owner planner. Every owner performs all block partials, FP16 stores,
+opposite-half merges and the final expression for its own rows. Column and
+scalar inputs keep their broadcast coordinates; row and full inputs and outputs
+retain global origins. Whole statistic lines determine the ownership quantum,
+and the final owner keeps the original padded output allocation. The common row
+planner prices both `p1` and distributed `rows` schedules, including scratch
+copies and post-reduction operations (API.ROW.003).
+
 ### Matmul
 
 Ring epilogues queue virtual VC instances within their owning sysnode. The
@@ -113,14 +126,90 @@ number of logical instances does not grant additional sysnodes: only the split
 planner or explicit peer-root scope supplies ownership. Local ring storage and
 packed-input lifetimes therefore remain eligible for shared chain scheduling.
 
-`matmul.mm_kernel` offers `m`, `n` and every eligible factorization `mn-PxQ` of
+`matmul.mm_kernel` offers `p1`, `m`, `n` and every eligible factorization `mn-PxQ` of
 the grant. M cuts preserve the row quantum (the class tile for classed kernels);
 N cuts preserve packed column groups. N and mixed column cuts require an
 independent output-column domain, not a column reduction or row-statistic
 output. Batched products also expose `groups`. Each share reads global packed
 operands at its origin. Boundary outputs needing a common physical-line owner
 use private output and explicit assembly, counted as a conversion.
-(code: ktpu-kernels/src/gen/matmul/split.rs:160-611, :204-430)
+(code: ktpu-kernels/src/gen/matmul/split.rs)
+
+Automatic comparison enumerates geometries before graph construction and visits
+candidates in increasing resource-bound order. For an ordinary local product,
+let `T = bt * (mp/tm) * (n/tn)`, `C = kp/(nk*kblock)`, `gm = tm/band`, and
+`gn = tn/band`. Its mandatory model work is `T*C*nk*(gm+gn)` fill entries,
+`T*C` GEMM issues and `T*C*nk*gm*gn` swept subtiles. Counts sum by physical owner.
+The single physical-node-zero unscoped product counts its complete batch once,
+not once per batch manifest shard. K owners use only their own K chunks. B-pass
+omits B fills, which its transport replaces with receives; its local bounds sum
+because its complete price serializes those local budgets.
+
+The resource owner derives a bound from read-bus service, MG fill and sweep
+service divided by the physical MG count, and one front-end word per GEMM.
+These resources overlap: take their maximum, add node startup, then take the
+maximum with the independent firmware floor. Ordinary/K owner bounds combine
+by maximum and one launch intercept; B-pass owner bounds combine by sum and one
+launch intercept. Epilogues, drain/merge/delivery traffic and dependencies are
+omitted. FP16 conversion retains these subsequent MG operations. Classed runtime
+loops have no bound here and receive complete prices. These are bounds on the
+current model price: shared MG fills retain that model's per-command charge,
+not a claim of read-once physical hardware traffic.
+
+Only a downward-rounded bound strictly above an exact incumbent omits emission.
+No tie is discarded. Unsupported or overflowing bounds and pricing mutants use
+complete pricing. Forced choices always receive exact prices. Within a fixed
+shape/grant/backend, ordinary options with identical local schedules, origins,
+active/empty shards and boundary ownership reuse one complete price. IDs and tie
+breakers remain distinct; K and B-pass do not use this equivalence. No candidate
+is made illegal or selected by a kernel-specific threshold. The DSL bound witness
+compares all small batched candidate bounds with forced complete prices, requires
+omitted dominated compilations and matches exhaustive selection including IDs.
+
+Nonclassed independent-output options additionally enumerate `ID-tile-MxN`:
+the same global owners with an explicit common local rectangle. Legal rectangles
+divide each owner's padded rows and columns, retain the original K chunk and
+packing, and satisfy A/B bank, accumulator and staging limits. No extra row
+padding is introduced. The typed local geometry drives both emitted pricing and
+final emission; it is not decoded from the option name. Column ownership gives
+each node only its assigned B columns; local M tiles may reread those columns.
+The ordinary local plan remains a competing option.
+
+Automatic selection compares all alternatives, including one-sysnode choices,
+using the complete price or the resource-bound proof above. Forced selection emits and prices only the requested legal alternative.
+Explicit local geometry also applies to the singleton physical-node-zero grant.
+For schedules containing MG sends, LocalTiming uses the production
+resource graph in `ktpu-l2/src/cost/resource.rs`: separate command, fill, sweep
+and emit engines, per-physical-sysnode read/write arbitration, phase-dependent VC
+memory service, image residency and descriptor state. MG COUNT receives retire
+after completed payloads, and consumed slot waits use successive notifications.
+The selected option minimizes this complete emitted price, including epilogues,
+packing and output assembly, rather than dividing a card-wide work total.
+Each ordinary candidate needing an exact price is priced as one complete physical-sysnode graph, not
+as independently retraced shard graphs. Its local cost vector is the completion
+of each active physical owner in grant order; assembly and K-reduction options
+use those same joined completion budgets. The ownership witness compares these
+budgets and the makespan directly with the emitted performance report.
+
+Ring-wave and K traversal are symbolic graph loops. Their instantiated stage
+effects are queried through resource/owner/mode buckets and interval trees,
+without a Cartesian scan of every repeated bank access against every subsequent
+effect. Original footprints decide dependencies; original bounds decide pipe
+hoisting. This representation changes neither device instructions nor their
+ordering, and does not replace the ring by serialized node control loops.
+
+The bundled `sysnode-card-v1` calibration in `ktpu-l2/src/cost/planning.json`
+names the supplied memory/compute anchors. Machine-owned dispatch facts remain
+machine-owned. Performance reporting imports this same resource model; its
+external parameter file selects a calibration, not another implementation.
+Vector/mover-only pricing retains its existing clock. Prices are estimates, not
+silicon measurements. The perf ownership witness requires lower reported cycles
+and actual modeled read traffic than row replication. The DSL witness forces a
+column-owned candidate, verifies disjoint weight ownership, exact ordered outputs
+and single writes, and requires automatic price no worse than that candidate.
+Automatic MN ownership may read a B region on more than one sysnode: column-only
+ownership can reload the same region across local M tiles. Minimum complete price,
+not unique B-owner count, decides between these legal schedules.
 
 For two or four participants, non-classed products with nonempty K expose
 `k-tree` and `k-serial`. They partition whole packed K chunks, accumulate using
@@ -129,7 +218,7 @@ shares do not contribute. A requested reduction order filters options by their
 actual edge list. With four live participants the tree joins 0 into 1, 3 into 2,
 then 1 into 2; serial reduction sends each earlier active rank to the last active
 rank. Changing this order changes the numerical contract, not just placement.
-(code: ktpu-kernels/src/gen/matmul/split.rs:466-611;
+(code: ktpu-kernels/src/gen/matmul/split.rs:541-686;
 ktpu-kernels/src/gen/matmul/peer.rs:43-66)
 
 B-pass options retain the M or mixed M/N ownership but share raw packed B words:
@@ -140,11 +229,12 @@ stages; private-A prerequisites retire before B-ready and receiver-scoped
 ready/credit events protect bank generations. The emitted L1, not the precursor
 graph, is the executable. Its manifest records actual sender reads and events.
 The price sums emitted node budgets plus one launch intercept, mesh-hop word
-traffic, remote payloads, bank events, relay words, compute issues and private
-fills. This serial upper estimate is explicitly unfitted; it asserts no measured
+traffic, remote payloads, bank events and relay words. MG compute and private
+fills belong to the local resource budget and are not charged again by the
+transport estimate. This serial upper estimate is explicitly unfitted; it asserts no measured
 crossover. Other independent M/N options use the slowest complete local share.
-(code: ktpu-kernels/src/gen/matmul/split.rs:431-465, :747-820, :840-890;
-ktpu-kernels/src/gen/matmul/b_pass.rs:38-97, :240-352;
+(code: ktpu-kernels/src/gen/matmul/split.rs:506-540, :822-912, :1037-1079;
+ktpu-kernels/src/gen/matmul/b_pass.rs:38-98, :241-353;
 ktpu-kernels/src/split/cost.rs:37-92)
 
 Packing itself has `destination-tiles` options. `matmul.quant_kernel` and
@@ -155,7 +245,7 @@ schedules are priced through the shared vector split planner. Classed packing
 and materialized prepared-read sequences retain their complete local `p1`
 schedule; the dispatcher states the reason in its legality witness.
 (code: ktpu-kernels/src/gen/matmul/destination.rs:31-128, :149-303;
-ktpu-kernels/src/call.rs:2254-2328, :2442-2480)
+ktpu-kernels/src/call.rs:2266-2340, :2454-2492)
 
 ### Checked quant schedules in typed products
 
@@ -195,8 +285,8 @@ that pitch from offset zero; each share is then that relayout on its own
 rows (source origin advanced by the share's first row, row and element
 counts the share's). A made operand's source is a whole read. Every nonempty local schedule is emitted and priced, including
 exact tails and scratch copies.
-(code: ktpu-kernels/src/gen/vector/split.rs:89-203, :207-325;
-ktpu-kernels/src/call.rs:891-922, :945-1088, :1090-1262, :1279-1335, :1866-2086)
+(code: ktpu-kernels/src/gen/vector/split.rs:89-203, :207-342;
+ktpu-kernels/src/call.rs:891-922, :945-1088, :1090-1274, :1291-1347, :1878-2098)
 
 Copy, cast, eligible walked copy/fill and transpose use `destination-tiles`.
 Copies partition complete destination words with line-safe cuts. Walked
@@ -211,7 +301,7 @@ option instead of inventing independent owners.
 (code: ktpu-kernels/src/gen/convert.rs:52-113;
 ktpu-kernels/src/gen/convert/destination.rs:20-133, :136-252;
 ktpu-kernels/src/gen/transpose/destination.rs:40-137;
-ktpu-kernels/src/call.rs:1932-1942, :2329-2380, :2442-2480)
+ktpu-kernels/src/call.rs:1944-1954, :2341-2392, :2454-2492)
 
 ### Logical row boundaries
 
@@ -800,7 +890,7 @@ sticky-overflow redo; flashd requires the caller's `unit-scores` contract and
 uses a direct score ring; srflash uses SR row state. Four distinct MG roles are
 required, plus two VCs for flash/flashd or two SRs for srflash. These resource
 checks do not establish numerical eligibility for arbitrary attention inputs.
-(code: ktpu-kernels/src/call.rs:2159-2198;
+(code: ktpu-kernels/src/call.rs:2171-2210;
 ktpu-kernels/src/gen/attention/motif.rs:57-161;
 ktpu-kernels/src/gen/attention/flash_split.rs:214-240)
 

@@ -1,6 +1,8 @@
 //! A compiled kernel's cycles from its L1: the node priced from the machine facts the
 //! timed model (`software/tests/perf/model`) reads, images by the core's timing.
 
+pub mod resource;
+
 use std::collections::{BTreeMap, HashMap};
 
 use ktpu_l1::lower::imem::Resident;
@@ -34,10 +36,10 @@ pub fn cycles(module: &Module, name: &str, t: &Target) -> Result<i64> {
 pub fn local_cycles(module: &Module, name: &str, t: &Target) -> Result<Vec<i64>> {
     let body = module.body(name, "l1")?;
     let clusters = body.stmts.iter().any(sends_to_clusters);
-    let mut timed = module.clone();
-    for img in timed.images.values_mut() {
-        img.stmts = unguarded(&img.stmts);
+    if clusters && !crate::mutant::on(FLAT_SEND_MUTANT) {
+        return resource::local_cycles(module, name, t);
     }
+    let timed = timed_module(module);
     let mut clock = Clock {
         module: &timed,
         t,
@@ -84,6 +86,24 @@ fn unit_of(t: &Term) -> String {
         Term::View(n, args) => format!("{n}{args:?}"),
         other => format!("{other:?}"),
     }
+}
+
+/// Guard-free modules are borrowed; guarded images expose their executed body
+/// to image timing without changing the program used for emission.
+fn timed_module(module: &Module) -> std::borrow::Cow<'_, Module> {
+    fn guarded(stmts: &[Stmt]) -> bool {
+        stmts.iter().any(|st| st.op == "skipz" || guarded(&st.body))
+    }
+    if !module.images.values().any(|img| guarded(&img.stmts)) {
+        return std::borrow::Cow::Borrowed(module);
+    }
+    let mut timed = module.clone();
+    for img in timed.images.values_mut() {
+        if guarded(&img.stmts) {
+            img.stmts = unguarded(&img.stmts);
+        }
+    }
+    std::borrow::Cow::Owned(timed)
 }
 
 /// `stmts` with each `skipz` replaced by what it guards, as the timed model reads

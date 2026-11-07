@@ -98,6 +98,8 @@ pub struct Ctx<'a> {
     pub zero_sign: ZeroSign,
     /// the instance holds a checked pack: the status register is reserved
     pub checked: bool,
+    /// Place sole-consumer FP16 readbacks directly in quantiser chunk order.
+    pub quantiser_readback: bool,
 }
 
 fn op(n: &Node) -> &Op {
@@ -156,6 +158,7 @@ impl<'a> Ctx<'a> {
             guards: Guards::new(),
             zero_sign: ZeroSign::DEFAULT,
             checked: false,
+            quantiser_readback: false,
         })
     }
 

@@ -348,7 +348,55 @@ fn plain(t: &Term, syms: &[Symbol]) -> bool {
     b.len() >= 2 && matches!(b[0], b's' | b'k') && b[1..].iter().all(u8::is_ascii_digit)
 }
 
-pub fn quantiser_order(g: &mut Gen, sym: &Symbol, into: &Symbol) -> bool {
+/// Four pairs read the same FP16 words as one eight-chunk walked unpack.
+/// ISA.VC.102 maps source chunk 4*q+i to word base+i*row+q*column.
+fn quantiser_unpack(stmt: &Stmt, sym: &Symbol, into: &Symbol) -> Option<Vec<Event>> {
+    if stmt.op != "vunpk" || stmt.args.len() != 5 {
+        return None;
+    }
+    let args = stmt.positional();
+    let [dest, Term::Arrow(arrow), Term::View(space, address), mode] = args.as_slice() else {
+        return None;
+    };
+    if **dest != whole(sym) || arrow != "<-" || space != "l1" || mode.as_name() != Some("f16") {
+        return None;
+    }
+    let [base] = address.as_slice() else {
+        return None;
+    };
+    let base = i64::try_from(base.as_int()?).ok()?;
+    let Term::Tuple(strides) = stmt.kw("walk")? else {
+        return None;
+    };
+    let [row, column] = strides.as_slice() else {
+        return None;
+    };
+    let row = i64::try_from(row.as_int()?).ok()?;
+    let column = i64::try_from(column.as_int()?).ok()?;
+    let mut result = Vec::new();
+    for i in 0i64..4 {
+        let at = base.checked_add(i.checked_mul(row)?)?;
+        let stmt = ir::memory(
+            ir::Memory::Unpack,
+            chunk(into, (2 * i) as u64),
+            at,
+            Some("f16"),
+            false,
+            vec![
+                ir::kw("n", Term::int(2)),
+                ir::kw("walk", ir::walk(&[(column, 0)]).ok()?),
+            ],
+        )
+        .ok()?;
+        result.push(Event::Op {
+            stmt,
+            syms: vec![into.clone()],
+        });
+    }
+    Some(result)
+}
+
+pub fn quantiser_order(g: &mut Gen, sym: &Symbol, into: &Symbol, unpack: bool) -> bool {
     if crate::mutant::on("l2.vector/no-quantiser-order") {
         return false;
     }
@@ -370,6 +418,12 @@ pub fn quantiser_order(g: &mut Gen, sym: &Symbol, into: &Symbol) -> bool {
     let Event::Op { stmt, syms } = &g.code[at] else {
         unreachable!()
     };
+    if unpack {
+        if let Some(events) = quantiser_unpack(stmt, sym, into) {
+            g.code.splice(at..at + 1, events);
+            return true;
+        }
+    }
     if syms[1..].contains(sym)
         || stmt.op.starts_with("vcmp")
         || stmt.args.first() != Some(&whole(sym))

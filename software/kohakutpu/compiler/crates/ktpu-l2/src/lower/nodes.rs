@@ -145,6 +145,18 @@ pub(super) fn order_nodes(built_by: &mut IndexMap<i64, Vec<Stage>>) -> Vec<serde
             )
         })
         .collect();
+    let effects: IndexMap<i64, Vec<_>> = mem
+        .iter()
+        .map(|(&node, stages)| {
+            (
+                node,
+                stages
+                    .iter()
+                    .map(|accesses| sync::AccessIndex::new(accesses))
+                    .collect(),
+            )
+        })
+        .collect();
     let mut rings: HashMap<(i64, usize), Vec<Released>> = HashMap::new();
     let mut waits: HashMap<(i64, usize), Vec<i64>> = HashMap::new();
     for (&b, built) in built_by.iter() {
@@ -156,9 +168,9 @@ pub(super) fn order_nodes(built_by: &mut IndexMap<i64, Vec<Stage>>) -> Vec<serde
                     if si.phase < 0 || sj.phase < 0 || si.phase >= sj.phase {
                         continue;
                     }
-                    if mem[&a][i]
-                        .iter()
-                        .any(|x| mem[&b][j].iter().any(|y| sync::clash(x, y)))
+                    if !effects[&a][i]
+                        .pending(&effects[&b][j], |_| false)
+                        .is_empty()
                     {
                         hit = Some(i);
                     }

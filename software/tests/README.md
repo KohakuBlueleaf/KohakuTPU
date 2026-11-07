@@ -34,6 +34,25 @@ tests/
 └── fixtures/   tiny L2 per form, the kernels tiny models compile (l2/harvest), anchor images
 ```
 
+The timed model retains both aggregate `work` and `node_work`, indexed by
+physical sysnode ID. Each resource floor is the maximum of that node's work
+divided by its local MG/VC capacity or read/write bandwidth. Read work includes
+mover reads. Grant size is not a divisor: an imbalanced schedule and a single
+active owner retain their own bounds. Aggregate work remains the basis for
+whole-card MFU. The perf stage runs the Rust `floors` target, comparing balanced,
+imbalanced and single-owner schedules with their individual-node references.
+The model implementation lives in the production `ktpu-l2` cost module; the
+perf crate re-exports it. The `ownership` target compares automatic joint matmul
+selection against row replication using emitted read traffic and full resource
+completion, and `resource_state` checks descriptor restoration, consumed slot
+generations and native counted-receive completion. Production matrix pricing
+uses the bundled, anchor-labelled `sysnode-card-v1` profile; external perf
+parameter files continue to select independent calibrations of the same model.
+The L2-to-L1 dependency witness schedules repeated matrix effects within a bounded
+admission window and checks the exact release frontier and pipe ordering. The
+DSL cache witness distinguishes forced-only prices from a complete automatic
+comparison; a forced call cannot hide a cheaper alternative on the next call.
+
 Speed follows the same chain. Each level has a floor and a time, and a stage owns
 the ratio it adds, so a loss is named without a long run:
 
