@@ -33,6 +33,11 @@ enum {
                       writes, abi.h KOS_DE_*) in groups of three, then a[2] blob bytes;
                       through SYS_DE_RUN, synchronous */
     KDS_LAUNCH_MARK, /* a[0] launch index: boundaries for KOS_LAUNCH_RING */
+    KDS_WAIT_SLOT, /* a[0] local user slot, a[1] amount, a[3] peek (else consume) */
+    KDS_DE_FEED = 10, /* DE payload as KDS_DE_STREAM; completion means enqueued */
+    KDS_DE_DRAIN = 12, /* pending until queued descriptors retire, counters retained */
+    KDS_DE_FINISH = 11, /* terminal epoch join; rearm only after every unit retires */
+    KDS_RELEASE_SLOT = 9, /* a[0] user slot, a[1] amount, a[2] destination node, a[3] fence */
 };
 
 #define KDS_MAXPRED  4
@@ -83,6 +88,8 @@ struct kds_result {
 #define KDS_F_ENGINE   (1u << 0) /* unit tasks in batches of up to 8 through SYS_ENGINE */
 #define KDS_F_UNCACHED (1u << 1) /* arenas mapped uncached: no release/acquire sweeps */
 #define KDS_F_BESTFIT  (1u << 2) /* the arena allocates best fit (else first fit) */
+
+#define KDS_F_RESIDENT (1u << 3) /* exclusive persistent DE epoch on this node */
 
 /* Start a server on every node in node_mask, each with an arena of
  * arena_bytes to begin with; returns when all are up. kds_stop on the same
@@ -142,6 +149,7 @@ int kds_server_stat(struct kds_server_stat *s); /* KOS_ENOENT: no server on this
 #define OSTPU_TASK_BYTES     128u
 #define OSTPU_OFF_READY      0u
 #define OSTPU_OFF_REQ        32u
+#define OSTPU_REQ_CANCEL        (1UL << 63) /* request-only STOP; active command remains immutable */
 #define OSTPU_REQ_EPOCH_WORD     1u /* rpad[0] in the request granule */
 #define OSTPU_REQ_WRITE_REF_WORD 2u /* rpad[1]: optional local kds_ref for 4-word client cached write */
 #define OSTPU_REQ_WRITE_VAL_WORD 3u /* rpad[2]: base value for the 4-word client cached write */
@@ -156,6 +164,9 @@ int kds_server_stat(struct kds_server_stat *s); /* KOS_ENOENT: no server on this
 #define OSTPU_PROF_WORDS     8u
 #define OSTPU_OP_RUN         1u
 #define OSTPU_OP_STOP        2u
+#define OSTPU_CAP_SLOTS      1u /* done granule dpad[1]: nonblocking slot tasks */
+#define OSTPU_CAP_EPOCH      4u /* persistent DE feeder across slot operations */
+#define OSTPU_CAP_LOCAL      2u /* this resident starts only its own node server */
 
 struct ostpu_mailbox {
     uint64_t magic, tasks_pa, data_pa, data_ref;

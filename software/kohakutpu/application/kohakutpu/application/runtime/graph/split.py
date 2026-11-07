@@ -1,13 +1,19 @@
 """Compose bound semantic launches before node ordering and slot allocation."""
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from graphlib import TopologicalSorter
 from types import MappingProxyType
 from typing import Any
 
 from kohakutpu.application.runtime import generated
+from kohakutpu.application.runtime.graph.bound import bind
 from kohakutpu.application.runtime.graph.native import names, renamed
+from kohakutpu.application.runtime.os.graph import PreparedMultiGraph
+from kohakutpu.application.runtime.split import (
+    BoundGraphArtifact,
+    PreparedFirmwareGraph,
+)
 from kohakutpu.stack import rs
 
 
@@ -20,6 +26,9 @@ class PreparedSplitGraph:
     events: tuple
     references: list
     closed: bool = False
+    artifact: BoundGraphArtifact | None = None
+    scratch: list[int] = field(default_factory=list)
+    backends: list[Any] = field(default_factory=list)
 
     def submit(self):
         if self.closed:
@@ -28,11 +37,37 @@ class PreparedSplitGraph:
             self.compiled, self.bindings, "graph", None, pinned=True
         )
 
+    def bind_artifact(self) -> BoundGraphArtifact:
+        if self.closed:
+            raise RuntimeError("prepared split graph is closed")
+        if self.artifact is None:
+            self.artifact = bind(self)
+        return self.artifact
+
+    def prepare_firmware(self, queues, leases):
+        artifact = self.bind_artifact()
+        backend = PreparedFirmwareGraph(artifact, queues, leases, self.references)
+        self.backends.append(backend)
+        return backend
+
+    def prepare_kaos(self, residents, units, leases, **options):
+        artifact = self.bind_artifact()
+        backend = PreparedMultiGraph(
+            artifact, residents, units, leases, references=self.references, **options
+        )
+        self.backends.append(backend)
+        return backend
+
     def close(self):
         if not self.closed:
+            for backend in self.backends:
+                backend.close()
             for arena, address in self.references:
                 arena.unretain(address)
             self.references.clear()
+            for address in self.scratch:
+                self.device.free(address)
+            self.scratch.clear()
             self.closed = True
 
 

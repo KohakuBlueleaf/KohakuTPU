@@ -168,8 +168,10 @@ Three fields on it are worth naming:
   `port` groups the clusters behind one memory port, `all` every instance,
   `cross` one cluster from each port; the group's leader is its first cluster
   in coordinate order. In a body spread over several nodes the `share` pass
-  marks a fill `share=cross` when its view does not name the cluster `par`'s
-  variable.
+  marks a fill `share=auto` when its view and intervening execution scopes
+  do not name the cluster `par`'s variable. Lowering chooses `cross` for
+  equally populated physical port groups, otherwise `port`; an explicit
+  sharing mode in the same par is authoritative.
   **A shared B `FILL` holds at most `mg.shared_b_max` [64] entries**: on the
   Verilated card a follower's B entries past that come back wrong. The `share`
   pass leaves a larger B fill unshared, and the lowering refuses an explicit

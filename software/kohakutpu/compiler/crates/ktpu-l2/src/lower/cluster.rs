@@ -23,7 +23,7 @@ use crate::ir::{const_of, value, Body, Instance, Node, Op, Result, Type};
 use crate::mutant::on;
 use crate::target::Target;
 
-pub const SHARE: [&str; 3] = ["port", "all", "cross"];
+pub const SHARE: [&str; 4] = ["port", "all", "cross", "auto"];
 
 /// A sweep's fields; `emit` set by a later drain.
 #[derive(Clone, Debug, Default, PartialEq)]

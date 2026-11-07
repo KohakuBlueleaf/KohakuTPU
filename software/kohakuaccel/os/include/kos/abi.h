@@ -73,7 +73,13 @@
 #define SYS_VTOP          28 /* (va, len) -> physical address of a contiguous user range, as units and the mover name it */
 #define SYS_MUNMAP        29 /* (va, size): unmap a contiguous SYS_MMAP range and free its frames */
 #define SYS_DE_RUN        30 /* (entries, count<=16384): DE entries (units, mover), fed in S-mode; synchronous */
-#define SYS_NCALLS        31
+#define KOS_DE_FEED  1u /* append descriptors without resetting counters or draining units */
+#define KOS_DE_FINISH 2u /* finish/rearm an epoch; EAGAIN while hardware is live */
+#define KOS_DE_CLOSE 5u /* release an idle epoch before stopping the resident */
+#define KOS_DE_DRAIN 4u /* queue publication frontier, without counter reset */
+#define KOS_DE_OPEN 3u /* arm counters before advertising a local resident */
+#define SYS_SLOT          31 /* (op, node, slot, amount): 0 consume, 1 fenced ring, 2 peek, 3 ring */
+#define SYS_NCALLS        32
 
 /* Dispatch-engine stream & mover ABI (shared by kernel, KDS and host osabi.py) */
 #define KOS_DE_QUEUE_DEPTH      64u
@@ -238,7 +244,9 @@ struct kos_launch_rec {
 #define KOS_SLOT_MSG(src)  (src)       /* messages from node src: 0..3 */
 #define KOS_SLOT_CRED(dst) (4 + (dst)) /* credits returned by node dst: 4..7 */
 #define KOS_SLOT_BARRIER   8           /* kernel barrier arrivals */
-#define KOS_SLOT_USER      9           /* 9..15: free */
+#define KOS_SLOT_USER      9           /* 9..15: leased application events */
+#define KOS_SLOT_LIMIT     16u
+#define KOS_SLOT_AMOUNT    0xffffu
 
 /* ---- the staging store, from each mesh's staging base ---- */
 #define KOS_STG_PT     0x00000UL /* L0's page-table pool: 32 tables */

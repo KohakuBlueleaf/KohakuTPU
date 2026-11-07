@@ -3,6 +3,7 @@
 #[path = "../common.rs"]
 mod common;
 mod select_semantics;
+mod share_participants;
 
 use common::{card, fixtures, known, software, stage_suite, Fixture, Level, Pair};
 use ktpu::{Backend, CardStack};
@@ -70,7 +71,7 @@ fn partial.l2(a: mx7a[4, 64] @dram(gm=1, nk=2), b: mx7b[32, 64] @dram(gn=8, nk=2
             ktpu_l2::Program::parse(&source, "partial", Some("partial")).expect("partial wave");
         let target = ktpu_l2::target::Target::of(&card());
         let shared = ktpu_l2::passes::share::share(&program, &target).expect("share inference");
-        assert_eq!(shared.text().contains("share=cross"), uniform);
+        assert_eq!(shared.text().contains("share=auto"), uniform);
         // Execute the sole node's schedule on the single-node L1 simulator.
         let (params, stmts) = ktpu_l2::passes::body_of(&shared).expect("share body");
         let local = ktpu_l2::passes::write(&shared, &params, &stmts[0].body).expect("local share");

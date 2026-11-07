@@ -228,8 +228,14 @@ static BUFFER_CALL void engine_user(struct thread *t, uint64_t unit, uint64_t ad
     ret2(t, tk < 0 ? tk : KOS_OK, tk < 0 ? 0 : (uint64_t)tk);
 }
 
-static BUFFER_CALL int64_t de_run_user(uint64_t addr, uint64_t count)
+static BUFFER_CALL int64_t de_run_user(uint64_t addr, uint64_t count, uint64_t operation)
 {
+    if (operation == KOS_DE_OPEN || operation == KOS_DE_FINISH || operation == KOS_DE_DRAIN || operation == KOS_DE_CLOSE) {
+        return addr || count ? KOS_EINVAL : k_de_epoch(0, 0, (unsigned)operation);
+    }
+    if (operation > KOS_DE_FEED) {
+        return KOS_EINVAL;
+    }
 #ifdef KOS_LAUNCH_RING
     if (!count) {
         int64_t r = k_copy_out(addr, &k_lring_cur, sizeof k_lring_cur);
@@ -245,7 +251,8 @@ static BUFFER_CALL int64_t de_run_user(uint64_t addr, uint64_t count)
     if (!pa || (pa & 31)) {
         return KOS_EINVAL;
     }
-    return k_de_stream((const uint64_t *)pa, (unsigned)count);
+    return operation ? k_de_epoch((const uint64_t *)pa, (unsigned)count, KOS_DE_FEED) :
+                       k_de_stream((const uint64_t *)pa, (unsigned)count);
 }
 
 static BUFFER_CALL void run_user(struct thread *t, uint64_t uname, uint64_t uargs, uint64_t node)
@@ -473,7 +480,7 @@ void k_syscall(struct thread *t)
         return;
     }
     case SYS_DE_RUN:
-        r = de_run_user(a0, a1);
+        r = de_run_user(a0, a1, a2);
         break;
     case SYS_MOVE: {
         uint64_t bytes = a2 * 32;
@@ -547,6 +554,9 @@ void k_syscall(struct thread *t)
         }
         return;
     }
+    case SYS_SLOT:
+        r = k_slot_try(a0, a1, a2, a3);
+        break;
     case SYS_ENGINE:
         engine_user(t, a0, a1, a2);
         return;

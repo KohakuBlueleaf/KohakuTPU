@@ -81,6 +81,7 @@ enum { LG_FREE, LG_LOADING, LG_LOADED, LG_RUN, LG_ENDED, LG_CACHED };
 struct kds_part {
     uint32_t gid, state;
     unsigned home;
+    unsigned de_live; /* outstanding persistent descriptor epoch protects task storage */
     const struct kds_task *source;
     uint32_t n, loaded, done, inflight; /* inflight: unit instructions not yet retired */
     int64_t status;

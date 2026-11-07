@@ -1,4 +1,5 @@
 /* Ring egress with a held or advancing sent frontier. */
+#include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,7 +10,13 @@
 #define hw_time() dbl_cycles()
 
 static uint64_t ticks;
-static unsigned writes, sent, advancing;
+static unsigned writes, sent, advancing, tokens;
+struct knode kn;
+static uint32_t slot_count(unsigned slot)
+{
+    assert(slot == KOS_SLOT_USER);
+    return tokens;
+}
 
 uint64_t dbl_cycles(void) { return ticks++; }
 uint64_t dbl_rd(unsigned off)
@@ -22,12 +29,16 @@ uint64_t dbl_rd(unsigned off)
 }
 void dbl_wr(unsigned off, uint64_t value)
 {
-    (void)value;
+    if (off == HW_R_IL + HW_IL_CONSUME) {
+        assert((value & 0xffffffffu) == KOS_SLOT_USER);
+        tokens -= (unsigned)(value >> 32);
+    }
     if (off == HW_R_IL + HW_IL_RING) {
         ++writes;
     }
 }
 
+#define hw_slot(slot) slot_count(slot)
 #define hw_sig_word() dbl_rd(HW_R_SIG)
 #include APP_SOURCE
 
@@ -53,7 +64,24 @@ int main(int argc, char **argv)
     if (argc != 2) {
         return 2;
     }
-    if (argv[1][0] == 'p') {
+    if (argv[1][0] == 's') {
+        kn.n = 1;
+        tokens = 1;
+        assert(k_slot_try(0, 0, KOS_SLOT_USER, 2) == KOS_EAGAIN);
+        assert(tokens == 1);
+        tokens = 2;
+        assert(k_slot_try(0, 0, KOS_SLOT_USER, 2) == KOS_OK);
+        assert(tokens == 0);
+        assert(k_slot_try(1, 0, KOS_SLOT_BARRIER, 1) == KOS_EINVAL);
+        for (unsigned i = 0; i < HW_RING_DEPTH; ++i) {
+            assert(k_slot_try(1, 0, KOS_SLOT_USER, 1) == KOS_OK);
+        }
+        assert(k_slot_try(1, 0, KOS_SLOT_USER, 1) == KOS_EAGAIN);
+        assert(writes == HW_RING_DEPTH);
+        sent = 1;
+        assert(k_slot_try(1, 0, KOS_SLOT_USER, 1) == KOS_OK);
+        assert(writes == HW_RING_DEPTH + 1);
+    } else if (argv[1][0] == 'p') {
         advancing = 1;
         for (unsigned i = 0; i < 65540; ++i) {
             k_ring_word(1);

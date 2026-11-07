@@ -17,7 +17,7 @@ impl<'a> Ctx<'a> {
                 other => other,
             }];
         }
-        let form = "NAME = fill VIEW [share=port|all|cross] : mx7a[M, K] @A | mx7b[N, K] @B";
+        let form = "NAME = fill VIEW [share=port|all|cross|auto] : mx7a[M, K] @A | mx7b[N, K] @B";
         if pos.len() != 1
             || !matches!(pos[0], Term::View(..))
             || kw.iter().any(|(k, _)| *k != "share")

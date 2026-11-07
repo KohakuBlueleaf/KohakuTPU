@@ -1,6 +1,5 @@
 """Launches: admission, the submit path, collection."""
 
-import functools
 import json
 import time
 from contextlib import contextmanager
@@ -8,6 +7,12 @@ from dataclasses import replace
 
 from kohakuaccel.driver.node.queue import NodeError
 from kohakutpu.application.runtime import generated, launch_boundary
+from kohakutpu.application.runtime.binding import (
+    burst_line,
+    burst_unaligned,
+    cluster_burst,
+    unaligned,
+)
 from kohakutpu.application.runtime.class_library import ClassLibrary
 from kohakutpu.application.runtime.device.common import (
     KERNELS_KEPT,
@@ -23,38 +28,6 @@ from kohakutpu.application.runtime.packages import Prebuilt, placed
 from kohakutpu.stack import rs
 from kohakutpu.stack.buffer import Buffer
 from kohakutpu.stack.kernel import arena_name
-
-
-@functools.cache
-def burst_line(machine_json: str) -> int | None:
-    """The base alignment F-001's handling proves mover writes under
-    (L2.MOV.020); None on an image without the flaw."""
-    m = json.loads(machine_json)["machine"]
-    return m["card"]["dram"]["line_bytes"] if m["flaws"]["F-001"]["present"] else None
-
-
-def unaligned(full: dict, line: int | None, ports) -> list[str]:
-    """Of `ports`, the buffers whose L1.MOV.019 proof leans on a write-line
-    base, those bound off `line`."""
-    if line is None:
-        return []
-    return sorted(k for k in ports if k in full and full[k] % line)
-
-
-@functools.cache
-def cluster_burst(machine_json: str) -> int | None:
-    """F-016's cluster burst alignment within a 4 KiB page."""
-    m = json.loads(machine_json)["machine"]
-    if not m["flaws"]["F-016"]["present"]:
-        return None
-    return m["mg"]["wburst"] * m["die"]["word_bytes"]
-
-
-def burst_unaligned(full: dict, burst: int | None, ports) -> list[str]:
-    """Only bases on which a compiled memory-drain proof depends."""
-    if burst is None:
-        return []
-    return sorted(k for k in ports if k in full and full[k] % 4096 % burst)
 
 
 def _entry(s: Submitted) -> int:

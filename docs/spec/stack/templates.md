@@ -35,8 +35,8 @@ unsupported consumer forms, explicit scale groups and unsupported numerical
 contracts rather than claiming a conversion it does not emit. Input-form labels
 and mapped-read capabilities remain request metadata; generator arguments select
 the reads. A split plan is not a certificate for a new binding, topology or
-consumer form. (code: ktpu-kernels/src/call.rs:2054-2106, :2107-2164,
-:2165-2352, :2353-2453)
+consumer form. (code: ktpu-kernels/src/call.rs:2088-2140, :2141-2198,
+:2199-2386, :2387-2487)
 
 ### Pricing and selection
 
@@ -56,7 +56,7 @@ its caller requests `price_unsplit` for a dependent sequence. The generic local
 default cost records are not measured zero-cycle execution times.
 (code: ktpu-kernels/src/split/cost.rs:10-35, :94-186, :189-252;
 ktpu-kernels/src/gen/matmul/split.rs:775-805;
-ktpu-kernels/src/call.rs:2441-2453)
+ktpu-kernels/src/call.rs:2475-2487)
 
 Dependent work is priced as dependent work. Matmul K reductions and output-line
 assembly use the complete composed graph, B delivery uses its emitted transport
@@ -64,7 +64,7 @@ model, convolution uses the patch/product sequence, and GroupNorm includes its
 population tree and normalization. These are not independent-share divisions.
 Row-stage sequences likewise use the complete composed graph for makespan while
 retaining per-node local costs. (code: ktpu-kernels/src/gen/matmul/split.rs:840-890;
-ktpu-kernels/src/call.rs:1426-1442, :1481-1506;
+ktpu-kernels/src/call.rs:1460-1476, :1515-1540;
 ktpu-kernels/src/gen/conv.rs:447-473;
 ktpu-kernels/src/gen/groupnorm/distributed.rs:410-438, :535-567)
 
@@ -155,7 +155,7 @@ schedules are priced through the shared vector split planner. Classed packing
 and materialized prepared-read sequences retain their complete local `p1`
 schedule; the dispatcher states the reason in its legality witness.
 (code: ktpu-kernels/src/gen/matmul/destination.rs:31-128, :149-303;
-ktpu-kernels/src/call.rs:2220-2294, :2408-2446)
+ktpu-kernels/src/call.rs:2254-2328, :2442-2480)
 
 ### Checked quant schedules in typed products
 
@@ -185,15 +185,18 @@ caller's whole words. Row cuts coalesce adjacent quantums until every output
 plane has disjoint line ownership. Row-local chains and fused row stages can
 share that partition; other supported row/flat sequences compose distributed
 stages with L2 access ordering for their intermediates. `prepared.rows_kernel`
-takes the same row partition when every made operand is one relayout whose
-source and destination walks lead with the kernel's rows, whose destination
-origin is zero and whose element count is given: each share is that
-relayout on its own rows (its origin advanced by the share's first row, its
-row count and element count the share's), and the relayout's source is a
-whole read. Every nonempty local schedule is emitted and priced, including
+takes the same row partition when each made operand is either read composed
+or one materialized relayout that keeps every consumer row whole in its own
+destination row block. A composed operand keeps its whole map; each share's
+consumer operand selects its rows. A materialized relayout must lead both
+walks with the kernel's rows, start its destination at zero, keep every
+inner destination level within one row stride, and feed a full consumer of
+that pitch from offset zero; each share is then that relayout on its own
+rows (source origin advanced by the share's first row, row and element
+counts the share's). A made operand's source is a whole read. Every nonempty local schedule is emitted and priced, including
 exact tails and scratch copies.
 (code: ktpu-kernels/src/gen/vector/split.rs:89-203, :207-325;
-ktpu-kernels/src/call.rs:889-920, :943-1054, :1056-1228, :1245-1301, :1832-2052)
+ktpu-kernels/src/call.rs:891-922, :945-1088, :1090-1262, :1279-1335, :1866-2086)
 
 Copy, cast, eligible walked copy/fill and transpose use `destination-tiles`.
 Copies partition complete destination words with line-safe cuts. Walked
@@ -208,7 +211,7 @@ option instead of inventing independent owners.
 (code: ktpu-kernels/src/gen/convert.rs:52-113;
 ktpu-kernels/src/gen/convert/destination.rs:20-133, :136-252;
 ktpu-kernels/src/gen/transpose/destination.rs:40-137;
-ktpu-kernels/src/call.rs:1898-1908, :2295-2346, :2408-2446)
+ktpu-kernels/src/call.rs:1932-1942, :2329-2380, :2442-2480)
 
 ### Logical row boundaries
 
@@ -797,7 +800,7 @@ sticky-overflow redo; flashd requires the caller's `unit-scores` contract and
 uses a direct score ring; srflash uses SR row state. Four distinct MG roles are
 required, plus two VCs for flash/flashd or two SRs for srflash. These resource
 checks do not establish numerical eligibility for arbitrary attention inputs.
-(code: ktpu-kernels/src/call.rs:2125-2164;
+(code: ktpu-kernels/src/call.rs:2159-2198;
 ktpu-kernels/src/gen/attention/motif.rs:57-161;
 ktpu-kernels/src/gen/attention/flash_split.rs:214-240)
 
@@ -871,7 +874,7 @@ package replay retains that additional state contract.
 :438-509;
 software/kohakutpu/application/kohakutpu/application/runtime/graph/split_recorded.py:15-19,
 :31-91, :122-187;
-software/kohakutpu/application/kohakutpu/application/runtime/graph/split.py:24-36, :50-92)
+software/kohakutpu/application/kohakutpu/application/runtime/graph/split.py:33-38, :61-71, :85-127)
 
 Queue admission can overlap runs on disjoint physical lines, including runs
 using the same multi-node grant. A single common node FIFO already orders its
@@ -881,8 +884,8 @@ conflicts. Dependency completion can be observed without publishing success
 past an earlier fault. Host reads and writes still collect through their last
 conflicting allocation use. This is access-based admission, not a promise that
 all independent work executes in parallel.
-(code: software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py:79-98,
-:126-149, :446-485;
+(code: software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py:52-71,
+:99-122, :419-458;
 software/kohakutpu/application/kohakutpu/application/runtime/graph/access.py:18-61;
 software/kohakutpu/application/kohakutpu/application/runtime/graph/leases.py:8-28)
 

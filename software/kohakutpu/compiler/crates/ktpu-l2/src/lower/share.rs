@@ -64,11 +64,12 @@ fn groups(
                 .push(idx);
         }
         let ports: Vec<Vec<i64>> = by_port.into_values().collect();
-        if mode == "port" || ports.len() < 2 {
+        let balanced = ports.iter().all(|p| p.len() == ports[0].len());
+        if mode == "port" || ports.len() < 2 || (mode == "auto" && !balanced) {
             ports
         } else {
             let n = ports[0].len();
-            if ports.iter().any(|p| p.len() != n) {
+            if !balanced {
                 return Err(body.reader.fail(
                     st,
                     "L2.MG.005",
@@ -110,10 +111,13 @@ pub(super) fn shared(
             "share=: every instance fills the same shared views, in the same order",
         ));
     }
-    let modes: BTreeSet<String> = streams
+    let mut modes: BTreeSet<String> = streams
         .iter()
         .flat_map(|(_, s)| s.lines.iter().filter_map(|l| l.share.clone()))
         .collect();
+    if modes.len() > 1 {
+        modes.remove("auto");
+    }
     if modes.len() != 1 {
         return Err(body
             .reader

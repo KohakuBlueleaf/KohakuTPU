@@ -33,6 +33,10 @@ def ring_exe(tmp_path_factory):
     return out
 
 
+def test_user_slots_consume_atomically_and_publish_only_with_room(ring_exe):
+    run_ring(ring_exe, "slots")
+
+
 def run_ring(exe, mode):
     return subprocess.run(
         [str(exe), mode],

@@ -77,6 +77,35 @@ forever**.
 | 28 | `SYS_VTOP` | va, len | the physical address; `EINVAL` | of a user range that is one physically contiguous piece (shared region, `mmap` pages, the landing zone), as this node's units and mover name it |
 | 29 | `SYS_MUNMAP` | va, size | `OK`; `EINVAL` | unmaps a physically contiguous range of the `mmap` area (whole leaves) and frees its frames |
 
+### Persistent descriptor epochs
+
+`SYS_DE_RUN` (30) accepts `(entries, count, operation)`; operation zero is the
+synchronous stream interface. `kos_de_epoch` exposes OPEN (3), FEED (1), DRAIN
+(4), FINISH (2) and CLOSE (5). OPEN arms a local resident before READY; FEED
+appends up to KOS_DE_MAX_ENTRIES without resetting counters or waiting for unit
+retirement. DRAIN returns EAGAIN until queued entries reach their publication
+frontier. FINISH joins queue, mover and unit work, then rearms the next epoch;
+CLOSE performs the quiescence check and releases ownership. Operations other than
+FEED require zero entries/count. The same validation and status mechanisms apply
+as for synchronous streams. A failed epoch remains quarantined until reset.
+
+### Nonblocking user events
+
+`SYS_SLOT` (31), exposed as `kos_slot(op, node, slot, amount)`, performs one
+user-slot operation. Slots 0–3 belong to messaging, 4–7 to credits, and 8 to the
+kernel barrier; application events use 9–15. Operations are 0 (consume), 1
+(fenced ring), 2 (peek without consumption), and 3 (unfenced ring). A consume or
+peek names the local node and a positive 32-bit count; a ring names an OS node
+index and a positive 16-bit amount. Invalid arguments return `KOS_EINVAL`.
+
+Insufficient tokens or a full four-entry ring egress returns `KOS_EAGAIN` without
+changing either frontier. A consume subtracts exactly the requested amount and
+waits for the register pipeline to reflect the write. A ring shares the kernel
+message transport's sent frontier and maps the node index through the boot
+mesh table. It returns after enqueue, not after reception. The caller owns the
+receiver-scoped lease, all producer completion fences and CPU cache maintenance.
+This syscall does not allocate, reset or release a lease.
+
 ### `SYS_INFO` keys
 
 | key | value |

@@ -326,6 +326,17 @@ static int64_t check(struct kds_node *k, struct kds_task *t, uint32_t n, uint32_
                 return KOS_EINVAL;
             }
             break;
+        case KDS_DE_DRAIN:
+        case KDS_DE_FINISH:
+            if (x->node != k->me || !(k->flags & KDS_F_RESIDENT)) {
+                return KOS_EINVAL;
+            }
+            break;
+        case KDS_DE_FEED:
+            if (!(k->flags & KDS_F_RESIDENT)) {
+                return KOS_EINVAL;
+            }
+            /* fall through */
         case KDS_DE_STREAM: {
             uint64_t bytes = KOS_DE_CMD_BYTES(x->a[1]) + x->a[2];
             if (x->node != k->me || !x->a[1] || x->a[1] > KOS_DE_MAX_ENTRIES || (x->a[2] & 31) ||
@@ -336,6 +347,14 @@ static int64_t check(struct kds_node *k, struct kds_task *t, uint32_t n, uint32_
             }
             break;
         }
+        case KDS_WAIT_SLOT:
+        case KDS_RELEASE_SLOT:
+            if (x->node != k->me || x->a[0] < KOS_SLOT_USER || x->a[0] >= KOS_SLOT_LIMIT ||
+                !x->a[1] || x->a[1] > (x->kind == KDS_RELEASE_SLOT ? KOS_SLOT_AMOUNT : 0xffffffffUL) || x->a[3] > 1 ||
+                (x->kind == KDS_WAIT_SLOT ? x->a[2] != 0 : x->a[2] >= k->n)) {
+                return KOS_EINVAL;
+            }
+            break;
         case KDS_LAUNCH_MARK:
             if (x->node != k->me) {
                 return KOS_EINVAL;
@@ -566,7 +585,8 @@ static int init(struct kds_node *k, unsigned flags, unsigned mask, uint64_t aren
         }
         k->depth[u] = k->units[u].depth ? k->units[u].depth : 16;
     }
-    int st = kds_arena_init(k, arena);
+    int st = (flags & KDS_F_RESIDENT) ? (int)kos_de_epoch(0, 0, KOS_DE_OPEN) : KOS_OK;
+    st = st ? st : kds_arena_init(k, arena);
     kds_ref stage;
     if (!st) {
         st = (int)kds_arena_alloc(k, KDS_LZ_SLICE, KDS_SERVER, &stage);
@@ -619,8 +639,7 @@ int64_t kds_server(uint64_t arg)
         kds_lring(KOS_LRING_STEP_SLOT)->batches = t1 - t;
 #endif
         if (k->any_ready) {
-            kds_parts_run(k); /* runs every ready ring dry */
-            k->any_ready = 0;
+            kds_parts_run(k); /* ready tasks plus one probe per pending slot operation */
         }
         t = kos_now();
         k->st.cyc_run += t - t1;
@@ -640,7 +659,7 @@ int64_t kds_server(uint64_t arg)
         }
         /* nothing is ready now: wait for a retirement or a message (or the
          * outbox's retry, or a deadline) */
-        uint64_t wait = k->ocount ? KDS_RETRY : 0, now, need = k->in_flight ? kds_units_need(k) : ~0UL;
+        uint64_t wait = k->any_ready ? 1 : k->ocount ? KDS_RETRY : 0, now, need = k->in_flight ? kds_units_need(k) : ~0UL;
         deadlines(k, t, &wait);
         uint64_t target = need == ~0UL ? k->events + (1UL << 62) : k->events + need;
         queued = kos_event(target, wait, k->counts, k->in_flight ? k->nunits : 0, KDS_CHAN, &now);
@@ -665,6 +684,12 @@ int64_t kds_server(uint64_t arg)
     }
     while (k->ocount) {
         outbox_flush(k);
+    }
+    if (k->flags & KDS_F_RESIDENT) {
+        int64_t quiet = kos_de_epoch(0, 0, KOS_DE_CLOSE);
+        if (quiet) {
+            return quiet;
+        }
     }
     kds_k = 0;
     teardown(k, size);

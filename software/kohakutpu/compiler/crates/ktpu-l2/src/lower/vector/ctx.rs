@@ -248,18 +248,13 @@ impl<'a> Ctx<'a> {
                 if d.inc != 0 && trips > 1 {
                     levels.push((d.inc, trips));
                 }
-                out.push(Access::strided(
-                    u,
-                    d.kind == "store",
-                    name,
-                    d.off,
-                    &levels,
-                    32,
-                ));
+                out.push(
+                    Access::strided(u, d.kind == "store", name, d.off, &levels, 32).described(d.ad),
+                );
                 continue;
             }
             let (lo, hi) = d.span(if d.inc != 0 { trips } else { 1 });
-            out.push(mem(u, d.kind == "store", name, lo, hi));
+            out.push(mem(u, d.kind == "store", name, lo, hi).described(d.ad));
         }
         for x in self.plan.values() {
             match x {

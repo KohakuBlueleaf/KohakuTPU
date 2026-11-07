@@ -535,13 +535,15 @@ fn logical_list(v: &Value) -> R<Vec<relayout::Logical>> {
     Ok(out)
 }
 
+fn composed_read(a: &Value, i: usize) -> bool {
+    a.get("composed")
+        .and_then(Value::as_array)
+        .is_some_and(|l| l.iter().any(|x| x.as_u64() == Some(i as u64)))
+}
+
 /// A pending read: composed when `composed` lists `i`, else planned.
 fn read_of(a: &Value, i: usize, steps: &Value, m: &Machine) -> R<prepared::Read> {
-    let listed = a
-        .get("composed")
-        .and_then(Value::as_array)
-        .is_some_and(|l| l.iter().any(|x| x.as_u64() == Some(i as u64)));
-    if listed {
+    if composed_read(a, i) {
         Ok(prepared::Read::Composed(logical_list(steps)?))
     } else {
         Ok(prepared::Read::Materialized(plan_list(steps, m)?))
@@ -940,10 +942,9 @@ fn row_operands_at(a: &mut Value, key: &str, first: i64) -> R<()> {
     Ok(())
 }
 
-/// The made operands of a `prepared.rows_kernel` whose every read is one
-/// relayout leading with the kernel's row axis (source and destination walks
-/// both `R` rows outermost), so a row share is the same relayout on its rows.
-/// None when any made operand reads otherwise.
+/// Made operands with composed maps or one materialized relayout whose walks
+/// both lead with `R` rows. Composed maps retain destination coordinates while
+/// the consumer operands select each share's rows.
 fn prepared_row_made(a: &Value) -> R<Option<Vec<usize>>> {
     let rows = int(a, "R")?;
     let mut made = Vec::new();
@@ -954,6 +955,10 @@ fn prepared_row_made(a: &Value) -> R<Option<Vec<usize>>> {
         let Ok(index) = index.parse::<usize>() else {
             return Ok(None);
         };
+        if composed_read(a, index) {
+            made.push(index);
+            continue;
+        }
         let [read] = reads.as_array().map(Vec::as_slice).unwrap_or(&[]) else {
             return Ok(None);
         };
@@ -964,12 +969,38 @@ fn prepared_row_made(a: &Value) -> R<Option<Vec<usize>>> {
             || !leading("dwalk")
             || by["args"]["dat"].as_i64() != Some(0)
             || by["args"]["m"].as_i64().is_none()
+            || !rows_outermost(&by["args"]["dwalk"], &a["operands"][index])
         {
             return Ok(None);
         }
         made.push(index);
     }
     Ok(Some(made))
+}
+
+/// Whether a materialized relayout's destination keeps each consumer row whole
+/// in its own row block: the row level outermost, every inner level within one
+/// row stride, and the consumer reading that stride as its pitch from offset 0.
+/// A row share is then the relayout's first rows.
+fn rows_outermost(dwalk: &Value, consumer: &Value) -> bool {
+    let levels: Option<Vec<(i64, i64)>> = dwalk.as_array().and_then(|levels| {
+        levels
+            .iter()
+            .map(|l| Some((l[0].as_i64()?, l[1].as_i64()?)))
+            .collect()
+    });
+    let Some(levels) = levels else { return false };
+    let Some(&(_, row)) = levels.first() else {
+        return false;
+    };
+    let inner = levels[1..].iter().try_fold(1i64, |reach, &(n, s)| {
+        (n >= 1 && s > 0).then(|| reach + (n - 1) * s)
+    });
+    let c = consumer.get("operand").unwrap_or(consumer);
+    inner.is_some_and(|reach| reach <= row)
+        && c["kind"] == "full"
+        && c["pitch"].as_i64() == Some(row)
+        && c["offset"].as_i64() == Some(0)
 }
 
 fn shifted_rows_call(gen: &str, a: &Value, first: i64, count: i64, m: &Machine) -> R<Value> {
@@ -984,7 +1015,7 @@ fn shifted_rows_call(gen: &str, a: &Value, first: i64, count: i64, m: &Machine) 
             let ops = operands(arg(a, "operands")?)?;
             local["R"] = count.into();
             for (i, o) in ops.iter().enumerate() {
-                if !made.contains(&i) {
+                if !made.contains(&i) || composed_read(a, i) {
                     operand_field(
                         &mut local["operands"][i],
                         "offset",
@@ -998,6 +1029,9 @@ fn shifted_rows_call(gen: &str, a: &Value, first: i64, count: i64, m: &Machine) 
                 vector::split::shifted(&out, first).offset,
             );
             for i in made {
+                if composed_read(a, i) {
+                    continue;
+                }
                 let args = &mut local["made"][i.to_string()][0]["made_by"]["args"];
                 let row_stride = args["walk"][0][1].as_i64().unwrap_or(0);
                 let at = args["at"].as_i64().unwrap_or(0);

@@ -43,6 +43,35 @@ static void ring_wait(uint64_t w, unsigned limit)
     } while (1);
 }
 
+/* EAGAIN leaves both the token count and egress frontier unchanged. */
+int k_slot_try(uint64_t release, uint64_t node, uint64_t slot, uint64_t amount)
+{
+    unsigned ring = (unsigned)release & 1;
+    if (release > 3 || node >= kn.n || slot < KOS_SLOT_USER || slot >= KOS_SLOT_LIMIT ||
+        !amount || amount > (ring ? KOS_SLOT_AMOUNT : 0xffffffffUL) || (!ring && node != kn.me)) {
+        return KOS_EINVAL;
+    }
+    if (!ring) {
+        if (hw_slot(slot) < amount) {
+            return KOS_EAGAIN;
+        }
+        if (!release) {
+            hw_wr(HW_R_IL + HW_IL_CONSUME, (amount << 32) | slot);
+            (void)hw_sig_word();
+            (void)hw_sig_word();
+        }
+    } else {
+        uint64_t w = hw_sig_word();
+        if (((rings_written - HW_SIG_SENT(w)) & 0xffffu) >= HW_RING_DEPTH) {
+            return KOS_EAGAIN;
+        }
+        hw_wr(HW_R_IL + HW_IL_RING, ((uint64_t)(release == 1) << 32) | (amount << 16) |
+              ((uint64_t)slot << 8) | kn.mesh_of[node]);
+        ++rings_written;
+    }
+    return KOS_OK;
+}
+
 void k_ring_word(uint64_t value)
 {
     ring_wait(hw_sig_word(), HW_RING_DEPTH - 1);

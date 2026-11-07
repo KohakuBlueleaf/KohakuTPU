@@ -238,6 +238,31 @@ the final completion retires its tag; preparation pins or resident caching may r
 packages share one upload. Recording retains host package bytes; prepared replay may also pin uploaded package storage. The queue-local fallback coalesces retired
 spans and never wraps over outstanding work.
 
+### Retained multi-node lists
+
+`PreparedQueueGroup` in the queue driver's `group.py` prepares one immutable LIST
+per node before publishing any of them. Each node consumes its own package through
+the existing RUN item protocol. Submission publishes and flushes every queue
+before collection waits for any of the group's terminal completions. Replays reuse
+the package and descriptor uploads. The group is single-flight and its completion
+object joins every participant; an individual successful CQ is not group success.
+A failed or uncertain publication quarantines all participating queues and keeps
+their uploads. A failed collection still attempts the other published completions,
+then keeps the epoch quarantined. No firmware queue wire changes are required.
+
+The application `PreparedFirmwareGraph` adapter holds an immutable
+`BoundGraphArtifact` and retains its allocations and receiver-scoped slots for the
+whole retained instance. The caller supplies the same card-wide `SlotLeases` pool
+to both firmware and OS adapters. Closing an active or failed instance refuses;
+only a stopped/reset card establishes safe reclamation after uncertainty. Slot
+leases do not alter the queue's epoch/version checks or the firmware's DE ring
+handling. A captured `PreparedSplitGraph` exposes `bind_artifact`,
+`prepare_firmware` and `prepare_kaos`: private scratch and physical aliases bind
+once under retained allocation generations, and both backend constructors consume
+that cached artifact. The common capability set supports static event effects;
+operations unsupported by the KAOS adapter refuse at preparation. The ordinary
+firmware submission path retains its existing capability set.
+
 ## 7. Host-owned boot regions
 
 The driver reserves each sysnode's QUEUE region from its staging allocator and

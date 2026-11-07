@@ -237,6 +237,16 @@ void kos_unlock(kos_lock_t *l)
     }
 }
 
+int64_t kos_de_epoch(const uint64_t *entries, unsigned count, unsigned operation)
+{
+    return kos_sys(SYS_DE_RUN, (uint64_t)entries, count, operation, 0).st;
+}
+
+int kos_slot(unsigned release, unsigned node, unsigned slot, unsigned amount)
+{
+    return (int)kos_sys(SYS_SLOT, release, node, slot, amount).st;
+}
+
 /* ---- channels ---- */
 int kos_send(unsigned node, unsigned chan, const void *buf, unsigned len)
 {

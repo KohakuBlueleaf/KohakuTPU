@@ -7,6 +7,7 @@
  *   m       one k_move -> "st" and the window writes by side and axis
  *   c       the stream counters -> "streams entries open load room tail span moves
  *           move_cycles", span the double's own cycles across every stream */
+#include <assert.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -89,7 +90,32 @@ int main(void)
     uint64_t w[4] = {1, 2, 3, 4}, span = 0;
     char op;
     while (scanf(" %c", &op) == 1) {
-        if (op == 's') {
+        if (op == 'e') {
+            assert(k_de_epoch(0, 0, KOS_DE_OPEN) == KOS_OK);
+            unsigned clears = dbl_clears;
+            dbl_retire = 1000;
+            words(1, 0);
+            --entries; /* no retirement frontier before the acquire */
+            assert(k_de_epoch(stream, entries, KOS_DE_FEED) == KOS_OK);
+            k_units_poll();
+            assert(dbl_pending());
+            dbl_peer_retires(X, Y);
+            for (unsigned i = 0; i < 4096; ++i) {
+                k_units_poll();
+            }
+            assert(k_unit_retired(0) == 2);
+            entries = 0;
+            put(KOS_DE_WAIT_CODE, 2);
+            assert(k_de_epoch(stream, entries, KOS_DE_FEED) == KOS_OK);
+            assert(dbl_clears == clears);
+            int64_t st = KOS_EAGAIN;
+            for (unsigned i = 0; i < 4096 && st == KOS_EAGAIN; ++i) {
+                st = k_de_epoch(0, 0, KOS_DE_FINISH);
+            }
+            assert(st == KOS_OK && kunits[0].sent == 2 && k_unit_retired(0) == 2);
+            puts("epoch retired local and incoming work");
+        }
+        else if (op == 's') {
             unsigned n, p;
             if (scanf("%u %u", &n, &p) != 2) {
                 return 2;

@@ -346,7 +346,7 @@ KohakuTPU's spaces and ops. Code: `software/kohakutpu/compiler/crates/ktpu-l2/sr
 |---|---|---|
 | `par v in LO..HI on node[E]` | | a `node N` block |
 | `for v in LO..HI [pipe=K]` (node scope) | | its stages in order; with `pipe`, the next K - 1 iterations' words may be sent ahead of this one's waits |
-| `par v in LO..HI on mg[E]` | `x = fill VIEW [share=cross\|port\|all] : mx7a[M, K] @A` | FILLs of the view's runs, a bank the latest sweep does not read; with `share`, one read for a group of clusters, the node the rendezvous |
+| `par v in LO..HI on mg[E]` | `x = fill VIEW [share=cross\|port\|all\|auto] : mx7a[M, K] @A` | FILLs of the view's runs, a bank the latest sweep does not read; with `share`, one read for a group of clusters, the node the rendezvous |
 | | `x = recv vc[H] : mx7a[M, K] @A` | `fill A recv n=` for the counted entries core H sent into this cluster's bank (`send`); a gemm reads them there (`aoff` / `boff`). Inside a loop, a **stream**: `fill A recv n=` waits for the counted entries in a two-slot ring from entry 0; the stage's first recv posts the ring as credits after the stage's own fills, each later one returns its slot after its last sweep but the last two |
 | | `c = zero : f32[M, N] @acc`; `c = gemm a, b[, c] : f32[M, N] @acc`; `gemm a[LO : +R, :], b` | the next sweep opens the tile; a GEMM; a row slice of an operand is the same bank `LO / 4 * nk` entries in |
 | | `drain c -> VIEW` | an emitting last sweep plus a fused DRAIN placed before the unit's next emitting sweep, else a DRAIN |
@@ -435,7 +435,7 @@ its words' cycles ahead of its first unpack.
 
 **Passes** (`ktpu-l2/src/passes/`, `ktpu_l2::compile_l1`): `place`, `space`,
 `share` (in a body over several nodes, a fill whose view does not name the
-cluster becomes `share=cross`), `split` (`gemm ... split`: the K loop),
+cluster becomes `share=auto`, resolved from physical port populations), `split` (`gemm ... split`: the K loop),
 `step` (a vector stream loop some view of which steps further a trip than a
 descriptor's 18-bit `ainc` reaches: its trips become a node-scope loop
 around the `par`, one trip a run, `for t in T..T + 1` inside; trips that

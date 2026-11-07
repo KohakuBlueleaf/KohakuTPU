@@ -625,7 +625,8 @@ pub fn lower(
     } else {
         best.parts
     };
-    Ok((parts, best.params, best.accesses))
+    let accesses = repetition::accesses(body, par, env, best.accesses)?;
+    Ok((parts, best.params, accesses))
 }
 
 /// `vsel D, A, B, ...` with A and B traded.
@@ -752,6 +753,7 @@ pub fn max_step(body: &Body, par: &Par, env: &Env, t: &Target) -> VResult<i64> {
 
 mod assign_typed;
 mod decompose;
+mod repetition;
 
 /// An image text with its header's name `name`.
 pub fn renamed(text: &str, name: &str) -> String {

@@ -292,6 +292,30 @@ static int64_t run_move(struct kds_node *k, struct kds_task *t)
     return r;
 }
 
+static int run_slot(struct kds_node *k, struct kds_part *p, unsigned i)
+{
+    const struct kds_task *t = &p->t[i];
+    unsigned release = t->kind == KDS_RELEASE_SLOT;
+    if (release && k->cpu_dirty && cached(k)) {
+        kos_release();
+        k->cpu_dirty = 0;
+    }
+    unsigned op = release ? (t->a[3] ? 1 : 3) : (t->a[3] ? 2 : 0);
+    int st = kos_slot(op, release ? (unsigned)t->a[2] : k->me,
+                      (unsigned)t->a[0], (unsigned)t->a[1]);
+    if (st == KOS_EAGAIN) {
+        return 1;
+    } else if (st) {
+        fail(k, p, i, st, 0);
+    } else {
+        if (!release) {
+            k->hw_dirty = 1;
+        }
+        complete(k, p, i);
+    }
+    return 0;
+}
+
 /* Run what is ready: NOP, CPU and MOVE tasks at once, unit tasks onto their
  * unit's pending list. */
 int kds_parts_run(struct kds_node *k)
@@ -299,13 +323,14 @@ int kds_parts_run(struct kds_node *k)
 #ifdef KOS_LAUNCH_RING
     uint64_t tw0 = kos_cycles();
 #endif
-    int work = 0;
+    int work = 0, blocked = 0;
     for (unsigned g = 0; g < KDS_GRAPHS; ++g) {
         struct kds_part *p = &k->part[g];
         if (p->state != LG_RUN || p->rhead == p->rtail) {
             continue;
         }
         uint64_t t0 = kos_now();
+        unsigned deferred = NONE;
         while (p->state == LG_RUN && p->rhead != p->rtail) {
             unsigned i = p->ready[p->rhead];
             p->rhead = (p->rhead + 1) % (p->n + 1);
@@ -313,6 +338,13 @@ int kds_parts_run(struct kds_node *k)
             work = 1;
             kds_trace(5, t->id, t->kind);
             switch (t->kind) {
+            case KDS_WAIT_SLOT:
+            case KDS_RELEASE_SLOT:
+                if (run_slot(k, p, i)) {
+                    p->next[i] = (uint16_t)deferred;
+                    deferred = i;
+                }
+                break;
             case KDS_NOP:
                 complete(k, p, i);
                 break;
@@ -348,6 +380,24 @@ int kds_parts_run(struct kds_node *k)
                 complete(k, p, i);
                 break;
             }
+            case KDS_DE_DRAIN:
+            case KDS_DE_FINISH: {
+                int64_t r = kos_de_epoch(0, 0, t->kind == KDS_DE_FINISH ? KOS_DE_FINISH : KOS_DE_DRAIN);
+                if (r == KOS_EAGAIN) {
+                    p->next[i] = (uint16_t)deferred;
+                    deferred = i;
+                } else if (r) {
+                    fail(k, p, i, r, 0);
+                } else {
+                    if (t->kind == KDS_DE_FINISH && p->de_live) {
+                        p->de_live = 0;
+                        --p->inflight;
+                    }
+                    complete(k, p, i);
+                }
+                break;
+            }
+            case KDS_DE_FEED:
             case KDS_DE_STREAM: {
 #ifdef KOS_LAUNCH_RING
                 uint64_t trl = kos_cycles();
@@ -363,7 +413,16 @@ int kds_parts_run(struct kds_node *k)
 #ifdef KOS_LAUNCH_RING
                 uint64_t tde = kos_cycles();
 #endif
-                int64_t r = kos_de_run(kds_arena_va(k, t->a[0]), (unsigned)t->a[1]);
+                int64_t r;
+                if (t->kind == KDS_DE_FEED) {
+                    if (!p->de_live) {
+                        p->de_live = 1;
+                        ++p->inflight;
+                    }
+                    r = kos_de_epoch(kds_arena_va(k, t->a[0]), (unsigned)t->a[1], KOS_DE_FEED);
+                } else {
+                    r = kos_de_run(kds_arena_va(k, t->a[0]), (unsigned)t->a[1]);
+                }
                 k->hw_dirty = 1;
 #ifdef KOS_LAUNCH_RING
                 kds_lring(KOS_LRING_STEP_SLOT)->cyc_wait = kos_cycles() - tde;
@@ -436,8 +495,15 @@ int kds_parts_run(struct kds_node *k)
                 break;
             }
         }
+        while (deferred != NONE && p->state == LG_RUN) {
+            unsigned i = deferred;
+            deferred = p->next[i];
+            push_ready(p, i);
+            blocked = 1;
+        }
         p->busy += kos_now() - t0;
     }
+    k->any_ready = blocked;
 #ifdef KOS_LAUNCH_RING
     kds_lring(KOS_LRING_SCRATCH)->cyc_walk += kos_cycles() - tw0;
 #endif

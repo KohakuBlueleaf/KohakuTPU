@@ -227,14 +227,15 @@ pub fn lower(
         format!("{output_name}+{}", output.off),
     ];
     let accesses = vec![
-        mem(&c.unit, false, input_name, lo, hi),
+        mem(&c.unit, false, input_name, lo, hi).described(0),
         mem(
             &c.unit,
             true,
             output_name,
             output.off,
             output.off + output.extent(),
-        ),
+        )
+        .described(1),
     ];
     Ok(Some((module, params, accesses)))
 }

@@ -172,6 +172,8 @@ void k_reply(unsigned node, uint64_t req, int64_t status, uint64_t value);
 void k_ring(unsigned node, unsigned slot, unsigned amount, int fence);
 /* A ring of interlink value `value`, once fewer than HW_RING_DEPTH are queued. */
 void k_ring_word(uint64_t value);
+int64_t k_de_epoch(const uint64_t *entries, unsigned count, unsigned operation);
+int k_slot_try(uint64_t release, uint64_t node, uint64_t slot, uint64_t amount);
 void k_rings_drain(void); /* every ring queued has left */
 
 /* ---- channels ---- */

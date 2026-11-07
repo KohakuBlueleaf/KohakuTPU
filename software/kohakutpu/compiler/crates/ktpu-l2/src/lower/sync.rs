@@ -74,6 +74,8 @@ pub struct Access {
     pub flow: bool,
     /// the exact memory footprint within `[lo, hi)`, when known
     pub footprint: Option<Arc<Footprint>>,
+    /// Descriptor whose base advances between repeated vector sends.
+    pub(crate) descriptor: Option<usize>,
 }
 
 impl Access {
@@ -86,6 +88,7 @@ impl Access {
             hi,
             flow: false,
             footprint: None,
+            descriptor: None,
         }
     }
 
@@ -128,6 +131,43 @@ impl Access {
             a.footprint = Some(Arc::new(f));
         }
         Some(a)
+    }
+
+    /// Associate a memory effect with its emitted descriptor.
+    pub(crate) fn described(mut self, descriptor: usize) -> Self {
+        self.descriptor = Some(descriptor);
+        self
+    }
+
+    /// The union of `count` sends whose descriptor base advances by `step`.
+    pub(crate) fn repeated(&self, count: i64, step: i64) -> Option<Self> {
+        let mut a = self.clone();
+        let reach = count.checked_sub(1)?.checked_mul(step)?;
+        a.lo = a.lo.checked_add(reach.min(0))?;
+        a.hi = a.hi.checked_add(reach.max(0))?;
+        if count > 1 && step != 0 {
+            if let Some(f) = &a.footprint {
+                let mut f = (**f).clone();
+                f.levels.push((step, count));
+                a.footprint = Some(Arc::new(f));
+            }
+        }
+        Some(a)
+    }
+
+    /// Physical identity for dependency comparisons; symbolic scratch stays local.
+    pub fn bound(&self, bindings: &BTreeMap<String, i64>) -> crate::ir::Result<Self> {
+        if self.key.0 != "mem" {
+            return Ok(self.clone());
+        }
+        let Some(&base) = bindings.get(&self.key.1) else {
+            return Ok(self.clone());
+        };
+        let mut a = self
+            .shifted(base)
+            .ok_or_else(|| crate::ir::Error::new("L2.ORDER.009", "bound access overflow"))?;
+        a.key = ("bound_dram".into(), String::new());
+        Ok(a)
     }
 
     /// The lines it touches: its footprint's, else every line of its range.

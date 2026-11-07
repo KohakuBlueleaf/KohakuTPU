@@ -111,6 +111,80 @@ client's node's memory, built in order with:
 | `kds_move(g, src, dst, words, pred, n)` | one mover copy of `words` 32-byte words from a buffer to a buffer of the same node or any node's landing zone | the source's node |
 | `kds_cpu(g, node, fn, a0, a1, a2, pred, n)` | `fn(args)` with `args` = {a0, a1, a2}; a nonzero return fails the task (the image is the same on every node, so `fn` is valid everywhere) | `node` |
 
+### Nonblocking leased events
+
+`KDS_WAIT_SLOT` carries the local user slot in `a[0]`, the amount in `a[1]`,
+and a peek flag in `a[3]` (zero consumes). `KDS_RELEASE_SLOT` carries slot,
+amount, destination OS node and fence flag in `a[0..3]`. Both records run on
+the submitting resident's node. Admission checks the slot range 9–15, count
+widths, flags and destination. Ordinary predecessor tasks remain local.
+
+An unavailable event or full ring egress defers the task on a pass-local list,
+using its existing task link. The ready ring drains completely, including newly
+ready successors, before deferred tasks return to its tail. Each pending
+operation is probed at most once per pass while other ready work reaches the feeder. Pending operations bound `SYS_EVENT` sleep to one cycle;
+the graph's ordinary deadline remains authoritative. Each probe is constant
+work, with no changes to unit-word dispatch or retirement. Dirty CPU writes
+are released before a ring; a successful acquire sets the existing hardware-dirty
+flag so later CPU readers use writeback plus invalidation. Unit-memory release
+frontiers remain the graph producer's responsibility. Release completion means
+enqueue, so slot reclamation additionally requires the receiver's consumption
+and the whole-epoch no-late-sender proof.
+
+The host `Graph.wait_slot` and `Graph.release_slot` builders create these explicit
+tasks. `Graph.package_parts` lowers KAPK `WAIT_SLOT` and RING, including
+embedded ENGINE rings, to these operations. Its node-local `KDS_DE_FEED` tasks
+append descriptors in one persistent epoch: they complete at enqueue, not unit
+retirement. Mailbox state, mover configuration and completion frontiers survive
+an acquire. `KDS_DE_DRAIN` waits nonblockingly for the queued publication frontier
+before a ring; `KDS_DE_FINISH` joins the epoch and rearms counters only after
+local work retires. Neither event pause resets native incoming completion counts.
+The adapter retains DE batching/fetch and does not relay graph edges through DEP.
+
+A local resident arms receive counters before READY, so early remote completions
+are counted even before its first feed. Counter indices are dense in local boot
+unit order rather than the full multi-node registry. Descriptor payload storage
+stays protected until FINISH; failure leaves it quarantined. `SYS_DE_RUN` keeps
+its synchronous operation for legacy streams and adds OPEN, FEED, DRAIN, FINISH
+and CLOSE operations in its third argument.
+
+### Node-local retained mailbox groups
+
+`ostpu capacity bytes retain local` takes a fourth numeric argument: `local=1`
+starts only the invoking node's server, while the default `0` keeps full-mask
+startup. A multi-part host starts one local resident per participant. The DONE
+granule's third word advertises `OSTPU_CAP_SLOTS` and, in local mode,
+`OSTPU_CAP_LOCAL | OSTPU_CAP_EPOCH`. Older images do not advertise these capabilities.
+
+`ResidentGraph.submit` publishes a request and returns its sequence token;
+`collect` reads the matching terminal status. `run` composes those operations.
+`PreparedMultiGraph` claims every resident, preflights every part before uploading,
+retains allocation references and user-slot leases, and publishes all local
+requests before collection. Its one completion object includes every node's
+result. Successful replay reuses the uploads and content/binding-derived epoch;
+another preparation cannot replace a claimed resident. One host lock protects
+single-flight transitions. Failure poisons the group and all residents and keeps
+pins and leases; a timeout is not permission to close or reclaim them. Collection
+still attempts the other published parts. Failure then publishes a request-only
+STOP (`OSTPU_REQ_CANCEL`, request bit 63) on every participant and attempts every
+acknowledgement without overwriting the active command's timeout/repeat count.
+The current execution remains governed by its execution bound. Unacknowledged
+stops remain quarantined; even an acknowledgement does not release failed epoch
+pins. `ostpu` retains task/data storage and the server after an unsuccessful
+epoch instead of freeing hardware-visible memory on STOP. A clean stop releases
+idle DE ownership, allowing another local resident on the running node.
+
+`Graph.package_parts` validates CPU ownership and translates each immutable bound
+node part using the existing package adapter's capabilities. `BoundGraphArtifact`
+contains the machine identity, node packages and binding-generation/layout metadata;
+its digest includes all of them. Its event admission checks balanced tokens for
+static RING/WAIT_SLOT and embedded ENGINE rings. Dynamic control/patch effects
+are outside the common KAOS package capability set and refuse at preparation.
+`PreparedSplitGraph.bind_artifact` binds its composed graph once, retaining private
+node-qualified scratch and canonical aliases. `prepare_firmware` and
+`prepare_kaos` consume the same cached artifact without a second address bind or
+slot allocation. The existing captured/eager submission entry remains available.
+
 ### Dependency-boundary timestamps
 
 `KDS_STAMP` writes four 64-bit words into a local, aligned 32-byte arena span:

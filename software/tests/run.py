@@ -126,7 +126,7 @@ SUITES = (
     Suite(
         "stages/dsl",
         ("kohakutpu/language", f"{COMPILER}/ktpu-kernels", f"{COMPILER}/ktpu-graph"),
-        budget=40.0,
+        budget=45.0,
         heavy=(
             (
                 "test_kernels.test_a_whole_row_band_is_taken_only_where_the_lowering_buffers_fit",

@@ -98,6 +98,10 @@ static inline uint64_t kos_fetch_add(volatile uint64_t *w, uint64_t v) { return 
 static inline uint64_t kos_load(volatile uint64_t *w) { return kos_atomic(w, KOS_A_LOAD, 0, 0); }
 int kos_wait(volatile uint64_t *w, uint64_t value, uint64_t timeout);
 int kos_barrier(uint64_t id, uint64_t parties);
+int64_t kos_de_epoch(const uint64_t *entries, unsigned count, unsigned operation);
+
+/* No cache sweep: the caller owns CPU release/acquire and producer fences. */
+int kos_slot(unsigned release, unsigned node, unsigned slot, unsigned amount);
 
 #define KOS_LOCK_SLOTS 64
 typedef struct {

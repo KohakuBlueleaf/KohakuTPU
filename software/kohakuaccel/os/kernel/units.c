@@ -26,6 +26,13 @@ static uint64_t retired[KOS_MAX_UNITS];
 static int de_mapped[KOS_MAX_UNITS];
 static uint32_t de_seen[KOS_MAX_UNITS];
 static int de_ready;
+/* A resident owns one descriptor epoch, armed before any part is published. */
+static struct {
+    int armed, failed, used;
+    uint64_t faults, dst, arg2, arg3;
+    uint32_t pushed;
+    uint16_t go[KOS_DE_QUEUE_DEPTH];
+} de_epoch;
 
 #ifdef KOS_SMALL_CALL
 #define UNIT_SMALL __attribute__((noinline, minsize))
@@ -116,10 +123,11 @@ void k_units_poll(void)
     }
     if (de_ready) {
         for (unsigned i = 0; i < knunits; ++i) {
-            if (!de_mapped[i]) {
+            unsigned mapped = (unsigned)de_mapped[i];
+            if (!mapped) {
                 continue;
             }
-            uint32_t c = (uint32_t)hw_rd(HW_R_DE_CTR + 8 * i) & 0xfff;
+            uint32_t c = (uint32_t)hw_rd(HW_R_DE_CTR + 8 * (mapped - 1)) & 0xfff;
             uint32_t d = (c - de_seen[i]) & 0xfff;
             de_seen[i] = c;
             kunits[i].done += d;
@@ -176,7 +184,7 @@ static __attribute__((noinline)) void mailbox(const struct kunit *u, uint64_t ds
  * counter i from now on. 0, or KOS_EINVAL when there is no engine. */
 static __attribute__((noinline)) int engine_own(unsigned i)
 {
-    if (i >= KOS_DE_MAX_UNITS || !kn.engine) {
+    if ((!de_mapped[i] && i >= KOS_DE_MAX_UNITS) || !kn.engine) {
         return KOS_EINVAL;
     }
     if (!de_ready) {
@@ -193,7 +201,7 @@ static __attribute__((noinline)) int engine_own(unsigned i)
         k_units_poll();
         hw_wr(HW_R_DE_MAP, (1UL << 31) | ((uint64_t)i << 16) | (uint64_t)kunits[i].u.y << 8 | kunits[i].u.x);
         de_seen[i] = (uint32_t)hw_rd(HW_R_DE_CTR + 8 * i) & 0xfff;
-        de_mapped[i] = 1;
+        de_mapped[i] = (int)i + 1;
     }
     return KOS_OK;
 }
@@ -458,17 +466,19 @@ static UNIT_SMALL int64_t de_wait_q(uint64_t faults0, uint64_t *prog, unsigned m
     }
 }
 
-static UNIT_SMALL void de_map_all(uint64_t valid)
+static UNIT_SMALL void de_map_all(uint64_t valid, int local)
 {
     hw_wr(HW_R_DE_CTL, valid ? 3 : 2);
     while (hw_rd(HW_R_DE_WAIT) & (1UL << 34)) {
     }
     de_ready = valid != 0;
-    for (unsigned u = 0; u < knunits && u < KOS_DE_MAX_UNITS; ++u) {
-        if (kunits[u].local) {
-            hw_wr(HW_R_DE_MAP, valid | ((uint64_t)u << 16) |
+    unsigned counter = 0;
+    for (unsigned u = 0; u < knunits; ++u) {
+        if (kunits[u].local && (local || u < KOS_DE_MAX_UNITS)) {
+            unsigned at = local ? counter++ : u;
+            hw_wr(HW_R_DE_MAP, valid | ((uint64_t)at << 16) |
                   ((uint64_t)kunits[u].u.y << 8) | kunits[u].u.x);
-            de_mapped[u] = valid != 0;
+            de_mapped[u] = valid ? (int)at + 1 : 0;
             de_seen[u] = 0;
         }
     }
@@ -483,26 +493,32 @@ static UNIT_SMALL int64_t de_room_q(uint64_t faults0, uint64_t *prog, unsigned m
     return st;
 }
 
-UNIT_SMALL int64_t k_de_stream(const uint64_t *entries, unsigned count)
+static UNIT_SMALL int64_t de_stream(const uint64_t *entries, unsigned count, int append)
 {
     if (!kn.engine || !HW_DE_MAGIC(hw_rd(HW_R_DE_WAIT))) {
         return KOS_EINVAL;
     }
     uint64_t t_open = hw_cycles(), prog = 0;
-    int64_t st = de_wait_q(kstat.faults, &prog, de_ready ? 0 : 0xffff, 2);
-    if (st) {
-        return st;
+    int64_t st = KOS_OK;
+    if (!append) {
+        st = de_wait_q(kstat.faults, &prog, de_ready ? 0 : 0xffff, 2);
+        if (st) {
+            return st;
+        }
+        de_map_all(1UL << 31, 0);
+        mv.ok = 0;
     }
-    de_map_all(1UL << 31);
-    mv.ok = 0;
     uint64_t t_load = hw_cycles(), t_tail = 0, room0 = kstat.cyc_de_room;
     /* the mailbox registers as this stream wrote them; a GO before any DST
      * reads as a fetch with no descriptor and is refused */
     uint64_t faults0 = kstat.faults, base = (uint64_t)(uintptr_t)entries;
-    uint64_t dst = ~0UL, arg2 = 0, arg3 = 0;
-    uint16_t q_go[KOS_DE_QUEUE_DEPTH];
-    uint32_t pushed = 0;
-    unsigned room = KOS_DE_QUEUE_DEPTH;
+    uint64_t dst = append ? de_epoch.dst : ~0UL;
+    uint64_t arg2 = append ? de_epoch.arg2 : 0, arg3 = append ? de_epoch.arg3 : 0;
+    uint16_t local_go[KOS_DE_QUEUE_DEPTH];
+    uint16_t *q_go = append ? de_epoch.go : local_go;
+    uint32_t pushed = append ? de_epoch.pushed : 0;
+    unsigned room = append ? KOS_DE_QUEUE_DEPTH - (unsigned)(hw_rd(HW_R_DE_WAIT) & 0xffff) :
+                            KOS_DE_QUEUE_DEPTH;
 #ifdef KOS_LAUNCH_RING
     uint64_t ts = hw_cycles();
 #endif
@@ -617,12 +633,26 @@ UNIT_SMALL int64_t k_de_stream(const uint64_t *entries, unsigned count)
     uint64_t tw = hw_cycles();
     k_lring_cur.cyc_submit += tw - ts;
 #endif
+    if (append) {
+        de_epoch.dst = dst;
+        de_epoch.arg2 = arg2;
+        de_epoch.arg3 = arg3;
+        de_epoch.pushed = pushed;
+        kstat.de_entries += count;
+        return KOS_OK;
+    }
     t_tail = hw_cycles();
     st = de_wait_q(faults0, &prog, 0, 1);
 #ifdef KOS_LAUNCH_RING
     k_lring_cur.cyc_wait += hw_cycles() - tw;
 #endif
 out:
+    if (append) {
+        de_epoch.pushed = pushed;
+        de_epoch.failed = 1;
+        hw_wr(HW_R_DE_CTL, 0);
+        return st;
+    }
     hw_wr(HW_R_DE_CTL, 0);
     k_units_poll();
     for (uint32_t iss = (uint32_t)(hw_rd(HW_R_DE_WAIT) >> 16) & 0xffff; iss < pushed; ++iss) {
@@ -635,7 +665,7 @@ out:
 #endif
         }
     }
-    de_map_all(0);
+    de_map_all(0, 0);
 #if defined(KOS_N1_MUT) && KOS_N1_MUT == 1
     for (unsigned u = 0; u < knunits; ++u) {
         retired[u] = kunits[u].sent;
@@ -658,6 +688,96 @@ out:
         kstat.cyc_de_tail += hw_cycles() - t_tail;
     }
     return qst ? qst : st ? st : (kstat.faults != faults0 ? KOS_EFAULT : KOS_OK);
+}
+
+UNIT_SMALL int64_t k_de_stream(const uint64_t *entries, unsigned count)
+{
+    int resident = de_epoch.armed;
+    if (resident) {
+        if (de_epoch.used) {
+            return KOS_EBUSY;
+        }
+        int64_t st = k_de_epoch(0, 0, KOS_DE_CLOSE);
+        if (st) {
+            return st;
+        }
+    }
+    int64_t st = de_stream(entries, count, 0);
+    if (resident) {
+        int64_t opened = k_de_epoch(0, 0, KOS_DE_OPEN);
+        return st ? st : opened;
+    }
+    return st;
+}
+
+UNIT_SMALL int64_t k_de_epoch(const uint64_t *entries, unsigned count, unsigned operation)
+{
+    if (!kn.engine || !HW_DE_MAGIC(hw_rd(HW_R_DE_WAIT)) || de_epoch.failed) {
+        return KOS_EINVAL;
+    }
+    if (operation == KOS_DE_FEED) {
+        if (!de_epoch.armed || !entries || !count || count > KOS_DE_MAX_ENTRIES) {
+            return KOS_EINVAL;
+        }
+        if (kstat.faults != de_epoch.faults) {
+            de_epoch.failed = 1;
+            return KOS_EFAULT;
+        }
+        de_epoch.used = 1;
+        return de_stream(entries, count, 1);
+    }
+    if (operation != KOS_DE_OPEN && operation != KOS_DE_FINISH && operation != KOS_DE_DRAIN && operation != KOS_DE_CLOSE) {
+        return KOS_EINVAL;
+    }
+    if (operation == KOS_DE_OPEN && de_epoch.armed) {
+        return KOS_EBUSY;
+    }
+    if (operation != KOS_DE_OPEN && !de_epoch.armed) {
+        return KOS_EINVAL;
+    }
+    k_units_poll();
+    uint64_t status = hw_rd(HW_R_DE_WAIT), mover = hw_rd(HW_R_MVSTAT);
+    if (operation != KOS_DE_OPEN &&
+        (kstat.faults != de_epoch.faults || HW_MV_FAULT(mover) || (status & (1UL << 35)))) {
+        de_epoch.failed = 1;
+        hw_wr(HW_R_DE_CTL, 0);
+        return KOS_EFAULT;
+    }
+    if (operation == KOS_DE_DRAIN) {
+        return (status & 0xffff) ? KOS_EAGAIN : KOS_OK;
+    }
+    if ((status & 0xffff) || HW_MV_BUSY(mover) || (hw_rd(NM(HW_NM_STAT)) & HW_NM_OFFERED)) {
+        return KOS_EAGAIN;
+    }
+    unsigned locals = 0;
+    for (unsigned u = 0; u < knunits; ++u) {
+        if (kunits[u].local) {
+            ++locals;
+            if ((int64_t)(kunits[u].sent - retired[u]) > 0) {
+                return KOS_EAGAIN;
+            }
+        }
+    }
+    if (locals > KOS_DE_MAX_UNITS) {
+        return KOS_EINVAL;
+    }
+    for (unsigned u = 0; u < knunits; ++u) {
+        if (kunits[u].local) {
+            kunits[u].sent = retired[u];
+        }
+    }
+    if (operation == KOS_DE_CLOSE) {
+        de_map_all(0, 1);
+        memset(&de_epoch, 0, sizeof de_epoch);
+        return KOS_OK;
+    }
+    de_map_all(1UL << 31, 1);
+    mv.ok = 0;
+    memset(&de_epoch, 0, sizeof de_epoch);
+    de_epoch.armed = 1;
+    de_epoch.faults = kstat.faults;
+    de_epoch.dst = ~0UL;
+    return KOS_OK;
 }
 
 static int64_t move_words(uint64_t src, uint64_t dst, uint64_t words)

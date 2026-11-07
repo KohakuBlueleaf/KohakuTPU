@@ -34,6 +34,10 @@ def exe(tmp_path_factory):
     return native.on_double(tmp_path_factory.mktemp("units"), "kos_units", SOURCES)
 
 
+def test_a_paused_epoch_keeps_incoming_completions_and_does_not_drain_its_prefix(exe):
+    assert native.run(exe, ["e"]) == ["epoch retired local and incoming work"]
+
+
 def after_peer(exe):
     return native.run(exe, ["s 2 1", "d", "d", "d", "d", "d", "d", "w"])
 

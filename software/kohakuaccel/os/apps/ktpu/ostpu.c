@@ -41,15 +41,16 @@ static int64_t ostpu_cpu_rw(const uint64_t *a)
 
 static int ostpu(int argc, char **argv)
 {
-    uint64_t num[3] = {256, 4096, 0};
+    uint64_t num[4] = {256, 4096, 0, 0};
     unsigned nn;
-    unsigned flags = kds_args(argc, argv, num, 3, &nn);
-    if (!num[0] || num[0] > KDS_MAXTASKS || !num[1]) {
+    unsigned flags = kds_args(argc, argv, num, 4, &nn);
+    if (!num[0] || num[0] > KDS_MAXTASKS || !num[1] || num[3] > 1) {
         return KOS_EINVAL;
     }
     volatile struct ostpu_mailbox *m = (volatile void *)((uintptr_t)kos_land() + MAILBOX);
     memset((void *)m, 0, sizeof *m);
-    int st = kds_start(flags, KDS_ARENA + num[0] * sizeof(struct kds_task) + num[1], KDS_ALL_NODES);
+    int st = kds_start(flags | (num[3] ? KDS_F_RESIDENT : 0), KDS_ARENA + num[0] * sizeof(struct kds_task) + num[1],
+                       num[3] ? 1u << kos_node() : KDS_ALL_NODES);
     if (st) {
         return st;
     }
@@ -73,17 +74,19 @@ static int ostpu(int argc, char **argv)
     m->task_cap = num[0];
     m->data_bytes = num[1];
     m->dpad[0] = (uint64_t)(uintptr_t)ostpu_cpu_rw;
+    m->dpad[1] = OSTPU_CAP_SLOTS | (num[3] ? OSTPU_CAP_LOCAL | OSTPU_CAP_EPOCH : 0);
     kos_release();
     __asm__ volatile("fence rw, rw" ::: "memory");
     m->magic = OSTPU_MAGIC;
     uint64_t seen = 0, ret_epoch = 0, ret_tasks = 0;
+    int failed_epoch = 0;
     for (;;) {
         while (m->request == seen) {
             kos_yield();
         }
         seen = m->request;
         __asm__ volatile("fence rw, rw" ::: "memory");
-        if (m->op == OSTPU_OP_STOP) {
+        if ((seen & OSTPU_REQ_CANCEL) || m->op == OSTPU_OP_STOP) {
             break;
         }
         struct kds_result r = {0};
@@ -152,6 +155,7 @@ static int ostpu(int argc, char **argv)
                 out[i] = bp[i] - ap[i];
             }
         }
+        failed_epoch |= r.status != KOS_OK;
         m->status = r.status;
         m->failed = r.failed;
         m->detail = (uint64_t)r.detail;
@@ -160,6 +164,12 @@ static int ostpu(int argc, char **argv)
         m->failed_repeat = completed;
         __asm__ volatile("fence rw, rw" ::: "memory");
         m->done = seen;
+    }
+    if (failed_epoch) {
+        m->status = KOS_EBUSY;
+        __asm__ volatile("fence rw, rw" ::: "memory");
+        m->done = seen;
+        return KOS_EBUSY;
     }
     if (num[2] && ret_epoch) {
         kds_retain(0);
