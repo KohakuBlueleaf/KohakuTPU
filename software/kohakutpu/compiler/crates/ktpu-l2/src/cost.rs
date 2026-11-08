@@ -36,7 +36,7 @@ pub fn cycles(module: &Module, name: &str, t: &Target) -> Result<i64> {
 pub fn local_cycles(module: &Module, name: &str, t: &Target) -> Result<Vec<i64>> {
     let body = module.body(name, "l1")?;
     let clusters = body.stmts.iter().any(sends_to_clusters);
-    if clusters && !crate::mutant::on(FLAT_SEND_MUTANT) {
+    if !crate::mutant::on(FLAT_SEND_MUTANT) {
         return resource::local_cycles(module, name, t);
     }
     let timed = timed_module(module);

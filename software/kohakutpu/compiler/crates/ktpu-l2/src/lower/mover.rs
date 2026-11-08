@@ -5,16 +5,18 @@
 //! transform's steps once per converted entry).
 
 mod burst;
+mod choose;
 mod lone;
 mod packing;
 pub mod quant_status;
+mod stream;
 mod tiles;
 mod views;
 mod walk;
 mod xform;
 
 pub use burst::burst_safe;
-pub use lone::{lone_copy, vector_copy};
+pub use lone::{chosen_copy, lone_copy, vector_copy};
 pub use packing::{composed_fits, quant_backend, vector_quant, Finite};
 pub use tiles::tile_transpose;
 

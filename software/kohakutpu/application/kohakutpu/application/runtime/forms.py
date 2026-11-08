@@ -572,22 +572,38 @@ def relayout_call(s: Step) -> dict:
 
 
 @lru_cache(maxsize=4096)
-def _decided(mode: str, read: str, launches: str, machine: str, mutant) -> bool:
-    return _rs.read_composed(mode, read, launches, machine)
+def _decided(mode: str, read: str, launches: str, machine: str, mutant, nodes) -> bool:
+    return _rs.read_composed(mode, read, launches, machine, nodes, mutant)
+
+
+def sequence_choice(dev, read: dict | list, launches: list, mode: str) -> bool:
+    """Price whole alternatives under their emitted schedules and physical grant."""
+    if mode == "off":
+        return False
+
+    def scheduled(call):
+        generator = call["gen"]
+        return {
+            "gen": generator,
+            "args": generated.prepared(generator, call["args"]),
+            "force": generated.split_option(generator),
+        }
+
+    reads = read if isinstance(read, list) else [read]
+    nodes = (dev.home,) if dev.home is not None else tuple(dev.card.nodes)
+    return _decided(
+        mode,
+        json.dumps([scheduled(call) for call in reads], sort_keys=True),
+        json.dumps([scheduled(call) for call in launches], sort_keys=True),
+        generated.rs.machine_json(dev.machine),
+        generated.rs._MUTANT.get(),
+        nodes,
+    )
 
 
 def composed(dev, read: dict, launches: list) -> bool:
-    """Whether the kernel of call `read` reads composed where `launches`
-    would make its operands (`_rs.read_composed`), decided once a program."""
-    if COMPOSED == "off":
-        return False
-    return _decided(
-        COMPOSED,
-        json.dumps(read, sort_keys=True),
-        json.dumps(launches, sort_keys=True),
-        generated.rs.machine_json(dev.machine),
-        generated.rs._MUTANT.get(),
-    )
+    """Whether the complete composed alternative wins for this device's grant."""
+    return sequence_choice(dev, read, launches, COMPOSED)
 
 
 def plans_of(dev, steps) -> tuple | None:
@@ -749,13 +765,7 @@ def writer_quant(dev, key: tuple) -> dict | None:
         "gen": "matmul.quant_kernel",
         "args": dict(args, prepared=composed, composed=[0]),
     }
-    if not _decided(
-        "on",
-        json.dumps(read, sort_keys=True),
-        "[]",
-        generated.rs.machine_json(dev.machine),
-        generated.rs._MUTANT.get(),
-    ):
+    if not sequence_choice(dev, read, [], "on"):
         return None
     return dict(out, cols=dp, src=vars(laid), composed=composed)
 

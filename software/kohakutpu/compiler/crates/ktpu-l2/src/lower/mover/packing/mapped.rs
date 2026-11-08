@@ -58,6 +58,8 @@ struct Options {
     pipeline: bool,
     zero_classifier: bool,
     lift: bool,
+    direct_words: bool,
+    finish_groups: bool,
 }
 
 fn image(
@@ -79,6 +81,15 @@ fn image(
     } = job;
     let (strides, steady, overlap) = (*strides, *steady, *overlap);
     let n = shapes.len();
+    let sources = shared_source.iter().filter(|&&shared| !shared).count();
+    let mut source_of = vec![0usize; n];
+    let mut next_source = 0;
+    for (i, &shared) in shared_source.iter().enumerate() {
+        if !shared {
+            next_source += 1;
+        }
+        source_of[i] = next_source - 1;
+    }
     let args = (0..n)
         .flat_map(|i| {
             if shared_source[i] {
@@ -100,11 +111,12 @@ fn image(
         if !shared_source[i] {
             let (dims, _, _) = s.descriptor_transfers(t, t.read.pack_gather_words);
             lines.push(format!(
-                "    desc a{i} = src{i} walk=({})",
+                "    desc a{} = src{i} walk=({})",
+                source_of[i],
                 format_walk(&dims)
             ));
         }
-        lines.push(format!("    desc a{} = dst{i} walk=(32, 4)", n + i));
+        lines.push(format!("    desc a{} = dst{i} walk=(32, 4)", sources + i));
     }
     if checked {
         lines.extend(["    seti s2 = 65536.0".into(), "    seti s3 = 16.0".into()]);
@@ -121,7 +133,7 @@ fn image(
         lift: options.lift,
     };
     for i in 0..n {
-        lines.push(format!("    ainc a{} += {}", n + i, strides.1));
+        lines.push(format!("    ainc a{} += {}", sources + i, strides.1));
     }
     // Entries sharing a fetch exchange its words together, or not at all.
     let exchanged = (0..n)
@@ -131,65 +143,33 @@ fn image(
             shapes[first..end].iter().all(|s| s.exchange.is_some())
         })
         .collect::<Vec<_>>();
+    let direct = (0..n)
+        .map(|i| {
+            let first = (0..=i).rev().find(|&k| !shared_source[k]).unwrap_or(0);
+            let end = (i + 1..n).find(|&k| !shared_source[k]).unwrap_or(n);
+            options.direct_words && shapes[first..end].iter().all(Shape::direct_words)
+        })
+        .collect::<Vec<_>>();
     if exchanged.iter().any(|&x| x) {
         Shape::exchange_masks(&mut lines);
     }
-    let iteration = |prefetch: bool| {
-        let mut code = Vec::new();
-        for (i, shape) in shapes.iter().enumerate() {
-            if !shared_source[i] {
-                if !on("l2.readmap/no-fill-wait") {
-                    code.push("    vsync fe on=fill".into());
-                }
-                if exchanged[i] {
-                    Shape::exchange_source(slot_of[i], readmap::SPARE, pack.pipeline, &mut code);
-                } else {
-                    shape.unpack(slot_of[i], &mut code);
-                }
-                if overlap {
-                    if let Some(next_i) = (i + 1..n).find(|&k| !shared_source[k]) {
-                        fill(
-                            &shapes[next_i],
-                            next_i,
-                            slot_of[next_i],
-                            strides.0,
-                            steady,
-                            t,
-                            &mut code,
-                        );
-                    }
-                }
-            }
-            if exchanged[i] {
-                shape.exchanged(4 * i, readmap::SPARE, &mut code);
-            } else {
-                shape.rearrange(4 * i, pack.pipeline, &mut code);
-            }
-            if !shared_source[i] && !overlap {
-                if let Some(next_i) = (i + 1..n).find(|&k| !shared_source[k]) {
-                    fill(
-                        &shapes[next_i],
-                        next_i,
-                        slot_of[next_i],
-                        strides.0,
-                        steady,
-                        t,
-                        &mut code,
-                    );
-                }
-            }
-        }
-        if prefetch {
-            fill(&shapes[0], 0, 0, strides.0, steady, t, &mut code);
-        }
+    let finish = |first: usize, end: usize, code: &mut Vec<String>| {
         if overlap && !on("l2.readmap/no-output-reuse-wait") {
             code.push("    vsync pack on=drain".into());
         }
-        pack.batch(0, 4, n as i64, 256, "", "    ", &mut code);
+        pack.batch(
+            4 * first as i64,
+            4,
+            (end - first) as i64,
+            256 + 4 * first as i64,
+            "",
+            "    ",
+            code,
+        );
         if pack.pipeline {
             code.push("    vsync drain on=pack".into());
         }
-        for (i, offsets) in copies.iter().enumerate() {
+        for (i, offsets) in copies.iter().enumerate().take(end).skip(first) {
             for (j, &offset) in offsets.iter().enumerate() {
                 if on("l2.readmap/drop-fanout") && j > 0 {
                     continue;
@@ -200,10 +180,80 @@ fn image(
                         .copied()
                         .unwrap_or(if steady { strides.1 } else { offset });
                 code.extend([
-                    format!("    ainc a{} += {}", n + i, next - offset),
-                    format!("    vdrain a{} <- l1[{}] rel", n + i, 256 + i * 4),
+                    format!("    ainc a{} += {}", sources + i, next - offset),
+                    format!("    vdrain a{} <- l1[{}] rel", sources + i, 256 + i * 4),
                 ]);
             }
+        }
+    };
+    let iteration = |prefetch: bool| {
+        let mut code = Vec::new();
+        for (i, shape) in shapes.iter().enumerate() {
+            if !shared_source[i] {
+                if !on("l2.readmap/no-fill-wait") {
+                    code.push("    vsync fe on=fill".into());
+                }
+                if direct[i] {
+                    // Each entry reads its final chunks from the shared L1 tile.
+                } else if exchanged[i] {
+                    Shape::exchange_source(slot_of[i], readmap::SPARE, pack.pipeline, &mut code);
+                } else {
+                    shape.unpack(slot_of[i], &mut code);
+                }
+                if prefetch
+                    && options.finish_groups
+                    && !direct[i]
+                    && !(i + 1..n).any(|k| !shared_source[k])
+                {
+                    fill(&shapes[0], 0, 0, strides.0, steady, t, &mut code);
+                }
+                if overlap {
+                    if let Some(next_i) = (i + 1..n).find(|&k| !shared_source[k]) {
+                        fill(
+                            &shapes[next_i],
+                            source_of[next_i],
+                            slot_of[next_i],
+                            strides.0,
+                            steady,
+                            t,
+                            &mut code,
+                        );
+                    }
+                }
+            }
+            if direct[i] {
+                shape.unpack_words(4 * i, slot_of[i], &mut code);
+            } else if exchanged[i] {
+                shape.exchanged(4 * i, readmap::SPARE, &mut code);
+            } else {
+                shape.rearrange(4 * i, pack.pipeline, &mut code);
+            }
+            if !shared_source[i] && !overlap {
+                if let Some(next_i) = (i + 1..n).find(|&k| !shared_source[k]) {
+                    fill(
+                        &shapes[next_i],
+                        source_of[next_i],
+                        slot_of[next_i],
+                        strides.0,
+                        steady,
+                        t,
+                        &mut code,
+                    );
+                }
+            }
+            if options.finish_groups && (i + 1 == n || !shared_source[i + 1]) {
+                let first = (0..=i).rev().find(|&k| !shared_source[k]).unwrap_or(0);
+                if prefetch && i + 1 == n && direct[i] {
+                    fill(&shapes[0], 0, 0, strides.0, steady, t, &mut code);
+                }
+                finish(first, i + 1, &mut code);
+            }
+        }
+        if prefetch && !options.finish_groups {
+            fill(&shapes[0], 0, 0, strides.0, steady, t, &mut code);
+        }
+        if !options.finish_groups {
+            finish(0, n, &mut code);
         }
         code
     };
@@ -403,6 +453,7 @@ fn schedule(
     env: &Env,
     tg: &Target,
     checked: bool,
+    coalesce: bool,
 ) -> Result<Option<Schedule>> {
     let st = &op.st;
     let err = |s: &str| fail(body, st, "L2.READ.001", s.to_owned());
@@ -425,22 +476,53 @@ fn schedule(
     {
         return Err(err("read_map source does not cover original FP16 words"));
     }
-    let mut equal = BTreeMap::<(Shape, i64), Vec<i64>>::new();
+    let mut entries = Vec::new();
     for a in 0..sl[0].0 {
         for b in 0..sl[1].0 {
             for c in 0..sl[2].0 {
                 for d in 0..sl[3].0 {
                     let origin = (a * sl[0].1 + b * sl[1].1 + c * sl[2].1 + d * sl[3].1) / 2;
                     let entry = window.entry(origin);
-                    let mut tile = map.tile(&entry, knobs);
-                    tile.shape.exchange = map.exchange(&banded(&entry), 4, &tile);
-                    equal
-                        .entry((tile.shape, tile.anchor))
-                        .or_default()
-                        .push(base + a * dl[0].1 + b * dl[1].1 + c * dl[2].1 + d * dl[3].1);
+                    let dest = base + a * dl[0].1 + b * dl[1].1 + c * dl[2].1 + d * dl[3].1;
+                    entries.push((entry, dest));
                 }
             }
         }
+    }
+    let mut equal = BTreeMap::<(Shape, i64), Vec<i64>>::new();
+    let width = if coalesce {
+        knobs.image_entries.min(tg.machine.vc.preds as usize).max(1)
+    } else {
+        1
+    };
+    let mut at = 0;
+    while at < entries.len() {
+        let mut end = at + 1;
+        let mut positions = entries[at].0.clone();
+        let mut tile = map.tile(&positions, knobs);
+        while end < entries.len() && end - at < width {
+            let mut joined = positions.clone();
+            joined.extend_from_slice(&entries[end].0);
+            let trial = map.tile(&joined, knobs);
+            if trial.shape.words.len() > knobs.lattice_words.min(64) {
+                break;
+            }
+            positions = joined;
+            tile = trial;
+            end += 1;
+        }
+        for (i, (entry, dest)) in entries[at..end].iter().enumerate() {
+            let mut shape = tile.shape.clone();
+            shape
+                .segments
+                .retain(|s| (8 * i..8 * (i + 1)).contains(&s.chunk));
+            for segment in &mut shape.segments {
+                segment.chunk -= 8 * i;
+            }
+            shape.exchange = map.exchange(&banded(entry), 4, &tile);
+            equal.entry((shape, tile.anchor)).or_default().push(*dest);
+        }
+        at = end;
     }
     let limit = tg.step();
     let reach = limit / 2;
@@ -477,7 +559,9 @@ fn schedule(
     let quant_cores = tg.machine.quant_cores() as usize;
     let image_entries = knobs.image_entries.min(tg.machine.vc.preds as usize);
     let total_items: usize = by_anchor_words.values().map(Vec::len).sum();
-    let max_chunk = (total_items / quant_cores).clamp(1, image_entries);
+    let max_chunk = (total_items / quant_cores)
+        .clamp(1, image_entries)
+        .min(tg.descriptors - 1);
     let mut buckets =
         BTreeMap::<(Vec<Shape>, Vec<Vec<i64>>), BTreeMap<(i64, Vec<i64>), SuperEntry>>::new();
     for ((anchor, _), mut items) in by_anchor_words {
@@ -570,6 +654,8 @@ fn schedule(
     let cores = tg.machine.quant_cores().min(entries.len() as i64).max(1) as usize;
     let overlap = flag(body, op, env, "overlap")?;
     let options = Options {
+        direct_words: coalesce,
+        finish_groups: coalesce,
         classifier_overlap: flag(body, op, env, "classifier_overlap")?,
         pipeline: flag(body, op, env, "pipeline")?,
         zero_classifier: flag(body, op, env, "zero_classifier")?,
@@ -668,7 +754,7 @@ fn schedule(
 /// The machine holds this composed pack: its layout, and every lane program in
 /// its IMEM. A pack that does not fit reads materialized.
 pub fn fits(body: &Body, op: &Op, env: &Env, tg: &Target, checked: bool) -> Result<bool> {
-    Ok(readmap::fits_layout(tg) && schedule(body, op, env, tg, checked)?.is_some())
+    Ok(readmap::fits_layout(tg) && schedule(body, op, env, tg, checked, false)?.is_some())
 }
 
 pub(super) fn quant(
@@ -687,11 +773,57 @@ pub(super) fn quant(
         ));
     }
     let checked = status.is_some();
-    let Some(plan) = schedule(body, op, env, tg, checked)? else {
+    let tiled_policy = op
+        .st
+        .kw("source_tiles")
+        .map(|_| flag(body, op, env, "source_tiles"))
+        .transpose()?;
+    if tiled_policy == Some(true) {
+        let Some(plan) = schedule(body, op, env, tg, checked, true)? else {
+            return Err(err(
+                "this read is materialized: a tile's lane program exceeds IMEM",
+            ));
+        };
+        return emit(body, op, tg, images, status.as_ref(), &plan);
+    }
+    let Some(plan) = schedule(body, op, env, tg, checked, false)? else {
         return Err(err(
             "this read is materialized: a tile's lane program exceeds IMEM",
         ));
     };
+    let tag = images.len();
+    let original = emit(body, op, tg, images, status.as_ref(), &plan)?;
+    let mut candidates = vec![(original, images.split_off(tag))];
+    if plan
+        .streams
+        .iter()
+        .flatten()
+        .any(|job| job.shapes.iter().any(Shape::direct_words))
+    {
+        let mut direct = plan;
+        direct.options.direct_words = true;
+        let stage = emit(body, op, tg, images, status.as_ref(), &direct)?;
+        candidates.push((stage, images.split_off(tag)));
+    }
+    if tiled_policy != Some(false) {
+        if let Some(tiled) = schedule(body, op, env, tg, checked, true)? {
+            let stage = emit(body, op, tg, images, status.as_ref(), &tiled)?;
+            candidates.push((stage, images.split_off(tag)));
+        }
+    }
+    super::super::choose::select(candidates, images, tg)
+}
+
+fn emit(
+    body: &Body,
+    op: &Op,
+    tg: &Target,
+    images: &mut Vec<String>,
+    status: Option<&Finite>,
+    plan: &Schedule,
+) -> Result<Stage> {
+    let st = &op.st;
+    let checked = status.is_some();
     let cores = plan.streams.len().max(1);
     let units = (0..cores).map(|i| format!("vc[{i}]")).collect::<Vec<_>>();
     if let Some(Finite::Deferred(s)) = &status {

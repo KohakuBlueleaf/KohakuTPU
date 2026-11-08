@@ -266,8 +266,8 @@ def test_matmul_then_activation(same):
 
 
 def test_conv(same):
-    x = R.normal(size=(2, 1, 12, 12))
-    w = R.normal(size=(4, 1, 3, 3))
+    # Keep the numerical sample independent of test order and cache warmth.
+    x, w = _normal((2, 1, 12, 12), (4, 1, 3, 3))
     same(lambda x, w: x.conv2d(w, padding=1), x, w, tolerance=MX7)
 
 

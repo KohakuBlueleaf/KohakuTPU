@@ -2105,11 +2105,21 @@ pub fn call_split(
     request: &crate::split::SplitRequest,
     m: &Machine,
 ) -> R<crate::split::PlannedKernel> {
-    ktpu_graph::with_cycle_cache(|| call_split_with_timing(gen, a, request, m, false))
+    call_split_with_timing(gen, a, request, m, false)
 }
 
 /// Sequence stages need local timing even when their only option is unsplit.
-pub(crate) fn call_split_with_timing(
+pub fn call_split_with_timing(
+    gen: &str,
+    a: &Value,
+    request: &crate::split::SplitRequest,
+    m: &Machine,
+    price_unsplit: bool,
+) -> R<crate::split::PlannedKernel> {
+    ktpu_graph::with_cycle_cache(|| split_with_timing(gen, a, request, m, price_unsplit))
+}
+
+fn split_with_timing(
     gen: &str,
     a: &Value,
     request: &crate::split::SplitRequest,
@@ -2252,6 +2262,16 @@ pub(crate) fn call_split_with_timing(
             request,
             m,
         );
+    }
+    if gen == "relayout.relayout_kernel" && request.force.as_deref() != Some("p1") {
+        if let Ok(plan) = relayout_plan(made_by(arg(a, "pl")?, "relayout.plan")?, m)? {
+            if let Some(words) = relayout::split::independent_words(&plan) {
+                let mut single = request.clone();
+                single.force = Some("p1".into());
+                let original = call_split_with_timing(gen, a, &single, m, true)?;
+                return relayout::split::kernel(&plan, words, original, request, m);
+            }
+        }
     }
     if gen == "transpose.reverse_kernel" && request.force.as_deref() != Some("p1") {
         return transpose::reverse_split(
@@ -2456,7 +2476,7 @@ pub(crate) fn call_split_with_timing(
             "indexed lane classes share destination lines; table ports select write locations and padded classes repeat destinations",
         ),
         "relayout.relayout_kernel" => Some(
-            "relayout parts share staged buffers and ordered line-merge layers; table ports bind gather/scatter destinations",
+            "complete local relayout; any indexed destinations and ordered merge layers retain one owner",
         ),
         "matmul.quant_kernel" if a.get("shape_class").is_some() => Some(
             "classed packing preserves the complete node-loop entry schedule and finite-status reduction",

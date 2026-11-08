@@ -446,9 +446,12 @@ name the same bytes. No shared-DRAM key contains the issuing mesh.
 An access has a resolved byte footprint, a start clock and a completion clock.
 RAW and WAR conflict unless one completion happens before the other start.
 WAW additionally respects one source's ordered write-response stream; it does
-not publish that stream to a reader. Read/read is independent. DRAM write
-intervals are also rounded to physical 64-byte boundaries for ownership: disjoint bytes within a line still require
-one writer or proved serialization. Staging is not a DRAM read/modify/write line.
+not publish that stream to a reader. Read/read is independent. CPU lane strobes
+and native compute-unit word strobes preserve unwritten bytes through MAG's DRAM
+width conversion. Those writers own their resolved byte intervals, including
+when independent words share a physical 64-byte line. Other DRAM writes retain
+whole-line ownership: disjoint bytes within a line require one writer or proved
+serialization. Staging is not a DRAM read/modify/write line.
 
 MG fills, the shared-fill leader, plain and emitting drains, VC descriptor walks,
 mover and transform reads/writes, CPU protocol accesses, fetched instructions,

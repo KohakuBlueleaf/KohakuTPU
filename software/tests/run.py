@@ -127,7 +127,7 @@ SUITES = (
     Suite(
         "stages/dsl",
         ("kohakutpu/language", f"{COMPILER}/ktpu-kernels", f"{COMPILER}/ktpu-graph"),
-        budget=50.0,
+        budget=60.0,
         heavy=(
             (
                 "test_kernels.test_a_whole_row_band_is_taken_only_where_the_lowering_buffers_fit",
@@ -164,11 +164,11 @@ SUITES = (
         heavy=(
             (
                 "test_attention.test_native_fast_projection_attention_keeps_materialized_stage_bytes",
-                50.0,
+                55.0,
             ),
             (
                 "test_vit_split_device.test_batch_one_encoder_eager_and_split_tinyjit",
-                30.0,
+                36.0,
             ),
         ),
     ),

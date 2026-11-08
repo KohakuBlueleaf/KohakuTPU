@@ -1,10 +1,12 @@
 """Admission prices a call from its scheduled L1: the price a card build gives."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from kohakutpu.application.kernels.template import GraphKernel
+from kohakutpu.application.runtime import forms
 from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.stack import kernel as K
 from kohakutpu.stack.rs import _rs
@@ -75,3 +77,55 @@ def test_graph_compile_cache_distinguishes_programs_with_the_same_display_text()
     assert second.l1_text == expected["l1"]
     assert K.compile(traces[0], machine=machine) is first
     assert K.compile(traces[1], machine=machine) is second
+
+
+def test_sequence_decisions_follow_the_launch_grant_and_family_policy(monkeypatch):
+    machine = machine_of("multimesh_v9t8")
+    dev = SimpleNamespace(machine=machine, home=None, card=SimpleNamespace(nodes=(0,)))
+    monkeypatch.setattr(forms, "COMPOSED", "cost")
+    monkeypatch.setenv("KTPU_SPLIT_CONVERT_WALK_KERNEL_OPTION", "p1")
+    monkeypatch.delenv("KTPU_SPLIT_CONVERT_COPY_KERNEL_OPTION", raising=False)
+    nbytes = 262144
+    read = {
+        "gen": "convert.walk_kernel",
+        "args": {
+            "src_bytes": nbytes,
+            "levels": [[nbytes // 32, 32]],
+            "at": 0,
+            "dst_bytes": nbytes,
+            "dlevels": [[nbytes // 32, 32]],
+            "dat": 0,
+        },
+    }
+    materialized = [{"gen": "convert.copy_kernel", "args": {"nbytes": nbytes}}]
+    assert forms.composed(dev, read, materialized)
+    dev.card.nodes = (3, 1, 0, 2)
+    assert not forms.composed(dev, read, materialized)
+    dev.home = 3
+    assert forms.composed(dev, read, materialized)
+    dev.home = None
+    assert not forms.composed(dev, read, materialized)
+    monkeypatch.delenv("KTPU_SPLIT_CONVERT_WALK_KERNEL_OPTION")
+    assert forms.composed(dev, read, materialized)
+    dev.card.nodes = (0,)
+    assert forms.composed(dev, read, materialized)
+
+
+def test_admission_supplies_the_emitted_plan_without_replanning():
+    machine = machine_of("multimesh_v9t8").machine_json
+    call = {"gen": "convert.copy_kernel", "args": {"nbytes": 7360}}
+    nodes = [3, 1, 0, 2]
+    encoded = json.dumps(call)
+    assert _rs.read_composed("cost", encoded, f"[{encoded}]", machine, nodes=nodes)
+    admitted = _rs.bind_cache_stats()
+    _rs.generate_split(call["gen"], json.dumps(call["args"]), machine, nodes)
+    emitted = _rs.bind_cache_stats()
+    assert emitted["split_plans"] == admitted["split_plans"]
+    assert emitted["split_plan_hits"] > admitted["split_plan_hits"]
+
+    other_nodes = list(reversed(nodes))
+    _rs.generate_split(call["gen"], json.dumps(call["args"]), machine, other_nodes)
+    changed = _rs.bind_cache_stats()
+    assert changed["split_plans"] > emitted["split_plans"]
+    _rs.generate_split(call["gen"], json.dumps(call["args"]), machine, nodes)
+    assert _rs.bind_cache_stats()["split_plans"] == changed["split_plans"]

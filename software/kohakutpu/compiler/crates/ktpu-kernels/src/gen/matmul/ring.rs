@@ -30,6 +30,18 @@ pub struct Ring {
 /// quant ring, at most
 /// `knobs.quant_ring`, where its slots fit the room the waves leave.
 pub fn resolve(mm: &Mm, e: &E, out: &Operand, knobs: &Knobs, mach: &Machine) -> Ring {
+    resolve_layout(mm, e, out, knobs, mach, false)
+}
+
+/// Physical tiled-to-row-major conversion can be explicit work in the ring.
+pub(super) fn resolve_layout(
+    mm: &Mm,
+    e: &E,
+    out: &Operand,
+    knobs: &Knobs,
+    mach: &Machine,
+    layout: bool,
+) -> Ring {
     let hw = Hw::of(mach);
     let ntn = mm.n / mm.tn;
     let tiles = if expr::reduces(e).is_empty() && out.kind != Kind::Row {
@@ -40,9 +52,8 @@ pub fn resolve(mm: &Mm, e: &E, out: &Operand, knobs: &Knobs, mach: &Machine) -> 
     let groups = mm.bt * (mm.mp / mm.tm) * (ntn / tiles);
     let lanes = groups.min((hw.mg / tiles).max(1));
     let wave = 2 * lanes * mm.tm * tiles * mm.tn;
-    // An epilogue of no op has no core work for the waves to overlap.
     let depth = match expr::count(e) {
-        0 => 0,
+        0 if !layout => 0,
         _ => knobs.ring_depth.min(mach.stage_room() / wave),
     };
     let row_tiles = mm.bt * (mm.mp / mm.tm);
@@ -76,6 +87,27 @@ pub fn resolve(mm: &Mm, e: &E, out: &Operand, knobs: &Knobs, mach: &Machine) -> 
         quant,
         qa_slots: slots(quant),
     }
+}
+
+/// Resident pairs use two row groups per cluster, with the same staging bound.
+pub(super) fn resident(mut ring: Ring, mm: &Mm, knobs: &Knobs, mach: &Machine) -> Ring {
+    let hw = Hw::of(mach);
+    // Pair slots never cross a batch or column. An odd row tail leaves its
+    // second slot unused by both producer and epilogue.
+    ring.groups = mm.bt * (2 * cdiv(mm.mp / mm.tm, 2)) * (mm.n / mm.tn);
+    ring.lanes = ring.groups.min(2 * hw.mg);
+    let wave = 2 * ring.lanes * mm.tm * ring.tiles * mm.tn;
+    ring.depth = ring.depth.min(mach.stage_room() / wave);
+    ring.parts = if knobs.split_vc && ring.depth > 0 {
+        (1..=(hw.vc / ring.lanes).max(1))
+            .rev()
+            .find(|p| mm.tm % (p * mm.quantum) == 0)
+            .expect("one part divides a tile")
+    } else {
+        1
+    };
+    ring.tail_bands = knobs.tail_bands && ring.depth > 0;
+    ring
 }
 
 impl Ring {
@@ -250,8 +282,19 @@ pub(super) fn schedule(
     made: &BTreeMap<usize, prepared::Read>,
     origin: split::Origin,
     peer: Option<&peer::Plan<'_>>,
+    reuse_b: bool,
 ) -> R<()> {
     let hw = &Hw::of(mach);
+    let group = |gi: &Idx| {
+        if reuse_b {
+            let rows = 2 * cdiv(mm.mp / mm.tm, 2);
+            let per_batch = rows * (mm.n / mm.tn);
+            let at = gi.rem(per_batch);
+            (gi.div(per_batch), at.rem(rows), at.div(rows))
+        } else {
+            ring.group(mm, gi)
+        }
+    };
     let wg = ring.tiles * mm.tn;
     let mut layout = vec![(
         "tile".to_string(),
@@ -335,48 +378,69 @@ pub(super) fn schedule(
         if let Some(q) = qa.as_ref().filter(|q| q.ahead == 0) {
             q.wave(t, &w, peer)?;
         }
-        peer::clusters(t, peer, ncl, per, |t, u, i, rank| {
-            let q = u.add(i.mul(ncl));
-            let (lg, tl) = (q.div(ring.tiles), q.rem(ring.tiles));
-            let gi = w.mul(ring.lanes).add(&lg);
-            let work = |t: &mut Trace| {
-                let (bt, ti, tj0) = ring.group(mm, &gi);
-                let arow = match &qa {
-                    Some(q) => q.row(&bt.mul(mm.mp / mm.tm).add(&ti)),
-                    None => bt.mul(mm.mp).add(ti.mul(mm.tm)),
+        if reuse_b {
+            let pairs = ring.lanes / 2;
+            peer::clusters(t, None, pairs, 1, |t, u, _, _| {
+                let lg = u.mul(2);
+                let gi = w.mul(ring.lanes).add(&lg);
+                let work = |t: &mut Trace| {
+                    let (bt, ti, tj) = group(&gi);
+                    let row = bt.mul(mm.mp).add(ti.mul(mm.tm));
+                    let slot = slot0.add(&lg).mul(mm.tm);
+                    let first = slots.at(&[sl(&slot, slot.add(mm.tm)), ALL])?;
+                    let second = slots.at(&[sl(slot.add(mm.tm), slot.add(2 * mm.tm)), ALL])?;
+                    resident_pair(t, b, mm, &bt, &row, &tj, [&first, &second], hw, origin)
                 };
-                let srow = slot0.add(&lg).mul(mm.tm);
-                let c0 = tl.mul(mm.tn);
-                let dst = slots.at(&[sl(&srow, srow.add(mm.tm)), sl(&c0, c0.add(mm.tn))])?;
-                product(
-                    t,
-                    &bq,
-                    mm,
-                    &bt,
-                    &arow,
-                    &tj0.add(&tl),
-                    &dst,
-                    hw,
-                    split::Origin {
-                        a: if qa.is_some() { 0 } else { origin.a },
-                        ..origin
-                    },
-                    peer.zip(rank.as_ref()).map(|(p, r)| (p, r, &u)),
-                )
-            };
-            let live = |t: &mut Trace| {
                 if ragged {
                     t.when(Cond::new(&gi, g::CmpOp::Lt, ring.groups), work)
                 } else {
                     work(t)
                 }
-            };
-            if per * ncl != per_wave {
-                t.when(Cond::new(&q, g::CmpOp::Lt, per_wave), live)
-            } else {
-                live(t)
-            }
-        })?;
+            })?;
+        } else {
+            peer::clusters(t, peer, ncl, per, |t, u, i, rank| {
+                let q = u.add(i.mul(ncl));
+                let (lg, tl) = (q.div(ring.tiles), q.rem(ring.tiles));
+                let gi = w.mul(ring.lanes).add(&lg);
+                let work = |t: &mut Trace| {
+                    let (bt, ti, tj0) = group(&gi);
+                    let arow = match &qa {
+                        Some(q) => q.row(&bt.mul(mm.mp / mm.tm).add(&ti)),
+                        None => bt.mul(mm.mp).add(ti.mul(mm.tm)),
+                    };
+                    let srow = slot0.add(&lg).mul(mm.tm);
+                    let c0 = tl.mul(mm.tn);
+                    let dst = slots.at(&[sl(&srow, srow.add(mm.tm)), sl(&c0, c0.add(mm.tn))])?;
+                    product(
+                        t,
+                        &bq,
+                        mm,
+                        &bt,
+                        &arow,
+                        &tj0.add(&tl),
+                        &dst,
+                        hw,
+                        split::Origin {
+                            a: if qa.is_some() { 0 } else { origin.a },
+                            ..origin
+                        },
+                        peer.zip(rank.as_ref()).map(|(p, r)| (p, r, &u)),
+                    )
+                };
+                let live = |t: &mut Trace| {
+                    if ragged {
+                        t.when(Cond::new(&gi, g::CmpOp::Lt, ring.groups), work)
+                    } else {
+                        work(t)
+                    }
+                };
+                if per * ncl != per_wave {
+                    t.when(Cond::new(&q, g::CmpOp::Lt, per_wave), live)
+                } else {
+                    live(t)
+                }
+            })?;
+        }
         if let Some(q) = qa.as_ref().filter(|q| q.ahead == 1) {
             q.wave(t, &w.add(1), peer)?;
         }
@@ -418,7 +482,7 @@ pub(super) fn schedule(
                             None => None,
                         };
                         let work = |t: &mut Trace| {
-                            let (bt, ti, tj0) = ring.group(mm, &gi);
+                            let (bt, ti, tj0) = group(&gi);
                             let grow = bt.mul(mm.mp).add(ti.mul(mm.tm));
                             let gcol = tj0.mul(mm.tn);
                             let srow = slot0.add(&lg).mul(mm.tm);
@@ -481,10 +545,18 @@ pub(super) fn schedule(
                                 Ok(())
                             })
                         };
+                        let live = |t: &mut Trace| {
+                            if reuse_b && (mm.mp / mm.tm) % 2 != 0 {
+                                let (_, ti, _) = group(&gi);
+                                t.when(Cond::new(&ti, g::CmpOp::Lt, mm.mp / mm.tm), work)
+                            } else {
+                                work(t)
+                            }
+                        };
                         if ragged {
-                            t.when(Cond::new(&gi, g::CmpOp::Lt, ring.groups), work)
+                            t.when(Cond::new(&gi, g::CmpOp::Lt, ring.groups), live)
                         } else {
-                            work(t)
+                            live(t)
                         }
                     })
                 })?;

@@ -158,6 +158,17 @@ pub(super) fn local(shape: &Shape<'_>, share: &ShardTiles, mach: &Machine) -> R<
 /// Resolve the typed local geometry used for both pricing and emission.
 fn local_option(shape: &Shape<'_>, share: &ShardTiles, axis: &SplitAxis, mach: &Machine) -> R<Mm> {
     match *axis {
+        SplitAxis::RowGrain { .. } => {
+            let knobs = Knobs {
+                pad_m: false,
+                ..*shape.knobs
+            };
+            let local_shape = Shape {
+                knobs: &knobs,
+                ..*shape
+            };
+            local(&local_shape, share, mach)
+        }
         SplitAxis::Tiled { tm, tn } => Ok(Mm {
             bt: 1,
             m: share.valid_extent[0],
@@ -168,6 +179,32 @@ fn local_option(shape: &Shape<'_>, share: &ShardTiles, axis: &SplitAxis, mach: &
             shared: true,
             ..*shape.mm
         }),
+        SplitAxis::Batched { tm, tn } => Ok(Mm {
+            bt: (share.tile_ranges[0].end - share.tile_ranges[0].start)
+                / cdiv(shape.mm.m, shape.mm.quantum),
+            tm,
+            tn,
+            ..*shape.mm
+        }),
+        SplitAxis::OwnerTiled { ref tiles }
+        | SplitAxis::LayoutRing { ref tiles }
+        | SplitAxis::ResidentB { ref tiles } => {
+            let Some(tile) = tiles.iter().find(|tile| {
+                tile.node == share.logical_node && tile.origin == share.logical_origin
+            }) else {
+                return fail("DSL.KERN.020", "an owner-local tile needs its output share");
+            };
+            Ok(Mm {
+                bt: 1,
+                m: share.valid_extent[0],
+                mp: share.padded_extent[0],
+                n: share.valid_extent[1],
+                tm: tile.tm,
+                tn: tile.tn,
+                shared: true,
+                ..*shape.mm
+            })
+        }
         _ => local(shape, share, mach),
     }
 }
@@ -225,6 +262,313 @@ fn joint_options(
     Ok(joint)
 }
 
+/// Local-wave candidates retain each share's own divisors and packing geometry.
+/// The inexpensive geometry price seeds two complete emitted alternatives.
+fn owner_options(
+    shape: &Shape<'_>,
+    options: &[SplitOption],
+    mach: &Machine,
+) -> R<Vec<SplitOption>> {
+    if shape.class.is_some() || !expr::reduces(shape.e).is_empty() || shape.out.kind == Kind::Row {
+        return Ok(vec![]);
+    }
+    let hw = Hw::of(mach);
+    let mm = shape.mm;
+    let mut result = Vec::new();
+    for original in options {
+        'policy: for (waves, reuse_b) in [(1, false), (2, false), (1, true), (2, true)] {
+            let mut tiles = Vec::new();
+            for share in original
+                .shards
+                .iter()
+                .filter(|s| s.role != ShardRole::Empty)
+            {
+                let rows = share.padded_extent[0];
+                let cols = share.valid_extent[1];
+                let max_rows = rows
+                    .min(MAX_TM)
+                    .min(hw.bank / mm.nk * hw.band)
+                    .min(ring_rows(mach).max(mm.quantum));
+                let most_tiles = (rows / mm.quantum) * (cols / hw.kblock);
+                let wanted = (waves * hw.mg).min(most_tiles);
+                let mut best = None;
+                for tm in (mm.quantum..=max_rows).step_by(mm.quantum as usize) {
+                    if rows % tm != 0 || tm % hw.band != 0 {
+                        continue;
+                    }
+                    for tn in (hw.kblock..=cols.min(hw.max_block())).step_by(hw.kblock as usize) {
+                        if cols % tn != 0
+                            || (tm / hw.band) * (tn / hw.band) > hw.acc_subtiles
+                            || (tn / hw.band) * mm.nk > hw.bank
+                            || (rows / tm) * (cols / tn) < wanted
+                        {
+                            continue;
+                        }
+                        if reuse_b {
+                            let local = Mm {
+                                bt: 1,
+                                m: share.valid_extent[0],
+                                mp: rows,
+                                n: cols,
+                                tm,
+                                tn,
+                                shared: true,
+                                ..*mm
+                            };
+                            let r = ring::resolve(
+                                &local,
+                                &computed(shape.e, shape.knobs),
+                                shape.out,
+                                shape.knobs,
+                                mach,
+                            );
+                            let resident = ring::resident(r, &local, shape.knobs, mach);
+                            if rows / tm < 2
+                                || (tn / hw.band) * (mm.kp / hw.kblock) > hw.bank
+                                || r.tiles != 1
+                                || r.quant != 0
+                                || (shape.knobs.activation_any
+                                    && takes_f16(mm.k, mm.nk, shape.knobs, mach))
+                                || (r.depth > 0 && resident.depth == 0)
+                                || !shape.demands.is_empty()
+                            {
+                                continue;
+                            }
+                        }
+                        let group_tm = if reuse_b { 2 * tm } else { tm };
+                        let price = (
+                            wave_cost(cdiv(rows, group_tm), cols, mm.kp, mm.nk, group_tm, tn, &hw),
+                            tile_cost(rows, cols, mm.kp, mm.nk, group_tm, tn, &hw),
+                            -tm,
+                            -tn,
+                        );
+                        if best.as_ref().is_none_or(|(p, _, _)| price < *p) {
+                            best = Some((price, tm, tn));
+                        }
+                    }
+                }
+                let Some((_, tm, tn)) = best else {
+                    continue 'policy;
+                };
+                tiles.push(crate::split::LocalTile {
+                    node: share.logical_node,
+                    origin: share.logical_origin.clone(),
+                    tm,
+                    tn,
+                });
+            }
+            let mut option = original.clone();
+            option.id = if reuse_b {
+                format!("{}-resident-b-{waves}", original.id)
+            } else {
+                format!("{}-owner-waves-{waves}", original.id)
+            };
+            option.axis = if reuse_b {
+                SplitAxis::ResidentB { tiles }
+            } else {
+                SplitAxis::OwnerTiled { tiles }
+            };
+            for share in &mut option.shards {
+                if share.role != ShardRole::Empty {
+                    share.local_schedule =
+                        local_option(shape, share, &option.axis, mach)?.py().repr();
+                    if reuse_b {
+                        share.local_schedule = format!("resident-b {}", share.local_schedule);
+                    }
+                }
+            }
+            if !reuse_b
+                && shape.knobs.ring_depth > 0
+                && shape.out.kind == Kind::Full
+                && expr::count(shape.e) == 0
+                && shape.demands.is_empty()
+                && !takes_f16(mm.k, mm.nk, shape.knobs, mach)
+            {
+                if let SplitAxis::OwnerTiled { tiles } = &option.axis {
+                    let mut pipelined = option.clone();
+                    pipelined.id = format!("{}-layout-ring-{waves}", original.id);
+                    pipelined.axis = SplitAxis::LayoutRing {
+                        tiles: tiles.clone(),
+                    };
+                    for share in &mut pipelined.shards {
+                        if share.role != ShardRole::Empty {
+                            let local = local_option(shape, share, &pipelined.axis, mach)?;
+                            let ring = ring::resolve_layout(
+                                &local,
+                                shape.e,
+                                shape.out,
+                                shape.knobs,
+                                mach,
+                                true,
+                            );
+                            share.local_schedule = format!(
+                                "layout-ring {} {}",
+                                share.local_schedule,
+                                ring.py().repr(),
+                            );
+                        }
+                    }
+                    result.push(pipelined);
+                }
+            }
+            result.push(option);
+        }
+    }
+    Ok(result)
+}
+
+/// Identity-layout delivery competes at the existing partition and common-tile
+/// geometries, independently of the owner-local wave heuristic.
+fn layout_options(
+    shape: &Shape<'_>,
+    options: &[SplitOption],
+    mach: &Machine,
+) -> R<Vec<SplitOption>> {
+    if shape.class.is_some()
+        || shape.knobs.ring_depth == 0
+        || shape.out.kind != Kind::Full
+        || expr::count(shape.e) != 0
+        || !shape.demands.is_empty()
+        || takes_f16(shape.mm.k, shape.mm.nk, shape.knobs, mach)
+    {
+        return Ok(vec![]);
+    }
+    let mut result = Vec::new();
+    'candidate: for original in options {
+        if !matches!(
+            original.axis,
+            SplitAxis::M
+                | SplitAxis::N
+                | SplitAxis::MN { .. }
+                | SplitAxis::Groups
+                | SplitAxis::Tiled { .. }
+        ) {
+            continue;
+        }
+        let mut tiles = Vec::new();
+        let mut option = original.clone();
+        let mut active = false;
+        for share in &mut option.shards {
+            if share.role == ShardRole::Empty {
+                continue;
+            }
+            let local = local_option(shape, share, &original.axis, mach)?;
+            // Typed local tiles retain the declared physical owner extent.
+            if local.mp != share.padded_extent[0] {
+                continue 'candidate;
+            }
+            let ring = ring::resolve_layout(&local, shape.e, shape.out, shape.knobs, mach, true);
+            active |= ring.depth > 0;
+            tiles.push(crate::split::LocalTile {
+                node: share.logical_node,
+                origin: share.logical_origin.clone(),
+                tm: local.tm,
+                tn: local.tn,
+            });
+            share.local_schedule =
+                format!("layout-ring {} {}", local.py().repr(), ring.py().repr());
+        }
+        if active {
+            option.id = format!("{}-layout-ring", original.id);
+            option.axis = SplitAxis::LayoutRing { tiles };
+            result.push(option);
+        }
+    }
+    Ok(result)
+}
+
+/// Emission groups consecutive complete batches without changing manifest shards.
+fn batch_shards(shares: &[ShardTiles]) -> Vec<ShardTiles> {
+    let mut groups: Vec<ShardTiles> = Vec::new();
+    for share in shares {
+        if let Some(last) = groups.last_mut().filter(|last| {
+            last.role != ShardRole::Empty
+                && share.role != ShardRole::Empty
+                && last.logical_node == share.logical_node
+                && last.tile_ranges[0].end == share.tile_ranges[0].start
+        }) {
+            last.tile_ranges[0].end = share.tile_ranges[0].end;
+        } else {
+            groups.push(share.clone());
+        }
+    }
+    groups
+}
+
+/// Whole consecutive batches retain their global strides while sharing local waves.
+fn batched_options(
+    shape: &Shape<'_>,
+    options: &[SplitOption],
+    mach: &Machine,
+) -> R<Vec<SplitOption>> {
+    let mm = shape.mm;
+    if mm.bt < 2
+        || shape.class.is_some()
+        || !shape.demands.is_empty()
+        || !shape.made.is_empty()
+        || shape.out.kind == Kind::Row
+        || !expr::reduces(shape.e).is_empty()
+    {
+        return Ok(vec![]);
+    }
+    let mut result = Vec::new();
+    for original in options
+        .iter()
+        .filter(|o| matches!(o.axis, SplitAxis::Groups))
+    {
+        if original.conversions != 0
+            || original.shards.iter().any(|s| {
+                s.role != ShardRole::Empty
+                    && (s.logical_origin[1] != 0
+                        || s.logical_origin[2] != 0
+                        || s.valid_extent != [mm.m, mm.n]
+                        || s.padded_extent != [mm.mp, mm.n])
+            })
+        {
+            continue;
+        }
+        let shards = batch_shards(&original.shards);
+        if shards.len() == original.shards.len() {
+            continue;
+        }
+        let Some(first) = shards.iter().find(|s| s.role != ShardRole::Empty) else {
+            continue;
+        };
+        let local = local(shape, first, mach)?;
+        let mut geometries =
+            std::collections::BTreeSet::from([(mm.tm, mm.tn), (local.tm, local.tn)]);
+        geometries.extend(options.iter().filter_map(|candidate| match candidate.axis {
+            SplitAxis::Tiled { tm, tn }
+                if candidate.output.ownership == original.output.ownership =>
+            {
+                Some((tm, tn))
+            }
+            _ => None,
+        }));
+        for (tm, tn) in geometries {
+            if mm.mp % tm != 0 || mm.n % tn != 0 {
+                continue;
+            }
+            let mut option = original.clone();
+            option.id = format!("{}-batch-{tm}x{tn}", original.id);
+            option.axis = SplitAxis::Batched { tm, tn };
+            for share in &mut option.shards {
+                if share.role != ShardRole::Empty {
+                    share.local_schedule = format!(
+                        "batched {}",
+                        local_option(shape, share, &option.axis, mach)?.py().repr()
+                    );
+                }
+            }
+            option.legality.clauses.push(
+                "whole consecutive batches; original A/B batch strides and ordered K chunks".into(),
+            );
+            result.push(option);
+        }
+    }
+    Ok(result)
+}
+
 /// M flattens batch row tiles; N and every factorization use column tiles.
 /// Whole physical write lines and packing scale groups have a single owner.
 pub fn split_options(
@@ -242,7 +586,6 @@ pub fn split_options(
     } else {
         mm.quantum
     };
-    let mt = cdiv(mm.m, row_unit);
     let column_unit = shape.demands.iter().fold(
         if shape.class.is_some() {
             mm.tn
@@ -251,7 +594,6 @@ pub fn split_options(
         },
         |unit, d| lcm(unit, hw.kblock * d.nk),
     );
-    let nt = mm.n / column_unit;
     let mut axes = vec![
         (SplitAxis::Unsplit, 1, 1, "p1".to_string()),
         (SplitAxis::M, p, 1, "m".to_string()),
@@ -273,8 +615,74 @@ pub fn split_options(
     if mm.bt > 1 {
         axes.push((SplitAxis::Groups, p, 1, "groups".into()));
     }
+    let mut axes: Vec<_> = axes
+        .into_iter()
+        .map(|(axis, pm, pn, id)| (axis, pm, pn, id, column_unit, row_unit))
+        .collect();
+    if columns && p > 1 && shape.class.is_none() {
+        for grain in [hw.max_block() / 2, hw.max_block()] {
+            if grain > column_unit && grain % column_unit == 0 && mm.n % grain == 0 {
+                let ordinary = partition_tiles(mm.n / column_unit, p)?;
+                let tiled = partition_tiles(mm.n / grain, p)?;
+                if ordinary.iter().zip(&tiled).any(|(a, b)| {
+                    a.start * column_unit != b.start * grain || a.end * column_unit != b.end * grain
+                }) {
+                    axes.push((
+                        SplitAxis::N,
+                        1,
+                        p,
+                        format!("n-grain-{grain}"),
+                        grain,
+                        row_unit,
+                    ));
+                }
+            }
+        }
+    }
+    if columns
+        && p > 1
+        && shape.class.is_none()
+        && shape.demands.is_empty()
+        && mm.mp == cdiv(mm.m, mm.quantum) * mm.quantum
+    {
+        let base_axes = axes.clone();
+        for multiple in [1, 2] {
+            let rows = multiple * hw.mg * row_unit;
+            if rows <= row_unit || cdiv(mm.m, rows) >= cdiv(mm.m, row_unit) {
+                continue;
+            }
+            for (axis, pm, pn, id, grain, _) in &base_axes {
+                if *pm <= 1 || !matches!(axis, SplitAxis::M | SplitAxis::MN { .. }) {
+                    continue;
+                }
+                let old_count = cdiv(mm.m, row_unit);
+                let new_count = cdiv(mm.m, rows);
+                let old = partition_tiles(mm.bt * old_count, *pm)?;
+                let new = partition_tiles(mm.bt * new_count, *pm)?;
+                // A flattened tile index names a batch and a within-batch row.
+                let address =
+                    |at: i64, count: i64, grain: i64| (at / count, (at % count * grain).min(mm.mp));
+                if old.iter().zip(&new).all(|(a, b)| {
+                    address(a.start, old_count, row_unit) == address(b.start, new_count, rows)
+                        && address(a.end, old_count, row_unit) == address(b.end, new_count, rows)
+                }) {
+                    continue;
+                }
+                axes.push((
+                    SplitAxis::RowGrain { rows },
+                    *pm,
+                    *pn,
+                    format!("{id}-row-grain-{rows}"),
+                    *grain,
+                    rows,
+                ));
+            }
+        }
+    }
     let mut options = Vec::new();
-    for (axis, pm, pn, id) in axes {
+    for (axis, pm, pn, id, grain, row_unit) in axes {
+        let mt = cdiv(mm.m, row_unit);
+        let nt = mm.n / grain;
         let mr = if matches!(axis, SplitAxis::Groups) {
             partition_tiles(mm.bt, pm)?
                 .into_iter()
@@ -306,8 +714,8 @@ pub fn split_options(
                 for batch in rows.start / mt..=(rows.end - 1) / mt {
                     let r0 = (rows.start.max(batch * mt) - batch * mt) * row_unit;
                     let r1 = ((rows.end.min((batch + 1) * mt) - batch * mt) * row_unit).min(mm.mp);
-                    let c0 = cols.start * column_unit;
-                    let width = (cols.end - cols.start) * column_unit;
+                    let c0 = cols.start * grain;
+                    let width = (cols.end - cols.start) * grain;
                     let grow = batch * mm.mp + r0;
                     let mut reads =
                         if shape.class.is_none() && takes_f16(mm.k, mm.nk, shape.knobs, mach) {
@@ -373,7 +781,7 @@ pub fn split_options(
                         local_schedule: String::new(),
                         role: ShardRole::Compute,
                     };
-                    let pl = local(shape, &share, mach)?;
+                    let pl = local_option(shape, &share, &axis, mach)?;
                     share.local_schedule = pl.py().repr();
                     shards.push(share);
                 }
@@ -501,8 +909,14 @@ pub fn split_options(
             },
         });
     }
+    let owners = owner_options(shape, &options, mach)?;
     let joint = joint_options(shape, &options, mach)?;
     options.extend(joint);
+    let layouts = layout_options(shape, &options, mach)?;
+    options.extend(layouts);
+    options.extend(owners);
+    let batched = batched_options(shape, &options, mach)?;
+    options.extend(batched);
     if p > 1 && mm.kp > 0 && shape.class.is_none() {
         let assignments: Vec<_> = options
             .iter()
@@ -539,10 +953,7 @@ pub fn split_options(
         }
     }
     if matches!(p, 2 | 4) && mm.kp > 0 && shape.class.is_none() {
-        let mut single = request.clone();
-        single.nodes = crate::split::NodeSet::new(vec![request.nodes.ids()[0]], mach)?;
-        single.numerics.reduction_order.clear();
-        let base = split_options(shape, &single, mach)?.remove(0);
+        let base = options[0].clone();
         let cuts = partition_tiles(mm.kp / mm.kc(&hw), p)?;
         let active: Vec<_> = cuts
             .iter()
@@ -729,9 +1140,16 @@ pub(crate) fn emit(
             }
         }
     }
+    let batched;
+    let shares = if matches!(option.axis, SplitAxis::Batched { .. }) {
+        batched = batch_shards(&option.shards);
+        &batched
+    } else {
+        &option.shards
+    };
     let mut index = 0;
-    emit_shares(t, &request.nodes, &option.shards, |t, share| {
-        while option.shards[index].role == ShardRole::Empty {
+    emit_shares(t, &request.nodes, shares, |t, share| {
+        while shares[index].role == ShardRole::Empty {
             index += 1;
         }
         let mut local_bufs = b.to_vec();
@@ -788,7 +1206,7 @@ pub(crate) fn emit(
                 origin.b,
             );
         }
-        emit_local(
+        emit_local_schedule(
             t,
             &local_bufs,
             &local,
@@ -801,6 +1219,8 @@ pub(crate) fn emit(
             &demands,
             origin,
             None,
+            matches!(option.axis, SplitAxis::ResidentB { .. }),
+            matches!(option.axis, SplitAxis::LayoutRing { .. }),
         )
     })?;
     if option.conversions != 0 {
@@ -854,35 +1274,42 @@ pub(crate) fn kernel_with_policy(
         mach.digest_bytes(),
         pricing_mutants(),
     );
-    let mut split =
-        CHOICES
-            .get_or_init(ChoiceCache::default)
-            .choose(key, request.force.as_deref(), || {
-                let bounds = request.force.is_none() && pricing_mutants().is_empty();
-                let candidates = split_options(shape, &unforced, mach)?
-                    .into_iter()
-                    .filter(|option| request.force.as_deref().is_none_or(|id| id == option.id))
-                    .map(|option| {
-                        let floor = bounds
-                            .then(|| resource_floor(shape, &unforced, &option, mach))
-                            .flatten();
-                        (option, floor)
-                    })
-                    .collect();
-                let mut equivalent = BTreeMap::<String, CostEstimate>::new();
-                crate::split::cost::price_bounded(candidates, |mut option| {
-                    let key = ordinary_schedule_key(&option, &unforced);
-                    if let Some(cost) = key.as_ref().and_then(|key| equivalent.get(key)) {
-                        option.cost = cost.clone();
-                        return Ok(option);
-                    }
-                    let option = price_option(shape, &unforced, option, mach, backend)?;
-                    if let Some(key) = key {
-                        equivalent.insert(key, option.cost.clone());
-                    }
-                    Ok(option)
+    let mut split = CHOICES.get_or_init(ChoiceCache::default).choose_priced(
+        key,
+        request.force.as_deref(),
+        |exact| {
+            let bounds = request.force.is_none() && pricing_mutants().is_empty();
+            let candidates = split_options(shape, &unforced, mach)?
+                .into_iter()
+                .filter(|option| request.force.as_deref().is_none_or(|id| id == option.id))
+                .map(|option| {
+                    let floor = bounds
+                        .then(|| resource_floor(shape, &unforced, &option, mach))
+                        .flatten();
+                    (option, floor)
                 })
-            })?;
+                .collect();
+            let mut equivalent = BTreeMap::<String, CostEstimate>::new();
+            crate::split::cost::price_bounded(candidates, |mut option| {
+                let key = ordinary_schedule_key(&option, &unforced);
+                if let Some(priced) = exact.get(&option.id) {
+                    if let Some(key) = key {
+                        equivalent.insert(key, priced.cost.clone());
+                    }
+                    return Ok(priced.clone());
+                }
+                if let Some(cost) = key.as_ref().and_then(|key| equivalent.get(key)) {
+                    option.cost = cost.clone();
+                    return Ok(option);
+                }
+                let option = price_option(shape, &unforced, option, mach, backend)?;
+                if let Some(key) = key {
+                    equivalent.insert(key, option.cost.clone());
+                }
+                Ok(option)
+            })
+        },
+    )?;
     let kernel = build_option(shape, request, &split, mach, backend)?;
     let l1 = if matches!(split.axis, SplitAxis::BPass { .. }) {
         let emitted = b_pass::emit(&kernel, &split, request, mach)?;
@@ -930,8 +1357,8 @@ fn pricing_mutants() -> String {
 }
 
 /// Model-service bound before graph construction. Ordinary products retain two
-/// fills and one sweep per tile/K chunk. K owners retain their own chunks;
-/// B-pass replaces B fills and serializes local budgets. Epilogue, delivery,
+/// fills and one sweep per tile/K chunk. Resident pairs share B fill entries,
+/// with one additional B sequence for an odd row tail, without changing sweeps. K owners retain their own chunks; B-pass replaces B fills and serializes local budgets. Epilogue, delivery,
 /// drain and dependency costs are omitted, never estimated upward.
 pub fn resource_floor(
     shape: &Shape<'_>,
@@ -945,7 +1372,15 @@ pub fn resource_floor(
     let hw = Hw::of(mach);
     let params = ktpu_l2::cost::resource::Params::planning(mach);
     let serial = matches!(option.axis, SplitAxis::BPass { .. });
-    let unscoped = request.nodes.ids() == [0] && !matches!(option.axis, SplitAxis::Tiled { .. });
+    let unscoped = request.nodes.ids() == [0]
+        && !matches!(
+            option.axis,
+            SplitAxis::Tiled { .. }
+                | SplitAxis::Batched { .. }
+                | SplitAxis::OwnerTiled { .. }
+                | SplitAxis::ResidentB { .. }
+                | SplitAxis::LayoutRing { .. }
+        );
     let mut owners = BTreeMap::<usize, [u64; 3]>::new();
     for share in option
         .shards
@@ -977,10 +1412,21 @@ pub fn resource_floor(
         let gm = u64::try_from(mm.tm / hw.band).ok()?;
         let gn = u64::try_from(mm.tn / hw.band).ok()?;
         let nk = u64::try_from(mm.nk).ok()?;
-        let entries =
+        let entries = if matches!(option.axis, SplitAxis::ResidentB { .. }) {
+            let b_issues = u64::try_from(mm.bt)
+                .ok()?
+                .checked_mul(u64::try_from(cdiv(mm.mp / mm.tm, 2)).ok()?)?
+                .checked_mul(u64::try_from(mm.n / mm.tn).ok()?)?
+                .checked_mul(u64::try_from(chunks).ok()?)?;
             issues
                 .checked_mul(nk)?
-                .checked_mul(if serial { gm } else { gm.checked_add(gn)? })?;
+                .checked_mul(gm)?
+                .checked_add(b_issues.checked_mul(nk)?.checked_mul(gn)?)?
+        } else {
+            issues
+                .checked_mul(nk)?
+                .checked_mul(if serial { gm } else { gm.checked_add(gn)? })?
+        };
         let steps = issues.checked_mul(nk)?.checked_mul(gm)?.checked_mul(gn)?;
         let total = owners.entry(share.logical_node).or_default();
         for (sum, count) in total.iter_mut().zip([entries, issues, steps]) {
@@ -1011,7 +1457,16 @@ fn ordinary_schedule_key(option: &SplitOption, request: &SplitRequest) -> Option
     if matches!(option.axis, SplitAxis::K | SplitAxis::BPass { .. }) {
         return None;
     }
-    if request.nodes.ids() == [0] && !matches!(option.axis, SplitAxis::Tiled { .. }) {
+    if request.nodes.ids() == [0]
+        && !matches!(
+            option.axis,
+            SplitAxis::Tiled { .. }
+                | SplitAxis::Batched { .. }
+                | SplitAxis::OwnerTiled { .. }
+                | SplitAxis::ResidentB { .. }
+                | SplitAxis::LayoutRing { .. }
+        )
+    {
         return Some("unscoped".into());
     }
     let shares: Vec<_> = option
@@ -1207,8 +1662,15 @@ fn build_option(
     mach: &Machine,
     backend: super::super::chain::quant::Backend,
 ) -> R<Kernel> {
-    let placement = if request.nodes.ids() == [0] && !matches!(option.axis, SplitAxis::Tiled { .. })
-    {
+    let placement = if request.nodes.ids() == [0]
+        && !matches!(
+            option.axis,
+            SplitAxis::Tiled { .. }
+                | SplitAxis::Batched { .. }
+                | SplitAxis::OwnerTiled { .. }
+                | SplitAxis::ResidentB { .. }
+                | SplitAxis::LayoutRing { .. }
+        ) {
         None
     } else {
         Some((request, option))

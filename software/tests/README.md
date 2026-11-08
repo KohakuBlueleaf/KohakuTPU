@@ -45,13 +45,47 @@ The model implementation lives in the production `ktpu-l2` cost module; the
 perf crate re-exports it. The `ownership` target compares automatic joint matmul
 selection against row replication using emitted read traffic and full resource
 completion, and `resource_state` checks descriptor restoration, consumed slot
-generations and native counted-receive completion. Production matrix pricing
+generations and native counted-receive completion. Production schedule pricing
 uses the bundled, anchor-labelled `sysnode-card-v1` profile; external perf
 parameter files continue to select independent calibrations of the same model.
 The L2-to-L1 dependency witness schedules repeated matrix effects within a bounded
 admission window and checks the exact release frontier and pipe ordering. The
 DSL cache witness distinguishes forced-only prices from a complete automatic
 comparison; a forced call cannot hide a cheaper alternative on the next call.
+
+The L2-to-L1 quant-choice witnesses compare direct mapped-word unpacks and
+joint source tiles with exact packed output bytes and late
+nonfinite rejection. The movement witness copies raw arbitrary bytes through a
+fragmented source walk, checks one write per output byte and a lower complete
+price than the safe mover. Its companion cost witness requires production
+mover prices to agree with independently requested resource reports. Mapped-choice witnesses require automatic selection no dearer than a strictly cheaper candidate; ordinary policies may retain the original on ties. The DSL
+batched-product witness retains separate manifest ownership while grouping
+whole heads with common local rectangles into owner-local matrix waves. Joint source-tile packing checks
+exact packed bytes and late nonfinite status against independent-entry packing,
+including targets with four descriptors. The DSL direct-relayout witness checks
+independent source addressing, single writes, hostile unused table contents and
+minimum price against p1 under a permuted grant. The ordinary entry-major quant
+witness requires complete-value unpacks instead of sliced row unpacks, exact
+packed bytes and late nonfinite rejection, and minimum complete policy price.
+The counted-copy witness exercises repeated DMA pairs and an odd final piece,
+including raw output bytes, single writes, engine-local fill/drain dependencies
+and automatic price selection against both barrier and queued schedules. DSL
+owner-tile witnesses compare unequal local rectangles and column-grain origins
+against ordered products and require the automatic complete minimum price. The
+row-grain witness also covers two short independent-weight batches on a permuted
+four-owner grant, verifying the emitted padded extent and geometry cost bound. Resident-B
+witnesses compare resource read traffic for ordinary/ring products at the same
+geometry and exact logical and emitted outputs with independent weights, odd row-tile tails and a staging-limited ring, certified with that same machine. Identity-layout delivery is compared at a common rectangle as well as owner-wave geometry. A separate L2-to-L1
+witness keeps three original K chunks live across two complete products,
+checking bank-entry placement against L2 execution.
+
+The logic sequence-choice witness compares equivalent transfers whose permitted
+ownership differs, requiring the decision to change with the physical grant and
+family forcing and to recover for a pinned home. The runtime LeNet test compares
+all actual WAITs with the package writer. Barrier/count-AWAIT semantics have an
+explicit program in `logic/test_os_graph.py`, independent of a model's selected
+engine schedule. The convolution comparison uses a private seeded input stream
+so test ordering cannot change its sample; its numerical tolerance is unchanged.
 
 Speed follows the same chain. Each level has a floor and a time, and a stage owns
 the ratio it adds, so a loss is named without a long run:

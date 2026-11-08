@@ -1118,6 +1118,8 @@ fn laid(
     knobs: &Knobs,
     mach: &Machine,
     demands: &[QDemand],
+    reuse_b: bool,
+    layout_ring: bool,
 ) -> R<Laid> {
     let hw = Hw::of(mach);
     let mut operands = vec![Operand {
@@ -1140,7 +1142,12 @@ fn laid(
         mm.quantum,
         &hw,
     )?;
-    let ring = ring::resolve(mm, e, out, knobs, mach);
+    let ring = ring::resolve_layout(mm, e, out, knobs, mach, layout_ring);
+    let ring = if reuse_b {
+        ring::resident(ring, mm, knobs, mach)
+    } else {
+        ring
+    };
     let most = (!demands.is_empty()).then_some(hw.band);
     let segs = match ring.depth > 0 {
         true => ring::segments(mm, &ring, &operands, out, wc, most, &hw)?,
@@ -1171,7 +1178,17 @@ pub fn packs_demands(
         return Ok(true);
     }
     let hw = Hw::of(mach);
-    let l = laid(mm, &computed(e, knobs), extras, out, knobs, mach, demands)?;
+    let l = laid(
+        mm,
+        &computed(e, knobs),
+        extras,
+        out,
+        knobs,
+        mach,
+        demands,
+        false,
+        false,
+    )?;
     Ok(l.ring.depth > 0
         && mm.bt == 1
         && out.kind == Kind::Full
@@ -1258,7 +1275,7 @@ pub(super) fn mm_kernel_build(
     let lay_a = Side::A.layout(mm.tm / hw.band, mm.nk);
     let lay_b = Side::B.layout(mm.tn / hw.band, mm.nk);
     let nb_rows = if mm.shared { mm.n } else { mm.bt * mm.n };
-    let Laid { pl, ring, segs, .. } = laid(mm, e, extras, out, knobs, mach, demands)?;
+    let Laid { pl, ring, segs, .. } = laid(mm, e, extras, out, knobs, mach, demands, false, false)?;
     let rows = if ring.depth > 0 {
         (mm.bt - 1) * mm.mp + ring::cover(mm, &ring, &segs)
     } else {
@@ -1411,6 +1428,28 @@ fn emit_local(
     origin: split::Origin,
     peer: Option<&peer::Plan<'_>>,
 ) -> R<()> {
+    emit_local_schedule(
+        t, b, mm, e, extras, out, knobs, mach, made, demands, origin, peer, false, false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_local_schedule(
+    t: &mut Trace,
+    b: &[Buf],
+    mm: &Mm,
+    e: &E,
+    extras: &[Operand],
+    out: &Operand,
+    knobs: &Knobs,
+    mach: &Machine,
+    made: &BTreeMap<usize, prepared::Read>,
+    demands: &[QDemand],
+    origin: split::Origin,
+    peer: Option<&peer::Plan<'_>>,
+    reuse_b: bool,
+    layout_ring: bool,
+) -> R<()> {
     let hw = Hw::of(mach);
     let (clusters, cores) = (hw.mg, hw.vc);
     let (ntm, ntn) = (mm.mp / mm.tm, mm.n / mm.tn);
@@ -1424,7 +1463,17 @@ fn emit_local(
         ring,
         segs,
         ..
-    } = laid(mm, e, extras, out, knobs, mach, demands)?;
+    } = laid(
+        mm,
+        e,
+        extras,
+        out,
+        knobs,
+        mach,
+        demands,
+        reuse_b,
+        layout_ring,
+    )?;
     let f16 = takes_f16(mm.k, mm.nk, knobs, mach);
     let product_origin = split::Origin {
         a: if f16 && ring.quant == 0 { 0 } else { origin.a },
@@ -1433,6 +1482,9 @@ fn emit_local(
     // The product tiles of `nb` batches from batch `bt` (`nb` > 1: from
     // batch 0) over the clusters.
     let products = |t: &mut Trace, b: &[Buf], h: &Buf, bt: &Idx, nb: i64| -> R<()> {
+        if reuse_b {
+            return resident_products(t, b, h, mm, bt, nb, &hw, product_origin);
+        }
         let all = nb * tiles;
         let ncl = clusters.min(all).max(1);
         let per = cdiv(all, ncl);
@@ -1531,6 +1583,7 @@ fn emit_local(
             made,
             product_origin,
             peer,
+            reuse_b,
         );
     }
     let tile = vec![(
@@ -1654,4 +1707,97 @@ fn product(
         Some((plan, rank, unit)) => peer::drain(t, plan, rank, unit, acc, dst),
         None => t.drain(acc, dst),
     }
+}
+
+/// A pair of row products, or a single final row tile, retains original B chunks
+/// in bank slots. Every completed product drains before the next begins.
+#[allow(clippy::too_many_arguments)]
+fn resident_pair(
+    t: &mut Trace,
+    b: &[Buf],
+    mm: &Mm,
+    bt: &Idx,
+    arow: &Idx,
+    tj: &Idx,
+    destinations: [&View; 2],
+    hw: &Hw,
+    origin: split::Origin,
+) -> R<()> {
+    let brow = if mm.shared {
+        tj.mul(mm.tn)
+    } else {
+        bt.mul(mm.n).add(tj.mul(mm.tn))
+    }
+    .add(origin.b);
+    let kc = mm.kc(hw);
+    let mut weights = Vec::new();
+    for k in 0..mm.kp / kc {
+        weights.push(t.fill(&b[1].at(&[sl(&brow, brow.add(mm.tn)), sl(k * kc, (k + 1) * kc)])?)?);
+    }
+    // There is one physical accumulator plane. Finish and drain each row tile
+    // before starting the next; only B bank entries live across row products.
+    for (i, dst) in destinations.into_iter().enumerate() {
+        let product = |t: &mut Trace| {
+            let mut acc = t.zero(mm.tm, mm.tn)?;
+            let row = arow.add(origin.a + i as i64 * mm.tm);
+            for (k, &weight) in weights.iter().enumerate() {
+                let k0 = k as i64 * kc;
+                let a = t.fill(&b[0].at(&[sl(&row, row.add(mm.tm)), sl(k0, k0 + kc)])?)?;
+                acc = t.gemm(a, weight, acc)?;
+            }
+            t.drain(acc, dst)
+        };
+        if i == 1 && (mm.mp / mm.tm) % 2 != 0 {
+            t.when(
+                Cond::new(&arow.rem(mm.mp).add(mm.tm), g::CmpOp::Lt, mm.mp),
+                product,
+            )?;
+        } else {
+            product(t)?;
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resident_products(
+    t: &mut Trace,
+    b: &[Buf],
+    h: &Buf,
+    mm: &Mm,
+    bt: &Idx,
+    batches: i64,
+    hw: &Hw,
+    origin: split::Origin,
+) -> R<()> {
+    let rows = cdiv(mm.mp / mm.tm, 2);
+    let per_batch = rows * (mm.n / mm.tn);
+    let all = batches * per_batch;
+    let clusters = hw.mg.min(all);
+    let trips = cdiv(all, clusters);
+    peer::clusters(t, None, clusters, trips, |t, u, i, _| {
+        let pair = u.add(i.mul(clusters));
+        let work = |t: &mut Trace| {
+            let batch = if batches == 1 {
+                bt.clone()
+            } else {
+                pair.div(per_batch)
+            };
+            let local = pair.rem(per_batch);
+            let row = batch.mul(mm.mp).add(local.rem(rows).mul(2 * mm.tm));
+            let tj = local.div(rows);
+            let col = tj.mul(mm.tn);
+            let first = h.at(&[sl(&row, row.add(mm.tm)), sl(&col, col.add(mm.tn))])?;
+            let second = h.at(&[
+                sl(row.add(mm.tm), row.add(2 * mm.tm)),
+                sl(&col, col.add(mm.tn)),
+            ])?;
+            resident_pair(t, b, mm, &batch, &row, &tj, [&first, &second], hw, origin)
+        };
+        if trips * clusters == all {
+            work(t)
+        } else {
+            t.when(Cond::new(&pair, g::CmpOp::Lt, all), work)
+        }
+    })
 }

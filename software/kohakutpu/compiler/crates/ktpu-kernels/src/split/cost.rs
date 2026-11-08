@@ -251,7 +251,13 @@ fn selected(priced: &[SplitOption], force: Option<&str>) -> R<SplitOption> {
 /// exact price they contain. A bound-pruned option is priced when forced; a
 /// forced entry never stands in for an automatic candidate comparison.
 #[derive(Default)]
-pub struct ChoiceCache(Mutex<HashMap<(String, Option<String>), Vec<SplitOption>>>);
+pub struct ChoiceCache(Mutex<HashMap<String, ChoicePrices>>);
+
+#[derive(Default)]
+struct ChoicePrices {
+    comparisons: HashMap<Option<String>, String>,
+    exact: HashMap<String, SplitOption>,
+}
 
 impl ChoiceCache {
     pub fn choose(
@@ -260,23 +266,35 @@ impl ChoiceCache {
         force: Option<&str>,
         price: impl FnOnce() -> R<Vec<SplitOption>>,
     ) -> R<SplitOption> {
+        self.choose_priced(key, force, |_| price())
+    }
+
+    /// Reuse exact candidates without treating a forced price as a comparison.
+    /// The caller applies its usual bounds and tie order before requesting misses.
+    pub fn choose_priced(
+        &self,
+        key: String,
+        force: Option<&str>,
+        price: impl FnOnce(&HashMap<String, SplitOption>) -> R<Vec<SplitOption>>,
+    ) -> R<SplitOption> {
         let mut cache = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let entry = cache.entry(key).or_default();
         if let Some(id) = force {
-            if let Some(option) = cache
-                .get(&(key.clone(), None))
-                .and_then(|choices| choices.iter().find(|option| option.id == id))
-            {
+            if let Some(option) = entry.exact.get(id) {
                 return Ok(option.clone());
             }
         }
-        let choices = match cache.entry((key, force.map(str::to_owned))) {
-            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                let mut choices = price()?;
-                rank(&mut choices);
-                entry.insert(choices)
-            }
-        };
-        selected(choices, force)
+        let forced = force.map(str::to_owned);
+        if let Some(id) = entry.comparisons.get(&forced) {
+            return Ok(entry.exact[id].clone());
+        }
+        let mut choices = price(&entry.exact)?;
+        rank(&mut choices);
+        let chosen = selected(&choices, force)?;
+        for option in choices {
+            entry.exact.insert(option.id.clone(), option);
+        }
+        entry.comparisons.insert(forced, chosen.id.clone());
+        Ok(chosen)
     }
 }

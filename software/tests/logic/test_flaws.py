@@ -2,6 +2,7 @@
 runs exactly where its flaw is present (docs/spec/stack/flaws.md)."""
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -66,12 +67,19 @@ def test_a_copy_overlapping_its_source_reads_it_whole_first():
     into x's front goes source to scratch, then scratch to destination."""
     doc = machine("multimesh_v9t8")
     doc["machine"]["flaws"]["F-001"]["present"] = False
-    copies = [
-        line for line in lowered(doc, "overlap").splitlines() if "copy w(" in line
-    ]
-    assert len(copies) == 2, copies
-    assert "-> w(h0" in copies[0].replace(" + ", "+")
-    assert "copy w(h0" in copies[1].replace(" + ", "+")
+    l1 = lowered(doc, "overlap").replace(" + ", "+")
+    write = l1.index("copy w(h0+0, (256, 32)) -> w(x+0, (256, 32))")
+    capture = l1[:write]
+    if "copy w(x+0, (256, 64)) -> w(h0+0, (256, 32))" in capture:
+        assert "wait mover" in capture or "move local=1" in capture
+    else:
+        assert "desc a0=x+0 walk=(64, 256)" in capture
+        assert "desc a1=h0+0 walk=(32, 256)" in capture
+        readers = set(re.findall(r"send (vc\[\d+\])", capture))
+        assert readers
+        for unit in readers:
+            assert capture.rfind(f"wait {unit}") > capture.rfind(f"send {unit}")
+    assert "-> w(x" not in capture
 
 
 def test_a_copy_writing_one_word_runs_runs_on_the_vector_cores():
@@ -88,7 +96,10 @@ def test_a_copy_whose_page_cut_can_leave_one_beat_runs_on_the_vector_cores():
     assert "copy w(" not in l1
     doc = machine("multimesh_v9t8")
     doc["machine"]["flaws"]["F-001"]["present"] = False
-    assert "vdrain" not in lowered(doc, "pagetail")
+    doc["machine"]["die"]["units"]["vc"] = []
+    plain = compiled(doc, "pagetail")
+    assert "copy w(" in plain["l1"] and "vdrain" not in plain["l1"]
+    assert plain["f001"]["split"] == 0
 
 
 def test_a_gather_into_odd_strided_rows_packs_then_copies_on_the_vector_cores():
@@ -232,9 +243,8 @@ def test_a_split_scatter_row_off_an_index_word_is_refused():
         rs.compile(INDEXED.format(op=op), "rows", json.dumps(doc), l1=True)
 
 
-def test_without_the_flaw_the_copy_stays_on_the_mover():
-    doc = machine("multimesh_v9t8")
-    doc["machine"]["flaws"]["F-001"]["present"] = False
+def test_without_the_flaw_a_mover_only_copy_needs_no_split():
+    doc = without_vector_copy(flaw=False)
     l1 = lowered(doc)
     assert "copy w(x+0, (256, 32)) -> w(y+0, (256, 64))" in l1.replace(" + ", "+")
     assert "vdrain" not in l1

@@ -1,5 +1,5 @@
 //! A cluster instance: fills, sweeps and drains on the cluster model
-//! (L2.MG.001-.010), the banks alternating by side.
+//! (L2.MG.001-.010), with operands retained as logical values.
 
 use std::collections::HashMap;
 
@@ -18,10 +18,9 @@ const KBLOCK: i64 = 32;
 /// The sweep's exponent anchor the lowering writes when none is chosen.
 const ANCHOR: i64 = 40;
 
-/// A bank's value.
-#[derive(Clone, Copy)]
+/// Packed entries of one logical operand, independent of physical placement.
 struct Operand {
-    bank: usize,
+    entries: Vec<mx7::Entry>,
     groups: i64,
     nk: i64,
 }
@@ -30,7 +29,6 @@ struct Operand {
 struct Instance {
     key: i64,
     operands: HashMap<String, Operand>,
-    next: [usize; 2],
     /// Accumulators a sweep has written.
     open: HashMap<String, bool>,
     /// Each accumulator's rows and columns.
@@ -95,7 +93,7 @@ impl Instance {
                 true => self.block(sim, c, &st.body),
                 false => Ok(()),
             },
-            "fill" => self.fill(sim, c, st),
+            "fill" => self.fill(sim, st),
             "zero" => {
                 let name = st.target_name().ok_or("c = zero")?.to_string();
                 self.shapes.insert(name.clone(), shape(st)?);
@@ -103,7 +101,7 @@ impl Instance {
                 Ok(())
             }
             "gemm" => self.gemm(sim, c, st),
-            "recv" => self.recv(sim, c, st),
+            "recv" => self.recv(sim, st),
             "drain" => self.drain(sim, c, st),
             op => Err(format!("no cluster op {op} in this simulator")),
         }
@@ -167,14 +165,12 @@ impl Instance {
         Ok(())
     }
 
-    /// Rows a core sent, quantised into the next bank as a burst lands them.
-    fn recv(&mut self, sim: &mut Sim<'_>, c: &mut Cluster, st: &Stmt) -> R<()> {
+    /// Rows a core sent, quantised into a logical operand value.
+    fn recv(&mut self, sim: &mut Sim<'_>, st: &Stmt) -> R<()> {
         let (rows, cols) = shape(st)?;
         let got = sim.received(self.key, rows as usize)?;
-        let side = false;
-        let bank = self.next[0];
-        self.next[0] = 1 - bank;
         let (groups, nk) = (rows / LANES, cols / KBLOCK);
+        let mut entries = Vec::new();
         for g in 0..groups {
             for k in 0..nk {
                 let mut x = [[0u16; mx7::KBLOCK]; mx7::LANES];
@@ -184,44 +180,56 @@ impl Instance {
                         *code = got.v[(g as usize * 4 + l) * got.cols + col] as u16;
                     }
                 }
-                c.place(side, bank, (g * nk + k) as usize, mx7::entry(&x));
+                entries.push(mx7::entry(&x));
             }
         }
         let name = st.target_name().ok_or("x = recv")?.to_string();
-        self.operands.insert(name, Operand { bank, groups, nk });
+        self.operands.insert(
+            name,
+            Operand {
+                entries,
+                groups,
+                nk,
+            },
+        );
         Ok(())
     }
 
-    fn fill(&mut self, sim: &mut Sim<'_>, c: &mut Cluster, st: &Stmt) -> R<()> {
+    fn fill(&mut self, sim: &mut Sim<'_>, st: &Stmt) -> R<()> {
         let v = sim.view(st.positional()[0])?;
         let b = sim.buf(&v.name)?.clone();
         let Layout::Mx7 { b: side, g, nk } = b.layout else {
             return Err("a fill reads an MXFP7 buffer".into());
         };
-        let which = usize::from(side);
-        let bank = self.next[which];
-        self.next[which] = 1 - bank;
         let (r0, rows, k0, _) = v.rect();
         let (mut lo, hi) = (r0 / LANES, (r0 + rows) / LANES);
         let groups = hi - lo;
-        let mut eoff = 0;
+        let mut entries = Vec::new();
         while lo < hi {
             let t = lo / g;
             let top = hi.min((t + 1) * g);
             let n = (top - lo) * nk;
-            let word = Word::Fill {
-                b: side,
-                bank,
-                eoff: eoff as usize,
-                addr: b.entry(lo, k0 / KBLOCK)?,
-                n: n as usize,
-            };
-            c.run(&word, sim.mem)?;
-            eoff += n;
+            let addr = b.entry(lo, k0 / KBLOCK)?;
+            if let Some(reach) = &mut sim.mem.reach {
+                reach.request("mg_fill", addr, n as usize * mx7::ENTRY_BYTES);
+            }
+            for entry in 0..n {
+                let bytes = sim
+                    .mem
+                    .read(addr + entry * mx7::ENTRY_BYTES as i64, mx7::ENTRY_BYTES)?;
+                entries.push(mx7::Entry::read(bytes, side));
+            }
             lo = top;
         }
         let name = st.target_name().ok_or("x = fill")?.to_string();
-        self.operands.insert(name, Operand { bank, groups, nk });
+        self.operands.insert(
+            name,
+            Operand {
+                entries,
+                groups,
+                nk,
+            },
+        );
         Ok(())
     }
 
@@ -229,21 +237,24 @@ impl Instance {
         let pos = st.positional();
         let operand = |t: &Term| {
             let name = t.as_name().ok_or("gemm a, b")?;
-            self.operands
-                .get(name)
-                .copied()
-                .ok_or(format!("no operand {name}"))
+            self.operands.get(name).ok_or(format!("no operand {name}"))
         };
         let (a, b) = (operand(pos[0])?, operand(pos[1])?);
+        for (side, operand) in [(false, a), (true, b)] {
+            for (at, entry) in operand.entries.iter().enumerate() {
+                c.place(side, 0, at, entry.clone());
+            }
+        }
+        let (gm, gn, nk) = (a.groups as usize, b.groups as usize, a.nk as usize);
         let name = st.target_name().ok_or("c = gemm")?.to_string();
         self.shapes.insert(name.clone(), shape(st)?);
         let keep = self.open.get(&name).copied().unwrap_or(false);
         let word = Word::Gemm {
-            gm: a.groups as usize,
-            gn: b.groups as usize,
-            nk: a.nk as usize,
-            abank: a.bank,
-            bbank: b.bank,
+            gm,
+            gn,
+            nk,
+            abank: 0,
+            bbank: 0,
             aoff: 0,
             boff: 0,
             acc: keep,

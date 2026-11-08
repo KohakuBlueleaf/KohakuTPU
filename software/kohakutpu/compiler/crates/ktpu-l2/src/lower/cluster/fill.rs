@@ -125,24 +125,59 @@ impl<'a> Ctx<'a> {
             .into_iter()
             .filter(|b| !live.contains(b) && Some(*b) != reading)
             .collect();
-        if free.is_empty() {
-            return Err(fail(
-                body,
-                st,
-                "L2.MG.018",
-                format!("both {} banks hold values still read", t.space),
-            ));
-        }
         let prev: Vec<i64> = self
             .vals
             .values()
             .filter(|v| v.kind == t.space)
             .map(|v| v.bank)
             .collect();
-        let bank = match prev.last() {
-            None => free[0],
-            Some(p) if !free.contains(p) || free.len() == 1 => free[0],
-            Some(p) => 1 - p,
+        let placement = if !free.is_empty() {
+            let bank = match prev.last() {
+                None => free[0],
+                Some(p) if !free.contains(p) || free.len() == 1 => free[0],
+                Some(p) => 1 - p,
+            };
+            Some((bank, 0))
+        } else if t.space == "B" && (share.is_none() || share.as_deref() == Some("auto")) {
+            // Automatic sharing may fall back to local bank residency. Explicit
+            // transport requests retain their original admission rules.
+            share = None;
+            // Retain independently packed K chunks without changing their order
+            // or layout. Never modify the bank read by the last sweep.
+            [0, 1]
+                .into_iter()
+                .filter(|bank| Some(*bank) != reading)
+                .find_map(|bank| {
+                    let mut spans: Vec<_> = self
+                        .vals
+                        .values()
+                        .filter(|v| {
+                            v.kind == "B"
+                                && v.bank == bank
+                                && self.uses.get(&v.at).copied().unwrap_or(-1) > i
+                        })
+                        .map(|v| (v.entry, v.entry + (v.shape.0 / g) * v.nk))
+                        .collect();
+                    spans.sort_unstable();
+                    let mut at = 0;
+                    for (lo, hi) in spans {
+                        if at + entries <= lo {
+                            return Some((bank, at));
+                        }
+                        at = at.max(hi);
+                    }
+                    (at + entries <= bank_n).then_some((bank, at))
+                })
+        } else {
+            None
+        };
+        let Some((bank, entry)) = placement else {
+            return Err(fail(
+                body,
+                st,
+                "L2.MG.018",
+                format!("both {} banks hold values still read", t.space),
+            ));
         };
         let key = share.as_ref().map(|_| (vname.clone(), runs.clone()));
         let unit = self.s.unit.clone();
@@ -150,8 +185,8 @@ impl<'a> Ctx<'a> {
             &unit,
             true,
             (&unit, &t.space),
-            bank * bank_n,
-            bank * bank_n + entries,
+            bank * bank_n + entry,
+            bank * bank_n + entry + entries,
         ));
         self.s
             .accesses
@@ -161,7 +196,7 @@ impl<'a> Ctx<'a> {
             self.s
                 .accesses
                 .push(mem(&unit, false, &vname, off0, off0 + n0 * e));
-            let (mut off, mut n, mut eoff) = (off0, n0, eoff0);
+            let (mut off, mut n, mut eoff) = (off0, n0, entry + eoff0);
             let mf = self.t.max_fill;
             while n > 0 {
                 let part = if n <= mf {
@@ -193,6 +228,7 @@ impl<'a> Ctx<'a> {
         self.vals.shift_remove(&target);
         let mut v = Val::new(if t.space == "A" { "A" } else { "B" }, (rows, k));
         v.bank = bank;
+        v.entry = entry;
         v.nk = nk;
         v.at = i;
         self.vals.insert(target, v);

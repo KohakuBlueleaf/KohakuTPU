@@ -4,6 +4,7 @@
 #[path = "../common.rs"]
 mod common;
 mod memory_dependencies;
+mod timing;
 mod unary_semantics;
 
 use common::{fixtures, known, stage_suite, Fixture, Level, Pair};

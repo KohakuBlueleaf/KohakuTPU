@@ -75,14 +75,14 @@ software/kohakutpu/application/kohakutpu/application/runtime/device/allocation.p
 Checking classifies supplied image values including generated padding, not all
 underlying storage. Entirely zero tiles issue no source descriptor or DMA;
 partial-row tiles describe only valid source rows. Storage outside the live view
-is not necessarily overwritten. (code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:738-753; software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing/image.rs:190-215)
+is not necessarily overwritten. (code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:811-826; software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing/image.rs:190-215)
 
 For vector quantisation, only integer finite=1 suppresses checking; deferred
 status with finite=1 is refused. This is caller proof, not tensor-value analysis.
 The ordinary unmapped vector path refuses checking under conversion version 1
 and checks contract-status/register/descriptor/EXP2D capabilities for version 2.
 (code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mod.rs:182-221;
-software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:149-180)
+software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:211-242)
 
 ## Vector schedule
 
@@ -93,14 +93,14 @@ converted to integers; looped mode accepts only 0 or 1. Machine parsing accepts
 one or two slots and a nonnegative core count; packing refuses a resolved count
 outside the available vector cores. (code: software/kohakutpu/application/kohakutpu/application/runtime/machine.py:97-112;
 software/kohakutpu/compiler/crates/ktpu-machine/src/lib.rs:266-277;
-software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:269-275)
+software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:339-345)
 
 The ordinary scheduler groups adjacent entries into source-row bursts and partitions
 stream groups contiguously: core v receives floor(groups*v/cores) through
 floor(groups*(v+1)/cores), with core count capped by stream groups. Full entries
 contain four rows of two FP16 words and drain four MX7 words. Partial entries
 load live rows and words only and zero remaining lanes; entirely zero entries
-issue no source fill. (code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:536-578, :679-687, :737-763;
+issue no source fill. (code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:609-651, :752-760, :810-836;
 software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing/image.rs:96-134, :352-356)
 
 Each software L1 slot reserves 128 input words and 64 output words; slot two
@@ -114,7 +114,7 @@ sixteen-entry cap. Contiguous grouping has separate caps, and image-size pressur
 reduces batch size or grouping. A steady loop exceeding skip displacement can
 be specialised on whether it executes rather than always imposing a seven-entry
 cap. (code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing/image.rs:61-93, :308-341;
-software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:549-578, :604-618, :655-677, :697-716)
+software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:622-651, :677-691, :728-750, :770-789)
 
 With zero reuse enabled and no valid input rows, packed-zero output is prepared
 once and the immutable slot is drained repeatedly. (code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing/image.rs:218-259)
@@ -122,7 +122,7 @@ once and the immutable slot is drained repeatedly. (code: software/kohakutpu/com
 With vector_looped enabled, ordinary packing emits sysnode counters and affine
 source/destination offsets for outer axes 0, 1 and 3. Otherwise it expands those
 axes using constant buffer-relative offsets. After issuing streams, each outer
-tile waits for all participating vector cores. (code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:777-821)
+tile waits for all participating vector cores. (code: software/kohakutpu/compiler/crates/ktpu-l2/src/lower/mover/packing.rs:850-894)
 
 When conversion version is at least 2, loading requires bit 0 in the ELF package
 feature word; absence raises AbiMismatch before stopping/booting sysnodes.

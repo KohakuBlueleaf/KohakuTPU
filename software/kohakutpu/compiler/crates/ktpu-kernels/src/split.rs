@@ -74,6 +74,15 @@ pub enum Delivery {
     Relay,
 }
 
+/// A local rectangle associated with one exact global output share.
+#[derive(Clone, Debug)]
+pub struct LocalTile {
+    pub node: usize,
+    pub origin: Vec<i64>,
+    pub tm: i64,
+    pub tn: i64,
+}
+
 #[derive(Clone, Debug)]
 pub enum SplitAxis {
     Unsplit,
@@ -84,8 +93,29 @@ pub enum SplitAxis {
         pm: usize,
         pn: usize,
     },
+    /// Output ownership cut in whole row grains, retaining its short final grain.
+    RowGrain {
+        rows: i64,
+    },
     /// Explicit local rectangles within independent global output shares.
     Tiled {
+        tm: i64,
+        tn: i64,
+    },
+    /// Each owner chooses legal rectangles for its own extent.
+    OwnerTiled {
+        tiles: Vec<LocalTile>,
+    },
+    /// A tiled identity product pipelines its physical output-layout conversion.
+    LayoutRing {
+        tiles: Vec<LocalTile>,
+    },
+    /// Sequential row products reuse original K chunks retained in B bank slots.
+    ResidentB {
+        tiles: Vec<LocalTile>,
+    },
+    /// Complete consecutive batches share one owner's local matrix waves.
+    Batched {
         tm: i64,
         tn: i64,
     },

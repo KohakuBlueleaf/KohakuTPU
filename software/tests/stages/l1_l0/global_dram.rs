@@ -1280,3 +1280,24 @@ fn local_register_spills_publish_after_rebinding_and_rehoming() {
         ));
     }
 }
+
+#[test]
+fn independent_unit_drains_share_a_line_but_not_written_bytes() {
+    let machine = card();
+    let facts = Facts::of_mesh(&machine, 0).expect("facts");
+    let a = facts.units["VC"][0];
+    let b = facts.units["VC"][1];
+    for (second, overlapping) in [(4192, false), (4160, true)] {
+        let mut p = Program::new();
+        p.send(a, dma(4128, true), vec![]);
+        p.send(b, dma(second, true), vec![]);
+        p.wait(a, None).expect("first drain completion");
+        p.wait(b, None).expect("second drain completion");
+        let findings = verify(&[p]);
+        if overlapping {
+            hazard(&findings, Kind::Race);
+        } else {
+            clean(&findings);
+        }
+    }
+}

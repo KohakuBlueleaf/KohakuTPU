@@ -658,6 +658,20 @@ pub fn cycles_with(
         .map(|(p, v)| (p.clone(), Val::Int(v)))
         .collect();
     let stmts = Expander::new(&macros, &r, true).stmts(&img.stmts, &env)?;
+    cycles_expanded(module, &stmts, sent, vregs, copies, fill, machine)
+}
+
+/// Time already expanded image statements with a fresh core clock.
+pub fn cycles_expanded(
+    module: &Module,
+    stmts: &[Stmt],
+    sent: &Sent,
+    vregs: u32,
+    copies: u32,
+    fill: (i64, i64),
+    machine: &Machine,
+) -> Result<i64> {
+    let r = module.reader();
     let isa = image::isa_for(machine, vregs)?;
     let facts = CoreFacts::of(machine, vregs);
     let mut t = Timing {
@@ -670,7 +684,7 @@ pub fn cycles_with(
         run: sent.run,
     };
     t.run(sent.descs)?;
-    t.run(&stmts)?;
+    t.run(stmts)?;
     Ok(t.core.end())
 }
 
@@ -713,12 +727,13 @@ impl Timing<'_> {
             }
             if op == "desc" {
                 let bind = st.args.iter().find(|x| matches!(x, Term::Assign(..)));
-                if let (Some(Term::Assign(lhs, _)), Some(walk)) = (bind, st.kw("walk")) {
+                if let Some(Term::Assign(lhs, _)) = bind {
                     if let Some(n) = lhs.as_name() {
-                        let words = walk_words(walk);
+                        let walk = st.kw("walk");
+                        let words = walk.map_or(1, walk_words);
+                        let run = walk.map_or(1, walk_run).max(1);
                         self.words_of.insert(n.to_string(), words);
-                        self.runs_of
-                            .insert(n.to_string(), words / walk_run(walk).max(1));
+                        self.runs_of.insert(n.to_string(), words / run);
                     }
                 }
                 continue;

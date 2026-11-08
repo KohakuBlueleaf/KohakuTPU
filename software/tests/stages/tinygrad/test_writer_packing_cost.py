@@ -65,7 +65,11 @@ def test_packed_prefix_prices_remaining_consumers(monkeypatch, missing):
             return total(candidate) <= total(other)
 
     monkeypatch.setattr(emit, "_Priced", Priced)
-    dev = SimpleNamespace(machine=SimpleNamespace(board="test"))
+    dev = SimpleNamespace(
+        machine=SimpleNamespace(board="test"),
+        home=None,
+        card=SimpleNamespace(nodes=(0,)),
+    )
     st = SimpleNamespace(form=lambda key, size: SimpleNamespace(addr=0))
     result = emit.packings(dev, st, 68, {}, 1)
     assert result is not None
@@ -86,7 +90,11 @@ def test_prefix_tail_uses_selected_prepared_production(monkeypatch, composed):
     fm = emit.FM
     src = emit.Operand("full", pitch=17, rows=4)
     keys = [("mx7", side, src, 4, 17, 4, 32, 1, 1, 1) for side in ("a", "b")]
-    dev = SimpleNamespace(machine=SimpleNamespace(board="test"))
+    dev = SimpleNamespace(
+        machine=SimpleNamespace(board="test"),
+        home=None,
+        card=SimpleNamespace(nodes=(0,)),
+    )
     uploads, launched, candidates = [], [], []
     monkeypatch.setattr(fm, "COMPOSED", composed)
     monkeypatch.setattr(fm, "PREPARED_QUANT", True)

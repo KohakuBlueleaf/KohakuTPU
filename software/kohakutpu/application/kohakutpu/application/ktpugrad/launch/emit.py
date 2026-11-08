@@ -233,7 +233,7 @@ def _quant(dev, src, rows, cols, rp, cp, side, g, nk, batches):
 
 class _Priced:
     """A writer of `reads` reads over [N, K] = `shape` priced by its package's
-    cycles (`_cost_decided`), a copy member standing for its math."""
+    launch-grant sequence cost, a copy member standing for its math."""
 
     def __init__(self, dev, shape: tuple, lanes: dict, reads: int):
         self.dev, self.shape, self.lanes, self.reads = dev, shape, lanes, reads
@@ -265,11 +265,7 @@ class _Priced:
 
     def cheaper(self, read: list, launches: list) -> bool:
         """Whether all of `read` costs no more than `launches`, including gaps."""
-        return _cost_decided(
-            json.dumps(read, sort_keys=True),
-            json.dumps(launches, sort_keys=True),
-            FM.generated.rs.machine_json(self.dev.machine),
-        )
+        return FM.sequence_choice(self.dev, read, launches, "cost")
 
 
 def published(st, held: bool, packs: tuple | None) -> None:
@@ -680,16 +676,12 @@ def _alike(dev, merged: list) -> None:
 def _cheaper(dev, package: dict, own: list) -> bool:
     """Whether `package` lowers and its cycles are no more than its stages'
     own launches and their gaps (`_rs.read_composed` under cost)."""
-    return _cost_decided(
-        json.dumps({"gen": "fused.kernel", "args": package}, sort_keys=True),
-        json.dumps([_solo_call(dev, s) for s in own], sort_keys=True),
-        FM.generated.rs.machine_json(dev.machine),
+    return FM.sequence_choice(
+        dev,
+        {"gen": "fused.kernel", "args": package},
+        [_solo_call(dev, s) for s in own],
+        "cost",
     )
-
-
-@lru_cache(maxsize=4096)
-def _cost_decided(read: str, launches: str, machine: str) -> bool:
-    return _rs.read_composed("cost", read, launches, machine)
 
 
 def _apart(dev, own: list, dead: set, info) -> list:

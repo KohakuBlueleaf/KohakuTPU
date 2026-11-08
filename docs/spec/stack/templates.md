@@ -16,7 +16,7 @@ input forms, numerical contract, dispatch profile and an optional forced option
 ID. `SplitOption` records the axis, participant and active-node counts, shares,
 physical output ownership, symbolic events, legality witness and cost. A
 `PlannedKernel` carries the executable graph or an authoritative L1 executable.
-(code: ktpu-kernels/src/split.rs:18-36, :40-69, :115-182)
+(code: ktpu-kernels/src/split.rs:18-36, :40-69, :145-212)
 
 Physical regions are byte runs over allocation identities. `validate_ownership`
 requires distinct writers to own distinct 64-byte lines and the byte union to
@@ -25,7 +25,7 @@ canonical physical identities; this ownership check alone is not a numerical or
 all-agent happens-before certificate. `partition_tiles(T,P)` uses balanced cuts
 `p*q+ceil(p*r/P)`, where `q=T/P` and `r=T%P`. Empty shares stay in the plan but
 `emit_shares` emits no work for them. Explicit sysnode scopes place each nonempty share on its granted
-physical ID. (code: ktpu-kernels/src/split.rs:185-205, :209-281, :283-298)
+physical ID. (code: ktpu-kernels/src/split.rs:215-235, :239-311, :313-328)
 
 `call_split` dispatches to family planners. Graph families expose distributed
 options where their ownership and local schedules permit them; generators with
@@ -35,8 +35,8 @@ unsupported consumer forms, explicit scale groups and unsupported numerical
 contracts rather than claiming a conversion it does not emit. Input-form labels
 and mapped-read capabilities remain request metadata; generator arguments select
 the reads. A split plan is not a certificate for a new binding, topology or
-consumer form. (code: ktpu-kernels/src/call.rs:2100-2152, :2153-2210,
-:2211-2398, :2399-2499)
+consumer form. (code: ktpu-kernels/src/call.rs:2100-2162, :2163-2220,
+:2221-2418, :2419-2519)
 
 ### Pricing and selection
 
@@ -65,7 +65,7 @@ assembly use the complete composed graph, B delivery uses its emitted transport
 model, convolution uses the patch/product sequence, and GroupNorm includes its
 population tree and normalization. These are not independent-share divisions.
 Row-stage sequences likewise use the complete composed graph for makespan while
-retaining per-node local costs. (code: ktpu-kernels/src/gen/matmul/split.rs:1037-1079;
+retaining per-node local costs. (code: ktpu-kernels/src/gen/matmul/split.rs:1492-1534;
 ktpu-kernels/src/call.rs:1472-1488, :1527-1552;
 ktpu-kernels/src/gen/conv.rs:447-473;
 ktpu-kernels/src/gen/groupnorm/distributed.rs:410-438, :535-567)
@@ -175,11 +175,124 @@ final emission; it is not decoded from the option name. Column ownership gives
 each node only its assigned B columns; local M tiles may reread those columns.
 The ordinary local plan remains a competing option.
 
+Independent-output ownership also exposes `ID-owner-waves-1` and
+`ID-owner-waves-2`. Each share chooses its own row/column divisors subject to
+bank, accumulator, staging and row-quantum limits. The existing geometry price
+seeds one- and two-local-wave alternatives, including operand fill bytes and
+command cost. The complete emitted resource price, not that seed, determines
+the winner against all ordinary and common-rectangle options. Typed `LocalTile`
+records associate geometry with physical-owner rank and exact global origin.
+No candidate requires all unequal owners to use the same divisor.
+
+Identity epilogues with full outputs also price `ID-layout-ring` at each ordinary
+partition and admitted common rectangle, as well as owner-wave layout rings.
+The policy pipelines the physical tiled-to-row-major conversion through staging;
+no arithmetic or rounding step is added. Local geometry and effective ring depth,
+lanes and parts enter schedule identity. A layout ring needs positive staging
+capacity, no activation conversion and no packed-output demands. Equal emitted
+schedules reuse complete prices; resource bounds prune only proven losers.
+
+Column ownership additionally compares cuts in half-maximum and maximum local
+column-block grains when those grains divide the global columns and preserve
+packed-output groups. These `n-grain-G` options retain whole packed blocks and
+can assign unequal column widths to avoid uniformly incomplete local waves.
+They receive ordinary, common-rectangle and owner-local geometry alternatives.
+Equivalent emitted schedules share prices, and resource bounds use their actual
+local geometry. Output ownership and boundary assembly use global byte regions,
+not the grain's diagnostic tile index.
+
+Independent-output M and MN assignments additionally compare
+`ID-row-grain-G` ownership at one or two MG waves of the ordinary row quantum.
+Grain boundaries retain the original batch and within-batch coordinates; the
+last grain keeps its exact short extent. Equal boundary assignments are omitted.
+These options require the original padded rows to equal quantum-rounded valid
+rows and no packed-output demands, retaining existing choices otherwise. Their
+ordinary local plans disable additional row padding, so their declared padded
+extent is also the emitted extent. Common and owner-local rectangles compete
+for the new shares. The typed `RowGrain` axis does not enter M/MN-specific B-pass
+transport conversion. Complete resource prices include imbalance and any
+boundary assembly; no grain is forced by its nominal MG occupancy. The DSL
+short-batch witness checks exact independently weighted outputs, single writes,
+optimistic bounds against forced prices, and automatic minimum-price selection.
+
+Independent output owners also expose `ID-resident-b-1` and `ID-resident-b-2`.
+These policies retain the complete sequence of original packed B K-chunks in
+bank entry slots for two adjacent row products. They do not create a second
+physical accumulator: each row product visits those chunks in original order
+and drains before the next starts. Admission requires at least two local row
+tiles and a complete B sequence fitting one bank. An odd final row tile visits
+that sequence once, without reading or writing a second product. L2 fill lifetime allocation
+keeps live chunks in disjoint intervals and never writes the currently read
+bank. Explicit shared-transport requests retain their original rules.
+
+Resident product rings resolve their depth against the complete resident wave;
+eligibility requires no quant ring, no stage-resident activation conversion and
+no packed output demands. Up to two row groups per MG occupy the product ring.
+Depth is capped by staging capacity, and a positive ordinary ring retains at
+least one resident wave. VC parts and epilogue segments use this same resolved
+geometry. Production and epilogue use the same column-major
+row-group coordinates, including independent batches and ragged final waves.
+Pair slots are aligned within each column and batch. An odd row-tile tail leaves
+one ring slot unused; neither its producer nor its epilogue accesses that slot.
+Capacity and depth include reserved slots. The non-ring path uses the same retained chunks and ordered drains. Geometry
+seeds are bounded; final selection uses the whole emitted schedule price.
+Residency participates in local identities and price equivalence. Its optimistic
+bound counts `bt * ceil(row_tiles/2) * column_tiles * K_chunks` B fills and
+all original A fills, GEMM commands and swept subtiles. The tests compare resource read bytes and exact
+ordered outputs; the L2-to-L1 witness exercises more than two live B chunks.
+
+Whole-batch group owners additionally expose `groups-batch-MxN`. Consecutive
+complete batches on one owner share the local matrix schedule. The source,
+ordinary local and all admitted common-rectangle geometries of the same physical
+ownership are deduplicated and priced as separate candidates when they divide
+the original padded rows and columns. Typed tile records supply the geometry;
+option names do not encode planning semantics. Manifest shards and their physical output
+ownership remain per batch; only emission groups them. A and B retain their
+original batch strides, including nonshared B and the distinct valid/padded A
+strides. The emitted local batch count participates in matrix waves and rings.
+These candidates do not change K chunks, FP16 epilogues or packing groups.
+Classed, reducing, mapped-extra, packed-output and boundary-assembly schedules
+retain their existing options; no such program is refused. Complete prices and
+optimistic resource bounds account for the same total matrix work. The DSL
+batched-product witness compares exact output bytes, single writes and prices
+with separate-head scheduling under a permuted physical grant.
+
+A table-independent relayout consisting of one direct source-to-destination
+word walk compares `p1` with `destination-tiles`. The shared destination walker
+normalizes its address map and partitions complete physical write lines across
+the ordered grant. Source origins remain global. The public index/mask ports
+remain present and unused; their contents cannot affect this word plan. Indexed,
+staged and merge-layer relayouts retain their local schedules. The original wins
+a price tie, and forced options use the ordinary split error mechanism. Both
+alternatives have complete prices, including explicit timing of the p1 path.
+
+Composed reads, writer packing and fused-sequence choices compare complete
+alternatives under the launch's ordered physical grant or pinned home. Each call
+carries the same effective scheduling controls and family-scoped forcing as
+generation. A distributed alternative is charged its selected split makespan;
+a single-owner unforced ordinary call retains ordinary graph pricing. Split
+pricing requests timing even for a generator whose only plan is p1; an unpriced
+manifest is not a zero-cost materialization. Each
+required materialization and launch gap remains in the sequence price. Decision
+cache identity includes grant, controls and mutation context, so a single-owner
+materialization decision is not inherited by a distributed consumer.
+
+Native admission memoizes each distributed call separately from the enclosing
+sequence decision. The key includes the machine digest, effective typed call and
+complete split request (ordered grant, forcing and contracts). At most 4096 prices
+are retained process-wide; an admission also retains its own entries until the
+comparison ends. A shared once-cell computes each retained price at most once,
+including refusals, without holding the cache lock during planning. Mutation runs
+use admission-local entries only. Sequence membership and the other alternative
+do not trigger another full split plan for a retained call. Launch gaps are still
+charged on every occurrence. Ordinary graph pricing retains its graph-based key.
+
 Automatic selection compares all alternatives, including one-sysnode choices,
 using the complete price or the resource-bound proof above. Forced selection emits and prices only the requested legal alternative.
 Explicit local geometry also applies to the singleton physical-node-zero grant.
-For schedules containing MG sends, LocalTiming uses the production
-resource graph in `ktpu-l2/src/cost/resource.rs`: separate command, fill, sweep
+LocalTiming uses the production resource graph for complete schedules,
+including pure vector and mover programs. The graph in
+`ktpu-l2/src/cost/resource.rs` has separate command, fill, sweep
 and emit engines, per-physical-sysnode read/write arbitration, phase-dependent VC
 memory service, image residency and descriptor state. MG COUNT receives retire
 after completed payloads, and consumed slot waits use successive notifications.
@@ -202,8 +315,8 @@ The bundled `sysnode-card-v1` calibration in `ktpu-l2/src/cost/planning.json`
 names the supplied memory/compute anchors. Machine-owned dispatch facts remain
 machine-owned. Performance reporting imports this same resource model; its
 external parameter file selects a calibration, not another implementation.
-Vector/mover-only pricing retains its existing clock. Prices are estimates, not
-silicon measurements. The perf ownership witness requires lower reported cycles
+Vector/mover-only schedules use the same calibration and resource clock.
+Prices are estimates, not silicon measurements. The perf ownership witness requires lower reported cycles
 and actual modeled read traffic than row replication. The DSL witness forces a
 column-owned candidate, verifies disjoint weight ownership, exact ordered outputs
 and single writes, and requires automatic price no worse than that candidate.
@@ -218,7 +331,7 @@ shares do not contribute. A requested reduction order filters options by their
 actual edge list. With four live participants the tree joins 0 into 1, 3 into 2,
 then 1 into 2; serial reduction sends each earlier active rank to the last active
 rank. Changing this order changes the numerical contract, not just placement.
-(code: ktpu-kernels/src/gen/matmul/split.rs:541-686;
+(code: ktpu-kernels/src/gen/matmul/split.rs:955-1097;
 ktpu-kernels/src/gen/matmul/peer.rs:43-66)
 
 B-pass options retain the M or mixed M/N ownership but share raw packed B words:
@@ -233,7 +346,7 @@ traffic, remote payloads, bank events and relay words. MG compute and private
 fills belong to the local resource budget and are not charged again by the
 transport estimate. This serial upper estimate is explicitly unfitted; it asserts no measured
 crossover. Other independent M/N options use the slowest complete local share.
-(code: ktpu-kernels/src/gen/matmul/split.rs:506-540, :822-912, :1037-1079;
+(code: ktpu-kernels/src/gen/matmul/split.rs:920-954, :1242-1339, :1492-1534;
 ktpu-kernels/src/gen/matmul/b_pass.rs:38-98, :241-353;
 ktpu-kernels/src/split/cost.rs:37-92)
 
@@ -245,7 +358,7 @@ schedules are priced through the shared vector split planner. Classed packing
 and materialized prepared-read sequences retain their complete local `p1`
 schedule; the dispatcher states the reason in its legality witness.
 (code: ktpu-kernels/src/gen/matmul/destination.rs:31-128, :149-303;
-ktpu-kernels/src/call.rs:2266-2340, :2454-2492)
+ktpu-kernels/src/call.rs:2286-2360, :2474-2512)
 
 ### Checked quant schedules in typed products
 
@@ -301,7 +414,7 @@ option instead of inventing independent owners.
 (code: ktpu-kernels/src/gen/convert.rs:52-113;
 ktpu-kernels/src/gen/convert/destination.rs:20-133, :136-252;
 ktpu-kernels/src/gen/transpose/destination.rs:40-137;
-ktpu-kernels/src/call.rs:1944-1954, :2341-2392, :2454-2492)
+ktpu-kernels/src/call.rs:1944-1954, :2361-2412, :2474-2512)
 
 ### Logical row boundaries
 
@@ -890,7 +1003,7 @@ sticky-overflow redo; flashd requires the caller's `unit-scores` contract and
 uses a direct score ring; srflash uses SR row state. Four distinct MG roles are
 required, plus two VCs for flash/flashd or two SRs for srflash. These resource
 checks do not establish numerical eligibility for arbitrary attention inputs.
-(code: ktpu-kernels/src/call.rs:2171-2210;
+(code: ktpu-kernels/src/call.rs:2181-2220;
 ktpu-kernels/src/gen/attention/motif.rs:57-161;
 ktpu-kernels/src/gen/attention/flash_split.rs:214-240)
 
@@ -1082,3 +1195,8 @@ composition or rewriting. Device specialization follows the retained call and
 ordinary grant/cache path. The obsolete `native.composition` module is absent,
 not a second ABI or forwarding compatibility surface. Independent frozen graph
 oracles live only in test support. This relocation adds no device operations.
+
+Identity arithmetic products can price an owner-local physical output-layout
+ring. Effective local ring geometry enters schedule/kernel identity. FP16
+activation conversion and attached quant demands are excluded; ordinary
+schedules remain alternatives.

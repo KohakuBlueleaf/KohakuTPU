@@ -670,12 +670,16 @@ fn selection_prices_the_slowest_share_and_forcing_keeps_its_price() {
 
 #[path = "attention.rs"]
 mod attention;
+#[path = "batched_matmul.rs"]
+mod batched_matmul;
 #[path = "bounded_matmul.rs"]
 mod bounded_matmul;
 #[path = "joint_matmul.rs"]
 mod joint_matmul;
 #[path = "loop_ownership.rs"]
 mod loop_ownership;
+#[path = "owner_tiles.rs"]
+mod owner_tiles;
 #[path = "prepared_split.rs"]
 mod prepared_split;
 #[path = "split_cost.rs"]
@@ -718,7 +722,7 @@ fn simulate_named_tables(
     extra: &dyn Fn(i64) -> u16,
     tables: &[(&str, Vec<u8>)],
 ) -> (Vec<u8>, Vec<u32>) {
-    simulate_named_executable(kernel, None, output, input, extra, tables)
+    simulate_named_executable(kernel, None, output, input, extra, tables, &machine())
 }
 
 fn simulate_matmul_executable(
@@ -726,8 +730,9 @@ fn simulate_matmul_executable(
     l1: Option<&str>,
     input: &dyn Fn(bool, i64, i64, i64, i64) -> u16,
     extra: &dyn Fn(i64) -> u16,
+    card: &Machine,
 ) -> (Vec<u8>, Vec<u32>) {
-    simulate_named_executable(kernel, l1, "out", input, extra, &[])
+    simulate_named_executable(kernel, l1, "out", input, extra, &[], card)
 }
 
 fn simulate_named_executable(
@@ -737,6 +742,7 @@ fn simulate_named_executable(
     input: &dyn Fn(bool, i64, i64, i64, i64) -> u16,
     extra: &dyn Fn(i64) -> u16,
     tables: &[(&str, Vec<u8>)],
+    card: &Machine,
 ) -> (Vec<u8>, Vec<u32>) {
     let text = ktpu_graph::lower(&kernel.graph).expect("L2 graph");
     let module = ktpu_l1::text::read(&text.text(), "matmul shares").expect("L2 text");
@@ -767,15 +773,9 @@ fn simulate_named_executable(
         .collect();
     match l1 {
         Some(source) => {
-            common::verify_card_l1(source, &text.name, &machine(), proof_binds, &proof_memory)
+            common::verify_card_l1(source, &text.name, card, proof_binds, &proof_memory)
         }
-        None => common::verify_card_l2(
-            &text.text(),
-            &text.name,
-            &machine(),
-            proof_binds,
-            &proof_memory,
-        ),
+        None => common::verify_card_l2(&text.text(), &text.name, card, proof_binds, &proof_memory),
     }
     let mut mem = Dram::new(end as usize);
     for (name, b) in &buffers {
@@ -825,8 +825,7 @@ fn simulate_named_executable(
     mem.watch_writes(start..start + out.bytes() as usize)
         .expect("watch the output");
     if let Some(executable) = &executable {
-        let card = machine();
-        let facts = Facts::of(&card);
+        let facts = Facts::of(card);
         let mut simulator = ktpu_sim::machine::Machine::of_meshes(
             mem,
             card.nodes() as usize,
@@ -965,7 +964,7 @@ fn matmul_b_pass_preserves_k_order_and_writes_each_word_once() {
             assert_eq!(chosen.id, "m", "raw delivery can lose for a short M share");
             let executable = plan.l1.as_deref().expect("raw peer delivery executable");
             let (actual, writes) =
-                simulate_matmul_executable(&plan.kernel, Some(executable), &input, &extra);
+                simulate_matmul_executable(&plan.kernel, Some(executable), &input, &extra, &m);
             let values = decoded(&actual);
             println!(
                 "{id} P={p}: against P=1: {}; against f32: {}; P=1 against f32: {}",

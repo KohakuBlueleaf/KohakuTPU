@@ -41,7 +41,8 @@ pub fn split_sequences(
     })
 }
 
-fn compare_sequences<T>(
+/// Compare caller-owned alternatives with complete prices and inter-launch gaps.
+pub fn compare_sequences<T>(
     mode: Composed,
     kernels: &[T],
     materialized: &[T],

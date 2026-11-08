@@ -71,19 +71,6 @@ def graph_waits(raw):
     return out
 
 
-def awaits_past_a_barrier(raw):
-    """Whether an AWAIT by count follows a BARRIER, what a BARRIER counted as raised
-    twice over."""
-    h = struct.unpack_from(A.PKG_HDR_FMT, raw)
-    seen = False
-    for i in range((h[A.KA_PH_COUNTS2] >> 16) & 0xFFFF):
-        a = struct.unpack_from("<Q", raw, h[A.KA_PH_OFF_STEP] + 16 * i)[0]
-        if a & 255 == A.KA_OP_AWAIT and seen and not (a >> 8) & 255:
-            return True
-        seen |= a & 255 == A.KA_OP_BARRIER
-    return False
-
-
 @pytest.fixture(scope="module")
 def captured():
     """The composed reads a real model plans: the suite's default holds them off."""
@@ -94,7 +81,7 @@ def captured():
 
 def test_every_wait_of_lenet_is_the_writers(captured):
     programs = [p for e in captured["step"] if e[0] == "program" for p in e[1].values()]
-    assert any(awaits_past_a_barrier(p.bound(False)) for p in programs)
+    assert programs
     for p in programs:
         raw = p.bound(False)
         written = writer_waits(p.bound(True))

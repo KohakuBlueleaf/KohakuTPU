@@ -1,7 +1,7 @@
 """The Rust stack (software/kohakutpu/compiler/crates, crate ktpu): graph or L2 -> L2 passes -> L1
 -> image schedule -> L0 packages -> verifier, each stage cached on disk."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TypedDict
 
 def compile_split_graph(
@@ -809,7 +809,12 @@ def mm_resolved(args_json: str, machine_json: str) -> str: ...
 def mm_takes_f16(args_json: str, machine_json: str) -> bool: ...
 def fused_packs(args_json: str, machine_json: str) -> bool: ...
 def read_composed(
-    mode: str, read_json: str, launches_json: str, machine_json: str
+    mode: str,
+    read_json: str,
+    launches_json: str,
+    machine_json: str,
+    nodes: Sequence[int] | None = None,
+    mutant: str | None = None,
 ) -> bool: ...
 def call_cycles(call_json: str, machine_json: str) -> int | None: ...
 def graph_cycles(source: str, machine_json: str) -> int:

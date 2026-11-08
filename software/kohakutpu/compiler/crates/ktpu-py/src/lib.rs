@@ -754,6 +754,9 @@ fn bind_cache_stats(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     d.set_item("library_limit", lib_limit)?;
     d.set_item("library_reads", lib_reads)?;
     d.set_item("library_hits", lib_hits)?;
+    let (planned, reused) = pricing::plan_counts();
+    d.set_item("split_plans", planned)?;
+    d.set_item("split_plan_hits", reused)?;
     Ok(d)
 }
 
@@ -940,7 +943,7 @@ fn generate(
                 input_forms: vec![],
                 force: None,
             };
-            let plan = ktpu_kernels::call_split(generator, &args, &request, &m)?;
+            let plan = pricing::planned(generator, &args, &request, &m, false)?;
             let mut graph = serde_json::to_value(&plan.kernel.graph)
                 .map_err(|e| ktpu_machine::Refusal::new("API.OP.001", e.to_string()))?;
             if let Some(l1) = plan.l1 {
@@ -986,7 +989,7 @@ fn generate_split(
         force,
     };
     let planned = under(mutant, || {
-        ktpu_kernels::call_split(generator, &args, &request, &m)
+        pricing::planned(generator, &args, &request, &m, false)
     })?
     .map_err(|e| PyValueError::new_err(e.to_string()))?;
     let mut graph = serde_json::to_value(&planned.kernel.graph)
@@ -1311,36 +1314,80 @@ fn call_cycles(call_json: &str, machine_json: &str) -> PyResult<Option<i64>> {
     Ok(pricing::Prices::new(&m, &root).cycles(&call))
 }
 
-/// read_composed(mode, read_json, launches_json, machine_json) -> bool:
-/// `ktpu_kernels::composed::composed` of `{"gen", "args"}` calls.
+/// Compare complete alternatives using the same grant and policies as generation.
 #[pyfunction]
+#[pyo3(signature = (mode, read_json, launches_json, machine_json, nodes=None, mutant=None))]
 fn read_composed(
     mode: &str,
     read_json: &str,
     launches_json: &str,
     machine_json: &str,
+    nodes: Option<Vec<i64>>,
+    mutant: Option<&str>,
 ) -> PyResult<bool> {
+    use ktpu_kernels::split::{DispatchProfile, NodeSet, SplitRequest};
+
     let m = machine(machine_json)?;
     let bad = |e: serde_json::Error| PyValueError::new_err(format!("a read's calls: {e}"));
     #[derive(serde::Deserialize)]
+    struct Choice {
+        #[serde(flatten)]
+        call: Call,
+        #[serde(default)]
+        force: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
     #[serde(untagged)]
     enum Calls {
-        One(Call),
-        Many(Vec<Call>),
+        One(Choice),
+        Many(Vec<Choice>),
     }
     let read = match serde_json::from_str::<Calls>(read_json).map_err(bad)? {
         Calls::One(call) => vec![call],
         Calls::Many(calls) => calls,
     };
-    let launches: Vec<Call> = serde_json::from_str(launches_json).map_err(bad)?;
+    let launches: Vec<Choice> = serde_json::from_str(launches_json).map_err(bad)?;
     let mode = ktpu_kernels::gen::prepared::Composed::named(mode)
         .ok_or_else(|| PyValueError::new_err(format!("a composed mode {mode:?}")))?;
-    let root = cache(None);
-    let prices = pricing::Prices::new(&m, &root);
-    let cost = |c: &Call| prices.cycles(c);
-    Ok(ktpu_kernels::composed::sequences(
-        mode, &read, &launches, &m, &cost,
-    ))
+    let request = nodes
+        .map(|ids| {
+            NodeSet::new(ids, &m).map(|nodes| SplitRequest {
+                nodes,
+                consumer: Default::default(),
+                dispatch: DispatchProfile::Common,
+                numerics: Default::default(),
+                input_forms: vec![],
+                force: None,
+            })
+        })
+        .transpose()
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    under(mutant, || {
+        let root = cache(None);
+        let prices = pricing::Prices::new(&m, &root);
+        let cost = |choice: &Choice| {
+            let call = &choice.call;
+            let distributed = request.as_ref().filter(|r| {
+                r.nodes.ids().len() > 1
+                    || choice.force.is_some()
+                    || matches!(
+                        call.gen.as_str(),
+                        "attention.flash" | "attention.flashd" | "attention.srflash"
+                    )
+            });
+            if let Some(request) = distributed {
+                let request = SplitRequest {
+                    force: choice.force.clone(),
+                    ..request.clone()
+                };
+                prices.split_cycles(call, &request)
+            } else {
+                prices.cycles(call)
+            }
+        };
+        // The generic sequence comparator includes every launch and launch gap.
+        ktpu_kernels::composed::compare_sequences(mode, &read, &launches, &m, &cost)
+    })
 }
 
 /// The relayout knobs' defaults (`ktpu_kernels::gen::relayout`), a JSON

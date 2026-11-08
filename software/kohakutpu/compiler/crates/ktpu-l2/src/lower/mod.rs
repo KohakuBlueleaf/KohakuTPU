@@ -226,8 +226,7 @@ pub fn lower_bound(
                         "a deferred quant status is a vector_mx7 quant's",
                     ));
                 }
-                if mover::lone_copy(&body, op, env, t)? {
-                    let mut stage = mover::vector_copy(&body, op, env, t, &mut images)?;
+                if let Some(mut stage) = mover::chosen_copy(&body, op, env, t, &mut images)? {
                     pending.protect(&body, &op.st, &stage.accesses)?;
                     stage.group = s.tag;
                     stage.phase = s.phase;

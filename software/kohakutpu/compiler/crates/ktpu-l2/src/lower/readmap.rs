@@ -604,6 +604,37 @@ impl Shape {
         (vec![(32, unit as i64)], unit, transfers)
     }
 
+    /// Whole source words can unpack directly into their final entry chunks.
+    pub fn direct_words(&self) -> bool {
+        self.segments.len() == REG_WORDS
+            && self.segments.iter().enumerate().all(|(chunk, s)| {
+                s.chunk == chunk
+                    && s.end == WORD_LANES as usize
+                    && matches!(s.source, Some((_, 0, false)))
+            })
+    }
+
+    pub fn unpack_words(&self, dest: usize, slot: usize, lines: &mut Vec<String>) {
+        let mut chunk = 0;
+        while chunk < REG_WORDS {
+            let Some((word, _, _)) = self.segments[chunk].source else {
+                unreachable!("direct words have a source");
+            };
+            let mut n = 1;
+            while chunk + n < REG_WORDS
+                && self.segments[chunk + n].source == Some((word + n, 0, false))
+            {
+                n += 1;
+            }
+            lines.push(format!(
+                "    vunpk v{dest}[{chunk}:] <- l1[{}] f16 n={n}",
+                slot + word
+            ));
+            chunk += n;
+        }
+        lines.push("    vsync fe on=unpack".into());
+    }
+
     pub fn unpack(&self, slot: usize, lines: &mut Vec<String>) {
         for (reg, start) in (0..self.words.len()).step_by(REG_WORDS).enumerate() {
             lines.push(format!(

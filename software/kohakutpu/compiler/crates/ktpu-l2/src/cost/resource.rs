@@ -4,9 +4,10 @@
 //! calibration through the same parameter and task-graph interfaces.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use ktpu_l1::lower::imem::Resident;
-use ktpu_l1::sched::timing::{cycles_with, parse, symbolic, walk_words, Params as Core, Sent};
+use ktpu_l1::sched::timing::{cycles_expanded, parse, symbolic, walk_words, Params as Core, Sent};
 use ktpu_l1::text::{fmt, Env, Expander, Module, Stmt, Term, Val};
 use ktpu_machine::Machine;
 use serde_json::{json, Value};
@@ -359,9 +360,10 @@ impl Census<'_> {
                 }
                 "desc" => {
                     let bind = st.args.iter().find(|x| matches!(x, Term::Assign(..)));
-                    if let (Some(Term::Assign(lhs, _)), Some(walk)) = (bind, st.kw("walk")) {
+                    if let Some(Term::Assign(lhs, _)) = bind {
                         if let Some(n) = lhs.as_name() {
-                            self.walks.insert(n.to_string(), walk_words(walk) as f64);
+                            let words = st.kw("walk").map_or(1, walk_words);
+                            self.walks.insert(n.to_string(), words as f64);
                         }
                     }
                 }
@@ -425,6 +427,7 @@ fn fmt_stmt(st: &Stmt) -> String {
 fn program_words(stmts: &[Stmt]) -> f64 {
     stmts
         .iter()
+        .filter(|s| s.op != "desc")
         .map(|s| 1.0 + program_words(&s.body))
         .sum::<f64>()
 }
@@ -432,38 +435,20 @@ fn program_words(stmts: &[Stmt]) -> f64 {
 /// One image: its cycles alone, its counts, its program's words.
 fn image(
     module: &Module,
-    run: &Stmt,
+    stmts: &[Stmt],
     descs: &[Stmt],
     t: &Target,
     fill: (i64, i64),
     p: &Params,
-) -> Result<(String, f64, Work, f64), String> {
-    let Some(Term::Call(name, args)) = run.positional().first().copied() else {
-        return Err("run IMAGE(args)".into());
-    };
-    let Some(img) = module.images.get(name) else {
-        return Ok((name.clone(), 0.0, Work::default(), 0.0));
-    };
-    let values: Vec<i128> = args.iter().map(|a| a.as_int().unwrap_or(0)).collect();
+) -> Result<(f64, Work, f64), String> {
     let sent = Sent {
-        args: &values,
+        args: &[],
         descs,
         run: t.machine.mover.copy_cost.0 as i64,
     };
-    let took = cycles_with(module, name, &sent, t.vregs, t.vcopies, fill, &t.machine)
+    let took = cycles_expanded(module, stmts, &sent, t.vregs, t.vcopies, fill, &t.machine)
         .map_err(|e| e.to_string())?;
 
-    let r = module.reader();
-    let macros = module.macro_table();
-    let env: Env = img
-        .params
-        .iter()
-        .zip(values.iter().copied().chain(std::iter::repeat(0)))
-        .map(|(p, v)| (p.clone(), Val::Int(v)))
-        .collect();
-    let stmts = Expander::new(&macros, &r, true)
-        .stmts(&img.stmts, &env)
-        .map_err(|e| e.to_string())?;
     let mut c = Census {
         machine: &t.machine,
         core: Core::of(&t.machine),
@@ -473,14 +458,14 @@ fn image(
         work: Work::default(),
     };
     c.run(descs, 1.0);
-    c.run(&stmts, 1.0);
+    c.run(stmts, 1.0);
     let w = c.work;
     // What the core's own timing leaves out, each from its anchor.
     let took = took as f64
         + w.fe_syncs * p.vc_fe_sync
         + w.pack_ops * p.vc_pack_op
         + w.unpack_ops * p.vc_unpack_op;
-    Ok((name.clone(), took, w, program_words(&stmts)))
+    Ok((took, w, program_words(stmts)))
 }
 
 fn add(a: &mut Work, b: &Work, n: f64) {
@@ -519,6 +504,8 @@ struct Builder<'a> {
     arrivals: Vec<(usize, String, i64, usize)>,
     receives: Vec<(usize, usize, String, i64)>,
     descriptors: HashMap<(usize, String, String, String), String>,
+    walks: HashMap<(usize, String), BTreeMap<String, Stmt>>,
+    expanded: HashMap<(String, Vec<i128>), Arc<Vec<Stmt>>>,
     resident: HashMap<(usize, String), Resident>,
     image_ids: HashMap<(String, Vec<i128>), u64>,
     images: HashMap<(String, Vec<i128>, Vec<(String, String)>), (f64, f64, Work, f64)>,
@@ -630,7 +617,71 @@ impl Builder<'_> {
             changed |= self.descriptors.get(&key) != Some(&value);
             self.descriptors.insert(key, value);
         }
+        if descriptor.kw("walk").is_none() {
+            changed |= self
+                .descriptors
+                .remove(&(self.mesh, unit.to_string(), id.to_string(), "walk".into()))
+                .is_some();
+        }
         changed
+    }
+
+    /// Image-owned descriptors are installed at launch, even on an image hit.
+    fn expanded(&mut self, run: &Stmt) -> Result<Arc<Vec<Stmt>>, String> {
+        let Some(Term::Call(name, args)) = run.positional().first().copied() else {
+            return Err("run IMAGE(args)".into());
+        };
+        let values: Vec<i128> = args.iter().map(|a| a.as_int().unwrap_or(0)).collect();
+        let key = (name.clone(), values);
+        if let Some(stmts) = self.expanded.get(&key) {
+            return Ok(Arc::clone(stmts));
+        }
+        let Some(img) = self.module.images.get(name) else {
+            return Ok(Arc::new(Vec::new()));
+        };
+        let env: Env = img
+            .params
+            .iter()
+            .zip(key.1.iter().copied().chain(std::iter::repeat(0)))
+            .map(|(p, v)| (p.clone(), Val::Int(v)))
+            .collect();
+        let reader = self.module.reader();
+        let macros = self.module.macro_table();
+        let stmts = Expander::new(&macros, &reader, true)
+            .stmts(&img.stmts, &env)
+            .map_err(|e| e.to_string())?;
+        let stmts = Arc::new(stmts);
+        self.expanded.insert(key, Arc::clone(&stmts));
+        Ok(stmts)
+    }
+
+    fn image_price(&mut self, run: &Stmt, descs: &[Stmt]) -> Result<(f64, f64, Work, f64), String> {
+        let walks: Vec<_> = descs
+            .iter()
+            .filter_map(|d| {
+                let fields = d.kwargs();
+                let (id, _) = fields.first()?;
+                Some((id.to_string(), d.kw("walk").map(fmt).unwrap_or_default()))
+            })
+            .collect();
+        let Some(Term::Call(name, args)) = run.positional().first().copied() else {
+            return Err("run IMAGE(args)".into());
+        };
+        let arguments: Vec<i128> = args.iter().map(|a| a.as_int().unwrap_or(0)).collect();
+        let key = (name.clone(), arguments, walks);
+        if let Some(value) = self.images.get(&key) {
+            return Ok(*value);
+        }
+        let stmts = self.expanded(run)?;
+        let (took, work, program) = image(self.module, &stmts, descs, self.t, self.fill, self.p)?;
+        let alone = if let Some(fill) = self.alone {
+            image(self.module, &stmts, descs, self.t, fill, self.p)?.0
+        } else {
+            took
+        };
+        let value = (took, alone, work, program);
+        self.images.insert(key, value);
+        Ok(value)
     }
 
     fn send(&mut self, st: &Stmt) -> Result<(), String> {
@@ -649,10 +700,20 @@ impl Builder<'_> {
             return Ok(());
         }
         let engine = self.g.engine(format!("{}{u}", self.prefix));
-        let descs: Vec<Stmt> = st.body.iter().filter(|s| s.op == "desc").cloned().collect();
+        let mut body = Vec::new();
+        for s in &st.body {
+            if u.starts_with("vc") && s.op == "run" {
+                body.extend(
+                    self.expanded(s)?
+                        .iter()
+                        .take_while(|s| s.op == "desc")
+                        .cloned(),
+                );
+            }
+            body.push(s.clone());
+        }
         // A descriptor word writing what its field holds is never sent.
-        let fresh = st
-            .body
+        let fresh = body
             .iter()
             .filter(|s| s.op != "desc" || self.described(&u, s))
             .count();
@@ -669,38 +730,67 @@ impl Builder<'_> {
                 .push(engine, "unit.command", 0.0, 0.0, 0.0, self.mesh, vec![sent]);
             return Ok(());
         }
-        // Timing and census read descriptor identity and walk, not its address
-        // or increment. Residency and descriptor updates retain their own state.
-        let walks: Vec<_> = descs
-            .iter()
-            .filter_map(|d| {
-                let bind = d.args.iter().find_map(|a| match a {
-                    Term::Assign(lhs, _) => lhs.as_name(),
-                    _ => None,
-                })?;
-                Some((bind.to_string(), fmt(d.kw("walk")?)))
-            })
-            .collect();
-        for s in st.body.iter().filter(|s| s.op == "run") {
+        // Fixed descriptor writes reach their steady state after one traversal.
+        // Keep a second state only for a repeated body that changes an inherited walk.
+        let mut steady = if repeats > 1.0 {
+            let initial = self.walks.get(&(self.mesh, u.clone()));
+            let mut final_walks = initial.cloned().unwrap_or_default();
+            for s in body.iter().filter(|s| s.op == "desc") {
+                if let Some((id, _)) = s.kwargs().first() {
+                    final_walks.insert(id.to_string(), s.clone());
+                }
+            }
+            let changed = final_walks.iter().any(|(id, desc)| {
+                initial
+                    .and_then(|walks| walks.get(id))
+                    .map(|s| s.kw("walk"))
+                    != Some(desc.kw("walk"))
+            });
+            changed.then_some(final_walks)
+        } else {
+            None
+        };
+        for s in &body {
+            if s.op == "desc" {
+                if let Some((id, _)) = s.kwargs().first() {
+                    self.walks
+                        .entry((self.mesh, u.clone()))
+                        .or_default()
+                        .insert(id.to_string(), s.clone());
+                    if let Some(steady) = &mut steady {
+                        steady.insert(id.to_string(), s.clone());
+                    }
+                }
+                continue;
+            }
+            if s.op != "run" {
+                continue;
+            }
+            let descs: Vec<_> = self
+                .walks
+                .get(&(self.mesh, u.clone()))
+                .into_iter()
+                .flat_map(|descs| descs.values().cloned())
+                .collect();
             let Some(Term::Call(name, args)) = s.positional().first().copied() else {
                 return Err("run IMAGE(args)".into());
             };
             let arguments: Vec<i128> = args.iter().map(|a| a.as_int().unwrap_or(0)).collect();
-            let key = (name.clone(), arguments.clone(), walks.clone());
-            let (took, alone, work, program) = match self.images.get(&key) {
-                Some(value) => *value,
-                None => {
-                    let (_, took, work, program) =
-                        image(self.module, s, &descs, self.t, self.fill, self.p)?;
-                    let alone = if let Some(fill) = self.alone {
-                        image(self.module, s, &descs, self.t, fill, self.p)?.1
-                    } else {
-                        took
-                    };
-                    let value = (took, alone, work, program);
-                    self.images.insert(key, value);
-                    value
-                }
+            let (first, first_alone, first_work, program) = self.image_price(s, &descs)?;
+            let (took, alone, work) = if let Some(steady) = &steady {
+                let held: Vec<_> = steady.values().cloned().collect();
+                let (next, next_alone, next_work, _) = self.image_price(s, &held)?;
+                let mut work = first_work;
+                add(&mut work, &next_work, repeats - 1.0);
+                (
+                    first + next * (repeats - 1.0),
+                    first_alone + next_alone * (repeats - 1.0),
+                    work,
+                )
+            } else {
+                let mut work = Work::default();
+                add(&mut work, &first_work, repeats);
+                (first * repeats, first_alone * repeats, work)
             };
             let (r, w) = (work.read_bytes, work.write_bytes);
             let next = self.image_ids.len() as u64;
@@ -721,17 +811,11 @@ impl Builder<'_> {
             } else {
                 sent
             };
-            add(&mut self.g.work, &work, repeats);
-            let id = self.g.push(
-                engine,
-                "vc.run",
-                took * repeats,
-                r * repeats,
-                w * repeats,
-                self.mesh,
-                vec![sent],
-            );
-            self.g.tasks[id].alone = alone * repeats;
+            add(&mut self.g.work, &work, 1.0);
+            let id = self
+                .g
+                .push(engine, "vc.run", took, r, w, self.mesh, vec![sent]);
+            self.g.tasks[id].alone = alone;
         }
         Ok(())
     }
@@ -883,6 +967,8 @@ fn build(module: &Module, name: &str, t: &Target, p: &Params) -> Result<Graph, S
         arrivals: Vec::new(),
         receives: Vec::new(),
         descriptors: HashMap::new(),
+        walks: HashMap::new(),
+        expanded: HashMap::new(),
         resident: HashMap::new(),
         image_ids: HashMap::new(),
         images: HashMap::new(),

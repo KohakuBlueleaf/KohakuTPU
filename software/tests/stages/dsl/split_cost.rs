@@ -54,3 +54,42 @@ fn a_forced_price_cannot_hide_a_cheaper_automatic_option() {
         .expect("automatic cached choice");
     assert_eq!(automatic.cost.makespan, fast.cost.makespan);
 }
+
+#[test]
+fn exact_forced_prices_are_reused_during_automatic_comparison() {
+    let m = machine();
+    let template = call_split(
+        "convert.copy_kernel",
+        &json!({"nbytes": 128}),
+        &request(&m),
+        &m,
+    )
+    .expect("copy ownership")
+    .split;
+    let mut evaluated = Vec::new();
+    let cache = ChoiceCache::default();
+    let mut select = |force: Option<&str>| {
+        cache.choose_priced("schedule".into(), force, |exact| {
+            let mut choices = Vec::new();
+            for (id, cycles) in [("slow", 90), ("fast", 20)] {
+                if force.is_some_and(|forced| forced != id) {
+                    continue;
+                }
+                if let Some(option) = exact.get(id) {
+                    choices.push(option.clone());
+                } else {
+                    evaluated.push(id);
+                    let mut option = template.clone();
+                    option.id = id.into();
+                    option.cost.makespan = cycles;
+                    choices.push(option);
+                }
+            }
+            Ok(choices)
+        })
+    };
+    let forced = select(Some("slow")).expect("forced price");
+    let automatic = select(None).expect("complete comparison");
+    assert!(automatic.cost.makespan < forced.cost.makespan);
+    assert_eq!(evaluated, [forced.id.as_str(), automatic.id.as_str()]);
+}

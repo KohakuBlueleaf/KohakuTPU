@@ -137,9 +137,9 @@ impl Sim<'_> {
                 }
             };
             let committed = self.tick(port, std::slice::from_ref(retired));
-            // rv64_nport emits lane strobes; mag_ilink and mag_dram_port
-            // carry them through remote routing and DRAM width conversion.
-            let byte_strobes = matches!(self.procs[issuer].kind, Pk::Node(_));
+            // CPU lane strobes and native CU word strobes survive MAG routing
+            // and DRAM width conversion, preserving unwritten bytes of a line.
+            let byte_strobes = unit.is_some() || matches!(self.procs[issuer].kind, Pk::Node(_));
             self.dram_access_masked(
                 Ok(ranges),
                 true,

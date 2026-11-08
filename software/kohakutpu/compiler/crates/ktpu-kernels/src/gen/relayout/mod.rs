@@ -36,6 +36,7 @@
 mod emit;
 mod forms;
 mod repr;
+pub(crate) mod split;
 mod tables;
 
 pub use emit::{emit_steps, relayout_kernel, scratch_rows, step_ports};

@@ -137,8 +137,70 @@ fn finite_status(
     }
 }
 
-/// A serialized 16-entry L1 slot: gather, exact unpack, MX7 pack, drain.
+/// Price complete quant stages, retaining explicit scheduling attributes.
 pub fn vector_quant(
+    body: &Body,
+    op: &Op,
+    env: &Env,
+    tg: &Target,
+    images: &mut Vec<String>,
+    status: Option<Finite>,
+) -> Result<Stage> {
+    if op.st.kw("read_map").is_some() {
+        return vector_quant_policy(body, op, env, tg, images, status);
+    }
+    let variants = [
+        (false, false, false),
+        (true, false, false),
+        (false, true, false),
+        (true, true, false),
+        (false, false, true),
+    ];
+    let tag = images.len();
+    let mut candidates: Vec<(Stage, Vec<String>)> = Vec::new();
+    for (stream, banks, entry_major) in variants {
+        if (entry_major && op.st.kw("entry_major").is_some())
+            || (stream && op.st.kw("stream_batch").is_some())
+            || (banks
+                && (op.st.kw("classifier_banks").is_some()
+                    || op.st.kw("zero_classifier").and_then(Term::as_int) != Some(1)
+                    || tg.vregs < 24))
+        {
+            continue;
+        }
+        let mut candidate = op.clone();
+        for (key, enabled) in [
+            ("stream_batch", stream),
+            ("classifier_banks", banks),
+            ("entry_major", entry_major),
+        ] {
+            if enabled {
+                candidate.st.args.push(Term::Assign(
+                    Box::new(Term::name(key)),
+                    Box::new(Term::int(1)),
+                ));
+            }
+        }
+        let stage = vector_quant_policy(body, &candidate, env, tg, images, status.clone())?;
+        let code = images.split_off(tag);
+        if candidates
+            .iter()
+            .any(|(prior, prior_code)| prior.lines == stage.lines && prior_code == &code)
+        {
+            continue;
+        }
+        candidates.push((stage, code));
+    }
+    if candidates.len() == 1 {
+        let (stage, code) = candidates.remove(0);
+        images.extend(code);
+        return Ok(stage);
+    }
+    super::choose::select(candidates, images, tg)
+}
+
+/// A serialized 16-entry L1 slot: gather, exact unpack, MX7 pack, drain.
+fn vector_quant_policy(
     body: &Body,
     op: &Op,
     env: &Env,
@@ -266,6 +328,14 @@ pub fn vector_quant(
     if classifier_banks && tg.vregs < 24 {
         return Err(err("classifier_banks requires 24 vector registers".into()));
     }
+    let entry_major = match st.kw("entry_major") {
+        None => false,
+        Some(k) => match const_of(body, st, k, env)? {
+            0 => false,
+            1 => true,
+            _ => return Err(err("entry_major is 0 or 1".into())),
+        },
+    };
     let slots = policy.vector_slots;
     let cores = tg.machine.quant_cores();
     if cores < 1 || cores > tg.vc.len() as i64 {
@@ -401,6 +471,7 @@ pub fn vector_quant(
         zero_reuse,
         stream_batch,
         classifier_banks,
+        entry_major,
         slots,
         cores,
         pitch,
@@ -481,6 +552,7 @@ struct Schedule<'a> {
     zero_reuse: bool,
     stream_batch: bool,
     classifier_banks: bool,
+    entry_major: bool,
     slots: i64,
     cores: i64,
     pitch: i64,
@@ -491,7 +563,7 @@ struct Schedule<'a> {
 
 impl Schedule<'_> {
     fn emit(&self, piece: padding::Piece, images: &mut Vec<String>) -> Result<Stage> {
-        self.emit_across(piece, images, 16)
+        self.emit_across(piece, images, if self.entry_major { 1 } else { 16 })
     }
 
     /// [`Self::emit`], a tile row spanning at most `widest` entries.
@@ -517,6 +589,7 @@ impl Schedule<'_> {
             zero_reuse,
             stream_batch,
             classifier_banks,
+            entry_major: _,
             slots,
             cores,
             pitch,

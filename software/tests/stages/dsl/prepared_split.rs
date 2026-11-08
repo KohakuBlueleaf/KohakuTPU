@@ -35,3 +35,51 @@ fn row_shares_slice_the_consumer_not_the_relayout_iteration_axis() {
     assert_eq!(actual, expected, "each output uses its inverse-map input");
     assert!(writes.iter().all(|&n| n == 1));
 }
+
+#[test]
+fn table_independent_relayout_prices_destination_owners_against_p1() {
+    let m = machine();
+    let args = json!({"pl": {"made_by": {"gen": "relayout.plan", "args": {
+        "src_n": 37440, "m": 12480, "at": 0, "dat": 0,
+        "walk": [[3, 64], [65, 576], [64, 1]],
+        "dwalk": [[3, 4160], [65, 64], [64, 1]], "keep": false, "z0": 0, "tree": true
+    }}}});
+    let mut req = request(&m);
+    req.nodes = NodeSet::new(vec![3, 1, 0, 2], &m).expect("permuted grant");
+    req.force = Some("p1".into());
+    let original = ktpu_kernels::call::call_split_with_timing(
+        "relayout.relayout_kernel",
+        &args,
+        &req,
+        &m,
+        true,
+    )
+    .expect("priced whole relayout");
+    req.force = Some("destination-tiles".into());
+    let distributed = call_split("relayout.relayout_kernel", &args, &req, &m)
+        .expect("table-independent destination owners");
+    ktpu_kernels::split::validate_ownership(&distributed.split.output)
+        .expect("whole-line ownership");
+    let sample = |i: i64| (i as u16).wrapping_mul(37);
+    let (actual, writes) = super::simulate_named_tables(
+        &distributed.kernel,
+        "dst",
+        &|_, _, _, _, _| 0,
+        &sample,
+        &[("index", vec![0xff; 32]), ("mask", vec![0xff; 256])],
+    );
+    let expected: Vec<u8> = (0..12480i64)
+        .flat_map(|i| {
+            let head = i / (65 * 64);
+            let token = (i / 64) % 65;
+            sample(token * 576 + head * 64 + i % 64).to_le_bytes()
+        })
+        .collect();
+    assert_eq!(actual, expected);
+    assert!(writes.iter().all(|&n| n == 1));
+    assert!(distributed.split.cost.makespan < original.split.cost.makespan);
+    req.force = None;
+    let selected = call_split("relayout.relayout_kernel", &args, &req, &m)
+        .expect("minimum complete relayout price");
+    assert!(selected.split.cost.makespan <= distributed.split.cost.makespan);
+}
