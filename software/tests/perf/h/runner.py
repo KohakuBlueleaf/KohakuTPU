@@ -20,6 +20,7 @@ import numpy as np
 from h import check
 from h import ledger as L
 from h.gen import Spec
+from h.placement import buffers
 from kohakutpu.application.runtime import packages as B
 from kohakutpu.application.runtime.card import interlink
 from kohakutpu.application.runtime.card.measure import Ring
@@ -72,7 +73,7 @@ def admission(card, module, name: str, level: str, spec: Spec, session: str) -> 
     refused = ""
     try:
         compiled = kernel.compile(module, name, card.machine, level=level)
-        binds, _ = bind(card, l1.bufs(compiled.l1, compiled.name, card.machine_json))
+        binds, _ = bind(card, buffers(compiled, card.machine_json))
         B.findings(compiled.programs(binds), "refuse")
     except Exception as error:  # noqa: BLE001 -- the refusal is the outcome
         refused = repr(error)[:600]
@@ -152,14 +153,14 @@ def runs(
 ) -> Iterator[tuple[dict, list[dict]]]:
     """`reps` runs of `compiled` on `card` (epoch = rep + 1), each phase's row and
     its measure records (one a sysnode run; none without `ring`)."""
-    layout = l1.bufs(compiled.l1, compiled.name, card.machine_json)
+    layout = buffers(compiled, card.machine_json)
     bufs = dict(layout)
     rng = np.random.default_rng(seed)
     given = spec.inputs(0) if spec.inputs else {}
     ins = {
         p: l1.seeded(b, rng)
         for p, b in layout
-        if p not in spec.outputs and p not in given
+        if p not in spec.outputs and p not in given and not p.startswith("scratch:")
     }
     if not spec.fresh:
         ins |= {p: np.reshape(v, bufs[p].host_shape) for p, v in given.items()}
@@ -169,7 +170,7 @@ def runs(
     try:
         binds, zones = bind(card, layout)
         for p, b in layout:
-            if p not in spec.outputs:
+            if p not in spec.outputs and not p.startswith("scratch:"):
                 card.write(binds[p], l1.raw(b, ins[p]) if p in ins else bytes(b.nbytes))
         progs = compiled.programs(binds)
         prog = progs[None] if list(progs) == [None] else progs

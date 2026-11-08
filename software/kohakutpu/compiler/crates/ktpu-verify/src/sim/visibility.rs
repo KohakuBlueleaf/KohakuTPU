@@ -137,7 +137,18 @@ impl Sim<'_> {
                 }
             };
             let committed = self.tick(port, std::slice::from_ref(retired));
-            self.dram_access(Ok(ranges), true, start, &committed, port, what.clone());
+            // rv64_nport emits lane strobes; mag_ilink and mag_dram_port
+            // carry them through remote routing and DRAM width conversion.
+            let byte_strobes = matches!(self.procs[issuer].kind, Pk::Node(_));
+            self.dram_access_masked(
+                Ok(ranges),
+                true,
+                start,
+                &committed,
+                port,
+                what.clone(),
+                byte_strobes,
+            );
             if destination == mesh {
                 acknowledged.join(&committed);
             }

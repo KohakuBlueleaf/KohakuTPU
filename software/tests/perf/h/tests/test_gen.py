@@ -1,7 +1,6 @@
 """The round h generators, offline: every fn of each compiles for four sysnodes on
-both boards and passes the static checker (P14's polls are data loops, reported,
-not refused), and each fn's reference answers its outputs at their sizes from
-inputs that fit its parameters."""
+both boards and passes the static checker, and each fn's reference answers its
+outputs at their sizes from inputs that fit its parameters."""
 
 import collections
 import functools
@@ -10,6 +9,7 @@ import numpy as np
 import pytest
 
 from h import gen
+from h.placement import buffers
 from kohakutpu.application.runtime import packages as B
 from kohakutpu.application.runtime.card.common import MACHINES
 from kohakutpu.application.runtime.machine import machine_of
@@ -43,8 +43,6 @@ ROWS = (
     "c4",
     "c5",
 )
-#: Rows whose fns poll a register in a loop (L1.VER.012 `loop` findings).
-POLLING = ("p14",)
 #: Fns compiled one an item in their own test (an 8192-trip stamp is ~15 s cold).
 SEPARATE = ("c2_i79_",)
 BOARDS = ("multimesh_v9t6", "multimesh_v9t8")
@@ -78,23 +76,19 @@ def test_every_fn_compiles_on_four_sysnodes_and_the_checker_passes_it(row, board
     for name, spec in mod.specs.items():
         if name.startswith(SEPARATE):
             continue
-        layout = l1.bufs(text, name, json)
         if spec.refused:
             with pytest.raises(Exception, match=spec.refused):
-                progs = kernel.compile(text, name, machine, level="l1").programs(
-                    placed(layout, machine)
-                )
+                compiled = kernel.compile(text, name, machine, level="l1")
+                progs = compiled.programs(placed(buffers(compiled, json), machine))
                 B.findings(progs, "refuse")
             continue
-        progs = kernel.compile(text, name, machine, level="l1").programs(
-            placed(layout, machine)
-        )
+        compiled = kernel.compile(text, name, machine, level="l1")
+        progs = compiled.programs(placed(buffers(compiled, json), machine))
         try:
             found = B.findings(progs, "refuse")
         except B.Refused as refused:
             pytest.fail(f"{name}: {refused}")
-        allowed = ("loop",) if row in POLLING else ()
-        assert [f for f in found if f.kind not in allowed] == [], name
+        assert found == [], name
 
 
 @functools.cache

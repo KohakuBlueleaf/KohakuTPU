@@ -5,11 +5,13 @@ and a fn with a ledger reads back every slot it was rung on."""
 
 import collections
 import dataclasses
+import functools
 
 import numpy as np
 
 from h import check
 from h.ledger import Ledger
+from kohakutpu.application.runtime.machine import machine_of
 from kohakutpu.application.tools.l1 import POISON
 
 HEAD = "target ktpu.v9\n"
@@ -122,6 +124,17 @@ class Body:
         for n in sorted(self.lines):
             text += f"\n    node {n}" + "".join(f"\n        {s}" for s in self.lines[n])
         return text + "\n"
+
+
+@functools.cache
+def dram_route(node: int, board: str) -> int:
+    """The target's route bits, shared by every buffer on this route."""
+    return machine_of(board, nodes=node + 1).global_addr(0, node)
+
+
+def dram_at(at: str, node: int, board: str) -> str:
+    """Route a canonical DRAM buffer through `node`, retaining its physical bytes."""
+    return f"{at} + {dram_route(node, board)}"
 
 
 def hops(a: int, b: int) -> int:

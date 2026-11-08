@@ -18,6 +18,7 @@
 //! the packages in the order it sent.
 
 mod engine;
+mod poll;
 
 use crate::sim::fx::{FxHashMap as HashMap, FxHashSet as HashSet};
 
@@ -25,6 +26,7 @@ use crate::adapter::package::{flag, op, Package, Step, PATCH_STEPS};
 use crate::adapter::u256::U256;
 use crate::model::clock::Clock;
 use crate::model::finding::Kind;
+use crate::target::NodePollContract;
 
 use super::package_memory::{Location, Section};
 use super::symbolic::Value;
@@ -108,6 +110,7 @@ pub(crate) struct Node {
     pub why: String,
     /// Concrete register values or finite-width symbolic expressions.
     regs: HashMap<u16, Value>,
+    flush: Option<poll::Flush>,
     pub rx: usize,
     pub rx_taken: i64,
     /// Where bursts the node sends come from, as a unit's key.
@@ -287,6 +290,7 @@ impl Sim<'_> {
             fetched: 0,
             why: String::new(),
             regs: HashMap::default(),
+            flush: None,
             rx: 0,
             rx_taken: 0,
             key: (mesh, 0, 0),
@@ -374,6 +378,7 @@ impl Sim<'_> {
             let cl = self.clock_to(c, need, &[]);
             self.tick(p, &[cl]);
             self.nodes[i].host = 0;
+            self.enter_package(host);
         }
         if let Some(step) = self.nodes[i].engine.step {
             return self.node_engine(i, step);
@@ -443,6 +448,7 @@ impl Sim<'_> {
                     let n = self.procs[p].n;
                     nd.ends.push((n, clock.clone()));
                     nd.regs.clear();
+                    nd.flush = None;
                     nd.move_base = nd.moves.len();
                     nd.engine.end(&nd.sent);
                     let k = nd.ends.len();
@@ -561,7 +567,18 @@ impl Sim<'_> {
             op::MOVER | op::MWAIT => self.node_mover(i, s),
             op::STORE => self.node_store(i, s),
             op::PATCH => self.node_patch(i, s),
-            op::SETTLE | op::SIGNAL | op::CTRL => {
+            op::CTRL => {
+                let clock = self.tick(p, &[]);
+                if matches!(
+                    self.t.facts.node_poll,
+                    Some(NodePollContract::Rv64SysDcache)
+                ) {
+                    poll::request(&mut self.nodes[i], s, &clock);
+                }
+                self.nodes[i].at += 1;
+                true
+            }
+            op::SETTLE | op::SIGNAL => {
                 self.tick(p, &[]);
                 self.nodes[i].at += 1;
                 true
@@ -817,7 +834,7 @@ impl Sim<'_> {
                     );
                     return false;
                 }
-                let cl = self.clock_to(c, want, &[]);
+                let cl = self.node_counter_clock(c, want, p);
                 self.tick(p, &[cl]);
                 if s.op == op::WAIT_BELL || s.flags & flag::CONSUME != 0 {
                     self.taken.insert((mesh, key), want);
@@ -928,6 +945,17 @@ impl Sim<'_> {
                 Value::Known(base)
             } else if let Some(value) = loaded {
                 Value::Known(value)
+            } else if s.flags == ktpu_l0::format::F_CTRL
+                && base == poll::DCACHE
+                && matches!(
+                    self.t.facts.node_poll,
+                    Some(NodePollContract::Rv64SysDcache)
+                )
+            {
+                let sample = self.symbolic.fresh();
+                self.symbolic
+                    .alu(4, sample, Value::Known(1))
+                    .expect("status bit")
             } else {
                 self.symbolic.fresh()
             };
@@ -982,6 +1010,17 @@ impl Sim<'_> {
                             taken,
                             fallthrough,
                         };
+                    }
+                    if matches!(
+                        self.t.facts.node_poll,
+                        Some(NodePollContract::Rv64SysDcache)
+                    ) {
+                        if let Some(exit) = poll::summarize(nd, &mut self.symbolic, s) {
+                            if let poll::Exit::Flushed(visibility) = exit {
+                                self.procs[p].clock.join(&visibility);
+                            }
+                            return StepOutcome::Progress;
+                        }
                     }
                     let name = nd.name.clone();
                     self.find(

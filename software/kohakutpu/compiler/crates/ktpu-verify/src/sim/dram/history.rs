@@ -11,28 +11,31 @@ use super::Access;
 #[derive(Clone, PartialEq, Eq)]
 struct Tree {
     len: usize,
+    first: u32,
     earliest: Clock,
     last: Rc<Access>,
     children: Option<(Rc<Tree>, Rc<Tree>)>,
 }
 
 impl Tree {
-    fn surviving(&self, floor: &Clock, out: &mut Vec<Rc<Access>>) {
+    fn surviving(self: &Rc<Self>, floor: &Clock, out: &mut Vec<Rc<Tree>>) {
         if self.last.done <= floor.at(self.last.owner) {
             return;
         }
-        match &self.children {
-            Some((left, right)) => {
-                left.surviving(floor, out);
-                right.surviving(floor, out);
-            }
-            None => out.push(self.last.clone()),
+        if self.first > floor.at(self.last.owner) {
+            out.push(self.clone());
+            return;
+        }
+        if let Some((left, right)) = &self.children {
+            left.surviving(floor, out);
+            right.surviving(floor, out);
         }
     }
 
     fn leaf(access: &Rc<Access>) -> Rc<Self> {
         Rc::new(Self {
             len: 1,
+            first: access.done,
             earliest: access.start.clone(),
             last: access.clone(),
             children: None,
@@ -42,6 +45,7 @@ impl Tree {
     fn join(left: Rc<Self>, right: Rc<Self>) -> Rc<Self> {
         Rc::new(Self {
             len: left.len + right.len,
+            first: left.first,
             earliest: left.earliest.meet(&right.earliest),
             last: right.last.clone(),
             children: Some((left, right)),
@@ -71,6 +75,7 @@ impl Tree {
 
 #[derive(Clone, PartialEq, Eq)]
 struct Block {
+    first: u32,
     tree: Rc<Tree>,
     rest: History,
 }
@@ -105,34 +110,33 @@ impl History {
         }
     }
 
-    /// Rebuild only the live suffix, sharing each surviving access event.
+    pub fn first(&self) -> Option<u32> {
+        self.0.as_ref().map(|head| head.first)
+    }
+
+    /// Cut a completed prefix and share all untouched suffix subtrees.
     pub fn retire(&mut self, floor: &Clock) {
+        crate::work::visit_retirement();
+        if let Some(head) = &self.0 {
+            let last = &head.tree.last;
+            if last.done <= floor.at(last.owner) {
+                *self = Self::default();
+                return;
+            }
+        }
         let mut trees = Vec::new();
         let mut block = &self.0;
-        let mut count = 0;
         while let Some(head) = block {
-            count += head.tree.len;
-            trees.push(&head.tree);
+            trees.push(head.tree.clone());
             block = &head.rest.0;
-        }
-        let Some(mut first) = trees.last().copied() else {
-            return;
-        };
-        while let Some((left, _)) = &first.children {
-            first = left;
-        }
-        if first.last.done > floor.at(first.last.owner) {
-            return;
         }
         let mut live = Vec::new();
         for tree in trees.into_iter().rev() {
             tree.surviving(floor, &mut live);
         }
-        if live.len() != count {
-            *self = Self::default();
-            for access in live {
-                self.push(&access);
-            }
+        *self = Self::default();
+        for tree in live {
+            self.push_tree(tree);
         }
     }
 
@@ -141,7 +145,11 @@ impl History {
     }
 
     pub fn push(&mut self, access: &Rc<Access>) {
-        let mut tree = Tree::leaf(access);
+        self.push_tree(Tree::leaf(access));
+    }
+
+    fn push_tree(&mut self, mut tree: Rc<Tree>) {
+        let first = self.first().unwrap_or(tree.first);
         while let Some(head) = &self.0 {
             if head.tree.len != tree.len {
                 break;
@@ -150,6 +158,7 @@ impl History {
             *self = head.rest.clone();
         }
         self.0 = Some(Rc::new(Block {
+            first,
             tree,
             rest: self.clone(),
         }));

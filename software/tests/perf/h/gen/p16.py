@@ -69,7 +69,7 @@ image load(n, x)
 
 def copy(b: Body, n: int, src: str, dst: str) -> None:
     walk = f"({WORDS}, 32)"
-    b.add(n, "move", f"    copy w({src}, {walk}) -> w({dst}, {walk})")
+    b.add(n, "move local=1", f"    copy w({src}, {walk}) -> w({dst}, {walk})")
 
 
 def write(b: Body, n: int, writer: str) -> None:

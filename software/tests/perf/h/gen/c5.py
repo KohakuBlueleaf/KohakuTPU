@@ -12,7 +12,7 @@ reachable queue must complete), then:
   (never issued), so it stalls before taking DATA and never rings FREE: both time
   out (expected), z stays POISON, DATA's token is left in sysnode 1's slot.
 - `c5_refuse_amount` (a ring amount past the 16-bit field, L0.STEP.033) and
-  `c5_refuse_line` (two mover commands writing parts of one 64-byte line,
+  `c5_refuse_line` (two sysnodes' movers writing parts of one 64-byte line,
   L1.VER.017): refused at admission, before issue; the runner never issues
   them (`runner.admission`).
 
@@ -108,6 +108,10 @@ def refused(sysnodes, kind: str):
             first,
             "move",
             "    copy w(x, (1, 32)) -> w(y, (1, 32))",
+        )
+        b.add(
+            second,
+            "move",
             "    copy w(x + 32, (1, 32)) -> w(y + 32, (1, 32))",
         )
         code = "L1.VER.017"

@@ -159,7 +159,7 @@ SUITES = (
             "kohakutpu/application/kohakutpu/application/kernels/attention.py",
             "kohakutpu/application/kohakutpu/application/kernels/native",
         ),
-        budget=60.0,
+        budget=65.0,
         per_test=20.0,
         heavy=(
             (

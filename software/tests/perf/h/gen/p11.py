@@ -8,10 +8,10 @@ buffer's base (k = 0 for every ordered pair, 1-3 from the first sysnode).
 
 Modes: now; the producer late (it settles before each write, so a ring that does
 not wait for the write's completion releases a stale read); the consumer late (it
-settles before each wait); and the notify-before-data diagnostic (a plain ring
-before the write): a mismatch is MANIFEST, none INCONCLUSIVE. A stale read shows
-in z. The mover rewriting one line writes its whole 64-byte DRAM line: two moves
-writing part of one line are refused by the checker's write-line ownership
+settles before each wait); and the notify-before-data admission control (a plain
+ring before the write), which requires L1.VER.009 and is never issued. A stale
+read shows in z. The mover rewriting one line writes its whole 64-byte DRAM
+line: two moves writing part of one line are refused by the checker's ownership
 (L1.VER.017). Every fn carries its token ledger (faults included)."""
 
 import itertools
@@ -20,7 +20,7 @@ import numpy as np
 
 from h import check
 from h.gen import Module, Spec
-from h.gen.body import HEAD, Body, host_tags, nearest
+from h.gen.body import HEAD, Body, dram_at, host_tags, nearest
 
 ROUNDS = 8
 WRITERS = ("cpu", "vc", "mover")
@@ -41,19 +41,25 @@ image line(src, dst)
 """
 
 
-def write(b: Body, p: int, writer: str, i: int, at: int, whole: bool) -> None:
+def write(
+    b: Body, p: int, writer: str, i: int, at: int, whole: bool, board: str
+) -> None:
     """`at`: the line's byte offset in y; `whole`: the mover writes its 64 bytes."""
     if writer == "cpu":
-        b.stores(p, "y", range(at // 8, at // 8 + 4), i, p, 0)
+        b.stores(p, dram_at("y", p, board), range(at // 8, at // 8 + 4), i, p, 0)
     if writer == "vc":
         b.add(p, "send vc[0]", f"    run line(x + {WORD * i}, y + {at})", "wait vc[0]")
     if writer == "mover":
         n = 2 if whole else 1
         walk = f"({n}, 32)"
-        b.add(p, "move", f"    copy w(x + {WORD * i}, {walk}) -> w(y + {at}, {walk})")
+        b.add(
+            p,
+            "move local=1",
+            f"    copy w(x + {WORD * i}, {walk}) -> w(y + {at}, {walk})",
+        )
 
 
-def line(p: int, c: int, writer: str, k: int, fresh: bool, mode: str):
+def line(p: int, c: int, writer: str, k: int, fresh: bool, mode: str, board: str):
     b = Body(ledger=True)
     b.barrier(sorted((p, c)), START)
     for i in range(ROUNDS):
@@ -62,7 +68,7 @@ def line(p: int, c: int, writer: str, k: int, fresh: bool, mode: str):
             b.ring(p, c, SEEN, plain=True)
         if mode == "late_producer":
             b.add(p, f"settle {LATE}")
-        write(b, p, writer, i, at, not fresh)
+        write(b, p, writer, i, at, not fresh, board)
         if mode != "early":
             b.ring(p, c, SEEN)
         if mode == "late_consumer":
@@ -116,7 +122,7 @@ def generate(sysnodes: tuple[int, ...], board: str) -> Module:
     text, specs = HEAD + IMAGES, {}
     tagged = host_tags({"x": (WORD * (ROUNDS + 1), np.float16, 1)})
     for p, c, writer, k, fresh, mode in cases:
-        name, src, b = line(p, c, writer, k, fresh, mode)
+        name, src, b = line(p, c, writer, k, fresh, mode, board)
         text += src
         cpu = writer == "cpu"
         specs[name] = Spec(
@@ -124,6 +130,6 @@ def generate(sysnodes: tuple[int, ...], board: str) -> Module:
             stored(p, k, fresh) if cpu else copied,
             inputs=None if cpu else tagged,
             ledger=b.ledger_of(),
-            diagnostic=mode == "early",
+            refused="L1.VER.009" if mode == "early" else "",
         )
     return Module(text, specs)

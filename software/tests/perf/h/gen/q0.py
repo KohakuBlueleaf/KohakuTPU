@@ -36,7 +36,7 @@ def empty(sysnodes) -> tuple[str, str]:
 
 def copy(b: Body, n: int, src: str, dst: str) -> None:
     walk = f"({BYTES // WORD}, 32)"
-    b.add(n, "move", f"    copy w({src}, {walk}) -> w({dst}, {walk})")
+    b.add(n, "move local=1", f"    copy w({src}, {walk}) -> w({dst}, {walk})")
 
 
 def local(n: int) -> tuple[str, str]:

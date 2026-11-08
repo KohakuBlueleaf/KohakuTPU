@@ -18,7 +18,7 @@ import itertools
 
 from h import check
 from h.gen import Module, Spec
-from h.gen.body import HEAD, Body, counts, nearest
+from h.gen.body import HEAD, Body, counts, dram_at, nearest
 
 ROUNDS = (1, 16)
 #: Ring amounts: 1/2/4/8, a 12-bit counter's span, the field's largest.
@@ -59,14 +59,14 @@ def fanout(producer: int, consumers: list[int], amount: int, rounds: int, split:
     return name, b.fn(name, f"count: u64[{len(every)}] @dram"), b
 
 
-def partial(p: int, c: int, u: int, n: int, whole: bool):
+def partial(p: int, c: int, u: int, n: int, whole: bool, board: str):
     """`u` the unrelated source (`p` itself on two sysnodes)."""
     b = Body(ledger=True)
     b.barrier(sorted({p, c, u}), START)
     b.ring(p, c, SIGNAL, amount=n - 1)
     b.ring(u, c, OTHER)
     b.add(p, f"settle {DELAY}")
-    b.stores(p, "mark", [0], 0, p, MARK)
+    b.stores(p, dram_at("mark", c, board), [0], 0, p, MARK)
     b.ring(p, c, SIGNAL)
     if whole:
         b.take(c, SIGNAL, n)
@@ -97,7 +97,7 @@ def generate(sysnodes: tuple[int, ...], board: str) -> Module:
         itertools.permutations(sysnodes, 2), PARTIAL, (True, False)
     ):
         rest = [m for m in nearest(c, sysnodes) if m != p]
-        name, src, b = partial(p, c, rest[0] if rest else p, n, whole)
+        name, src, b = partial(p, c, rest[0] if rest else p, n, whole, board)
         text += src
         mark = check.tags(0, p, MARK, [0])
         specs[name] = Spec(

@@ -25,7 +25,7 @@ import numpy as np
 
 from h import check
 from h.gen import Module, Spec
-from h.gen.body import BELL_TAKE, HEAD, Body, nearest
+from h.gen.body import BELL_TAKE, HEAD, Body, dram_at, nearest
 
 BURSTS = range(1, 9)
 SINK_BURSTS = (1, 4, 8)
@@ -125,7 +125,7 @@ def bell_wrap(p: int, c: int):
     return name, b.fn(name, "count: u64[2] @dram"), [0, total], b
 
 
-def stale(p: int, c: int, q: int):
+def stale(p: int, c: int, q: int, board: str):
     """`q` rings the wrong slot EPOCHS times at once (`p` itself on two sysnodes)."""
     b = Body(ledger=True)
     b.barrier(sorted({p, c, q}), START)
@@ -133,7 +133,7 @@ def stale(p: int, c: int, q: int):
         b.ring(q, c, WRONG)
     for e in range(EPOCHS):
         b.add(p, f"settle {LATE}")
-        b.stores(p, "mark", [0], e, p, MARK)
+        b.stores(p, dram_at("mark", c, board), [0], e, p, MARK)
         b.ring(p, c, DATA)
         b.take(c, DATA, 1)
         b.observe(c, "mark", [0], "seen", e)
@@ -172,7 +172,7 @@ def generate(sysnodes: tuple[int, ...], board: str) -> Module:
         )
     for p, c in itertools.permutations(sysnodes, 2):
         rest = [m for m in nearest(c, sysnodes) if m != p]
-        name, src, b = stale(p, c, rest[0] if rest else p)
+        name, src, b = stale(p, c, rest[0] if rest else p, board)
         text += src
         marks = np.array([check.tag(e, p, MARK, 0) for e in range(EPOCHS)], np.uint64)
         specs[name] = Spec(

@@ -1,8 +1,8 @@
 //! Card-wide physical intervals, occupied from issue until completion.
-//! RAW/WAR/WAW are byte conflicts; independent DRAM writers also own whole
-//! 64-byte lines (round-i verification, L1.VER.009 and L1.VER.017).
+//! RAW/WAR/WAW are byte conflicts. CPU writes retain their byte strobes;
+//! other DRAM writers own whole 64-byte lines (L1.VER.009 and L1.VER.017).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use crate::model::clock::Clock;
@@ -45,31 +45,67 @@ impl Span {
 }
 
 #[derive(Clone, Default, PartialEq, Eq)]
-struct Intervals(BTreeMap<u64, Span>);
+struct Intervals {
+    spans: BTreeMap<u64, Span>,
+    // One entry per live stream: (oldest completion, interval start, direction).
+    retirement: BTreeMap<usize, BTreeSet<(u32, u64, bool)>>,
+}
 
 impl Intervals {
+    fn index(&mut self, lo: u64, span: &Span) {
+        for (&(owner, write), history) in &span.frontier {
+            if let Some(first) = history.first() {
+                self.retirement
+                    .entry(owner)
+                    .or_default()
+                    .insert((first, lo, write));
+            }
+        }
+    }
+
+    fn insert(&mut self, lo: u64, span: Span) {
+        self.index(lo, &span);
+        self.spans.insert(lo, span);
+    }
+
     fn retire(&mut self, floor: &Clock) {
-        self.0.retain(|_, span| {
-            span.frontier.retain(|_, history| {
+        for (&owner, pending) in &mut self.retirement {
+            let ready: Vec<_> = pending
+                .range(..=(floor.at(owner), u64::MAX, true))
+                .copied()
+                .collect();
+            for entry @ (_, lo, write) in ready {
+                pending.remove(&entry);
+                let span = self.spans.get_mut(&lo).expect("indexed interval");
+                let history = span
+                    .frontier
+                    .get_mut(&(owner, write))
+                    .expect("indexed stream");
                 history.retire(floor);
-                !history.is_empty()
-            });
-            !span.frontier.is_empty()
-        });
+                if let Some(first) = history.first() {
+                    pending.insert((first, lo, write));
+                } else {
+                    span.frontier.remove(&(owner, write));
+                }
+                if span.frontier.is_empty() {
+                    self.spans.remove(&lo);
+                }
+            }
+        }
     }
 
     fn split(&mut self, at: u64) {
-        let Some((&lo, span)) = self.0.range(..at).next_back() else {
+        let Some((&lo, span)) = self.spans.range(..at).next_back() else {
             return;
         };
         if span.end <= at {
             return;
         }
         let tail = span.clone();
-        if let Some(span) = self.0.get_mut(&lo) {
+        if let Some(span) = self.spans.get_mut(&lo) {
             span.end = at;
         }
-        self.0.insert(at, tail);
+        self.insert(at, tail);
     }
 
     fn visit(
@@ -87,13 +123,13 @@ impl Intervals {
             }
             self.split(lo);
             self.split(hi);
-            let keys: Vec<_> = self.0.range(lo..hi).map(|(&at, _)| at).collect();
+            let keys: Vec<_> = self.spans.range(lo..hi).map(|(&at, _)| at).collect();
             let mut cursor = lo;
             for at in keys {
                 if cursor < at {
-                    self.0.insert(cursor, Span::new(at, current));
+                    self.insert(cursor, Span::new(at, current));
                 }
-                let span = self.0.get_mut(&at).expect("indexed span");
+                let span = self.spans.get_mut(&at).expect("indexed span");
                 for (&(owner, write), history) in &span.frontier {
                     if !(write || current.write) {
                         continue;
@@ -132,10 +168,18 @@ impl Intervals {
                 }
                 // FIFO alone cannot discard an older write: a later-visited
                 // read may precede its successor yet race the older commit.
-                span.frontier
+                let history = span
+                    .frontier
                     .entry((current.owner, current.write))
-                    .or_default()
-                    .push(current);
+                    .or_default();
+                if history.is_empty() {
+                    self.retirement.entry(current.owner).or_default().insert((
+                        current.done,
+                        at,
+                        current.write,
+                    ));
+                }
+                history.push(current);
                 cursor = span.end;
                 *work += 1;
                 if *work > LIMIT {
@@ -143,7 +187,7 @@ impl Intervals {
                 }
             }
             if cursor < hi {
-                self.0.insert(cursor, Span::new(hi, current));
+                self.insert(cursor, Span::new(hi, current));
             }
             *work += 1;
             if *work > LIMIT {
@@ -166,8 +210,8 @@ pub(crate) struct GlobalDram {
 impl GlobalDram {
     pub fn retained(&self, stats: &mut super::stats::Retained) {
         for (kind, intervals) in [("dram_bytes", &self.bytes), ("dram_lines", &self.writers)] {
-            stats.add(kind, intervals.0.len());
-            for span in intervals.0.values() {
+            stats.add(kind, intervals.spans.len());
+            for span in intervals.spans.values() {
                 for (&(owner, write), history) in &span.frontier {
                     stats.add(format!("{kind}/stream/{owner}/{write}"), 1);
                     history.retained(stats);
@@ -192,6 +236,7 @@ impl GlobalDram {
         owner: usize,
         what: String,
         special: u64,
+        byte_strobes: bool,
     ) {
         if self.refused {
             return;
@@ -208,7 +253,13 @@ impl GlobalDram {
                 ranges
                     .iter()
                     .filter(|&&(lo, hi)| lo < hi && lo & special == 0)
-                    .map(|&(lo, hi)| (lo / 64 * 64, ((hi - 1) / 64 + 1) * 64))
+                    .map(|&(lo, hi)| {
+                        if byte_strobes {
+                            (lo, hi)
+                        } else {
+                            (lo / 64 * 64, ((hi - 1) / 64 + 1) * 64)
+                        }
+                    })
                     .collect(),
             )
         } else {

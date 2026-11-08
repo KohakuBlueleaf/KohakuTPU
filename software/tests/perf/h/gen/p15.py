@@ -2,7 +2,8 @@
 once (after a start barrier, its token ledger carried). Each stream does N = 1, 8,
 32, 128 or 512 pieces of real work, every piece leaving its own tag words in y
 (x is host tag words, written once; y == x per feeder, every word), so a dropped
-send shows as POISON, never as a fast run. Kinds:
+send shows as POISON, never as a fast run. Feeder slices start on 64-byte
+boundaries; alignment gaps remain POISON. Kinds:
 
 - `sends`: N `send vc[0]` of one `run one(..)` (two DESC words and a RUN a piece,
   the image resident after the first), one wait at the end;
@@ -26,7 +27,7 @@ import itertools
 import numpy as np
 
 from h.gen import Module, Spec
-from h.gen.body import HEAD, Body, host_tags
+from h.gen.body import HEAD, Body, host_tags, poison
 
 COUNTS = (1, 8, 32, 128, 512)
 KINDS = ("sends", "waits", "group", "repeat", "moves")
@@ -66,7 +67,11 @@ def stream(b: Body, n: int, kind: str, count: int, at: int, image: str) -> None:
         walk = "(2, 32)"
         for i in range(count):
             o = 2 * WORD * i
-            b.add(n, "move", f"    copy w(x + {o}, {walk}) -> w(y + {at + o}, {walk})")
+            b.add(
+                n,
+                "move local=1",
+                f"    copy w(x + {o}, {walk}) -> w(y + {at + o}, {walk})",
+            )
         return
     if kind == "repeat":
         b.add(
@@ -94,13 +99,15 @@ def feeders(sysnodes, kind: str, count: int, image: str, name: str):
     if len(sysnodes) > 1:
         b.barrier(list(sysnodes), START)
     words = count * PIECE.get(kind, 1)
+    stride = -(-words * WORD // 64) * 64
     for q, n in enumerate(sysnodes):
         if count:
-            stream(b, n, kind, count, q * words * WORD, image)
+            stream(b, n, kind, count, q * stride, image)
     params = "unused: u64[4] @dram"
     if count:
         half = words * WORD // 2
-        params = f"x: f16[{half}] @dram, y: f16[{len(sysnodes) * half}] @dram"
+        size = (len(sysnodes) - 1) * stride // 2 + half
+        params = f"x: f16[{half}] @dram, y: f16[{size}] @dram"
     if not b.lines:
         blocks = "".join(f"\n    node {n}" for n in sysnodes)
         return f"\nfn {name}.l1({params}){blocks}\n", b, words
@@ -113,7 +120,12 @@ def spec(b: Body, sysnodes, words: int) -> Spec:
         return Spec(outs, ledger=b.ledger_of() if b.ledger else None)
 
     def want(ins: dict) -> dict:
-        return {"y": np.tile(ins["x"], len(sysnodes))}
+        half = words * WORD // 2
+        stride = -(-words * WORD // 64) * 32
+        y = poison(np.float16, (len(sysnodes) - 1) * stride + half)
+        for q in range(len(sysnodes)):
+            y[q * stride : q * stride + half] = ins["x"]
+        return {"y": y}
 
     return Spec(
         ("y", *outs),

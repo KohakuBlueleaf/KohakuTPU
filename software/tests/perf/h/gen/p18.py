@@ -71,7 +71,7 @@ def ends(k: int) -> list[int]:
 
 def segment(b: Body, n: int, src: str, dst: str) -> None:
     walk = f"({WORDS}, 32)"
-    b.add(n, "move", f"    copy w({src}, {walk}) -> w({dst}, {walk})")
+    b.add(n, "move local=1", f"    copy w({src}, {walk}) -> w({dst}, {walk})")
 
 
 def opened(b: Body, sysnodes: list[int], r: int) -> None:
@@ -138,7 +138,7 @@ def graph(sysnodes, kind: str, size: int, r: int, late: bool):
             b.take(lead, SOURCE + n, 1)
             b.observe(lead, "y", ends((i + 1) * size - 1), "seen", 2 * (i - 1))
         walk = f"({chunks * WORDS}, 32)"
-        b.add(lead, "move", f"    copy w(y, {walk}) -> w(z, {walk})")
+        b.add(lead, "move local=1", f"    copy w(y, {walk}) -> w(z, {walk})")
     for k in range(size if kind != "shards" else 0):
         last = late and k == size - 1
         if kind == "chain":

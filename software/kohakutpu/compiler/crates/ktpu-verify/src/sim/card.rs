@@ -36,6 +36,20 @@ impl Sim<'_> {
         owner: usize,
         what: String,
     ) {
+        self.dram_access_masked(footprint, write, start, done, owner, what, false);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn dram_access_masked(
+        &mut self,
+        footprint: Result<Footprint, String>,
+        write: bool,
+        start: &Clock,
+        done: &Clock,
+        owner: usize,
+        what: String,
+        byte_strobes: bool,
+    ) {
         let address = self.t.machine.die.address.runtime();
         let special = 1u64 << address.special_bit;
         let meshes = (((1u64 << address.mesh_bits) - 1) << address.mesh_shift)
@@ -72,6 +86,7 @@ impl Sim<'_> {
             owner,
             what,
             special,
+            byte_strobes,
         );
     }
 

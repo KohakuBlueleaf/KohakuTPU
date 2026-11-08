@@ -18,6 +18,7 @@ use crate::target::{Target, UnitKind};
 
 pub(crate) mod card;
 pub(crate) mod dram;
+mod feedback;
 pub(crate) mod fx;
 pub(crate) mod memory;
 pub(crate) mod node;
@@ -197,8 +198,12 @@ pub(crate) struct Sim<'t> {
     /// Every process's name: the owner key of `Totals`, so one name each.
     proc_names: HashSet<String>,
     pub counters: Vec<Counter>,
+    feedback: feedback::Feedback,
     names: IndexMap<String, usize>,
     totals: Option<Totals>,
+    /// Cumulative counter bounds through each host-separated package.
+    pub package_totals: Vec<Totals>,
+    package: usize,
     pub findings: Vec<Finding>,
     /// Physical proof obligations do not stop architectural dispatch progress.
     /// Admission includes every obligation, including unresolved footprints.
@@ -246,8 +251,11 @@ impl<'t> Sim<'t> {
             procs: Vec::new(),
             proc_names: HashSet::default(),
             counters: Vec::new(),
+            feedback: feedback::Feedback::default(),
             names: IndexMap::new(),
             totals,
+            package_totals: Vec::new(),
+            package: 0,
             findings: Vec::new(),
             memory_findings: Vec::new(),
             sequence_findings: Vec::new(),
@@ -303,6 +311,26 @@ impl<'t> Sim<'t> {
         i
     }
 
+    /// No node enters package `k` until every node ended package `k - 1`.
+    /// Later packages cannot contribute to a counter wait in this package.
+    pub fn enter_package(&mut self, k: usize) {
+        if k <= self.package {
+            return;
+        }
+        self.package = k;
+        let Some(totals) = self.package_totals.get(k) else {
+            return;
+        };
+        for counter in &mut self.counters {
+            let owners = totals
+                .get(&counter.name)
+                .map(|owners| owners.iter().map(|(o, &n)| (o.clone(), n)).collect())
+                .unwrap_or_default();
+            counter.set_totals(owners);
+        }
+        self.totals = Some(totals.clone());
+    }
+
     /// Every counter's increments by owner: a run's `totals`.
     pub fn tally(&self) -> Totals {
         self.counters
@@ -349,7 +377,8 @@ impl<'t> Sim<'t> {
     }
 
     /// Explore forward alternatives with each process's scheduling cursor intact.
-    pub fn run(self, limit: u64) -> Vec<Self> {
+    pub fn run(mut self, limit: u64) -> Vec<Self> {
+        self.prepare_feedback();
         // Timed only with the stats on: wasm32 has no clock.
         let t0 = std::env::var_os("KTPU_VERIFY_STATS")
             .is_some()

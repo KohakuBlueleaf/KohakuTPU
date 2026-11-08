@@ -4,10 +4,10 @@ must stay POISON), then rings the consumer fenced. The consumer copies all 2K wo
 of y to `seen` right after its wait, before its ack; the producer waits the ack
 before the next of ROUNDS rounds, each a new epoch over the same words. Every
 ordered pair: K = 1/2/8/32 into the consumer's staging (peer staging) and
-K = 1/32 into canonical DRAM; with K = 8 into staging, the consumer late (it
-settles before waiting) and the notify-before-data diagnostic (a plain ring, a
-settle, then the stores): its final y is right, its `seen` may not be; a mismatch
-is MANIFEST, none INCONCLUSIVE. Then 2 and 3 sources into one sink's staging, each
+K = 1/32 into shared DRAM through the consumer; with K = 8 into staging, the
+consumer late (it settles before waiting) and the notify-before-data control (a plain
+ring, a settle, then the stores). The admission control requires L1.VER.009
+and is never issued. Then 2 and 3 sources into one sink's staging, each
 into its own region of y.
 
 The L1 STORE loop is firmware step plus store; a bundle's cycles over its words is
@@ -25,13 +25,13 @@ import numpy as np
 
 from h import check
 from h.gen import Module, Spec
-from h.gen.body import HEAD, Body, nearest, poison
+from h.gen.body import HEAD, Body, dram_at, nearest, poison
 
 WORDS = (1, 2, 8, 32)
-#: Canonical DRAM's word counts; the late and diagnostic cases' (MANY_WORDS).
+#: Canonical DRAM's word counts; the late and admission cases' (MANY_WORDS).
 DRAM_WORDS = (1, 32)
 ROUNDS = 4
-#: The late consumer's settle, and the diagnostic producer's between ring and data.
+#: The late consumer's settle, and the admission producer's between ring and data.
 LATE = 20_000
 SEEN, ACK = 1, 2
 #: A source's slot at a many-source sink is SOURCE + its index.
@@ -39,8 +39,10 @@ SOURCE = 4
 MANY_WORDS = 8
 
 
-def bundle(b: Body, p: int, k: int, i: int, region: int, base: int) -> None:
-    b.stores(p, "y", range(base, base + 2 * k, 2), i, p, region)
+def bundle(
+    b: Body, p: int, k: int, i: int, region: int, base: int, at: str = "y"
+) -> None:
+    b.stores(p, at, range(base, base + 2 * k, 2), i, p, region)
 
 
 def reference(sources: list[int], k: int):
@@ -58,16 +60,17 @@ def reference(sources: list[int], k: int):
     return lambda _: out
 
 
-def pair(p: int, c: int, k: int, staged: bool, mode: str):
-    """`mode`: "now", "late" (the consumer settles first) or "early" (diagnostic)."""
+def pair(p: int, c: int, k: int, staged: bool, mode: str, board: str):
+    """`mode`: "now", "late" (the consumer settles first) or "early" (admission control)."""
     b = Body(ledger=True)
+    at = "y" if staged else dram_at("y", c, board)
     for i in range(ROUNDS):
         if mode == "early":
             b.ring(p, c, SEEN, plain=True)
             b.add(p, f"settle {LATE}")
-            bundle(b, p, k, i, 0, 0)
+            bundle(b, p, k, i, 0, 0, at)
         else:
-            bundle(b, p, k, i, 0, 0)
+            bundle(b, p, k, i, 0, 0, at)
             b.ring(p, c, SEEN)
         if mode == "late":
             b.add(c, f"settle {LATE}")
@@ -109,13 +112,13 @@ def generate(sysnodes: tuple[int, ...], board: str) -> Module:
     cases += [(r, k, False, "now") for r in routes for k in DRAM_WORDS]
     cases += [(r, MANY_WORDS, True, m) for r in routes for m in ("late", "early")]
     for (p, c), k, staged, mode in cases:
-        name, src, b = pair(p, c, k, staged, mode)
+        name, src, b = pair(p, c, k, staged, mode, board)
         text += src
         specs[name] = Spec(
             ("y", "seen", "slots"),
             reference([p], k),
             ledger=b.ledger_of(),
-            diagnostic=mode == "early",
+            refused="L1.VER.009" if mode == "early" else "",
         )
     for c in sysnodes:
         others = nearest(c, sysnodes)

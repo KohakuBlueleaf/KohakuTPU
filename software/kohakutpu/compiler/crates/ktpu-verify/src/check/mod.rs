@@ -65,6 +65,7 @@ impl Scheduled {
 struct Continuation {
     held: Held,
     totals: Totals,
+    package_totals: Vec<Totals>,
     path: Vec<Decision>,
     symbolic: Symbolic,
     values: Option<Values>,
@@ -155,6 +156,7 @@ fn order(
         .map(|sim| Continuation {
             held: held_after(sim),
             totals: sim.tally(),
+            package_totals: vec![sim.tally()],
             path: sim.path.clone(),
             symbolic: sim.symbolic.clone(),
             memory_findings: sim.memory_findings.clone(),
@@ -215,11 +217,12 @@ type Queued = BTreeMap<u32, Vec<Package>>;
 fn run<'t>(
     pkgs: &Queued,
     t: &'t Target,
-    totals: Option<Totals>,
+    package_totals: Vec<Totals>,
     choices: Vec<Decision>,
     context: &MemoryContext,
 ) -> Vec<Sim<'t>> {
-    let mut sim = Sim::new(t, totals);
+    let mut sim = Sim::new(t, package_totals.first().cloned());
+    sim.package_totals = package_totals;
     sim.choices = choices;
     sim.initialize_memory(context);
     for (&mesh, ps) in pkgs {
@@ -242,6 +245,7 @@ pub fn check_with_memory(runs: &[Nodes], t: &Target, context: &MemoryContext) ->
     let initial = Continuation {
         held: Held::new(),
         totals: Totals::new(),
+        package_totals: Vec::new(),
         path: Vec::new(),
         symbolic: Symbolic::default(),
         values: None,
@@ -306,13 +310,13 @@ fn checked(
     let mut findings = Vec::new();
     for (pkgs, mut continuation) in states {
         if on("verify.check/totals-prepass") {
-            let first = run(&pkgs, t, None, continuation.path.clone(), context);
-            continuation.totals = first[0].tally();
+            let first = run(&pkgs, t, Vec::new(), continuation.path.clone(), context);
+            continuation.package_totals = vec![first[0].tally()];
         }
         for sim in run(
             &pkgs,
             t,
-            Some(continuation.totals),
+            continuation.package_totals,
             continuation.path,
             context,
         ) {
@@ -397,6 +401,8 @@ fn ordered(
                     (pkgs.clone(), before.totals.clone(), before.path.clone())
                 };
                 join(&mut totals, continuation.totals);
+                continuation.package_totals = before.package_totals.clone();
+                continuation.package_totals.push(totals.clone());
                 continuation.totals = totals;
                 for decision in &mut continuation.path {
                     decision.run += offsets.get(&decision.mesh).copied().unwrap_or(0);
@@ -440,7 +446,7 @@ pub fn check_many(kernels: &[Vec<Nodes>], t: &Target) -> Vec<Vec<Finding>> {
 /// unit name, after one plain run of `pkgs` (scheduled packages).
 pub fn l1_touched(pkgs: &Nodes, t: &Target) -> Vec<(String, Vec<i64>, Vec<i64>)> {
     let own = pkgs.iter().map(|(&m, p)| (m, vec![from_l0(p)])).collect();
-    let sims = run(&own, t, None, Vec::new(), &MemoryContext::default());
+    let sims = run(&own, t, Vec::new(), Vec::new(), &MemoryContext::default());
     if sims.len() == 1 {
         return sims[0]
             .units

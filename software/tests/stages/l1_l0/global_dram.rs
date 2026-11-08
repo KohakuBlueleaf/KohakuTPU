@@ -103,7 +103,7 @@ fn physical_aliases_and_partial_lines_are_card_wide() {
     for (a, b, race) in [
         (4096, 4096 | route, Some(Kind::Race)),
         (4096, 4096 | uncached, Some(Kind::Race)),
-        (4096, 4104 | route, Some(Kind::Line)),
+        (4096, 4104 | route, None),
         (4096, 4160 | route, None),
         (special | 4096, special | route | 4096, None),
     ] {
@@ -113,10 +113,41 @@ fn physical_aliases_and_partial_lines_are_card_wide() {
         q.store(vec![(b, 2)], false);
         let findings = verify(&[p, q]);
         match race {
-            Some(kind) => hazard(&findings, kind),
-            None => clean(&findings),
+            Some(kind) => assert!(
+                findings
+                    .iter()
+                    .any(|f| f.kind == kind && f.at == "shared physical memory"),
+                "CPU stores at {a:#x} and {b:#x}: expected {kind:?}, got {findings:?}"
+            ),
+            None => assert!(
+                !findings.iter().any(|f| f.kind.refuses()),
+                "CPU stores at {a:#x} and {b:#x}: expected no refusal, got {findings:?}"
+            ),
         }
     }
+    let target = Target::from_machine(&machine, Some(2)).expect("target");
+    let movers: Vec<_> = [4096, 4128 | route]
+        .into_iter()
+        .map(|at| {
+            let mut p = Program::new();
+            p.move_(
+                vec![
+                    (0x10, (at << 4) | (1 << 44) | 1),
+                    (0x18, (1 << 4) | (32 << 20) | 1),
+                    (0x20, 0),
+                    (0, (1 << 16) | u64::from(target.isa.mover.modes.fill)),
+                ],
+                vec![],
+            );
+            p
+        })
+        .collect();
+    let findings = verify(&movers);
+    hazard(&findings, Kind::Line);
+    assert!(
+        !findings.iter().any(|f| f.kind == Kind::Race),
+        "{findings:?}"
+    );
 }
 
 #[test]

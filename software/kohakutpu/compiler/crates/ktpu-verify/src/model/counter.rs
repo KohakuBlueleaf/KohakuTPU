@@ -29,6 +29,10 @@ impl Counter {
         }
     }
 
+    pub fn set_totals(&mut self, totals: Vec<(String, i64)>) {
+        self.totals = Some(totals);
+    }
+
     pub fn add(&mut self, n: i64, clock: &Clock, owner: usize) {
         if n <= 0 {
             return;

@@ -49,8 +49,16 @@ impl MeshUnits {
     }
 }
 
+/// Control-processor status semantics, distinct from compute-PE cache signals.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum NodePollContract {
+    /// sysnode.v -> rv64_mag_pe -> rv64_syscore -> rv64_l1.
+    Rv64SysDcache,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Facts {
+    pub node_poll: Option<NodePollContract>,
     /// `fw.fetch_depth`: a fetch run's room.
     pub fetch_depth: i64,
     /// `vc.l1_words`, `vc.walk_max` (a peer drain's words, F_LEN).
@@ -188,6 +196,12 @@ impl Target {
         let word_bits = word_bytes * 8;
         let lanes = int(m, "mg.lanes")?;
         let facts = Facts {
+            // The ktpu.v9 control processor is the mandatory RV64 sysnode
+            // (sysnode.v:64,497), not an rv_pe or kht_pe compute occupant.
+            node_poll: match m("die.target").and_then(Value::as_str) {
+                Some("ktpu.v9") => Some(NodePollContract::Rv64SysDcache),
+                _ => None,
+            },
             fetch_depth: int(m, "fw.fetch_depth")?,
             vc_l1_words: int(m, "vc.l1_words")?,
             vc_walk_max: int(m, "vc.walk_max")?,

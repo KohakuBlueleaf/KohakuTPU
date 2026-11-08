@@ -417,19 +417,23 @@ fn programs(
         .collect();
     // Each parameter its own span, then each arena one span.
     let place = |shift: u64| -> Result<Placed, Refusal> {
-        let mut at = Place::new(shift);
+        let mut at = Place::new(m, shift)?;
         let mut binds = BTreeMap::new();
         for (p, t) in &own {
             let b = ktpu_l1::layout::buffer::Buffer::of(t).map_err(refusal)?;
             binds.insert(
                 p.clone(),
-                at.next(&b.space, b.bytes(m).map_err(refusal)?) as i128,
+                at.next(
+                    &b.space,
+                    b.layout.get("node").and_then(|v| v.int()),
+                    b.bytes(m).map_err(refusal)?,
+                )? as i128,
             );
         }
         let bases = arenas
             .iter()
-            .map(|a| (a.clone(), at.next(&a.space, a.bytes)))
-            .collect();
+            .map(|a| Ok((a.clone(), at.next(&a.space, a.node, a.bytes)?)))
+            .collect::<Result<Vec<_>, Refusal>>()?;
         Ok((binds, bases))
     };
     let build = |b: &BTreeMap<String, i128>, bases: &[(Arena, u64)]| {
@@ -437,26 +441,29 @@ fn programs(
     };
     let (binds, bases, shifted) = match binds {
         Some(b) => {
-            let mut at = Place::new(0);
+            let mut at = Place::new(m, 0)?;
             for (p, ty) in &body.params {
                 if let Some(&base) = b.get(p) {
                     let buffer = ktpu_l1::layout::buffer::Buffer::of(ty).map_err(refusal)?;
                     let end = base as u64 + buffer.bytes(m).map_err(refusal)?;
-                    match buffer.space.as_str() {
-                        "stage" => at.stage = at.stage.max(end.div_ceil(STAGE_ALIGN) * STAGE_ALIGN),
-                        _ => at.dram = at.dram.max(end.div_ceil(DRAM_ALIGN) * DRAM_ALIGN),
-                    }
+                    at.reserve(&buffer.space, base as u64, end);
+                }
+            }
+            for arena in &arenas {
+                if let Some(&base) = b.get(&arena.name()) {
+                    at.reserve(&arena.space, base as u64, base as u64 + arena.bytes);
                 }
             }
             let bases = arenas
                 .iter()
                 .map(|a| {
-                    let base = b
-                        .get(&a.name())
-                        .map_or_else(|| at.next(&a.space, a.bytes), |v| *v as u64);
-                    (a.clone(), base)
+                    let base = match b.get(&a.name()) {
+                        Some(v) => *v as u64,
+                        None => at.next(&a.space, a.node, a.bytes)?,
+                    };
+                    Ok((a.clone(), base))
                 })
-                .collect();
+                .collect::<Result<Vec<_>, Refusal>>()?;
             (b.clone(), bases, None)
         }
         None => {
@@ -526,29 +533,54 @@ fn programs(
 /// Each own parameter's address and each arena's base.
 type Placed = (BTreeMap<String, i128>, Vec<(Arena, u64)>);
 
-/// The next span of a space: DRAM buffers from DRAM_AT, staging buffers
-/// from STAGE_AT, each at its space's alignment.
+/// Placeholder spans retain their memory space and staging destination.
 struct Place {
+    card: ktpu_machine::card::Card,
     dram: u64,
-    stage: u64,
+    stage: BTreeMap<u64, u64>,
+    offset_mask: u64,
+    shift: u64,
 }
 
 impl Place {
-    fn new(shift: u64) -> Place {
-        Place {
+    fn new(machine: &Machine, shift: u64) -> Result<Place, Refusal> {
+        Ok(Place {
+            card: ktpu_machine::card::Card::of(machine, Some(machine.nodes()), None)?,
             dram: DRAM_AT + shift,
-            stage: STAGE_AT + shift,
-        }
+            stage: BTreeMap::new(),
+            offset_mask: (1u64 << machine.die.address.runtime().aperture_shift) - 1,
+            shift,
+        })
     }
 
-    fn next(&mut self, space: &str, bytes: u64) -> u64 {
-        let (next, align) = match space {
-            "stage" => (&mut self.stage, STAGE_ALIGN),
-            _ => (&mut self.dram, DRAM_ALIGN),
+    fn cursor(&mut self, space: &str, node: Option<i128>) -> Result<(&mut u64, u64), Refusal> {
+        if space != "stage" {
+            return Ok((&mut self.dram, DRAM_ALIGN));
+        }
+        let node =
+            u32::try_from(node.unwrap_or(0)).map_err(|_| Refusal::new("MACHINE", "absent mesh"))?;
+        let route = self.card.stage_addr(0, node)?;
+        let base = route + STAGE_AT + self.shift;
+        Ok((self.stage.entry(route).or_insert(base), STAGE_ALIGN))
+    }
+
+    fn reserve(&mut self, space: &str, base: u64, end: u64) {
+        let (next, align) = if space == "stage" {
+            (
+                self.stage.entry(base & !self.offset_mask).or_insert(base),
+                STAGE_ALIGN,
+            )
+        } else {
+            (&mut self.dram, DRAM_ALIGN)
         };
+        *next = (*next).max(end.div_ceil(align) * align);
+    }
+
+    fn next(&mut self, space: &str, node: Option<i128>, bytes: u64) -> Result<u64, Refusal> {
+        let (next, align) = self.cursor(space, node)?;
         let at = *next;
         *next += bytes.div_ceil(align) * align;
-        at
+        Ok(at)
     }
 }
 
@@ -830,10 +862,9 @@ const CHECKED_RUNS: usize = 2;
 /// their bytes; distinct spans keep the dispatch order free of overlaps.
 const DRAM_AT: u64 = 0x0100_0000;
 const DRAM_ALIGN: u64 = 4096;
-const STAGE_AT: u64 = 0x1000;
+const STAGE_AT: u64 = 0;
 const STAGE_ALIGN: u64 = 256;
-/// The second build's offset (`programs`): one staging alignment, so a
-/// shifted staging span stays inside the store.
+/// The second, relocation-only build shifts spans by one staging alignment.
 const SHIFT: u64 = STAGE_ALIGN;
 
 fn l0(e: ktpu_l0::Refusal) -> Refusal {
