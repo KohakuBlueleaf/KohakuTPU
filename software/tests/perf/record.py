@@ -5,25 +5,35 @@ tools read these traces and never tinygrad.
     python software/tests/perf/record.py lenet --board multimesh_v9t6
     python software/tests/perf/record.py vit --library build/templates --blocks 12
     python software/tests/perf/record.py unet --card --measure --profile 0:40
+    python software/tests/perf/record.py vitb --card --measure --backend firmware --steps 16 --min-replays 8
 """
 
 import argparse
 import collections
 import cProfile
+import hashlib
 import json
 import os
 import pathlib
 import pstats
+import re
 import runpy
 import signal
 import sys
 import time
 import traceback
+import weakref
 
 import backends
+import traces
 import zoo
-from examples.tinygrad import mnist_models
+from examples.tinygrad import mnist_models, perf_inputs
 from h import meta
+from intervals import Inputs
+from retirement import (
+    card_rows as joined_card_rows,  # noqa: F401 -- public witness seam
+)
+from retirement import observe
 
 from kohakuaccel.driver.node.queue import layout as QL
 from kohakutpu.application.ktpugrad.device import KTPUAllocator, KTPUGraph
@@ -32,7 +42,7 @@ from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime import generated, packages, rows
 from kohakutpu.application.runtime.card import NodeCard
 from kohakutpu.application.runtime.card.common import MEASURE_FIRMWARE
-from kohakutpu.application.runtime.card.measure import Ring
+from kohakutpu.application.runtime.graph.split import PreparedSplitGraph
 from kohakutpu.stack import rs
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -80,34 +90,79 @@ class Trace:
         self.out = out
         (out / "kernels").mkdir(parents=True, exist_ok=True)
         self.kernels: dict[str, str] = {}
+        self.program_names = {}
         self.launches = (out / "launches.jsonl").open("w", encoding="utf-8")
         self.count = 0
+        self.current_input = None
         self.compiles: list[tuple] = []
         self.ended: float | None = None
         #: Open events, innermost last, each with the host time of events nested in it.
         self.open: list[list] = []
 
-    def kernel(self, compiled) -> None:
-        if compiled.name in self.kernels:
-            return
-        self.kernels[compiled.name] = compiled.name
-        (self.out / "kernels" / f"{compiled.name}.l2").write_text(
-            compiled.l2_text, encoding="utf-8"
-        )
-        (self.out / "kernels" / f"{compiled.name}.l1").write_text(
-            compiled.l1_text, encoding="utf-8"
-        )
+    def kernel(self, compiled, unique=False) -> str:
+        # Split compilation calls every different region "captured_split".
+        # Alias only the trace copy, never the runtime object or its package.
+        key = (id(compiled), unique)
+        previous = self.program_names.get(key)
+        if previous is not None and previous[0]() is compiled:
+            return previous[1]
+        l1, l2 = compiled.l1_text, compiled.l2_text
+        digest = hashlib.sha256(
+            json.dumps([compiled.name, l1, l2]).encode()
+        ).hexdigest()
+        name = f"{compiled.name}__{digest[:20]}" if unique else compiled.name
+        if name in self.kernels:
+            if self.kernels[name] != digest:
+                raise ValueError(f"different programs share trace name {name}")
+            self.remember(key, compiled, name)
+            return name
+        self.kernels[name] = digest
+        if unique:
+            l1, count = re.subn(
+                r"(?m)^(\s*fn\s+)" + re.escape(compiled.name) + r"\.l1(?=\()",
+                lambda match: match[1] + name + ".l1",
+                l1,
+            )
+            if count != 1:
+                raise ValueError("retained L1 entry cannot be uniquely named in trace")
+            if l2:
+                l2, count = re.subn(
+                    r"(?m)^(\s*fn\s+)" + re.escape(compiled.name) + r"\.l2(?=\()",
+                    lambda match: match[1] + name + ".l2",
+                    l2,
+                )
+                if count != 1:
+                    raise ValueError(
+                        "retained L2 entry cannot be uniquely named in trace"
+                    )
+            graph = getattr(getattr(compiled, "traced", None), "graph", None)
+            if graph is not None:
+                (self.out / "kernels" / f"{name}.graph.json").write_text(
+                    json.dumps(graph), "utf-8"
+                )
+        (self.out / "kernels" / f"{name}.l2").write_text(l2, encoding="utf-8")
+        (self.out / "kernels" / f"{name}.l1").write_text(l1, encoding="utf-8")
+        self.remember(key, compiled, name)
+        return name
+
+    def remember(self, key, compiled, name):
+        # Observation must not extend compiled/recipe ownership lifetimes.
+        try:
+            self.program_names[key] = (weakref.ref(compiled), name)
+        except TypeError:
+            pass  # A lightweight synthetic compiled object need not be weakrefable.
 
     def compiled(self, name: str, seconds: float) -> None:
         """A library fill spans bounded rounds, so its compile times append."""
         self.compiles.append((name, seconds))
         with (self.out / "compiles.jsonl").open("a", encoding="utf-8") as f:
-            f.write(json.dumps(dict(name=name, seconds=seconds)) + "\n")
+            f.write(json.dumps({"name": name, "seconds": seconds}) + "\n")
 
     def opened(self, row: dict) -> int:
         """`row` numbered on entry; an event opened inside another (a staged launch
         flushed by a submit) names it as `parent`."""
         row["seq"] = self.count
+        row["input"] = self.current_input
         self.count += 1
         if self.open:
             row["parent"] = self.open[-1][0]["seq"]
@@ -122,9 +177,12 @@ class Trace:
         if self.open:
             self.open[-1][1] += seconds
         self.launches.write(json.dumps(row) + "\n")
+        self.launches.flush()
 
-    def launch(self, dev, compiled, binds: dict, kind: str, info, gap: float) -> int:
-        self.kernel(compiled)
+    def launch(
+        self, dev, compiled, binds: dict, kind: str, info, gap: float, unique=False
+    ) -> int:
+        name = self.kernel(compiled, unique)
         phys = {p: int(dev.mmu.resolve(a)[1]) for p, a in binds.items()}
         keep = {
             k: v
@@ -133,23 +191,27 @@ class Trace:
         }
         scratch = getattr(compiled, "scratch", None) or []
         return self.opened(
-            dict(
-                phase="capture" if dev.recording else "ordinary",
-                name=compiled.name,
-                kind=kind,
-                binds=phys,
-                scratch=sum(a["bytes"] for a in scratch),
-                info=keep,
-                gap_ms=round(gap * 1e3, 3),
-            )
+            {
+                "phase": "capture" if dev.recording else "ordinary",
+                "name": name,
+                "original_name": compiled.name,
+                "kind": kind,
+                "binds": phys,
+                "scratch": sum(a["bytes"] for a in scratch),
+                "info": keep,
+                "gap_ms": round(gap * 1e3, 3),
+            }
         )
 
     def replayed(self, gap: float) -> int:
         """A TinyJit replay: one event, its runs each carrying its `seq`."""
         return self.opened(
-            dict(
-                phase="replay", name="replay", kind="replay", gap_ms=round(gap * 1e3, 3)
-            )
+            {
+                "phase": "replay",
+                "name": "replay",
+                "kind": "replay",
+                "gap_ms": round(gap * 1e3, 3),
+            }
         )
 
     def save(self, meta: dict) -> None:
@@ -209,7 +271,7 @@ class Profile:
             self.profile.disable()
         stats = pstats.Stats(self.profile).stats  # type: ignore[attr-defined]
         rows_ = [
-            dict(file=f, line=ln, fn=fn, calls=nc, own=tt, cumulative=ct)
+            {"file": f, "line": ln, "fn": fn, "calls": nc, "own": tt, "cumulative": ct}
             for (f, ln, fn), (_, nc, tt, ct, _) in stats.items()
             if tt > 1e-5
         ]
@@ -236,7 +298,7 @@ def recording(trace: Trace, library: pathlib.Path | None, card: bool, prof: Prof
         finally:
             trace.ended = time.perf_counter()
             trace.submitted(trace.ended - t0)
-        got.info["seq"] = seq
+        got.info.update(seq=seq, input=trace.current_input)
         return got
 
     def on_replay(self, log, *args, **kw):
@@ -249,7 +311,9 @@ def recording(trace: Trace, library: pathlib.Path | None, card: bool, prof: Prof
             trace.ended = time.perf_counter()
             trace.submitted(trace.ended - t0)
         for event in got:
-            event.info["seq"] = seq
+            # A retained graph has its own nested launch event and compiled code.
+            event.info.setdefault("seq", seq)
+            event.info.update(input=trace.current_input, replay_seq=seq)
         return got
 
     def on_compile(self, source):
@@ -266,6 +330,33 @@ def recording(trace: Trace, library: pathlib.Path | None, card: bool, prof: Prof
             trace.compiled(name, round(time.monotonic() - t0, 3))
             print("compiled", len(trace.compiles), trace.compiles[-1], flush=True)
             return compile_graph(self, source)
+
+    graph_submit = PreparedSplitGraph.submit
+
+    def on_graph(self):
+        t0 = time.perf_counter()
+        seq = trace.launch(
+            self.device,
+            self.compiled,
+            dict(self.bindings),
+            "graph",
+            None,
+            0.0,
+            unique=True,
+        )
+        trace_name = trace.open[-1][0]["name"]
+        in_replay = any(event[0].get("phase") == "replay" for event in trace.open[:-1])
+        if in_replay and self.device.graph_backend in ("firmware", "kaos"):
+            trace.open[-1][0]["phase"] = "retained_replay"
+            trace.open[-1][0]["backend"] = self.device.graph_backend
+        try:
+            got = graph_submit(self)
+        finally:
+            trace.submitted(time.perf_counter() - t0)
+        got.info.update(seq=seq, input=trace.current_input, trace_name=trace_name)
+        return got
+
+    PreparedSplitGraph.submit = on_graph
 
     class Offline(D.Device):
         def __init__(self, kind="offline", *args, **kw):
@@ -313,7 +404,9 @@ def graphs_kept() -> list:
 
 
 def card_rows(runs, records: list[dict], ring: list[int] | None) -> list[dict]:
-    """One row a run, from `runs` (each with name, kind, wall) and the card's
+    """Legacy single-sysnode helper for s0; new recordings use joined_card_rows.
+
+    One row a run, from `runs` (each with name, kind, wall) and the card's
     `records`, one a collection. An eager list (`list_index` n > 1, its runs not a
     TinyJit replay) is one record for its n runs: each run takes its own ring
     `cycles` as `cycles` and `steps`, the first also the list's other phases and
@@ -325,8 +418,12 @@ def card_rows(runs, records: list[dict], ring: list[int] | None) -> list[dict]:
             for k, run in enumerate(runs[at : at + n]):
                 cycles = ring[slot + k] if ring is not None else run.cycles
                 phases = dict(rec) if k == 0 else {key: 0 for key in rec}
-                phases |= dict(cycles=cycles, steps=cycles, list_index=0)
-                phases |= dict(in_list=n, list_pos=k, item_tag=rec.get("item_tag", 0))
+                phases |= {"cycles": cycles, "steps": cycles, "list_index": 0}
+                phases |= {
+                    "in_list": n,
+                    "list_pos": k,
+                    "item_tag": rec.get("item_tag", 0),
+                }
                 if k == 0:
                     phases["list_cycles"] = rec["cycles"]
                 rows_.append(
@@ -357,69 +454,19 @@ def card_rows(runs, records: list[dict], ring: list[int] | None) -> list[dict]:
 
 
 def on_card(out: pathlib.Path, measure: bool, traced: bool):
-    """Each run's card record in run order; the call given back writes them. `traced`
-    boots the debug image, whose step records come back with each result."""
-    records, devices, rings = [], [], []
-    result = NodeCard._result
-    collect = NodeCard.collect
-    card_submit = NodeCard.submit
-    card_init = NodeCard.__init__
-    init = D.Device.__init__
-
-    def on_result(self, *args, **kw):
-        got = result(self, *args, **kw)
-        records.append(dict(got.get("phases") or {}, cycles=got["cycles"]))
-        return got
-
-    def on_collect(self, p, *args, **kw):
-        got = collect(self, p, *args, **kw)
-        if "debug" in got:
-            records[-1]["trace"] = got["debug"]
-        return got
-
-    def on_init(self, *args, **kw):
-        init(self, *args, **kw)
-        devices.append(self)
-        if measure:
-            rings.append(Ring(self.card))
-
-    def write():
-        device = devices[-1]
-        slots = rings[-1].rows() if measure else None
-        cycles = [r["cycles"] for r in slots] if slots is not None else None
-        rows_ = card_rows(device.runs, records, cycles)
-        text = "\n".join(json.dumps(r) for r in rows_)
-        (out / "card.jsonl").write_text(text + "\n", encoding="utf-8")
-        if slots is not None:
-            units = "\n".join(json.dumps(r) for r in slots)
-            (out / "units.jsonl").write_text(units + "\n", encoding="utf-8")
-        return dict(
-            counters={k: v for k, v in device.counters.items()},
-            runs=len(device.runs),
-            transport={
-                str(k): v
-                for k, v in (
-                    device.card.mem.snapshot()
-                    if hasattr(device.card.mem, "snapshot")
-                    else {}
-                ).items()
-            },
-        )
-
-    def on_card_init(self, *args, **kw):
-        card_init(self, *args, **dict(kw, debug=True))
-
-    def on_card_submit(self, program, trace=False, flags=0, after=None):
-        return card_submit(self, program, True, flags | QL.RUN_F_NOENGINE, after)
-
-    NodeCard._result = on_result
-    D.Device.__init__ = on_init
+    """Observe grouped logical retirement, never the per-node _result stream."""
     if traced:
+        card_init, card_submit = NodeCard.__init__, NodeCard.submit
+
+        def on_init(self, *args, **kw):
+            card_init(self, *args, **dict(kw, debug=True))
+
+        def on_submit(self, program, trace=False, flags=0, after=None):
+            return card_submit(self, program, True, flags | QL.RUN_F_NOENGINE, after)
+
         C.DEBUG_RECORDS = 1 << 18
-        NodeCard.__init__ = on_card_init
-        NodeCard.collect = on_collect
-        NodeCard.submit = on_card_submit
-    return write
+        NodeCard.__init__, NodeCard.submit = on_init, on_submit
+    return observe(out, "eager", measure, outputs=True)
 
 
 def output_check(report: pathlib.Path) -> dict | None:
@@ -454,6 +501,9 @@ def main() -> int:
     ap.add_argument("--batch", type=int)
     ap.add_argument("--profile", help="cProfile launches FIRST:LAST")
     ap.add_argument("--tag", default="")
+    ap.add_argument("--out", type=pathlib.Path, help="explicit trace directory")
+    ap.add_argument("--round", default=None)
+    ap.add_argument("--min-replays", type=int, default=1)
     ap.add_argument("--extra", nargs="*", default=[], help="the workload's own flags")
     args = ap.parse_args()
     if args.backend and not args.card:
@@ -462,6 +512,14 @@ def main() -> int:
         ap.error("--traced uses the ordinary firmware debug entry, not retained graphs")
     if args.backend:
         args.jit = True
+        if args.steps is None:
+            args.steps = 16
+        if args.steps < args.min_replays + 4:
+            ap.error(
+                "retained runs need at least min-replays + 4 inputs; observed replays are checked too"
+            )
+    if args.min_replays < 1:
+        ap.error("--min-replays must be positive")
     if args.backend == "kaos" and args.measure:
         os.environ["KOHAKUTPU_OS_PROFILE_SYS"] = "1"
 
@@ -479,41 +537,50 @@ def main() -> int:
         steps = "--steps" if script == "mnist_mlp.py" else "--inputs"
         extra += [steps, str(args.steps)]
     if args.blocks:
-        extra += ["--blocks", str(args.blocks)]
+        if script == "mnist_mlp.py":
+            if args.blocks != 1:
+                ap.error("MNIST zoo workloads have no block axis; specify blocks=1")
+        else:
+            extra += ["--blocks", str(args.blocks)]
     if args.card:
         extra += ["--device", "card", "--transport", "xdma"]
+    if not args.card and script == "vit_tiny.py":
+        extra += ["--offline"]
     extra += args.extra
 
     name = f"{args.workload}{args.tag}.{args.board}.{args.nodes}n"
     if args.backend:
         name += f".{args.backend}"
-    if args.card and (TRACES / name / "meta.json").exists():
+    destination = args.out or (TRACES / name)
+    if args.card and (destination / "meta.json").exists():
         print(name, "exists: one run a configuration", flush=True)
         return 1
-    trace = Trace(TRACES / name)
+    trace = Trace(destination)
+    inputs = Inputs(trace)
+    perf_inputs.observer = inputs
     report = trace.out / "report.json"
     if args.card and script != "nodes_measure.py":
         extra += ["--report", str(report)]
         extra += ["--check", "8"] if script == "mnist_mlp.py" else []
         extra += ["--references", str(REFERENCES)] if script == "vit_tiny.py" else []
-    close_boot = None
-    if args.backend:
-        close_boot = backends.select(args, trace.out)
-        write = backends.observe(trace.out, args.backend, args.measure)
-    else:
-        write = on_card(trace.out, args.measure, args.traced) if args.card else None
-    if args.measure and args.backend != "kaos":
-        C.FIRMWARE = MEASURE_FIRMWARE
-    prof = Profile(args.profile)
-    recording(trace, args.library, args.card, prof)
-    spans = host_spans()
-    graphs = graphs_kept()
-    mnist_models.MODELS.update(zoo.MODELS)
-    sys.argv = [str(EXAMPLES / script), *extra]
+    close_boot = write = None
+    prof, spans, graphs = Profile(args.profile), Spans(), []
     signal.signal(signal.SIGTERM, ended)
     t0 = time.monotonic()
     done = "exited"
     try:
+        if args.backend:
+            close_boot = backends.select(args, trace.out)
+            write = backends.observe(trace.out, args.backend, args.measure)
+        else:
+            write = on_card(trace.out, args.measure, args.traced) if args.card else None
+        if args.measure and args.backend != "kaos":
+            C.FIRMWARE = MEASURE_FIRMWARE
+        recording(trace, args.library, args.card, prof)
+        spans = host_spans()
+        graphs = graphs_kept()
+        mnist_models.MODELS.update(zoo.MODELS)
+        sys.argv = [str(EXAMPLES / script), *extra]
         runpy.run_path(sys.argv[0], run_name="__main__")
     except Ended:
         done = "stopped at its bound"
@@ -529,22 +596,45 @@ def main() -> int:
     if done != "exited":
         print(done, flush=True)
     prof.write(trace.out)
+    card_meta = {}
+    # Measurement and teardown failures go to failure.txt and `done`, so meta.json
+    # is still written and the exit code reports them.
     try:
         card_meta = write() if write is not None else {}
+    except BaseException:  # noqa: BLE001
+        failure = traceback.format_exc()
+        with (trace.out / "failure.txt").open("a", encoding="utf-8") as f:
+            f.write(failure)
+        done = "measurement failure: " + failure[-1800:]
     finally:
-        if close_boot is not None:
-            close_boot()
+        try:
+            if close_boot is not None:
+                close_boot()
+        except BaseException:  # noqa: BLE001
+            failure = traceback.format_exc()
+            with (trace.out / "failure.txt").open("a", encoding="utf-8") as f:
+                f.write(failure)
+            done = "teardown failure: " + failure[-1800:]
+        card_meta.update(inputs.close())
+        perf_inputs.observer = None
     trace.save(
         dict(
             card_meta,
+            schema=2,
+            round=args.round,
+            path=args.backend or "eager",
+            batch=args.batch or (8 if args.workload in MNIST else 1),
+            blocks=args.blocks,
             workload=args.workload,
             board=args.board,
             nodes=args.nodes,
             args=extra,
             seconds=seconds,
             done=done,
-            spans={k: dict(calls=v[0], seconds=v[1]) for k, v in spans.totals.items()},
-            graphs=[dict(kernels=k, counts=c, history=h) for k, c, h in graphs],
+            spans={
+                k: {"calls": v[0], "seconds": v[1]} for k, v in spans.totals.items()
+            },
+            graphs=[{"kernels": k, "counts": c, "history": h} for k, c, h in graphs],
             profile=os.environ.get("KOHAKUTPU_PROFILE"),
             # Which paths ran: every stack knob this process saw, and the four dies'
             # clocks as `bringup read-clocks` read them before the run.
@@ -565,6 +655,32 @@ def main() -> int:
             when=time.time(),
         )
     )
+    if args.card:
+        metadata = json.loads((trace.out / "meta.json").read_text("utf-8"))
+        try:
+            summary = traces.steady_summary(trace.out, metadata)
+            metadata["replay_counts"] = {
+                key: summary[key]
+                for key in ("replay_inputs", "replay_calls", "retained_launches")
+            }
+            (trace.out / "steady.json").write_text(
+                json.dumps(summary, indent=1), "utf-8"
+            )
+            if (
+                done == "exited"
+                and args.backend
+                and summary["replay_inputs"] < args.min_replays
+            ):
+                raise ValueError(
+                    f"only {summary['replay_inputs']} complete retained inputs; need {args.min_replays}"
+                )
+        except (OSError, ValueError, KeyError):
+            failure = traceback.format_exc()
+            with (trace.out / "failure.txt").open("a", encoding="utf-8") as f:
+                f.write(failure)
+            done = "steady selection failure: " + failure[-1800:]
+        metadata["done"] = done
+        (trace.out / "meta.json").write_text(json.dumps(metadata, indent=1), "utf-8")
     print(name, trace.count, "launches", len(trace.kernels), "kernels", done)
     return 0 if done == "exited" else 1
 

@@ -10,6 +10,7 @@ import json
 import time
 
 import numpy as np
+from examples.tinygrad import perf_inputs
 from examples.tinygrad.vit_tiny import seeded_model
 from tinygrad.tensor import Tensor
 
@@ -27,9 +28,14 @@ def tensor(x):
 def rounds(run, count):
     """Wall seconds of the last `count` calls of `run`, past its warm rounds; the
     outputs of every round."""
-    outs = [run() for _ in range(WARM_ROUNDS)]
+
+    def one(index):
+        with perf_inputs.span(index, run.__name__):
+            return run()
+
+    outs = [one(i) for i in range(WARM_ROUNDS)]
     t0 = time.monotonic()
-    timed = [run() for _ in range(count)]
+    timed = [one(WARM_ROUNDS + i) for i in range(count)]
     return (time.monotonic() - t0) / count, outs + timed
 
 

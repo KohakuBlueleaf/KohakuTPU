@@ -1,18 +1,16 @@
 """Backend selection and completion observation for the existing model recorder."""
 
-import json
 import pathlib
 import sys
-from typing import Any
 
 TOOLS = pathlib.Path(__file__).resolve().parents[2] / "kohakutpu/os/tools"
 sys.path.insert(0, str(TOOLS))
 sys.path.insert(0, str(TOOLS.parents[2] / "kohakuaccel/os/tools"))
 
 from ostpu.model import ModelResidents
+from retirement import observe as retirements
 
 from kohakutpu.application.runtime import device as D
-from kohakutpu.application.runtime.card.measure import Ring
 from kohakutpu.application.runtime.os.graph import task_capacity
 
 
@@ -41,68 +39,7 @@ def completion_record(got, backend):
 
 
 def observe(out, backend, measure=False):
-    """Observe public device retirement and reads, shared by both execution paths."""
-    records, devices, rings = [], [], []
-    init, collect, read = D.Device.__init__, D.Device._collect_one, D.Device.read
-    output = (out / "outputs.jsonl").open("w", encoding="utf-8")
-
-    def on_init(self, *args, **kwargs):
-        init(self, *args, **kwargs)
-        devices.append(self)
-        if measure and backend == "firmware":
-            rings.append(Ring(self.card))
-
-    def on_collect(self, submitted):
-        fresh = submitted.run is None
-        run = collect(self, submitted)
-        if fresh:
-            records.append((run, completion_record(submitted.result, backend)))
-        return run
-
-    def on_read(self, address, count):
-        raw = read(self, address, count)
-        output.write(json.dumps(dict(backend=backend, bytes=raw.hex())) + "\n")
-        output.flush()
-        return raw
-
-    # Recording wraps: the wrappers take the methods' arguments untyped.
-    device: Any = D.Device
-    device.__init__ = on_init
-    device._collect_one = on_collect
-    device.read = on_read
-
-    def write():
-        output.close()
-        rows = [
-            dict(name=r.name, kind=r.kind, wall=r.wall, seq=r.info.get("seq"), **values)
-            for r, values in records
-        ]
-        (out / "card.jsonl").write_text(
-            "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
-        )
-        if measure and backend == "kaos":
-            (out / "units.jsonl").write_text(
-                "".join(
-                    json.dumps(dict(backend=backend, run=i, node=node, **values)) + "\n"
-                    for i, (_, record) in enumerate(records)
-                    for node, values in record["nodes"].items()
-                ),
-                encoding="utf-8",
-            )
-        if rings:
-            (out / "units.jsonl").write_text(
-                "".join(
-                    json.dumps(dict(backend=backend, **row)) + "\n"
-                    for row in rings[-1].rows()
-                ),
-                encoding="utf-8",
-            )
-        if not devices:
-            return {}
-        device = devices[-1]
-        return dict(counters=dict(device.counters), runs=len(device.runs))
-
-    return write
+    return retirements(out, backend, measure, outputs=True)
 
 
 def select(args, out):
@@ -134,6 +71,8 @@ def select(args, out):
         init(self, kind, *positional, **kwargs)
         if args.backend == "kaos":
             self.card.sys_hz = boots[-1].sys_hz
+            self.card._perf_windows = dict(enumerate(boots[-1].windows))
+            self.card._perf_transport = boots[-1].card.t
 
     D.Device.__init__ = on_init
 

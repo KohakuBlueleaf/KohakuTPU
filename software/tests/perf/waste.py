@@ -9,7 +9,7 @@ import collections
 import json
 import pathlib
 
-from traces import FORM_KINDS, Launch, events, load, planned, step
+from traces import FORM_KINDS, Launch, events, load, planned, steady_summary, step
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 PARAMS = pathlib.Path(__file__).with_name("params.json")
@@ -29,7 +29,7 @@ def floors(launches: list[Launch]) -> dict:
         form += fl if x.kind in FORM_KINDS else 0.0
         compute += fl if x.kind not in FORM_KINDS else 0.0
         useful += max(f["mg"], f["vc"]) if x.kind not in FORM_KINDS else 0.0
-    return dict(math=useful, compute=compute, with_form=compute + form)
+    return {"math": useful, "compute": compute, "with_form": compute + form}
 
 
 def labels(launches: list[Launch]) -> dict:
@@ -69,27 +69,32 @@ class Flow:
     def lineage(self, at: int) -> int:
         if at not in self.live:
             self.fresh += 1
-            self.live[at] = dict(
-                form="?", lineage=self.fresh, by=None, read=True, kind="host"
-            )
+            self.live[at] = {
+                "form": "?",
+                "lineage": self.fresh,
+                "by": None,
+                "read": True,
+                "kind": "host",
+            }
         return self.live[at]["lineage"]
 
 
 def detect(launches: list[Launch]) -> list[dict]:
     """Findings over the whole trace; a finding's `cycles` are its launch's."""
     flow = Flow()
+    indexed = {x.index: x for x in launches}
     found = []
 
     def finding(kind: str, x: Launch, why: str, cycles: float | None = None):
         found.append(
-            dict(
-                detector=kind,
-                launch=x.index,
-                name=x.name,
-                kernel_kind=x.kind,
-                cycles=x.cycles if cycles is None else cycles,
-                why=why,
-            )
+            {
+                "detector": kind,
+                "launch": x.index,
+                "name": x.name,
+                "kernel_kind": x.kind,
+                "cycles": x.cycles if cycles is None else cycles,
+                "why": why,
+            }
         )
 
     last_compute = None
@@ -103,7 +108,7 @@ def detect(launches: list[Launch]) -> list[dict]:
             if old is not None and not old["read"] and old["by"] is not None:
                 finding(
                     "written_unread",
-                    launches[old["by"]],
+                    indexed[old["by"]],
                     f"its {old['form']} output at {at:#x} is overwritten by "
                     f"launch {x.index} before anything reads it",
                 )
@@ -120,12 +125,16 @@ def detect(launches: list[Launch]) -> list[dict]:
             else:
                 flow.fresh += 1
                 lineage = flow.fresh
-            flow.live[at] = dict(
-                form=p.dtype, lineage=lineage, by=x.index, read=False, kind=x.kind
-            )
+            flow.live[at] = {
+                "form": p.dtype,
+                "lineage": lineage,
+                "by": x.index,
+                "read": False,
+                "kind": x.kind,
+            }
         if not form_change:
             if last_compute is not None and last_compute == x.index - 1:
-                a, b = launches[x.index - 1], x
+                a, b = indexed[x.index - 1], x
                 if set(a.writes) & set(b.reads):
                     finding(
                         "launch_seam",
@@ -148,11 +157,11 @@ def chains(launches: list[Launch]) -> list[dict]:
             continue
         if run:
             out.append(
-                dict(
-                    before=x.index,
-                    kinds=[r.kind for r in run],
-                    cycles=sum(r.cycles for r in run),
-                )
+                {
+                    "before": x.index,
+                    "kinds": [r.kind for r in run],
+                    "cycles": sum(r.cycles for r in run),
+                }
             )
         run = []
     return out
@@ -166,8 +175,20 @@ def median(values: list[float]) -> float:
 def report(trace: pathlib.Path, machine: str) -> dict:
     launches = load(trace, machine)
     meta = json.loads((trace / "meta.json").read_text("utf-8"))
-    warm = step(launches, planned(meta["args"]))
-    found = detect(launches)
+    selection = None
+    if meta.get("schema", 0) >= 2:
+        steady = steady_summary(trace, meta)
+        groups = steady["groups"]
+        if not groups:
+            raise ValueError("no replayed/steady input to model")
+        group = next((g for g in ("input", "train") if g in groups), next(iter(groups)))
+        selection = {"group": group, "input": groups[group]["representative_input"]}
+        warm = [x for x in launches if x.input == selection["input"]]
+    else:
+        warm = step(launches, planned(meta["args"]))
+    if not warm:
+        raise ValueError("selected input has no actual compiled launch")
+    found = detect(warm if meta.get("schema", 0) >= 2 else launches)
     first, last = warm[0].index, warm[-1].index
     in_step = [f for f in found if first <= f["launch"] <= last]
     by = collections.Counter()
@@ -177,33 +198,37 @@ def report(trace: pathlib.Path, machine: str) -> dict:
     table = labels(warm)
     busy = sum(table.values())
     replays = [e for e in events(trace) if e.get("phase") == "replay"]
-    return dict(
-        host_ms=dict(
-            between=sum(x.gap_ms for x in warm),
-            submit=sum(x.submit_ms for x in warm),
-            replays=len(replays),
-            replay_between=median([e["gap_ms"] for e in replays]),
-            replay_publish=median([e["submit_ms"] for e in replays]),
-        ),
-        mfu=dict(
-            mg=sum(x.timed["floor"]["mg"] for x in warm) / busy,
-            vc=sum(x.timed["floor"]["vc"] for x in warm) / busy,
-            read_bus=sum(x.timed["floor"]["read"] for x in warm) / busy,
-            write_bus=sum(x.timed["floor"]["write"] for x in warm) / busy,
-        ),
-        trace=trace.name,
-        machine=machine,
-        launches=len(launches),
-        step_launches=len(warm),
-        step_cycles=total,
-        step_with_seams=sum(table.values()),
-        floors=floors(warm),
-        kinds=report_kinds(warm),
-        labels=table,
-        recoverable=dict(by),
-        findings=in_step,
-        chains=chains(warm),
-    )
+    return {
+        "host_ms": {
+            "between": sum(x.gap_ms for x in warm),
+            "submit": sum(x.submit_ms for x in warm),
+            "replays": len(replays),
+            "replay_between": median([e["gap_ms"] for e in replays]),
+            "replay_publish": median([e["submit_ms"] for e in replays]),
+        },
+        "mfu": {
+            "mg": sum(x.timed["floor"]["mg"] for x in warm) / busy,
+            "vc": sum(x.timed["floor"]["vc"] for x in warm) / busy,
+            "read_bus": sum(x.timed["floor"]["read"] for x in warm) / busy,
+            "write_bus": sum(x.timed["floor"]["write"] for x in warm) / busy,
+        },
+        "selection": selection,
+        "dataflow_unavailable": [x.name for x in warm if not x.dataflow_available],
+        "detector_scope": "inter-launch dataflow where L2 is retained; combined graph internals are opaque",
+        "evidence": "timed model of actual selected launched programs, not measured savings",
+        "trace": trace.name,
+        "machine": machine,
+        "launches": len(launches),
+        "step_launches": len(warm),
+        "step_cycles": total,
+        "step_with_seams": sum(table.values()),
+        "floors": floors(warm),
+        "kinds": report_kinds(warm),
+        "labels": table,
+        "recoverable": dict(by),
+        "findings": in_step,
+        "chains": chains(warm),
+    }
 
 
 def main():

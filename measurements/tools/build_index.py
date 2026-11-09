@@ -434,12 +434,15 @@ def note(name: str, caption: str) -> list[str]:
 
 
 def main():
-    page, readme = "", [
-        "# Measurements",
+    page, readme = (
         "",
-        "Open `index.html`. Findings: `REPORT.md`. Plan: `PLAN.md`. Issues: `ISSUES.md`.",
-        "",
-    ]
+        [
+            "# Measurements",
+            "",
+            "Open `index.html`. Findings: `REPORT.md`. Plan: `PLAN.md`. Issues: `ISSUES.md`.",
+            "",
+        ],
+    )
     nav = ""
     for anchor, title, what, figures in SECTIONS:
         nav += f"<a href='#{anchor}'>{html.escape(title)}</a>"
@@ -481,6 +484,65 @@ def main():
     HOME.mkdir(parents=True, exist_ok=True)
     (HOME / "index.html").write_text(doc, "utf-8")
     (HOME / "README.md").write_text("\n".join(readme) + "\n", "utf-8")
+
+
+def matrix_index(rows):
+    """Current-schema matrix index: explicit metrics, failures and raw trace links."""
+    HOME.mkdir(parents=True, exist_ok=True)
+    lead = (
+        "Only complete eager warm inputs or observed retained-replay inputs are scored. "
+        "The launch-max sum is NOT a global interval. Global bounds enclose input "
+        "upload, all participating nodes and the workload's output readback; they "
+        "include host work. HR_CYCLES bounds use one reference node, never subtract "
+        "different boot epochs. Retained combined regions are measured as kind graph; "
+        "a constituent-kernel breakdown is unavailable, not borrowed from capture. "
+        "Model cycles and waste are estimates over the actual selected compiled regions. "
+        "P1 speedup holds path fixed; eager speedup holds P fixed. Global speedups use "
+        "host bounds, separately from the cycle-sum speedups. Unscored attempts remain linked."
+    )
+    md = [
+        f"# Round {ROUND}",
+        "",
+        lead,
+        "",
+        "[Matrix table](data/matrix.csv) · [Per-kind table](data/matrix-kinds.csv)",
+        "",
+    ]
+    for figure in ("intervals", "kinds"):
+        if (FIGURES / "matrix" / f"{figure}.png").exists():
+            md += [f"![{figure}](figures/matrix/{figure}.png)", ""]
+    md += [
+        "| Run / input group | Status | Launch-max sum | Global host bound (ms) |",
+        "|---|---|---:|---:|",
+    ]
+    for row in rows:
+        target = "../../data/" + row["run"]
+        wall = row["global_host_bound_ns"]
+        md.append(
+            f"| [{row['run']}]({target}/meta.json) / {row['group']} | {row['status']} | {row['launch_max_sum'] or '—'} | {wall / 1e6 if wall is not None else '—'} |"
+        )
+        if row["reason"]:
+            md += ["", f"{row['run']}: `{row['reason'].replace('`', chr(39))}`", ""]
+    text = "\n".join(md) + "\n"
+    (HOME / "README.md").write_text(text, "utf-8")
+    # HTML shares the same source text and figure links, no legacy zoo assumptions.
+    images = "".join(
+        f'<img style="max-width:100%" src="figures/matrix/{name}.png" alt="{name}">'
+        for name in ("intervals", "kinds")
+        if (FIGURES / "matrix" / f"{name}.png").exists()
+    )
+    links = '<p><a href="data/matrix.csv">Matrix CSV</a> · <a href="data/matrix-kinds.csv">Kinds CSV</a></p>'
+    (HOME / "index.html").write_text(
+        '<!doctype html><meta charset="utf-8"><title>Round '
+        + html.escape(ROUND)
+        + "</title>"
+        + links
+        + images
+        + '<pre style="white-space:pre-wrap">'
+        + html.escape(text)
+        + "</pre>",
+        "utf-8",
+    )
 
 
 if __name__ == "__main__":

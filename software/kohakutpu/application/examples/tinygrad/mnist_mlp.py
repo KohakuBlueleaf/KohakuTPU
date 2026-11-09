@@ -13,6 +13,7 @@ import time
 from typing import cast
 
 import numpy as np
+from examples.tinygrad import perf_inputs
 from examples.tinygrad.mnist_models import MLP, MODELS, LeNet  # noqa: F401
 from tinygrad.dtype import _to_np_dtype
 from tinygrad.engine.jit import TinyJit
@@ -149,7 +150,7 @@ def train(
         if len(idx) not in runs:
             runs[len(idx)] = TinyJit(one) if jit else one
         value = host_lr.write(learning_rate(step, steps, lr, schedule, warmup, lr_min))
-        with Context(TRAINING=1):
+        with perf_inputs.span(step, "train"), Context(TRAINING=1):
             loss, logits = runs[len(idx)](
                 Tensor(x[idx], device=device).realize(),
                 Tensor(eye[y[idx]], device=device).realize(),

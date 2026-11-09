@@ -15,6 +15,8 @@ extend-exclude = ["software", "temp-remove", "temp"]
 # Pylance / pyright opened at the repo root: every software member's import
 # root (the namespace packages install through a finder it cannot run).
 [tool.pyright]
+# Recorded runs keep the scripts that made them; they are data, not checked code.
+exclude = ["measurements/data", "**/node_modules", "**/__pycache__", "**/.*"]
 extraPaths = [
     "software/kohakuaccel/compiler",
     "software/kohakuaccel/driver",

@@ -15,6 +15,7 @@ import pathlib
 import time
 
 import numpy as np
+from examples.tinygrad import perf_inputs
 from examples.tinygrad.boundaries import boundary
 from tinygrad import nn
 from tinygrad.helpers import Context
@@ -266,30 +267,37 @@ def main():
                 observer = (
                     compare_state if index in traced and not args.offline else None
                 )
-                input_tensor = Tensor(x.astype(np.float16), device="KTPU")
-                y = (
-                    model(input_tensor, observer).realize()
-                    if observer is not None
-                    else predict(input_tensor)
-                )
-                if stages:
-                    block_errors.append(
-                        dict(
-                            input=index,
-                            stages=stages,
-                            largest_absolute_growth_stage=max(
-                                stages, key=lambda r: r["absolute_error_growth"]
-                            )["stage"],
-                            largest_block_growth_stage=max(
-                                (r for r in stages if r["stage"].startswith("block_")),
-                                key=lambda r: r["absolute_error_growth"],
-                            )["stage"],
-                        )
+                with perf_inputs.span(index):
+                    input_tensor = Tensor(x.astype(np.float16), device="KTPU")
+                    y = (
+                        model(input_tensor, observer).realize()
+                        if observer is not None
+                        else predict(input_tensor)
                     )
-                if not args.offline:
-                    got.append(y.numpy().astype(np.float32))
                     if stages:
-                        block_errors[-1]["logits"] = error_stats(got[-1], want[index])
+                        block_errors.append(
+                            {
+                                "input": index,
+                                "stages": stages,
+                                "largest_absolute_growth_stage": max(
+                                    stages, key=lambda r: r["absolute_error_growth"]
+                                )["stage"],
+                                "largest_block_growth_stage": max(
+                                    (
+                                        r
+                                        for r in stages
+                                        if r["stage"].startswith("block_")
+                                    ),
+                                    key=lambda r: r["absolute_error_growth"],
+                                )["stage"],
+                            }
+                        )
+                    if not args.offline:
+                        got.append(y.numpy().astype(np.float32))
+                        if stages:
+                            block_errors[-1]["logits"] = error_stats(
+                                got[-1], want[index]
+                            )
                 seconds.append(time.monotonic() - t0)
             result = {
                 "seconds": seconds,

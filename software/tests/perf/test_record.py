@@ -12,18 +12,26 @@ import traces
 
 from kohakutpu.application.runtime import device as D
 from kohakutpu.application.runtime.device.common import Submitted
+from kohakutpu.application.runtime.graph.split import PreparedSplitGraph
 
 
 def test_an_eager_list_is_a_row_a_run_with_its_own_ring_cycles():
     runs = [
-        NS(name="a", kind="dsl", wall=0.1, cycles=5, info=dict(seq=0)),
-        NS(name="b", kind="quant", wall=0.2, cycles=30, info=dict(seq=1)),
-        NS(name="c", kind="matmul", wall=0.3, cycles=0, info=dict(seq=2)),
-        NS(name="d", kind="dsl", wall=0.4, cycles=0, info=dict(seq=3)),
-        NS(name="replay", kind="replay", wall=0.5, cycles=9, info=dict(seq=4)),
-        NS(name="e", kind="dsl", wall=0.6, cycles=7, info=dict(seq=5)),
+        NS(name="a", kind="dsl", wall=0.1, cycles=5, info={"seq": 0}),
+        NS(name="b", kind="quant", wall=0.2, cycles=30, info={"seq": 1}),
+        NS(name="c", kind="matmul", wall=0.3, cycles=0, info={"seq": 2}),
+        NS(name="d", kind="dsl", wall=0.4, cycles=0, info={"seq": 3}),
+        NS(name="replay", kind="replay", wall=0.5, cycles=9, info={"seq": 4}),
+        NS(name="e", kind="dsl", wall=0.6, cycles=7, info={"seq": 5}),
     ]
-    head = dict(head=700, bind=500, barrier=170, idle=4000, item_tag=3, epoch=0)
+    head = {
+        "head": 700,
+        "bind": 500,
+        "barrier": 170,
+        "idle": 4000,
+        "item_tag": 3,
+        "epoch": 0,
+    }
     records = [
         dict(head, cycles=5, steps=4, list_index=0),
         dict(head, cycles=30, steps=29, list_index=3),
@@ -53,6 +61,7 @@ def wrapped(tmp_path, monkeypatch):
     "outer" launch flushes two staged "inner" ones, a "bad" one raises."""
     for name in ("submit", "replay", "compile_graph"):
         monkeypatch.setattr(D.Device, name, getattr(D.Device, name))
+    monkeypatch.setattr(PreparedSplitGraph, "submit", PreparedSplitGraph.submit)
     ticks = iter(range(1000))
     monkeypatch.setattr(record.time, "perf_counter", lambda: next(ticks) / 1000)
 
@@ -105,7 +114,9 @@ def test_without_a_ring_a_list_keeps_each_runs_own_cycles():
         NS(name="b", kind="quant", wall=0.2, cycles=30, info={}),
         NS(name="c", kind="matmul", wall=0.3, cycles=0, info={}),
     ]
-    rows = record.card_rows(runs, [dict(cycles=30, list_index=2, item_tag=1)], None)
+    rows = record.card_rows(
+        runs, [{"cycles": 30, "list_index": 2, "item_tag": 1}], None
+    )
     assert [(r["name"], r["cycles"]) for r in rows] == [("b", 30), ("c", 0)]
 
 
@@ -123,12 +134,13 @@ def test_backend_observer_keeps_group_metrics_and_output_bytes(tmp_path, monkeyp
     monkeypatch.setattr(D.Device, "__init__", init)
     monkeypatch.setattr(D.Device, "_collect_one", collect)
     monkeypatch.setattr(D.Device, "read", lambda self, at, count: payload)
+    monkeypatch.setattr(D.Device, "close", D.Device.close)
     finish = backends.observe(tmp_path, "kaos", measure=True)
     dev = D.Device("os")
-    nodes = {0: dict(cycles=30, de_entries=4), 1: dict(cycles=50, de_entries=7)}
+    nodes = {0: {"cycles": 30, "de_entries": 4}, 1: {"cycles": 50, "de_entries": 7}}
     submitted = NS(
         run=None,
-        result=dict(cycles=50, nodes=nodes, phases=dict(makespan_seconds=0.15)),
+        result={"cycles": 50, "nodes": nodes, "phases": {"makespan_seconds": 0.15}},
     )
     run = dev._collect_one(cast(Submitted, submitted))
     run.info["seq"] = 9

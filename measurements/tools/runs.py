@@ -133,6 +133,10 @@ def load(name: str) -> Run:
     units = lines(base / "units.jsonl.gz")
     launches = lines(base / "launches.jsonl.gz")
     meta = json.loads((base / "meta.json").read_text("utf-8"))
+    if meta.get("schema", 0) >= 2:
+        raise ValueError(
+            "schema-2 traces use explicit input/sysnode joins; use build_round's matrix report, not legacy positional zoo figures"
+        )
     rows: list[dict] = []
     at = 0
     # A run recorded with event identities joins its host event by `seq`: one

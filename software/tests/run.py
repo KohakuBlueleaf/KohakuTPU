@@ -52,7 +52,8 @@ class Suite:
     `((package, target, ...), ...)`, its budgets in seconds, the sources that
     select it, the environment it needs. `default` needs no Verilated model.
     `heavy` names the tests that build a whole package, each with its own
-    per-test budget `((test, seconds), ...)`."""
+    per-test budget `((test, seconds), ...)`. `ignore` names directories under
+    the stage's own that belong to another stage."""
 
     name: str
     sources: tuple
@@ -63,6 +64,7 @@ class Suite:
     pytest: bool = True
     default: bool = True
     env: tuple = ()
+    ignore: tuple = ()
 
 
 #: Mutants of the tracer, the generators and the runtime, and the suites that
@@ -216,6 +218,8 @@ SUITES = (
         "perf",
         (
             "tests/perf",
+            "../measurements/tools",
+            "kohakutpu/application/examples/tinygrad",
             f"{COMPILER}/ktpu-l1/src/sched",
             f"{COMPILER}/ktpu-l2/src/cost.rs",
             f"{COMPILER}/ktpu-l2/src/cost",
@@ -223,6 +227,16 @@ SUITES = (
         ),
         cargo=(("ktpu-perf", "floors", "ownership", "resource_state"),),
         per_test=5.0,
+        env=(("PYTHONPATH", str(SOFTWARE / "kohakutpu" / "application")),),
+        ignore=("perf/h",),
+    ),
+    Suite(
+        "perf/h",
+        ("tests/perf/h",),
+        budget=900.0,
+        per_test=30.0,
+        default=False,
+        env=(("PYTHONPATH", str(SOFTWARE / "kohakutpu" / "application")),),
     ),
     Suite(
         "e2e",
@@ -235,7 +249,7 @@ SUITES = (
 
 
 def changed() -> list[str]:
-    """Paths under software/ that differ from HEAD, untracked ones included."""
+    """Changed software paths, plus ../measurements tool paths selecting perf."""
     out = subprocess.run(
         ["git", "status", "--porcelain", "--no-renames", "--relative", "."],
         cwd=SOFTWARE,
@@ -243,7 +257,23 @@ def changed() -> list[str]:
         text=True,
         check=True,
     ).stdout
-    return [line[3:].strip('"') for line in out.splitlines()]
+    paths = [line[3:].strip('"') for line in out.splitlines()]
+    tools = subprocess.run(
+        [
+            "git",
+            "status",
+            "--porcelain",
+            "--no-renames",
+            "--relative",
+            "--",
+            "measurements/tools",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return paths + ["../" + line[3:].strip('"') for line in tools.splitlines()]
 
 
 def selected(paths: list[str]) -> list[Suite]:
@@ -342,6 +372,7 @@ def run_python(suite: Suite, jobs: int, report: pathlib.Path, env: dict) -> tupl
         "-p",
         "no:cacheprovider",
     ]
+    cmd += [f"--ignore={SOFTWARE / 'tests' / path}" for path in suite.ignore]
     code = subprocess.run(cmd, cwd=ROOT, check=False, env=env).returncode
     if code == 5:  # no test collected: the stage is not written yet
         return 0, []
