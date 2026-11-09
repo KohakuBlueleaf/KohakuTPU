@@ -1,4 +1,4 @@
-"""Bind a composed graph once, retaining its node-private scratch and aliases."""
+"""Bind a composed graph once, retaining borrowed eager scratch and aliases."""
 
 import hashlib
 import json
@@ -11,45 +11,47 @@ from kohakutpu.application.runtime.binding import (
     cluster_burst,
     unaligned,
 )
+from kohakutpu.application.runtime.graph.storage import borrow_scratch
 from kohakutpu.application.runtime.split import BoundGraphArtifact, NodePart
 from kohakutpu.stack import rs
-from kohakutpu.stack.buffer import Buffer
 from kohakutpu.stack.kernel import arena_name
 
 
 def bind(prepared):
-    """The caller's prepared graph owns scratch and pins before any upload.
+    """Backends receive the same verified bytes, physical aliases and leases.
 
-    Backends receive exactly these bytes; neither backend rebinds addresses,
-    recompiles node ownership, nor assigns new event slots.
+    Scratch is a lease on the eager windows, not a second graph allocation.
+    The compiler's lifetime joins make the borrowed offsets safe within the
+    graph; backend draining/collection protects them between submissions.
     """
     dev, compiled = prepared.device, prepared.compiled
     full = dict(prepared.bindings)
-    arenas = compiled.scratch or ()
-    allocated, references = [], []
+    references = []
     try:
-        for arena in arenas:
-            name = arena_name(arena)
-            if name not in full:
-                address = dev.alloc(
-                    arena["bytes"],
-                    arena["space"],
-                    arena.get("node"),
-                    owner="graph:scratch",
-                )
-                allocated.append(address)
-                full[name] = address
+        physical_ports = {name: dev.mmu.resolve(at)[1] for name, at in full.items()}
+        if prepared.environment is not None and physical_ports != prepared.environment:
+            raise ValueError(
+                "bound graph differs from its lowered physical alias environment"
+            )
+        full.update(borrow_scratch(dev, compiled, full, prepared.scratch_limits))
+        for arena in compiled.scratch or ():
+            base = full[arena_name(arena)]
             for name, offset in arena.get("members", ()):
-                full.setdefault(name, full[arena_name(arena)] + offset)
-        for name, spec in compiled.l1.params(compiled.name, "l1"):
-            if name not in full:
-                buf = Buffer.of(spec, dev.card.machine_json)
-                address = dev.alloc(
-                    buf.nbytes, buf.space, buf.layout.get("node"), owner="graph:scratch"
+                full.setdefault(name, base + offset)
+        # A standalone preparation may have just established a window (zero
+        # pins); a recording may instead name released-but-pinned allocations.
+        # Extend each physical allocation exactly once using its ownership state.
+        retained = set()
+        for address in set(full.values()):
+            entry, _ = dev.mmu.resolve(address)
+            ref = (entry.arena, entry.physical)
+            if ref not in retained:
+                references.extend(
+                    dev._retain(
+                        [address], pinned=entry.physical in entry.arena.released
+                    )
                 )
-                allocated.append(address)
-                full[name] = address
-        references = dev._retain(full.values(), pinned=True)
+                retained.add(ref)
         physical = {name: dev.mmu.resolve(address)[1] for name, address in full.items()}
         if unaligned(physical, burst_line(dev.card.machine_json), compiled.line_ports):
             raise ValueError("bound graph violates its mover line-alignment proof")
@@ -68,12 +70,14 @@ def bind(prepared):
             }
         programs = B.placed(programs, dev.card.nodes)
         B.findings(programs, "refuse")
-        if any(not p.matches_environment(dev.mmu) for p in programs.values()):
+        if compiled.bound is None and any(
+            not p.matches_environment(dev.mmu) for p in programs.values()
+        ):
             raise ValueError("bound graph differs from its certified alias environment")
         parts = []
         for node, program in programs.items():
             raw = program.bound(True)
-            B.admit(raw, dev.card.machine_json, node)
+            B.admit(raw, dev.card.machine_json, node, cached=dev.card.admission_cached)
             parts.append(NodePart(node, raw))
         identity = []
         for name, address in sorted(full.items()):
@@ -98,11 +102,11 @@ def bind(prepared):
             ).encode(),
         )
         prepared.references.extend(references)
-        prepared.scratch.extend(allocated)
+        prepared.bound_references = references
+        prepared.bound_bindings = full
         return artifact
     except BaseException:
         for arena, address in references:
             arena.unretain(address)
-        for address in allocated:
-            dev.free(address)
+        dev._release_windows()
         raise

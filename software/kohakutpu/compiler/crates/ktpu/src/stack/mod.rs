@@ -7,6 +7,7 @@
 
 mod drains;
 pub mod lines;
+pub mod retained;
 
 use crate::output::{Finding, PackageOut, Scratch, F001, F016};
 use crate::pipeline::stage::{Backend, Stage};
@@ -56,7 +57,7 @@ impl CardStack {
         let builder = ktpu_l1::build::Builder::new(m).map_err(refusal)?;
         let mut residents = cores(p, m)?;
         let runs = (0..CHECKED_RUNS)
-            .map(|_| bound(&run(&builder, &p.programs, &mut residents, self.fetch(m))?))
+            .map(|_| bound(&run(&builder, &p.programs, &mut residents, self.fetch(m), p.relocate)?))
             .collect::<Result<Vec<_>, Refusal>>()?;
         let findings = ktpu_verify::check_with_memory(&runs, &target(m)?, memory);
         Ok(findings
@@ -504,6 +505,7 @@ fn programs(
     Ok(Programs {
         programs: build(&binds, &bases)?,
         params,
+        relocate: shifted.is_some(),
         shifted,
         name: name.to_string(),
         first: std::sync::Mutex::new(Vec::new()),
@@ -714,7 +716,7 @@ fn first(
     let got = (|| {
         let builder = ktpu_l1::build::Builder::new(m).map_err(refusal)?;
         let mut cores = cores(p, m)?;
-        let run = run(&builder, &p.programs, &mut cores, fetch)?;
+        let run = run(&builder, &p.programs, &mut cores, fetch, p.relocate)?;
         let found = scheduled(&bound(&run)?, &target(m)?);
         Ok(std::sync::Arc::new(First { run, cores, found }))
     })();
@@ -744,7 +746,7 @@ fn check(
         true => {
             let mut cores = cores(p, m)?;
             let runs = (0..CHECKED_RUNS)
-                .map(|_| bound(&run(&builder, &p.programs, &mut cores, fetch)?))
+                .map(|_| bound(&run(&builder, &p.programs, &mut cores, fetch, p.relocate)?))
                 .collect::<Result<Vec<_>, Refusal>>()?;
             count::SIMULATED.with(|c| c.set(c.get() + runs.len()));
             ktpu_verify::check(&runs, &t)
@@ -753,7 +755,7 @@ fn check(
             let first = first(p, m, fetch)?;
             let mut cores = first.cores.clone();
             let rest = (1..CHECKED_RUNS)
-                .map(|_| bound(&run(&builder, &p.programs, &mut cores, fetch)?))
+                .map(|_| bound(&run(&builder, &p.programs, &mut cores, fetch, p.relocate)?))
                 .collect::<Result<Vec<_>, Refusal>>()?;
             match &first.found {
                 Ok(s) => {
@@ -778,6 +780,9 @@ fn check(
 /// Each node's program of one kernel, and the parameter each bound address
 /// stands for.
 pub struct Programs {
+    // A compile supplied physical bindings is already address-bound. Do not
+    // manufacture a temporary relocation table (limited to 64 buffers on v9).
+    relocate: bool,
     parameter_images: bool,
     programs: Vec<ktpu_l1::lower::node::NodeProgram>,
     params: BTreeMap<u64, String>,
@@ -894,6 +899,7 @@ fn run(
     programs: &[ktpu_l1::lower::node::NodeProgram],
     cores: &mut BTreeMap<u32, Cores>,
     fetch: Option<ktpu_l0::Coord>,
+    relocate: bool,
 ) -> Result<Run, Refusal> {
     count::BUILT.with(|c| c.set(c.get() + 1));
     let mut out = BTreeMap::new();
@@ -901,7 +907,7 @@ fn run(
         let opts = ktpu_l1::build::Opts {
             fetch,
             cores: cores.get_mut(&np.mesh),
-            relocate: true,
+            relocate,
         };
         let stats = std::env::var_os("KTPU_VERIFY_STATS").is_some();
         if stats {
@@ -936,7 +942,7 @@ fn relocatable(
     fetch: Option<ktpu_l0::Coord>,
 ) -> Result<(), Refusal> {
     let mut cores = cores(p, m)?;
-    let other = run(builder, shifted, &mut cores, fetch)?;
+    let other = run(builder, shifted, &mut cores, fetch, true)?;
     for (mesh, (pkg, _)) in run_ {
         let (want, at) = &other[mesh];
         let (got, want) = (pkg.bind(at).map_err(l0)?, want.bind(at).map_err(l0)?);

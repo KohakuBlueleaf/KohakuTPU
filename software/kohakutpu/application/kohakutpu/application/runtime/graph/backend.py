@@ -94,4 +94,8 @@ def configure(dev, backend):
     )
     dev.graph_backend = backend
     dev._bound_backend = dev._bound_source = None
-    dev._bound_leases = SlotLeases()
+    # Event counters belong to the physical card, not a Device wrapper.
+    card = dev.card
+    if not hasattr(card, "leases"):
+        card.leases = SlotLeases()
+    dev._bound_leases = card.leases

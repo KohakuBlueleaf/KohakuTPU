@@ -193,7 +193,11 @@ def admission_cached():
 
 def admit(raw, machine, mesh=0, bindings=(), cached=True):
     """Receiving-board reliability policy cannot be disabled by checker mode."""
-    _admit(raw, machine, 0 if mesh is None else mesh, tuple(bindings or ()), cached)
+    mesh, bindings = 0 if mesh is None else mesh, tuple(bindings or ())
+    if not cached:
+        _rs.package_admit(raw, machine, mesh, list(bindings), cached_context=False)
+    else:
+        _admit(raw, machine, mesh, bindings, True)
 
 
 @lru_cache(maxsize=512)

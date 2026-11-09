@@ -321,16 +321,25 @@ fn l2_of(
 
 /// Compose access ordering and slot leases before building any node package.
 #[pyfunction]
-#[pyo3(signature = (graph_json, machine_json, bindings, zero_sign=None))]
+#[pyo3(signature = (graph_json, machine_json, bindings, zero_sign=None, launches=None, default_node=0))]
 fn compile_split_graph<'py>(
     py: Python<'py>,
     graph_json: &str,
     machine_json: &str,
     bindings: std::collections::BTreeMap<String, i64>,
     zero_sign: Option<&str>,
+    launches: Option<Vec<String>>,
+    default_node: i64,
 ) -> PyResult<Bound<'py, PyDict>> {
     let m = machine(machine_json)?;
     let zero_sign = zero_sign.map(signed).transpose()?;
+    if let Some(launches) = launches {
+        let (result, events) = ktpu::stack::retained::compose(&launches, &bindings, &m, zero_sign, i128::from(default_node))
+            .map_err(|refusal| raise(py, &StageRefused { stage: Stage::Lower, refusal }))?;
+        let output = compiled(py, &result)?;
+        output.set_item("events", py_value(py, &serde_json::Value::Array(events))?)?;
+        return Ok(output);
+    }
     let backend = CardStack {
         zero_sign,
         ..CardStack::default()

@@ -9,6 +9,7 @@ from kohakutpu.application.runtime.graph.access import bind_contracts, contracts
 from kohakutpu.application.runtime.graph.dependencies import access_dependencies
 from kohakutpu.application.runtime.graph.native import NativeLaunch, fuse, port_bytes
 from kohakutpu.application.runtime.graph.split import PreparedSplitGraph, SplitRunner
+from kohakutpu.application.runtime.graph.storage import borrow_scratch
 from kohakutpu.language.config import ENV
 
 
@@ -33,19 +34,30 @@ class SplitRecording:
         for submitted in self.pending:
             self.device.collect_through(submitted)
         self.pending.clear()
+        submitted_runs = []
         for kind, payload in self.segments:
+            # Regions borrow the same eager windows. Retire the previous region
+            # before a host effect or another region can reuse those bytes.
+            for submitted in self.pending:
+                self.device.collect_through(submitted)
+            self.pending.clear()
             if kind == "write":
                 address, data = payload
                 self.device.write(address, data)
             else:
-                self.pending.append(payload.submit())
+                submitted = payload.submit()
+                self.pending.append(submitted)
+                submitted_runs.append(submitted)
         if wait:
-            result = [self.device.collect_through(s) for s in self.pending]
+            result = [self.device.collect_through(s) for s in submitted_runs]
             self.pending.clear()
             return result
-        return list(self.pending)
+        return submitted_runs
 
     def close(self):
+        for submitted in self.pending:
+            self.device.collect_through(submitted)
+        self.pending.clear()
         for kind, payload in self.segments:
             if kind == "run":
                 payload.close()
@@ -127,6 +139,11 @@ def prepare(log):
     groups = regions(log)
     live, outside = visible_regions(dev, groups)
     result = SplitRecording(dev, [], [])
+    # Snapshot before binding: a retained artifact may borrow this envelope,
+    # but must not allocate an additional pool beside capture-owned windows.
+    limits = {key: size for key, (_, size) in dev.windows.items()}
+    physical_capture = any(c.packages or c.bound for c, _ in log.templates)
+    has_writes = any(event[0] == "write" for event in log)
     try:
         for index, (kind, body) in enumerate(groups):
             if kind == "write":
@@ -162,7 +179,13 @@ def prepare(log):
                                 ("layout", "0"),
                             )
                         },
-                        stage_bytes=min(a.largest for a in dev.memory.staging.values()),
+                        stage_bytes=min(
+                            (
+                                max(a.largest, limits.get(("stage", node), 0))
+                                for node, a in dev.memory.staging.items()
+                            ),
+                            default=0,
+                        ),
                         recursive=True,
                         producer_quant=True,
                         edge_space="dram",
@@ -181,6 +204,19 @@ def prepare(log):
                 )
                 result.after += len(body)
             result.segments.append(("run", prepared))
+            prepared.scratch_limits = limits if physical_capture else None
+            # Capacity-check every region before replay. Memory-dependent
+            # proof must see the tables at that region's host-effect boundary,
+            # not the final table bytes left behind by the capture.
+            if has_writes:
+                borrow_scratch(
+                    dev,
+                    prepared.compiled,
+                    dict(prepared.bindings),
+                    prepared.scratch_limits,
+                )
+            else:
+                prepared.bind_artifact()
         return result
     except BaseException:
         result.close()

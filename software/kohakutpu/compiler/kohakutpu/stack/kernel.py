@@ -70,7 +70,9 @@ class Compiled:
         """Each mesh's program at `binds`; given `node`, a one-mesh kernel on
         that node, keyed by it."""
         key = (node, *sorted(binds.items()))
-        if self.requires_memory:
+        # Bound-only graphs defer their first proof until addresses exist;
+        # their placeholder verdict cannot yet say whether tables are needed.
+        if self.bound is not None or self.requires_memory:
             owner = rs._COMPILER_OWNER.get()
             context = None if owner is None else (owner, owner.table_epoch)
             key = (context, key)
@@ -154,11 +156,14 @@ class Compiled:
             )
         owner = rs._COMPILER_OWNER.get()
         if owner is not None and any(f.kind == "model" for f in found):
-            out = self._initialized(out, owner, self.bound is not None or apart)
+            physical = self.bound is not None or apart
+            out = self._initialized(
+                out, owner, physical, binds.values() if physical else None
+            )
         return {None: out[0]} if not moved and list(out) == [0] else out
 
     @staticmethod
-    def _initialized(programs, owner, physical):
+    def _initialized(programs, owner, physical, physical_addresses=None):
         """Prove bound packages using the runtime's owned constant-table bytes."""
         if not owner.tables:
             return programs
@@ -170,11 +175,17 @@ class Compiled:
             )
             for n, p in programs.items()
         }
-        addresses = {
-            at if physical else owner.mmu.resolve(at)[1]
-            for p in programs.values()
-            for at in p.bindings
-        }
+        # A physical-only package has no relocation bindings. Its actual
+        # caller addresses still identify the tables needed by the proof.
+        addresses = (
+            set(physical_addresses)
+            if physical_addresses is not None
+            else {
+                at if physical else owner.mmu.resolve(at)[1]
+                for p in programs.values()
+                for at in p.bindings
+            }
+        )
         initial = {}
         for table in owner.tables.values():
             _, at = owner.mmu.resolve(table.addr)

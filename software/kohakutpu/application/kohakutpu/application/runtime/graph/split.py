@@ -1,4 +1,4 @@
-"""Compose bound semantic launches before node ordering and slot allocation."""
+"""Retain launch lifetimes while composing one address-bound node program."""
 
 import json
 from dataclasses import dataclass, field
@@ -30,21 +30,43 @@ class PreparedSplitGraph:
     artifact: BoundGraphArtifact | None = None
     scratch: list[int] = field(default_factory=list)
     backends: list[Any] = field(default_factory=list)
+    environment: dict | None = None
+    scratch_limits: dict | None = None
+    bound_bindings: dict | None = None
+    bound_references: list = field(default_factory=list)
+    proof_epoch: int | None = None
 
     def submit(self):
         if self.closed:
             raise RuntimeError("prepared split graph is closed")
+        self.bind_artifact()
         if self.device.graph_backend is not None:
             return graph_backend.submit(self)
         return self.device._submitted(
-            self.compiled, self.bindings, "graph", None, pinned=True
+            self.compiled, self.bound_bindings, "graph", None, pinned=True
         )
 
     def bind_artifact(self) -> BoundGraphArtifact:
         if self.closed:
             raise RuntimeError("prepared split graph is closed")
+        if self.artifact is not None and self.proof_epoch != self.device.table_epoch:
+            # A constant/address-table write invalidates the memory proof, not
+            # the pinned alias layout. Retire adapters before replacing bytes.
+            self.device.drain()
+            for backend in self.backends:
+                backend.close()
+            self.backends.clear()
+            for arena, address in self.bound_references:
+                self.references.remove((arena, address))
+                arena.unretain(address)
+            self.bound_references.clear()
+            self.artifact = self.bound_bindings = None
         if self.artifact is None:
+            # This cache owns both the artifact and its validity stamp. Do not
+            # depend on bind() mutating the stamp as an undocumented side effect.
+            epoch = self.device.table_epoch
             self.artifact = bind(self)
+            self.proof_epoch = epoch
         return self.artifact
 
     def prepare_firmware(self, queues, leases, **options):
@@ -65,6 +87,8 @@ class PreparedSplitGraph:
 
     def close(self):
         if not self.closed:
+            # Borrowed scratch may still be in use by an ordinary submission.
+            self.device.drain()
             for backend in self.backends:
                 backend.close()
             for arena, address in self.references:
@@ -77,10 +101,11 @@ class PreparedSplitGraph:
 
 
 class SplitRunner:
-    """A graph runner whose packets are NativeLaunch objects with virtual bindings.
+    """Compile launches separately, then compose quiescent scratch lifetimes.
 
-    External aliases are resolved once under allocation pins. The whole graph is
-    lowered and scheduled together; replay uses ordinary device submission.
+    External aliases are resolved under pins before lowering. Launch-local
+    placement and legalization stay identical to eager; the compiler joins
+    launches on the device before reusing their pooled scratch.
     """
 
     def __init__(self, device, *, pinned=False):
@@ -90,12 +115,16 @@ class SplitRunner:
     def prepare(self, packets, dependencies):
         if not packets:
             raise ValueError("a split graph requires at least one launch")
+        if len(dependencies) != len(packets):
+            raise ValueError("one dependency list is required per launch")
         first = packets[0].graph
         graph = {key: first[key] for key in ("format", "version", "target", "machine")}
         graph.update(name="captured_split", consts={}, ports=[], scratch=[], body=[])
-        bindings = {}
+        bindings, launches = {}, []
         order = TopologicalSorter(dict(enumerate(dependencies))).static_order()
         for index in order:
+            if not 0 <= index < len(packets):
+                raise ValueError("dependency names a launch outside the graph")
             packet = packets[index]
             mapping = names(packet.graph, f"call{index}_")
             part = renamed(packet.graph, mapping)
@@ -106,17 +135,21 @@ class SplitRunner:
             graph["scratch"].extend(part["scratch"])
             graph["body"].extend(part["body"])
             bindings.update({mapping[name]: at for name, at in packet.bindings.items()})
+            launches.append(json.dumps(part))
         references = self.device._retain(bindings.values(), pinned=self.pinned)
         try:
             physical = {
                 name: self.device.mmu.resolve(at)[1] for name, at in bindings.items()
             }
-            output = rs._rs.compile_split_graph(
-                json.dumps(graph),
-                rs.machine_json(self.device.machine),
-                physical,
-                zero_sign=rs._ZERO_SIGN.get(),
-            )
+            with rs.compiler_owner(self.device):
+                output = rs._rs.compile_split_graph(
+                    json.dumps(graph),
+                    rs.machine_json(self.device.machine),
+                    physical,
+                    zero_sign=rs._ZERO_SIGN.get(),
+                    launches=launches,
+                    default_node=self.device._node_of(None),
+                )
             compiled = generated.from_output(self.device, graph, output)
             return PreparedSplitGraph(
                 self.device,
@@ -125,6 +158,7 @@ class SplitRunner:
                 tuple(dependencies),
                 tuple(output["events"]),
                 references,
+                environment=physical,
             )
         except BaseException:
             for arena, address in references:
