@@ -4,6 +4,7 @@
 #include <kos/lib.h>
 
 #include "l0.h"
+#include "../kernel/bootstrap.h"
 
 volatile struct kos_boot *const l0_boot = (volatile struct kos_boot *)KOS_BOOT_PA;
 struct l0_mem l0_mem;
@@ -11,13 +12,20 @@ struct l0_mem l0_mem;
 uint64_t l0_traps;
 #define traps l0_traps
 
-#define WATCHDOG 1000000 /* cycles the kernel runs under KOS_F_TRACE before L0 reports it */
-
-/* Linker symbols: the image's split between kernel and user pages. */
 extern char __k_text_end[], __u_img_size[], __u_data_off[], __k_spad_start[], __k_spad_end[];
 extern char __ushared_start[], __ushared_end[];
-extern struct kos_boot k_boot;
 extern void l0_enter_kernel(uint64_t boot, uint64_t node) __attribute__((noreturn));
+
+static const struct k_boot_machine boot = {
+    .mem = &l0_mem, .boot = (volatile struct kos_boot *)KOS_BOOT_PA,
+    .copy = &k_boot, .node = &kn, .mmu_init = mmu_init,
+    .text_end = (uint64_t)__k_text_end, .data_off = (uint64_t)__u_data_off,
+    .image_size = (uint64_t)__u_img_size,
+    .shared_start = __ushared_start, .shared_end = __ushared_end,
+    .say = l0_say, .halt = l0_halt, .map = mmu_map,
+    .maps = mmu_maps, .tables = mmu_tables, .satp = mmu_satp,
+    .enter_kernel = l0_enter_kernel,
+};
 
 #ifdef KOS_SMALL_CALL
 #define L0_COLD __attribute__((minsize))
@@ -57,15 +65,6 @@ static L0_COLD void need(int ok, const char *what)
     }
 }
 
-static L0_COLD void map_or_halt(uint64_t va, uint64_t pa, uint64_t size, unsigned attr)
-{
-    int r = mmu_map(va, pa, size, attr, 0);
-    if (r) {
-        l0_say("L0: map %lx -> %lx (%lx) failed %d\n", va, pa, size, r);
-        l0_halt(0xB1);
-    }
-}
-
 L0_COLD void l0_main(void)
 {
     volatile struct kos_boot *b = l0_boot;
@@ -81,74 +80,10 @@ L0_COLD void l0_main(void)
         if (r->kind == KOS_RG_DRAM_PRIV && r->owner == me) {
             l0_mem.priv = r->base;
             l0_mem.priv_size = r->size;
-        } else if (r->kind == KOS_RG_DRAM_SHARED) {
-            l0_mem.shared = r->base;
-            l0_mem.shared_size = r->size;
-        } else if (r->kind == KOS_RG_STAGING) {
-            unsigned m = (unsigned)((r->base >> HW_MESH_SHIFT) & 3);
-            l0_mem.staging[m] = r->base;
-            l0_mem.staging_size[m] = r->size;
         }
     }
-    unsigned mesh = b->mesh_of[me];
     need(l0_mem.priv_size >= 0x40000, "no private DRAM span");
-    need(l0_mem.staging_size[mesh] >= KOS_STG_END, "staging too small");
-    if (b->flags & KOS_F_PT_DRAM) {
-        l0_mem.pool_dram = 1;
-        l0_mem.pool_pages = KOS_STG_PTSIZE >> 12;
-        l0_mem.pool = l0_mem.priv + KOS_PRIV_PT_OFF(l0_mem.priv_size);
-    } else {
-        l0_mem.pool = l0_mem.staging[mesh] + KOS_STG_PT;
-        l0_mem.pool_pages = KOS_STG_PTSIZE >> 12;
-    }
-    mmu_init();
-
-    /* The user address space. The kernel runs untranslated; of its own it
-     * maps only its text, which the trap entry and the return to user mode
-     * fetch while translation is still on. */
-    uint64_t ktext = KOS_ALIGN_UP((uint64_t)__k_text_end, 0x1000);
-    uint64_t udoff = (uint64_t)__u_data_off, uimg = (uint64_t)__u_img_size;
-    need(uimg < KOS_PRIV_PT_OFF(l0_mem.priv_size), "user image larger than the private span");
-    map_or_halt(0, 0, ktext, KOS_MAP_R | KOS_MAP_X);
-    map_or_halt(KOS_UV_TEXT, l0_mem.priv, udoff, KOS_MAP_R | KOS_MAP_X | KOS_MAP_U);
-    if (uimg > udoff) {
-        map_or_halt(KOS_UV_DATA, l0_mem.priv + udoff, uimg - udoff, KOS_MAP_R | KOS_MAP_W | KOS_MAP_U);
-    }
-    if (l0_mem.shared_size) {
-        unsigned ua = KOS_MAP_R | KOS_MAP_W | KOS_MAP_U;
-        if (b->flags & KOS_F_SHARED_UNCACHED) {
-            ua |= KOS_MAP_UNCACHED;
-        }
-        map_or_halt(KOS_UV_SHARED, l0_mem.shared, l0_mem.shared_size, ua);
-    }
-    /* without a shared region the KOS_SHARED globals are unmapped: apps check kos_shared_ok() */
-    need(!l0_mem.shared_size || (uint64_t)(__ushared_end - __ushared_start) <= l0_mem.shared_size,
-         "shared section larger than the shared region");
-
-    /* The kernel's copy of the boot table. */
-    volatile uint8_t *src = (volatile uint8_t *)b;
-    uint8_t *dst = (uint8_t *)&k_boot;
-    for (unsigned i = 0; i < sizeof(struct kos_boot); ++i) {
-        dst[i] = src[i];
-    }
-
-    /* Everything a supervisor can handle goes to it directly. */
-    csr_write(medeleg, (1UL << 0) | (1UL << 2) | (1UL << 3) | (1UL << 4) | (1UL << 6) | (1UL << 8) |
-                           (1UL << 12) | (1UL << 13) | (1UL << 15));
-    csr_write(mideleg, MIP_SOFT | MIP_TIMER | MIP_EXT);
-    csr_write(mie, MIP_SOFT | MIP_TIMER | MIP_EXT);
-    csr_write(CSR_MTIMECMP, ~0UL);
-    csr_write(satp, 0);
-    __asm__ volatile("sfence.vma" ::: "memory");
-    if (b->flags & KOS_F_TRACE) {
-        /* a watchdog: the machine timer stays L0's, and when it fires L0 reports
-         * where the kernel is and stops the node */
-        csr_write(mideleg, MIP_SOFT | MIP_EXT);
-        csr_write(CSR_MTIMECMP, hw_time() + WATCHDOG);
-        l0_say("L0 node %u: %lu tables, %lu maps, satp %lx, entering the kernel\n", me, mmu_tables(), mmu_maps(),
-               mmu_satp());
-    }
-    l0_enter_kernel((uint64_t)&k_boot, me);
+    ((k_boot_machine_fn *)(l0_mem.priv + (uint64_t)k_boot_machine - KOS_UV_TEXT))(&boot);
 }
 
 /* ---- calls from the kernel ---- */

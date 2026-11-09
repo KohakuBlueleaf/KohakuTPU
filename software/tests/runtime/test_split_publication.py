@@ -98,6 +98,46 @@ def test_split_submission_publishes_every_queue_before_collection(
             assert all(order.index(("publish", node)) < index for node in card.nodes)
 
 
+def test_a_list_on_a_record_queue_segments_its_console_bytes(monkeypatch):
+    card = object.__new__(NodeCard)
+    card.nodes = (0,)
+    card._order, card._stdout, card._segs = {}, {}, {}
+    card._publication_epoch = 0
+    card.runs = 0
+    card.timeout = 1.0
+    card.residents = {}
+    text = b"list run text\n"
+    queue = SimpleNamespace(
+        record=object(),
+        ends={},
+        console_at=0,
+        flush=lambda: None,
+        read_stdout=lambda: b"",
+        wait=lambda *args, **kwargs: SimpleNamespace(cycles=5),
+    )
+
+    def submit_list(*args, publishing=None, **kwargs):
+        queue.ends[1] = len(text)
+        return 1
+
+    def read_to(end):
+        queue.console_at = end
+        return text[:end]
+
+    queue.submit_list = submit_list
+    queue.read_stdout_bytes_to = read_to
+    monkeypatch.setattr(card, "queues", {0: queue}, raising=False)
+    monkeypatch.setattr(
+        card,
+        "_result",
+        lambda text, done, _: {"cycles": done.cycles, "text": text},
+        raising=False,
+    )
+    pending = card.submit_execution({0: (object(), ())})
+    assert card.collect(pending)["cycles"] == 5
+    assert card._stdout[0] == b""
+
+
 @pytest.mark.parametrize("failure_at", ["stage", "publish"])
 def test_split_failure_invalidates_residency_and_closes_staging(
     failure_at, monkeypatch

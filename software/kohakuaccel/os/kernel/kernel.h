@@ -25,6 +25,9 @@ struct knode {
     uint64_t peer_priv[KOS_MAX_NODES];  /* each node's span as this node's mover names it */
     uint64_t peer_priv_size[KOS_MAX_NODES];
     uint64_t shared, shared_size;
+    uint64_t shared_route_mask;        /* boot-declared shared DRAM ingress aliases */
+    uint64_t shared_user_size;         /* bytes mapped at the shared user aliases */
+    uint64_t stage_user[KOS_MAX_NODES], stage_size[KOS_MAX_NODES];
     uint64_t frames_end;                /* frame pool: [0, frames_end) of the span */
     uint64_t land_off, log_off;         /* offsets in the span */
     int engine;
@@ -94,7 +97,6 @@ __attribute__((noreturn)) void k_resume(struct thread *t);
 __attribute__((noreturn)) void k_panic(const char *fmt, ...);
 
 /* ---- memory ---- */
-void k_mem_init(void);
 uint64_t k_frame(void);           /* a zeroed private page, physical; 0 when out */
 void *k_alloc(uint64_t bytes);    /* zeroed kernel tables in private DRAM (cached), at boot */
 void k_frame_free(uint64_t pa);
@@ -161,7 +163,6 @@ struct kmsg {
 #define KMSG_TYPE(m) ((unsigned)((m)->hdr & 0xff))
 #define KMSG_SRC(m)  ((unsigned)(((m)->hdr >> 8) & 0xff))
 
-void k_msg_init(void);
 void k_send(unsigned node, unsigned type, const uint64_t *p, unsigned np);
 int k_send_room(unsigned node); /* a k_send to `node` would not wait for credits */
 void k_msg_poll(void);
@@ -203,7 +204,6 @@ extern unsigned knunits;
  * waits for it to reach a target, or for a message on a channel). */
 extern uint64_t k_events;
 int k_event_out(uint64_t ubuf, uint64_t n);
-void k_units_init(void);
 void k_units_poll(void);
 int64_t k_dispatch_local(unsigned u, const uint64_t w[4]);
 uint64_t k_unit_retired(unsigned u);

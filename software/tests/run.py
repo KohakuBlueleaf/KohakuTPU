@@ -19,6 +19,8 @@ a card model, KOS_LLVM a clang that reaches riscv64.
 
 import argparse
 import dataclasses
+import hashlib
+import importlib.util
 import json
 import os
 import pathlib
@@ -31,6 +33,12 @@ from typing import cast
 
 SOFTWARE = pathlib.Path(__file__).resolve().parents[1]
 ROOT = SOFTWARE.parent
+_TOOLS_SPEC = importlib.util.spec_from_file_location(
+    "kos_build_tools", SOFTWARE / "kohakuaccel/os/tools/toolchain.py"
+)
+assert _TOOLS_SPEC is not None and _TOOLS_SPEC.loader is not None
+KOS_TOOLS = importlib.util.module_from_spec(_TOOLS_SPEC)
+_TOOLS_SPEC.loader.exec_module(KOS_TOOLS)
 REPORTS = ROOT / "build" / "tests"
 #: At most this many jobs at once; `--jobs` or fewer cores lowers it.
 JOBS = 16
@@ -146,6 +154,10 @@ SUITES = (
             "kohakutpu/application/kohakutpu/application/runtime",
             "kohakutpu/application/kohakutpu/application/ktpugrad/captured",
             "kohakuaccel/driver",
+            "tests/run.py",
+            "kohakuaccel/os/tools/toolchain.py",
+            "kohakutpu/os/tools",
+            "tests/perf/backends.py",
             f"{COMPILER}/ktpu-py",
             "kohakutpu/compiler/kohakutpu/stack",
             f"{FRAMEWORK}/ka-debug",
@@ -242,6 +254,75 @@ def selected(paths: list[str]) -> list[Suite]:
         )
 
     return [s for s in SUITES if any(hit(s, p) for p in paths)]
+
+
+def prepare_emu(env: dict) -> None:
+    """Reuse only an image recorded for this complete input set and build policy."""
+    # Preparation runs in the caller's cwd; builds and consumers run in ROOT.
+    # Freeze one absolute path before crossing either process boundary.
+    image = pathlib.Path(env["KOS_IMAGE"]).resolve()
+    env["KOS_IMAGE"] = str(image)
+    os_root = SOFTWARE / "kohakuaccel" / "os"
+    headers = SOFTWARE / "kohakuaccel" / "firmware" / "include"
+    inputs = [
+        path
+        for root in (os_root, headers)
+        for path in root.rglob("*")
+        if path.suffix in (".c", ".h", ".S", ".ld")
+    ]
+    inputs += [
+        os_root / "tools" / name for name in ("build.py", "memgap.py", "toolchain.py")
+    ]
+
+    def digest(path):
+        with path.open("rb") as source:
+            return hashlib.file_digest(source, "sha256").hexdigest()
+
+    tools = {
+        name: pathlib.Path(KOS_TOOLS.tool(name, env, ROOT)).resolve()
+        for name in KOS_TOOLS.TOOLS
+    }
+    tool_digests = {path: digest(path) for path in set(tools.values())}
+    identity = {
+        "tools": {
+            name: [str(path), tool_digests[path]] for name, path in tools.items()
+        },
+        "sources": {str(path): digest(path) for path in sorted(inputs)},
+        "environment": {
+            key: env.get(key) for key in ("KOS_LLVM", "PATH", "HOME", "USERPROFILE")
+        },
+        "mode": "kos-hot-memgap",
+    }
+    receipt = image.with_suffix(image.suffix + ".stage.json")
+    if image.exists() and receipt.exists():
+        try:
+            recorded = json.loads(receipt.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            recorded = None
+        if recorded == {**identity, "image": digest(image)}:
+            return
+    receipt.unlink(missing_ok=True)
+    image.unlink(missing_ok=True)
+    try:
+        subprocess.run(
+            [
+                sys.executable,
+                str(os_root / "tools" / "build.py"),
+                "kos",
+                "--out",
+                str(image.parent),
+            ],
+            cwd=ROOT,
+            env=env,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        image.unlink(missing_ok=True)
+        raise
+    receipt.write_text(
+        json.dumps({**identity, "image": digest(image)}, sort_keys=True),
+        encoding="utf-8",
+    )
 
 
 def run_python(suite: Suite, jobs: int, report: pathlib.Path, env: dict) -> tuple:
@@ -344,6 +425,7 @@ def emu_audit(jobs: int) -> dict:
     build = ["--profile", "stage", "--target-dir", str(target)]
     build += ["-p", "ka-emu", "--features", "mutants", "-j", str(jobs)]
     env = {**os.environ, **dict(EMU_ENV), "KA_EMU_MODEL": str(target / "model")}
+    prepare_emu(env)
     subprocess.run(
         ["cargo", "build", "--bin", "vsim", *build], cwd=SOFTWARE, env=env, check=True
     )
@@ -402,9 +484,14 @@ def run(suite: Suite, jobs: int, mutants: str | None) -> dict:
     env = {**os.environ, **dict(suite.env), "RAYON_NUM_THREADS": str(jobs)}
     if mutants:
         env["KTPU_STAGE_MUTANTS"] = mutants
-    t0 = time.monotonic()
     code, tests = 0, []
-    if suite.cargo:
+    if suite.name == "firmware/emu":
+        try:
+            prepare_emu(env)
+        except subprocess.CalledProcessError as error:
+            code = error.returncode
+    t0 = time.monotonic()
+    if suite.cargo and code == 0:
         code = run_cargo(suite, jobs, env)
     if suite.pytest and code == 0:
         code, tests = run_python(suite, jobs, report, env)

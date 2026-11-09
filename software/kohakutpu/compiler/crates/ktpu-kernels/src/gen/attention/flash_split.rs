@@ -11,9 +11,8 @@ use super::{assignments, AttentionMask, AttentionPartition, AttentionPrecision, 
 use crate::kernel::{layout, Kernel, Port};
 use crate::split::cost::LocalPrices;
 use crate::split::{
-    choose_split, validate_ownership, CostEstimate, CostFeatures, LegalityWitness, LocalTiming,
-    OutputLayout, PlannedKernel, Region, ShardRole, ShardTiles, SplitAxis, SplitOption,
-    SplitRequest,
+    validate_ownership, CostEstimate, CostFeatures, LegalityWitness, LocalTiming, OutputLayout,
+    PlannedKernel, Region, ShardRole, ShardTiles, SplitAxis, SplitOption, SplitRequest,
 };
 use crate::trace::{Facts, R};
 
@@ -357,8 +356,19 @@ pub(crate) fn plan_motif(
         };
         options.push((option, features));
     }
-    let split = choose_split(options, &LocalTiming, request.force.as_deref())?;
-    let l1 = Some(emit(&split.shards, request, heads, motif)?);
+    let options = options
+        .into_iter()
+        .map(|(option, features)| crate::split::cost::price_option(option, &features, &LocalTiming))
+        .collect::<R<Vec<_>>>()?;
+    let mut l1 = None;
+    let split = crate::split::cost::select_admitted(options, request.force.as_deref(), |option| {
+        let text = emit(&option.shards, request, heads, motif)?;
+        let module = ktpu_l1::text::read(&text, motif.name())
+            .map_err(|e| ktpu_machine::Refusal::new(&e.clause, e.message))?;
+        crate::split::cost::l1_staging(&module, motif.name(), m, request.nodes.staging_budget())?;
+        l1 = Some(text);
+        Ok(())
+    })?;
     Ok(PlannedKernel {
         kernel,
         split,

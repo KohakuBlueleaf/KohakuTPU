@@ -6,7 +6,9 @@
  *        0x12000 the kernel's data and stack (the kernel runs untranslated)
  *  DRAM  private span + 0: the user image, loaded per node from load address
  *        UIMG (1 << 40, not a machine address) by tools/image.py:
- *          .utext  text, rodata, the app table, run at KOS_UV_TEXT (U, RX)
+ *          .utext  boot-only kernel helpers, then user text, rodata and the
+ *                  app table. User code runs at KOS_UV_TEXT (U, RX); boot
+ *                  helpers run untranslated at their physical load address.
  *          .udata  per-node data and bss, run at KOS_UV_DATA (U, RW)
  *  .ushared      KOS_SHARED globals, at KOS_UV_SHARED (shared DRAM, not loaded)
  * User mode touches no scratchpad: every user page is DRAM. */
@@ -19,15 +21,10 @@ UIMG      = 0x10000000000;
 
 SECTIONS
 {
-    .text 0x0 : {
-        KEEP(*(.text.init))
-        KEEP(*(.text.k_entry))
-        */k/*(.text .text.*)
-    }
-    __k_text_end = .;
-    ASSERT(__k_text_end <= 0x8000, "the kernel side does not fit the 32 KB instruction window")
-
     .utext UV_TEXT : AT(UIMG) {
+        __k_boot_start = .;
+        */k/kernel__bootstrap*.c.o(.text .text.* .rodata .rodata.* .srodata .srodata.*)
+        __k_boot_end = .;
         */u/*(.text .text.*)
         */u/*(.rodata .rodata.* .srodata .srodata.*)
         . = ALIGN(8);
@@ -37,6 +34,17 @@ SECTIONS
         . = ALIGN(4096);
     }
     __u_data_off = SIZEOF(.utext);
+
+    .text 0x0 : AT(0) {
+        KEEP(*(.text.init))
+        KEEP(*(.text.k_entry))
+        */k/*(.text .text.*)
+    }
+    __k_text_end = .;
+    __k_text_free = 0x8000 - __k_text_end;
+    ASSERT(__k_text_end <= 0x8000, "the kernel side does not fit the 32 KB instruction window")
+
+    ASSERT(__k_text_free >= 256, "the kernel side must leave 256 bytes free in the instruction window")
 
     .udata UV_DATA : AT(UIMG + __u_data_off) {
         */u/*(.data .data.* .sdata .sdata.*)

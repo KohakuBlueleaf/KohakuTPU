@@ -66,10 +66,28 @@ universal certificate.
 Forward symbolic alternatives share one append-only BDD arena. Predicates remain
 branch-local; fresh inputs, node identities and interned word identities belong
 to the shared arena. Creating a branch or retained continuation copies an arena
-handle, not its tables. Arithmetic and feasible-successor predicates remain
-exact. A mutex protects arena allocation across host users; recursive BDD apply
-runs under one outer operation lock. This does not claim a polynomial bound for
-arbitrary symbolic multiplication or division.
+handle and its predicate factors, not the arena's tables. Arithmetic and
+feasible-successor predicates remain exact. Iterative BDD select retains the
+low/high/node evaluation order under one outer arena lock.
+
+A path predicate is a conjunction of nonfalse BDD factors with disjoint
+fresh-input supports. The input-to-factor index locates every factor touched by
+a new condition; only those factors are conjoined. Reduction recomputes their
+support before updating the index. Grouping all bits of one input is conservative:
+it may merge independent bits but cannot separate correlated conditions.
+`ASSERT_ZERO` restricts only the successful continuation, without constructing
+an unused complement. An impossible assertion retains its incoming predicate
+for terminal-state identity. Actual branches restrict both cloned continuations.
+State equality uses exact mutual implication when factor groupings differ, not
+syntactic factor equality. Thus grouping cannot change which paths are feasible
+or which simulator states may be joined.
+
+The computed ITE cache retains at most 65,536 results with incremental FIFO
+eviction. Node uniqueness and symbolic word identities are never evicted.
+Independent assertions add support-index entries rather than rebuilding all
+preceding constraints. These bounds do not limit the immutable arena, and do not
+claim polynomial cost for correlated predicates, multiplication or division.
+Implementation: `ktpu-verify/src/sim/symbolic.rs` and `sim/symbolic/{predicate,cache}.rs`.
 
 ## 2. The machine
 

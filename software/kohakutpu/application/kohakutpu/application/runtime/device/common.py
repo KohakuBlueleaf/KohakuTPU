@@ -81,6 +81,7 @@ class Parts:
     """What `Device`'s parts read of one another, declared only: `Device.__init__` or a
     sibling part defines each."""
 
+    graph_backend: str | None
     card: Any
     memory: Any
     mmu: Any

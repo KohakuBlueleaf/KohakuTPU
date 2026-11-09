@@ -2,6 +2,7 @@
 
 #[path = "../common.rs"]
 mod common;
+mod retile_pricing;
 mod select_semantics;
 mod share_participants;
 

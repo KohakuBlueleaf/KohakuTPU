@@ -59,7 +59,7 @@ static uint64_t shared_off(uint64_t va, uint64_t len)
 {
     for (int k = 0; k < 2; ++k) {
         uint64_t base = k ? KOS_UV_SHUNC : KOS_UV_SHARED;
-        if (kn.shared_size && va >= base && va + len <= base + kn.shared_size) {
+        if (kn.shared_user_size && va >= base && va + len <= base + kn.shared_user_size) {
             return va - base;
         }
     }
@@ -284,10 +284,10 @@ static BUFFER_CALL int64_t info_user(uint64_t a0, uint64_t a1)
     case KOS_I_NODES: return kn.n;
     case KOS_I_MESH: return kn.mesh;
     case KOS_I_FLAGS: return kn.flags;
-    case KOS_I_SHARED: return kn.shared_size ? (int64_t)KOS_UV_SHARED : 0;
-    case KOS_I_SHSIZE: return (int64_t)kn.shared_size;
+    case KOS_I_SHARED: return kn.shared_user_size ? (int64_t)KOS_UV_SHARED : 0;
+    case KOS_I_SHSIZE: return (int64_t)kn.shared_user_size;
     case KOS_I_SHHEAP:
-        return kn.shared_size ? (int64_t)(KOS_UV_SHARED +
+        return kn.shared_user_size ? (int64_t)(KOS_UV_SHARED +
                KOS_ALIGN_UP((uint64_t)(__ushared_end - __ushared_start), 64)) : 0;
     case KOS_I_L0RTT: {
         uint64_t start = hw_cycles();

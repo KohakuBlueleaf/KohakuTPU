@@ -233,6 +233,33 @@ struct kos_launch_rec {
 #define KOS_W_PROBE 7 /* m0: a = probe index */
 #define KOS_W_DONE  8 /* exiting: a = code */
 #define KOS_W_BAR   9 /* m0: in a barrier, a = epoch, b = its slot's count on entry */
+/* Cold user-mode progress, published as @where records in the console log. */
+#define KOS_W_APP_ARGS 10 /* a = app index, b = argument pointer */
+#define KOS_W_APP_ENTER 11 /* a = app index, b = argc */
+#define KOS_W_INIT_ARGS 12 /* a = copied bytes, b = 0 copying / 1 complete */
+#define KOS_W_PARALLEL_ARGS 13 /* a = copied bytes, b = 0 copying / 1 complete */
+#define KOS_W_RUN_ISSUE 14 /* a = destination node, b = 0 */
+#define KOS_W_RUN_ACK 15 /* a = destination node, b = tid or signed status */
+#define KOS_W_JOIN_ISSUE 16 /* a = destination node, b = tid */
+#define KOS_W_JOIN_ACK 17 /* a = destination node, b = join status or child exit */
+#define KOS_W_OSTPU_ARGS 18 /* a = argc, b = 0 */
+#define KOS_W_MAILBOX 19 /* a = mailbox VA, b = byte count */
+#define KOS_W_SERVER_START 20 /* a = task capacity, b = local mode */
+#define KOS_W_SERVER_STATE 21 /* a = state bytes, b = starter tid */
+#define KOS_W_DE_OPEN 22 /* a = node, b = server flags */
+#define KOS_W_DE_OPENED 23 /* a = node, b = signed status */
+#define KOS_W_ARENA 24 /* a = node, b = requested bytes */
+#define KOS_W_ARENA_DONE 25 /* a = node, b = signed status */
+#define KOS_W_SERVER_ACK 26 /* a = starter tid, b = signed status */
+#define KOS_W_SERVER_STARTED 27 /* a = capacity, b = signed status */
+#define KOS_W_TASK_ALLOC 28 /* a = requested bytes, b = 0 */
+#define KOS_W_TASK_ALLOCATED 29 /* a = capacity, b = signed status */
+#define KOS_W_DATA_ALLOC 30 /* a = requested bytes, b = 0 */
+#define KOS_W_DATA_ALLOCATED 31 /* a = requested bytes, b = signed status */
+#define KOS_W_MAILBOX_FILL 32 /* a = task reference, b = data reference */
+#define KOS_W_RELEASE 33 /* a = mailbox VA, b = 0 */
+#define KOS_W_READY_WRITE 34 /* a = mailbox VA, b = 0 */
+#define KOS_W_READY 35 /* a = mailbox VA, b = 0 */
 /* A private span of `size` bytes, from its tail: landing zone, log, and (with
  * KOS_F_PT_DRAM) L0's page-table pool; the kernel's frames are the rest. */
 #define KOS_PRIV_LAND_OFF(size) ((size) - KOS_LAND_SIZE)

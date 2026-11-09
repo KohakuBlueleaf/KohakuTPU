@@ -43,6 +43,20 @@ class PhysicalMemory:
         return self.io.read(address, size)
 
 
+def attach_memory(card, units, memory, arena, staging):
+    """Attach a boot owner's physical heap and transport to an OS device."""
+    card.units = units
+    card.unit_types = {
+        (mesh.index, *coord): int.from_bytes(kind.encode(), "big")
+        for mesh in card.machine.meshes
+        for kind, coords in mesh.units.items()
+        for coord in coords
+    }
+    card.mem = memory
+    card.memory = CardMemory(arena, staging)
+    card.dram_bytes = arena[1] - arena[0]
+
+
 class Prepared:
     def __init__(self, graph, launches):
         self.graph, self.launches = graph, launches
@@ -56,20 +70,20 @@ class Prepared:
 
 
 class OSCard(OfflineCard):
+    # Set by `attach_memory`: unit index by (mesh, x, y) and CU type by the same key.
+    units: dict
+    unit_types: dict
+
     def __init__(self, board, session, units):
         super().__init__(board)
-        self.session, self.units = session, units
-        self.unit_types = {
-            (mesh.index, *coord): int.from_bytes(kind.encode(), "big")
-            for mesh in self.machine.meshes
-            for kind, coords in mesh.units.items()
-            for coord in coords
-        }
-        self.mem = PhysicalMemory(session.io)
-        self.memory = CardMemory(
-            (session.data_pa, session.data_pa + session.data_bytes), {}
+        self.session = session
+        attach_memory(
+            self,
+            units,
+            PhysicalMemory(session.io),
+            (session.data_pa, session.data_pa + session.data_bytes),
+            {},
         )
-        self.dram_bytes = session.data_bytes
         self.resident_program = None
         self.last_result = None
         self.submissions = 0

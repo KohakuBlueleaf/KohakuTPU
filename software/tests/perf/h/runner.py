@@ -34,6 +34,26 @@ PAD = {"dram": 64 << 10, "stage": 2 * check.GUARD_BYTES}
 LINE = 64
 #: The words of an output without a reference kept in its row.
 OBSERVED = 64
+#: AUX_CFG interlink control: sweep signal slots, leaving doorbells and faults.
+CLEAR_SLOTS = 1 << 3
+
+
+def initialise(card) -> None:
+    """Start an independent probe session on the opened, idle sysnodes.
+
+    Signal slots belong to the session, unlike the firmware's boot-relative
+    bell counts. Empty slots ensure aggregate acquisitions count only this
+    session's publications. Keep them across its functions and repetitions
+    so a leftover token remains observable by the ledger.
+    """
+    ctrls = board_map(card.board)["ctrl"]
+    write = (
+        card.t.write32 if getattr(card.t, "control_bytes", 8) == 4 else card.t.write64
+    )
+    for n in card.nodes:
+        control = ctrls[n]
+        enabled = interlink.ENABLE if card.t.read64(control + interlink.STATW) else 0
+        write(control + interlink.CONTROL, enabled | CLEAR_SLOTS)
 
 
 def bind(card, layout) -> tuple[dict, dict]:

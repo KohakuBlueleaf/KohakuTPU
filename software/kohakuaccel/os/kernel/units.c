@@ -5,6 +5,7 @@
  * CU_CTRL replies are taken from the RX queue. Nothing here knows what any
  * unit computes. */
 #include "kernel.h"
+#include "bootstrap.h"
 
 #define NM(r) (HW_R_NM + 8 * (r))
 #define RX(r) (HW_R_RX + 8 * (r))
@@ -52,8 +53,6 @@ static __attribute__((noinline)) int find(unsigned x, unsigned y)
     return -1;
 }
 
-static void pending_init(void);
-
 /* The mover's index buffer: IDX_WORDS (256) words of eight 32-bit indices
  * (mm_mover.v:46,330). */
 #define MV_INDEX_MAX 2048u
@@ -62,20 +61,6 @@ static void pending_init(void);
  * the mover's index buffer: private, written back once at boot so no cached
  * line covers it, then written only through the uncached alias. */
 static uint64_t mv_ixbuf;
-
-UNIT_MINSIZE void k_units_init(void)
-{
-    mv_ixbuf = (uint64_t)(uintptr_t)k_alloc(4 * MV_INDEX_MAX);
-    hw_dcache(HW_DC_FLUSH);
-    pending_init();
-    knunits = k_boot.nunits;
-    for (unsigned i = 0; i < knunits; ++i) {
-        kunits[i].u = k_boot.unit[i];
-        kunits[i].local = kunits[i].u.mesh == kn.mesh;
-    }
-    hw_wr(NM(HW_NM_DST), 0);
-    k_units_poll();
-}
 
 void k_units_poll(void)
 {
@@ -835,7 +820,17 @@ static struct pend *pend; /* in private DRAM */
 static unsigned pending_count;
 #endif
 
-static void pending_init(void) { pend = k_alloc(K_PENDING * sizeof *pend); }
+static void boot_units(uint64_t index_buffer, struct pend *pending)
+{
+    mv_ixbuf = index_buffer;
+    pend = pending;
+}
+
+const struct k_boot_units k_boot_units = {
+    .init = boot_units,
+    .index_bytes = 4 * MV_INDEX_MAX, .pending_bytes = K_PENDING * sizeof *pend,
+    .units = kunits, .count = &knunits,
+};
 
 #ifdef KOS_REMOTE_BATCH
 __attribute__((noinline))

@@ -4,6 +4,8 @@
 from collections.abc import Callable, Sequence
 from typing import TypedDict
 
+STAGING_RUNTIME_BYTES: int
+
 def compile_split_graph(
     graph_json: str,
     machine_json: str,

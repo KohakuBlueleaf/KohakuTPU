@@ -567,20 +567,37 @@ fn emit(
 }
 
 pub fn kernel(s: &GroupNormSpec, request: &SplitRequest, m: &Machine) -> R<PlannedKernel> {
+    let mut admission = crate::split::cost::Admission::default();
     let mut candidates = Vec::new();
     for (id, spatial) in [("domains", false), ("spatial", true)] {
         if request.force.as_deref().is_some_and(|forced| forced != id) {
             continue;
         }
-        candidates.push(emit(s, request, spatial, m)?);
+        if let Some(candidate) = admission.consider(id, emit(s, request, spatial, m))? {
+            candidates.push(candidate);
+        }
     }
-    let chosen = crate::split::cost::select_split(
-        candidates.iter().map(|p| p.split.clone()).collect(),
+    let chosen = crate::split::cost::select_admitted(
+        admission.finish(
+            candidates.iter().map(|p| p.split.clone()).collect(),
+            request.force.as_deref(),
+        )?,
         request.force.as_deref(),
+        |option| {
+            let plan = candidates
+                .iter()
+                .find(|plan| plan.split.id == option.id)
+                .expect("priced GroupNorm candidate");
+            ktpu_graph::check_staging(&plan.kernel.graph, m, request.nodes.staging_budget())
+        },
     )?;
     candidates
         .into_iter()
         .find(|p| p.split.id == chosen.id)
+        .map(|mut plan| {
+            plan.split = chosen;
+            plan
+        })
         .ok_or_else(|| ktpu_machine::Refusal::new("DSL.KERN.020", "no GroupNorm option emitted"))
 }
 

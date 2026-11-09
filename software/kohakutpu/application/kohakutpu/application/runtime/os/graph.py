@@ -5,7 +5,10 @@ Other operations refuse; this is not an interpreter for arbitrary firmware packa
 """
 
 import hashlib
+import json
+import pathlib
 import struct
+import sys
 import threading
 import time
 from dataclasses import dataclass, replace
@@ -210,6 +213,10 @@ class Graph:
     def move_de(self, data, dst_pa, after=()):
         if not self.de_stream:
             raise ValueError("move_de requires de_stream=True")
+        if dst_pa < 0 or dst_pa % 32 or len(data) % 32:
+            raise ValueError(
+                "move_de requires a nonnegative word-aligned destination and whole words"
+            )
         frontier = tuple(after)
         max_chunk = A.KOS_MOVE_MAX_WORDS * 32
         for at in range(0, len(data), max_chunk):
@@ -406,7 +413,17 @@ class Graph:
                         waited[src] = max(waited.get(src, 0), want)
 
                 def ensure_room(needed):
-                    nonlocal state, entries, blobs, mb, sent_cnt, exp_cnt, waited, mv_base, pkg_pay_off, split_mv
+                    nonlocal \
+                        state, \
+                        entries, \
+                        blobs, \
+                        mb, \
+                        sent_cnt, \
+                        exp_cnt, \
+                        waited, \
+                        mv_base, \
+                        pkg_pay_off, \
+                        split_mv
                     if (
                         not allow_split
                         or not entries
@@ -1101,9 +1118,14 @@ class ResidentGraph:
     session; stop/reset the node before reclaiming its memory.
     """
 
-    def __init__(self, io, mailbox, timeout=60, exited=None):
+    def __init__(self, io, mailbox, timeout=60, exited=None, *, failure_path=None):
         self._lock = threading.RLock()
         self.io, self.mailbox, self.timeout = io, mailbox, timeout
+        self.failure_path = (
+            pathlib.Path(failure_path) if failure_path is not None else None
+        )
+        self.last_failure = None
+        self._installed_raw = b""
         self.graph_epoch = 0
         self._prep_nonce = 0
         self.poisoned = False
@@ -1186,6 +1208,9 @@ class ResidentGraph:
             self._active(_owner)
             self.poisoned = True
             self.io.write(self.tasks_pa, raw)
+            # Keep the immutable upload by reference: failure capture needs no card
+            # reads, including when the failing task leaves the hardware uncertain.
+            self._installed_raw = raw
             self.count = count
             self._prep_nonce += 1
             digest = int.from_bytes(
@@ -1224,6 +1249,86 @@ class ResidentGraph:
             )
             return self.sequence
 
+    def _record_failure(self, token, status, failed, detail, cycles, completed, repeat):
+        """Failure-only disk I/O, before cancellation can overwrite the mailbox.
+
+        The descriptor/payload are the host's exact upload, not a potentially
+        patched KDS working copy. The KDS log line carries the failing task's site and operands.
+        """
+        signed_detail = detail - (1 << 64) if detail >> 63 else detail
+        record: dict[str, object] = dict(
+            node=self.data_ref >> 56,
+            mailbox=self.mailbox,
+            sequence=token,
+            graph_epoch=self.graph_epoch,
+            status=status,
+            failed_task=failed,
+            detail=signed_detail,
+            detail_u64=detail,
+            failed_repeat=repeat,
+            cycles=cycles,
+            completed=completed,
+            task_count=self.count,
+            source="host upload (before KDS patches)",
+        )
+        raw = self._installed_raw
+        if 0 <= failed < self.count:
+            at = failed * A.OSTPU_TASK_BYTES
+            descriptor = raw[at : at + A.OSTPU_TASK_BYTES]
+            if len(descriptor) == A.OSTPU_TASK_BYTES:
+                kind, node, npred, npatch, unit, succ = struct.unpack_from(
+                    "<4BHH", descriptor, A.KDS_TASK_OFF_HEADER
+                )
+                words = struct.unpack_from("<4Q", descriptor, A.KDS_TASK_OFF_WORDS)
+                record["task"] = dict(
+                    kind=kind,
+                    node=node,
+                    unit=unit,
+                    npred=npred,
+                    npatch=npatch,
+                    succ_nodes=succ,
+                    words=words,
+                    pred=struct.unpack_from(
+                        f"<{A.KDS_MAXPRED}H", descriptor, A.KDS_TASK_OFF_PRED
+                    )[:npred],
+                    descriptor_pa=self.tasks_pa + at,
+                    descriptor_hex=descriptor.hex(),
+                )
+                if kind in (A.KDS_DE_STREAM, A.KDS_DE_FEED, A.KDS_STREAM):
+                    base_ref = self.data_ref + self.tasks_pa - self.data_pa
+                    offset = words[0] - base_ref
+                    size = (
+                        A.de_cmd_bytes(words[1]) + words[2]
+                        if kind != A.KDS_STREAM
+                        else words[1] * 32
+                    )
+                    if self.count * A.OSTPU_TASK_BYTES <= offset <= len(raw) - size:
+                        record["task"]["payload_pa"] = self.tasks_pa + offset
+                        record["task"]["payload_hex"] = raw[
+                            offset : offset + size
+                        ].hex()
+        self.last_failure = record
+        message = (
+            f"KDS status {status}, repeat {repeat}, task {failed}, detail {signed_detail}"
+            f" (node {record['node']}, sequence {token}, epoch {self.graph_epoch:#x})"
+        )
+        # A disk error must not replace the accelerator failure: preserve its
+        # descriptor in memory and on captured stderr.
+        try:
+            if self.failure_path is None:
+                print("KDS failure " + json.dumps(record), file=sys.stderr, flush=True)
+            else:
+                with self.failure_path.open("a", encoding="utf-8") as out:
+                    out.write(json.dumps(record) + "\n")
+                message += f"; descriptor: {self.failure_path}"
+        except OSError as error:
+            message += f"; failure record not saved: {error}"
+            try:
+                print("KDS failure " + json.dumps(record), file=sys.stderr, flush=True)
+            except OSError:
+                pass
+        return RuntimeError(message)
+
     def collect(self, token, *, _owner=None):
         """Acknowledge the exact published epoch; failure keeps the session poisoned."""
         with self._lock:
@@ -1238,6 +1343,11 @@ class ResidentGraph:
                         "<q7Q", self.io.read(self.mailbox + A.OSTPU_OFF_STATUS, 64)
                     )
                 )
+                if status:
+                    self.poisoned = True
+                    raise self._record_failure(
+                        token, status, failed, detail, cycles, completed, failed_repeat
+                    )
                 stats = dict(
                     zip(
                         A.STAT_NAMES,
@@ -1250,11 +1360,6 @@ class ResidentGraph:
                         strict=True,
                     )
                 )
-                if status:
-                    self.poisoned = True
-                    raise RuntimeError(
-                        f"KDS status {status}, repeat {failed_repeat}, task {failed}, detail {detail}"
-                    )
                 self._pending = None
                 self.poisoned = False
                 return dict(cycles=cycles, completed=completed, submissions=1, **stats)

@@ -284,18 +284,18 @@ def w_coherence(w):
     )
     runtime.run()
     got_cpu_run0 = struct.unpack("<4Q", card.read(base_pa + cpu_ret_out_off, 32))
-    assert got_cpu_run0 == tuple(
-        (0xAAAA0000 + i) ^ 0x5555 for i in range(4)
-    ), got_cpu_run0
+    assert got_cpu_run0 == tuple((0xAAAA0000 + i) ^ 0x5555 for i in range(4)), (
+        got_cpu_run0
+    )
     card.write(
         base_pa + cpu_in_off,
         struct.pack("<4Q", 0xBBBB0000, 0xBBBB0001, 0xBBBB0002, 0xBBBB0003),
     )
     runtime.run()
     got_cpu_run1 = struct.unpack("<4Q", card.read(base_pa + cpu_ret_out_off, 32))
-    assert got_cpu_run1 == tuple(
-        (0xBBBB0000 + i) ^ 0x5555 for i in range(4)
-    ), got_cpu_run1
+    assert got_cpu_run1 == tuple((0xBBBB0000 + i) ^ 0x5555 for i in range(4)), (
+        got_cpu_run1
+    )
     return dict(run0=got_cpu_run0, run1=got_cpu_run1)
 
 

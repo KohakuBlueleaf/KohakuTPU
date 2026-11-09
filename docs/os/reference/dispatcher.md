@@ -185,6 +185,223 @@ node-qualified scratch and canonical aliases. `prepare_firmware` and
 `prepare_kaos` consume the same cached artifact without a second address bind or
 slot allocation. The existing captured/eager submission entry remains available.
 
+### Models on P sysnodes
+
+The model recorder selects the retained backend with `--backend kaos` or
+`--backend firmware`. Both selections enable TinyJit and send captured pure
+regions through `PreparedSplitGraph.bind_artifact`, including a one-node region.
+The same workload, compiler, bindings and split-event allocation feed either
+`prepare_kaos` or `prepare_firmware`; neither adapter repartitions the graph.
+Ordinary initialization and capture launches use the selected card backend too.
+The eager KAOS adapter takes each already-bound `Package.to_bytes()` from
+the ordinary card builder or native wire submission and retains the complete
+package as a `NodePart`. Headers, unit tables, steps and payloads travel together;
+`Package.bound()` is a diagnostic list of relocated payload words, not a wire
+package. The adapter does not bind or decode the package a second time before
+constructing the artifact.
+Host writes remain between pure regions. This is a Device backend of the existing
+model entry, not a separate model-capture format.
+
+Build the resident image, then run from the repository root in the installed
+software Python environment:
+
+```sh
+python software/kohakuaccel/os/tools/build.py kos --out build/os && \
+KOS_IMAGE=build/os/kos.elf python software/tests/perf/record.py vitb \
+  --card --backend kaos --board multimesh_v9t6 --nodes 2 --batch 4 --tag .b4
+python software/tests/perf/record.py vitb \
+  --card --backend firmware --board multimesh_v9t6 --nodes 2 --batch 4 --tag .b4
+```
+
+`vitb` is the ViT-B workload. Use `--nodes 1`, `2` or `4` and `--batch 1`, `4` or
+`16`; include the batch in `--tag` so configurations have distinct directories.
+The clock profile must already be set, exactly as for the firmware card entry;
+`KOHAKUTPU_PROFILE` selects the profile to verify. Both paths use XDMA.
+
+The boot owner in `software/kohakutpu/os/tools/ostpu/model.py` reuses `run_card`'s
+transport, ELF arrays, node loader and boot tables. `--os-board` names the OS
+board description (default `card_v9t6_4n`); it must describe the selected machine
+and contain every requested participant. It selects the first P node/mesh pairs
+and their units, stops all participating CPUs before painting, loads every
+participant, releases the load windows in reverse node order, then attaches
+the local `ResidentGraph` mailboxes. No attachment waits before every loaded
+CPU has started; node zero starts last for the OS boot handshake.
+`--kos-image` overrides `KOS_IMAGE`, whose default is `build/os/kos.elf`.
+The linker enforces the 32-KiB IMEM limit for `.text` and at least 256 bytes of
+free space. The build prints the exact `.text` size in `kos.size`; `kos.map`
+also records `__k_text_free`. One-shot L0 mapping/setup and kernel startup,
+unit/message-table initialization and the interlink handshake reside in the
+per-node DRAM image alongside user text. They execute untranslated at their
+physical load addresses with resident callbacks and owner-local state setters.
+Early boot-table/private-span validation, MMU/log helpers, the cache-maintenance
+callback and steady-state kernel operations remain in IMEM. The cache command
+and its busy-rise/busy-fall polls execute together there; the live busy interval
+must not be hidden by a private-image instruction refill. Units, syscalls, messages and scheduler keep
+`-O2` and the selected HOT flags. The host loader and boot table format are
+shared by both pieces.
+
+The stage harness `software/tests/run.py` prepares the default HOT `kos` image
+at `build/os/kos.elf` before starting the timed `firmware/emu` suite or emulator
+mutant consumers. Its `.elf.stage.json` receipt records the complete set and
+content digests of OS sources, assembly, headers, linker scripts, shared firmware
+headers, `build.py`, `memgap.py` and `toolchain.py`, plus the toolchain-selection
+environment, resolved tool paths/content and built image digest. The builder and
+stage harness share tool discovery; an in-place tool upgrade or a newly preferred
+installation also invalidates reuse. Reuse requires an exact match: source removal, preserved
+source timestamps and an externally replaced image cannot select stale code.
+An image without a matching receipt is rebuilt with the default HOT/memory-gap
+policy. A relative `KOS_IMAGE` is resolved once in the harness invocation
+working directory and propagated as an absolute path to the builder and every
+consumer, so their repository-root working directory cannot select another ELF.
+It needs the RISC-V LLVM toolchain selected by `KOS_LLVM`
+(or the build tool's normal discovery). A failed build stops the harness before
+any test can consume an older image, with compiler/linker diagnostics on stderr;
+unsuccessful builds leave no selectable image. The stage budget is 30 seconds,
+with no heavy-test exception for the physical-heap witness.
+The physical-heap witness in `software/tests/firmware/emu/test_os.py` consumes
+that supplied `KOS_IMAGE`, like the other OS tests; it does not compile.
+It boots `card_v9t6_4n` on `KA_EMU_MODEL`: four nodes, each receiving the same
+16-unit table (four local units). Private-page message reduction exercises
+all participants and the 2-GiB physical shared grant. ka-emu models cache busy
+as a read-cleared flag, not a timed sweep, and does not model instruction-refill
+latency. This witness checks boot and reduction, not the card's cache-busy timing;
+the native unit harness separately requires the resident barrier before pending
+allocation. Direct
+pytest invocation requires the caller to build and supply the image first.
+
+The same emulator stage boots `parallel ostpu 4096 4096 1 1 -e` with
+`shared_phys` on all four nodes. One case uses the stock board's zero shared
+span and private layout; the other uses the model entry's capacity-derived
+private spans and 2-GiB physical heap. The test waits for `OSTPU_MAGIC` at every
+node's application mailbox, not a console banner or process exit. The emulator's
+`--until-word N:0xADDR:0xVALUE` option samples all requested physical words every
+1024 iterations and at termination, stopping when they match together. The
+ordinary cycle bound still applies, and unsuccessful node exits remain failures.
+This permits testing persistent services without changing their executable image.
+The startup consumer supplies an explicit quiescent DE hardware fixture through
+`--control-word N:0xOFFSET:0xVALUE`: a full-width register initialization before
+CPU execution. The DE status register advertises its signature, idle queue and
+no faults; counter registers start at zero. ka-emu's generic register storage
+accepts the startup control/map writes. No descriptors are submitted before the
+mailbox stopping condition. This fixture covers software startup and publication,
+not DE execution, counter timing, cache timing or the card's missing-READY cause.
+It does not initialize mailbox magic. The option is an emulator fixture interface,
+not a card command: actual hardware writes to DE status enqueue WAIT entries.
+
+A log header's `where user` address is the selected task's saved resume PC, not
+a live processor PC. With `KOS_LOCAL_LOG`, USER transitions and switch counts
+remain local until a log synchronization, such as a console write. A quiet
+resident may therefore leave an earlier USER or IDLE snapshot visible. Diagnose
+a missing READY using the mailbox and actual halted PC/task state; neither an
+init banner nor an unchanged log-header PC establishes where execution stopped.
+
+Permanent cold startup records use `kos_progress(KOS_W_*, a, b)` in user mode.
+They are ordinary SYS_WRITE records in the persistent log and console, encoded
+as `@where CODE A B` (decimal code, hexadecimal operands). `klog` adds the latest
+complete record as `progress`, `progress_a`, `progress_b`, leaving scheduler
+`where` fields intact. `run_card` reads the full log at its existing 30-second
+progress interval and appends the named progress to each node's summary.
+
+| progress | operands / boundary |
+|---|---|
+| `app_args`, `app_enter` | app index and argument pointer / decoded argc |
+| `init_args`, `parallel_args` | copied bytes; second operand 0 copying, 1 complete |
+| `run_issue`, `run_ack` | destination node; returned tid or signed status at acknowledgment |
+| `join_issue`, `join_ack` | destination node; tid before join, status/exit afterward |
+| `ostpu_args`, `mailbox` | argc; then mailbox VA and size before clearing |
+| `server_start`, `server_started` | capacity/local mode; then returned startup status |
+| `server_state`, `server_ack` | state allocation bytes/starter; then starter/status before reply |
+| `de_open`, `de_opened` | node and server flags / returned status |
+| `arena`, `arena_done` | node and allocation bytes / returned status |
+| `task_alloc`, `task_allocated`, `data_alloc`, `data_allocated` | requested storage followed by returned status |
+| `mailbox_fill`, `release` | task/data references; then mailbox VA before release |
+| `ready_write`, `ready` | mailbox VA before the fenced READY store / after publication |
+
+A RUN_ACK for a remote node is recorded after SYS_RUN receives its M_RUN reply.
+The records observe the user-side syscall boundary, not an internal kernel
+message-receive PC. Parent and resident records can interleave on node 0; the
+persistent log retains their sequence and destination operands. All call sites
+are in app entry, init/parallel startup or resident/server initialization, before
+any graph servicing. No progress logging runs per graph, instruction word,
+retirement or device poll. Marker code occupies user `.utext`, not resident
+kernel `.text`; the existing 32-KiB limit and 256-byte margin remain enforced.
+
+The boot command is **`parallel ostpu capacity 4096 1 1 -e`**. The general
+`parallel APP ARGS` utility starts APP on every node before joining any child.
+If a launch fails after another child started, or a join fails without confirming
+termination, it shuts down the boot with that status. Residents can run forever
+or wait for missing participants; returning to init or joining them indefinitely
+is not a cleanup strategy. Ordinary child exit codes are collected after all
+successful launches. Only node 0 runs init, so remote local residents are started through `kos_run`,
+not by assuming each CPU interprets its boot command. Each CPU thus runs
+`ostpu capacity bytes retain local` with bytes=4096, retain=1, local=1 and `-e`.
+Build `kos` from the same source tree as the host tools.
+`--os-capacity` defaults to 65534 task records and is rounded to keep the data
+arena 256-byte aligned; records and their descriptor payloads must fit that
+resident byte budget. The resident's `bytes` argument is 4096; descriptor storage stays in its task
+region, not in the model heap. `--os-bytes` sizes the separate shared model heap
+(default 2147483648 bytes). Private spans contain the OS, task storage and KDS
+allocator space; they are carved at distinct offsets, followed by the shared
+heap spelled through mesh 0 on every node. The complete layout must fit physical
+DRAM without overlapping the driver's reserved scratch. The application uses
+this shared heap and the ordinary node-qualified staging arenas. `UnitGlobal` carries
+both DRAM and staging accesses; mailbox I/O uses `run_card`'s physical mapping.
+No second allocator or per-model address relocation is involved.
+
+Boot uses `shared_phys` (`KOS_F_SHARED_PHYS`). This grants the shared physical
+span to device I/O without mapping it into the fixed user shared/uncached
+aliases: a multi-gigabyte model heap must not cover the user stack or mmap
+virtual addresses. Physical mover admission still checks the full shared span.
+The kernel stores the mapped shared size separately at boot; virtual shared
+queries/translation use that size (zero here), while `KOS_I_SHPA` still reports
+the physical base. The boot table also grants each mesh's implemented staging above `KOS_STG_END`,
+excluding the OS page tables and message/start rings. Physical admission selects
+that span for special addresses, or the existing DRAM spans otherwise: one
+constant-time address-space branch, no added DRAM-path memory read, and no new
+unit-word or retirement work. Without the flag, mapped shared applications keep their
+existing mapping and heap paths.
+
+One active graph owns the local residents. Preparation uploads every part before
+publication; replay publishes every participant before collecting any. Repeated
+calls to that graph keep its uploads. Switching to another pure region or an
+ordinary launch replaces the completed resident graph. A failed epoch retains
+its pins and leases and refuses reuse. `KOHAKUTPU_GRAPH_TIMEOUT_CYCLES` sets the
+whole-graph execution bound (default 1099511627776 cycles); the resident host
+wait is bounded at 1800 seconds. No edge is synchronized by a host poll.
+
+The trace directory has a `.kaos` or `.firmware` suffix. It contains the ordinary
+`meta.json`, `launches.jsonl`, `kernels/`, profile/compile files when requested,
+and workload `report.json`. `matrix.py` and `waste.py` read these ordinary traces
+without a backend-specific reader. `card.jsonl` has one row per retired host run,
+with the backend tag and every participating node's cycle/stat record. `cycles`
+and `max_node_cycles` mean the maximum **local duration**, not a globally
+synchronized hardware interval. For retained regions, `makespan_seconds` is the
+host-observed group interval, from first publication through collection of all
+participants; it includes publication/poll/transport cost, excludes preparation
+and output reads, and does not assume synchronized CPU cycle counters. `wall`
+also includes the host's preparation and retirement work.
+
+`outputs.jsonl` preserves each public Device read's bytes, in read order, for
+comparison with the firmware run. Compare the same workload/input sequence, not
+physical addresses: separately booted processes have separate allocation
+identities. Every KAOS completion retains the existing KDS counters, including
+DE entries/streams, unit batches, task/message counts and phase cycles.
+For kernel trap counters, build a profiled image and request `--measure`:
+
+```sh
+python software/kohakuaccel/os/tools/build.py kos --out build/os-profile \
+  -D KOS_PROF=1 -D OSTPU_PROFILE_SYS=30 && \
+KOS_IMAGE=build/os-profile/kos.elf python software/tests/perf/record.py vitb \
+  --card --backend kaos --nodes 4 --batch 16 --tag .b16.profile --measure
+```
+
+Here 30 is `SYS_DE_RUN`; `syscall_profile` contains the existing mailbox profile
+words for that selected syscall. KAOS `units.jsonl` contains per-node KDS/kernel
+statistics, tagged `kaos`, not firmware unit-counter records. Firmware
+`--measure` uses its existing measure image and unit ring. Profiling changes the
+measured execution cost and is recorded separately. `--traced` belongs to the
+ordinary firmware debug entry, not these retained-backend selections.
+
 ### Dependency-boundary timestamps
 
 `KDS_STAMP` writes four 64-bit words into a local, aligned 32-byte arena span:

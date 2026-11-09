@@ -7,7 +7,7 @@
 use ktpu_l1::text::{fmt, Env, Expander, Reader, Stmt, Term, Val};
 
 use super::{body_of, head, names, unit_of, walk, write};
-use crate::ir::read::instances;
+use crate::ir::read::instance_scopes;
 use crate::ir::{Program, Result, StageX};
 use crate::lower::vector::{self, Search};
 use crate::target::Target;
@@ -63,7 +63,7 @@ pub fn first_of(scopes: &[Stmt], inner: Stmt) -> Stmt {
 fn far(p: &Program, params: &[(String, Term)], stmts: &[Stmt], t: &Target) -> i64 {
     let got = (|| -> Option<i64> {
         let body = write(p, params, stmts).ok()?.body().ok()?;
-        let stages = instances(&body).ok()?;
+        let stages = instance_scopes(&body).ok()?;
         let x = stages.into_iter().find_map(|s| match s.x {
             StageX::Par(x) => Some(x),
             _ => None,
@@ -186,7 +186,7 @@ pub fn step(p: &Program, t: &Target, _search: &Search) -> Result<Program> {
         let mut phased = false;
         if lp.body.iter().any(|s| s.kw("read_map").is_some()) {
             let phase_body = write(p, &params, &probe)?.body()?;
-            let phase_instances = instances(&phase_body)?;
+            let phase_instances = instance_scopes(&phase_body)?;
             for stage in &phase_instances {
                 if let StageX::Par(parts) = &stage.x {
                     for part in parts {

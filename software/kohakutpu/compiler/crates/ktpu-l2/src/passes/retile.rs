@@ -5,13 +5,14 @@
 //! tile first). When none lowers, a stream whose ops work on each 32-column
 //! GT4 block apart splits into the fewest equal pieces one of which lowers.
 
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap};
 
 use ktpu_l1::text::{fmt, IntStyle, Stmt, Term};
 
 use super::step::{first_of, scope_ok};
 use super::{body_of, first_line, head, names, unit_of, walk, write};
-use crate::ir::read::instances;
+use crate::ir::read::instance_scopes;
 use crate::ir::{Program, Result, StageX};
 use crate::lower::vector::{self, Search, BINARY, CMP, TERNARY, UNARY, XLANE};
 use crate::target::Target;
@@ -285,7 +286,7 @@ pub(super) fn lowered_cost(
             program
         };
         let body = program.body().map_err(|e| first_line(&e))?;
-        let stages = instances(&body).map_err(|e| first_line(&e))?;
+        let stages = instance_scopes(&body).map_err(|e| first_line(&e))?;
         if !stages.iter().any(|s| matches!(s.x, StageX::Par(_))) {
             return Err("StopIteration".to_string());
         }
@@ -652,6 +653,13 @@ fn live_streams(stmts: Vec<Stmt>) -> Vec<Stmt> {
 }
 
 pub fn retile(p: &Program, t: &Target, search: &Search) -> Result<Program> {
+    retile_profiled(p, t, search).map(|(program, _)| program)
+}
+
+/// The retiled program and the number of distinct candidate prices computed.
+/// Prices belong to this invocation's program, target and search policy.
+#[doc(hidden)]
+pub fn retile_profiled(p: &Program, t: &Target, search: &Search) -> Result<(Program, usize)> {
     let (params, stmts) = body_of(p)?;
     let stmts = unlift_step(live_streams(stmts));
     let r = p.module.reader();
@@ -669,6 +677,20 @@ pub fn retile(p: &Program, t: &Target, search: &Search) -> Result<Program> {
             }
         }
     }
+    // Canonical source includes parameters, buffers, scopes and stream bounds.
+    // The target, search settings and mutation scope are fixed for this map.
+    let prices: RefCell<HashMap<String, (Option<i64>, String)>> = RefCell::default();
+    let computed = Cell::new(0);
+    let price = |probe: &[Stmt]| {
+        let key = crate::ir::read::write_text(&p.module, &p.name, &params, probe);
+        if let Some(got) = prices.borrow().get(&key) {
+            return got.clone();
+        }
+        computed.set(computed.get() + 1);
+        let got = lowered_cost(p, &params, probe, t, search);
+        prices.borrow_mut().insert(key, got.clone());
+        got
+    };
     // `(par at the fastest tile, rows) ` or `(None, the written tile's why)`.
     let tiled_best =
         |s: &Stmt, scopes: &[Stmt], path: &[usize], rows: i64| -> (Option<(Stmt, i64)>, String) {
@@ -710,7 +732,7 @@ pub fn retile(p: &Program, t: &Target, search: &Search) -> Result<Program> {
                 let cand = tiled(s, path, rows, new);
                 let mut probe = top.clone();
                 probe.push(first_of(scopes, cand.clone()));
-                let (got, err) = lowered_cost(p, &params, &probe, t, search);
+                let (got, err) = price(&probe);
                 if new == rows {
                     why = err;
                     why_set = true;
@@ -785,20 +807,23 @@ pub fn retile(p: &Program, t: &Target, search: &Search) -> Result<Program> {
         while lo < hi {
             let mid = (lo + hi) / 2;
             let k = ks[mid];
-            let pieces: Vec<Stmt> = (0..k).map(|j| piece(&s, wd, wd / k, j, &shapes)).collect();
-            let Some(ppath) = loop_of(&pieces[0]) else {
+            // Only piece zero is priced. Materialize the other columns only
+            // after this geometry is accepted, in their original order.
+            let first = piece(&s, wd, wd / k, 0, &shapes);
+            let Some(ppath) = loop_of(&first) else {
                 lo = mid + 1;
                 continue;
             };
-            let (got, _) = tiled_best(&pieces[0], scopes, &ppath, rows);
+            let (got, _) = tiled_best(&first, scopes, &ppath, rows);
             let Some((g0, new)) = got else {
                 lo = mid + 1;
                 continue;
             };
             let mut all = vec![g0];
-            for pc in &pieces[1..] {
-                let pp = loop_of(pc).unwrap();
-                all.push(tiled(pc, &pp, rows, new));
+            for j in 1..k {
+                let pc = piece(&s, wd, wd / k, j, &shapes);
+                let pp = loop_of(&pc).unwrap();
+                all.push(tiled(&pc, &pp, rows, new));
             }
             hi = mid;
             found = Some(all);
@@ -824,12 +849,13 @@ pub fn retile(p: &Program, t: &Target, search: &Search) -> Result<Program> {
         ));
     }
     let result = write(p, &params, &out)?;
-    if out
+    let result = if out
         .iter()
         .any(|s| ops_of(s).iter().any(|s| s.kw("read_map").is_some()))
     {
-        super::step::step(&result, t, search)
+        super::step::step(&result, t, search)?
     } else {
-        Ok(result)
-    }
+        result
+    };
+    Ok((result, computed.get()))
 }

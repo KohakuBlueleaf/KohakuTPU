@@ -21,6 +21,16 @@ use std::path::{Path, PathBuf};
 
 pub use fill::fill_lost;
 pub use ka_machine::{canon, refusal, refuse, MachineFacts, Refusal};
+
+/// Per-sysnode runtime queue region, including rings and its package heap.
+pub const STAGING_RUNTIME_BYTES: u64 = 1 << 20;
+
+/// Available staging per physical owner and placement of unqualified allocations.
+#[derive(Clone, Copy, Debug)]
+pub struct StagingBudget {
+    pub bytes: u64,
+    pub default_node: i128,
+}
 pub use pairing::{Pairing, PAIRING};
 pub use schema::*;
 
@@ -215,8 +225,8 @@ impl Machine {
             .with_fact("card.chain", Value::from((0..nodes).collect::<Vec<_>>()))
     }
 
-    /// The stack's staging room a node: half the staging store (the
-    /// firmware queues hold the other half).
+    /// Local ring/placement heuristic: half the physical staging store.
+    /// Complete split admission uses the request's available staging budget.
     pub fn stage_room(&self) -> i64 {
         (self.die.stage_bytes().expect("a staging store's bytes") / 2) as i64
     }

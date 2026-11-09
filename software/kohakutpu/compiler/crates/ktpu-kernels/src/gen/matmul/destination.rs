@@ -5,8 +5,8 @@ use crate::gen::vector;
 use crate::split::{PlannedKernel, SplitAxis, SplitRequest};
 
 /// Maximal rectangles in a contiguous interval of physical packing tiles.
-fn rectangles(first: i64, count: i64, rp: i64, cp: i64, g: i64, nk: i64) -> Vec<[i64; 4]> {
-    let (rh, cw) = (4 * g, 32 * nk);
+fn rectangles(first: i64, count: i64, rp: i64, cp: i64, g: i64, nk: i64, hw: &Hw) -> Vec<[i64; 4]> {
+    let (rh, cw) = (hw.band * g, hw.kblock * nk);
     let columns = cp / cw;
     let mut at = first;
     let end = first + count;
@@ -66,8 +66,9 @@ pub fn kernel(
     } else {
         (rows, rp)
     };
-    let tiles = batches * rp / (4 * groups) * (cp / (32 * nk));
-    let tile_bytes = 128 * groups * nk;
+    let hw = Hw::of(mach);
+    let tiles = batches * rp / (hw.band * groups) * (cp / (hw.kblock * nk));
+    let tile_bytes = hw.band * hw.kblock * groups * nk;
     let shape = vector::split::Shape {
         rows: tiles,
         quantum: 1,
@@ -101,6 +102,7 @@ pub fn kernel(
                 cp,
                 groups,
                 nk,
+                &hw,
             ) {
                 let bi = row / window_rp;
                 let lo = (row % window_rp).min(window_rows);
@@ -126,7 +128,6 @@ pub fn kernel(
             }
         }
     }
-    let hw = Hw::of(mach);
     let xs = if let Some((bytes, _, _)) = walked {
         [cdiv(bytes, hw.word_bytes), hw.lanes]
     } else {
@@ -168,7 +169,7 @@ pub fn kernel(
             vec![Py::str(&identity), Py::Int(first), Py::Int(count)],
         );
         build(&key, mach, ports.clone(), given.clone(), |t, b| {
-            let pieces = rectangles(first, count, window_rp, cp, groups, nk);
+            let pieces = rectangles(first, count, window_rp, cp, groups, nk, &hw);
             let record = ktpu_machine::packing::quant_status_bytes(mach.quant_cores()) / 2;
             let status = if vector && !finite && pieces.len() > 1 {
                 Some(t.buffer(&[pieces.len() as i64 * record], g::Dtype::F16, vec![])?)

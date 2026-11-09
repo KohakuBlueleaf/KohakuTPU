@@ -66,6 +66,23 @@ fn quantiser_orders(par: &RPar) -> &'static [bool] {
     }
 }
 
+/// Only mapped GT4 loads with a word-sized row window consult alignment.
+/// Other types produce identical images for both policies.
+fn window_loads(nodes: &[Arc<Node>]) -> bool {
+    nodes.iter().any(|node| {
+        (node.op_name() == "load"
+            && node.ty().is_some_and(|ty| {
+                ty.dtype == "f16"
+                    && ty.mode.as_deref() == Some("gt4")
+                    && ty.shape.len() == 2
+                    && ty.shape[1] == 32
+                    && (1..=16).contains(&ty.shape[0])
+            })
+            && matches!(node.as_ref(), Node::Op(o) if o.st.kw("read_map").is_some()))
+            || window_loads(node.body())
+    })
+}
+
 /// The most choices kept (by one candidate's image, name blanked).
 const CHOSEN_KEPT: usize = 4096;
 /// A search's result under the name `\0`: text, continuations, cycles.
@@ -91,7 +108,7 @@ type Key = (
     (i64, i64),
     Strategy,
     i64,
-    (Option<bool>, Option<bool>),
+    (Option<bool>, Option<bool>, Option<bool>),
 );
 
 /// A band image as its fit sees it: the machine's digest, the name-blanked
@@ -159,6 +176,8 @@ pub struct Search {
     /// when given; the search tries both where they apply when not.
     pub hold: Option<bool>,
     pub pin: Option<bool>,
+    /// Source-window alignment policy for banded composed reads; None prices both.
+    pub window_exchange: Option<bool>,
     /// What range analysis may prove of EXP2 / EXP2D arguments, dropping
     /// the guard checks it covers.
     pub ranges: Ranges,
@@ -199,6 +218,7 @@ impl Search {
             strategy,
             hold: None,
             pin: None,
+            window_exchange: None,
             ranges: Ranges::DEFAULT,
             zero_sign: ZeroSign::DEFAULT,
             chosen: Mutex::new(IndexMap::new()),
@@ -266,6 +286,9 @@ impl Search {
         pin: bool,
         quantiser_readback: bool,
     ) -> VResult<Cand> {
+        let mut target = t.clone();
+        target.read.window_exchange = self.window_exchange.unwrap_or(t.read.window_exchange);
+        let t = &target;
         lower_band(
             body,
             par,
@@ -425,7 +448,7 @@ impl Search {
             body.fill,
             self.strategy,
             IMEM_ROOM,
-            (self.hold, self.pin),
+            (self.hold, self.pin, self.window_exchange),
         );
         let got = match on("l2.vector/search-again") {
             true => None,
@@ -474,7 +497,13 @@ impl Search {
         probe: Option<Cand>,
     ) -> Result<Best> {
         let orders = quantiser_orders(par);
-        let mut shapes: Vec<(usize, bool, bool, bool, bool, bool)> = Vec::new();
+        let windows: &[bool] = match self.window_exchange {
+            Some(true) => &[true],
+            Some(false) => &[false],
+            None if window_loads(&par.body) => &[false, true],
+            None => &[false],
+        };
+        let mut shapes: Vec<(usize, bool, bool, bool, bool, bool, bool)> = Vec::new();
         if self.strategy != Strategy::Modulo {
             let (pre, lp) = split(body, par)?;
             let mut all = pre.clone();
@@ -501,7 +530,9 @@ impl Search {
                                     self.pin_given().unwrap_or(pin),
                                 );
                                 for &order in orders {
-                                    shapes.push((band, remat, ahead, hold, pin, order));
+                                    for &window in windows {
+                                        shapes.push((band, remat, ahead, hold, pin, order, window));
+                                    }
                                 }
                             }
                         }
@@ -512,6 +543,12 @@ impl Search {
         // Timing is a function of image text; duplicate text shares the first Module.
         // `l2.vector/search-each` times every candidate apart.
         let each = on("l2.vector/search-each");
+        if !each && !on("l2.vector/fit-each") && !ktpu_l1::mutant::on("l1.sched/unstable") {
+            // Forced hold/pin policies can map distinct enumeration positions
+            // to one identical lowering. Keep its first position and tie order.
+            let mut seen = std::collections::HashSet::new();
+            shapes.retain(|shape| seen.insert(*shape));
+        }
         let timed = |module: &std::sync::Arc<Module>| -> Result<(std::sync::Arc<Module>, i64)> {
             let c = encode::cycles(
                 module,
@@ -534,13 +571,16 @@ impl Search {
         let lowered: Vec<VResult<Cand>> = shapes
             .par_iter()
             .enumerate()
-            .map(|(index, &(band, remat, ahead, hold, pin, order))| {
+            .map(|(index, &(band, remat, ahead, hold, pin, order, window))| {
                 if index == 0 && reuse_probe {
                     if let Some(probe) = &probe {
                         return Ok(probe.clone());
                     }
                 }
                 crate::mutant::scoped(active, || {
+                    let mut target = t.clone();
+                    target.read.window_exchange = window;
+                    let t = &target;
                     self.band(
                         body, par, env, name, t, band, remat, ahead, plan, land, hold, pin, order,
                     )
@@ -643,7 +683,7 @@ impl Search {
             if cutting && !splits {
                 break;
             }
-            let mut tried: Vec<(String, usize)> = Vec::new();
+            let mut tried = std::collections::HashSet::new();
             for ((candidate, params, accesses), cycles) in &cands {
                 let beat = fit.as_ref().map(|f| f.cycles);
                 if cutting && (cut.is_some() || beat.is_some_and(|b| *cycles >= b)) {
@@ -651,11 +691,11 @@ impl Search {
                 }
                 let text = &candidate.source;
                 // A text tried before encodes as it did: its words are in `whys`.
-                let key = (text.clone(), params.len());
-                if !each && tried.contains(&key) {
+                // Membership only: candidate iteration still determines every
+                // choice and tie. Borrow immutable text rather than cloning it.
+                if !each && !tried.insert((text.as_str(), params.len())) {
                     continue;
                 }
-                tried.push(key);
                 let module = match read.get(text) {
                     Some(m) if !each => m,
                     _ => candidate,

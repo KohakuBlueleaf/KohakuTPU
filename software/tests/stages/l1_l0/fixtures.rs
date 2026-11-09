@@ -18,8 +18,10 @@ mod global_dram;
 mod long_remote;
 mod mark_frontiers;
 mod package;
+mod periodic_work;
 mod probe_memory;
 mod probe_placement;
+mod symbolic_predicates;
 mod tiled_readback;
 
 use std::collections::BTreeMap;

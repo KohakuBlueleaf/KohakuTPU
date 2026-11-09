@@ -112,7 +112,7 @@ fn image(
         .filter(|d| d.to.is_empty())
         .map(|d| format!("p_a{}", d.ad))
         .collect();
-    print::image(name, names, body, c.body.vregs).unwrap()
+    print::structured_image(name, names, body, c.body.vregs).unwrap()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -190,7 +190,7 @@ fn modulo_module(
     if c.descs.iter().any(|d| d.twin.is_some()) {
         return no("a value stored through several views (one ring a view)");
     }
-    let packed: Vec<_> = ops
+    let packed: std::collections::HashSet<_> = ops
         .iter()
         .filter(|o| o.op_name() == "pack")
         .filter_map(|o| o.target().map(str::to_string))
@@ -316,7 +316,7 @@ fn modulo_module(
                 slots: own.into_iter().chain(extra).collect(),
             });
         }
-        let mut best: Option<(Arc<Module>, i64)> = None;
+        let mut best: Option<(Module, i64)> = None;
         let mut overflow = false;
         for tail in MO::TAILS {
             let emitted = MO::emit_typed::emit(&p, &stmts, &rings, trips, &pinned, tail)
@@ -333,12 +333,18 @@ fn modulo_module(
                     continue;
                 }
             };
-            let module = Arc::new(image(&c, name, head, &events, &pinned));
+            // Tail selection uses the schedule's exact cycles and keeps the
+            // first tie. Encoding cannot make a later, no-faster tail win.
+            if best.as_ref().is_some_and(|(_, old)| cycles >= *old) {
+                continue;
+            }
+            let module = image(&c, name, head, &events, &pinned);
             let thrown = match on("l2.vector/modulo-unthrottled") {
-                true => std::borrow::Cow::Borrowed(&*module),
-                false => throttled(&module, t)?,
+                true => std::borrow::Cow::Borrowed(&module),
+                false => crate::lower::fills::throttled_structure(&module, t),
             };
             let encoded = encode::words_of(&thrown, name, params.len(), &t.machine);
+            drop(thrown);
             match encoded {
                 Err(e) => {
                     tried.push(format!("II {} K {} {tail}: {}", p.ii, p.k, first_line(&e)));
@@ -357,9 +363,10 @@ fn modulo_module(
                 }
             }
         }
-        if let Some((module, _)) = best {
+        if let Some((mut module, _)) = best {
+            print::materialize(&mut module).map_err(VErr::Value)?;
             c.top = top;
-            return Ok(Ok((module, params, c.accesses())));
+            return Ok(Ok((Arc::new(module), params, c.accesses())));
         }
         if overflow && p.k <= 2 {
             return Ok(Err(format!(

@@ -55,6 +55,13 @@ pub struct Scheduled {
 }
 
 impl Scheduled {
+    /// Retained symbolic paths for diagnostics (shared arena, cloned predicates).
+    /// One entry per actual continuation, not per finding or branch instruction.
+    #[doc(hidden)]
+    pub fn symbolic_paths(&self) -> impl Iterator<Item = Symbolic> + '_ {
+        self.continuations.iter().map(|c| c.symbolic.clone())
+    }
+
     /// Correlated core states after every feasible forward path.
     pub fn held_states(&self) -> impl Iterator<Item = &Held> {
         self.continuations.iter().map(|c| &c.held)
@@ -401,7 +408,13 @@ fn ordered(
                     (pkgs.clone(), before.totals.clone(), before.path.clone())
                 };
                 join(&mut totals, continuation.totals);
-                continuation.package_totals = before.package_totals.clone();
+                // Earlier successors need their own prefix; the last one can
+                // take ownership, just like packages, totals and path above.
+                continuation.package_totals = if after.peek().is_none() {
+                    std::mem::take(&mut before.package_totals)
+                } else {
+                    before.package_totals.clone()
+                };
                 continuation.package_totals.push(totals.clone());
                 continuation.totals = totals;
                 for decision in &mut continuation.path {

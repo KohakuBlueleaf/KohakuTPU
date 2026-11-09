@@ -38,8 +38,10 @@ class Replay(Parts):
         self._record_accesses = []
         self._record_templates = []
         self.recording = False
-        if ENV.get("KTPU_GRAPH_FUSE", "0") == "1" and not split_recorded.contains_split(
-            log
+        if (
+            self.graph_backend is None
+            and ENV.get("KTPU_GRAPH_FUSE", "0") == "1"
+            and not split_recorded.contains_split(log)
         ):
             try:
                 log.native = native_recorded.from_environment(log)
@@ -63,7 +65,9 @@ class Replay(Parts):
         self._healthy()
         if self.closed:
             raise RuntimeError("device is closed")
-        if log.split is None and split_recorded.contains_split(log):
+        if log.split is None and (
+            self.graph_backend is not None or split_recorded.contains_split(log)
+        ):
             self.prepare_recorded(log)
         if log.split is not None:
             return log.split.run(wait)
@@ -128,7 +132,7 @@ class Replay(Parts):
         """Keep a recording's dispatch wrappers and uploads, when selected."""
         if not isinstance(log, Recorded) or log.closed or log.owner is not self:
             raise ValueError("preparation requires an open, pinned recording")
-        if split_recorded.contains_split(log):
+        if self.graph_backend is not None or split_recorded.contains_split(log):
             if log.split is None:
                 log.split = split_recorded.prepare(log)
             return

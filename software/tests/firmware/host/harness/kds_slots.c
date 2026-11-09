@@ -1,5 +1,7 @@
 /* The ready scheduler on held tokens and held egress room. */
 #include <assert.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -22,6 +24,15 @@ static struct kds_node node;
 static struct kds_task tasks[4];
 static uint16_t remain[4], next_task[4], ready[5];
 static uint32_t pairs[2];
+
+int kos_printf(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vprintf(fmt, ap);
+    va_end(ap);
+    return n;
+}
 
 int kos_slot(unsigned release, unsigned destination, unsigned slot, unsigned amount)
 {

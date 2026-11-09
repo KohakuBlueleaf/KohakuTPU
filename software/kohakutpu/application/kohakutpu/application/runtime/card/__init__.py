@@ -632,7 +632,7 @@ def open_transport(kind: str = "jtag"):
     if kind == "jtag":
         return JtagTransport()
     if kind == "xdma":
-        return XdmaLinux(recover="auto" if ENV.get("XDMA_KO") else None)
+        return XdmaLinux.from_env()
     raise ValueError(f"transport {kind!r}: one of {TRANSPORTS}")
 
 

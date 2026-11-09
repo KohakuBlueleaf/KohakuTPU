@@ -199,10 +199,14 @@ int kds_retain(struct kds_graph *g)
     if (!started_mask) {
         return KOS_ENOENT;
     }
-    retained_tasks = g ? g->t : 0;
-    retained_tid = g ? self() : 0;
+    unsigned tid = g ? self() : 0;
     struct kds_msg m = {KM_RETAIN, 0, 0, 0, {g ? (uint64_t)g->t : 0, 0, 0, 0}};
-    return (int)(int64_t)request(kos_node(), m).p[0];
+    int st = (int)(int64_t)request(kos_node(), m).p[0];
+    if (!st) {
+        retained_tasks = g ? g->t : 0;
+        retained_tid = tid;
+    }
+    return st;
 }
 
 /* ---- memory ---- */

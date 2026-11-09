@@ -76,17 +76,6 @@ fn operand_regions(
         .collect()
 }
 
-fn gcd(mut a: i64, mut b: i64) -> i64 {
-    while b != 0 {
-        (a, b) = (b, a % b);
-    }
-    a
-}
-
-fn lcm(a: i64, b: i64) -> i64 {
-    a / gcd(a, b) * b
-}
-
 /// Physical runs of complete MX entries, retaining the producer's packing.
 #[allow(clippy::too_many_arguments)]
 fn packed_rect(
@@ -138,7 +127,7 @@ pub(super) fn local(shape: &Shape<'_>, share: &ShardTiles, mach: &Machine) -> R<
             ..*mm
         });
     }
-    plan(
+    plan_columns(
         1,
         share.valid_extent[0],
         share.valid_extent[1],
@@ -152,6 +141,7 @@ pub(super) fn local(shape: &Shape<'_>, share: &ShardTiles, mach: &Machine) -> R<
         },
         mach,
         shape.knobs,
+        packed_columns(shape.demands, &Hw::of(mach))?,
     )
 }
 
@@ -221,6 +211,7 @@ fn joint_options(
     }
     let hw = Hw::of(mach);
     let mm = shape.mm;
+    let columns = packed_columns(shape.demands, &hw)?;
     let mut joint = Vec::new();
     for original in options {
         let shares: Vec<_> = original
@@ -239,7 +230,7 @@ fn joint_options(
             if tm % hw.band != 0 || shares.iter().any(|s| s.padded_extent[0] % tm != 0) {
                 continue;
             }
-            for tn in (hw.kblock..=hw.max_block()).step_by(hw.kblock as usize) {
+            for tn in (columns..=hw.max_block()).step_by(columns as usize) {
                 if (tm / hw.band) * (tn / hw.band) > hw.acc_subtiles
                     || (tn / hw.band) * mm.nk > hw.bank
                     || shares.iter().any(|s| s.valid_extent[1] % tn != 0)
@@ -274,6 +265,7 @@ fn owner_options(
     }
     let hw = Hw::of(mach);
     let mm = shape.mm;
+    let columns = packed_columns(shape.demands, &hw)?;
     let mut result = Vec::new();
     for original in options {
         'policy: for (waves, reuse_b) in [(1, false), (2, false), (1, true), (2, true)] {
@@ -289,14 +281,14 @@ fn owner_options(
                     .min(MAX_TM)
                     .min(hw.bank / mm.nk * hw.band)
                     .min(ring_rows(mach).max(mm.quantum));
-                let most_tiles = (rows / mm.quantum) * (cols / hw.kblock);
+                let most_tiles = (rows / mm.quantum) * (cols / columns);
                 let wanted = (waves * hw.mg).min(most_tiles);
                 let mut best = None;
                 for tm in (mm.quantum..=max_rows).step_by(mm.quantum as usize) {
                     if rows % tm != 0 || tm % hw.band != 0 {
                         continue;
                     }
-                    for tn in (hw.kblock..=cols.min(hw.max_block())).step_by(hw.kblock as usize) {
+                    for tn in (columns..=cols.min(hw.max_block())).step_by(columns as usize) {
                         if cols % tn != 0
                             || (tm / hw.band) * (tn / hw.band) > hw.acc_subtiles
                             || (tn / hw.band) * mm.nk > hw.bank
@@ -586,14 +578,14 @@ pub fn split_options(
     } else {
         mm.quantum
     };
-    let column_unit = shape.demands.iter().fold(
+    let column_unit = v::split::common_quantum(
         if shape.class.is_some() {
             mm.tn
         } else {
             hw.kblock
         },
-        |unit, d| lcm(unit, hw.kblock * d.nk),
-    );
+        packed_columns(shape.demands, &hw)?,
+    )?;
     let mut axes = vec![
         (SplitAxis::Unsplit, 1, 1, "p1".to_string()),
         (SplitAxis::M, p, 1, "m".to_string()),
@@ -1274,10 +1266,16 @@ pub(crate) fn kernel_with_policy(
         mach.digest_bytes(),
         pricing_mutants(),
     );
-    let mut split = CHOICES.get_or_init(ChoiceCache::default).choose_priced(
+    let equivalent = std::cell::RefCell::new(BTreeMap::<String, CostEstimate>::new());
+    let mut split = CHOICES.get_or_init(ChoiceCache::default).choose_bounded_with_prices(
         key,
         request.force.as_deref(),
-        |exact| {
+        |known| {
+            // A cached exact option must seed the same equivalence table as a
+            // newly priced option, including after a forced-only invocation.
+            equivalent.borrow_mut().extend(known.values().filter_map(|option| {
+                ordinary_schedule_key(option, &unforced).map(|key| (key, option.cost.clone()))
+            }));
             let bounds = request.force.is_none() && pricing_mutants().is_empty();
             let candidates = split_options(shape, &unforced, mach)?
                 .into_iter()
@@ -1289,25 +1287,35 @@ pub(crate) fn kernel_with_policy(
                     (option, floor)
                 })
                 .collect();
-            let mut equivalent = BTreeMap::<String, CostEstimate>::new();
-            crate::split::cost::price_bounded(candidates, |mut option| {
-                let key = ordinary_schedule_key(&option, &unforced);
-                if let Some(priced) = exact.get(&option.id) {
-                    if let Some(key) = key {
-                        equivalent.insert(key, priced.cost.clone());
-                    }
-                    return Ok(priced.clone());
-                }
-                if let Some(cost) = key.as_ref().and_then(|key| equivalent.get(key)) {
-                    option.cost = cost.clone();
-                    return Ok(option);
-                }
-                let option = price_option(shape, &unforced, option, mach, backend)?;
-                if let Some(key) = key {
-                    equivalent.insert(key, option.cost.clone());
-                }
-                Ok(option)
-            })
+            Ok(candidates)
+        },
+        |mut option| {
+            let key = ordinary_schedule_key(&option, &unforced);
+            if let Some(cost) = key.as_ref().and_then(|key| equivalent.borrow().get(key).cloned()) {
+                option.cost = cost;
+                return Ok(option);
+            }
+            let option = price_option(shape, &unforced, option, mach, backend)?;
+            if let Some(key) = key {
+                equivalent.borrow_mut().insert(key, option.cost.clone());
+            }
+            Ok(option)
+        },
+        |option| {
+            let kernel = build_option(shape, &unforced, option, mach, backend)?;
+            if matches!(option.axis, SplitAxis::BPass { .. }) {
+                let emitted = b_pass::emit(&kernel, option, &unforced, mach)?;
+                let module = ktpu_l1::text::read(&emitted.text, "B delivery")
+                    .map_err(|e| ktpu_machine::Refusal::new(&e.clause, e.message))?;
+                crate::split::cost::l1_staging(
+                    &module,
+                    &kernel.graph.name,
+                    mach,
+                    request.nodes.staging_budget(),
+                )
+            } else {
+                g::check_staging(&kernel.graph, mach, request.nodes.staging_budget())
+            }
         },
     )?;
     let kernel = build_option(shape, request, &split, mach, backend)?;

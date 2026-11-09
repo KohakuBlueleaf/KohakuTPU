@@ -17,8 +17,9 @@ For every node of the board, with the node's processor held in reset
    DRAM line never written is an ECC error, and a cached store fills its line
    first. (A fresh Verilated card model's DRAM reads zero, so the model runs
    skip this; `run_card.py --paint`.)
-2. **Write the user image** at the start of the node's private span: the
-   ELF's user segments, linked at load address `1 << 40`.
+2. **Write the private image** at the start of the node's private span: the
+   ELF segments linked at load address `1 << 40`. These contain boot-only
+   kernel helpers followed by user text, constants, the app table and data.
 3. **Write the instruction window** (kernel-side text) and the
    **scratchpad** (L0 and kernel data, with the node's **boot table** at
    `0x1_0000`).
@@ -56,29 +57,43 @@ the mesh bits the board's spelling gives it (see
 
 ### L0
 
-1. Checks magic, version, node index and table sizes; finds this node's
-   private span, the shared region and every mesh's staging store; requires a
-   private span of at least 256 KB and a staging store that holds the OS's
-   layout. Any failure prints `L0 node N: …` and stops the node with exit
-   code `0xB0`.
+1. Checks magic, version, node index and table sizes in IMEM; finds this
+   node's private span and requires at least 256 KB. It enters
+   `k_boot_machine` at `private base + linked address - KOS_UV_TEXT`.
+   This boot-only PIC code resides in the already-loaded private image. It
+   discovers shared and staging regions and requires staging to hold the OS
+   layout. Validation uses the existing L0 diagnostics and exit `0xB0`.
 2. Places the page-table pool (local staging, or the span with `pt_dram`)
    and builds the user address space: kernel text, user text, user data, the
-   shared region (uncached with `shared_uncached`).
-3. Copies the boot table into kernel memory, delegates traps and interrupts
-   to S, sets `mtimecmp` to never, `satp` to 0, and jumps to the kernel in S.
+   shared region (uncached with `shared_uncached`, unmapped with `shared_phys`).
+3. Copies the boot table into kernel memory and populates the kernel's node
+   view, including physical grants and the mapped shared size. Immutable
+   scratchpad descriptors supply resident state, linker values and callbacks;
+   the relocated code refers directly only to code/constants relocated with it.
+4. Delegates traps and interrupts to S, sets `mtimecmp` to never, `satp` to 0,
+   and jumps to the kernel in S.
 
 ### The kernel
 
-1. Reads its node's view from the table copy; initialises the frame pool
-   and the log area; asks L0 for the user `satp`; zeroes the user bss.
+1. Uses the node view populated by L0 to enter `k_boot_kernel` at its private
+   physical address. This boot-only code initialises the frame pool and log
+   area, asks L0 for the user `satp`, and zeroes the user bss.
 2. Prints its banner: `KohakuAccel OS: node N of M (mesh m), private …,
    shared …, U units, flags F, tick T`.
 3. Maps the landing zone (uncached) and the uncached view of the shared
-   region; node 0 initialises the shared heap.
-4. Reads the unit list from the table, marks the units on its own mesh
-   local, and drains its completion queue (empty: it is reset with the
-   processor).
-5. Initialises messaging and runs **the start handshake**.
+   region unless `shared_phys`; node 0 initialises a mapped shared heap.
+4. Allocates the mover index buffer and calls the resident cache-maintenance
+   callback before allocating pending requests. The command and both busy-edge
+   polls execute in IMEM: the hardware busy bit is a live sweep state, so the
+   polling code must not wait for a DRAM instruction refill during that interval.
+   It then reads the unit list from the table, marks the units on its own mesh
+   local, and drains its completion queue (empty: it is reset with the processor).
+5. Allocates the inbox, channel queue and barriers, initialises channel free
+   lists and runs **the start handshake**, all in the private boot image.
+   Owner-local setters install private allocator, unit and message state without
+   exposing its addresses. MMU/log initialization and steady-state operations
+   remain resident. Syscalls, dispatch, scheduling and polling retain `-O2` and
+   the selected HOT flags; there is no boot-descriptor access in those paths.
 6. Enables the external interrupt (unless `poll`) and the timer (if
    `tick` > 0).
 7. Node 0 starts `init` with the boot table's command line; every node

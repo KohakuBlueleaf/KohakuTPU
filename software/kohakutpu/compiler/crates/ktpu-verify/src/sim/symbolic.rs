@@ -2,11 +2,16 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::fx::FxHashMap as HashMap;
+use super::fx::{FxHashMap as HashMap, FxHashSet as HashSet};
+
+mod cache;
+mod predicate;
+pub(crate) use predicate::Predicate;
 
 /// Concrete operands do not consult the symbolic arena.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Value {
+#[doc(hidden)]
+pub enum Value {
     Known(u64),
     Symbolic(usize),
 }
@@ -23,14 +28,19 @@ struct Branch {
 
 /// Branches retain their own predicate and share immutable node/word identities.
 #[derive(Clone, Debug)]
-pub(crate) struct Symbolic {
+#[doc(hidden)]
+pub struct Symbolic {
     arena: Arc<Mutex<Arena>>,
-    pub predicate: Bit,
+    pub(crate) predicate: Predicate,
 }
 
 impl PartialEq for Symbolic {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.arena, &other.arena) && self.predicate == other.predicate
+        Arc::ptr_eq(&self.arena, &other.arena)
+            && self.predicate.equivalent(
+                &other.predicate,
+                &mut self.arena.lock().expect("symbolic arena"),
+            )
     }
 }
 
@@ -40,7 +50,7 @@ impl Eq for Symbolic {}
 struct Arena {
     nodes: Vec<Branch>,
     unique: HashMap<Branch, Bit>,
-    cache: HashMap<(Bit, Bit, Bit), Bit>,
+    cache: cache::Computed,
     inputs: usize,
     words: Vec<Word>,
     word_ids: HashMap<Word, usize>,
@@ -62,7 +72,7 @@ impl Default for Arena {
                 },
             ],
             unique: HashMap::default(),
-            cache: HashMap::default(),
+            cache: cache::Computed::default(),
             inputs: 0,
             words: Vec::new(),
             word_ids: HashMap::default(),
@@ -71,6 +81,23 @@ impl Default for Arena {
 }
 
 impl Arena {
+    /// Fresh-input support of a diagram, walking each shared node once.
+    fn support(&self, root: Bit) -> Vec<usize> {
+        let mut inputs = std::collections::BTreeSet::new();
+        let mut seen = HashSet::default();
+        let mut pending = vec![root];
+        while let Some(bit) = pending.pop() {
+            if bit <= 1 || !seen.insert(bit) {
+                continue;
+            }
+            let branch = self.nodes[bit];
+            inputs.insert(branch.var.1);
+            pending.push(branch.low);
+            pending.push(branch.high);
+        }
+        inputs.into_iter().collect()
+    }
+
     pub(crate) fn storage(&self) -> (usize, usize, usize, usize) {
         (
             self.nodes.len(),
@@ -97,41 +124,66 @@ impl Arena {
         id
     }
 
+    /// `c ? yes : no`, as one diagram. The expansion runs on an explicit stack
+    /// in the recursive order (low branch, high branch, node), so its depth is
+    /// the variable count without a native frame per variable.
     fn select(&mut self, c: Bit, yes: Bit, no: Bit) -> Bit {
-        if c == 1 || yes == no {
-            return yes;
+        enum Task {
+            Expand(Bit, Bit, Bit),
+            Join((Bit, Bit, Bit), (usize, usize)),
         }
-        if c == 0 {
-            return no;
-        }
-        if yes == 1 && no == 0 {
-            return c;
-        }
-        let key = (c, yes, no);
-        if let Some(&id) = self.cache.get(&key) {
-            return id;
-        }
-        let var = [c, yes, no]
-            .map(|id| self.nodes[id].var)
-            .into_iter()
-            .min()
-            .expect("three decision operands");
-        let split = |id: Bit| {
-            let n = self.nodes[id];
-            if n.var == var {
-                (n.low, n.high)
-            } else {
-                (id, id)
+        let mut tasks = vec![Task::Expand(c, yes, no)];
+        let mut done: Vec<Bit> = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Expand(c, yes, no) => {
+                    if c == 1 || yes == no {
+                        done.push(yes);
+                        continue;
+                    }
+                    if c == 0 {
+                        done.push(no);
+                        continue;
+                    }
+                    if yes == 1 && no == 0 {
+                        done.push(c);
+                        continue;
+                    }
+                    let key = (c, yes, no);
+                    if let Some(&id) = self.cache.get(&key) {
+                        done.push(id);
+                        continue;
+                    }
+                    let var = [c, yes, no]
+                        .map(|id| self.nodes[id].var)
+                        .into_iter()
+                        .min()
+                        .expect("three decision operands");
+                    let split = |id: Bit| {
+                        let n = self.nodes[id];
+                        if n.var == var {
+                            (n.low, n.high)
+                        } else {
+                            (id, id)
+                        }
+                    };
+                    let (cl, ch) = split(c);
+                    let (yl, yh) = split(yes);
+                    let (nl, nh) = split(no);
+                    tasks.push(Task::Join(key, var));
+                    tasks.push(Task::Expand(ch, yh, nh));
+                    tasks.push(Task::Expand(cl, yl, nl));
+                }
+                Task::Join(key, var) => {
+                    let high = done.pop().expect("high branch");
+                    let low = done.pop().expect("low branch");
+                    let id = self.node(var, low, high);
+                    self.cache.insert(key, id);
+                    done.push(id);
+                }
             }
-        };
-        let (cl, ch) = split(c);
-        let (yl, yh) = split(yes);
-        let (nl, nh) = split(no);
-        let low = self.select(cl, yl, nl);
-        let high = self.select(ch, yh, nh);
-        let id = self.node(var, low, high);
-        self.cache.insert(key, id);
-        id
+        }
+        done.pop().expect("one diagram")
     }
 
     fn not(&mut self, a: Bit) -> Bit {
@@ -318,13 +370,16 @@ impl Default for Symbolic {
     fn default() -> Self {
         Self {
             arena: Arc::new(Mutex::new(Arena::default())),
-            predicate: 1,
+            predicate: Predicate::default(),
         }
     }
 }
 
 impl Symbolic {
-    pub(crate) fn storage(&self) -> (usize, usize, usize, usize) {
+    /// Immutable nodes, unique nodes, computed entries, and interned words.
+    /// This snapshot does not allocate or change the path predicate.
+    #[doc(hidden)]
+    pub fn storage(&self) -> (usize, usize, usize, usize) {
         self.arena.lock().expect("symbolic arena").storage()
     }
 
@@ -339,12 +394,32 @@ impl Symbolic {
             .condition(c, a, b)
     }
 
-    /// Both roots include the entire incoming path condition.
-    pub fn successors(&mut self, condition: Bit) -> (Bit, Bit) {
+    /// Restrict only the continuing path; assertions and summarized polls do
+    /// not consume a failing/fallthrough successor.
+    pub fn assume(&mut self, condition: Bit) {
+        self.predicate.restrict(
+            &mut self.arena.lock().expect("symbolic arena"),
+            condition,
+        );
+    }
+
+    /// A failing assertion terminates with its incoming path identity intact.
+    pub fn try_assume(&mut self, condition: Bit) -> bool {
+        self.predicate.try_restrict(
+            &mut self.arena.lock().expect("symbolic arena"),
+            condition,
+        )
+    }
+
+    /// Both predicates include the entire incoming path condition. Cloning is
+    /// needed only at an actual branch, not at each successful assertion.
+    pub(crate) fn successors(&mut self, condition: Bit) -> (Predicate, Predicate) {
         let mut arena = self.arena.lock().expect("symbolic arena");
-        let taken = arena.and(self.predicate, condition);
+        let mut taken = self.predicate.clone();
+        taken.restrict(&mut arena, condition);
         let not = arena.not(condition);
-        let fallthrough = arena.and(self.predicate, not);
+        let mut fallthrough = self.predicate.clone();
+        fallthrough.restrict(&mut arena, not);
         (taken, fallthrough)
     }
 

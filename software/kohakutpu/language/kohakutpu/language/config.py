@@ -41,6 +41,11 @@ VARIABLES = {
     "KOHAKUTPU_DEVICE": ("application/runtime/device/__init__.py",),
     "KOHAKUTPU_EAGER_FLUSH": ("application/runtime/device/__init__.py",),
     "KOHAKUTPU_HOST_SUBMIT_CACHE": ("application/runtime/card/__init__.py",),
+    "KOHAKUTPU_GRAPH_TIMEOUT_CYCLES": (
+        "application/runtime/graph/backend.py",
+        "application/runtime/os/multi.py",
+    ),
+    "KOHAKUTPU_OS_PROFILE_SYS": ("application/runtime/os/multi.py",),
     "KOHAKUTPU_KEEP_FAILED": ("application/runtime/card/collection.py",),
     "KOHAKUTPU_LIBRARY_CLASSES": ("application/runtime/device/__init__.py",),
     "KOHAKUTPU_OS_COMPACT": ("application/runtime/os/card.py",),
@@ -72,7 +77,10 @@ VARIABLES = {
     ),
     "KOHAKUTPU_PACKAGE_HOME": ("application/runtime/device/__init__.py",),
     "KOHAKUTPU_PREPARED_REPLAY": ("application/runtime/device/__init__.py",),
-    "KOHAKUTPU_PROFILE": ("application/runtime/device/__init__.py",),
+    "KOHAKUTPU_PROFILE": (
+        "application/runtime/device/__init__.py",
+        "os/tools/ostpu/model.py",
+    ),
     "KOHAKUTPU_QUEUE": ("application/runtime/device/__init__.py",),
     "KOHAKUTPU_QUEUE_BYTES": ("application/runtime/device/__init__.py",),
     "KOHAKUTPU_QUEUE_DEPTH": ("application/runtime/device/__init__.py",),

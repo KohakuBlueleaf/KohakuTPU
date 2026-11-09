@@ -20,7 +20,7 @@ use indexmap::IndexMap;
 use ktpu_l1::text::{emit, Stmt, Term};
 
 use super::{body_of, head, unit_of, walk, write};
-use crate::ir::read::instances;
+use crate::ir::read::instance_scopes;
 use crate::ir::{value, Body, Program, Result, StageX};
 use crate::lower::memory as M;
 use crate::lower::mover as MV;
@@ -122,7 +122,7 @@ type Staged = (Option<Plan>, bool);
 /// instance of which goes through a scratch.
 fn plans(body: &Body, t: &Target) -> Result<IndexMap<Key, Staged>> {
     let mut seen: IndexMap<Key, Vec<(Why, Plan)>> = IndexMap::new();
-    for s in instances(body)? {
+    for s in instance_scopes(body)? {
         let StageX::Op(n, env) = &s.x else { continue };
         let op = n.as_op().unwrap();
         if ["gather", "scatter", "copy"].contains(&op.op.as_str()) {

@@ -239,10 +239,18 @@ static void complete(struct kds_node *k, struct kds_part *p, unsigned i)
     }
 }
 
-static void fail(struct kds_node *k, struct kds_part *p, unsigned i, int64_t status, int64_t detail)
+static void fail_at(struct kds_node *k, struct kds_part *p, unsigned i, int64_t status,
+                    int64_t detail, unsigned line)
 {
-    end_part(k, p, status, p->t[i].id, detail);
+    const struct kds_task *t = &p->t[i];
+    /* SYS_WRITE publishes to the kernel ring even when the console FIFO is full.
+     * Only failures pay for formatting or the two writes. */
+    kos_printf("KDS fail node=%u gid=%u task=%u kind=%u unit=%u site=graph.c:%u status=%ld detail=%ld\n",
+               k->me, p->gid, t->id, (unsigned)t->kind, (unsigned)t->unit, line, status, detail);
+    kos_printf("KDS operands a0=%lx a1=%lx a2=%lx a3=%lx\n", t->a[0], t->a[1], t->a[2], t->a[3]);
+    end_part(k, p, status, t->id, detail);
 }
+#define fail(k, p, i, status, detail) fail_at(k, p, i, status, detail, __LINE__)
 
 /* bits [lo, lo + width) of a 256-bit instruction (w[0] = bits 63..0): at
  * most two words, each one mask */
@@ -279,12 +287,15 @@ static int64_t run_move(struct kds_node *k, struct kds_task *t)
         dst = (uint64_t)kds_arena_va(k, t->a[1]);
     } else {
         if (dn >= k->n || KDS_REF_OFF(t->a[1]) < k->spansz[dn] - KOS_LAND_SIZE) {
+            kos_printf("KDS move-check peer-land dst-ref=%lx peer=%u nodes=%u\n", t->a[1], dn, k->n);
             return KOS_EINVAL; /* another node's memory: only its landing zone */
         }
         dst = KDS_REF_OFF(t->a[1]) - (k->spansz[dn] - KOS_LAND_SIZE);
         flags = KOS_MV_LAND(dn);
     }
     if (!src || (dn == k->me && !dst)) {
+        kos_printf("KDS move-check arena-ref src-ref=%lx dst-ref=%lx src=%lx dst=%lx\n",
+                   t->a[0], t->a[1], (uint64_t)(uintptr_t)src, dst);
         return KOS_EINVAL;
     }
     int64_t r = kos_move(src, dst, t->a[2], (unsigned)flags);

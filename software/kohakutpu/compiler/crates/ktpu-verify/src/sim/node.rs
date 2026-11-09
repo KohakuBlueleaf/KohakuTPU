@@ -865,8 +865,7 @@ impl Sim<'_> {
         let nd = &self.nodes[i];
         let value = nd.regs.get(&s.unit).copied().unwrap_or(Value::Known(0));
         let condition = self.symbolic.condition(1, value, Value::Known(0));
-        let (success, _) = self.symbolic.successors(condition);
-        if success == 0 {
+        if !self.symbolic.try_assume(condition) {
             self.find(
                 Kind::Model,
                 self.nodes[i].name.clone(),
@@ -874,7 +873,6 @@ impl Sim<'_> {
             );
             return StepOutcome::Terminal;
         }
-        self.symbolic.predicate = success;
         let p = self.nodes[i].proc;
         self.tick(p, &[]);
         self.nodes[i].regs.insert(s.unit, Value::Known(0));

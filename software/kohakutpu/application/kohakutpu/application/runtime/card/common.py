@@ -14,6 +14,7 @@ from kohakutpu.application.runtime.machine import MachineSpec
 from kohakutpu.application.runtime.memory import CardMemory
 from kohakutpu.application.runtime.paths import ROOT
 from kohakutpu.language.dsl.kernel import _MUTANT
+from kohakutpu.stack.rs import _rs
 
 FIRMWARE = ROOT / "build/fw/kohakutpu_node.elf"
 
@@ -35,7 +36,7 @@ MACHINES = ROOT / "machines"
 ARENA = 0x0010_0000
 
 #: The node queue, at the start of each node's staging store.
-Q_SIZE = 0x0010_0000
+Q_SIZE = _rs.STAGING_RUNTIME_BYTES
 
 #: Each node queue's submission and completion ring depth: a replayed step
 #: (`NodeCard.replay`) submits its packages back to back.

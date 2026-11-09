@@ -2,9 +2,9 @@
 
 use super::*;
 use crate::split::{
-    choose_split, partition_tiles, validate_ownership, CostEstimate, CostFeatures, LegalityWitness,
-    LocalTiming, OutputLayout, PlannedKernel, Region, ShardRole, ShardTiles, SplitAxis,
-    SplitOption, SplitRequest,
+    partition_tiles, validate_ownership, CostEstimate, CostFeatures, LegalityWitness, LocalTiming,
+    OutputLayout, PlannedKernel, Region, ShardRole, ShardTiles, SplitAxis, SplitOption,
+    SplitRequest,
 };
 
 /// A named operand in the invocation's global coordinate system.
@@ -246,6 +246,7 @@ pub fn kernel_options(
     m: &Machine,
     mut local: impl FnMut(i64, i64) -> R<Kernel>,
 ) -> R<PlannedKernel> {
+    let mut admission = crate::split::cost::Admission::default();
     let mut candidates = Vec::new();
     let mut emitted = Vec::new();
     for mut option in options {
@@ -292,7 +293,11 @@ pub fn kernel_options(
             .filter(|p| p.role == g::Role::Out)
             .map(|p| (p.name.clone(), p.spec.clone()))
             .collect();
-        let features = CostFeatures::of_shares(&kernels, m)?;
+        let Some(features) =
+            admission.consider(&option.id, CostFeatures::of_shares(&kernels, m))?
+        else {
+            continue;
+        };
         let kernel = if request.nodes.ids() == [0] {
             signature.clone()
         } else {
@@ -329,7 +334,18 @@ pub fn kernel_options(
         emitted.push((option.id.clone(), kernel));
         candidates.push((option, features));
     }
-    let split = choose_split(candidates, &LocalTiming, request.force.as_deref())?;
+    let options = candidates
+        .into_iter()
+        .map(|(option, features)| crate::split::cost::price_option(option, &features, &LocalTiming))
+        .collect::<R<Vec<_>>>()?;
+    let options = admission.finish(options, request.force.as_deref())?;
+    let split = crate::split::cost::select_admitted(options, request.force.as_deref(), |option| {
+        let (_, kernel) = emitted
+            .iter()
+            .find(|(id, _)| *id == option.id)
+            .expect("priced row candidate");
+        g::check_staging(&kernel.graph, m, request.nodes.staging_budget())
+    })?;
     let Some((_, kernel)) = emitted.into_iter().find(|(id, _)| *id == split.id) else {
         return fail("DSL.KERN.020", "selected row schedule was not emitted");
     };

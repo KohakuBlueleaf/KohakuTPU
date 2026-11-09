@@ -76,6 +76,8 @@ __attribute__((noreturn)) void kos_shutdown(int64_t code);
 int64_t kos_write(const void *buf, uint64_t len);
 int64_t kos_read(void *buf, uint64_t len);
 int kos_printf(const char *fmt, ...);
+/* Cold progress records use SYS_WRITE's persistent log and console publication. */
+void kos_progress(unsigned where, uint64_t a, uint64_t b);
 
 /* memory */
 void *kos_mmap(uint64_t size);

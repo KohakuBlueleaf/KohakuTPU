@@ -220,3 +220,41 @@ pub fn throttled<'a>(module: &'a Module, t: &Target) -> Result<Cow<'a, Module>> 
     (got.vregs, got.vcopies) = (module.vregs, module.vcopies);
     Ok(Cow::Owned(got))
 }
+
+/// The same throttle on structured pricing images. No source-keyed cache or
+/// text reader consumes the result; encoding reads its statement tree directly.
+#[doc(hidden)]
+pub fn throttled_structure<'a>(module: &'a Module, t: &Target) -> Cow<'a, Module> {
+    if on("l2.fill/no-throttle") || on("l2.vector/fit-unthrottled") {
+        return Cow::Borrowed(module);
+    }
+    let syncs = syncs_of(module, t.fill_track_depth);
+    if syncs.is_empty() {
+        return Cow::Borrowed(module);
+    }
+    fn insert(stmts: Vec<Stmt>, syncs: &BTreeMap<u32, u32>) -> Vec<Stmt> {
+        let mut out = Vec::new();
+        for mut st in stmts {
+            if let Some(&slack) = syncs.get(&st.line) {
+                out.push(crate::lower::vector::gen::typed::sync(
+                    "fe",
+                    "fill",
+                    Some(Term::int(slack.into())),
+                ));
+            }
+            st.body = insert(st.body, syncs);
+            out.push(st);
+        }
+        out
+    }
+    let mut got = module.clone();
+    got.source.clear();
+    let mut line = 1;
+    for d in got.images.values_mut() {
+        d.line = line;
+        line += 1;
+        d.stmts = insert(std::mem::take(&mut d.stmts), &syncs);
+        crate::lower::vector::gen::print::positions(&mut d.stmts, 1, &mut line);
+    }
+    Cow::Owned(got)
+}

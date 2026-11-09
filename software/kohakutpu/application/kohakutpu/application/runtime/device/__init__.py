@@ -60,10 +60,12 @@ from kohakutpu.application.runtime.device.kernels import Kernels
 from kohakutpu.application.runtime.device.replay import Replay
 from kohakutpu.application.runtime.device.submission import Submission
 from kohakutpu.application.runtime.double import DoubleCard
+from kohakutpu.application.runtime.graph import backend as graph_backend
 from kohakutpu.application.runtime.memory import package_homes
 from kohakutpu.application.runtime.native import direct as native_direct
 from kohakutpu.application.runtime.offline import OfflineCard
 from kohakutpu.application.runtime.os.card import OSCard
+from kohakutpu.application.runtime.os.multi import MultiOSCard
 from kohakutpu.application.runtime.paths import ROOT
 from kohakutpu.driver.clock.card import load_board
 from kohakutpu.language import machine as MF
@@ -75,6 +77,10 @@ from kohakutpu.stack.kernel import arena_name
 class Device(Kernels, Allocation, Submission, Replay):
     """A KohakuTPU card of one or more nodes sharing memory: kernel runs,
     counters. Each argument left None comes from its environment variable."""
+
+    # The retained graph backend bound by `graph.backend.configure`.
+    _bound_backend: Any = None
+    _bound_source: Any = None
 
     def __init__(
         self,
@@ -92,6 +98,9 @@ class Device(Kernels, Allocation, Submission, Replay):
         queue_depth: int | None = None,
         os_session=None,
         os_units=None,
+        os_memory=None,
+        os_arena=None,
+        graph_mode=None,
     ) -> None:
         self.recipe_epoch = rs._rs.RecipeEpoch()
         self._library = self._machine = None
@@ -157,10 +166,27 @@ class Device(Kernels, Allocation, Submission, Replay):
                 raise ValueError(
                     "OS device requires a booted os_session and OS unit map"
                 )
-            if nodes != 1:
-                raise ValueError("OS device adapter currently owns one node")
             self.build = None
-            self.card = OSCard(board, os_session, os_units)
+            if isinstance(os_session, dict):
+                if os_memory is None or os_arena is None:
+                    raise ValueError(
+                        "local residents require physical memory and a heap span"
+                    )
+                if set(os_session) != set(range(nodes)):
+                    raise ValueError("local residents must match the device's nodes")
+                self.card = MultiOSCard(
+                    board,
+                    os_session,
+                    os_units,
+                    os_memory,
+                    os_arena,
+                    resident_mode=self._resident_mode,
+                )
+                graph_mode = "kaos"
+            else:
+                if nodes != 1:
+                    raise ValueError("a multi-node OS device requires local residents")
+                self.card = OSCard(board, os_session, os_units)
         elif kind in ("offline", "double"):
             self.build = None
             self.card = {"offline": OfflineCard, "double": DoubleCard}[kind](
@@ -195,6 +221,7 @@ class Device(Kernels, Allocation, Submission, Replay):
                 log=log,
                 resident_mode=self._resident_mode,
             )
+        graph_backend.configure(self, graph_mode)
         self.machine = self.card.machine
         #: The card's memory, which every allocation here comes from.
         self.memory = self.card.memory
@@ -314,6 +341,8 @@ class Device(Kernels, Allocation, Submission, Replay):
             return {}
         try:
             self.drain()
+            if self._bound_backend is not None:
+                self._bound_backend.close()
         finally:
             # No reservation is revoked until card shutdown succeeds.
             result = self.card.close()

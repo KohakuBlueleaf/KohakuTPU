@@ -585,8 +585,17 @@ static int init(struct kds_node *k, unsigned flags, unsigned mask, uint64_t aren
         }
         k->depth[u] = k->units[u].depth ? k->units[u].depth : 16;
     }
-    int st = (flags & KDS_F_RESIDENT) ? (int)kos_de_epoch(0, 0, KOS_DE_OPEN) : KOS_OK;
-    st = st ? st : kds_arena_init(k, arena);
+    int st = KOS_OK;
+    if (flags & KDS_F_RESIDENT) {
+        kos_progress(KOS_W_DE_OPEN, k->me, flags);
+        st = (int)kos_de_epoch(0, 0, KOS_DE_OPEN);
+        kos_progress(KOS_W_DE_OPENED, k->me, (uint64_t)(int64_t)st);
+    }
+    if (!st) {
+        kos_progress(KOS_W_ARENA, k->me, arena);
+        st = kds_arena_init(k, arena);
+        kos_progress(KOS_W_ARENA_DONE, k->me, (uint64_t)(int64_t)st);
+    }
     kds_ref stage;
     if (!st) {
         st = (int)kds_arena_alloc(k, KDS_LZ_SLICE, KDS_SERVER, &stage);
@@ -611,9 +620,11 @@ int64_t kds_server(uint64_t arg)
 {
     unsigned flags = arg & 0xff, mask = (arg >> 8) & 0xf, starter = (arg >> 12) & 0xfff;
     uint64_t size = KOS_ALIGN_UP(sizeof(struct kds_node), 4096);
+    kos_progress(KOS_W_SERVER_STATE, size, starter);
     struct kds_node *k = kos_mmap(size);
     int st = k ? init(k, flags, mask, (arg >> 24) << 12) : KOS_ENOMEM;
     struct kds_msg ready = {KM_READY, 0, 0, 0, {(uint64_t)(int64_t)st, 0, 0, 0}};
+    kos_progress(KOS_W_SERVER_ACK, starter, (uint64_t)(int64_t)st);
     kds_send(KOS_TID_NODE(starter), KDS_REPLY(starter), &ready, 0);
     if (st) {
         if (k) {

@@ -1,13 +1,17 @@
 """The card's records against the runs they belong to: one row a run, whatever
 went out as a list."""
 
+import json
 from types import SimpleNamespace as NS
+from typing import cast
 
+import backends
 import pytest
 import record
 import traces
 
 from kohakutpu.application.runtime import device as D
+from kohakutpu.application.runtime.device.common import Submitted
 
 
 def test_an_eager_list_is_a_row_a_run_with_its_own_ring_cycles():
@@ -103,3 +107,48 @@ def test_without_a_ring_a_list_keeps_each_runs_own_cycles():
     ]
     rows = record.card_rows(runs, [dict(cycles=30, list_index=2, item_tag=1)], None)
     assert [(r["name"], r["cycles"]) for r in rows] == [("b", 30), ("c", 0)]
+
+
+def test_backend_observer_keeps_group_metrics_and_output_bytes(tmp_path, monkeypatch):
+    def init(self, *args, **kwargs):
+        self.runs, self.counters = [], {}
+
+    def collect(self, submitted):
+        if submitted.run is None:
+            submitted.run = NS(name="model", kind="graph", wall=0.2, info={})
+            self.runs.append(submitted.run)
+        return submitted.run
+
+    payload = b"\x12\x34\x56\x78"
+    monkeypatch.setattr(D.Device, "__init__", init)
+    monkeypatch.setattr(D.Device, "_collect_one", collect)
+    monkeypatch.setattr(D.Device, "read", lambda self, at, count: payload)
+    finish = backends.observe(tmp_path, "kaos", measure=True)
+    dev = D.Device("os")
+    nodes = {0: dict(cycles=30, de_entries=4), 1: dict(cycles=50, de_entries=7)}
+    submitted = NS(
+        run=None,
+        result=dict(cycles=50, nodes=nodes, phases=dict(makespan_seconds=0.15)),
+    )
+    run = dev._collect_one(cast(Submitted, submitted))
+    run.info["seq"] = 9
+    dev._collect_one(cast(Submitted, submitted))
+    assert dev.read(0, len(payload)) == payload
+    finish()
+    rows = [
+        json.loads(line) for line in (tmp_path / "card.jsonl").read_text().splitlines()
+    ]
+    assert len(rows) == 1
+    assert rows[0]["seq"] == run.info["seq"]
+    assert rows[0]["nodes"] == {str(k): v for k, v in nodes.items()}
+    assert rows[0]["max_node_cycles"] == max(n["cycles"] for n in nodes.values())
+    assert rows[0]["makespan_seconds"] == submitted.result["phases"]["makespan_seconds"]
+    assert (
+        json.loads((tmp_path / "outputs.jsonl").read_text())["bytes"] == payload.hex()
+    )
+    stats = [
+        json.loads(line) for line in (tmp_path / "units.jsonl").read_text().splitlines()
+    ]
+    assert {r["node"]: r["de_entries"] for r in stats} == {
+        n: result["de_entries"] for n, result in nodes.items()
+    }

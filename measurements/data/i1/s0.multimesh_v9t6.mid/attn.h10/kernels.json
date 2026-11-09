@@ -1,0 +1,123 @@
+{
+ "copy_d326bb044e": {
+  "signature": "src: f16[7880, 16] @dram, dst: f16[7880, 16] @dram",
+  "g1": [],
+  "cases": [
+   "attn.h10"
+  ]
+ },
+ "mm_3aec19bc42": {
+  "signature": "a: mx7a[2000, 64] @dram(gm=50, nk=2), b: mx7b[2240, 64] @dram(gn=56, nk=2), out: f16[2000, 224] @dram",
+  "g1": [],
+  "cases": [
+   "attn.h10"
+  ]
+ },
+ "mm_78d549e348": {
+  "signature": "a: mx7a[200, 768] @dram(gm=50, nk=2), b: mx7b[1920, 768] @dram(gn=48, nk=2), out: f16[200, 1920] @dram",
+  "g1": [],
+  "cases": [
+   "attn.h10"
+  ]
+ },
+ "mm_bb69e43602": {
+  "signature": "a: mx7a[2000, 224] @dram(gm=50, nk=1), b: mx7b[640, 224] @dram(gn=16, nk=1), out: f16[2000, 64] @dram",
+  "g1": [],
+  "cases": [
+   "attn.h10"
+  ]
+ },
+ "quant_0f17611ff1": {
+  "signature": "x: f16[1920, 768] @dram, q: mx7b[1920, 768] @dram(gn=48, nk=2)",
+  "g1": [],
+  "cases": [
+   "attn.h10"
+  ]
+ },
+ "quant_20f0953681": {
+  "signature": "x: f16[197, 768] @dram, q: mx7a[200, 768] @dram(gm=50, nk=2)",
+  "g1": [
+   "t_ff627409ee1e283dc07c93d627095490c37db1e92377fa6f64ea1a73f2d69d57"
+  ],
+  "cases": [
+   "attn.h10"
+  ]
+ },
+ "quant_373851ea43": {
+  "signature": "p_x: f16[23640, 16] @dram, q: mx7b[640, 224] @dram(gn=16, nk=1)",
+  "g1": [],
+  "cases": [
+   "attn.h10"
+  ]
+ },
+ "quant_3acf97507b": {
+  "signature": "p_x: f16[27580, 16] @dram, q: mx7a[2000, 224] @dram(gm=50, nk=1)",
+  "g1": [],
+  "cases": [
+   "attn.h10"
+  ]
+ },
+ "quant_4c257bc223": {
+  "signature": "p_x: f16[23640, 16] @dram, q: mx7b[2240, 64] @dram(gn=56, nk=2)",
+  "g1": [],
+  "cases": [
+   "attn.h10"
+  ]
+ },
+ "quant_9dd982cf53": {
+  "signature": "x: f16[1970, 224] @dram, q: mx7a[2000, 224] @dram(gm=50, nk=1)",
+  "g1": [],
+  "cases": [
+   "attn.h10"
+  ]
+ },
+ "quant_d80685e597": {
+  "signature": "p_x: f16[23640, 16] @dram, q: mx7a[2000, 64] @dram(gm=50, nk=2)",
+  "g1": [],
+  "cases": [
+   "attn.h10"
+  ]
+ },
+ "rows_1bf3030a11": {
+  "signature": "in0: f16[197, 1920] @dram, in1: f16[1920] @dram, out: f16[197, 1920] @dram",
+  "g1": [],
+  "cases": [
+   "attn.h10"
+  ]
+ },
+ "rows_2a63728da6": {
+  "signature": "in0: f16[1970, 224] @dram, in1: f16[224] @dram, in2: f16[224] @dram, out: f16[1970, 224] @dram",
+  "g1": [],
+  "cases": [
+   "attn.h10"
+  ]
+ },
+ "rows_3046491a37": {
+  "signature": "in0: f16[1970, 224] @dram, in1: f16[224] @dram, out: f16[1970, 224] @dram",
+  "g1": [],
+  "cases": [
+   "attn.h10"
+  ]
+ },
+ "walk_4947574ce6": {
+  "signature": "src: f16[8000, 16] @dram, dst: f16[7880, 16] @dram",
+  "g1": [],
+  "cases": [
+   "attn.h10"
+  ]
+ },
+ "walk_4c7790c1b6": {
+  "signature": "src: f16[28000, 16] @dram, dst: f16[27580, 16] @dram",
+  "g1": [],
+  "cases": [
+   "attn.h10"
+  ]
+ },
+ "walk_6ced5ffb0f": {
+  "signature": "src: f16[7880, 16] @dram, dst: f16[7880, 16] @dram",
+  "g1": [],
+  "cases": [
+   "attn.h10"
+  ]
+ }
+}

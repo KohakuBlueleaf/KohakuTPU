@@ -15,6 +15,16 @@ pub type Run = (usize, usize, usize, Vec<Increment>);
 
 /// The run saving the most payload slots, or None when no run saves any.
 pub fn periodic(words: &[Word], fields: &[(u32, u32)]) -> Option<Run> {
+    periodic_profiled(words, fields, false).0
+}
+
+/// Exact search reference and extension-work counter for stage witnesses.
+/// Exhaustive mode disables only the optimistic payload-saving bound.
+#[doc(hidden)]
+pub fn periodic_profiled(
+    words: &[Word], fields: &[(u32, u32)], exhaustive: bool,
+) -> (Option<Run>, u64) {
+    let mut extensions = 0;
     let mut rest = Word::ZERO.not();
     for &(bit, width) in fields {
         rest = rest.cleared(bit, width);
@@ -25,6 +35,14 @@ pub fn periodic(words: &[Word], fields: &[(u32, u32)]) -> Option<Run> {
     let n = words.len();
     for period in 1..=MAX_PERIOD.min(n / 2) {
         for head in 0..=(n - 2 * period) {
+            // Even a perfect suffix cannot save more than all its complete
+            // repetitions minus the template, with zero increment overhead.
+            // Later heads have no larger bound. Equality cannot replace the
+            // incumbent because the choice below requires strict improvement.
+            let upper = ((n - head) / period - 1) * period;
+            if !exhaustive && upper as u128 <= saved as u128 {
+                break;
+            }
             if differs(&words[head], &words[head + period]) {
                 continue;
             }
@@ -52,6 +70,7 @@ pub fn periodic(words: &[Word], fields: &[(u32, u32)]) -> Option<Run> {
             }
             let mut repeats = 2;
             while head + (repeats + 1) * period <= n {
+                extensions += 1;
                 let base = head + repeats * period;
                 let mut good = (0..period).all(|j| !differs(&words[base + j], &words[head + j]));
                 for j in 0..period {
@@ -77,7 +96,7 @@ pub fn periodic(words: &[Word], fields: &[(u32, u32)]) -> Option<Run> {
             }
         }
     }
-    best
+    (best, extensions)
 }
 
 /// `w` with field `[bit, bit+width)` plus `add`, modulo 2^width.

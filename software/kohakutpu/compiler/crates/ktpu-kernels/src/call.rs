@@ -1469,7 +1469,8 @@ fn row_sequence(
             ],
         );
     }
-    let node_cycles = crate::split::cost::graph_nodes(&kernel.graph, m)?;
+    let node_cycles =
+        crate::split::cost::graph_nodes(&kernel.graph, m, request.nodes.staging_budget())?;
     if node_cycles
         .keys()
         .any(|node| !request.nodes.ids().contains(node))
@@ -2510,6 +2511,7 @@ fn split_with_timing(
     } else {
         option
     };
+    g::check_staging(&kernel.graph, m, request.nodes.staging_budget())?;
     Ok(PlannedKernel {
         l1: None,
         kernel,

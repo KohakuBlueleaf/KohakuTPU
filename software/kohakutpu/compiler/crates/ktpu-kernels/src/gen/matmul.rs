@@ -404,12 +404,40 @@ pub fn plan(
     mach: &Machine,
     knobs: &Knobs,
 ) -> R<Mm> {
+    plan_columns(
+        bt,
+        m,
+        n,
+        k,
+        shared,
+        quantum,
+        pairing,
+        mach,
+        knobs,
+        Hw::of(mach).kblock,
+    )
+}
+
+/// Plan local tiles in whole destination column quanta.
+#[allow(clippy::too_many_arguments)]
+fn plan_columns(
+    bt: i64,
+    m: i64,
+    n: i64,
+    k: i64,
+    shared: bool,
+    quantum: i64,
+    pairing: Pairing,
+    mach: &Machine,
+    knobs: &Knobs,
+    columns: i64,
+) -> R<Mm> {
     let hw = Hw::of(mach);
     let (kb, band) = (hw.kblock, hw.band);
-    if n % kb != 0 {
+    if n % columns != 0 {
         return fail(
             "API.OP.006",
-            format!("N = {n}: the product's columns are whole blocks of {kb}"),
+            format!("N = {n}: the product's columns are whole blocks of {columns}"),
         );
     }
     let pairs = mach.pairs_blocks(pairing);
@@ -426,6 +454,7 @@ pub fn plan(
     };
     let mut mp = cdiv(m, quantum) * quantum;
     let max_tm = (hw.bank / nk * band)
+        .min(hw.acc_subtiles * band * band / columns)
         .min(MAX_TM)
         .min(ring_rows(mach).max(quantum))
         .min(mp)
@@ -447,29 +476,40 @@ pub fn plan(
     // Every legal N tile for M tile `tm`, narrowest first: whole blocks dividing
     // N that the accumulator and a bank hold, at least `knobs.n_tiles` of them.
     let legal = move |tm: i64| {
-        (1..=n.min(hw.max_block()) / kb)
-            .map(move |x| x * kb)
+        (1..=n.min(hw.max_block()) / columns)
+            .map(move |x| x * columns)
             .filter(move |&x| {
                 n % x == 0
                     && (tm / band) * (x / band) <= hw.acc_subtiles
                     && (x / band) * nk <= hw.bank
-                    && n / x >= knobs.n_tiles.min(n / kb)
+                    && n / x >= knobs.n_tiles.min(n / columns)
             })
     };
     let tn_with = |tm: i64, dense: bool| -> R<i64> {
-        let mut tn = v::block(n, hw.max_block(), &hw)?;
-        while (tm / band) * (tn / band) > hw.acc_subtiles {
-            tn /= 2;
+        let mut tn = columns;
+        while 2 * tn <= hw.max_block()
+            && n % (2 * tn) == 0
+            && (tm / band) * (2 * tn / band) <= hw.acc_subtiles
+        {
+            tn *= 2;
         }
         if dense {
             return Ok(legal(tm).next_back().unwrap_or(tn));
         }
-        while n / tn < knobs.n_tiles && tn / 2 >= kb && n % (tn / 2) == 0 {
+        while n / tn < knobs.n_tiles && tn / 2 >= columns && n % (tn / 2) == 0 {
             tn /= 2;
         }
         if knobs.waves {
             // The ring spreads every batch's row tiles over the clusters.
-            return Ok(wave_tn(n, tm, nk, bt * cdiv(rows, tm), tn, &hw));
+            return Ok(wave_tn_columns(
+                n,
+                tm,
+                nk,
+                bt * cdiv(rows, tm),
+                tn,
+                &hw,
+                columns,
+            ));
         }
         Ok(tn)
     };
@@ -482,7 +522,9 @@ pub fn plan(
                 let units = bt * cdiv(rows, tm);
                 return Ok(legal(tm)
                     .min_by_key(|&x| (wave_cost(units, n, kp, nk, tm, x, &hw), -x))
-                    .expect("a one-block N tile fits every M tile `max_tm` allows"));
+                    .ok_or_else(|| {
+                        ktpu_machine::Refusal::new("API.OP.006", "no whole destination tile fits")
+                    })?);
             }
         };
         tn_with(tm, dense)
@@ -518,9 +560,21 @@ pub fn plan(
 /// The N tile, at most `widest`, of least `waves * tn` for `units` row tiles
 /// over the clusters (legal `kblock` multiples dividing `n`; widest of equals).
 pub fn wave_tn(n: i64, tm: i64, nk: i64, units: i64, widest: i64, hw: &Hw) -> i64 {
+    wave_tn_columns(n, tm, nk, units, widest, hw, hw.kblock)
+}
+
+fn wave_tn_columns(
+    n: i64,
+    tm: i64,
+    nk: i64,
+    units: i64,
+    widest: i64,
+    hw: &Hw,
+    columns: i64,
+) -> i64 {
     let band = hw.band;
-    (1..=widest / hw.kblock)
-        .map(|x| x * hw.kblock)
+    (1..=widest / columns)
+        .map(|x| x * columns)
         .filter(|&x| {
             n % x == 0 && (tm / band) * (x / band) <= hw.acc_subtiles && (x / band) * nk <= hw.bank
         })
@@ -599,6 +653,20 @@ pub struct QDemand {
     pub nk: i64,
     pub rp: i64,
     pub cp: i64,
+}
+
+/// Common column quantum of the destinations' MXFP7 store views.
+pub(super) fn packed_columns(demands: &[QDemand], hw: &Hw) -> R<i64> {
+    demands.iter().try_fold(hw.kblock, |columns, demand| {
+        let chunk = hw.kblock.checked_mul(demand.nk).filter(|&n| n > 0);
+        let Some(chunk) = chunk else {
+            return fail(
+                "API.OP.007",
+                "a packing needs a positive representable K chunk",
+            );
+        };
+        v::split::common_quantum(columns, chunk)
+    })
 }
 
 impl QDemand {
@@ -1087,14 +1155,19 @@ fn quant_a(t: &mut Trace, dst: &View, src: &View, padded: bool, status: Option<&
 
 /// The epilogue's column block: the widest of `chunk`-column blocks dividing
 /// the tile's width whose trip of `quantum` rows fits the L1.
-fn epilogue_block(mm: &Mm, operands: &[Operand], out: &Operand, chunk: i64, hw: &Hw) -> i64 {
+fn epilogue_block(mm: &Mm, operands: &[Operand], out: &Operand, chunk: i64, hw: &Hw) -> R<i64> {
     let need = mm.quantum / hw.band;
     (1..=mm.tn / chunk)
         .rev()
         .map(|k| k * chunk)
         .filter(|w| mm.tn % w == 0)
         .find(|w| v::bands_fit(operands, out.kind, *w, hw) >= need)
-        .unwrap_or(hw.kblock)
+        .ok_or_else(|| {
+            ktpu_machine::Refusal::new(
+                "API.OP.007",
+                "an epilogue needs whole destination chunks that divide its tile and fit L1",
+            )
+        })
 }
 
 /// What the kernel for `mm` lays out: the epilogue's operands (the product
@@ -1129,8 +1202,8 @@ fn laid(
         ..Operand::new(Kind::Tile)
     }];
     operands.extend_from_slice(extras);
-    let chunk = hw.kblock * demands.iter().map(|d| d.nk).max().unwrap_or(1);
-    let wc = epilogue_block(mm, &operands, out, chunk, &hw);
+    let chunk = packed_columns(demands, &hw)?;
+    let wc = epilogue_block(mm, &operands, out, chunk, &hw)?;
     let bands = epilogue_bands(mm, &operands, out, wc, &hw)?;
     let pl = v::plan(
         &operands,
@@ -1178,6 +1251,9 @@ pub fn packs_demands(
         return Ok(true);
     }
     let hw = Hw::of(mach);
+    if mm.tn % packed_columns(demands, &hw)? != 0 {
+        return Ok(false);
+    }
     let l = laid(
         mm,
         &computed(e, knobs),

@@ -41,6 +41,7 @@ static int64_t ostpu_cpu_rw(const uint64_t *a)
 
 static int ostpu(int argc, char **argv)
 {
+    kos_progress(KOS_W_OSTPU_ARGS, (uint64_t)argc, 0);
     uint64_t num[4] = {256, 4096, 0, 0};
     unsigned nn;
     unsigned flags = kds_args(argc, argv, num, 4, &nn);
@@ -48,24 +49,32 @@ static int ostpu(int argc, char **argv)
         return KOS_EINVAL;
     }
     volatile struct ostpu_mailbox *m = (volatile void *)((uintptr_t)kos_land() + MAILBOX);
+    kos_progress(KOS_W_MAILBOX, (uint64_t)(uintptr_t)m, sizeof *m);
     memset((void *)m, 0, sizeof *m);
+    kos_progress(KOS_W_SERVER_START, num[0], num[3]);
     int st = kds_start(flags | (num[3] ? KDS_F_RESIDENT : 0), KDS_ARENA + num[0] * sizeof(struct kds_task) + num[1],
                        num[3] ? 1u << kos_node() : KDS_ALL_NODES);
+    kos_progress(KOS_W_SERVER_STARTED, num[0], (uint64_t)(int64_t)st);
     if (st) {
         return st;
     }
     kds_ref tasks, data;
+    kos_progress(KOS_W_TASK_ALLOC, num[0] * sizeof(struct kds_task), 0);
     st = (int)kds_alloc(kos_node(), num[0] * sizeof(struct kds_task), &tasks);
+    kos_progress(KOS_W_TASK_ALLOCATED, num[0], (uint64_t)(int64_t)st);
     if (st) {
         kds_stop();
         return st;
     }
+    kos_progress(KOS_W_DATA_ALLOC, num[1], 0);
     st = (int)kds_alloc(kos_node(), num[1], &data);
+    kos_progress(KOS_W_DATA_ALLOCATED, num[1], (uint64_t)(int64_t)st);
     if (st) {
         kds_free(tasks);
         kds_stop();
         return st;
     }
+    kos_progress(KOS_W_MAILBOX_FILL, tasks, data);
     struct kds_graph g;
     kds_graph_init(&g, kds_va(tasks), (unsigned)num[0]);
     m->tasks_pa = kds_pa(tasks);
@@ -75,9 +84,12 @@ static int ostpu(int argc, char **argv)
     m->data_bytes = num[1];
     m->dpad[0] = (uint64_t)(uintptr_t)ostpu_cpu_rw;
     m->dpad[1] = OSTPU_CAP_SLOTS | (num[3] ? OSTPU_CAP_LOCAL | OSTPU_CAP_EPOCH : 0);
+    kos_progress(KOS_W_RELEASE, (uint64_t)(uintptr_t)m, 0);
     kos_release();
+    kos_progress(KOS_W_READY_WRITE, (uint64_t)(uintptr_t)m, 0);
     __asm__ volatile("fence rw, rw" ::: "memory");
     m->magic = OSTPU_MAGIC;
+    kos_progress(KOS_W_READY, (uint64_t)(uintptr_t)m, 0);
     uint64_t seen = 0, ret_epoch = 0, ret_tasks = 0;
     int failed_epoch = 0;
     for (;;) {
@@ -109,7 +121,16 @@ static int ostpu(int argc, char **argv)
             }
             g.n = (unsigned)m->tasks;
             if (num[2] && !hit) {
-                kds_retain(&g);
+                st = kds_retain(&g);
+                if (st) {
+                    ret_epoch = ret_tasks = 0;
+                    r.status = st;
+                    volatile uint64_t *out = (volatile uint64_t *)&m->stat;
+                    for (unsigned i = 0; i < sizeof m->stat / 8; ++i) {
+                        out[i] = 0;
+                    }
+                    goto publish;
+                }
                 ret_epoch = ep;
                 ret_tasks = m->tasks;
 #ifdef KOS_LAUNCH_RING
@@ -146,8 +167,11 @@ static int ostpu(int argc, char **argv)
             }
 #endif
             if (num[2] && (!ep || r.status)) {
-                kds_retain(0);
-                ret_epoch = 0;
+                st = kds_retain(0);
+                if (st && !r.status) {
+                    r.status = st;
+                }
+                ret_epoch = ret_tasks = 0;
             }
             const uint64_t *ap = (const uint64_t *)&a, *bp = (const uint64_t *)&b;
             volatile uint64_t *out = (volatile uint64_t *)&m->stat;
@@ -155,6 +179,7 @@ static int ostpu(int argc, char **argv)
                 out[i] = bp[i] - ap[i];
             }
         }
+publish:
         failed_epoch |= r.status != KOS_OK;
         m->status = r.status;
         m->failed = r.failed;
@@ -172,7 +197,13 @@ static int ostpu(int argc, char **argv)
         return KOS_EBUSY;
     }
     if (num[2] && ret_epoch) {
-        kds_retain(0);
+        st = kds_retain(0);
+        if (st) {
+            m->status = st;
+            __asm__ volatile("fence rw, rw" ::: "memory");
+            m->done = seen;
+            return st; /* Do not free a graph still retained by the server. */
+        }
     }
     kds_free(data);
     kds_free(tasks);

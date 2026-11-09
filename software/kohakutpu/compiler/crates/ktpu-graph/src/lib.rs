@@ -18,6 +18,7 @@ pub use text::{lower, L2Module, Line};
 use ktpu_machine::{Machine, Refusal};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 /// The stage's version, a key of its cache entries.
 pub const VERSION: u32 = 1;
@@ -47,8 +48,8 @@ pub fn node_cycles(graph: &Graph, machine: &Machine) -> Result<BTreeMap<i64, i64
         cache.borrow().as_ref().and_then(|entries| {
             entries
                 .iter()
-                .find(|(m, previous, _)| *m == machine_key && previous == &key)
-                .map(|(_, _, cycles)| cycles.clone())
+                .find(|(m, previous, _, _)| *m == machine_key && previous == &key)
+                .map(|(_, _, cycles, _)| cycles.clone())
         })
     });
     if let Some(cycles) = cached {
@@ -68,10 +69,69 @@ pub fn node_cycles(graph: &Graph, machine: &Machine) -> Result<BTreeMap<i64, i64
             if entries.len() == 32 {
                 entries.remove(0);
             }
-            entries.push((machine_key, key, cycles.clone()));
+            entries.push((
+                machine_key,
+                key,
+                cycles.clone(),
+                Rc::new((program.name.clone(), compiled.l1)),
+            ));
         }
     });
     Ok(cycles)
+}
+
+/// Capacity of a complete, pooled candidate, independently of its timing.
+/// Explicit placements admit directly from declarations. Automatic placement
+/// and capacity-boundary cases use the emitted L1, shared with price compilation.
+pub fn check_staging(
+    graph: &Graph,
+    machine: &Machine,
+    budget: ktpu_machine::StagingBudget,
+) -> Result<(), Refusal> {
+    let caller = graph.ports.iter().map(|p| p.name.clone()).collect();
+    if graph.scratch.iter().all(|s| match s.spec.space {
+        BufSpace::Dram => true,
+        BufSpace::Stage => s.spec.layout.iter().any(|(key, _)| key == "node"),
+        BufSpace::Mem | BufSpace::Any => false,
+    }) {
+        let params: Vec<_> = graph
+            .scratch
+            .iter()
+            .map(|s| (s.name.clone(), term::spec(&s.spec)))
+            .collect();
+        if ktpu_l1::layout::scratch::staging_bounds(&params, &caller, machine, budget)
+            .map_err(|e| Refusal::new(&e.clause, e.message))?
+        {
+            return Ok(());
+        }
+    }
+    let machine_key = machine.digest_bytes();
+    let mut key = graph.clone();
+    key.name.clear();
+    let cached = CYCLES.with(|cache| {
+        cache.borrow().as_ref().and_then(|entries| {
+            entries
+                .iter()
+                .find(|(m, previous, _, _)| *m == machine_key && previous == &key)
+                .map(|(_, _, _, module)| Rc::clone(module))
+        })
+    });
+    let emitted = if let Some(emitted) = cached {
+        emitted
+    } else {
+        let program = program(graph, machine)?;
+        let compiled = ktpu_l2::compile_l1(
+            &program,
+            machine,
+            &ktpu_l2::PASSES,
+            true,
+            &ktpu_l2::Search::default(),
+        )
+        .map_err(|e| Refusal::new("L2.COST.001", e.to_string()))?;
+        Rc::new((program.name, compiled.l1))
+    };
+    ktpu_l1::layout::scratch::admit_staging(&emitted.1, &emitted.0, &caller, machine, budget)
+        .map_err(|e| Refusal::new(&e.clause, e.message))
 }
 
 /// Physical-node prices from an already scheduled complete L1 module.
@@ -113,7 +173,12 @@ pub fn module_node_cycles(
     Ok(result)
 }
 
-type CycleEntries = Vec<([u8; 32], Graph, BTreeMap<i64, i64>)>;
+type CycleEntries = Vec<(
+    [u8; 32],
+    Graph,
+    BTreeMap<i64, i64>,
+    Rc<(String, ktpu_l1::text::Module)>,
+)>;
 thread_local! {
     static CYCLES: RefCell<Option<CycleEntries>> = const { RefCell::new(None) };
 }

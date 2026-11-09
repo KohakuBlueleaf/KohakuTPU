@@ -20,6 +20,7 @@ import sys
 import time
 import traceback
 
+import backends
 import zoo
 from examples.tinygrad import mnist_models
 from h import meta
@@ -433,6 +434,15 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("workload", choices=WORKLOADS)
     ap.add_argument("--card", action="store_true")
+    ap.add_argument("--backend", choices=("firmware", "kaos"))
+    ap.add_argument("--os-board", default="card_v9t6_4n")
+    ap.add_argument(
+        "--kos-image",
+        type=pathlib.Path,
+        default=pathlib.Path(os.environ.get("KOS_IMAGE", ROOT / "build/os/kos.elf")),
+    )
+    ap.add_argument("--os-capacity", type=int, default=65534)
+    ap.add_argument("--os-bytes", type=lambda value: int(value, 0), default=2 << 30)
     ap.add_argument("--measure", action="store_true", help="unit counters per launch")
     ap.add_argument("--traced", action="store_true", help="debug image, step records")
     ap.add_argument("--jit", action="store_true", help="TinyJit: replays skip submit")
@@ -446,6 +456,14 @@ def main() -> int:
     ap.add_argument("--tag", default="")
     ap.add_argument("--extra", nargs="*", default=[], help="the workload's own flags")
     args = ap.parse_args()
+    if args.backend and not args.card:
+        ap.error("--backend selects a --card run")
+    if args.backend and args.traced:
+        ap.error("--traced uses the ordinary firmware debug entry, not retained graphs")
+    if args.backend:
+        args.jit = True
+    if args.backend == "kaos" and args.measure:
+        os.environ["KOHAKUTPU_OS_PROFILE_SYS"] = "1"
 
     script, extra = WORKLOADS[args.workload]
     extra = list(extra) + ["--board", args.board, "--nodes", str(args.nodes)]
@@ -467,6 +485,8 @@ def main() -> int:
     extra += args.extra
 
     name = f"{args.workload}{args.tag}.{args.board}.{args.nodes}n"
+    if args.backend:
+        name += f".{args.backend}"
     if args.card and (TRACES / name / "meta.json").exists():
         print(name, "exists: one run a configuration", flush=True)
         return 1
@@ -476,8 +496,13 @@ def main() -> int:
         extra += ["--report", str(report)]
         extra += ["--check", "8"] if script == "mnist_mlp.py" else []
         extra += ["--references", str(REFERENCES)] if script == "vit_tiny.py" else []
-    write = on_card(trace.out, args.measure, args.traced) if args.card else None
-    if args.measure:
+    close_boot = None
+    if args.backend:
+        close_boot = backends.select(args, trace.out)
+        write = backends.observe(trace.out, args.backend, args.measure)
+    else:
+        write = on_card(trace.out, args.measure, args.traced) if args.card else None
+    if args.measure and args.backend != "kaos":
         C.FIRMWARE = MEASURE_FIRMWARE
     prof = Profile(args.profile)
     recording(trace, args.library, args.card, prof)
@@ -496,12 +521,19 @@ def main() -> int:
         if end.code:
             done = f"exit {end.code}"
     except BaseException:  # noqa: BLE001
-        done = traceback.format_exc()[-1800:]
+        # The whole chained traceback on disk, its last lines in `done`.
+        failure = traceback.format_exc()
+        (trace.out / "failure.txt").write_text(failure)
+        done = failure[-1800:]
     seconds = round(time.monotonic() - t0, 2)
     if done != "exited":
         print(done, flush=True)
     prof.write(trace.out)
-    card_meta = write() if write is not None else {}
+    try:
+        card_meta = write() if write is not None else {}
+    finally:
+        if close_boot is not None:
+            close_boot()
     trace.save(
         dict(
             card_meta,
@@ -522,7 +554,14 @@ def main() -> int:
             profiled=[prof.first, prof.last] if prof.reached else None,
             jit=args.jit,
             commit=os.environ.get("PERF_COMMIT"),
-            firmware=str(C.FIRMWARE),
+            backend=args.backend or ("firmware" if args.card else "offline"),
+            firmware=str(args.kos_image if args.backend == "kaos" else C.FIRMWARE),
+            os_flags="shared_phys" if args.backend == "kaos" else None,
+            os_command=(
+                f"parallel ostpu {args.os_capacity} 4096 1 1 -e"
+                if args.backend == "kaos"
+                else None
+            ),
             when=time.time(),
         )
     )

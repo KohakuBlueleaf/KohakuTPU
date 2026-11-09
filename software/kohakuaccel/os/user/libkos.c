@@ -23,6 +23,7 @@ extern const struct kos_app __kos_apps_start[];
 
 void __kos_app_start(uint64_t app, char *args)
 {
+    kos_progress(KOS_W_APP_ARGS, app, (uint64_t)(uintptr_t)args);
     char *argv[16];
     int argc = 0;
     argv[argc++] = (char *)__kos_apps_start[app].name;
@@ -42,6 +43,7 @@ void __kos_app_start(uint64_t app, char *args)
     if (shared_cached()) {
         kos_acquire();
     }
+    kos_progress(KOS_W_APP_ENTER, app, (uint64_t)argc);
     int r = __kos_apps_start[app].main(argc, argv);
     if (shared_cached()) {
         kos_release();
@@ -113,6 +115,11 @@ int kos_printf(const char *fmt, ...)
     va_end(ap);
     kos_write(b, n < (int)sizeof b ? (uint64_t)n : sizeof b - 1);
     return n;
+}
+
+void kos_progress(unsigned where, uint64_t a, uint64_t b)
+{
+    kos_printf("@where %u %lx %lx\n", where, a, b);
 }
 
 /* ---- memory ---- */

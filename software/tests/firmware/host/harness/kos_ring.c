@@ -72,7 +72,12 @@ int main(int argc, char **argv)
         tokens = 2;
         assert(k_slot_try(0, 0, KOS_SLOT_USER, 2) == KOS_OK);
         assert(tokens == 0);
-        assert(k_slot_try(1, 0, KOS_SLOT_BARRIER, 1) == KOS_EINVAL);
+        for (unsigned slot = 0; slot < KOS_SLOT_USER; ++slot) {
+            for (unsigned release = 0; release < 2; ++release) {
+                assert(k_slot_try(release, 0, slot, 1) == KOS_EINVAL);
+                assert(tokens == 0 && writes == 0);
+            }
+        }
         for (unsigned i = 0; i < HW_RING_DEPTH; ++i) {
             assert(k_slot_try(1, 0, KOS_SLOT_USER, 1) == KOS_OK);
         }

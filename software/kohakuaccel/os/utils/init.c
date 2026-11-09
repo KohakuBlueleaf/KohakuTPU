@@ -41,13 +41,17 @@ static int run_line(char *line)
         return kos_shell();
     }
     uint64_t t0 = kos_time();
+    kos_progress(KOS_W_RUN_ISSUE, node, 0);
     int64_t tid = kos_run(line, args, node);
+    kos_progress(KOS_W_RUN_ACK, node, (uint64_t)tid);
     if (tid < 0) {
         kos_printf("init: %s: cannot start (%ld)\n", line, tid);
         return 1;
     }
     int64_t code = 0;
+    kos_progress(KOS_W_JOIN_ISSUE, node, (uint64_t)tid);
     int64_t st = kos_join(tid, &code);
+    kos_progress(KOS_W_JOIN_ACK, node, (uint64_t)(st ? st : code));
     kos_printf("init: %s exit %ld in %lu cycles%s\n", line, code, kos_time() - t0,
                st ? " (join failed)" : "");
     return st || code;
@@ -55,6 +59,7 @@ static int run_line(char *line)
 
 static int init_main(int argc, char **argv)
 {
+    kos_progress(KOS_W_INIT_ARGS, 0, 0);
     char cmd[KOS_CMDLINE];
     unsigned n = 0;
     for (int i = 1; i < argc; ++i) {
@@ -66,6 +71,7 @@ static int init_main(int argc, char **argv)
         }
     }
     cmd[n] = 0;
+    kos_progress(KOS_W_INIT_ARGS, n, 1);
     kos_printf("init: %u nodes, commands: %s\n", kos_nodes(), cmd);
     int fails = 0, ran = 0;
     for (char *p = cmd; *p;) {

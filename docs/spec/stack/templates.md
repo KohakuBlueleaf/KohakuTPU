@@ -54,8 +54,9 @@ price; a bound-pruned legal option is priced when forced. A forced-only entry
 cannot stand in for an automatic comparison. An
 unknown forced ID uses the existing DSL.KERN.020 refusal without compiling other
 options. Automatic matmul selection compares every legal option by exact price or a proven lower bound. The generic local
-`p1` path computes timing only when `price_unsplit` is requested; its default cost
-record is not a measured zero-cycle execution time.
+`p1` path retains a timing record only when `price_unsplit` is requested; its default
+cost record is not a measured zero-cycle execution time. Capacity admission uses the complete allocation layout or a proof from its
+declarations; it does not require computing an unrequested timing record.
 (code: ktpu-kernels/src/split/cost.rs;
 ktpu-kernels/src/gen/matmul/split.rs;
 ktpu-kernels/src/call.rs)
@@ -69,6 +70,58 @@ retaining per-node local costs. (code: ktpu-kernels/src/gen/matmul/split.rs:1492
 ktpu-kernels/src/call.rs:1472-1488, :1527-1552;
 ktpu-kernels/src/gen/conv.rs:447-473;
 ktpu-kernels/src/gen/groupnorm/distributed.rs:410-438, :535-567)
+
+### Staging capacity admission
+
+Every emitted split candidate must fit each physical sysnode's staging window
+(DSL.KERN.020). Admission uses the same L1 scratch arena layout as package
+construction, after drain legalization: packed extents, write-line padding and
+cluster-drain burst alignment are included. The runtime rounds arena extents to
+at least 256 bytes when laying out a window. All distinct allocations remain
+resident for the launch; sequential batch shares do not implicitly share storage.
+Explicit graph aliases represent storage whose lifetimes have already been pooled.
+
+A compiler-only `NodeSet::new` grants the physical `die.staging` capacity.
+Runtime generation and runtime pricing construct `NodeSet::runtime`, whose budget
+subtracts `STAGING_RUNTIME_BYTES`, the per-sysnode runtime queue reservation shared
+with Python's `Q_SIZE` (RUL.038). The budget is part of the request and therefore
+of the plan-cache identity. Unqualified staging allocations use the grant's first
+physical node, as the runtime does.
+Submission, completion, stdio and binding rings and the queue-local package heap
+are within that reservation. Shared spilled packages and debug regions use DRAM.
+Local ring/placement heuristics retain their half-store allowance; admission
+additionally sums every ring, peer temporary and other staging allocation in the
+complete option against the request's actual budget.
+
+Candidates keep the existing makespan/conversion/event/ID price order. Capacity
+admission visits the incumbent price winner, not each priced candidate. When a
+winner is refused, its provisional bound is released, deferred candidates remain
+available, and the next price winner is admitted. Equal-price candidates retain
+all tie breakers. Exact cached prices and successful capacity proofs are distinct:
+forcing an unchecked cached price still requires admission. Refusals retain option
+IDs and byte diagnostics in legality clauses, published by `generate_split` in its
+existing `info` record. A forced oversized option, or no fitting requested option,
+returns DSL.KERN.020.
+
+`scratch::check_staging` is the shared per-owner comparison for graph, attention
+and B-delivery candidates. `staging_bounds` lays out declarations with no extra
+burst constraints and with every staging member burst-aligned. The lower bound
+can refuse an option; the upper bound can admit it. A budget between those bounds
+requires exact drain legalization. Drain legalization creates only DRAM scratch,
+so these bounds cover its staging alignment effect without expanding instructions.
+Existing tiled-layout alignment, packed extents and outer window padding participate
+in both bounds. Non-nested alignment grids use exact admission instead of the upper
+proof.
+
+Complete graph candidates with explicit staging owners and no unresolved Mem/Any
+placement can use these declaration proofs before L1 compilation. Other candidates
+use their emitted L1, retained by the invocation-scoped timing cache. No arena
+layout or drain legalization is added to ordinary timing misses. Row/destination
+options admit the complete composed graph only when it wins, while retaining the
+independent-share price. Unpriced local plans need no timing computation for
+admission. Internal comparisons of intermediate, unpooled graphs remain timing
+estimates; only complete executable options undergo admission. No device
+instruction or runtime per-step check is added.
 
 ### Independent planar stage groups
 

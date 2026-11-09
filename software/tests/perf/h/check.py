@@ -202,7 +202,9 @@ def verdict(
     precision = (
         "NONE"
         if not numerics
-        else "EXACT" if all(o["abs_max"] == 0 for o in numerics) else "UNRESOLVED"
+        else "EXACT"
+        if all(o["abs_max"] == 0 for o in numerics)
+        else "UNRESOLVED"
     )
     return dict(structural=structural, precision=precision, reasons=reasons)
 

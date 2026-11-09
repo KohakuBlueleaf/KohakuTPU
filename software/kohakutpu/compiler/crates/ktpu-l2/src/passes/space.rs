@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use ktpu_l1::text::{Stmt, Term};
 
 use super::{body_of, head, subst, unit_of, views, walk, write};
-use crate::ir::read::{bind, instances};
+use crate::ir::read::{bind, instance_scopes, instances};
 use crate::ir::{span, value, Body, Buffer, Instance, Node, Program, Result, StageX};
 use crate::lower::memory as M;
 use crate::target::{Target, POOL};
@@ -102,7 +102,7 @@ fn scratch_nodes(body: &Body) -> Result<BTreeMap<String, BTreeSet<i64>>> {
     }
     let buffers = body.scratch.keys().cloned().collect();
     let mut out: BTreeMap<String, BTreeSet<i64>> = BTreeMap::new();
-    for stage in instances(body)? {
+    for stage in instance_scopes(body)? {
         let mut used = BTreeSet::new();
         match &stage.x {
             StageX::Op(node, _) => scan(node, &buffers, &mut used),

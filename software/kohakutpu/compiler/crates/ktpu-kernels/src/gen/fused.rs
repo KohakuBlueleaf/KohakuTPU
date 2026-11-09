@@ -315,16 +315,11 @@ pub fn packed_block(
     demands: &[QDemand],
     hw: &Hw,
 ) -> Option<i64> {
-    let whole = |d: &QDemand| {
-        d.groups > 0 && d.cp == w && d.rp >= r && d.rp % hw.band == 0 && w % (hw.kblock * d.nk) == 0
-    };
-    if r % hw.band != 0 || !demands.iter().all(whole) {
+    let chunk = matmul::packed_columns(demands, hw).ok()?;
+    let whole = |d: &QDemand| d.groups > 0 && d.cp == w && d.rp >= r && d.rp % hw.band == 0;
+    if r % hw.band != 0 || w % chunk != 0 || !demands.iter().all(whole) {
         return None;
     }
-    let chunk = demands
-        .iter()
-        .map(|d| hw.kblock * d.nk)
-        .fold(hw.kblock, |a, b| a / gcd(a, b) * b);
     let mut planned = operands.to_vec();
     planned.extend((1..outs + demands.len()).map(|_| v::Operand::full(w, r)));
     (1..=w.min(hw.max_block()) / chunk)

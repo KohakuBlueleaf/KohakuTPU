@@ -109,7 +109,12 @@ impl Ctx<'_> {
         }
         let mut tile = map.tile(&positions, &self.t.read);
         if t.mode.as_deref() == Some("gt4") && width == 32 {
-            tile.shape.exchange = map.exchange(&positions, t.shape[0] as usize, &tile);
+            tile.shape.exchange = if self.t.read.window_exchange {
+                map.window_exchange(&positions, t.shape[0] as usize, &tile)
+                    .or_else(|| map.exchange(&positions, t.shape[0] as usize, &tile))
+            } else {
+                map.exchange(&positions, t.shape[0] as usize, &tile)
+            };
         }
         Ok(Some(tile))
     }
@@ -125,6 +130,12 @@ impl Ctx<'_> {
         target: &str,
         local: &mut IndexMap<String, Val>,
     ) {
+        let slot = if x.shift == 0 {
+            slot
+        } else {
+            self.align_window(g, x, slot, spare);
+            spare
+        };
         let block = self.exchanged.as_ref().expect("a tile's exchange masks");
         let unpack = |operand: Term, at: i64, options: Vec<Term>| {
             ir::memory(ir::Memory::Unpack, operand, at, Some("gt4"), false, options).unwrap()
@@ -141,23 +152,28 @@ impl Ctx<'_> {
         }
         for (k, mask) in [5, 10].into_iter().zip(block) {
             let mask = symbol(mask);
-            for s in held.iter_mut() {
-                let d = g.sym();
-                let a = s.operand(Select::Whole);
+            g.op(
+                ir::math(
+                    "vcmpeq",
+                    Term::name("p1"),
+                    vec![mask.operand(Select::Whole), Term::name("k0")],
+                    vec![],
+                ),
+                vec![mask],
+            );
+            for s in &held {
                 g.op(
                     ir::math(
-                        "vsel",
-                        d.operand(Select::Whole),
+                        "vadd",
+                        s.operand(Select::Whole),
                         vec![
-                            a.clone(),
-                            ir::crossbar("xor", a, k),
-                            mask.operand(Select::Whole),
+                            Term::name("k0"),
+                            ir::crossbar("xor", s.operand(Select::Whole), k),
                         ],
-                        vec![],
+                        vec![ir::kw("if", Term::name("p1"))],
                     ),
-                    vec![d.clone(), s.clone(), mask.clone()],
+                    vec![s.clone()],
                 );
-                *s = d;
             }
         }
         g.fixed(ir::sync("pack", "unpack", None));
@@ -214,6 +230,115 @@ impl Ctx<'_> {
                 }
             }
         }
+    }
+
+    /// Rotate adjacent captured words into one source word per column. The
+    /// mask selects the low word's suffix and the high word's prefix exactly.
+    fn align_window(&self, g: &mut Emitter, x: Exchange, slot: i64, spare: i64) {
+        let mask = g.sym();
+        for (vl, value) in [(16, "k0"), (16 - x.shift, "k1")] {
+            g.op(
+                ir::math(
+                    "vmov",
+                    mask.operand(Select::Chunk(0)),
+                    vec![Term::name(value)],
+                    vec![ir::kw("vl", Term::int(vl as i128))],
+                ),
+                vec![mask.clone()],
+            );
+        }
+        g.op(
+            ir::math(
+                "vsel",
+                mask.operand(Select::Stride(1)),
+                vec![
+                    Term::name("k1"),
+                    mask.operand(Select::Chunk(0)),
+                    Term::name("k0"),
+                ],
+                vec![ir::kw("vl", Term::int(112))],
+            ),
+            vec![mask.clone()],
+        );
+        g.op(
+            ir::math(
+                "vcmpeq",
+                Term::name("p1"),
+                vec![mask.operand(Select::Whole), Term::name("k0")],
+                vec![],
+            ),
+            vec![mask],
+        );
+        let stride = x.words_per_column as i64;
+        let mut aligned = Vec::new();
+        for n in 0..x.cols / 8 {
+            let mut sources = Vec::new();
+            for word in 0..stride {
+                let source = g.sym();
+                g.op(
+                    ir::memory(
+                        ir::Memory::Unpack,
+                        source.operand(Select::Whole),
+                        slot + n as i64 * 8 * stride + word,
+                        Some("f16"),
+                        false,
+                        vec![ir::kw(
+                            "walk",
+                            ir::walk(&[(stride, 4 * stride)]).expect("word strides"),
+                        )],
+                    )
+                    .expect("typed source unpack"),
+                    vec![source.clone()],
+                );
+                sources.push(source);
+            }
+            let low = &sources[0];
+            let high = &sources[sources.len() - 1];
+            let dest = g.sym();
+            g.op(
+                ir::math(
+                    "vadd",
+                    dest.operand(Select::Whole),
+                    vec![
+                        Term::name("k0"),
+                        ir::crossbar("rot", low.operand(Select::Whole), x.shift as i64),
+                    ],
+                    vec![],
+                ),
+                vec![dest.clone(), low.clone()],
+            );
+            if x.words_per_column == 2 {
+                g.op(
+                    ir::math(
+                        "vadd",
+                        dest.operand(Select::Whole),
+                        vec![
+                            Term::name("k0"),
+                            ir::crossbar("rot", high.operand(Select::Whole), x.shift as i64),
+                        ],
+                        vec![ir::kw("if", Term::name("p1"))],
+                    ),
+                    vec![dest.clone(), high.clone()],
+                );
+            }
+            aligned.push(dest);
+        }
+        g.fixed(ir::sync("pack", "unpack", None));
+        for (n, value) in aligned.into_iter().enumerate() {
+            g.op(
+                ir::memory(
+                    ir::Memory::Pack,
+                    value.operand(Select::Whole),
+                    spare + n as i64 * 8,
+                    Some("f16"),
+                    false,
+                    vec![],
+                )
+                .expect("typed aligned pack"),
+                vec![value],
+            );
+        }
+        g.fixed(ir::sync("unpack", "pack", None));
     }
 
     /// The pinned masks of a tile's exchange.
@@ -543,13 +668,13 @@ impl Ctx<'_> {
                     let vl = if n > 1 { n * 16 } else { segment.end };
                     kw.push(ir::kw("vl", Term::int(vl as i128)));
                     let st = ir::math(
-                        "vsel",
+                        "vadd",
                         dest.operand(if n > 1 {
                             Select::Stride(chunk as u64)
                         } else {
                             Select::Chunk(chunk as u64)
                         }),
-                        vec![Term::name("k1"), source, Term::name("k0")],
+                        vec![Term::name("k0"), source],
                         kw,
                     );
                     let half_key = ((xk / 4) % 2) ^ (chunk / 4);
@@ -568,9 +693,10 @@ impl Ctx<'_> {
         for (dest, chunk, source, from) in all_copies {
             g.op(
                 ir::math(
-                    "vmov",
+                    "vadd",
                     dest.operand(Select::Chunk(chunk as u64)),
                     vec![
+                        Term::name("k0"),
                         source.operand(Select::Chunk(if on("l2.readmap/dsl-copy-reuse") {
                             (from as u64 + 1) % 8
                         } else {

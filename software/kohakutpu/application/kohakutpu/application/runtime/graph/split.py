@@ -7,6 +7,7 @@ from types import MappingProxyType
 from typing import Any
 
 from kohakutpu.application.runtime import generated
+from kohakutpu.application.runtime.graph import backend as graph_backend
 from kohakutpu.application.runtime.graph.bound import bind
 from kohakutpu.application.runtime.graph.native import names, renamed
 from kohakutpu.application.runtime.os.graph import PreparedMultiGraph
@@ -33,6 +34,8 @@ class PreparedSplitGraph:
     def submit(self):
         if self.closed:
             raise RuntimeError("prepared split graph is closed")
+        if self.device.graph_backend is not None:
+            return graph_backend.submit(self)
         return self.device._submitted(
             self.compiled, self.bindings, "graph", None, pinned=True
         )
@@ -44,9 +47,11 @@ class PreparedSplitGraph:
             self.artifact = bind(self)
         return self.artifact
 
-    def prepare_firmware(self, queues, leases):
+    def prepare_firmware(self, queues, leases, **options):
         artifact = self.bind_artifact()
-        backend = PreparedFirmwareGraph(artifact, queues, leases, self.references)
+        backend = PreparedFirmwareGraph(
+            artifact, queues, leases, self.references, **options
+        )
         self.backends.append(backend)
         return backend
 

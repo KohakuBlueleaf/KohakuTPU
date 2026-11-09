@@ -1,11 +1,89 @@
 //! Unfitted local-schedule timing; no measured speedup is implied.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Mutex;
 
 use super::SplitOption;
 use crate::trace::{fail, R};
 use ktpu_machine::{Machine, Refusal};
+
+/// Lowering and capacity refusals are recorded in the candidate comparison.
+#[derive(Default)]
+pub(crate) struct Admission {
+    refused: Vec<(String, Refusal)>,
+}
+
+impl Admission {
+    pub(crate) fn consider<T>(&mut self, id: &str, result: R<T>) -> R<Option<T>> {
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(error)
+                if error.clause == "L2.COST.001"
+                    || error.clause == "DSL.KERN.020"
+                        && error.message.starts_with("staging capacity:") =>
+            {
+                self.refused.push((id.into(), error));
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub(crate) fn finish(
+        &self,
+        mut options: Vec<SplitOption>,
+        force: Option<&str>,
+    ) -> R<Vec<SplitOption>> {
+        let forced_refusal = force.is_some_and(|id| self.refused.iter().any(|(n, _)| n == id));
+        if (options.is_empty() || forced_refusal) && !self.refused.is_empty() {
+            let context = if self
+                .refused
+                .iter()
+                .all(|(_, error)| error.clause == "DSL.KERN.020")
+            {
+                "staging capacity: no fitting requested option"
+            } else {
+                "no legal requested option"
+            };
+            return fail(
+                "DSL.KERN.020",
+                format!(
+                    "{context}; {}",
+                    self.refused
+                        .iter()
+                        .map(|(id, reason)| format!("{id}: {reason}"))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                ),
+            );
+        }
+        for option in &mut options {
+            option.legality.clauses.extend(
+                self.refused
+                    .iter()
+                    .map(|(id, reason)| format!("refused {id}: {reason}")),
+            );
+        }
+        Ok(options)
+    }
+}
+
+/// Hand L1 options use the same arena layout and capacity rule as graph options.
+pub(crate) fn l1_staging(
+    module: &ktpu_l1::text::Module,
+    name: &str,
+    machine: &Machine,
+    budget: ktpu_machine::StagingBudget,
+) -> R<()> {
+    ktpu_l1::layout::scratch::admit_staging(
+        module,
+        name,
+        &std::collections::BTreeSet::new(),
+        machine,
+        budget,
+    )
+    .map_err(|e| Refusal::new(&e.clause, e.message))
+}
 
 #[derive(Clone, Debug)]
 pub struct CostEstimate {
@@ -144,8 +222,14 @@ impl LocalPrices {
 
 /// Complete emitted node budgets, excluding the launch intercept. Compilation
 /// is performed once; every local price retains the complete module context.
-pub(crate) fn graph_nodes(graph: &ktpu_graph::Graph, machine: &Machine) -> R<BTreeMap<i64, i64>> {
-    ktpu_graph::node_cycles(graph, machine)
+pub(crate) fn graph_nodes(
+    graph: &ktpu_graph::Graph,
+    machine: &Machine,
+    budget: ktpu_machine::StagingBudget,
+) -> R<BTreeMap<i64, i64>> {
+    let cycles = ktpu_graph::node_cycles(graph, machine)?;
+    ktpu_graph::check_staging(graph, machine, budget)?;
+    Ok(cycles)
 }
 
 pub trait CostModel {
@@ -192,17 +276,76 @@ pub fn price_bounded(
     mut price: impl FnMut(SplitOption) -> R<SplitOption>,
 ) -> R<Vec<SplitOption>> {
     candidates.sort_by(|(a, af), (b, bf)| (af.unwrap_or(0), &a.id).cmp(&(bf.unwrap_or(0), &b.id)));
+    let mut admission = Admission::default();
     let mut best = i64::MAX;
     let mut priced = Vec::new();
     for (option, floor) in candidates {
         if floor.is_some_and(|floor| floor > best) {
             continue;
         }
-        let option = price(option)?;
+        let id = option.id.clone();
+        let Some(option) = admission.consider(&id, price(option))? else {
+            continue;
+        };
         best = best.min(option.cost.makespan);
         priced.push(option);
     }
-    Ok(priced)
+    admission.finish(priced, None)
+}
+
+/// Price in the ordinary lower-bound order, admitting only the price winner.
+/// A refused winner releases its provisional bound: deferred candidates remain
+/// available until a fitting winner dominates them. Exact ties use `rank`.
+pub fn price_bounded_admitted(
+    mut candidates: Vec<(SplitOption, Option<i64>)>,
+    mut price: impl FnMut(SplitOption) -> R<SplitOption>,
+    mut admit: impl FnMut(&SplitOption) -> R<()>,
+) -> R<Vec<SplitOption>> {
+    candidates.sort_by(|(a, af), (b, bf)| (af.unwrap_or(0), &a.id).cmp(&(bf.unwrap_or(0), &b.id)));
+    let mut pending = candidates.into_iter().peekable();
+    let mut priced = Vec::<SplitOption>::new();
+    let mut admission = Admission::default();
+    loop {
+        rank(&mut priced);
+        let best = priced.first().map(|option| option.cost.makespan);
+        if pending.peek().is_some_and(|(_, floor)| {
+            best.is_none_or(|best| floor.is_none_or(|floor| floor <= best))
+        }) {
+            if let Some((option, _)) = pending.next() {
+                let id = option.id.clone();
+                if let Some(option) = admission.consider(&id, price(option))? {
+                    priced.push(option);
+                }
+            }
+            continue;
+        }
+        if priced.is_empty() {
+            return admission.finish(Vec::new(), None);
+        }
+        let option = priced.remove(0);
+        if admission.consider(&option.id, admit(&option))?.is_some() {
+            return admission.finish(vec![option], None);
+        }
+    }
+}
+
+/// The exact cost/tie order is also the capacity-admission order.
+pub fn select_admitted(
+    mut priced: Vec<SplitOption>,
+    force: Option<&str>,
+    mut admit: impl FnMut(&SplitOption) -> R<()>,
+) -> R<SplitOption> {
+    rank(&mut priced);
+    let mut admission = Admission::default();
+    for option in priced {
+        if force.is_some_and(|id| id != option.id) {
+            continue;
+        }
+        if admission.consider(&option.id, admit(&option))?.is_some() {
+            return select_split(admission.finish(vec![option], force)?, force);
+        }
+    }
+    select_split(admission.finish(Vec::new(), force)?, force)
 }
 
 /// Forced options are still priced; ties never depend on enumeration order.
@@ -257,9 +400,75 @@ pub struct ChoiceCache(Mutex<HashMap<String, ChoicePrices>>);
 struct ChoicePrices {
     comparisons: HashMap<Option<String>, String>,
     exact: HashMap<String, SplitOption>,
+    admitted: HashSet<String>,
 }
 
 impl ChoiceCache {
+    /// Exact prices and admission proofs have distinct cache identities. A losing
+    /// price may later become a forced winner and must then undergo admission.
+    pub fn choose_bounded(
+        &self,
+        key: String,
+        force: Option<&str>,
+        candidates: impl FnOnce() -> R<Vec<(SplitOption, Option<i64>)>>,
+        price: impl FnMut(SplitOption) -> R<SplitOption>,
+        admit: impl FnMut(&SplitOption) -> R<()>,
+    ) -> R<SplitOption> {
+        self.choose_bounded_with_prices(key, force, |_| candidates(), price, admit)
+    }
+
+    /// Seed invocation-local schedule equivalences from exact cached prices
+    /// before pricing misses. Prices remain separate from admission proofs;
+    /// the chosen identity is still admitted.
+    pub fn choose_bounded_with_prices(
+        &self,
+        key: String,
+        force: Option<&str>,
+        candidates: impl FnOnce(&HashMap<String, SplitOption>) -> R<Vec<(SplitOption, Option<i64>)>>,
+        mut price: impl FnMut(SplitOption) -> R<SplitOption>,
+        mut admit: impl FnMut(&SplitOption) -> R<()>,
+    ) -> R<SplitOption> {
+        let mut cache = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let entry = cache.entry(key).or_default();
+        if let Some(id) = force.filter(|id| entry.admitted.contains(*id)) {
+            return Ok(entry.exact[id].clone());
+        }
+        let forced = force.map(str::to_owned);
+        if let Some(id) = entry.comparisons.get(&forced) {
+            return Ok(entry.exact[id].clone());
+        }
+        let ChoicePrices {
+            comparisons,
+            exact,
+            admitted,
+        } = entry;
+        let choices = price_bounded_admitted(
+            candidates(exact)?
+                .into_iter()
+                .filter(|(option, _)| force.is_none_or(|id| id == option.id))
+                .collect(),
+            |option| {
+                if let Some(priced) = exact.get(&option.id) {
+                    return Ok(priced.clone());
+                }
+                let priced = price(option)?;
+                exact.insert(priced.id.clone(), priced.clone());
+                Ok(priced)
+            },
+            |option| {
+                if !admitted.contains(&option.id) {
+                    admit(option)?;
+                    admitted.insert(option.id.clone());
+                }
+                Ok(())
+            },
+        )?;
+        let chosen = select_split(choices, force)?;
+        exact.insert(chosen.id.clone(), chosen.clone());
+        comparisons.insert(forced, chosen.id.clone());
+        Ok(chosen)
+    }
+
     pub fn choose(
         &self,
         key: String,

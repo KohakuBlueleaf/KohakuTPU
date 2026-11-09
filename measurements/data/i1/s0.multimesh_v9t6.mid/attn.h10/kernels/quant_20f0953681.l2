@@ -1,0 +1,4 @@
+target ktpu.v9
+
+fn quant_20f0953681.l2(x: f16[197, 768] @dram, q: mx7a[200, 768] @dram(gm=50, nk=2))
+    quant q[0 : +200] <- x[0 : +197, 0 : +768] finite_batch=4 pipeline=1 zero_classifier=1 stream_axes=1 fill_overlap=1 zero_reuse=1 pad=1 overlap=1

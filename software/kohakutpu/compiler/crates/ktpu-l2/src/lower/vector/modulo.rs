@@ -28,7 +28,7 @@ pub use sched::{plan, Plan};
 /// the last II `plan` tried on this thread.
 #[doc(hidden)]
 pub mod internals {
-    pub use super::emit::typed::emit;
+    pub use super::emit::typed::{emit, emit_exhaustive, last_intervals, last_materialized};
     pub use super::ops::link;
     pub use super::sched::{colour, last_ii, place, Life};
 }

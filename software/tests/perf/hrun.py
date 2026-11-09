@@ -109,6 +109,7 @@ def main() -> int:
         fw=MEASURE_FIRMWARE if a.measure else FIRMWARE,
         boot_flags=parse_boot_flags(a.flags, sysnodes),
     )
+    runner.initialise(card)
     session = uuid.uuid4().hex
     info = dict(
         args={k: str(v) for k, v in vars(a).items()},

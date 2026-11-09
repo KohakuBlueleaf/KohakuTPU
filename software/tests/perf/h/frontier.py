@@ -78,7 +78,7 @@ def main() -> int:
     a = ap.parse_args()
     l1_text, name = emitted(a.path, a.board, a.sysnodes, a.fn)
     for r in rings(l1_text, name):
-        print(f"sysnode {r["sysnode"]}: {r['ring']}")
+        print(f"sysnode {r['sysnode']}: {r['ring']}")
         for w in r["waits"]:
             print(f"    after {w}")
         print(f"    uncovered: {', '.join(r['uncovered']) or 'none'}")

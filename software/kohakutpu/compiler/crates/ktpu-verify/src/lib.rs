@@ -31,6 +31,11 @@ pub use check::{
 pub use model::finding::{Finding, Kind};
 pub use target::{Facts, MeshUnits, Target, UnitKind};
 
+// Diagnostic access to the production symbolic engine; no alternate evaluator.
+// Values and condition IDs belong to one arena and its clones only.
+#[doc(hidden)]
+pub use sim::symbolic::{Symbolic, Value as SymbolicValue};
+
 /// The finding kinds a run is refused for (L1.VER.015).
 pub const REFUSE: [&str; 11] = [
     "deadlock", "rest", "port", "race", "bounds", "route", "line", "cluster", "vector", "loop",

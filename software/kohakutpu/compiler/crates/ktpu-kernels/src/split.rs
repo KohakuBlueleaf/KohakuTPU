@@ -16,7 +16,7 @@ pub use ktpu_l2::lower::events::{EventId, EventSpec};
 
 /// Ordered physical sysnodes. Construction validates the grant once.
 #[derive(Clone, Debug)]
-pub struct NodeSet(Vec<i64>);
+pub struct NodeSet(Vec<i64>, u64);
 
 impl NodeSet {
     pub fn new(nodes: Vec<i64>, machine: &Machine) -> R<Self> {
@@ -27,7 +27,25 @@ impl NodeSet {
         {
             return fail("DSL.CTRL.001", "invalid sysnode grant");
         }
-        Ok(Self(nodes))
+        let bytes = machine
+            .die
+            .stage_bytes()
+            .ok_or_else(|| ktpu_machine::Refusal::new("MACHINE", "staging byte size overflows"))?;
+        Ok(Self(nodes, bytes))
+    }
+
+    /// A runtime grant excludes its resident queue and queue-local package heap.
+    pub fn runtime(nodes: Vec<i64>, machine: &Machine) -> R<Self> {
+        let mut grant = Self::new(nodes, machine)?;
+        grant.1 = grant.1.saturating_sub(ktpu_machine::STAGING_RUNTIME_BYTES);
+        Ok(grant)
+    }
+
+    pub fn staging_budget(&self) -> ktpu_machine::StagingBudget {
+        ktpu_machine::StagingBudget {
+            bytes: self.1,
+            default_node: i128::from(self.0[0]),
+        }
     }
 
     pub fn ids(&self) -> &[i64] {

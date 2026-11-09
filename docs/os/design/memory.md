@@ -30,10 +30,10 @@ cache (bit 38) and whether it is DRAM or the special space (bit 39). Mesh
 
 | | contents | size (`kos` image) |
 |---|---|---|
-| IMEM `0x0` | L0 + kernel text and their library copy | 28 240 B of 32 KB |
+| IMEM `0x0` | L0 + steady-state kernel text and their library copy | `.text` in `kos.size`; 32 KiB hardware window, at least 256 B link-enforced free space |
 | SPAD `0x1_0000` | boot table (host-written) | 2 KB |
-| SPAD `0x1_0800` | L0 data and its 2 KB stack | 3056 B |
-| SPAD `0x1_2000` | kernel data, thread frames, unit table, 4 KB stack | 19 424 B |
+| SPAD `0x1_0800` | L0 data, boot descriptor and its 2 KB stack | `.l0` in `kos.size`, ending at or before `0x12000` |
+| SPAD `0x1_2000` | kernel data, boot descriptors, thread frames, unit table, 4 KB stack | `.kdata` in `kos.size`, ending at or before `0x18000` |
 
 ## The user address space
 
@@ -42,7 +42,7 @@ physical pages behind it differ:
 
 | user address | what | mapped | backed by |
 |---|---|---|---|
-| `0x1000_0000` | user text, rodata, the app table | R X U | this node's private span + 0 |
+| `0x1000_0000` | boot helpers, user text, rodata, the app table | R X U | this node's private span + 0 |
 | `0x1100_0000` | user data and bss (per node) | R W U | this node's private span, after the text |
 | `0x2000_0000` | the shared region: `KOS_SHARED` globals first, then the shared heap | R W U (cached unless `shared_uncached`) | the board's shared DRAM |
 | `0x2800_0000` | the same shared region, uncached | R W U uncached | the same DRAM through the alias |
@@ -58,13 +58,24 @@ with no shared region (`card_v9t6_2n`, `card_v9t6_4n`, `core2`) the shared
 addresses are unmapped and `kos_shared_ok()` returns 0; applications that
 need shared memory check it.
 
+An address a unit, mover or fetch is given is checked as a physical range
+(`k_pa_ok`, `kernel/mem.c`): this node's staging store, its user landing zone,
+its mapped private frames, or the shared region. On a flat card the shared
+region has one address per DRAM ingress mesh (a local mover names it through
+its own mesh), so the boot table's shared region carries the route bits that
+spell the same bytes (`attr`, set from the board's `shared_route_mask`), and
+the check takes a request's route bits as the region's before one offset
+comparison. That is exact because no shared region spans a route boundary,
+which `tools/boot.py` (`shared_routes`) refuses. Staging and private pages are
+never folded this way.
+
 ## The private span
 
 Each node owns one contiguous DRAM span (its size and place come from the
 board). From its head:
 
 ```
-  + 0                    user image: text, rodata, app table | data, bss
+  + 0                    private image: boot helpers, user text, rodata, app table | data, bss
   + image size           kernel frames: stacks, mmap pages, kernel tables
                          (inbox, channel queue, pending requests, barriers)
   [pt_dram]              L0's page-table pool, 128 KB
@@ -73,8 +84,21 @@ board). From its head:
                          movers deliver for this node
 ```
 
-The host writes the user image at the span's base from the ELF's user
-segments (load address `1 << 40`, not a machine address; `tools/image.py`).
+The host writes the private image at the span's base from the ELF segments
+at load address `1 << 40` (not a machine address; `tools/image.py`). Boot-only
+kernel code in `kernel/bootstrap.c` and `kernel/bootstrap_units.c` occupies
+the first part of `.utext`, between `__k_boot_start` and `__k_boot_end`. These
+objects are PIC; their text and constants move together. Immutable descriptors
+in scratchpad supply resident callbacks, linker values and already-public state
+pointers. Private allocator/unit/message state is installed by owner-local
+setters, so its addresses do not escape into the boot image. Cache maintenance
+is a resident callback: its command and busy-rise/busy-fall polling execute
+entirely in IMEM, without competing with writeback for a DRAM instruction refill.
+L0 and the kernel
+call the physical boot entry addresses while untranslated; user code uses the
+normal mapping. `__k_text_free` in `kos.map` records the remaining IMEM bytes;
+the link requires at least 256, independently of the 32-KiB hardware assertion.
+The frame allocator reserves the complete image, including these boot helpers.
 Frames are 4 KB, handed out from a bitmap and zeroed when taken. `SYS_MMAP`
 takes a physically contiguous run (cached, or uncached with
 `KOS_MMAP_UNCACHED`), `SYS_VTOP` gives its physical address, `SYS_MUNMAP`

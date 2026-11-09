@@ -263,6 +263,51 @@ that cached artifact. The common capability set supports static event effects;
 operations unsupported by the KAOS adapter refuse at preparation. The ordinary
 firmware submission path retains its existing capability set.
 
+The retained model entry is selected by `record.py --card --backend firmware` or
+`--backend kaos`. Selection enables TinyJit and applies this same bound-artifact
+contract to pure captured regions at P=1 as well as P>1. Regions remain separated
+by host effects; model initialization still executes on the selected backend.
+Eager KAOS submission consumes the ordinary builder's complete, already-bound
+`Package.to_bytes()` as each `NodePart`, just as native wire submission does.
+It preserves headers, steps and unit tables as well as payloads; diagnostic
+`Package.bound()` payload words are not an executable package. No second
+address bind or package-reader pass is needed at this boundary.
+The application supplies one receiver-slot lease pool to the active adapter,
+retains graph scratch through its lifetime, and returns a normal Device
+submission/retirement record. All participant requests precede any collection.
+Only a fully collected epoch can be replaced; repeated execution of the same
+active graph does not bind addresses, allocate event slots or upload again.
+
+The KAOS Device receives a resident map rather than a single remote-dispatch
+session. Every participant boots the same `KOS_IMAGE` (`build/os/kos.elf` by
+default), built successfully from the same sources as the host tools. The image
+keeps steady-state kernel text within the 32-KiB IMEM window with at least
+256 bytes of link-enforced free space. One-shot machine/kernel startup,
+unit/message-table setup and the start handshake execute untranslated from
+that node's private DRAM image. Resident callbacks and owner-local setters
+initialize state. The mover index-buffer cache barrier executes its command
+and busy-edge polls in IMEM through a resident callback; private-image execution
+resumes only after completion. Steady-state code retains `-O2` and its HOT flags,
+without boot-descriptor indirection. Node 0's
+`parallel ostpu capacity 4096 1 1 -e` command starts every
+local resident before joining any. Readiness is the publication of `OSTPU_MAGIC`
+in every participant's mailbox after its local server and buffers are ready,
+not the init console line or a cached scheduler-log state. Permanent user-mode
+startup progress records bracket argument handling, each node's run/ack/join,
+server/arena allocation and READY publication. The card tool reports the latest
+complete record separately from the scheduler's saved PC. These records precede
+graph servicing and add no per-task, word, retirement or poll work. The emulator stage
+observes these publications for both the stock board memory layout and the
+model-sized physical heap. The shared model heap is physical-only
+(`shared_phys`): it remains inside the kernel's physical I/O grant without
+occupying the CPU's fixed shared virtual aliases. DE batching/fetch and the receiving
+machine's wait-window rule remain in force. Its output and completion records
+use the model recorder's ordinary trace directory, tagged by backend. Per-node
+cycles and the maximum local duration are separate from the host-observed group
+makespan in seconds; no synchronized inter-node cycle clock is presumed. See
+[models on P sysnodes](../os/reference/dispatcher.md#models-on-p-sysnodes) for the
+image, arena sizing, profiling and firmware/KAOS comparison commands.
+
 ## 7. Host-owned boot regions
 
 The driver reserves each sysnode's QUEUE region from its staging allocator and

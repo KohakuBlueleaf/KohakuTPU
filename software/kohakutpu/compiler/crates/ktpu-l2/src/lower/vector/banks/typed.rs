@@ -50,8 +50,18 @@ fn beats(st: &Stmt, core: &Core) -> u64 {
 }
 
 pub fn choose(code: &[Event], copies: u32, core: &Core) -> HashMap<String, u64> {
+    choose_profiled(code, copies, core, false).0
+}
+
+/// Exact incidence-index comparison for stage witnesses. The reference scans
+/// prior indices; production only compares the last monotonically inserted one.
+#[doc(hidden)]
+pub fn choose_profiled(
+    code: &[Event], copies: u32, core: &Core, exhaustive: bool,
+) -> (HashMap<String, u64>, u64) {
+    let mut comparisons = 0;
     if copies >= 4 || crate::mutant::on("l2.banks/rotates-none") {
-        return HashMap::new();
+        return (HashMap::new(), comparisons);
     }
     let tuples: Vec<_> = code
         .iter()
@@ -104,7 +114,18 @@ pub fn choose(code: &[Event], copies: u32, core: &Core) -> HashMap<String, u64> 
                 touching.push((s, Vec::new()));
                 touching.len() - 1
             });
-            if !touching[i].1.contains(&k) {
+            let seen = if exhaustive {
+                touching[i].1.iter().any(|prior| {
+                    comparisons += 1;
+                    *prior == k
+                })
+            } else {
+                // k increases in the outer loop. Repeated operands can only
+                // duplicate this list's final entry, never an older entry.
+                comparisons += 1;
+                touching[i].1.last() == Some(&k)
+            };
+            if !seen {
                 touching[i].1.push(k);
             }
         }
@@ -112,21 +133,30 @@ pub fn choose(code: &[Event], copies: u32, core: &Core) -> HashMap<String, u64> 
     let free: Vec<usize> = (0..touching.len())
         .filter(|&i| !fixed_syms.contains(touching[i].0))
         .collect();
+    // One instruction's price depends only on its operands' rotations. Its
+    // operands, beat count and machine facts are fixed throughout this search.
+    // Repeated coordinate-descent visits reuse the exact price, including for
+    // repeated operands and predicated/fixed values; no search choice changes.
+    let mut prices: Vec<HashMap<Vec<u64>, i64>> = vec![HashMap::new(); ops.len()];
+    let mut price = |k: usize, rho: &HashMap<&str, u64>| {
+        let rotations: Vec<u64> = ops[k]
+            .0
+            .iter()
+            .map(|(s, _, _)| rho.get(s).copied().unwrap_or(0))
+            .collect();
+        *prices[k]
+            .entry(rotations)
+            .or_insert_with(|| super::cost(&ops[k].0, ops[k].1, rho, copies, core))
+    };
     let mut rho = HashMap::new();
     for _ in 0..PASSES {
         let mut moved = false;
         for &i in &free {
             let (s, ks) = (&touching[i].0, &touching[i].1);
-            let now: i64 = ks
-                .iter()
-                .map(|&k| super::cost(&ops[k].0, ops[k].1, &rho, copies, core))
-                .sum();
+            let now: i64 = ks.iter().map(|&k| price(k, &rho)).sum();
             let flip = 1 - rho.get(s).copied().unwrap_or(0);
             rho.insert(*s, flip);
-            let then: i64 = ks
-                .iter()
-                .map(|&k| super::cost(&ops[k].0, ops[k].1, &rho, copies, core))
-                .sum();
+            let then: i64 = ks.iter().map(|&k| price(k, &rho)).sum();
             if then < now {
                 moved = true;
             } else {
@@ -137,10 +167,11 @@ pub fn choose(code: &[Event], copies: u32, core: &Core) -> HashMap<String, u64> 
             break;
         }
     }
-    rho.into_iter()
+    let rotations = rho.into_iter()
         .filter(|(_, r)| *r != 0)
         .map(|(s, r)| (s.to_string(), r))
-        .collect()
+        .collect();
+    (rotations, comparisons)
 }
 
 fn rotated(t: &mut Term, rho: &HashMap<String, u64>, chunks: u64, cb: &mut u64) {

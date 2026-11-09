@@ -936,7 +936,7 @@ fn generate(
                 ktpu_machine::Refusal::new("DSL.CTRL.001", format!("sysnode grant: {e}"))
             })?;
             let request = SplitRequest {
-                nodes: NodeSet::new(ids, &m)?,
+                nodes: NodeSet::runtime(ids, &m)?,
                 consumer: Default::default(),
                 dispatch: DispatchProfile::Common,
                 numerics: Default::default(),
@@ -981,7 +981,7 @@ fn generate_split(
     let args = serde_json::from_str(args_json)
         .map_err(|e| PyValueError::new_err(format!("generator arguments: {e}")))?;
     let request = SplitRequest {
-        nodes: NodeSet::new(nodes, &m).map_err(|e| PyValueError::new_err(e.to_string()))?,
+        nodes: NodeSet::runtime(nodes, &m).map_err(|e| PyValueError::new_err(e.to_string()))?,
         consumer: Default::default(),
         dispatch: DispatchProfile::Common,
         numerics: Default::default(),
@@ -1006,6 +1006,7 @@ fn generate_split(
             "option_id": planned.split.id,
             "p": planned.split.p,
             "active_nodes": planned.split.active_nodes,
+            "legality": planned.split.legality.clauses,
         },
     }))
     .map_err(|e| PyValueError::new_err(e.to_string()))
@@ -1351,7 +1352,7 @@ fn read_composed(
         .ok_or_else(|| PyValueError::new_err(format!("a composed mode {mode:?}")))?;
     let request = nodes
         .map(|ids| {
-            NodeSet::new(ids, &m).map(|nodes| SplitRequest {
+            NodeSet::runtime(ids, &m).map(|nodes| SplitRequest {
                 nodes,
                 consumer: Default::default(),
                 dispatch: DispatchProfile::Common,
@@ -1429,6 +1430,7 @@ fn kohakutpu_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(lanes_class_tables, m)?)?;
     m.add_function(wrap_pyfunction!(transpose_masks, m)?)?;
     m.add("MX7_PAIRING", ktpu_machine::PAIRING.name())?;
+    m.add("STAGING_RUNTIME_BYTES", ktpu_machine::STAGING_RUNTIME_BYTES)?;
     m.add_function(wrap_pyfunction!(mm_knobs, m)?)?;
     m.add_function(wrap_pyfunction!(mm_plan, m)?)?;
     m.add_function(wrap_pyfunction!(mm_resolved, m)?)?;

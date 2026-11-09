@@ -12,7 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "../../../../kohakuaccel/os/kernel/kernel.h"
+#include "../../../../kohakuaccel/os/kernel/bootstrap.h"
 #include "hw_double.h"
 
 #define X 1u
@@ -23,7 +23,24 @@ struct knode kn;
 struct kos_boot k_boot;
 struct kos_kernel_stat kstat;
 
-void *k_alloc(uint64_t bytes) { return calloc(1, bytes); }
+static unsigned allocations;
+static int index_visible;
+
+void *k_alloc(uint64_t bytes)
+{
+    if (allocations) {
+        assert(index_visible);
+    }
+    ++allocations;
+    return calloc(1, bytes);
+}
+
+static void boot_cache(unsigned op)
+{
+    assert(allocations == 1);
+    hw_dcache(op);
+    index_visible = 1;
+}
 int k_pa_ok(uint64_t pa, uint64_t bytes)
 {
     (void)pa;
@@ -86,7 +103,11 @@ int main(void)
     kn.engine = 1;
     k_boot.nunits = 1;
     k_boot.unit[0] = (struct kos_unit){.type = 0x4D47, .x = X, .y = Y, .depth = 4};
-    k_units_init();
+    const struct k_boot_kernel boot = {
+        .node = &kn, .boot = &k_boot, .units = &k_boot_units,
+        .alloc = k_alloc, .dcache = boot_cache, .poll_units = k_units_poll,
+    };
+    k_boot_units_init(&boot);
     uint64_t w[4] = {1, 2, 3, 4}, span = 0;
     char op;
     while (scanf(" %c", &op) == 1) {

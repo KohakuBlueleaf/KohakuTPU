@@ -4,6 +4,16 @@ use ktpu_l1::text::{Definition, IntStyle, Module, Stmt, Term};
 
 use super::typed::Result;
 
+thread_local! {
+    static EMITTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Actual text emissions on this thread, counted at the printer boundary.
+#[doc(hidden)]
+pub fn emitted() -> usize {
+    EMITTED.with(|count| count.get())
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Rule {
     Legacy,
@@ -108,9 +118,73 @@ pub fn emit(stmts: &mut [Stmt]) -> Result<String> {
 }
 
 pub(super) fn emit_rule(stmts: &mut [Stmt], rule: Rule) -> Result<String> {
+    EMITTED.with(|count| count.set(count.get() + 1));
     let mut out = String::new();
     lines(stmts, 0, &mut 1, &mut out, rule)?;
     Ok(out)
+}
+
+/// Assign unique instruction locations without spelling operands.
+pub(crate) fn positions(stmts: &mut [Stmt], depth: u32, line: &mut u32) {
+    for st in stmts {
+        st.line = *line;
+        st.col = 4 * depth + 1;
+        *line += 1;
+        positions(&mut st.body, depth + 1, line);
+    }
+}
+
+/// A single-image module for structural timing and encoding. Its source is
+/// materialized only when it leaves pricing; source-keyed caches take printed images.
+pub fn structured_image(
+    name: &str,
+    params: Vec<String>,
+    mut body: Vec<Stmt>,
+    vregs: u32,
+) -> Result<Module> {
+    if body.is_empty() {
+        return Err("an image has a nonempty body".into());
+    }
+    positions(&mut body, 1, &mut 2);
+    let mut module = Module {
+        file: format!("<{name}>"),
+        vregs,
+        ..Module::default()
+    };
+    module.images.insert(
+        name.into(),
+        Definition {
+            kind: "image".into(),
+            name: name.into(),
+            params,
+            stmts: body,
+            line: 1,
+        },
+    );
+    Ok(module)
+}
+
+/// Spell a structured image module at the boundary to source-based consumers.
+pub fn materialize(module: &mut Module) -> Result<()> {
+    let mut headers = Vec::new();
+    for d in module.images.values_mut() {
+        let mut header = Stmt::new(
+            "image",
+            vec![Term::Call(
+                d.name.clone(),
+                d.params.iter().map(Term::name).collect(),
+            )],
+        );
+        header.body = std::mem::take(&mut d.stmts);
+        headers.push(header);
+    }
+    let source = emit(&mut headers);
+    for (d, header) in module.images.values_mut().zip(headers) {
+        d.line = header.line;
+        d.stmts = header.body;
+    }
+    module.source = source?;
+    Ok(())
 }
 
 /// A single-image module, with the defaults used by the search's image reader.

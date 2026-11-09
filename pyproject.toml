@@ -28,6 +28,7 @@ extraPaths = [
     "software/tests/perf",
     # Tools a script reaches by the `sys.path` entry it adds at run time.
     "software/kohakuaccel/os/tools",
+    "software/kohakutpu/os/tools",
     "software/kohakutpu/os/tools/ostpu",
     "scripts/py",
 ]

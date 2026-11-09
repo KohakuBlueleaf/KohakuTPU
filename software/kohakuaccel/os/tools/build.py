@@ -16,7 +16,6 @@ The toolchain directory is $KOS_LLVM, else ~/micromamba/envs/kos/bin, else PATH.
 
 import argparse
 import concurrent.futures
-import os
 import pathlib
 import shutil
 import subprocess
@@ -24,6 +23,7 @@ import sys
 import time
 
 import memgap
+from toolchain import tool
 
 OS = pathlib.Path(__file__).resolve().parents[1]
 ROOT = OS.parents[2]
@@ -91,28 +91,6 @@ IMAGES = {
 }
 
 
-def toolchain() -> pathlib.Path | None:
-    env = os.environ.get("KOS_LLVM")
-    if env:
-        return pathlib.Path(env)
-    mm = pathlib.Path.home() / "micromamba/envs/kos/bin"
-    if (mm / "ld.lld").exists():
-        return mm
-    return None
-
-
-def tool(name: str) -> str:
-    d = toolchain()
-    if d is not None:
-        return str(d / name)
-    found = shutil.which(name)
-    if not found:
-        raise SystemExit(
-            f"no {name}: set KOS_LLVM to a directory holding clang and ld.lld"
-        )
-    return found
-
-
 def run(cmd: list[str]) -> str:
     p = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if p.returncode:
@@ -128,6 +106,9 @@ def compile_one(
     obj = obj_dir / side / (src.replace("/", "__") + ".o")
     obj.parent.mkdir(parents=True, exist_ok=True)
     flags = CFLAGS + defines + (["-DKOS_USER=1"] if side == "u" else [])
+    if src.startswith("kernel/bootstrap") and src.endswith(".c"):
+        # Its linked VMA and per-node physical execution address differ.
+        flags += ["-fPIC"]
     if not gap:
         run([tool("clang"), *flags, "-c", (OS / src).as_posix(), "-o", obj.as_posix()])
         return obj.as_posix(), 0

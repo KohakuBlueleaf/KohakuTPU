@@ -7,7 +7,8 @@ use std::process::ExitCode;
 use std::rc::Rc;
 use std::time::Instant;
 
-use ka_emu::node::{Memory, Silent};
+use ka_emu::bus::Bus;
+use ka_emu::node::{Memory, Silent, CONTROL, CONTROL_BYTES};
 use ka_emu::{elf, Node};
 
 const NODES: usize = 4;
@@ -30,6 +31,8 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (mut image, mut blobs, mut dumps) = (None, Vec::new(), Vec::new());
     let mut expect: Vec<(usize, String)> = Vec::new();
+    let mut until: Vec<(usize, u64, u64)> = Vec::new();
+    let mut control: Vec<(usize, u64, u64)> = Vec::new();
     let (mut nodes, mut cycles) = (0, 50_000_000u64);
     let mut flat = false;
     let mut i = 0;
@@ -65,6 +68,21 @@ fn main() -> ExitCode {
                     file.to_string(),
                 ));
             }
+            "--until-word" | "--control-word" => {
+                let parsed = triple(&next).and_then(|(node, at, value)| {
+                    let value = u64::from_str_radix(value.strip_prefix("0x")?, 16).ok()?;
+                    Some((node, at, value))
+                });
+                let Some(word) = parsed else {
+                    eprintln!("{} N:0xADDR:0xVALUE", args[i]);
+                    return ExitCode::FAILURE;
+                };
+                if args[i] == "--until-word" {
+                    until.push(word);
+                } else {
+                    control.push(word);
+                }
+            }
             "--expect" => {
                 i += 1;
                 expect.push((next.parse().expect("--expect N"), args[i + 1].clone()));
@@ -74,6 +92,17 @@ fn main() -> ExitCode {
         i += 2;
     }
     assert!(nodes <= NODES, "{nodes} nodes");
+    if until.iter().any(|(node, _, _)| *node >= nodes) {
+        eprintln!("--until-word must name a loaded node");
+        return ExitCode::FAILURE;
+    }
+    if control
+        .iter()
+        .any(|&(node, offset, _)| node >= nodes || offset >= CONTROL_BYTES || offset & 7 != 0)
+    {
+        eprintln!("--control-word requires a loaded node and an aligned control offset");
+        return ExitCode::FAILURE;
+    }
     let bytes = fs::read(image.expect("--elf")).expect("the image");
     let image = elf::read(&bytes).expect("an ELF");
     let shared = (
@@ -91,9 +120,16 @@ fn main() -> ExitCode {
         let bytes = fs::read(&b.file).expect("a blob");
         card[b.node].place(b.at, &bytes).expect("a blob's address");
     }
+    for (node, offset, value) in control {
+        if card[node].soc.store(CONTROL + offset, 8, value).is_err() {
+            eprintln!("cannot initialize control word {node}:{offset:#x}");
+            return ExitCode::FAILURE;
+        }
+    }
     let t0 = Instant::now();
     let mut ran = 0;
     let mut printed = vec![0; nodes];
+    let mut reached = false;
     while ran < cycles && card.iter().any(|n| n.soc.exit.is_none()) {
         for (i, node) in card.iter_mut().enumerate() {
             if node.soc.exit.is_none() {
@@ -107,18 +143,37 @@ fn main() -> ExitCode {
             }
         }
         ran += 1;
+        if !until.is_empty() && ran & 1023 == 0 {
+            reached = until
+                .iter()
+                .all(|&(node, at, value)| card[node].soc.card_u64(at) == value);
+            if reached {
+                break;
+            }
+        }
     }
-    let mut ok = true;
+    if !reached && !until.is_empty() {
+        reached = until
+            .iter()
+            .all(|&(node, at, value)| card[node].soc.card_u64(at) == value);
+    }
+    let mut ok = until.is_empty() || reached;
     for (i, node) in card.iter().enumerate() {
         let state = if node.soc.exit.is_some() {
             "done"
+        } else if reached {
+            "observed"
         } else {
             "NEVER FINISHED"
         };
         let code = node.soc.exit.unwrap_or(0);
         let (pc, cyc, ret) = (node.hart.pc, node.hart.cycle, node.hart.retired);
         println!("node {i}: {state} exit {code} haltpc {pc:x} cycles {cyc} retired {ret}");
-        ok &= node.soc.exit == Some(0);
+        ok &= if until.is_empty() {
+            node.soc.exit == Some(0)
+        } else {
+            node.soc.exit.is_none() || node.soc.exit == Some(0)
+        };
     }
     for (n, want) in &expect {
         if !String::from_utf8_lossy(&card[*n].soc.console).contains(want) {

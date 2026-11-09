@@ -6,7 +6,7 @@
  * of credits keeps draining, so two nodes sending to each other never stall.
  * The doorbell count each ring raises is the interrupt that wakes a node. */
 #include "kernel.h"
-#include <kos/start.h>
+#include "bootstrap.h"
 
 static uint32_t tx_sent[KOS_MAX_NODES], rx_done[KOS_MAX_NODES];
 static uint32_t rings_written;
@@ -90,25 +90,11 @@ void k_rings_drain(void)
     ring_wait(hw_sig_word(), 0);
 }
 
-struct chanmsg {
-    uint32_t chan, src, len, pad;
-    uint8_t data[48];
-};
-struct kbar {
-    uint64_t id, parties, count;
-    struct {
-        uint32_t node;
-        uint64_t req;
-    } w[K_BAR_WAITERS];
-};
 /* in private DRAM: the inbox, the channel queue, the barriers (node 0's) */
 static struct chanmsg *chq;
 #ifndef KOS_CHAN_FIFO
 static unsigned ch_head, ch_tail;
 #else
-struct channel {
-    unsigned key, head, tail, count, next;
-};
 struct channel k_channels[K_CHANQ];
 unsigned k_chan_buckets[K_CHANQ];
 #define channels k_channels
@@ -128,23 +114,25 @@ static unsigned *channel_link(unsigned key)
 #endif
 static struct kbar *bars;
 
-void k_msg_init(void)
+static void boot_messages(struct kmsg *in, struct chanmsg *queue, struct kbar *barriers,
+                          uint64_t request, uint32_t rings)
 {
-    inbox = k_alloc(K_INBOX * sizeof *inbox);
-    chq = k_alloc(K_CHANQ * sizeof *chq);
+    inbox = in;
+    chq = queue;
+    bars = barriers;
+    next_req = request;
+    rings_written = rings;
 #ifdef KOS_CHAN_FIFO
     free_channel = free_message = 1;
-    for (unsigned i = 1; i < K_CHANQ; ++i) {
-        channels[i].next = i + 1 < K_CHANQ ? i + 1 : 0;
-        chq[i].pad = channels[i].next;
-    }
 #endif
-    if (kn.me == 0) {
-        bars = k_alloc(K_BAR * sizeof *bars);
-    }
-    next_req = (uint64_t)kn.me << 56;
-    kos_start(&k_boot, &rings_written, k_log_hdr());
 }
+
+const struct k_boot_messages k_boot_messages = {
+    .init = boot_messages,
+#ifdef KOS_CHAN_FIFO
+    .table = channels,
+#endif
+};
 
 uint64_t k_req_id(void) { return ++next_req; }
 

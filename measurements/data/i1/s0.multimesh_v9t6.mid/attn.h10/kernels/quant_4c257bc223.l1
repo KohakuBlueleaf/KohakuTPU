@@ -1,0 +1,603 @@
+target ktpu.v9 vregs=128 vcopies=2
+
+image quant_4c257bc223.read_clear_0()
+    vsync fe on=math
+    getstk s14
+    vmov v31, k0
+    vsync fe on=math
+    halt
+
+image quant_4c257bc223.read_pack_0_0(src0, dst0, src1, dst1, trips)
+    desc a0=src0 walk=(32, 1)
+    desc a2=dst0 walk=(32, 4)
+    desc a1=src1 walk=(32, 1)
+    desc a3=dst1 walk=(32, 4)
+    seti s2 = 65536.0
+    seti s3 = 16.0
+    seti s4 = 3375104
+    ainc a2 += 0
+    ainc a3 += 0
+    vsync fe on=fill
+    vsync fe on=unpack
+    vadd v0[0], k0, k0 vl=16
+    vadd v0[1], k0, v0[0] vl=16
+    vadd v0[2], k0, v0[0] vl=16
+    vadd v0[3], k0, v0[0] vl=16
+    vadd v0[4], k0, v0[0] vl=16
+    vadd v0[5], k0, v0[0] vl=16
+    vadd v0[6], k0, v0[0] vl=16
+    vadd v0[7], k0, v0[0] vl=16
+    vsync pack on=drain
+    vsel v0, v0, s4, v0
+    vmul v1, v0, k0
+    vexp2d v3, v1, k0
+    vpack v0 -> l1[256] mx7b
+    vsync drain on=pack
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 12928
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 12928
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 12928
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 12928
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 128
+    vdrain a2 <- l1[256] rel
+    ainc a2 += 0
+    vdrain a2 <- l1[256] rel
+    vsync fe on=fill
+    vsync fe on=unpack
+    vadd v4[0], k0, k0 vl=16
+    vadd v4[1], k0, v4[0] vl=16
+    vadd v4[2], k0, v4[0] vl=16
+    vadd v4[3], k0, v4[0] vl=16
+    vadd v4[4], k0, v4[0] vl=16
+    vadd v4[5], k0, v4[0] vl=16
+    vadd v4[6], k0, v4[0] vl=16
+    vadd v4[7], k0, v4[0] vl=16
+    vsync pack on=drain
+    vsel v4, v4, s4, v4
+    vmul v5, v4, k0
+    vexp2d v7, v5, k0
+    vpack v4 -> l1[260] mx7b
+    vsync drain on=pack
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 12928
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 12928
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 12928
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 12928
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 128
+    vdrain a3 <- l1[260] rel
+    ainc a3 += 0
+    vdrain a3 <- l1[260] rel
+    vsync fe on=drain
+    vsync fe on=math
+    getstk s14
+    vmax v31, v31, s14
+    vsync fe on=math
+    halt
+
+image quant_4c257bc223.read_pack_0_1(src0, dst0, dst1, dst2, dst3, trips)
+    desc a0=src0 walk=((32, 4), (3840, 5))
+    desc a1=dst0 walk=(32, 4)
+    desc a2=dst1 walk=(32, 4)
+    desc a3=dst2 walk=(32, 4)
+    desc a4=dst3 walk=(32, 4)
+    seti s2 = 65536.0
+    seti s3 = 16.0
+    seti s4 = 3375104
+    ainc a1 += 14336
+    ainc a2 += 14336
+    ainc a3 += 14336
+    ainc a4 += 14336
+    ainc a0 += 128
+    vfill a0 -> l1[0] rel
+    seti s0 = trips+-1
+    loop s0
+        vsync fe on=fill
+        vunpk v32 <- l1[0] f16 n=8
+        vunpk v33 <- l1[8] f16 n=8
+        vunpk v34 <- l1[16] f16 n=4
+        vsync fe on=unpack
+        ainc a0 += 128
+        vfill a0 -> l1[0] rel
+        vadd v0[0 :], k0, v32[0 :] vl=32
+        vadd v0[2 :], k0, v32[4 :] vl=32
+        vadd v0[4 :], k0, v33[0 :] vl=32
+        vadd v0[6 :], k0, v33[4 :] vl=32
+        vadd v4[0 :], k0, v32[2 :] vl=32
+        vadd v4[2 :], k0, v32[6 :] vl=32
+        vadd v4[4 :], k0, v33[2 :] vl=32
+        vadd v4[6 :], k0, v33[6 :] vl=32
+        vadd v8[2], k0, k0 vl=16
+        vadd v12[2], k0, k0 vl=16
+        vadd v8[0 :], k0, v34[0 :] vl=32
+        vadd v12[0 :], k0, v34[2 :] vl=32
+        vadd v8[3], k0, v8[2] vl=16
+        vadd v12[3], k0, v12[2] vl=16
+        vadd v8[4], k0, v8[2] vl=16
+        vadd v12[4], k0, v12[2] vl=16
+        vadd v8[5], k0, v8[2] vl=16
+        vadd v12[5], k0, v12[2] vl=16
+        vadd v8[6], k0, v8[2] vl=16
+        vadd v12[6], k0, v12[2] vl=16
+        vadd v8[7], k0, v8[2] vl=16
+        vadd v12[7], k0, v12[2] vl=16
+        vsync pack on=drain
+        vsel v0, v0, s4, v0
+        vsel v4, v4, s4, v4
+        vsel v8, v8, s4, v8
+        vsel v12, v12, s4, v12
+        vmul v1, v0, k0
+        vmul v5, v4, k0
+        vmul v9, v8, k0
+        vmul v13, v12, k0
+        vexp2d v3, v1, k0
+        vexp2d v7, v5, k0
+        vexp2d v11, v9, k0
+        vexp2d v15, v13, k0
+        vpack v0 -> l1[256] mx7b
+        vpack v4 -> l1[260] mx7b
+        vpack v8 -> l1[264] mx7b
+        vpack v12 -> l1[268] mx7b
+        vsync drain on=pack
+        ainc a1 += 14336
+        vdrain a1 <- l1[256] rel
+        ainc a2 += 14336
+        vdrain a2 <- l1[260] rel
+        ainc a3 += 14336
+        vdrain a3 <- l1[264] rel
+        ainc a4 += 14336
+        vdrain a4 <- l1[268] rel
+    vsync fe on=fill
+    vunpk v32 <- l1[0] f16 n=8
+    vunpk v33 <- l1[8] f16 n=8
+    vunpk v34 <- l1[16] f16 n=4
+    vsync fe on=unpack
+    vadd v0[0 :], k0, v32[0 :] vl=32
+    vadd v0[2 :], k0, v32[4 :] vl=32
+    vadd v0[4 :], k0, v33[0 :] vl=32
+    vadd v0[6 :], k0, v33[4 :] vl=32
+    vadd v4[0 :], k0, v32[2 :] vl=32
+    vadd v4[2 :], k0, v32[6 :] vl=32
+    vadd v4[4 :], k0, v33[2 :] vl=32
+    vadd v4[6 :], k0, v33[6 :] vl=32
+    vadd v8[2], k0, k0 vl=16
+    vadd v12[2], k0, k0 vl=16
+    vadd v8[0 :], k0, v34[0 :] vl=32
+    vadd v12[0 :], k0, v34[2 :] vl=32
+    vadd v8[3], k0, v8[2] vl=16
+    vadd v12[3], k0, v12[2] vl=16
+    vadd v8[4], k0, v8[2] vl=16
+    vadd v12[4], k0, v12[2] vl=16
+    vadd v8[5], k0, v8[2] vl=16
+    vadd v12[5], k0, v12[2] vl=16
+    vadd v8[6], k0, v8[2] vl=16
+    vadd v12[6], k0, v12[2] vl=16
+    vadd v8[7], k0, v8[2] vl=16
+    vadd v12[7], k0, v12[2] vl=16
+    vsync pack on=drain
+    vsel v0, v0, s4, v0
+    vsel v4, v4, s4, v4
+    vsel v8, v8, s4, v8
+    vsel v12, v12, s4, v12
+    vmul v1, v0, k0
+    vmul v5, v4, k0
+    vmul v9, v8, k0
+    vmul v13, v12, k0
+    vexp2d v3, v1, k0
+    vexp2d v7, v5, k0
+    vexp2d v11, v9, k0
+    vexp2d v15, v13, k0
+    vpack v0 -> l1[256] mx7b
+    vpack v4 -> l1[260] mx7b
+    vpack v8 -> l1[264] mx7b
+    vpack v12 -> l1[268] mx7b
+    vsync drain on=pack
+    ainc a1 += 14336
+    vdrain a1 <- l1[256] rel
+    ainc a2 += 14336
+    vdrain a2 <- l1[260] rel
+    ainc a3 += 14336
+    vdrain a3 <- l1[264] rel
+    ainc a4 += 14336
+    vdrain a4 <- l1[268] rel
+    vsync fe on=drain
+    vsync fe on=math
+    getstk s14
+    vmax v31, v31, s14
+    vsync fe on=math
+    halt
+
+image quant_4c257bc223.read_pack_0_2(src0, dst0, dst1, dst2, dst3, trips)
+    desc a0=src0 walk=((32, 4), (3840, 8))
+    desc a1=dst0 walk=(32, 4)
+    desc a2=dst1 walk=(32, 4)
+    desc a3=dst2 walk=(32, 4)
+    desc a4=dst3 walk=(32, 4)
+    seti s2 = 65536.0
+    seti s3 = 16.0
+    seti s4 = 3375104
+    ainc a1 += 512
+    ainc a2 += 512
+    ainc a3 += 512
+    ainc a4 += 512
+    ainc a0 += 30720
+    vfill a0 -> l1[0] rel
+    seti s0 = trips+-1
+    loop s0
+        vsync fe on=fill
+        vunpk v0[0 :] <- l1[0] f16 n=2
+        vunpk v0[2 :] <- l1[4] f16 n=2
+        vunpk v0[4 :] <- l1[8] f16 n=2
+        vunpk v0[6 :] <- l1[12] f16 n=2
+        vsync fe on=unpack
+        vunpk v4[0 :] <- l1[2] f16 n=2
+        vunpk v4[2 :] <- l1[6] f16 n=2
+        vunpk v4[4 :] <- l1[10] f16 n=2
+        vunpk v4[6 :] <- l1[14] f16 n=2
+        vsync fe on=unpack
+        vunpk v8[0 :] <- l1[16] f16 n=2
+        vunpk v8[2 :] <- l1[20] f16 n=2
+        vunpk v8[4 :] <- l1[24] f16 n=2
+        vunpk v8[6 :] <- l1[28] f16 n=2
+        vsync fe on=unpack
+        vunpk v12[0 :] <- l1[18] f16 n=2
+        vunpk v12[2 :] <- l1[22] f16 n=2
+        vunpk v12[4 :] <- l1[26] f16 n=2
+        vunpk v12[6 :] <- l1[30] f16 n=2
+        vsync fe on=unpack
+        ainc a0 += 30720
+        vfill a0 -> l1[0] rel
+        vsync pack on=drain
+        vsel v0, v0, s4, v0
+        vsel v4, v4, s4, v4
+        vsel v8, v8, s4, v8
+        vsel v12, v12, s4, v12
+        vmul v1, v0, k0
+        vmul v5, v4, k0
+        vmul v9, v8, k0
+        vmul v13, v12, k0
+        vexp2d v3, v1, k0
+        vexp2d v7, v5, k0
+        vexp2d v11, v9, k0
+        vexp2d v15, v13, k0
+        vpack v0 -> l1[256] mx7b
+        vpack v4 -> l1[260] mx7b
+        vpack v8 -> l1[264] mx7b
+        vpack v12 -> l1[268] mx7b
+        vsync drain on=pack
+        ainc a1 += 512
+        vdrain a1 <- l1[256] rel
+        ainc a2 += 512
+        vdrain a2 <- l1[260] rel
+        ainc a3 += 512
+        vdrain a3 <- l1[264] rel
+        ainc a4 += 512
+        vdrain a4 <- l1[268] rel
+    vsync fe on=fill
+    vunpk v0[0 :] <- l1[0] f16 n=2
+    vunpk v0[2 :] <- l1[4] f16 n=2
+    vunpk v0[4 :] <- l1[8] f16 n=2
+    vunpk v0[6 :] <- l1[12] f16 n=2
+    vsync fe on=unpack
+    vunpk v4[0 :] <- l1[2] f16 n=2
+    vunpk v4[2 :] <- l1[6] f16 n=2
+    vunpk v4[4 :] <- l1[10] f16 n=2
+    vunpk v4[6 :] <- l1[14] f16 n=2
+    vsync fe on=unpack
+    vunpk v8[0 :] <- l1[16] f16 n=2
+    vunpk v8[2 :] <- l1[20] f16 n=2
+    vunpk v8[4 :] <- l1[24] f16 n=2
+    vunpk v8[6 :] <- l1[28] f16 n=2
+    vsync fe on=unpack
+    vunpk v12[0 :] <- l1[18] f16 n=2
+    vunpk v12[2 :] <- l1[22] f16 n=2
+    vunpk v12[4 :] <- l1[26] f16 n=2
+    vunpk v12[6 :] <- l1[30] f16 n=2
+    vsync fe on=unpack
+    vsync pack on=drain
+    vsel v0, v0, s4, v0
+    vsel v4, v4, s4, v4
+    vsel v8, v8, s4, v8
+    vsel v12, v12, s4, v12
+    vmul v1, v0, k0
+    vmul v5, v4, k0
+    vmul v9, v8, k0
+    vmul v13, v12, k0
+    vexp2d v3, v1, k0
+    vexp2d v7, v5, k0
+    vexp2d v11, v9, k0
+    vexp2d v15, v13, k0
+    vpack v0 -> l1[256] mx7b
+    vpack v4 -> l1[260] mx7b
+    vpack v8 -> l1[264] mx7b
+    vpack v12 -> l1[268] mx7b
+    vsync drain on=pack
+    ainc a1 += 512
+    vdrain a1 <- l1[256] rel
+    ainc a2 += 512
+    vdrain a2 <- l1[260] rel
+    ainc a3 += 512
+    vdrain a3 <- l1[264] rel
+    ainc a4 += 512
+    vdrain a4 <- l1[268] rel
+    vsync fe on=drain
+    vsync fe on=math
+    getstk s14
+    vmax v31, v31, s14
+    vsync fe on=math
+    halt
+
+image quant_4c257bc223.read_status_0(status)
+    desc a2=status walk=(32, 4)
+    vpack v31 -> l1[384] f16 n=4
+    vsync fe on=pack
+    vdrain a2 <- l1[384]
+    vsync fe on=drain
+    halt
+
+fn quant_4c257bc223.l1(p_x: f16[23640, 16] @dram, q: mx7b[2240, 64] @dram(gn=56, nk=2), __mx7_status_0: f16[128] @dram)
+    send vc[0]
+        run quant_4c257bc223.read_clear_0()
+    send vc[1]
+        run quant_4c257bc223.read_clear_0()
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run quant_4c257bc223.read_pack_0_0(p_x+0, q+12800, p_x+0, q+84480, 1)
+    send vc[1]
+        run quant_4c257bc223.read_pack_0_2(p_x+554752, q+66560, q+66688, q+66816, q+66944, 6)
+    send vc[0]
+        run quant_4c257bc223.read_pack_0_1(p_x+738560, q+12288, q+12416, q+12544, q+12672, 10)
+    send vc[1]
+        run quant_4c257bc223.read_pack_0_2(p_x+1920, q+71680, q+71808, q+71936, q+72064, 24)
+    send vc[0]
+        run quant_4c257bc223.read_pack_0_2(p_x+1280, q+0, q+128, q+256, q+384, 24)
+    send vc[1]
+        run quant_4c257bc223.read_pack_0_2(p_x+2048, q+86016, q+86144, q+86272, q+86400, 24)
+    send vc[0]
+        run quant_4c257bc223.read_pack_0_2(p_x+1408, q+14336, q+14464, q+14592, q+14720, 24)
+    send vc[1]
+        run quant_4c257bc223.read_pack_0_2(p_x+2176, q+100352, q+100480, q+100608, q+100736, 24)
+    send vc[0]
+        run quant_4c257bc223.read_pack_0_2(p_x+1536, q+28672, q+28800, q+28928, q+29056, 24)
+    send vc[1]
+        run quant_4c257bc223.read_pack_0_2(p_x+2304, q+114688, q+114816, q+114944, q+115072, 24)
+    send vc[0]
+        run quant_4c257bc223.read_pack_0_2(p_x+1664, q+43008, q+43136, q+43264, q+43392, 24)
+    send vc[1]
+        run quant_4c257bc223.read_pack_0_2(p_x+2432, q+129024, q+129152, q+129280, q+129408, 24)
+    send vc[0]
+        run quant_4c257bc223.read_pack_0_2(p_x+1792, q+57344, q+57472, q+57600, q+57728, 18)
+    wait vc[0]
+    wait vc[1]
+    send vc[0]
+        run quant_4c257bc223.read_status_0(__mx7_status_0+0)
+    send vc[1]
+        run quant_4c257bc223.read_status_0(__mx7_status_0+128)
+    barrier
+    r14 = load __mx7_status_0+0
+    assert_zero r14 code=1
+    r14 = load __mx7_status_0+128
+    assert_zero r14 code=1
+    barrier

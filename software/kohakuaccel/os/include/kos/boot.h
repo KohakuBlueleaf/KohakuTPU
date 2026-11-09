@@ -22,7 +22,7 @@
 enum kos_region_kind {
     KOS_RG_NONE        = 0,
     KOS_RG_DRAM_PRIV   = 1, /* this node's private DRAM span (owner = this node) */
-    KOS_RG_DRAM_SHARED = 2, /* DRAM every node maps at the same user address */
+    KOS_RG_DRAM_SHARED = 2, /* shared DRAM, with optional user aliases */
     KOS_RG_STAGING     = 3, /* a mesh's staging store (owner = that mesh's node) */
 };
 
@@ -34,6 +34,7 @@ enum {
     KOS_F_POLL            = 1u << 3, /* kernel waits by polling only (else interrupt-driven) */
     KOS_F_ENGINE          = 1u << 4, /* unit dispatch through the dispatch engine where present */
     KOS_F_TRACE           = 1u << 5, /* kernel prints each syscall and message */
+    KOS_F_SHARED_PHYS     = 1u << 6, /* shared DRAM for physical I/O, without user aliases */
 };
 
 struct kos_region {
@@ -41,7 +42,9 @@ struct kos_region {
     uint64_t size;
     uint32_t kind;
     uint32_t owner; /* node index */
-    uint64_t attr;  /* reserved, 0 */
+    /* DRAM_SHARED: ingress-route alias mask (bits 37:36 only). Zero on
+     * machines with mesh-distinct DRAM. Never applies to staging/private. */
+    uint64_t attr;
 };
 
 struct kos_unit {

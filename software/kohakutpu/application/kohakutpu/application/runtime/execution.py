@@ -86,7 +86,7 @@ def publish(card, programs):
         order = card._order.setdefault(node, [])
         if not order:
             queue.read_stdout()
-            card._stdout[node] = ""
+            card._stdout[node] = b"" if queue.record is not None else ""
         tag = queue.submit_list(
             execution, publishing=card._publishing, native=len(programs) == 1
         )

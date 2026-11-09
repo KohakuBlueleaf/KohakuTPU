@@ -33,6 +33,7 @@ FLAGS = {
     "poll": 1 << 3,
     "engine": 1 << 4,
     "trace": 1 << 5,
+    "shared_phys": 1 << 6,
 }
 
 HEADER = struct.Struct("<QQII4BIQQQIIQ24x")
@@ -125,8 +126,12 @@ def table(
         len(units),
         run,
     )
+    # Platform memory identity, not a permission bypass for other regions.
+    route_mask = num(board.get("shared_route_mask", 0))
+    shared_routes(rg, route_mask)
     for i, (base, size, kind, owner) in enumerate(rg):
-        REGION.pack_into(b, OFF_REGION + i * REGION.size, base, size, kind, owner, 0)
+        attr = route_mask if kind == RG_DRAM_SHARED else 0
+        REGION.pack_into(b, OFF_REGION + i * REGION.size, base, size, kind, owner, attr)
     for i, u in enumerate(units):
         t = u["type"].encode()
         UNIT.pack_into(
@@ -153,6 +158,23 @@ def parse_flags(text: str) -> int:
             raise ValueError(f"flag {f!r}: one of {sorted(FLAGS)}")
         v |= FLAGS[f]
     return v
+
+
+def shared_routes(rg: list, route_mask: int) -> None:
+    """The kernel's shared-address check folds a request's route bits onto the
+    shared region's and checks one offset (`kernel/mem.c` `k_pa_ok`): that is
+    exact only while no shared region spans a route boundary, which this refuses."""
+    if route_mask & ~(3 << MESH_SHIFT):
+        raise ValueError("shared_route_mask may contain only DRAM ingress mesh bits")
+    for base, size, kind, _ in rg:
+        if (
+            kind == RG_DRAM_SHARED
+            and route_mask
+            and (base ^ (base + size - 1)) & route_mask
+        ):
+            raise ValueError(
+                f"shared region {base:#x}+{size:#x} spans a DRAM ingress route boundary"
+            )
 
 
 def tables(board: dict, flags: int = 0, tick: int = 0, cmd: str = "") -> list[bytes]:

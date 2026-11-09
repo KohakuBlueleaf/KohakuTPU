@@ -133,8 +133,8 @@ class Submission(Parts):
             recipe, handles, translations = debug[n]
             plain[n] = (
                 B.Package(
-                    lambda recipe=recipe, handles=handles, translations=translations: recipe.plain(
-                        handles, translations
+                    lambda recipe=recipe, handles=handles, translations=translations: (
+                        recipe.plain(handles, translations)
                     ),
                     self.machine_json,
                     n,

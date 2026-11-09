@@ -58,6 +58,7 @@ impl Emitted {
     ) -> R<crate::split::CostEstimate> {
         let module = ktpu_l1::text::read(&self.text, "B delivery")
             .map_err(|e| Refusal::new(&e.clause, e.message))?;
+        crate::split::cost::l1_staging(&module, name, machine, request.nodes.staging_budget())?;
         let body = module
             .body(name, "l1")
             .map_err(|e| Refusal::new(&e.clause, e.message))?;

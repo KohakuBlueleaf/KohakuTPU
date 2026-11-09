@@ -28,6 +28,7 @@ import pathlib
 import re
 import sys
 import time
+from contextlib import ExitStack
 from typing import cast
 
 # The framework's OS tools, as imports below.
@@ -72,10 +73,11 @@ class Card:
         self.m = board_map(cb)
         self.sim = model is not None
         self.chunk = int(os.environ.get("RUN_CARD_READ_CHUNK", "1048576"))
+        self.poll = float(os.environ.get("RUN_CARD_POLL_SECONDS", "0.001"))
         if model:
             self.t = VerilatorTransport(model, log=log)
         else:
-            self.t = XdmaLinux() if xdma else JtagTransport()
+            self.t = XdmaLinux.from_env() if xdma else JtagTransport()
         self.mem = UnitGlobal(
             self.t, self.m["dram"], self.m["mem"], self.m["size"], staging=True
         )
@@ -104,7 +106,9 @@ class Card:
         if self.sim:
             self.model.run(20000)
         else:
-            time.sleep(0.05)
+            # A resident completion is often sub-millisecond: the poll interval
+            # bounds the added latency against the transport's polling traffic.
+            time.sleep(self.poll)
 
 
 def arrays(elf: pathlib.Path, table: bytes) -> tuple[bytes, bytes, list]:
@@ -144,13 +148,37 @@ def run(a, board: dict) -> dict:
     out = pathlib.Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     card = Card(board, a.model, out / "model.log", a.xdma)
+    wins = []
+    try:
+        for mesh in board["mesh_of"][: board["nodes"]]:
+            wins.append(
+                rv64load.LoadWindow(
+                    card.t, card.m["ctrl"][mesh] + rv64load.WINDOW_OFFSET
+                )
+            )
+        # No image or shared-memory write may race a previous CPU owner.
+        for window in wins:
+            window.stop()
+        return _run_loaded(a, board, card, wins)
+    finally:
+        _close_card(card, wins)
+
+
+def _close_card(card, wins):
+    """Attempt every stop, then close; propagate cleanup failures with context."""
+    with ExitStack() as cleanup:
+        cleanup.callback(card.t.close)
+        for window in reversed(wins):
+            cleanup.callback(window.stop)
+
+
+def _run_loaded(a, board, card, wins):
     image = pathlib.Path(a.image)
     flags = parse_flags(a.flags)
     n = board["nodes"]
     priv = [regions(board, i)[0] for i in range(n)]
     t0 = time.monotonic()
     painted = set()
-    wins = []
     for i, tb in enumerate(tables(board, flags, a.tick, a.cmd)):
         imem, spad, dram = arrays(image, tb)
         base, size = priv[i][0], priv[i][1]
@@ -167,7 +195,7 @@ def run(a, board: dict) -> dict:
             for pa, data in dram:
                 card.write(pa | board["mesh_of"][i] << MESH_SHIFT, data)
         if a.dram_of is None:
-            wins.append(load_node(card, i, board["mesh_of"][i], imem, spad, a.load))
+            wins[i] = load_node(card, i, board["mesh_of"][i], imem, spad, a.load)
     t_load = time.monotonic() - t0
     if a.dram_of is not None:
         return {
@@ -194,7 +222,7 @@ def run(a, board: dict) -> dict:
         if a.log == "ring" and time.monotonic() - shown >= PROGRESS_SECONDS:
             shown = time.monotonic()
             for i in range(n):
-                nd = klog.parse(card.read(log_at[i], 64) + bytes(LOG - 64))
+                nd = klog.parse(card.read(log_at[i], LOG))
                 print(f"[{i}] at {shown - t1:.0f}s: {klog.describe(nd)}", flush=True)
         if card.sim or a.log == "ring":
             card.idle()
@@ -221,8 +249,6 @@ def run(a, board: dict) -> dict:
             if mm:
                 meas.setdefault(str(i), {})[mm[1]] = int(mm[2])
     st = card.model.status() if card.sim else {}
-    if card.sim:
-        card.t.close()
     ok = all(nd["status"] & 0x8 and nd["exit"] == 0 for nd in nodes)
     return {
         "ok": ok,

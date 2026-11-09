@@ -4,13 +4,13 @@
 //! outputs also start on a complete `mg.wburst * die.word_bytes` burst. An arena
 //! is one span, so one package buffer, whatever its member count.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ktpu_machine::Machine;
 
 use crate::error::Result;
 use crate::layout::buffer::Buffer;
-use crate::text::Module;
+use crate::text::{Module, Term};
 
 /// One arena: its space and node, its exact size (a whole number of write lines)
 /// and each member's offset.
@@ -32,6 +32,103 @@ impl Arena {
     }
 }
 
+/// Runtime allocation layout after drain legalization, shared by plan pricing.
+pub fn runtime_arenas(
+    module: &Module,
+    name: &str,
+    caller: &BTreeSet<String>,
+    machine: &Machine,
+) -> Result<Vec<Arena>> {
+    let plan = crate::lower::node::plan_drains(module, name, machine, None)?;
+    arenas_with_bursts(&plan.module, name, caller, machine, &plan.burst_ports)
+}
+
+/// Prove capacity from placed allocation declarations. Drain legalization adds
+/// only DRAM storage; its staging effect is burst alignment of existing members.
+/// False means that the budget lies between the bounds and needs exact layout.
+pub fn staging_bounds(
+    params: &[(String, Term)],
+    caller: &BTreeSet<String>,
+    machine: &Machine,
+    budget: ktpu_machine::StagingBudget,
+) -> Result<bool> {
+    let lower = arenas_of(params, caller, machine, &BTreeSet::new())?;
+    check_staging(&lower, machine, budget)?;
+    if !machine.flaws.f016.present {
+        return Ok(true);
+    }
+    let stage: BTreeSet<_> = lower
+        .iter()
+        .filter(|arena| arena.space == "stage")
+        .flat_map(|arena| arena.members.iter().map(|(name, _)| name.clone()))
+        .collect();
+    if stage.is_empty() {
+        return Ok(true);
+    }
+    let line = u64::from(machine.card.dram.line_bytes).max(if machine.flaws.f014.present {
+        128
+    } else {
+        1
+    });
+    let burst = u64::from(machine.mg.wburst) * u64::from(machine.die.word_bytes);
+    // Nested alignment grids make all-member alignment an upper bound.
+    if line.max(burst) % line != 0 {
+        return Ok(false);
+    }
+    let upper = arenas_of(params, caller, machine, &stage)?;
+    Ok(check_staging(&upper, machine, budget).is_ok())
+}
+
+/// Admit a complete candidate, expanding drains only at a capacity boundary.
+pub fn admit_staging(
+    module: &Module,
+    name: &str,
+    caller: &BTreeSet<String>,
+    machine: &Machine,
+    budget: ktpu_machine::StagingBudget,
+) -> Result<()> {
+    if staging_bounds(&module.body(name, "l1")?.params, caller, machine, budget)? {
+        return Ok(());
+    }
+    check_staging(
+        &runtime_arenas(module, name, caller, machine)?,
+        machine,
+        budget,
+    )
+}
+
+/// Admission of complete runtime windows, including alignment between arenas.
+/// Scratch members retain their allocation for the whole launch; graph aliases
+/// already represent any storage reused across disjoint lifetimes.
+pub fn check_staging(
+    arenas: &[Arena],
+    machine: &Machine,
+    budget: ktpu_machine::StagingBudget,
+) -> Result<()> {
+    let align = u64::from(machine.card.dram.line_bytes).max(256);
+    let mut used = BTreeMap::<i128, u64>::new();
+    for arena in arenas.iter().filter(|a| a.space == "stage") {
+        let node = arena.node.unwrap_or(budget.default_node);
+        let bytes = arena.bytes.div_ceil(align).checked_mul(align);
+        let total = used.entry(node).or_default();
+        *total = bytes.and_then(|n| total.checked_add(n)).ok_or_else(|| {
+            crate::error::Error::new("DSL.KERN.020", "staging capacity: footprint overflows")
+        })?;
+    }
+    for (node, bytes) in used {
+        if bytes > budget.bytes {
+            return Err(crate::error::Error::new(
+                "DSL.KERN.020",
+                format!(
+                    "staging capacity: sysnode {node} needs {bytes} bytes, budget {}",
+                    budget.bytes,
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The arenas of `fn name.l1`: every parameter not in `caller`, in the
 /// arena of its space and node, in first-member order.
 pub fn arenas(
@@ -47,6 +144,21 @@ pub fn arenas(
 pub fn arenas_with_bursts(
     module: &Module,
     name: &str,
+    caller: &BTreeSet<String>,
+    machine: &Machine,
+    burst_members: &BTreeSet<String>,
+) -> Result<Vec<Arena>> {
+    arenas_of(
+        &module.body(name, "l1")?.params,
+        caller,
+        machine,
+        burst_members,
+    )
+}
+
+/// Parameter-order layout, also used by allocation-only capacity proofs.
+fn arenas_of(
+    params: &[(String, Term)],
     caller: &BTreeSet<String>,
     machine: &Machine,
     burst_members: &BTreeSet<String>,
@@ -72,7 +184,7 @@ pub fn arenas_with_bursts(
     };
     let up = |n: u64| n.div_ceil(line) * line;
     let mut out: Vec<Arena> = Vec::new();
-    for (param, t) in &module.body(name, "l1")?.params {
+    for (param, t) in params {
         if caller.contains(param) {
             continue;
         }

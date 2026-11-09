@@ -287,8 +287,7 @@ pub(super) fn summarize(node: &mut Node, symbolic: &mut Symbolic, latch: Step) -
         }
         let extra = symbolic.fresh();
         let in_range = symbolic.condition(4, Value::Known(trips), extra);
-        let (allowed, _) = symbolic.successors(in_range);
-        symbolic.predicate = allowed;
+        symbolic.assume(in_range);
         let delta = symbolic
             .alu(3, extra, Value::Known(poll.step))
             .expect("multiply");

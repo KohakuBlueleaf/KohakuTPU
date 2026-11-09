@@ -16,6 +16,16 @@ pub const KINDS: [&str; 3] = ["node", "mg", "vc"];
 
 static UID: AtomicUsize = AtomicUsize::new(1);
 
+thread_local! {
+    static ITEM_EMISSIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Item environments materialized by the last instance traversal on this thread.
+#[doc(hidden)]
+pub fn last_item_emissions() -> usize {
+    ITEM_EMISSIONS.with(|count| count.get())
+}
+
 /// A fresh node identity.
 pub fn uid() -> usize {
     UID.fetch_add(1, Ordering::Relaxed)
@@ -317,14 +327,29 @@ pub fn const_of(body: &Body, st: &Stmt, t: &Term, env: &Env) -> Result<i64> {
 
 /// The iterations of a `par` or `for`.
 pub fn span(body: &Body, st: &Stmt, lo: &Term, hi: &Term, env: &Env) -> Result<Vec<i64>> {
-    let mut out: Vec<i64> = (const_of(body, st, lo, env)?..const_of(body, st, hi, env)?).collect();
+    Ok(span_iter(body, st, lo, hi, env)?.collect())
+}
+
+/// The same iteration order without retaining the domain's values.
+fn span_iter(
+    body: &Body,
+    st: &Stmt,
+    lo: &Term,
+    hi: &Term,
+    env: &Env,
+) -> Result<impl Iterator<Item = i64>> {
+    let mut range = const_of(body, st, lo, env)?..const_of(body, st, hi, env)?;
     if on("l2.body/span-short") {
-        out.pop();
+        range.next_back();
     }
-    if on("l2.body/span-reversed") {
-        out.reverse();
-    }
-    Ok(out)
+    let reversed = on("l2.body/span-reversed");
+    Ok(std::iter::from_fn(move || {
+        if reversed {
+            range.next_back()
+        } else {
+            range.next()
+        }
+    }))
 }
 
 /// `env` with `var` bound to `v`.
@@ -394,7 +419,28 @@ struct Phases {
 
 /// Every top-level stage of `body` (L2.BODY.009, .019).
 pub fn instances(body: &Body) -> Result<Vec<Stage>> {
-    let mut out = instances_in(body, &body.stmts, &Env::new())?;
+    stages(body, true)
+}
+
+/// Validated instance scopes, without materializing per-trip items or cuts.
+/// Consumers use the structured `par` and environment rather than `items`.
+pub fn instance_scopes(body: &Body) -> Result<Vec<Stage>> {
+    stages(body, false)
+}
+
+fn stages(body: &Body, expand: bool) -> Result<Vec<Stage>> {
+    ITEM_EMISSIONS.with(|count| count.set(0));
+    let mut out = Vec::new();
+    walk(
+        body,
+        &body.stmts,
+        &Env::new(),
+        0,
+        None,
+        &mut Phases::default(),
+        &mut out,
+        expand,
+    )?;
     if on("l2.body/phase-per-stage") {
         for (k, s) in out.iter_mut().enumerate() {
             s.phase = k as i64;
@@ -405,11 +451,22 @@ pub fn instances(body: &Body) -> Result<Vec<Stage>> {
 
 /// The stages under `stmts` with `env` bound.
 pub fn instances_in(body: &Body, stmts: &[Arc<Node>], env: &Env) -> Result<Vec<Stage>> {
+    ITEM_EMISSIONS.with(|count| count.set(0));
     let mut out = Vec::new();
-    walk(body, stmts, env, 0, None, &mut Phases::default(), &mut out)?;
+    walk(
+        body,
+        stmts,
+        env,
+        0,
+        None,
+        &mut Phases::default(),
+        &mut out,
+        true,
+    )?;
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn walk(
     body: &Body,
     stmts: &[Arc<Node>],
@@ -418,6 +475,7 @@ fn walk(
     tag: Option<(usize, usize, i64)>,
     ph: &mut Phases,
     out: &mut Vec<Stage>,
+    expand: bool,
 ) -> Result<()> {
     for s in stmts {
         match s.as_ref() {
@@ -430,7 +488,7 @@ fn walk(
                 for v in span(body, &p.st, &p.lo, &p.hi, env)? {
                     let inner = bind(env, &p.var, v);
                     let n = const_of(body, &p.st, p.index.as_ref().unwrap(), &inner)?;
-                    walk(body, &p.body, &inner, n, tag, ph, out)?;
+                    walk(body, &p.body, &inner, n, tag, ph, out, expand)?;
                 }
                 if outer {
                     ph.cur = None;
@@ -453,7 +511,7 @@ fn walk(
                         items: Vec::new(),
                         cuts: Vec::new(),
                     };
-                    flatten(body, &p.body, &inner, &mut inst, true)?;
+                    flatten(body, &p.body, &inner, &mut inst, true, expand)?;
                     stage.push(inst);
                 }
                 emit(out, ph, StageX::Par(stage), node, tag);
@@ -475,12 +533,13 @@ fn walk(
                         inner_tag,
                         ph,
                         out,
+                        expand,
                     )?;
                 }
             }
             Node::When(w) => {
                 if const_of(body, &w.st, &w.cond, env)? != 0 {
-                    walk(body, &w.body, env, node, tag, ph, out)?;
+                    walk(body, &w.body, env, node, tag, ph, out, expand)?;
                 }
             }
             Node::If(i) => {
@@ -525,6 +584,7 @@ fn flatten(
     env: &Env,
     inst: &mut Instance,
     top: bool,
+    expand: bool,
 ) -> Result<()> {
     for s in stmts {
         match s.as_ref() {
@@ -543,22 +603,36 @@ fn flatten(
                         "if sticky is a vector core's (its stream loop)",
                     ));
                 }
-                inst.items.push((s.clone(), env.clone()));
+                if expand {
+                    ITEM_EMISSIONS.with(|count| count.set(count.get() + 1));
+                    inst.items.push((s.clone(), env.clone()));
+                }
             }
             Node::When(w) => {
                 if const_of(body, &w.st, &w.cond, env)? != 0 {
-                    flatten(body, &w.body, env, inst, top)?;
+                    flatten(body, &w.body, env, inst, top, expand)?;
                 }
             }
             Node::For(f) => {
-                for v in span(body, &f.st, &f.lo, &f.hi, env)? {
-                    if top {
+                let values = span_iter(body, &f.st, &f.lo, &f.hi, env)?;
+                // Leaf instructions have no instance-domain validation. Their
+                // operands stay in the structured body for the consumer.
+                if !expand && f.body.iter().all(|s| matches!(s.as_ref(), Node::Op(_))) {
+                    continue;
+                }
+                for v in values {
+                    if top && expand {
                         inst.cuts.push(inst.items.len());
                     }
-                    flatten(body, &f.body, &bind(env, &f.var, v), inst, false)?;
+                    flatten(body, &f.body, &bind(env, &f.var, v), inst, false, expand)?;
                 }
             }
-            Node::Op(_) => inst.items.push((s.clone(), env.clone())),
+            Node::Op(_) => {
+                if expand {
+                    ITEM_EMISSIONS.with(|count| count.set(count.get() + 1));
+                    inst.items.push((s.clone(), env.clone()));
+                }
+            }
         }
     }
     Ok(())

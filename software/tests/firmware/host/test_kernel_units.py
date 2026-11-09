@@ -1,11 +1,12 @@
 """The kernel's unit accounting over a hardware double of the dispatch engine: a peer's
 retirement of a unit this node sent to must neither hold a descriptor stream's end
-nor the next ticket, and a kernel copy must not inherit a window on either axis."""
+nor the next ticket, and a kernel copy must not inherit a window on either axis.
+Boot crosses the resident cache barrier before allocating pending requests."""
 
 import native
 import pytest
 
-SOURCES = ["os/kernel/units.c"]
+SOURCES = ["os/kernel/units.c", "os/kernel/bootstrap_units.c"]
 #: Double's cycles a stream spends outside its stamps: entry checks and the return.
 SPAN_SLACK = 12
 COUNTERS = (

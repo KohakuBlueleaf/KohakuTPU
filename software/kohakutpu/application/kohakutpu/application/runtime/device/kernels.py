@@ -186,7 +186,9 @@ class Kernels(Parts):
             hit_kind = (
                 "class"
                 if self.counters["class_hits"] > before[0]
-                else "exact" if self.counters["exact_hits"] > before[1] else None
+                else "exact"
+                if self.counters["exact_hits"] > before[1]
+                else None
             )
             self.specialisations[key] = (compiled, hit_kind)
             while len(self.specialisations) > KERNELS_KEPT:

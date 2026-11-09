@@ -3,6 +3,7 @@
  * through L0 (k_map). The kernel runs untranslated: it names its span by
  * physical address, and user memory through k_user_pa / the copy helpers. */
 #include "kernel.h"
+#include "bootstrap.h"
 
 #define MAX_FRAMES 8192
 static uint64_t bitmap[MAX_FRAMES / 64];
@@ -25,30 +26,25 @@ static void mappings_changed(void)
 #define mappings_changed() ((void)0)
 #endif
 
-extern char __u_img_size[];
-
 #ifdef KOS_SMALL_CALL
 #define MEM_COLD __attribute__((minsize))
 #else
 #define MEM_COLD
 #endif
 
-MEM_COLD void k_mem_init(void)
+static MEM_COLD void boot_memory(uint64_t frames, uint64_t image_pages, uint64_t mmap_base)
 {
-    kn.land_off = KOS_PRIV_LAND_OFF(kn.priv_size);
-    kn.log_off = KOS_PRIV_LOG_OFF(kn.priv_size);
-    kn.frames_end = (kn.flags & KOS_F_PT_DRAM) ? KOS_PRIV_PT_OFF(kn.priv_size) : kn.log_off;
-    nframes = kn.frames_end >> 12;
-    if (nframes > MAX_FRAMES) {
-        nframes = MAX_FRAMES;
-    }
-    nfree = nframes;
-    for (uint64_t i = 0; i < ((uint64_t)__u_img_size >> 12); ++i) { /* the user image */
+    nframes = nfree = frames;
+    for (uint64_t i = 0; i < image_pages; ++i) {
         bitmap[i / 64] |= 1UL << (i % 64);
         --nfree;
     }
-    mmap_next = KOS_UV_MMAP + (uint64_t)kn.me * 0x10000000UL;
+    mmap_next = mmap_base;
 }
+
+const struct k_boot_memory k_boot_memory = {
+    .init = boot_memory, .max_frames = MAX_FRAMES,
+};
 
 uint64_t k_frames_free(void) { return nfree; }
 
@@ -84,9 +80,21 @@ MEM_COLD int k_pa_ok(uint64_t pa, uint64_t bytes)
         return 0;
     }
     uint64_t end = pa + bytes - 1;
+    if (pa & HW_SPECIAL) {
+        unsigned mesh = (unsigned)(pa >> HW_MESH_SHIFT) & (KOS_MAX_NODES - 1);
+        uint64_t base = kn.stage_user[mesh], size = kn.stage_size[mesh];
+        return pa - base < size && end - base < size;
+    }
+    /* Flat-card DRAM has several ingress spellings of the same shared
+     * bytes: the boot-declared route bits of the start are taken as the
+     * shared region's, the submitted address stays as it is. Staging and
+     * private pages are never folded. No shared region spans a route
+     * boundary (tools/boot.py `shared_routes`), so a request crossing one
+     * never fits the folded offset. */
+    uint64_t s = ((pa & ~kn.shared_route_mask) | (kn.shared & kn.shared_route_mask)) - kn.shared;
     if ((pa - (kn.priv + kn.land_off) < KOS_USER_LAND_SIZE &&
          end - (kn.priv + kn.land_off) < KOS_USER_LAND_SIZE) ||
-        (pa - kn.shared < kn.shared_size && end - kn.shared < kn.shared_size)) {
+        (s < kn.shared_size && s + (bytes - 1) < kn.shared_size)) {
         return 1;
     }
     for (uint64_t p = pa & ~0xfffUL; p <= end; p += 4096) {
@@ -111,12 +119,12 @@ int k_user_range(uint64_t va, uint64_t len)
 
 uint64_t k_shared_unc(uint64_t uva)
 {
-    if (!kn.shared_size) {
+    if (!kn.shared_user_size) {
         return 0;
     }
     for (int k = 0; k < 2; ++k) {
         uint64_t base = k ? KOS_UV_SHUNC : KOS_UV_SHARED;
-        if (uva >= base && uva < base + kn.shared_size) {
+        if (uva >= base && uva < base + kn.shared_user_size) {
             return (kn.shared + (uva - base)) | HW_UNC;
         }
     }

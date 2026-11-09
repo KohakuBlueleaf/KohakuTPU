@@ -101,6 +101,12 @@ class XdmaLinux(Transport):
         self.fd_generation = 0
         self._open()
 
+    @classmethod
+    def from_env(cls, index: int = 0) -> "XdmaLinux":
+        """The card's window with link recovery when ``$XDMA_KO`` names the
+        driver module, else none: one policy for every host tool."""
+        return cls(index, recover="auto" if os.environ.get("XDMA_KO") else None)
+
     # ------------------------------------------------------------ lifetime
     def _open(self) -> None:
         with self._native_lock:

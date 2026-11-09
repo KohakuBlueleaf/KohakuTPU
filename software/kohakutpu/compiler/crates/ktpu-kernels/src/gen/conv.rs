@@ -287,6 +287,7 @@ pub fn kernel(
     shape.insert("k".into(), json!(geom.kp));
     shape.insert("shared".into(), json!(false));
     object.insert("mm".into(), mm);
+    let mut admission = crate::split::cost::Admission::default();
     let mut plans = Vec::new();
     let e = crate::expr::from_table(&args["e"])?;
     let out = crate::call::operand(&args["out"])?;
@@ -301,174 +302,199 @@ pub fn kernel(
         if request.force.as_deref().is_some_and(|forced| forced != id) {
             continue;
         }
-        let mut stage_request = request.clone();
-        stage_request.force = Some(product_id.into());
-        let mut plan = crate::call::call_split_with_timing(
-            "matmul.mm_kernel",
-            &args,
-            &stage_request,
-            m,
-            true,
-        )?;
-        let signature = patch_kernel(spec, 0, 1, m)?;
-        let (producer, owners) = if product_id == "n" {
-            stage_request.force = Some("rows".into());
-            let patch = patch_split(spec, &stage_request, m)?;
-            (patch.kernel, patch.split.output.ownership)
-        } else {
-            let mut kernels = Vec::new();
-            let mut owners = Vec::new();
-            for share in &plan.split.shards {
-                if share.role == ShardRole::Empty || share.valid_extent[0] == 0 {
-                    continue;
+        let candidate = (|| {
+            let mut stage_request = request.clone();
+            stage_request.force = Some(product_id.into());
+            let mut plan = crate::call::call_split_with_timing(
+                "matmul.mm_kernel",
+                &args,
+                &stage_request,
+                m,
+                true,
+            )?;
+            let signature = patch_kernel(spec, 0, 1, m)?;
+            let (producer, owners) = if product_id == "n" {
+                stage_request.force = Some("rows".into());
+                let patch = patch_split(spec, &stage_request, m)?;
+                (patch.kernel, patch.split.output.ownership)
+            } else {
+                let mut kernels = Vec::new();
+                let mut owners = Vec::new();
+                for share in &plan.split.shards {
+                    if share.role == ShardRole::Empty || share.valid_extent[0] == 0 {
+                        continue;
+                    }
+                    let first = share.logical_origin[0] * geom.rows + share.logical_origin[1];
+                    let count = share.valid_extent[0];
+                    kernels.push(crate::kernel::on_node(
+                        request.nodes.ids()[share.logical_node],
+                        || patch_kernel(spec, first, count, m),
+                    )?);
+                    owners.push((
+                        share.logical_node,
+                        Region {
+                            allocation: "patches".into(),
+                            bytes: (first * geom.kp * 2) as u64
+                                ..((first + count) * geom.kp * 2) as u64,
+                        },
+                    ));
                 }
-                let first = share.logical_origin[0] * geom.rows + share.logical_origin[1];
-                let count = share.valid_extent[0];
-                kernels.push(crate::kernel::on_node(
-                    request.nodes.ids()[share.logical_node],
-                    || patch_kernel(spec, first, count, m),
-                )?);
-                owners.push((
-                    share.logical_node,
-                    Region {
-                        allocation: "patches".into(),
-                        bytes: (first * geom.kp * 2) as u64..((first + count) * geom.kp * 2) as u64,
-                    },
-                ));
-            }
-            (super::chain::shares(&signature, kernels)?, owners)
-        };
-        let product_scratch: Vec<_> = plan
-            .kernel
-            .graph
-            .scratch
-            .iter()
-            .map(|s| s.name.clone())
-            .collect();
-        let mut composed = super::chain::kernel(producer, plan.kernel, "a", "patches", false)?;
-        for scratch in &mut composed.graph.scratch {
-            if scratch.name == "patches" {
-                scratch.spec.space = g::BufSpace::Dram;
-            }
-        }
-        let Some(names) = composed.graph.consts["chain"]["ports"].as_object() else {
-            return fail(
-                "API.OP.001",
-                "convolution composition has no product port map",
-            );
-        };
-        let mut names: std::collections::BTreeMap<String, String> = names
-            .iter()
-            .filter_map(|(old, new)| new.as_str().map(|new| (old.clone(), new.into())))
-            .collect();
-        names.insert("a".into(), "patches".into());
-        let scratch_start = composed.graph.scratch.len() - product_scratch.len();
-        for (old, new) in product_scratch
-            .iter()
-            .zip(&composed.graph.scratch[scratch_start..])
-        {
-            names.insert(old.clone(), new.name.clone());
-        }
-        let rename = |region: &mut Region| {
-            if let Some(name) = names.get(&region.allocation) {
-                region.allocation = name.clone();
-            }
-        };
-        for region in &mut plan.split.output.valid_region {
-            rename(region);
-        }
-        for (_, region) in &mut plan.split.output.ownership {
-            rename(region);
-        }
-        for (name, _) in &mut plan.split.output.tensors {
-            if let Some(new) = names.get(name.as_str()) {
-                *name = new.clone();
-            }
-        }
-        let mut local_cycles = vec![0; request.nodes.ids().len()];
-        let mut product_cycles = plan.split.cost.local_cycles.iter();
-        for (rank, cycles) in local_cycles.iter_mut().enumerate() {
-            if plan
-                .split
-                .shards
+                (super::chain::shares(&signature, kernels)?, owners)
+            };
+            let product_scratch: Vec<_> = plan
+                .kernel
+                .graph
+                .scratch
                 .iter()
-                .any(|s| s.logical_node == rank && s.role != ShardRole::Empty)
-            {
-                *cycles = product_cycles.next().copied().ok_or_else(|| {
-                    ktpu_machine::Refusal::new("L2.COST.001", "missing convolution product timing")
-                })?;
+                .map(|s| s.name.clone())
+                .collect();
+            let mut composed = super::chain::kernel(producer, plan.kernel, "a", "patches", false)?;
+            for scratch in &mut composed.graph.scratch {
+                if scratch.name == "patches" {
+                    scratch.spec.space = g::BufSpace::Dram;
+                }
             }
-        }
-        for (rank, region) in &owners {
-            let row_bytes = (geom.kp * 2) as u64;
-            let first = (region.bytes.start / row_bytes) as i64;
-            let count = ((region.bytes.end - region.bytes.start) / row_bytes) as i64;
-            let patch = patch_kernel(spec, first, count, m)?;
-            local_cycles[*rank] += ktpu_graph::cycles(&patch.graph, m)? - m.vc.launch_front as i64;
-        }
-        let mut attached = vec![false; request.nodes.ids().len()];
-        for share in &mut plan.split.shards {
-            for region in share
-                .read_regions
-                .iter_mut()
-                .chain(&mut share.write_regions)
-                .chain(&mut share.scratch_regions)
+            let Some(names) = composed.graph.consts["chain"]["ports"].as_object() else {
+                return fail(
+                    "API.OP.001",
+                    "convolution composition has no product port map",
+                );
+            };
+            let mut names: std::collections::BTreeMap<String, String> = names
+                .iter()
+                .filter_map(|(old, new)| new.as_str().map(|new| (old.clone(), new.into())))
+                .collect();
+            names.insert("a".into(), "patches".into());
+            let scratch_start = composed.graph.scratch.len() - product_scratch.len();
+            for (old, new) in product_scratch
+                .iter()
+                .zip(&composed.graph.scratch[scratch_start..])
             {
+                names.insert(old.clone(), new.name.clone());
+            }
+            let rename = |region: &mut Region| {
+                if let Some(name) = names.get(&region.allocation) {
+                    region.allocation = name.clone();
+                }
+            };
+            for region in &mut plan.split.output.valid_region {
                 rename(region);
             }
-            let rank = share.logical_node;
-            if !attached[rank] && owners.iter().any(|(owner, _)| *owner == rank) {
-                attached[rank] = true;
-                let owned: Vec<_> = owners
-                    .iter()
-                    .filter(|(owner, _)| *owner == rank)
-                    .map(|(_, r)| r.clone())
-                    .collect();
-                share.scratch_regions.extend(owned.clone());
-                share.write_regions.extend(owned);
-                share.read_regions.push(Region {
-                    allocation: "x".into(),
-                    bytes: 0..(geom.source * 2) as u64,
-                });
-                if share.role == ShardRole::Empty {
-                    share.role = ShardRole::Compute;
-                    share.local_schedule = "patch-producer".into();
+            for (_, region) in &mut plan.split.output.ownership {
+                rename(region);
+            }
+            for (name, _) in &mut plan.split.output.tensors {
+                if let Some(new) = names.get(name.as_str()) {
+                    *name = new.clone();
                 }
             }
-        }
-        crate::split::validate_ownership(&crate::split::OutputLayout {
-            valid_region: vec![Region {
-                allocation: "patches".into(),
-                bytes: 0..(spec.groups * geom.rows * geom.kp * 2) as u64,
-            }],
-            ownership: owners,
-            ..Default::default()
-        })?;
-        let active: Vec<_> = (0..request.nodes.ids().len())
-            .filter(|rank| {
-                plan.split
+            let mut local_cycles = vec![0; request.nodes.ids().len()];
+            let mut product_cycles = plan.split.cost.local_cycles.iter();
+            for (rank, cycles) in local_cycles.iter_mut().enumerate() {
+                if plan
+                    .split
                     .shards
                     .iter()
-                    .any(|s| s.logical_node == *rank && s.role != ShardRole::Empty)
-            })
-            .collect();
-        plan.split.active_nodes = active.len();
-        plan.split.cost.local_cycles = active.into_iter().map(|rank| local_cycles[rank]).collect();
-        plan.split.id = id.into();
-        plan.split.axis = axis;
-        plan.split.cost.makespan = ktpu_graph::cycles(&composed.graph, m)?;
-        plan.split.cost.provenance = "ktpu-l2 convolution patch/product sequence".into();
-        plan.kernel = composed;
-        plan.request = request.clone();
-        plans.push(plan);
+                    .any(|s| s.logical_node == rank && s.role != ShardRole::Empty)
+                {
+                    *cycles = product_cycles.next().copied().ok_or_else(|| {
+                        ktpu_machine::Refusal::new(
+                            "L2.COST.001",
+                            "missing convolution product timing",
+                        )
+                    })?;
+                }
+            }
+            for (rank, region) in &owners {
+                let row_bytes = (geom.kp * 2) as u64;
+                let first = (region.bytes.start / row_bytes) as i64;
+                let count = ((region.bytes.end - region.bytes.start) / row_bytes) as i64;
+                let patch = patch_kernel(spec, first, count, m)?;
+                local_cycles[*rank] +=
+                    ktpu_graph::cycles(&patch.graph, m)? - m.vc.launch_front as i64;
+            }
+            let mut attached = vec![false; request.nodes.ids().len()];
+            for share in &mut plan.split.shards {
+                for region in share
+                    .read_regions
+                    .iter_mut()
+                    .chain(&mut share.write_regions)
+                    .chain(&mut share.scratch_regions)
+                {
+                    rename(region);
+                }
+                let rank = share.logical_node;
+                if !attached[rank] && owners.iter().any(|(owner, _)| *owner == rank) {
+                    attached[rank] = true;
+                    let owned: Vec<_> = owners
+                        .iter()
+                        .filter(|(owner, _)| *owner == rank)
+                        .map(|(_, r)| r.clone())
+                        .collect();
+                    share.scratch_regions.extend(owned.clone());
+                    share.write_regions.extend(owned);
+                    share.read_regions.push(Region {
+                        allocation: "x".into(),
+                        bytes: 0..(geom.source * 2) as u64,
+                    });
+                    if share.role == ShardRole::Empty {
+                        share.role = ShardRole::Compute;
+                        share.local_schedule = "patch-producer".into();
+                    }
+                }
+            }
+            crate::split::validate_ownership(&crate::split::OutputLayout {
+                valid_region: vec![Region {
+                    allocation: "patches".into(),
+                    bytes: 0..(spec.groups * geom.rows * geom.kp * 2) as u64,
+                }],
+                ownership: owners,
+                ..Default::default()
+            })?;
+            let active: Vec<_> = (0..request.nodes.ids().len())
+                .filter(|rank| {
+                    plan.split
+                        .shards
+                        .iter()
+                        .any(|s| s.logical_node == *rank && s.role != ShardRole::Empty)
+                })
+                .collect();
+            plan.split.active_nodes = active.len();
+            plan.split.cost.local_cycles =
+                active.into_iter().map(|rank| local_cycles[rank]).collect();
+            plan.split.id = id.into();
+            plan.split.axis = axis;
+            plan.split.cost.makespan = ktpu_graph::cycles(&composed.graph, m)?;
+            plan.split.cost.provenance = "ktpu-l2 convolution patch/product sequence".into();
+            plan.kernel = composed;
+            plan.request = request.clone();
+            Ok(plan)
+        })();
+        if let Some(plan) = admission.consider(id, candidate)? {
+            plans.push(plan);
+        }
     }
-    let selected = crate::split::cost::select_split(
-        plans.iter().map(|p| p.split.clone()).collect(),
+    let selected = crate::split::cost::select_admitted(
+        admission.finish(
+            plans.iter().map(|p| p.split.clone()).collect(),
+            request.force.as_deref(),
+        )?,
         request.force.as_deref(),
+        |option| {
+            let plan = plans
+                .iter()
+                .find(|plan| plan.split.id == option.id)
+                .expect("priced convolution candidate");
+            ktpu_graph::check_staging(&plan.kernel.graph, m, request.nodes.staging_budget())
+        },
     )?;
     plans
         .into_iter()
         .find(|p| p.split.id == selected.id)
+        .map(|mut plan| {
+            plan.split = selected;
+            plan
+        })
         .ok_or_else(|| ktpu_machine::Refusal::new("DSL.KERN.020", "no convolution option emitted"))
 }
 

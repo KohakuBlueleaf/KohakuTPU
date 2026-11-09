@@ -1,11 +1,13 @@
 //! L2 to L1: the lowering alone, each hand-written L2 fixture against its L1.
 
 mod access_order;
+mod bank_incidence;
 #[path = "../common.rs"]
 mod common;
 mod dependency_index;
 mod events;
 mod fill_throttle;
+mod instance_scopes;
 mod matrix_cost;
 mod modulo_memory_effects;
 mod move_choices;
@@ -17,7 +19,9 @@ mod release_frontier;
 mod resident_b;
 mod statistic_fold;
 mod stream_credit;
+mod sync_pending;
 mod view_progression;
+mod window_exchange;
 
 use common::{fixtures, known, stage_suite, Fixture, Level, Pair};
 use ktpu::{Backend, CardStack};

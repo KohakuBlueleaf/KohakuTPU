@@ -140,6 +140,12 @@ impl<'a> Prices<'a> {
             )
             .ok()?;
             let module = ktpu_l1::text::read(&l1, "<l1>").ok()?;
+            let callers = kernel.graph.ports.iter().map(|p| p.name.clone()).collect();
+            let budget = ktpu_kernels::split::NodeSet::runtime(vec![0], self.machine)
+                .ok()?
+                .staging_budget();
+            ktpu_l1::layout::scratch::admit_staging(&module, name, &callers, self.machine, budget)
+                .ok()?;
             ktpu_l2::cost::cycles(&module, name, &ktpu_l2::target::Target::of(self.machine)).ok()
         })
     }

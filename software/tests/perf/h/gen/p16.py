@@ -124,7 +124,7 @@ def chain(route: list[int], writer: str, mode: str):
         return name, b.fn(name, "unused: u64[4] @dram"), b
     x = MG_PARAMS if writer == "mg" else f"x: f16[{STAGE // 2}] @dram"
     params = (
-        f"{x}, y: f16[{(hops + 1) * STAGE // 2}] @dram, " f"seen: f16[{8 * hops}] @dram"
+        f"{x}, y: f16[{(hops + 1) * STAGE // 2}] @dram, seen: f16[{8 * hops}] @dram"
     )
     if mode == "loaded":
         params += f", l: f16[{FILLS * FILL // 2}] @dram"

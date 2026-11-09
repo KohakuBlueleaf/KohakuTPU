@@ -145,7 +145,13 @@ class PreparedFirmwareGraph:
     """The firmware adapter owns the same bound bytes, pins and receiver leases."""
 
     def __init__(
-        self, artifact: BoundGraphArtifact, queues, leases: SlotLeases, references=()
+        self,
+        artifact: BoundGraphArtifact,
+        queues,
+        leases: SlotLeases,
+        references=(),
+        *,
+        timeout_cycles=1 << 26,
     ):
         self._lock = threading.RLock()
         self.artifact = artifact
@@ -158,7 +164,9 @@ class PreparedFirmwareGraph:
                 arena.retain_pinned(address)
                 self.references.append((arena, address))
             self.group = PreparedQueueGroup(
-                {part.node: part.package for part in artifact.parts}, queues
+                {part.node: part.package for part in artifact.parts},
+                queues,
+                timeout_cycles,
             )
         except BaseException:
             for arena, address in self.references:

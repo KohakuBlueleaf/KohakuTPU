@@ -59,6 +59,8 @@ pub struct Knobs {
     pub imem_margin: usize,
     /// Largest word stride of a direct unpack.
     pub direct_stride: i64,
+    /// Align a transposed source window before its word/lane exchange.
+    pub window_exchange: bool,
     /// Cycles of a dispatch and configuration, a continuation.
     pub continuation_cycles: i64,
     /// Retile costs the longest core of every stage, not the first core's first.
@@ -83,6 +85,7 @@ impl Knobs {
         image_trips: 64,
         imem_margin: 64,
         direct_stride: 512,
+        window_exchange: false,
         continuation_cycles: 32,
         retile_every_stage: true,
         split_every_image: false,
@@ -250,7 +253,63 @@ impl ReadMap {
             }
         }
         Some(Exchange {
+            shift: 0,
+            words_per_column: 1,
             band: lane / 4,
+            cols,
+            rows: valid,
+        })
+    }
+
+    /// A transposed window of at most one word's lanes. Each source column
+    /// contributes one or two consecutive captured words, in column order.
+    pub fn window_exchange(&self, positions: &[i64], rows: usize, tile: &Tile) -> Option<Exchange> {
+        let lanes = WORD_LANES as usize;
+        if rows == 0 || rows > lanes {
+            return None;
+        }
+        let element = |r: usize, c: usize| -> Option<i64> {
+            let at = (r / 4) * 128 + (c / lanes) * 64 + (r % 4) * lanes + c % lanes;
+            let p = positions[at];
+            (p >= 0 && self.elements[p as usize] >= 0).then(|| self.elements[p as usize])
+        };
+        let cols = (0..2 * lanes)
+            .take_while(|&c| element(0, c).is_some())
+            .count();
+        let valid = (0..rows).take_while(|&r| element(r, 0).is_some()).count();
+        let lane = (element(0, 0)? % WORD_LANES) as usize;
+        let words = (lane + valid).div_ceil(lanes);
+        if lane == 0
+            || cols == 0
+            || !cols.is_multiple_of(lanes)
+            || tile.shape.words.len() != cols * words
+        {
+            return None;
+        }
+        for c in 0..2 * lanes {
+            let base = element(0, c);
+            if let Some(base) = base {
+                if c >= cols || base % WORD_LANES != lane as i64 {
+                    return None;
+                }
+                for w in 0..words {
+                    if (base / WORD_LANES + w as i64) * 32
+                        != tile.anchor + tile.shape.words[c * words + w]
+                    {
+                        return None;
+                    }
+                }
+            }
+            for r in 0..rows {
+                if element(r, c) != base.filter(|_| r < valid).map(|b| b + r as i64) {
+                    return None;
+                }
+            }
+        }
+        Some(Exchange {
+            shift: lane,
+            words_per_column: words,
+            band: 0,
             cols,
             rows: valid,
         })
@@ -268,6 +327,10 @@ pub struct Segment {
 /// consecutive lanes: registers exchange 16 x 16 blocks of words and lanes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Exchange {
+    /// Source-lane rotation before exchanging; zero needs no alignment pass.
+    pub shift: usize,
+    /// Captured adjacent words per source column.
+    pub words_per_column: usize,
     /// The 4-lane band of a source word its first row starts.
     pub band: usize,
     /// Real columns (16 or 32) and rows of the tile; the rest read zero.
@@ -670,8 +733,9 @@ impl Shape {
         }
         lines.push("    vsync fe on=unpack".into());
         for (k, m) in [(5, EXCHANGE_MASK), (10, EXCHANGE_MASK + 1)] {
+            lines.push(format!("    vcmpeq p1, v{m}, k0"));
             for &(_, v) in &regs {
-                lines.push(format!("    vsel v{v}, v{v}, xor(v{v}, {k}), v{m}"));
+                lines.push(format!("    vadd v{v}, k0, xor(v{v}, {k}) if=p1"));
             }
             if !pipeline {
                 lines.push("    vsync fe on=math".into());
@@ -700,7 +764,10 @@ impl Shape {
             } else {
                 "k0".into()
             };
-            lines.push(format!("    vmov v{dest}[{}], {from} vl=16", 2 * r + half));
+            lines.push(format!(
+                "    vadd v{dest}[{}], k0, {from} vl=16",
+                2 * r + half
+            ));
         }
     }
 
@@ -796,7 +863,7 @@ impl Shape {
                     s.end
                 };
                 let line = format!(
-                    "    vsel v{dest}[{}{}], k1, {source}, k0 vl={vl}",
+                    "    vadd v{dest}[{}{}], k0, {source} vl={vl}",
                     s.chunk,
                     if n > 1 { ":" } else { "" },
                 );
@@ -817,7 +884,9 @@ impl Shape {
             }
         }
         for (chunk, from) in copies {
-            lines.push(format!("    vmov v{dest}[{chunk}], v{dest}[{from}] vl=16"));
+            lines.push(format!(
+                "    vadd v{dest}[{chunk}], k0, v{dest}[{from}] vl=16"
+            ));
         }
     }
 }

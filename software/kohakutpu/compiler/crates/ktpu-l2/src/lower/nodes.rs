@@ -145,6 +145,7 @@ pub(super) fn order_nodes(built_by: &mut IndexMap<i64, Vec<Stage>>) -> Vec<serde
             )
         })
         .collect();
+    let mut names = sync::Names::default();
     let effects: IndexMap<i64, Vec<_>> = mem
         .iter()
         .map(|(&node, stages)| {
@@ -152,7 +153,7 @@ pub(super) fn order_nodes(built_by: &mut IndexMap<i64, Vec<Stage>>) -> Vec<serde
                 node,
                 stages
                     .iter()
-                    .map(|accesses| sync::AccessIndex::new(accesses))
+                    .map(|accesses| sync::AccessIndex::new(accesses, &mut names))
                     .collect(),
             )
         })
@@ -168,10 +169,7 @@ pub(super) fn order_nodes(built_by: &mut IndexMap<i64, Vec<Stage>>) -> Vec<serde
                     if si.phase < 0 || sj.phase < 0 || si.phase >= sj.phase {
                         continue;
                     }
-                    if !effects[&a][i]
-                        .pending(&effects[&b][j], |_| false)
-                        .is_empty()
-                    {
+                    if effects[&a][i].conflicts(&effects[&b][j]) {
                         hit = Some(i);
                     }
                 }

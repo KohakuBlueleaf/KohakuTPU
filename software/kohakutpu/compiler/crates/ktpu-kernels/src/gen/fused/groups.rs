@@ -281,6 +281,7 @@ pub(crate) fn split(
     let Some(groups) = prove(p, ranges) else {
         return Ok(None);
     };
+    let mut admission = crate::split::cost::Admission::default();
     let mut candidates = Vec::new();
     let participants = request.nodes.ids().len();
     for distributed in [false, true] {
@@ -361,7 +362,7 @@ pub(crate) fn split(
             if distributed {
                 kernel = chain::sequence::finish(kernel, a, m)?;
             }
-            let cycles = crate::split::cost::graph_nodes(&kernel.graph, m)?;
+            let cycles = ktpu_graph::node_cycles(&kernel.graph, m)?;
             let features = CostFeatures {
                 share_cycles: shards
                     .iter()
@@ -405,18 +406,29 @@ pub(crate) fn split(
             let option = crate::split::cost::price_option(option, &features, &LocalTiming)?;
             Ok((option, kernel))
         };
-        match candidate() {
-            Ok(candidate) => candidates.push(candidate),
+        match admission.consider(if distributed { "groups" } else { "p1" }, candidate()) {
+            Ok(Some(candidate)) => candidates.push(candidate),
+            Ok(None) => {}
             Err(_) if distributed && request.force.as_deref() != Some("groups") => {}
             Err(error) => return Err(error),
         }
     }
-    let selected = crate::split::cost::select_split(
-        candidates
-            .iter()
-            .map(|(option, _)| option.clone())
-            .collect(),
+    let selected = crate::split::cost::select_admitted(
+        admission.finish(
+            candidates
+                .iter()
+                .map(|(option, _)| option.clone())
+                .collect(),
+            request.force.as_deref(),
+        )?,
         request.force.as_deref(),
+        |option| {
+            let (_, kernel) = candidates
+                .iter()
+                .find(|(candidate, _)| candidate.id == option.id)
+                .expect("priced group candidate");
+            ktpu_graph::check_staging(&kernel.graph, m, request.nodes.staging_budget())
+        },
     )?;
     let (_, kernel) = candidates
         .into_iter()

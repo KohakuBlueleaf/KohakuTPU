@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::mutant::on;
 
 mod index;
-pub(crate) use index::AccessIndex;
+pub(crate) use index::{AccessIndex, Names};
 
 /// The unit of a fence's accesses: what it waits for, never waited on.
 pub const FENCE: &str = "fence";
@@ -139,6 +139,9 @@ impl Access {
 
     /// This access moved by `delta` bytes, its footprint with it.
     pub fn shifted(&self, delta: i64) -> Option<Self> {
+        if delta == 0 {
+            return Some(self.clone());
+        }
         let mut a = self.clone();
         a.lo = a.lo.checked_add(delta)?;
         a.hi = a.hi.checked_add(delta)?;
@@ -358,26 +361,41 @@ fn mark(s: usize, unit: &str) -> String {
 /// its conflicts need; a `pipe` group's later iterations sent ahead where they
 /// need no wait. Ends with a barrier (L2.ORDER.004-.006).
 pub fn schedule(stages: &[Stage]) -> Vec<String> {
-    let effects: Vec<_> = stages
-        .iter()
-        .map(|stage| AccessIndex::new(&stage.accesses))
-        .collect();
+    schedule_with(stages, false).0
+}
+
+/// Schedule and count resource lookups and interval-tree nodes visited.
+#[doc(hidden)]
+pub fn schedule_profiled(stages: &[Stage]) -> (Vec<String>, usize) {
+    schedule_with(stages, false)
+}
+
+/// Stage witness reference: exhaustive dependency queries, identical emission.
+#[doc(hidden)]
+pub fn schedule_exhaustive(stages: &[Stage]) -> (Vec<String>, usize) {
+    schedule_with(stages, true)
+}
+
+fn schedule_with(stages: &[Stage], exhaustive: bool) -> (Vec<String>, usize) {
+    let mut effects = index::Dependencies::new(stages, exhaustive);
     let mut st = State::default();
     for s in 0..stages.len() {
         if st.pos.contains_key(&s) {
             continue;
         }
-        let mut pending = needs(&effects, &st, s);
+        let mut pending = effects.needs(&st, s);
         if !pending.is_empty() && stages[s].group.is_some() {
             for j in ahead(stages, s) {
-                if !st.pos.contains_key(&j) && hoistable(stages, &effects, &st, j) {
-                    let pending = needs(&effects, &st, j);
+                if !st.pos.contains_key(&j) && effects.hoistable(&st, j) {
+                    let pending = effects.needs(&st, j);
                     emit_ready(stages, &mut st, j, pending);
+                    effects.emitted(&st, j);
                 }
             }
-            pending = needs(&effects, &st, s);
+            pending = effects.needs(&st, s);
         }
         emit_ready(stages, &mut st, s, pending);
+        effects.emitted(&st, s);
     }
     let mut out = Vec::new();
     for ln in &st.out {
@@ -392,7 +410,7 @@ pub fn schedule(stages: &[Stage]) -> Vec<String> {
     }
     if let Some(&last) = st.order.last() {
         if stages[last].closes {
-            return out;
+            return (out, effects.visits());
         }
     }
     let blocking_mover = stages.iter().any(|s| s.blocking_mover);
@@ -406,25 +424,11 @@ pub fn schedule(stages: &[Stage]) -> Vec<String> {
         out.push(format!("wait moves {p}"));
     }
     out.push("barrier".to_string());
-    out
+    (out, effects.visits())
 }
 
 fn complete(st: &State, p: usize, unit: &str) -> bool {
     st.done.get(unit).copied().unwrap_or(-1) >= st.pos[&p] as i64
-}
-
-/// `(earlier stage, access)` emitted, not yet complete, that `s` must wait for.
-fn needs<'a>(effects: &[AccessIndex<'a>], st: &State, s: usize) -> Vec<(usize, &'a Access)> {
-    let mut got = Vec::new();
-    for &p in &st.order {
-        got.extend(
-            effects[p]
-                .pending(&effects[s], |unit| unit == FENCE || complete(st, p, unit))
-                .into_iter()
-                .map(|access| (p, access)),
-        );
-    }
-    got
 }
 
 fn ahead(stages: &[Stage], s: usize) -> Vec<usize> {
@@ -438,24 +442,6 @@ fn ahead(stages: &[Stage], s: usize) -> Vec<usize> {
             None => false,
         })
         .collect()
-}
-
-fn hoistable(stages: &[Stage], effects: &[AccessIndex<'_>], st: &State, j: usize) -> bool {
-    if !needs(effects, st, j).is_empty() {
-        return false;
-    }
-    for k in 0..j {
-        if st.pos.contains_key(&k) {
-            continue;
-        }
-        if stages[k].fence || stages[k].units.iter().any(|u| stages[j].units.contains(u)) {
-            return false;
-        }
-        if effects[k].blocks(&effects[j]) {
-            return false;
-        }
-    }
-    true
 }
 
 fn emit_ready(stages: &[Stage], st: &mut State, s: usize, pending: Vec<(usize, &Access)>) {

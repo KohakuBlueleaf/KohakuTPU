@@ -62,8 +62,8 @@ pub(crate) enum StepOutcome {
     Fork {
         node: usize,
         target: usize,
-        taken: usize,
-        fallthrough: usize,
+        taken: symbolic::Predicate,
+        fallthrough: symbolic::Predicate,
     },
 }
 
@@ -450,7 +450,7 @@ impl<'t> Sim<'t> {
                     if let Some(chosen) = chosen {
                         let go = chosen.taken;
                         let predicate = if go { taken } else { fallthrough };
-                        if predicate == 0 {
+                        if predicate.is_false() {
                             let Some((next, next_cursor)) = pending.pop() else {
                                 return finished;
                             };
@@ -459,9 +459,9 @@ impl<'t> Sim<'t> {
                         } else {
                             self.choose(node, target, decision, go, predicate);
                         }
-                    } else if taken == 0 {
+                    } else if taken.is_false() {
                         self.choose(node, target, decision, false, fallthrough);
-                    } else if fallthrough == 0 {
+                    } else if fallthrough.is_false() {
                         self.choose(node, target, decision, true, taken);
                     } else {
                         for node in &mut self.nodes {
@@ -517,7 +517,7 @@ impl<'t> Sim<'t> {
         target: usize,
         mut decision: Decision,
         taken: bool,
-        predicate: usize,
+        predicate: symbolic::Predicate,
     ) {
         self.symbolic.predicate = predicate;
         decision.taken = taken;
@@ -553,7 +553,6 @@ impl<'t> Sim<'t> {
 
     fn same_state(&self, other: &Self) -> bool {
         self.card == other.card
-            && self.symbolic == other.symbolic
             && self.procs == other.procs
             && self.proc_names == other.proc_names
             && self.counters == other.counters
@@ -578,6 +577,7 @@ impl<'t> Sim<'t> {
             && self.acks == other.acks
             && self.far_adds == other.far_adds
             && self.choices == other.choices
+            && self.symbolic == other.symbolic
     }
 
     fn run_rounds(&mut self, limit: u64, cursor: &mut Cursor, rounds: &mut u64) -> StepOutcome {

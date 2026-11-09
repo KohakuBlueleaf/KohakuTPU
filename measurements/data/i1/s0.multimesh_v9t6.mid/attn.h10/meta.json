@@ -1,0 +1,121 @@
+{
+ "args": {
+  "board": "multimesh_v9t6",
+  "profile": "mid",
+  "device": "card",
+  "transport": "xdma",
+  "sysnode": "0",
+  "only": "attn.h10",
+  "reps": "1,8,64",
+  "replays": "20",
+  "seed": "7",
+  "measure": "False",
+  "library": "None",
+  "out": "/home/kblueleaf/i11/i2/s0_attn_h10"
+ },
+ "board": "multimesh_v9t6",
+ "profile": "mid",
+ "sysnode": 0,
+ "opened": [
+  0
+ ],
+ "commit": {
+  "head": "4ab04e28",
+  "dirty": true,
+  "copied": "2026-11-05T18:46:31Z"
+ },
+ "knobs": {
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "firmware": {
+  "path": "/home/kblueleaf/kt/build/fw/kohakutpu_node.elf",
+  "bytes": 240704,
+  "mtime": 1793652746.3195822
+ },
+ "clocks": {
+  "0": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "1": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "2": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "3": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  }
+ },
+ "timebase": {
+  "0": {
+   "cycles": 4254290,
+   "first": [
+    4253257,
+    4255057
+   ],
+   "lo": -767,
+   "hi": 1033,
+   "ns": [
+    291775722814689,
+    291775722818977
+   ]
+  }
+ },
+ "started": 1794188296.1864994,
+ "timebase_after": {
+  "0": {
+   "cycles": 12694431610,
+   "first": [
+    12694430253,
+    12694432356
+   ],
+   "lo": -746,
+   "hi": 1357,
+   "ns": [
+    291839174885439,
+    291839174889747
+   ]
+  }
+ },
+ "drift": {
+  "0": {
+   "lo": -1779,
+   "hi": 2124,
+   "over": 12690175196
+  }
+ },
+ "ended": 1794188359.638577,
+ "counters": {
+  "runs": 3941,
+  "cycles": 2799929885,
+  "bytes_in": 237353152,
+  "bytes_out": 18407680,
+  "library_hits": 0,
+  "class_hits": 0,
+  "exact_hits": 0,
+  "library_misses": 0,
+  "compile_calls": 17,
+  "compile_seconds": 11.779361760010943,
+  "kernel_reuses": 3510,
+  "f001_split": 0
+ },
+ "launches": 3941,
+ "kernels": 17,
+ "compiles": []
+}

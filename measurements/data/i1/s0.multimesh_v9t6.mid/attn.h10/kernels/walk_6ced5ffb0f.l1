@@ -1,0 +1,50 @@
+target ktpu.v9 vregs=128 vcopies=2
+
+image walk_6ced5ffb0f.word_stream_0(trips)
+    ainc a0 += 768
+    ainc a1 += 7680
+    vfill a0 -> l1[0] rel
+    seti s0 = trips+-1
+    loop s0
+        vsync fill on=drain
+        vfill a0 -> l1[256] rel
+        vsync drain on=fill slack=1
+        vdrain a1 <- l1[0] rel
+        vsync fill on=drain
+        vfill a0 -> l1[0] rel
+        vsync drain on=fill slack=1
+        vdrain a1 <- l1[256] rel
+    vsync fill on=drain
+    vfill a0 -> l1[256] rel
+    vsync drain on=fill slack=1
+    vdrain a1 <- l1[0] rel
+    vsync drain on=fill
+    vdrain a1 <- l1[256] rel
+    vsync fe on=drain
+    halt
+
+image walk_6ced5ffb0f.word_stream_1(trips)
+    ainc a0 += 0
+    ainc a1 += 0
+    vfill a0 -> l1[0] rel
+    vsync drain on=fill
+    vdrain a1 <- l1[0] rel
+    vsync fe on=drain
+    halt
+
+fn walk_6ced5ffb0f.l1(src: f16[7880, 16] @dram, dst: f16[7880, 16] @dram)
+    send vc[0]
+        desc a0=src+0 walk=((32, 4), (25216, 10), (128, 6))
+        desc a1=dst+0 walk=(32, 240)
+        run walk_6ced5ffb0f.word_stream_0(8)
+    send vc[1]
+        desc a0=src+12288 walk=((32, 4), (25216, 10), (128, 6))
+        desc a1=dst+122880 walk=(32, 240)
+        run walk_6ced5ffb0f.word_stream_0(8)
+    send vc[1]
+        desc a0=src+24576 walk=((32, 4), (25216, 10), (128, 5))
+        desc a1=dst+245760 walk=(32, 200)
+        run walk_6ced5ffb0f.word_stream_1(1)
+    wait vc[0]
+    wait vc[1]
+    barrier

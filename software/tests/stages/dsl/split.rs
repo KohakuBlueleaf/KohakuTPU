@@ -680,10 +680,14 @@ mod joint_matmul;
 mod loop_ownership;
 #[path = "owner_tiles.rs"]
 mod owner_tiles;
+#[path = "packed_matmul.rs"]
+mod packed_matmul;
 #[path = "prepared_split.rs"]
 mod prepared_split;
 #[path = "split_cost.rs"]
 mod split_cost;
+#[path = "staging.rs"]
+mod staging;
 #[path = "wide_fold_split.rs"]
 mod wide_fold_split;
 
