@@ -1,0 +1,147 @@
+Traceback (most recent call last):
+  File "/home/kblueleaf/kt/software/kohakutpu/application/examples/tinygrad/vit_tiny.py", line 273, in main
+    else predict(input_tensor)
+         ~~~~~~~^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/inference.py", line 48, in __call__
+    return jit(*inputs)
+  File "/home/kblueleaf/.local/share/uv/python/cpython-3.13.16-linux-x86_64-gnu/lib/python3.13/contextlib.py", line 85, in inner
+    return func(*args, **kwds)
+  File "/home/kblueleaf/kt/.venv/lib/python3.13/site-packages/tinygrad/engine/jit.py", line 281, in __call__
+    ret = self.captured(input_buf_uops, var_vals)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/device.py", line 49, in captured_call
+    return _CAPTURED_CALL(self, input_uops, var_vals)
+  File "/home/kblueleaf/kt/.venv/lib/python3.13/site-packages/tinygrad/engine/jit.py", line 187, in __call__
+    run_linear(self.linear, var_vals, input_uops=concrete, jit=True)
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/.venv/lib/python3.13/site-packages/tinygrad/engine/realize.py", line 319, in run_linear
+    for call in linear.src: track_stats(ctx, call, perf_counter_us(), pm_exec.rewrite(call, ctx))
+                                                                      ~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/kblueleaf/kt/.venv/lib/python3.13/site-packages/tinygrad/uop/ops.py", line 1478, in rewrite
+    if (ret:=match(uop, ctx)) is not None and ret is not uop: return ret
+             ~~~~~^^^^^^^^^^
+  File "/home/kblueleaf/kt/.venv/lib/python3.13/site-packages/tinygrad/uop/ops.py", line 1452, in lazy_compile
+    return entry[1](uop, ctx)
+           ~~~~~~~~^^^^^^^^^^
+  File "<string>", line 3, in compiled_match
+  File "/home/kblueleaf/kt/.venv/lib/python3.13/site-packages/tinygrad/engine/realize.py", line 210, in exec_graph
+    return [get_graph_runtime(ast, ctx.input_uops)(ctx.input_uops, ctx.var_vals, wait=ctx.wait)]
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/tests/perf/record.py", line 178, in call
+    return fn(*args, **kw)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/device.py", line 475, in __call__
+    self._plan(input_uops, slots=True)
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/device.py", line 287, in _plan
+    run_unit(grp[0])
+    ~~~~~~~~^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/device.py", line 275, in run_unit
+    recipe.submit(rt, plan, by_slot)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/captured/recipe.py", line 466, in submit
+    return execute(dev, plan, buffers)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/captured/recipe.py", line 492, in execute
+    return run.execute(dev, plan, buffers)
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/run/__init__.py", line 101, in execute
+    runs = [r for r in _run(dev, plan, bufs) if r is not HELD]
+                       ~~~~^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/run/__init__.py", line 155, in _run
+    return _member_done(dev, _execute(dev, plan, aliased))
+                             ~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/run/__init__.py", line 189, in _execute
+    return _vector(dev, plan, bufs)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/run/kernels.py", line 431, in _vector
+    return _materialise(dev, plan, bufs)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/run/kernels.py", line 124, in _materialise
+    runs = _vector(dev, sub, sub_bufs)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/run/kernels.py", line 425, in _vector
+    return _matmul(dev, payload, bufs)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/run/kernels.py", line 764, in _matmul
+    return runs + _product(dev, replace(plan, a=a, b=b), bufs)
+                  ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/run/kernels.py", line 989, in _product
+    return runs + _product_run(
+                  ~~~~~~~~~~~~^
+        dev,
+        ^^^^
+    ...<12 lines>...
+        fa is not None,
+        ^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/run/product.py", line 344, in _product_run
+    run = FM.generated.launch(
+        dev,
+    ...<4 lines>...
+        info={"plan": plan.name, "mm": mm},
+    )
+  File "/home/kblueleaf/kt/software/tests/perf/record.py", line 178, in call
+    return fn(*args, **kw)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/generated.py", line 157, in launch
+    return launch_now(dev, generator, arguments, bindings, kind, info)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/generated.py", line 165, in launch_now
+    run = dev.run(compiled, bindings, kind=kind, info=info)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py", line 149, in run
+    submitted = self.submit(compiled, binds, kind, info)
+  File "/home/kblueleaf/kt/software/tests/perf/record.py", line 178, in call
+    return fn(*args, **kw)
+  File "/home/kblueleaf/kt/software/tests/perf/record.py", line 235, in on_submit
+    got = submit(self, compiled, binds, kind, info)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py", line 172, in submit
+    return self._submitted(compiled, binds, kind, info)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py", line 376, in _submitted
+    s.result = self.card.run(card)
+               ~~~~~~~~~~~~~^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/offline.py", line 179, in run
+    return self.execute(self, built)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/os/multi.py", line 107, in _execute
+    results = self.active.submit(timeout_cycles=self.timeout_cycles).wait()
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/os/graph.py", line 1418, in wait
+    return self.owner.collect(self)
+           ~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/os/graph.py", line 1552, in collect
+    results[node] = self.residents[node].collect(ticket, _owner=self)
+                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/os/graph.py", line 1340, in collect
+    self._wait(A.OSTPU_OFF_DONE, token)
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/os/graph.py", line 1172, in _wait
+    self.io.idle()
+    ~~~~~~~~~~~~^^
+  File "/home/kblueleaf/kt/software/kohakutpu/os/tools/run_card.py", line 111, in idle
+    time.sleep(self.poll)
+    ~~~~~~~~~~^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/tests/perf/record.py", line 73, in ended
+    raise Ended
+Ended
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/kblueleaf/kt/software/tests/perf/record.py", line 517, in main
+    runpy.run_path(sys.argv[0], run_name="__main__")
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen runpy>", line 294, in run_path
+  File "<frozen runpy>", line 98, in _run_module_code
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/kblueleaf/kt/software/kohakutpu/application/examples/tinygrad/vit_tiny.py", line 332, in <module>
+    main()
+    ~~~~^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/examples/tinygrad/vit_tiny.py", line 328, in main
+    dev.close()
+    ~~~~~~~~~^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/device/__init__.py", line 348, in close
+    result = self.card.close()
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/os/multi.py", line 111, in close
+    self.release_graph()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/os/multi.py", line 52, in release_graph
+    self.active.close()
+    ~~~~~~~~~~~~~~~~~^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/os/graph.py", line 1571, in close
+    raise RuntimeError(
+        "reset the card before reclaiming an uncertain graph"
+    )
+RuntimeError: reset the card before reclaiming an uncertain graph

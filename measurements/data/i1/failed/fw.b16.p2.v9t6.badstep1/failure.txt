@@ -1,0 +1,136 @@
+Traceback (most recent call last):
+  File "/home/kblueleaf/kt/software/tests/perf/record.py", line 517, in main
+    runpy.run_path(sys.argv[0], run_name="__main__")
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen runpy>", line 294, in run_path
+  File "<frozen runpy>", line 98, in _run_module_code
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/kblueleaf/kt/software/kohakutpu/application/examples/tinygrad/vit_tiny.py", line 332, in <module>
+    main()
+    ~~~~^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/examples/tinygrad/vit_tiny.py", line 328, in main
+    dev.close()
+    ~~~~~~~~~^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/device/__init__.py", line 339, in close
+    self.drain()
+    ~~~~~~~~~~^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py", line 462, in drain
+    return [self.collect(s) for s in list(self.inflight)]
+            ~~~~~~~~~~~~^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py", line 417, in collect
+    return self._collect_one(s)
+           ~~~~~~~~~~~~~~~~~^^^
+  File "/home/kblueleaf/kt/software/tests/perf/record.py", line 178, in call
+    return fn(*args, **kw)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py", line 444, in _collect_one
+    raise s.error
+  File "/home/kblueleaf/kt/software/kohakutpu/application/examples/tinygrad/vit_tiny.py", line 273, in main
+    else predict(input_tensor)
+         ~~~~~~~^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/inference.py", line 37, in __call__
+    return self._forward(*inputs)
+           ~~~~~~~~~~~~~^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/inference.py", line 31, in _forward
+    return self.forward(*inputs).realize()
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/kblueleaf/kt/.venv/lib/python3.13/site-packages/tinygrad/tensor.py", line 767, in _wrapper
+    ret = fn(*args, **kwargs)
+  File "/home/kblueleaf/.local/share/uv/python/cpython-3.13.16-linux-x86_64-gnu/lib/python3.13/contextlib.py", line 85, in inner
+    return func(*args, **kwds)
+  File "/home/kblueleaf/kt/.venv/lib/python3.13/site-packages/tinygrad/tensor.py", line 424, in realize
+    run_linear(*Tensor.linear_with_vars(*to_realize), update_stats=do_update_stats)
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/seam.py", line 275, in run_linear
+    _execute_eager(linear, ctx, used, inputs, held, rt)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/seam.py", line 279, in _execute_eager
+    if launch_eager.try_group(linear, ctx, used, inputs, held, rt, _on_ktpu):
+       ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/launch/eager.py", line 113, in try_group
+    run_unit(grp[0])
+    ~~~~~~~~^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/launch/eager.py", line 94, in run_unit
+    recipe.submit(rt, plan, by_slot)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/captured/recipe.py", line 466, in submit
+    return execute(dev, plan, buffers)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/captured/recipe.py", line 493, in execute
+    return recipes.execute(dev, plan, buffers)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/captured/recipe.py", line 343, in execute
+    return run.execute(dev, plan, buffers)
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/run/__init__.py", line 101, in execute
+    runs = [r for r in _run(dev, plan, bufs) if r is not HELD]
+                       ~~~~^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/run/__init__.py", line 146, in _run
+    return _execute(dev, plan, bufs)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/run/__init__.py", line 191, in _execute
+    return _matmul(dev, plan, bufs)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/run/kernels.py", line 728, in _matmul
+    return _reordered(dev, plan, bufs, order)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/run/kernels.py", line 793, in _reordered
+    runs = _matmul(dev, sub, {**bufs, key: t})
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/run/kernels.py", line 764, in _matmul
+    return runs + _product(dev, replace(plan, a=a, b=b), bufs)
+                  ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/run/kernels.py", line 831, in _product
+    qb = FM.mx7(
+        dev,
+    ...<7 lines>...
+        1 if shared else bt,
+    )
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/forms.py", line 376, in mx7
+    return packed(dev, s, dtype, src, rows, cols, rp, mm.kp, side, g, mm.nk, batches)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/forms.py", line 801, in packed
+    got = _stepped(dev, s.steps, s.holder, *args)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/forms.py", line 735, in _stepped
+    return _produce_quant(dev, steps, holder, key, batches * rp * cp, production)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/forms.py", line 721, in _produce_quant
+    generated.launch(dev, "matmul.quant_kernel", call, binds, kind="quant")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/tests/perf/record.py", line 178, in call
+    return fn(*args, **kw)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/generated.py", line 157, in launch
+    return launch_now(dev, generator, arguments, bindings, kind, info)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/generated.py", line 165, in launch_now
+    run = dev.run(compiled, bindings, kind=kind, info=info)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py", line 149, in run
+    submitted = self.submit(compiled, binds, kind, info)
+  File "/home/kblueleaf/kt/software/tests/perf/record.py", line 178, in call
+    return fn(*args, **kw)
+  File "/home/kblueleaf/kt/software/tests/perf/record.py", line 235, in on_submit
+    got = submit(self, compiled, binds, kind, info)
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py", line 172, in submit
+    return self._submitted(compiled, binds, kind, info)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py", line 339, in _submitted
+    self._fence(nodes, references, writes, accesses, slots)
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py", line 119, in _fence
+    self._observe_one(pending)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/device/submission.py", line 425, in _observe_one
+    got = s.result if s.result is not None else self.card.collect(s.pending)
+                                                ~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/card/collection.py", line 186, in collect
+    raise contract_error(error) from error
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/card/collection.py", line 183, in collect
+    p.result = self._collect(p, faults, dump)
+               ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/card/collection.py", line 258, in _collect
+    raise e
+  File "/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/card/collection.py", line 234, in _collect
+    done = self.queues[n].wait(tag, timeout=self.timeout)
+  File "/home/kblueleaf/kt/software/kohakuaccel/driver/kohakuaccel/driver/node/queue/client.py", line 1082, in wait
+    raise NodeError(c, text)
+kohakuaccel.driver.node.queue.client.NodeError: kernel test; run row_shares_94d95a88b5: tag 0x15b: BAD_STEP at step 0 (20001416694 cycles)
+node said:
+PKGF status 20 detail 11 value 1d711c131bc51a37
+PKGF de stat de0106430d5e0040 moves 0 mvstat 200000bef xfdata 0
+PKGF de ctr b4d df6 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+PKGF u0 (2,1) sent 0 recv 0 want 0 inflight 1203
+PKGF u1 (2,2) sent 0 recv 0 want 0 inflight 522
+PKGF stray 0 outstanding 1725
+[ka] package 15b failed: status 14 detail b step 0 value 1d711c131bc51a37
+matmul.quant_kernel: {'src': {'kind': 'full', 'dtype': 'f16', 'offset': 0, 'pitch': 208, 'rows': 12288}, 'rows': 64, 'cols': 208, 'rp': 64, 'cp': 224, 'side': 'b', 'g': 16, 'nk': 1, 'batches': 192, 'prepared': [{'made_by': {'gen': 'relayout.plan', 'args': {'walk': ((16, 453888), (12, 64), (64, 1), (197, 2304)), 'at': 1536, 'dwalk': ((16, 151296), (12, 12608), (64, 197), (197, 1)), 'dat': 0, 'm': 2420736, 'src_n': 7262208, 'keep': False, 'z0': 0, 'tree': True}}}, {'made_by': {'gen': 'relayout.plan', 'args': {'walk': ((12288, 197), (197, 1)), 'at': 0, 'dwalk': ((12288, 208), (197, 1)), 'dat': 0, 'm': 2555904, 'src_n': 2420736, 'keep': False, 'z0': 0, 'tree': True}}}], 'composed': [0]}

@@ -1,0 +1,164 @@
+{
+ "counters": {
+  "runs": 557,
+  "cycles": 164833045,
+  "bytes_in": 174038944,
+  "bytes_out": 4000,
+  "library_hits": 0,
+  "class_hits": 0,
+  "exact_hits": 0,
+  "library_misses": 0,
+  "compile_calls": 33,
+  "compile_seconds": 2.669294844090473,
+  "kernel_reuses": 386,
+  "f001_split": 0
+ },
+ "runs": 557,
+ "workload": "vitb",
+ "board": "multimesh_v9t6",
+ "nodes": 1,
+ "args": [
+  "--batch",
+  "1",
+  "--inputs",
+  "10",
+  "--width",
+  "768",
+  "--board",
+  "multimesh_v9t6",
+  "--nodes",
+  "1",
+  "--inputs",
+  "2",
+  "--blocks",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma",
+  "--report",
+  "/home/kblueleaf/kt/build/perf/traces/vitb.i11.kaos.b1.p1.multimesh_v9t6.1n.kaos/report.json",
+  "--references",
+  "/home/kblueleaf/kt/build/perf/references"
+ ],
+ "seconds": 18.34,
+ "done": "exited",
+ "spans": {
+  "copyin": {
+   "calls": 155,
+   "seconds": 0.16653571813367307
+  },
+  "compile_graph": {
+   "calls": 33,
+   "seconds": 2.6745949079631828
+  },
+  "bind_admit": {
+   "calls": 557,
+   "seconds": 0.13817533163819462
+  },
+  "submit": {
+   "calls": 557,
+   "seconds": 2.426737101166509
+  },
+  "collect": {
+   "calls": 1114,
+   "seconds": 0.01576601545093581
+  },
+  "generate_launch": {
+   "calls": 419,
+   "seconds": 4.275492812390439
+  },
+  "rows": {
+   "calls": 60,
+   "seconds": 0.32864657789468765
+  },
+  "copyout": {
+   "calls": 2,
+   "seconds": 0.0020925949793308973
+  },
+  "graph_fill": {
+   "calls": 1,
+   "seconds": 0.00041799404425546527
+  },
+  "graph_storages": {
+   "calls": 1,
+   "seconds": 0.0003085859934799373
+  },
+  "graph_call": {
+   "calls": 1,
+   "seconds": 3.4978337829816155
+  }
+ },
+ "graphs": [
+  {
+   "kernels": 309,
+   "counts": {
+    "planned": 0,
+    "recorded": 1,
+    "replayed": 0
+   },
+   "history": [
+    "recorded: first"
+   ]
+  }
+ ],
+ "profile": "mid",
+ "knobs": {
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "clocks": null,
+ "check": {
+  "card_f32": {
+   "absolute": {
+    "max": 0.09889471530914307,
+    "mean": 0.020265135026420467,
+    "median": 0.016755282878875732
+   },
+   "relative": {
+    "max": 121.56086385022665,
+    "mean": 0.32643909181351377,
+    "median": 0.044710200359686994
+   }
+  },
+  "card_mxfp7": {
+   "absolute": {
+    "max": 0.09402185678482056,
+    "mean": 0.02237462814687751,
+    "median": 0.019085779786109924
+   },
+   "relative": {
+    "max": 258.0031924304781,
+    "mean": 0.4550949888040085,
+    "median": 0.050956826537226906
+   }
+  },
+  "mxfp7_f32": {
+   "absolute": {
+    "max": 0.10398109257221222,
+    "mean": 0.022784676236682573,
+    "median": 0.019671261310577393
+   },
+   "relative": {
+    "max": 1423.6713020404654,
+    "mean": 0.9734207838685413,
+    "median": 0.051415195182712384
+   }
+  },
+  "elements": 2000,
+  "outside_footprint": 0,
+  "worst": [],
+  "top1_f32": 1.0,
+  "top1_mxfp7": 1.0
+ },
+ "profiled": null,
+ "jit": true,
+ "commit": null,
+ "backend": "kaos",
+ "firmware": "build/os/kos.elf",
+ "os_flags": "shared_phys",
+ "os_command": "parallel ostpu 65534 4096 1 1 -e",
+ "when": 1794209687.1709335,
+ "launches": 557,
+ "kernels": 33,
+ "compiles": []
+}

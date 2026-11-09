@@ -1,0 +1,120 @@
+{
+ "counters": {
+  "runs": 484,
+  "cycles": 115767659,
+  "bytes_in": 174039232,
+  "bytes_out": 2000,
+  "library_hits": 0,
+  "class_hits": 0,
+  "exact_hits": 0,
+  "library_misses": 0,
+  "compile_calls": 34,
+  "compile_seconds": 43.32248603267362,
+  "kernel_reuses": 313,
+  "f001_split": 0
+ },
+ "runs": 484,
+ "workload": "vitb",
+ "board": "multimesh_v9t8",
+ "nodes": 2,
+ "args": [
+  "--batch",
+  "1",
+  "--inputs",
+  "10",
+  "--width",
+  "768",
+  "--board",
+  "multimesh_v9t8",
+  "--nodes",
+  "2",
+  "--inputs",
+  "2",
+  "--blocks",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma",
+  "--report",
+  "/home/kblueleaf/kt/build/perf/traces/vitb.i11.kaos.b1.p2.multimesh_v9t8.2n.kaos/report.json",
+  "--references",
+  "/home/kblueleaf/kt/build/perf/references"
+ ],
+ "seconds": 234.9,
+ "done": "ld/perf/traces/vitb.i11.kaos.b1.p2.multimesh_v9t8.2n.kaos/kds-failures.node1.jsonl\nmatmul.quant_kernel: {'src': {'kind': 'full', 'dtype': 'f16', 'offset': 0, 'pitch': 224, 'rows': 0}, 'rows': 197, 'cols': 208, 'rp': 200, 'cp': 224, 'side': 'a', 'g': 50, 'nk': 1, 'batches': 12, 'pad_strategy': 'native'}\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/kblueleaf/kt/software/tests/perf/record.py\", line 517, in main\n    runpy.run_path(sys.argv[0], run_name=\"__main__\")\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen runpy>\", line 294, in run_path\n  File \"<frozen runpy>\", line 98, in _run_module_code\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/examples/tinygrad/vit_tiny.py\", line 332, in <module>\n    main()\n    ~~~~^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/examples/tinygrad/vit_tiny.py\", line 328, in main\n    dev.close()\n    ~~~~~~~~~^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/device/__init__.py\", line 348, in close\n    result = self.card.close()\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/os/multi.py\", line 111, in close\n    self.release_graph()\n    ~~~~~~~~~~~~~~~~~~^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/os/multi.py\", line 52, in release_graph\n    self.active.close()\n    ~~~~~~~~~~~~~~~~~^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/os/graph.py\", line 1571, in close\n    raise RuntimeError(\n        \"reset the card before reclaiming an uncertain graph\"\n    )\nRuntimeError: reset the card before reclaiming an uncertain graph\n",
+ "spans": {
+  "copyin": {
+   "calls": 155,
+   "seconds": 0.17095886677270755
+  },
+  "compile_graph": {
+   "calls": 34,
+   "seconds": 43.32915369182592
+  },
+  "bind_admit": {
+   "calls": 485,
+   "seconds": 0.06795436004176736
+  },
+  "submit": {
+   "calls": 485,
+   "seconds": 1.9659120151191019
+  },
+  "collect": {
+   "calls": 968,
+   "seconds": 0.014324939344078302
+  },
+  "generate_launch": {
+   "calls": 347,
+   "seconds": 206.28665223449934
+  },
+  "rows": {
+   "calls": 41,
+   "seconds": 59.77652987011243
+  },
+  "copyout": {
+   "calls": 1,
+   "seconds": 0.00018494902178645134
+  },
+  "graph_fill": {
+   "calls": 1,
+   "seconds": 0.0004220159607939422
+  },
+  "graph_storages": {
+   "calls": 1,
+   "seconds": 0.00026897701900452375
+  },
+  "graph_call": {
+   "calls": 1,
+   "seconds": 46.631367393012624
+  }
+ },
+ "graphs": [
+  {
+   "kernels": 309,
+   "counts": {
+    "planned": 0,
+    "recorded": 1,
+    "replayed": 0
+   },
+   "history": []
+  }
+ ],
+ "profile": "mid",
+ "knobs": {
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "clocks": null,
+ "check": null,
+ "profiled": null,
+ "jit": true,
+ "commit": null,
+ "backend": "kaos",
+ "firmware": "build/os/kos.elf",
+ "os_flags": "shared_phys",
+ "os_command": "parallel ostpu 65534 4096 1 1 -e",
+ "when": 1794219938.0916135,
+ "launches": 485,
+ "kernels": 34,
+ "compiles": []
+}

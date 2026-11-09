@@ -1,0 +1,96 @@
+{
+ "counters": {
+  "runs": 358,
+  "cycles": 98422442,
+  "bytes_in": 174340288,
+  "bytes_out": 0,
+  "library_hits": 0,
+  "class_hits": 0,
+  "exact_hits": 0,
+  "library_misses": 0,
+  "compile_calls": 34,
+  "compile_seconds": 105.87633263680618,
+  "kernel_reuses": 215,
+  "f001_split": 0
+ },
+ "runs": 358,
+ "transport": {},
+ "workload": "vitb",
+ "board": "multimesh_v9t8",
+ "nodes": 4,
+ "args": [
+  "--batch",
+  "4",
+  "--inputs",
+  "10",
+  "--width",
+  "768",
+  "--board",
+  "multimesh_v9t8",
+  "--nodes",
+  "4",
+  "--no-jit",
+  "--inputs",
+  "2",
+  "--blocks",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma",
+  "--report",
+  "/home/kblueleaf/kt/build/perf/traces/vitb.i11.fw.b4.p4.multimesh_v9t8.4n/report.json",
+  "--references",
+  "/home/kblueleaf/kt/build/perf/references"
+ ],
+ "seconds": 658.95,
+ "done": "sult = self._collect(p, faults, dump)\n               ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/card/collection.py\", line 258, in _collect\n    raise e\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/card/collection.py\", line 234, in _collect\n    done = self.queues[n].wait(tag, timeout=self.timeout)\n  File \"/home/kblueleaf/kt/software/kohakuaccel/driver/kohakuaccel/driver/node/queue/client.py\", line 1082, in wait\n    raise NodeError(c, text)\nkohakuaccel.driver.node.queue.client.NodeError: kernel test; run row_shares_2fe9e42e63: tag 0x14f: TIMEOUT waiting on engine (head entry 255 blocked, 64 queued) at step 0 (20000202515 cycles)\nnode said:\nPKGF status 48 detail 11 value de01064300ff0040\nPKGF de stat de01064300ff0040 moves 0 mvstat 2000002e8 xfdata 0\nPKGF de ctr 296 4f0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\nPKGF u0 (2,1) sent 0 recv 0 want 0 inflight 0\nPKGF u1 (2,2) sent 0 recv 0 want 0 inflight 0\nPKGF stray 0 outstanding 0\n[ka] package 14f failed: status 30 detail b step 0 value de01064300ff0040\nmatmul.quant_kernel: {'src': {'kind': 'full', 'dtype': 'f16', 'offset': 0, 'pitch': 208, 'rows': 3072}, 'rows': 64, 'cols': 208, 'rp': 64, 'cp': 224, 'side': 'b', 'g': 16, 'nk': 1, 'batches': 48, 'prepared': [{'made_by': {'gen': 'relayout.plan', 'args': {'walk': ((4, 453888), (12, 64), (64, 1), (197, 2304)), 'at': 1536, 'dwalk': ((4, 151296), (12, 12608), (64, 197), (197, 1)), 'dat': 0, 'm': 605184, 'src_n': 1815552, 'keep': False, 'z0': 0, 'tree': True}}}, {'made_by': {'gen': 'relayout.plan', 'args': {'walk': ((3072, 197), (197, 1)), 'at': 0, 'dwalk': ((3072, 208), (197, 1)), 'dat': 0, 'm': 638976, 'src_n': 605184, 'keep': False, 'z0': 0, 'tree': True}}}], 'composed': [0]}\n",
+ "spans": {
+  "copyin": {
+   "calls": 153,
+   "seconds": 0.15306692430749536
+  },
+  "compile_graph": {
+   "calls": 34,
+   "seconds": 105.89819775306387
+  },
+  "bind_admit": {
+   "calls": 359,
+   "seconds": 3.8812327231280506
+  },
+  "submit": {
+   "calls": 360,
+   "seconds": 105.06546715571312
+  },
+  "generate_launch": {
+   "calls": 249,
+   "seconds": 609.9498847207869
+  },
+  "collect": {
+   "calls": 359,
+   "seconds": 0.003425170201808214
+  },
+  "rows": {
+   "calls": 8,
+   "seconds": 73.67749434988946
+  }
+ },
+ "graphs": [],
+ "profile": "mid",
+ "knobs": {
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "clocks": null,
+ "check": null,
+ "profiled": null,
+ "jit": false,
+ "commit": null,
+ "backend": "firmware",
+ "firmware": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+ "os_flags": null,
+ "os_command": null,
+ "when": 1794219641.6711512,
+ "launches": 360,
+ "kernels": 34,
+ "compiles": []
+}

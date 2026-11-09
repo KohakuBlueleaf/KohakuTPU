@@ -1,0 +1,2711 @@
+[
+  {
+    "trace": "vitb.i11.firmware.b1.p1.multimesh_v9t6.1n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 309,
+    "second_completed": 248,
+    "completed_launches": 557,
+    "attempted_launches": 557,
+    "cycles": 42072185,
+    "original_card_sum": 42072185,
+    "by_kind": {
+      "move": 2079368,
+      "quant": 11875373,
+      "matmul": 20669588,
+      "dsl": 7447856
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.09889471530914307,
+          "mean": 0.020265135026420467,
+          "median": 0.016755282878875732
+        },
+        "relative": {
+          "max": 121.56086385022665,
+          "mean": 0.32643909181351377,
+          "median": 0.044710200359686994
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.09402185678482056,
+          "mean": 0.02237462814687751,
+          "median": 0.019085779786109924
+        },
+        "relative": {
+          "max": 258.0031924304781,
+          "mean": 0.4550949888040085,
+          "median": 0.050956826537226906
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.022784676236682573,
+          "median": 0.019671261310577393
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.9734207838685413,
+          "median": 0.051415195182712384
+        }
+      },
+      "elements": 2000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b1.p1.multimesh_v9t6.1n.firmware"
+  },
+  {
+    "trace": "vitb.i11.firmware.b1.p1.multimesh_v9t8.1n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 321,
+    "second_completed": 260,
+    "completed_launches": 581,
+    "attempted_launches": 581,
+    "cycles": 40249814,
+    "original_card_sum": 40249814,
+    "by_kind": {
+      "move": 2087928,
+      "quant": 10077263,
+      "matmul": 19723244,
+      "dsl": 7392379,
+      "convert": 969000
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.10076475143432617,
+          "mean": 0.020293293387279844,
+          "median": 0.01727449893951416
+        },
+        "relative": {
+          "max": 1037.554353033672,
+          "mean": 0.7514529859494132,
+          "median": 0.04787432937425542
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.09389743208885193,
+          "mean": 0.022265839948086067,
+          "median": 0.018714308738708496
+        },
+        "relative": {
+          "max": 121.41604579658119,
+          "mean": 0.41627213606037483,
+          "median": 0.051115523851418126
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.022784676236682573,
+          "median": 0.019671261310577393
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.9734207838685413,
+          "median": 0.051415195182712384
+        }
+      },
+      "elements": 2000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b1.p1.multimesh_v9t8.1n.firmware"
+  },
+  {
+    "trace": "vitb.i11.firmware.b1.p2.multimesh_v9t6.2n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 309,
+    "second_completed": 248,
+    "completed_launches": 557,
+    "attempted_launches": 557,
+    "cycles": 28264935,
+    "original_card_sum": 28264935,
+    "by_kind": {
+      "move": 1654115,
+      "quant": 8082381,
+      "matmul": 14023861,
+      "dsl": 4504578
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.09889471530914307,
+          "mean": 0.020476841916213743,
+          "median": 0.016844123601913452
+        },
+        "relative": {
+          "max": 379.18674987408326,
+          "mean": 0.465631658806887,
+          "median": 0.0452940682749058
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.09402185678482056,
+          "mean": 0.022439638553885744,
+          "median": 0.019141563680022955
+        },
+        "relative": {
+          "max": 331.10385014808264,
+          "mean": 0.48909851910847535,
+          "median": 0.05041070177445746
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.022784676236682573,
+          "median": 0.019671261310577393
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.9734207838685413,
+          "median": 0.051415195182712384
+        }
+      },
+      "elements": 2000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b1.p2.multimesh_v9t6.2n.firmware"
+  },
+  {
+    "trace": "vitb.i11.firmware.b1.p2.multimesh_v9t8.2n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 321,
+    "second_completed": 260,
+    "completed_launches": 581,
+    "attempted_launches": 581,
+    "cycles": 27434280,
+    "original_card_sum": 27434280,
+    "by_kind": {
+      "move": 1637597,
+      "quant": 6748206,
+      "matmul": 13885974,
+      "dsl": 4546809,
+      "convert": 615694
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.10247373580932617,
+          "mean": 0.020468551214435138,
+          "median": 0.017287462949752808
+        },
+        "relative": {
+          "max": 1192.129884647986,
+          "mean": 0.8235813128956204,
+          "median": 0.04815766956732922
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.08386445045471191,
+          "mean": 0.021958823219174518,
+          "median": 0.018512781709432602
+        },
+        "relative": {
+          "max": 188.32289669748448,
+          "mean": 0.4409308853805944,
+          "median": 0.05034250787242732
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.022784676236682573,
+          "median": 0.019671261310577393
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.9734207838685413,
+          "median": 0.051415195182712384
+        }
+      },
+      "elements": 2000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b1.p2.multimesh_v9t8.2n.firmware"
+  },
+  {
+    "trace": "vitb.i11.firmware.b1.p4.multimesh_v9t6.4n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 309,
+    "second_completed": 248,
+    "completed_launches": 557,
+    "attempted_launches": 557,
+    "cycles": 19556346,
+    "original_card_sum": 19556346,
+    "by_kind": {
+      "move": 834095,
+      "quant": 5431353,
+      "matmul": 10578057,
+      "dsl": 2712841
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.09913885593414307,
+          "mean": 0.02036167541507166,
+          "median": 0.016876056790351868
+        },
+        "relative": {
+          "max": 121.56086385022665,
+          "mean": 0.30688635569992667,
+          "median": 0.04649574746308459
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.09675955772399902,
+          "mean": 0.022329319824231787,
+          "median": 0.019046388566493988
+        },
+        "relative": {
+          "max": 240.98838416862188,
+          "mean": 0.3941633206938993,
+          "median": 0.05024778105701279
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.022784676236682573,
+          "median": 0.019671261310577393
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.9734207838685413,
+          "median": 0.051415195182712384
+        }
+      },
+      "elements": 2000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b1.p4.multimesh_v9t6.4n.firmware"
+  },
+  {
+    "trace": "vitb.i11.firmware.b1.p4.multimesh_v9t8.4n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 321,
+    "second_completed": 260,
+    "completed_launches": 581,
+    "attempted_launches": 581,
+    "cycles": 19594407,
+    "original_card_sum": 19594407,
+    "by_kind": {
+      "move": 813266,
+      "quant": 4516544,
+      "matmul": 11136117,
+      "dsl": 2755407,
+      "convert": 373073
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.09321951866149902,
+          "mean": 0.02069426394312177,
+          "median": 0.017676495015621185
+        },
+        "relative": {
+          "max": 264.87796518555825,
+          "mean": 0.3649202689123788,
+          "median": 0.04736784989071076
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.09231977164745331,
+          "mean": 0.02289035437325947,
+          "median": 0.019141733646392822
+        },
+        "relative": {
+          "max": 242.87891841993923,
+          "mean": 0.48341970342643903,
+          "median": 0.05177446807734863
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.022784676236682573,
+          "median": 0.019671261310577393
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.9734207838685413,
+          "median": 0.051415195182712384
+        }
+      },
+      "elements": 2000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b1.p4.multimesh_v9t8.4n.firmware"
+  },
+  {
+    "trace": "vitb.i11.firmware.b16.p1.multimesh_v9t6.1n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 371,
+    "second_completed": 321,
+    "completed_launches": 692,
+    "attempted_launches": 692,
+    "cycles": 802695223,
+    "original_card_sum": 802695223,
+    "by_kind": {
+      "move": 77445493,
+      "quant": 256058075,
+      "matmul": 368284781,
+      "dsl": 100902626,
+      "convert": 4248
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.11209405958652496,
+          "mean": 0.021826421577041403,
+          "median": 0.01835529040545225
+        },
+        "relative": {
+          "max": 700.243857331572,
+          "mean": 0.3052842150277791,
+          "median": 0.04932112722021486
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.11474596709012985,
+          "mean": 0.021204212014268704,
+          "median": 0.017869949340820312
+        },
+        "relative": {
+          "max": 549.9849367041057,
+          "mean": 0.3195343071144666,
+          "median": 0.048065545139093585
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.11736947298049927,
+          "mean": 0.021642700240698105,
+          "median": 0.01837831735610962
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.3499652992385905,
+          "median": 0.049494400710144895
+        }
+      },
+      "elements": 32000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 0.8125,
+      "top1_mxfp7": 0.875
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b16.p1.multimesh_v9t6.1n.firmware"
+  },
+  {
+    "trace": "vitb.i11.firmware.b16.p1.multimesh_v9t8.1n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 383,
+    "second_completed": 333,
+    "completed_launches": 716,
+    "attempted_launches": 716,
+    "cycles": 743392803,
+    "original_card_sum": 743392803,
+    "by_kind": {
+      "move": 73400755,
+      "quant": 201115775,
+      "matmul": 352981989,
+      "dsl": 100573702,
+      "convert": 15320582
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.12208586931228638,
+          "mean": 0.021745190357056344,
+          "median": 0.018416881561279297
+        },
+        "relative": {
+          "max": 1370.8578430770365,
+          "mean": 0.3029332674563749,
+          "median": 0.04967410818773331
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.11739437282085419,
+          "mean": 0.021397599898384214,
+          "median": 0.018041886389255524
+        },
+        "relative": {
+          "max": 898.3318808459487,
+          "mean": 0.31791452390138836,
+          "median": 0.04837105822237264
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.11736947298049927,
+          "mean": 0.021642700240698105,
+          "median": 0.01837831735610962
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.3499652992385905,
+          "median": 0.049494400710144895
+        }
+      },
+      "elements": 32000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 0.90625,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b16.p1.multimesh_v9t8.1n.firmware"
+  },
+  {
+    "trace": "vitb.i11.firmware.b16.p2.multimesh_v9t6.2n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 372,
+    "second_completed": 322,
+    "completed_launches": 694,
+    "attempted_launches": 694,
+    "cycles": 408087586,
+    "original_card_sum": 408087586,
+    "by_kind": {
+      "move": 57563885,
+      "quant": 163613135,
+      "matmul": 135970945,
+      "dsl": 50925796,
+      "convert": 13825
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.11343475431203842,
+          "mean": 0.021829336005432198,
+          "median": 0.018379583954811096
+        },
+        "relative": {
+          "max": 700.243857331572,
+          "mean": 0.2942608257899398,
+          "median": 0.04943251734215981
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.11202883720397949,
+          "mean": 0.02117860117760938,
+          "median": 0.017856866121292114
+        },
+        "relative": {
+          "max": 616.1462379324594,
+          "mean": 0.32022451799326473,
+          "median": 0.04790612760950533
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.11736947298049927,
+          "mean": 0.021642700240698105,
+          "median": 0.01837831735610962
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.3499652992385905,
+          "median": 0.049494400710144895
+        }
+      },
+      "elements": 32000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 0.8125,
+      "top1_mxfp7": 0.875
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b16.p2.multimesh_v9t6.2n.firmware"
+  },
+  {
+    "trace": "vitb.i11.firmware.b16.p2.multimesh_v9t8.2n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 384,
+    "second_completed": 334,
+    "completed_launches": 718,
+    "attempted_launches": 718,
+    "cycles": 388701297,
+    "original_card_sum": 388701297,
+    "by_kind": {
+      "move": 57700351,
+      "quant": 123759119,
+      "matmul": 146140693,
+      "dsl": 50742795,
+      "convert": 10358339
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.12208586931228638,
+          "mean": 0.021687706533151867,
+          "median": 0.018311217427253723
+        },
+        "relative": {
+          "max": 1370.8578430770365,
+          "mean": 0.3108298121554416,
+          "median": 0.049223117849355624
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.12173667550086975,
+          "mean": 0.021386995425058557,
+          "median": 0.018041327130049467
+        },
+        "relative": {
+          "max": 898.3318808459487,
+          "mean": 0.3184002039727459,
+          "median": 0.04840308898230252
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.11736947298049927,
+          "mean": 0.021642700240698105,
+          "median": 0.01837831735610962
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.3499652992385905,
+          "median": 0.049494400710144895
+        }
+      },
+      "elements": 32000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 0.90625,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b16.p2.multimesh_v9t8.2n.firmware"
+  },
+  {
+    "trace": "vitb.i11.firmware.b16.p4.multimesh_v9t6.4n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 372,
+    "second_completed": 322,
+    "completed_launches": 694,
+    "attempted_launches": 694,
+    "cycles": 278152559,
+    "original_card_sum": 278152559,
+    "by_kind": {
+      "move": 39919741,
+      "quant": 111951893,
+      "matmul": 93108111,
+      "dsl": 33157695,
+      "convert": 15119
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.11343475431203842,
+          "mean": 0.021863292608033588,
+          "median": 0.018445581197738647
+        },
+        "relative": {
+          "max": 700.243857331572,
+          "mean": 0.2973080031528523,
+          "median": 0.049488098047042364
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.11202883720397949,
+          "mean": 0.02124783053833744,
+          "median": 0.017946038395166397
+        },
+        "relative": {
+          "max": 616.1462379324594,
+          "mean": 0.30467772424727435,
+          "median": 0.04788816624487047
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.11736947298049927,
+          "mean": 0.021642700240698105,
+          "median": 0.01837831735610962
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.3499652992385905,
+          "median": 0.049494400710144895
+        }
+      },
+      "elements": 32000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 0.84375,
+      "top1_mxfp7": 0.90625
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b16.p4.multimesh_v9t6.4n.firmware"
+  },
+  {
+    "trace": "vitb.i11.firmware.b16.p4.multimesh_v9t8.4n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 384,
+    "second_completed": 334,
+    "completed_launches": 718,
+    "attempted_launches": 718,
+    "cycles": 259237555,
+    "original_card_sum": 259237555,
+    "by_kind": {
+      "move": 38871798,
+      "quant": 83615768,
+      "matmul": 96633036,
+      "dsl": 32591217,
+      "convert": 7525736
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 3.169848918914795,
+          "mean": 0.0414006180992601,
+          "median": 0.019180909730494022
+        },
+        "relative": {
+          "max": 889.6711795622888,
+          "mean": 0.4240567908185467,
+          "median": 0.05239930651163127
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 3.17967689037323,
+          "mean": 0.04101750350241855,
+          "median": 0.018871143460273743
+        },
+        "relative": {
+          "max": 834.3246684947974,
+          "mean": 0.4418737230644399,
+          "median": 0.051246942302842956
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.11736947298049927,
+          "mean": 0.021642700240698105,
+          "median": 0.01837831735610962
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.3499652992385905,
+          "median": 0.049494400710144895
+        }
+      },
+      "elements": 32000,
+      "outside_footprint": 876,
+      "worst": [
+        {
+          "at": [
+            9,
+            683
+          ],
+          "card": -1.724609375,
+          "f32": 1.445239543914795,
+          "mxfp7": 1.45506751537323
+        },
+        {
+          "at": [
+            9,
+            663
+          ],
+          "card": 1.5107421875,
+          "f32": -1.2607578039169312,
+          "mxfp7": -1.24774169921875
+        },
+        {
+          "at": [
+            9,
+            626
+          ],
+          "card": -0.89208984375,
+          "f32": 1.428755521774292,
+          "mxfp7": 1.4199154376983643
+        },
+        {
+          "at": [
+            9,
+            592
+          ],
+          "card": -1.1728515625,
+          "f32": 1.1658217906951904,
+          "mxfp7": 1.1368842124938965
+        },
+        {
+          "at": [
+            9,
+            305
+          ],
+          "card": 1.0244140625,
+          "f32": -1.2634055614471436,
+          "mxfp7": -1.2940876483917236
+        },
+        {
+          "at": [
+            9,
+            553
+          ],
+          "card": 0.89501953125,
+          "f32": -1.3419170379638672,
+          "mxfp7": -1.37009859085083
+        },
+        {
+          "at": [
+            9,
+            332
+          ],
+          "card": -1.6640625,
+          "f32": 0.5519244074821472,
+          "mxfp7": 0.5688731670379639
+        },
+        {
+          "at": [
+            9,
+            507
+          ],
+          "card": -0.8642578125,
+          "f32": 1.3659592866897583,
+          "mxfp7": 1.351482629776001
+        }
+      ],
+      "top1_f32": 0.90625,
+      "top1_mxfp7": 0.90625
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b16.p4.multimesh_v9t8.4n.firmware"
+  },
+  {
+    "trace": "vitb.i11.firmware.b4.p1.multimesh_v9t6.1n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 371,
+    "second_completed": 321,
+    "completed_launches": 692,
+    "attempted_launches": 692,
+    "cycles": 317388189,
+    "original_card_sum": 317388189,
+    "by_kind": {
+      "move": 16523619,
+      "quant": 64094785,
+      "matmul": 210749360,
+      "dsl": 26015324,
+      "convert": 5101
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.10215359926223755,
+          "mean": 0.021681816337470083,
+          "median": 0.01814846694469452
+        },
+        "relative": {
+          "max": 700.243857331572,
+          "mean": 0.37407132699974177,
+          "median": 0.04826125457157429
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.10204508900642395,
+          "mean": 0.021092605333877145,
+          "median": 0.0176682248711586
+        },
+        "relative": {
+          "max": 370.48998038386094,
+          "mean": 0.3311192888984323,
+          "median": 0.04683455096282063
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.02185334007855272,
+          "median": 0.018613189458847046
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.477803991193911,
+          "median": 0.050040355249146865
+        }
+      },
+      "elements": 8000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 0.875,
+      "top1_mxfp7": 0.875
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b4.p1.multimesh_v9t6.1n.firmware"
+  },
+  {
+    "trace": "vitb.i11.firmware.b4.p1.multimesh_v9t8.1n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 383,
+    "second_completed": 333,
+    "completed_launches": 716,
+    "attempted_launches": 716,
+    "cycles": 305669137,
+    "original_card_sum": 305669137,
+    "by_kind": {
+      "move": 16930217,
+      "quant": 49855046,
+      "matmul": 208828083,
+      "dsl": 26246796,
+      "convert": 3808995
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.10606688261032104,
+          "mean": 0.02159024160921399,
+          "median": 0.01811063289642334
+        },
+        "relative": {
+          "max": 1370.8578430770365,
+          "mean": 0.43871845124950176,
+          "median": 0.04757566405718908
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.10854721069335938,
+          "mean": 0.021400475495946012,
+          "median": 0.017935246229171753
+        },
+        "relative": {
+          "max": 275.7718641556517,
+          "mean": 0.3073057334851296,
+          "median": 0.04813586570946507
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.02185334007855272,
+          "median": 0.018613189458847046
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.477803991193911,
+          "median": 0.050040355249146865
+        }
+      },
+      "elements": 8000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b4.p1.multimesh_v9t8.1n.firmware"
+  },
+  {
+    "trace": "vitb.i11.firmware.b4.p2.multimesh_v9t6.2n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 372,
+    "second_completed": 322,
+    "completed_launches": 694,
+    "attempted_launches": 694,
+    "cycles": 113453616,
+    "original_card_sum": 113453616,
+    "by_kind": {
+      "move": 12601898,
+      "quant": 40957729,
+      "matmul": 44917926,
+      "dsl": 14961309,
+      "convert": 14754
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.10215359926223755,
+          "mean": 0.021726768477776204,
+          "median": 0.017930060625076294
+        },
+        "relative": {
+          "max": 1259.3414370477747,
+          "mean": 0.5368525234984054,
+          "median": 0.04806671298587997
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.10204508900642395,
+          "mean": 0.021126206542932777,
+          "median": 0.017666228115558624
+        },
+        "relative": {
+          "max": 223.34339782299318,
+          "mean": 0.31423556135903,
+          "median": 0.04698911965012022
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.02185334007855272,
+          "median": 0.018613189458847046
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.477803991193911,
+          "median": 0.050040355249146865
+        }
+      },
+      "elements": 8000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 0.875,
+      "top1_mxfp7": 0.875
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b4.p2.multimesh_v9t6.2n.firmware"
+  },
+  {
+    "trace": "vitb.i11.firmware.b4.p2.multimesh_v9t8.2n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 384,
+    "second_completed": 334,
+    "completed_launches": 718,
+    "attempted_launches": 718,
+    "cycles": 111285418,
+    "original_card_sum": 111285418,
+    "by_kind": {
+      "move": 12522980,
+      "quant": 32152446,
+      "matmul": 49072488,
+      "dsl": 14957343,
+      "convert": 2580161
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.10343995690345764,
+          "mean": 0.021717736664999394,
+          "median": 0.018369536846876144
+        },
+        "relative": {
+          "max": 1370.8578430770365,
+          "mean": 0.4490824983736915,
+          "median": 0.049176762222026243
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.10854721069335938,
+          "mean": 0.021404455276715452,
+          "median": 0.01787307858467102
+        },
+        "relative": {
+          "max": 275.7718641556517,
+          "mean": 0.313322509959497,
+          "median": 0.048463694237280835
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.02185334007855272,
+          "median": 0.018613189458847046
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.477803991193911,
+          "median": 0.050040355249146865
+        }
+      },
+      "elements": 8000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b4.p2.multimesh_v9t8.2n.firmware"
+  },
+  {
+    "trace": "vitb.i11.firmware.b4.p4.multimesh_v9t6.4n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 372,
+    "second_completed": 322,
+    "completed_launches": 694,
+    "attempted_launches": 694,
+    "cycles": 74894300,
+    "original_card_sum": 74894300,
+    "by_kind": {
+      "move": 9001412,
+      "quant": 27490129,
+      "matmul": 29386544,
+      "dsl": 9002905,
+      "convert": 13310
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.10048544965684414,
+          "mean": 0.021733279816122376,
+          "median": 0.01804860681295395
+        },
+        "relative": {
+          "max": 838.284129577534,
+          "mean": 0.467415740755104,
+          "median": 0.049192972477071134
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.10834896564483643,
+          "mean": 0.020903543039559738,
+          "median": 0.017580658197402954
+        },
+        "relative": {
+          "max": 258.63337051425054,
+          "mean": 0.3334914236212297,
+          "median": 0.046874760427596335
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.02185334007855272,
+          "median": 0.018613189458847046
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.477803991193911,
+          "median": 0.050040355249146865
+        }
+      },
+      "elements": 8000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 0.875,
+      "top1_mxfp7": 0.875
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b4.p4.multimesh_v9t6.4n.firmware"
+  },
+  {
+    "trace": "vitb.i11.firmware.b4.p4.multimesh_v9t8.4n.firmware",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 384,
+    "second_completed": 334,
+    "completed_launches": 718,
+    "attempted_launches": 718,
+    "cycles": 72728174,
+    "original_card_sum": 72728174,
+    "by_kind": {
+      "move": 9000110,
+      "quant": 20535241,
+      "matmul": 32594640,
+      "dsl": 8897813,
+      "convert": 1700370
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.10343995690345764,
+          "mean": 0.021636050325192627,
+          "median": 0.018266111612319946
+        },
+        "relative": {
+          "max": 1370.8578430770365,
+          "mean": 0.45384946631537454,
+          "median": 0.04879632417464025
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.10854721069335938,
+          "mean": 0.021427391182558493,
+          "median": 0.01800660416483879
+        },
+        "relative": {
+          "max": 275.7718641556517,
+          "mean": 0.31231878685299264,
+          "median": 0.04825508800601599
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.02185334007855272,
+          "median": 0.018613189458847046
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.477803991193911,
+          "median": 0.050040355249146865
+        }
+      },
+      "elements": 8000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.firmware.b4.p4.multimesh_v9t8.4n.firmware"
+  },
+  {
+    "trace": "vitb.i11.fw.b1.p1.multimesh_v9t6.1n",
+    "metric": "sum of per-launch maximum reconstructed from per-node measurement rings",
+    "second_start_seq": 309,
+    "second_completed": 248,
+    "completed_launches": 557,
+    "attempted_launches": 557,
+    "cycles": 41418292,
+    "original_card_sum": 41418292,
+    "by_kind": {
+      "move": 2070098,
+      "quant": 11704830,
+      "matmul": 20336836,
+      "dsl": 7306528
+    },
+    "graph": [],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.09889471530914307,
+          "mean": 0.020265135026420467,
+          "median": 0.016755282878875732
+        },
+        "relative": {
+          "max": 121.56086385022665,
+          "mean": 0.32643909181351377,
+          "median": 0.044710200359686994
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.09402185678482056,
+          "mean": 0.02237462814687751,
+          "median": 0.019085779786109924
+        },
+        "relative": {
+          "max": 258.0031924304781,
+          "mean": 0.4550949888040085,
+          "median": 0.050956826537226906
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.022784676236682573,
+          "median": 0.019671261310577393
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.9734207838685413,
+          "median": 0.051415195182712384
+        }
+      },
+      "elements": 2000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.fw.b1.p1.multimesh_v9t6.1n"
+  },
+  {
+    "trace": "vitb.i11.fw.b1.p1.multimesh_v9t8.1n",
+    "metric": "sum of per-launch maximum reconstructed from per-node measurement rings",
+    "second_start_seq": 321,
+    "second_completed": 260,
+    "completed_launches": 581,
+    "attempted_launches": 581,
+    "cycles": 41248289,
+    "original_card_sum": 41248289,
+    "by_kind": {
+      "move": 2094165,
+      "quant": 9808944,
+      "matmul": 19590119,
+      "dsl": 8825024,
+      "convert": 930037
+    },
+    "graph": [],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.10076475143432617,
+          "mean": 0.020293293387279844,
+          "median": 0.01727449893951416
+        },
+        "relative": {
+          "max": 1037.554353033672,
+          "mean": 0.7514529859494132,
+          "median": 0.04787432937425542
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.09389743208885193,
+          "mean": 0.022265839948086067,
+          "median": 0.018714308738708496
+        },
+        "relative": {
+          "max": 121.41604579658119,
+          "mean": 0.41627213606037483,
+          "median": 0.051115523851418126
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.022784676236682573,
+          "median": 0.019671261310577393
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.9734207838685413,
+          "median": 0.051415195182712384
+        }
+      },
+      "elements": 2000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.fw.b1.p1.multimesh_v9t8.1n"
+  },
+  {
+    "trace": "vitb.i11.fw.b1.p2.multimesh_v9t6.2n",
+    "metric": "sum of per-launch maximum reconstructed from per-node measurement rings",
+    "second_start_seq": 309,
+    "second_completed": 248,
+    "completed_launches": 557,
+    "attempted_launches": 557,
+    "cycles": 27582744,
+    "original_card_sum": 51258592,
+    "by_kind": {
+      "move": 1619973,
+      "quant": 8072498,
+      "matmul": 13457708,
+      "dsl": 4432565
+    },
+    "graph": [],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.09889471530914307,
+          "mean": 0.020265135026420467,
+          "median": 0.016755282878875732
+        },
+        "relative": {
+          "max": 121.56086385022665,
+          "mean": 0.32643909181351377,
+          "median": 0.044710200359686994
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.09402185678482056,
+          "mean": 0.02237462814687751,
+          "median": 0.019085779786109924
+        },
+        "relative": {
+          "max": 258.0031924304781,
+          "mean": 0.4550949888040085,
+          "median": 0.050956826537226906
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.022784676236682573,
+          "median": 0.019671261310577393
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.9734207838685413,
+          "median": 0.051415195182712384
+        }
+      },
+      "elements": 2000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.fw.b1.p2.multimesh_v9t6.2n"
+  },
+  {
+    "trace": "vitb.i11.fw.b1.p2.multimesh_v9t8.2n",
+    "metric": "sum of per-launch maximum reconstructed from per-node measurement rings",
+    "second_start_seq": 321,
+    "second_completed": 260,
+    "completed_launches": 581,
+    "attempted_launches": 581,
+    "cycles": 27582126,
+    "original_card_sum": 54798660,
+    "by_kind": {
+      "move": 1591415,
+      "quant": 6615942,
+      "matmul": 13644476,
+      "dsl": 5133295,
+      "convert": 596998
+    },
+    "graph": [],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.10076475143432617,
+          "mean": 0.020293293387279844,
+          "median": 0.01727449893951416
+        },
+        "relative": {
+          "max": 1037.554353033672,
+          "mean": 0.7514529859494132,
+          "median": 0.04787432937425542
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.09389743208885193,
+          "mean": 0.022265839948086067,
+          "median": 0.018714308738708496
+        },
+        "relative": {
+          "max": 121.41604579658119,
+          "mean": 0.41627213606037483,
+          "median": 0.051115523851418126
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.022784676236682573,
+          "median": 0.019671261310577393
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.9734207838685413,
+          "median": 0.051415195182712384
+        }
+      },
+      "elements": 2000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.fw.b1.p2.multimesh_v9t8.2n"
+  },
+  {
+    "trace": "vitb.i11.fw.b1.p4.multimesh_v9t6.4n",
+    "metric": "sum of per-launch maximum reconstructed from per-node measurement rings",
+    "second_start_seq": 309,
+    "second_completed": 248,
+    "completed_launches": 557,
+    "attempted_launches": 557,
+    "cycles": 19358031,
+    "original_card_sum": 39241797,
+    "by_kind": {
+      "move": 766208,
+      "quant": 5508212,
+      "matmul": 10355740,
+      "dsl": 2727871
+    },
+    "graph": [],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.09889471530914307,
+          "mean": 0.020265135026420467,
+          "median": 0.016755282878875732
+        },
+        "relative": {
+          "max": 121.56086385022665,
+          "mean": 0.32643909181351377,
+          "median": 0.044710200359686994
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.09402185678482056,
+          "mean": 0.02237462814687751,
+          "median": 0.019085779786109924
+        },
+        "relative": {
+          "max": 258.0031924304781,
+          "mean": 0.4550949888040085,
+          "median": 0.050956826537226906
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.022784676236682573,
+          "median": 0.019671261310577393
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.9734207838685413,
+          "median": 0.051415195182712384
+        }
+      },
+      "elements": 2000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.fw.b1.p4.multimesh_v9t6.4n"
+  },
+  {
+    "trace": "vitb.i11.fw.b1.p4.multimesh_v9t8.4n",
+    "metric": "sum of per-launch maximum reconstructed from per-node measurement rings",
+    "second_start_seq": 321,
+    "second_completed": 260,
+    "completed_launches": 581,
+    "attempted_launches": 581,
+    "cycles": 20410862,
+    "original_card_sum": 41631776,
+    "by_kind": {
+      "move": 781575,
+      "quant": 4625504,
+      "matmul": 11328654,
+      "dsl": 3304175,
+      "convert": 370954
+    },
+    "graph": [],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.10279083251953125,
+          "mean": 0.02044729823747184,
+          "median": 0.017464905977249146
+        },
+        "relative": {
+          "max": 276.1363954645406,
+          "mean": 0.36321157081223715,
+          "median": 0.0472005655766993
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.09389743208885193,
+          "mean": 0.02265397654357366,
+          "median": 0.019057996571063995
+        },
+        "relative": {
+          "max": 121.41604579658119,
+          "mean": 0.41278818970580156,
+          "median": 0.0511636484258248
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.022784676236682573,
+          "median": 0.019671261310577393
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.9734207838685413,
+          "median": 0.051415195182712384
+        }
+      },
+      "elements": 2000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.fw.b1.p4.multimesh_v9t8.4n"
+  },
+  {
+    "trace": "vitb.i11.fw.b16.p1.multimesh_v9t6.1n",
+    "metric": "sum of per-launch maximum reconstructed from per-node measurement rings",
+    "second_start_seq": 371,
+    "second_completed": 321,
+    "completed_launches": 692,
+    "attempted_launches": 692,
+    "cycles": 780442828,
+    "original_card_sum": 780442828,
+    "by_kind": {
+      "move": 73405026,
+      "quant": 251294897,
+      "matmul": 355887550,
+      "dsl": 99851183,
+      "convert": 4172
+    },
+    "graph": [],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.11343475431203842,
+          "mean": 0.021779994241742314,
+          "median": 0.018210015492513776
+        },
+        "relative": {
+          "max": 700.243857331572,
+          "mean": 0.29901210137648604,
+          "median": 0.04917775562560893
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.11202883720397949,
+          "mean": 0.02117516496515236,
+          "median": 0.017806559801101685
+        },
+        "relative": {
+          "max": 578.9112730551069,
+          "mean": 0.3231497077098559,
+          "median": 0.04793758055600633
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.11736947298049927,
+          "mean": 0.021642700240698105,
+          "median": 0.01837831735610962
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.3499652992385905,
+          "median": 0.049494400710144895
+        }
+      },
+      "elements": 32000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 0.8125,
+      "top1_mxfp7": 0.875
+    },
+    "data": "base/measurements/data/i1/vitb.i11.fw.b16.p1.multimesh_v9t6.1n"
+  },
+  {
+    "trace": "vitb.i11.fw.b16.p1.multimesh_v9t8.1n",
+    "metric": "sum of per-launch maximum reconstructed from per-node measurement rings",
+    "second_start_seq": 383,
+    "second_completed": 333,
+    "completed_launches": 716,
+    "attempted_launches": 716,
+    "cycles": 731539956,
+    "original_card_sum": 731539956,
+    "by_kind": {
+      "move": 74599720,
+      "quant": 196788299,
+      "matmul": 344389632,
+      "dsl": 100563537,
+      "convert": 15198768
+    },
+    "graph": [],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.12208586931228638,
+          "mean": 0.021730739416883808,
+          "median": 0.018349602818489075
+        },
+        "relative": {
+          "max": 1370.8578430770365,
+          "mean": 0.30683275438690105,
+          "median": 0.04945183572783322
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.11739437282085419,
+          "mean": 0.021456381881453126,
+          "median": 0.018113762140274048
+        },
+        "relative": {
+          "max": 898.3318808459487,
+          "mean": 0.3179706037029745,
+          "median": 0.04849905815456751
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.11736947298049927,
+          "mean": 0.021642700240698105,
+          "median": 0.01837831735610962
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.3499652992385905,
+          "median": 0.049494400710144895
+        }
+      },
+      "elements": 32000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 0.90625,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.fw.b16.p1.multimesh_v9t8.1n"
+  },
+  {
+    "trace": "vitb.i11.fw.b16.p2.multimesh_v9t8.2n",
+    "metric": "sum of per-launch maximum reconstructed from per-node measurement rings",
+    "second_start_seq": 384,
+    "second_completed": 334,
+    "completed_launches": 718,
+    "attempted_launches": 718,
+    "cycles": 389703991,
+    "original_card_sum": 375365006,
+    "by_kind": {
+      "move": 56711599,
+      "quant": 125378264,
+      "matmul": 147010196,
+      "dsl": 50437363,
+      "convert": 10166569
+    },
+    "graph": [],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.12208586931228638,
+          "mean": 0.021707223148414414,
+          "median": 0.018350884318351746
+        },
+        "relative": {
+          "max": 1370.8578430770365,
+          "mean": 0.305001738787589,
+          "median": 0.04935133666926613
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.11739437282085419,
+          "mean": 0.02141651746050411,
+          "median": 0.01805013418197632
+        },
+        "relative": {
+          "max": 493.6708989143909,
+          "mean": 0.30477736181851867,
+          "median": 0.048313512894752
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.11736947298049927,
+          "mean": 0.021642700240698105,
+          "median": 0.01837831735610962
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.3499652992385905,
+          "median": 0.049494400710144895
+        }
+      },
+      "elements": 32000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 0.90625,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.fw.b16.p2.multimesh_v9t8.2n"
+  },
+  {
+    "trace": "vitb.i11.fw.b16.p4.multimesh_v9t6.4n",
+    "metric": "sum of per-launch maximum reconstructed from per-node measurement rings",
+    "second_start_seq": 372,
+    "second_completed": 322,
+    "completed_launches": 694,
+    "attempted_launches": 694,
+    "cycles": 276322537,
+    "original_card_sum": 269734420,
+    "by_kind": {
+      "move": 39786075,
+      "quant": 110364325,
+      "matmul": 93188460,
+      "dsl": 32969681,
+      "convert": 13996
+    },
+    "graph": [],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.11343475431203842,
+          "mean": 0.02178654855965033,
+          "median": 0.018187299370765686
+        },
+        "relative": {
+          "max": 700.243857331572,
+          "mean": 0.29885409396387086,
+          "median": 0.04928739628958284
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.11202883720397949,
+          "mean": 0.021205927686616634,
+          "median": 0.01781594008207321
+        },
+        "relative": {
+          "max": 616.1462379324594,
+          "mean": 0.31438874234667796,
+          "median": 0.04796266771371307
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.11736947298049927,
+          "mean": 0.021642700240698105,
+          "median": 0.01837831735610962
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.3499652992385905,
+          "median": 0.049494400710144895
+        }
+      },
+      "elements": 32000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 0.8125,
+      "top1_mxfp7": 0.875
+    },
+    "data": "base/measurements/data/i1/vitb.i11.fw.b16.p4.multimesh_v9t6.4n"
+  },
+  {
+    "trace": "vitb.i11.fw.b16.p4.multimesh_v9t8.4n",
+    "metric": "sum of per-launch maximum reconstructed from per-node measurement rings",
+    "second_start_seq": 384,
+    "second_completed": 334,
+    "completed_launches": 718,
+    "attempted_launches": 718,
+    "cycles": 260362365,
+    "original_card_sum": 258324071,
+    "by_kind": {
+      "move": 39140023,
+      "quant": 83944088,
+      "matmul": 97200038,
+      "dsl": 32677873,
+      "convert": 7400343
+    },
+    "graph": [],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.11121183633804321,
+          "mean": 0.021715921752847863,
+          "median": 0.018350079655647278
+        },
+        "relative": {
+          "max": 450.65038143557365,
+          "mean": 0.2818411438019254,
+          "median": 0.0493430580341331
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.12189227342605591,
+          "mean": 0.021589230501533167,
+          "median": 0.018152255564928055
+        },
+        "relative": {
+          "max": 898.3318808459487,
+          "mean": 0.3189085097782429,
+          "median": 0.04917038103583957
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.11736947298049927,
+          "mean": 0.021642700240698105,
+          "median": 0.01837831735610962
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.3499652992385905,
+          "median": 0.049494400710144895
+        }
+      },
+      "elements": 32000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 0.90625,
+      "top1_mxfp7": 0.90625
+    },
+    "data": "base/measurements/data/i1/vitb.i11.fw.b16.p4.multimesh_v9t8.4n"
+  },
+  {
+    "trace": "vitb.i11.fw.b4.p1.multimesh_v9t6.1n",
+    "metric": "sum of per-launch maximum reconstructed from per-node measurement rings",
+    "second_start_seq": 371,
+    "second_completed": 321,
+    "completed_launches": 692,
+    "attempted_launches": 692,
+    "cycles": 312414982,
+    "original_card_sum": 312414982,
+    "by_kind": {
+      "move": 16236801,
+      "quant": 62925204,
+      "matmul": 207316716,
+      "dsl": 25932482,
+      "convert": 3779
+    },
+    "graph": [],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.10215359926223755,
+          "mean": 0.021681816337470083,
+          "median": 0.01814846694469452
+        },
+        "relative": {
+          "max": 700.243857331572,
+          "mean": 0.37407132699974177,
+          "median": 0.04826125457157429
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.10204508900642395,
+          "mean": 0.021092605333877145,
+          "median": 0.0176682248711586
+        },
+        "relative": {
+          "max": 370.48998038386094,
+          "mean": 0.3311192888984323,
+          "median": 0.04683455096282063
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.02185334007855272,
+          "median": 0.018613189458847046
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.477803991193911,
+          "median": 0.050040355249146865
+        }
+      },
+      "elements": 8000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 0.875,
+      "top1_mxfp7": 0.875
+    },
+    "data": "base/measurements/data/i1/vitb.i11.fw.b4.p1.multimesh_v9t6.1n"
+  },
+  {
+    "trace": "vitb.i11.fw.b4.p1.multimesh_v9t8.1n",
+    "metric": "sum of per-launch maximum reconstructed from per-node measurement rings",
+    "second_start_seq": 383,
+    "second_completed": 333,
+    "completed_launches": 716,
+    "attempted_launches": 716,
+    "cycles": 299143459,
+    "original_card_sum": 299143459,
+    "by_kind": {
+      "move": 16372207,
+      "quant": 48628043,
+      "matmul": 204419735,
+      "dsl": 25879211,
+      "convert": 3844263
+    },
+    "graph": [],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.10606688261032104,
+          "mean": 0.021534374283466603,
+          "median": 0.017969161737710238
+        },
+        "relative": {
+          "max": 1370.8578430770365,
+          "mean": 0.4386786365233029,
+          "median": 0.04795015910924995
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.10854721069335938,
+          "mean": 0.0214063235665526,
+          "median": 0.017937976866960526
+        },
+        "relative": {
+          "max": 275.7718641556517,
+          "mean": 0.31248037361060643,
+          "median": 0.048081174983538574
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.02185334007855272,
+          "median": 0.018613189458847046
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.477803991193911,
+          "median": 0.050040355249146865
+        }
+      },
+      "elements": 8000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.fw.b4.p1.multimesh_v9t8.1n"
+  },
+  {
+    "trace": "vitb.i11.fw.b4.p2.multimesh_v9t6.2n",
+    "metric": "sum of per-launch maximum reconstructed from per-node measurement rings",
+    "second_start_seq": 372,
+    "second_completed": 322,
+    "completed_launches": 694,
+    "attempted_launches": 694,
+    "cycles": 112731541,
+    "original_card_sum": 128709682,
+    "by_kind": {
+      "move": 12640425,
+      "quant": 40504126,
+      "matmul": 44729905,
+      "dsl": 14843495,
+      "convert": 13590
+    },
+    "graph": [],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.10093289613723755,
+          "mean": 0.021772824896339443,
+          "median": 0.018269013613462448
+        },
+        "relative": {
+          "max": 648.2998678996037,
+          "mean": 0.3705263183961625,
+          "median": 0.0489981563819363
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.10869640111923218,
+          "mean": 0.021158534035246705,
+          "median": 0.017701556906104088
+        },
+        "relative": {
+          "max": 370.48998038386094,
+          "mean": 0.3293562917953361,
+          "median": 0.047181884423633344
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.02185334007855272,
+          "median": 0.018613189458847046
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.477803991193911,
+          "median": 0.050040355249146865
+        }
+      },
+      "elements": 8000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 0.875,
+      "top1_mxfp7": 0.875
+    },
+    "data": "base/measurements/data/i1/vitb.i11.fw.b4.p2.multimesh_v9t6.2n"
+  },
+  {
+    "trace": "vitb.i11.fw.b4.p2.multimesh_v9t8.2n",
+    "metric": "sum of per-launch maximum reconstructed from per-node measurement rings",
+    "second_start_seq": 384,
+    "second_completed": 334,
+    "completed_launches": 718,
+    "attempted_launches": 718,
+    "cycles": 111779623,
+    "original_card_sum": 133235791,
+    "by_kind": {
+      "move": 12535503,
+      "quant": 31874563,
+      "matmul": 49858895,
+      "dsl": 14898331,
+      "convert": 2612331
+    },
+    "graph": [],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.10343995690345764,
+          "mean": 0.021748910085196256,
+          "median": 0.01830635964870453
+        },
+        "relative": {
+          "max": 1370.8578430770365,
+          "mean": 0.4330053222396464,
+          "median": 0.04901186482619421
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.10854721069335938,
+          "mean": 0.021614509626277142,
+          "median": 0.018316462635993958
+        },
+        "relative": {
+          "max": 275.7718641556517,
+          "mean": 0.32046677555656045,
+          "median": 0.04873651025674061
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.02185334007855272,
+          "median": 0.018613189458847046
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.477803991193911,
+          "median": 0.050040355249146865
+        }
+      },
+      "elements": 8000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.fw.b4.p2.multimesh_v9t8.2n"
+  },
+  {
+    "trace": "vitb.i11.fw.b4.p4.multimesh_v9t6.4n",
+    "metric": "sum of per-launch maximum reconstructed from per-node measurement rings",
+    "second_start_seq": 372,
+    "second_completed": 322,
+    "completed_launches": 694,
+    "attempted_launches": 694,
+    "cycles": 75661156,
+    "original_card_sum": 91049120,
+    "by_kind": {
+      "move": 9123167,
+      "quant": 27486977,
+      "matmul": 29950547,
+      "dsl": 9088173,
+      "convert": 12292
+    },
+    "graph": [],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.11460477113723755,
+          "mean": 0.022002184541212045,
+          "median": 0.018635734915733337
+        },
+        "relative": {
+          "max": 644.3041764048369,
+          "mean": 0.41841256873027977,
+          "median": 0.04967777767143512
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.1036067008972168,
+          "mean": 0.021240473670812207,
+          "median": 0.01774467620998621
+        },
+        "relative": {
+          "max": 133.95223612898195,
+          "mean": 0.27774812048689934,
+          "median": 0.04841564870052967
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.02185334007855272,
+          "median": 0.018613189458847046
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.477803991193911,
+          "median": 0.050040355249146865
+        }
+      },
+      "elements": 8000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.fw.b4.p4.multimesh_v9t6.4n"
+  },
+  {
+    "trace": "vitb.i11.kaos.b1.p1.multimesh_v9t6.1n.kaos",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 309,
+    "second_completed": 248,
+    "completed_launches": 557,
+    "attempted_launches": 557,
+    "cycles": 52591480,
+    "original_card_sum": 52591480,
+    "by_kind": {
+      "move": 3819365,
+      "quant": 15249578,
+      "matmul": 23625178,
+      "dsl": 9897359
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.09889471530914307,
+          "mean": 0.020265135026420467,
+          "median": 0.016755282878875732
+        },
+        "relative": {
+          "max": 121.56086385022665,
+          "mean": 0.32643909181351377,
+          "median": 0.044710200359686994
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.09402185678482056,
+          "mean": 0.02237462814687751,
+          "median": 0.019085779786109924
+        },
+        "relative": {
+          "max": 258.0031924304781,
+          "mean": 0.4550949888040085,
+          "median": 0.050956826537226906
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.022784676236682573,
+          "median": 0.019671261310577393
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.9734207838685413,
+          "median": 0.051415195182712384
+        }
+      },
+      "elements": 2000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.kaos.b1.p1.multimesh_v9t6.1n.kaos"
+  },
+  {
+    "trace": "vitb.i11.kaos.b1.p1.multimesh_v9t8.1n.kaos",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 321,
+    "second_completed": 260,
+    "completed_launches": 581,
+    "attempted_launches": 581,
+    "cycles": 51865841,
+    "original_card_sum": 51865841,
+    "by_kind": {
+      "move": 3862615,
+      "quant": 13520537,
+      "matmul": 23058669,
+      "dsl": 9855833,
+      "convert": 1568187
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.10076475143432617,
+          "mean": 0.020293293387279844,
+          "median": 0.01727449893951416
+        },
+        "relative": {
+          "max": 1037.554353033672,
+          "mean": 0.7514529859494132,
+          "median": 0.04787432937425542
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.09389743208885193,
+          "mean": 0.022265839948086067,
+          "median": 0.018714308738708496
+        },
+        "relative": {
+          "max": 121.41604579658119,
+          "mean": 0.41627213606037483,
+          "median": 0.051115523851418126
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.022784676236682573,
+          "median": 0.019671261310577393
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.9734207838685413,
+          "median": 0.051415195182712384
+        }
+      },
+      "elements": 2000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.kaos.b1.p1.multimesh_v9t8.1n.kaos"
+  },
+  {
+    "trace": "vitb.i11.kaos.b1.p2.multimesh_v9t6.2n.kaos",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 309,
+    "second_completed": 248,
+    "completed_launches": 557,
+    "attempted_launches": 557,
+    "cycles": 40064521,
+    "original_card_sum": 40064521,
+    "by_kind": {
+      "move": 3833338,
+      "quant": 11752576,
+      "matmul": 17432413,
+      "dsl": 7046194
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": [
+          "recorded: first"
+        ]
+      }
+    ],
+    "commit": null,
+    "errors": {
+      "card_f32": {
+        "absolute": {
+          "max": 0.09889471530914307,
+          "mean": 0.020265135026420467,
+          "median": 0.016755282878875732
+        },
+        "relative": {
+          "max": 121.56086385022665,
+          "mean": 0.32643909181351377,
+          "median": 0.044710200359686994
+        }
+      },
+      "card_mxfp7": {
+        "absolute": {
+          "max": 0.09402185678482056,
+          "mean": 0.02237462814687751,
+          "median": 0.019085779786109924
+        },
+        "relative": {
+          "max": 258.0031924304781,
+          "mean": 0.4550949888040085,
+          "median": 0.050956826537226906
+        }
+      },
+      "mxfp7_f32": {
+        "absolute": {
+          "max": 0.10398109257221222,
+          "mean": 0.022784676236682573,
+          "median": 0.019671261310577393
+        },
+        "relative": {
+          "max": 1423.6713020404654,
+          "mean": 0.9734207838685413,
+          "median": 0.051415195182712384
+        }
+      },
+      "elements": 2000,
+      "outside_footprint": 0,
+      "worst": [],
+      "top1_f32": 1.0,
+      "top1_mxfp7": 1.0
+    },
+    "data": "base/measurements/data/i1/vitb.i11.kaos.b1.p2.multimesh_v9t6.2n.kaos"
+  },
+  {
+    "trace": "vitb.i11.kaos.b1.p2.multimesh_v9t8.2n.kaos",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 321,
+    "second_completed": 163,
+    "completed_launches": 484,
+    "attempted_launches": 485,
+    "cycles": 25185516,
+    "original_card_sum": 25185516,
+    "by_kind": {
+      "move": 2478215,
+      "quant": 6537966,
+      "matmul": 10749788,
+      "dsl": 4532597,
+      "convert": 886950
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": []
+      }
+    ],
+    "commit": null,
+    "errors": null,
+    "data": "base/measurements/data/i1/vitb.i11.kaos.b1.p2.multimesh_v9t8.2n.kaos"
+  },
+  {
+    "trace": "vitb.i11.kaos.b1.p4.multimesh_v9t6.4n.kaos",
+    "metric": "sum of completion max_node_cycles",
+    "second_start_seq": 309,
+    "second_completed": 28,
+    "completed_launches": 337,
+    "attempted_launches": 338,
+    "cycles": 3587402,
+    "original_card_sum": 3587402,
+    "by_kind": {
+      "move": 429900,
+      "quant": 985659,
+      "matmul": 1312076,
+      "dsl": 859767
+    },
+    "graph": [
+      {
+        "kernels": 309,
+        "counts": {
+          "planned": 0,
+          "recorded": 1,
+          "replayed": 0
+        },
+        "history": []
+      }
+    ],
+    "commit": null,
+    "errors": null,
+    "data": "base/measurements/data/i1/vitb.i11.kaos.b1.p4.multimesh_v9t6.4n.kaos"
+  }
+]

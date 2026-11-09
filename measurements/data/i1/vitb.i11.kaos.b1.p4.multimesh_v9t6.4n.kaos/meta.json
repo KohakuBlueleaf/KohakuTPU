@@ -1,0 +1,120 @@
+{
+ "counters": {
+  "runs": 337,
+  "cycles": 64102110,
+  "bytes_in": 174038944,
+  "bytes_out": 2000,
+  "library_hits": 0,
+  "class_hits": 0,
+  "exact_hits": 0,
+  "library_misses": 0,
+  "compile_calls": 33,
+  "compile_seconds": 3.1721018380485475,
+  "kernel_reuses": 167,
+  "f001_split": 0
+ },
+ "runs": 337,
+ "workload": "vitb",
+ "board": "multimesh_v9t6",
+ "nodes": 4,
+ "args": [
+  "--batch",
+  "1",
+  "--inputs",
+  "10",
+  "--width",
+  "768",
+  "--board",
+  "multimesh_v9t6",
+  "--nodes",
+  "4",
+  "--inputs",
+  "2",
+  "--blocks",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma",
+  "--report",
+  "/home/kblueleaf/kt/build/perf/traces/vitb.i11.kaos.b1.p4.multimesh_v9t6.4n.kaos/report.json",
+  "--references",
+  "/home/kblueleaf/kt/build/perf/references"
+ ],
+ "seconds": 1105.9,
+ "done": "ph.py\", line 1172, in _wait\n    self.io.idle()\n    ~~~~~~~~~~~~^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/os/tools/run_card.py\", line 111, in idle\n    time.sleep(self.poll)\n    ~~~~~~~~~~^^^^^^^^^^^\n  File \"/home/kblueleaf/kt/software/tests/perf/record.py\", line 73, in ended\n    raise Ended\nEnded\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/home/kblueleaf/kt/software/tests/perf/record.py\", line 517, in main\n    runpy.run_path(sys.argv[0], run_name=\"__main__\")\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen runpy>\", line 294, in run_path\n  File \"<frozen runpy>\", line 98, in _run_module_code\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/examples/tinygrad/vit_tiny.py\", line 332, in <module>\n    main()\n    ~~~~^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/examples/tinygrad/vit_tiny.py\", line 328, in main\n    dev.close()\n    ~~~~~~~~~^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/device/__init__.py\", line 348, in close\n    result = self.card.close()\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/os/multi.py\", line 111, in close\n    self.release_graph()\n    ~~~~~~~~~~~~~~~~~~^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/os/multi.py\", line 52, in release_graph\n    self.active.close()\n    ~~~~~~~~~~~~~~~~~^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/os/graph.py\", line 1571, in close\n    raise RuntimeError(\n        \"reset the card before reclaiming an uncertain graph\"\n    )\nRuntimeError: reset the card before reclaiming an uncertain graph\n",
+ "spans": {
+  "copyin": {
+   "calls": 155,
+   "seconds": 7.990395096829161
+  },
+  "compile_graph": {
+   "calls": 33,
+   "seconds": 3.1832644939422607
+  },
+  "bind_admit": {
+   "calls": 338,
+   "seconds": 0.08751161384861916
+  },
+  "submit": {
+   "calls": 338,
+   "seconds": 878.3269281837274
+  },
+  "collect": {
+   "calls": 674,
+   "seconds": 0.012791248911526054
+  },
+  "generate_launch": {
+   "calls": 200,
+   "seconds": 1056.758701428189
+  },
+  "rows": {
+   "calls": 15,
+   "seconds": 46.905647312814835
+  },
+  "copyout": {
+   "calls": 1,
+   "seconds": 0.00017659401055425406
+  },
+  "graph_fill": {
+   "calls": 1,
+   "seconds": 0.0005776599864475429
+  },
+  "graph_storages": {
+   "calls": 1,
+   "seconds": 0.0002664990024641156
+  },
+  "graph_call": {
+   "calls": 1,
+   "seconds": 908.9096139610047
+  }
+ },
+ "graphs": [
+  {
+   "kernels": 309,
+   "counts": {
+    "planned": 0,
+    "recorded": 1,
+    "replayed": 0
+   },
+   "history": []
+  }
+ ],
+ "profile": "mid",
+ "knobs": {
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "clocks": null,
+ "check": null,
+ "profiled": null,
+ "jit": true,
+ "commit": null,
+ "backend": "kaos",
+ "firmware": "build/os/kos.elf",
+ "os_flags": "shared_phys",
+ "os_command": "parallel ostpu 65534 4096 1 1 -e",
+ "when": 1794211024.3332453,
+ "launches": 338,
+ "kernels": 33,
+ "compiles": []
+}

@@ -1,0 +1,30 @@
+[
+ {
+  "log": "KohakuAccel OS: node 0 of 2 (mesh 0), private 20000000+2000000, shared 24000000+80000000, 8 units, flags 40, tick 0\n@where 10 0 3001ffd0\n@where 11 0 8\n@where 12 0 0\n@where 12 21 1\ninit: 2 nodes, commands: parallel ostpu 65534 4096 1 1 -e \n@where 14 0 0\n@where 15 0 1\n@where 16 0 1\n@where 10 1 3003ffe0\n@where 11 1 7\n@where 13 0 0\n@where 13 11 1\n@where 14 0 0\n@where 15 0 2\n@where 14 1 0\n@where 10 13 3005ffe0\n@where 11 13 6\n@where 18 6 0\n@where 19 38008000 160\n@where 20 fffe 1\n@where 15 1 100\n@where 16 0 2\n@where 21 5000 2\n@where 22 0 9\n@where 23 0 0\n@where 24 0 811000\n@where 25 0 0\n@where 26 2 0\n@where 27 fffe 0\n@where 28 7fff00 0\n@where 29 fffe 0\n@where 30 1000 0\n@where 31 1000 0\n@where 32 3b000 83af00\n@where 33 38008000 0\n@where 34 38008000 0\n@where 35 38008000 0\n@where 17 0 0\n@where 16 1 100\n@where 17 1 0\n@where 17 0 0\ninit: parallel exit 0 in 34534243143 cycles\ninit: 1 commands, 0 failed\n",
+  "log_bytes": 902,
+  "where": "done",
+  "where_a": 0,
+  "where_b": 0,
+  "switches": 20150689,
+  "progress": "join_ack",
+  "progress_a": 0,
+  "progress_b": 0,
+  "node": 0,
+  "status": 12,
+  "console": "00 0\n@where 17 0 0\n@where 16 1 100\n@where 17 1 0\n@where 17 0 0\ninit: parallel exit 0 in 34534243143 cycles\ninit: 1 commands, 0 failed\n"
+ },
+ {
+  "log": "KohakuAccel OS: node 1 of 2 (mesh 1), private 1022000000+2000000, shared 24000000+80000000, 8 units, flags 40, tick 0\n@where 10 13 3021ffe0\n@where 11 13 6\n@where 18 6 0\n@where 19 38008000 160\n@where 20 fffe 1\n@where 21 5000 100\n@where 22 1 9\n@where 23 1 0\n@where 24 1 811000\n@where 25 1 0\n@where 26 100 0\n@where 27 fffe 0\n@where 28 7fff00 0\n@where 29 fffe 0\n@where 30 1000 0\n@where 31 1000 0\n@where 32 100000000030000 10000000082ff00\n@where 33 38008000 0\n@where 34 38008000 0\n@where 35 38008000 0\n",
+  "log_bytes": 497,
+  "where": "done",
+  "where_a": 0,
+  "where_b": 0,
+  "switches": 20158764,
+  "progress": "ready",
+  "progress_a": 939556864,
+  "progress_b": 0,
+  "node": 1,
+  "status": 12,
+  "console": "@where 24 1 811000\n@where 25 1 0\n@where 26 100 0\n@where 27 fffe 0\n@where 28 7fff00 0\n@where 29 fffe 0\n@where 30 1000 0\n@where 31 1000 0\n@where 32 100000000030000 10000000082ff00\n@where 33 38008000 0\n@where 34 38008000 0\n@where 35 38008000 0\n"
+ }
+]

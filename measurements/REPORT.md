@@ -5,9 +5,10 @@ Every number comes from `data/`; each section's figures carry the same numbers. 
 run has all four dies at one clock, because idle dies change node 0's cycles. Runs that
 did not are kept in `data/old/` and used nowhere.
 
-The first section is the output statistics of every model. Round `h1` measures the
-multi-sysnode primitives on the card with hand-written L1 (`software/tests/perf/h/`). The
-next six are rounds `g1`, at commit 9da806c4, `f1`, at commit 97a4b0a7, `e1`, at commit de2c9b1e with the
+The first section is the output statistics of every model. Round `i1` runs ViT-B
+across one, two and four sysnodes, and reruns the round `h1` correctness probes. Round `h1`
+measures the multi-sysnode primitives on the card with hand-written L1
+(`software/tests/perf/h/`). The next six are rounds `g1`, at commit 9da806c4, `f1`, at commit 97a4b0a7, `e1`, at commit de2c9b1e with the
 silicon flaw registry and its handlings, `d2`, at
 commit a5e68412 with the performance batch on top, `d1`, at commit 1abcfb30, and `c1`,
 at commit 56021fd4. The sections after them hold 56021fd4's zoo, kept as the baseline,
@@ -47,6 +48,158 @@ reads 1 for MLP, GRU and wide (against f32) and ViT-B (against MXFP7); the liste
 value is inside both, since the card's largest error against the other is under the
 footprint's largest. Top-1 agrees with f32 on every image except ViT's 6 of 9; the MXFP7 run also
 agrees on 6 of 9: the nine images' f32 top-1 to top-2 gaps are 0.0001 to 0.079.
+
+## Round i1
+
+ViT-B, width 768 and 12 blocks, at batch 1, 4 and 16 on one, two and four
+sysnodes; v9t6 has 2 MG + 2 VC per sysnode, v9t8 has 4 MG + 2 VC. All dies
+were at mid, per the run setup. Runner: `software/tests/perf/record.py vitb
+--card`. Each complete run has two inputs. Paths below are under
+`data/i1/vitb.i11.<path>.b<batch>.p<sysnodes>.<board>.<n>n[.<backend>]`.
+Configuration, input count and output checks are in each directory's `meta.json`
+and `report.json`; `meta.json` does not retain a commit hash or measured clocks.
+The supplied run notes associate the final runs with 948d9a29 and the preceding
+runs with its uncommitted precursor; these files do not independently establish
+that provenance or byte-identical compiled packages.
+
+Here **second input**, not retained-graph steady state, is the reporting interval.
+Firmware-backend and KAOS rows sum that input's `card.jsonl.gz.max_node_cycles`,
+the maximum node-local duration of each completed launch. This is not global
+multi-sysnode makespan and excludes host time between launches. Firmware measures
+a package; KAOS measures KDS submit-to-reply (`software/tests/perf/backends.py:19-39`).
+The files predate the explicit `cycle_scope` fields now emitted by that source.
+Eager rows below are reconstructed from `units.jsonl.gz`, as explained below.
+
+The three execution configurations are:
+- **firmware** (`--backend firmware`, normal firmware image): TinyJit enabled;
+  the second input executes launch packages while making the first KTPUGraph
+  recording. It does **not** replay a retained whole-model bound artifact.
+- **eager** (`--measure --no-jit`, measure image): host-submitted launches with
+  per-node package and unit-counter records. It has no KTPUGraph recording.
+- **KAOS** (`--backend kaos`, `shared_phys`): TinyJit enabled; the second input
+  executes launches lowered to dispatcher tasks while making the first recording.
+
+This follows `record.py:463-475`, `backends.py:108-138`, and
+`ktpugrad/device.py:459-506`. A later matching recording is needed before the
+prepared replay path invokes `runtime/graph/backend.py:12-75`. Completed backend
+runs have one recording, zero replays and history `recorded: first`. The two
+interrupted KAOS runs also increment `recorded` to one, but have empty histories:
+the counter increments before execution completes. Their metadata is not evidence
+of successful recording. The matching completed eager/firmware runs have identical
+captured L2 dictionaries (`kernels.l2.json.gz`); this does not prove identical
+firmware/package instrumentation.
+
+`launches.jsonl.gz` marks the second input as `capture` for the backend runs.
+Its first zero-based sequence is 309/321 for batch 1 (v9t6/v9t8), 371/383 for
+batches 4 and 16 on one sysnode, and 372/384 for those batches on multiple sysnodes.
+The second-input launch counts are respectively 248/260, 321/333 and 322/334.
+Completed eager traces have the same ordered launch names and kinds as the
+corresponding firmware trace; that correspondence supplies their input boundary.
+
+Errors below are absolute card-minus-CPU-f32 logit statistics over **both inputs**,
+from `meta.json.check`, also retained in `report.json.check`. The reference
+MXFP7-minus-f32 maximum/mean is batch-dependent: batch 1 0.1040/0.0228, batch 4
+0.1040/0.0219, batch 16 0.1174/0.0216 (the corresponding firmware P1/v9t6
+`report.json`, `check.mxfp7_f32.absolute`).
+
+### Firmware path
+
+Source for each cycle cell: the indicated `firmware` trace's `card.jsonl.gz`
+joined on `seq` with `launches.jsonl.gz`. Factors divide the one-sysnode cell
+by the indicated cell. Error ranges are across the listed sysnode counts.
+
+| board | batch | 1 sysnode | 2 sysnodes | 4 sysnodes | error max, mean |
+|---|---|---|---|---|---|
+| v9t6 2+2 | 1 | 42,072,185 | 28,264,935 (1.49×) | 19,556,346 (2.15×) | 0.0989–0.0991, 0.0203–0.0205 |
+| v9t6 2+2 | 4 | 317,388,189 | 113,453,616 (2.80×) | 74,894,300 (4.24×) | 0.1005–0.1022, 0.0217 |
+| v9t6 2+2 | 16 | 802,695,223 | 408,087,586 (1.97×) | 278,152,559 (2.89×) | 0.1121–0.1134, 0.0218–0.0219 |
+| v9t8 4+2 | 1 | 40,249,814 | 27,434,280 (1.47×) | 19,594,407 (2.05×) | 0.0932–0.1025, 0.0203–0.0207 |
+| v9t8 4+2 | 4 | 305,669,137 | 111,285,418 (2.75×) | 72,728,174 (4.20×) | 0.1034–0.1061, 0.0216–0.0217 |
+| v9t8 4+2 | 16 | 743,392,803 | 388,701,297 (1.91×) | 259,237,555 (2.87×) | P1/P2: 0.1221, 0.0217; P4: 3.1698, 0.0414 |
+
+Batch-4 / batch-1 cycle ratios are 7.54 and 7.59 on one sysnode, and
+3.71–4.06 on two/four sysnodes, calculated from the preceding cells. The errors
+are not numerically identical across sysnode counts.
+
+For v9t8 batch 16/P4, `report.json.check` records 876 of 32,000 logits outside
+the two-reference footprint, absolute maximum 3.1698489 and mean 0.0414006.
+The retained worst entries refer to image index 9 of the first input; their card
+values match `outputs.jsonl.gz` decoded as 16 FP16 rows with storage pitch 1,024
+and 1,000 logical logits. Against the f32 reference `data/i1/references/vit.w768.b12.i224.s17.n16x2.npz` (the run's own, copied from the host), image 9 of the first input has 702 of 1,000 logits more than 0.3 from f32, the other 15 images of that input at most 0.1221, and the 16 images of the second input at most 0.1003. The second-input timing is retained, but
+the run has an output fault (ISSUES 90).
+
+### Eager path — corrected aggregation
+
+**The multi-sysnode eager `card.jsonl.gz` is misjoined.** The recorder appends
+one `_result` per node (`record.py:369-372`; `runtime/card/collection.py:232-278`),
+then associates successive records with successive launches (`record.py:315-355`).
+It consumes only a prefix of the per-node completion stream. Thus the old eager
+sums and kind breakdowns do not measure the named second-input launches.
+
+The following cells instead consume each active node's `units.jsonl.gz` in its
+own run order, using `launches.jsonl.gz.info.active_nodes`, then sum the maximum
+participating-node `cycles` per second-input launch. Node 0 participates in every
+launch; the larger-batch single-node launches advance only its cursor. All ring
+records are accounted for. Flattening these reconstructed completions in
+launch/node order reproduces every original eager card row's cycles, confirming
+the misjoin. One-sysnode cells are unchanged. `cycles` is package duration recorded
+before counter collection (`firmware/package/interp.c:1752-1775`), not unit busy.
+
+| board | batch | 1 sysnode | 2 sysnodes | 4 sysnodes |
+|---|---|---|---|---|
+| v9t6 | 1 | 41,418,292 | 27,582,744 | 19,358,031 |
+| v9t6 | 4 | 312,414,982 | 112,731,541 | 75,661,156 |
+| v9t6 | 16 | 780,442,828 | stopped twice, `BAD_STEP` (ISSUES 85) | 276,322,537 |
+| v9t8 | 1 | 41,248,289 | 27,582,126 | 20,410,862 |
+| v9t8 | 4 | 299,143,459 | 111,779,623 | stopped, engine TIMEOUT (ISSUES 82) |
+| v9t8 | 16 | 731,539,956 | 389,703,991 | 260,362,365 |
+
+Completed eager errors range from 0.0989 to 0.1221 maximum and 0.0203 to
+0.0220 mean (`fw` directories' `meta.json.check.card_f32.absolute`). Against the
+corresponding firmware cells, the corrected eager differences are −2.41% to
++4.17% at batch 1, −2.13% to +1.02% at batch 4, and −2.77% to +0.43% at batch 16.
+These are observations of different images/instrumentation, not isolated dispatch
+savings. In particular, neither the earlier batch-1 P2 slowdown nor the claimed
+13–22% batch-4 eager penalty survives correct aggregation.
+
+### KAOS path
+
+Source: `kaos` directories' `card.jsonl.gz`, `launches.jsonl.gz` and `meta.json`.
+
+| board | batch | 1 sysnode | 2 sysnodes | 4 sysnodes |
+|---|---|---|---|---|
+| v9t6 | 1 | 52,591,480 | 40,064,521 | stopped at zero-based seq 337, second input (ISSUES 89) |
+| v9t8 | 1 | 51,865,841 | stopped at zero-based seq 484, `KDS status -7` (ISSUES 86) | not run |
+
+The completed rows' error maxima are 0.0989–0.1008 and means 0.0203. Their cycle
+ratios to firmware are 1.2500, 1.4175 and 1.2886 respectively (rounded range
+1.25–1.42×), comparing KDS-submit-to-reply with firmware-package timing, not
+identical scopes. The v9t6 P4 trace has 309 completed first-input launches and
+28 completed second-input launches before seq 337 stalls. The v9t8 P2 trace has
+321 and 163 respectively before seq 484 fails. Partial sums are not whole-input
+performance results. Offline, before the card runs, every launch of one batch-1 input was translated into its
+KAOS tasks and packed against the resident's task capacity on one, two and four v9t6
+sysnodes: 309 of 309 on each, none refused, a DE feed and a DE finish a sysnode
+(`data/i1/kaos_preflight/kpre.multimesh_v9t6.p{1,2,4}.b1.jsonl.gz`, script `preflight.py`
+there). Translation is host-side only; it does not exercise the card.
+
+### Correctness reruns
+
+Round h1 probes on v9t6 at mid. Counts below are recomputed from
+`data/i1/<directory>/runs.jsonl.gz`, `verdict.structural`, except S0, whose
+`cases.jsonl.gz` retains numerical checks. PASS does not establish the absence
+of rare faults outside these samples.
+
+| probe | round i1 | directory / ISSUES |
+|---|---|---|
+| C1, serial → overlap → serial triples, reps 0–49 | 5,850/5,850 PASS | `c1.multimesh_v9t6.mid` / 31 |
+| C4, release frontier, normal and delayed | 20/20 each, 40/40 PASS; output mismatches zero | `c4.multimesh_v9t6.mid` / 75 |
+| S0 attention, 10 heads, R=1,8,64; 20 replay calls per R after four non-replay calls | R=1/8: zero outside footprint; R=64: 64 outside; retained worst entries include −781.5 vs +0.0063385 and +639.5 vs −0.0056093, so signs are not preserved | `s0.multimesh_v9t6.mid/attn.h10/cases.jsonl.gz` / 77 |
+| C2, one-beat-tail variants, fresh/stamp | 256: 30/30 PASS each; 254+2: 9/30 and 4/30 FAIL; 255+1: 4/30 and 3/30 FAIL; 128+128, 252+4 and 253+3: 30/30 PASS each variant | `c2.multimesh_v9t6.mid.i79` / 79 |
+| P12, shared all-gather | 960/960 PASS | `p12.multimesh_v9t6.mid` / 79 |
+| P13, including 63/65-entry B fills | 520/520 PASS | `p13.multimesh_v9t6.mid` / 80 |
+| C3, stream + compute | 317/319 PASS: one 64-byte foreign line and one engine TIMEOUT. The trace ends at `c3_mgvc_none` rep 18; it contains no `c3_mgvc_p5_disjoint` rerun | `c3.multimesh_v9t6.mid.steps` / 81,82 |
+| P19, matmul shards alone and together | 7,999/8,000 PASS; one failure with 200 wrong packed u64 words. Layout audit maps these to logical columns 136–139 across 200 rows, not 50 logical rows | `p19.multimesh_v9t6.mid` / 82 |
 
 ## Round h1
 
