@@ -151,6 +151,8 @@ class SplitRunner:
                     default_node=self.device._node_of(None),
                 )
             compiled = generated.from_output(self.device, graph, output)
+            # Single-launch capture retains every legacy checker verdict.
+            compiled.compositional = len(launches) > 1
             return PreparedSplitGraph(
                 self.device,
                 compiled,

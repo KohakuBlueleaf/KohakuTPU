@@ -585,6 +585,13 @@ impl Sim<'_> {
             }
             _ => self.node_other(i, s),
         };
+        if progress && crate::composition::active()
+            && matches!(s.op, op::END | op::BARRIER | op::WAIT_SLOT | op::WAIT_BELL)
+        {
+            // Only retire against the existing future-access lower bound. A
+            // local barrier is not a global edge and cannot reset visibility.
+            self.retire_memory();
+        }
         progress.into()
     }
 

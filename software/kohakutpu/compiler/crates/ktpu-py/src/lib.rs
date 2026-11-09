@@ -466,7 +466,7 @@ fn debug_decode<'py>(
 /// `zero_sign` ("native", "preserve"; None the default `ZERO_SIGN`): how the
 /// lowering moves a value it does not change (`ktpu_l2::ZeroSign`).
 #[pyfunction]
-#[pyo3(signature = (source, machine_json, name=None, cache_dir=None, fetch=false, mutant=None, l1=false, binds=None, passes=true, exp2_ranges=None, zero_sign=None))]
+#[pyo3(signature = (source, machine_json, name=None, cache_dir=None, fetch=false, mutant=None, l1=false, binds=None, passes=true, exp2_ranges=None, zero_sign=None, compositional=false))]
 #[allow(clippy::too_many_arguments)]
 fn compile<'py>(
     py: Python<'py>,
@@ -481,7 +481,13 @@ fn compile<'py>(
     passes: bool,
     exp2_ranges: Option<&str>,
     zero_sign: Option<&str>,
+    compositional: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
+    if compositional && (!l1 || binds.is_none() || !fetch) {
+        return Err(PyValueError::new_err(
+            "compositional proof requires bound L1 card programs",
+        ));
+    }
     if (binds.is_some() || !passes || exp2_ranges.is_some()) && !fetch {
         return Err(PyValueError::new_err(
             "binds=, passes=False and exp2_ranges= build a card's packages: fetch=True",
@@ -497,6 +503,7 @@ fn compile<'py>(
     let zero_sign = zero_sign.map(signed).transpose()?;
     let card = CardStack {
         binds,
+        compositional,
         no_passes: !passes,
         ranges,
         zero_sign,

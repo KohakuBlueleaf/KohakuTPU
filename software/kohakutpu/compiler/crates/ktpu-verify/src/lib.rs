@@ -9,6 +9,7 @@
 
 pub mod adapter;
 pub mod check;
+pub mod composition;
 mod cluster;
 pub mod lines;
 pub mod lint;

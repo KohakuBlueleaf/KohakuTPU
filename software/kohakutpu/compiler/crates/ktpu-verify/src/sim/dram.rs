@@ -10,6 +10,8 @@ use crate::model::finding::{Finding, Kind};
 
 use super::fx::FxHashSet;
 
+mod components;
+pub(crate) use components::Proof;
 mod history;
 use history::History;
 
@@ -106,6 +108,69 @@ impl Intervals {
             span.end = at;
         }
         self.insert(at, tail);
+    }
+
+    fn conflicts(
+        &mut self,
+        ranges: Footprint,
+        current: &Rc<Access>,
+        kind: Kind,
+        work: &mut usize,
+        reported: &mut FxHashSet<(String, String)>,
+        out: &mut Vec<Finding>,
+    ) -> Result<(), ()> {
+        for (lo, hi) in ranges {
+            if lo == hi {
+                continue;
+            }
+            let first = self.spans.range(..=lo).next_back()
+                .filter(|(_, span)| span.end > lo)
+                .map_or(lo, |(&at, _)| at);
+            for (&at, span) in self.spans.range(first..hi) {
+                let at = at.max(lo);
+                for (&(owner, write), history) in &span.frontier {
+                    if !(write || current.write) {
+                        continue;
+                    }
+                    // memory-protocol section 7.1 and mag_mem_port's ready-order FIFO
+                    // order WAW on one source/destination response stream. They
+                    // do not publish its commit to a reader (section 7.2).
+                    if write && current.write && owner == current.owner {
+                        continue;
+                    }
+                    history.conflicts(current, |previous| {
+                        *work += 1;
+                        if *work > LIMIT {
+                            return Err(());
+                        }
+                        let Some(previous) = previous else {
+                            return Ok(());
+                        };
+                        if reported.insert((previous.what.clone(), current.what.clone())) {
+                            let hazard = match (previous.write, current.write) {
+                                (true, true) => "WAW",
+                                (true, false) => "RAW",
+                                _ => "WAR",
+                            };
+                            out.push(Finding::new(
+                                kind,
+                                "shared physical memory",
+                                format!(
+                                    "{hazard} at {at:#x}: {} and {} are not ordered",
+                                    previous.what, current.what
+                                ),
+                            ));
+                        }
+                        Ok(())
+                    })?;
+                }
+            }
+            *work += 1;
+            if *work > LIMIT {
+                return Err(());
+            }
+        }
+        Ok(())
     }
 
     fn visit(
@@ -238,6 +303,25 @@ impl GlobalDram {
         special: u64,
         byte_strobes: bool,
     ) {
+        self.access_inner(
+            out, footprint, write, start, done, owner, what, special, byte_strobes, true,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn access_inner(
+        &mut self,
+        out: &mut Vec<Finding>,
+        footprint: Result<Footprint, String>,
+        write: bool,
+        start: &Clock,
+        done: &Clock,
+        owner: usize,
+        what: String,
+        special: u64,
+        byte_strobes: bool,
+        record: bool,
+    ) {
         if self.refused {
             return;
         }
@@ -272,7 +356,13 @@ impl GlobalDram {
             write,
             what,
         });
-        let result = self.bytes.visit(
+        let visit = if record {
+            Intervals::visit
+        } else {
+            Intervals::conflicts
+        };
+        let result = visit(
+            &mut self.bytes,
             ranges,
             &current,
             Kind::Race,
@@ -281,7 +371,8 @@ impl GlobalDram {
             out,
         );
         let result = result.and_then(|()| {
-            self.writers.visit(
+            visit(
+                &mut self.writers,
                 lines.map_err(|_| ())?,
                 &current,
                 Kind::Line,

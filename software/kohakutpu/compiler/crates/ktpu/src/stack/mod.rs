@@ -30,6 +30,9 @@ pub struct Stack;
 #[derive(Clone, Debug, Default)]
 pub struct CardStack {
     pub binds: Option<BTreeMap<String, i128>>,
+    /// Bound retained compositions: derive physical proof components from HB.
+    /// Ordinary single launches keep the original proof and budget verdicts.
+    pub compositional: bool,
     /// The node sends the units their words (no fetch port), as [`Stack`].
     pub node_fed: bool,
     /// The L2 lowered as written: no L2 -> L2 pass (a reference build the
@@ -46,6 +49,14 @@ pub struct CardStack {
 }
 
 impl CardStack {
+    fn proof<T>(&self, f: impl FnOnce() -> T) -> T {
+        if self.compositional {
+            ktpu_verify::composition::prove(f).0
+        } else {
+            f()
+        }
+    }
+
     /// Whole-card cold and retained proofs at the preparation-time physical
     /// environment, including package sections and address-bearing input data.
     pub fn check_memory(
@@ -59,7 +70,8 @@ impl CardStack {
         let runs = (0..CHECKED_RUNS)
             .map(|_| bound(&run(&builder, &p.programs, &mut residents, self.fetch(m), p.relocate)?))
             .collect::<Result<Vec<_>, Refusal>>()?;
-        let findings = ktpu_verify::check_with_memory(&runs, &target(m)?, memory);
+        let t = target(m)?;
+        let findings = self.proof(|| ktpu_verify::check_with_memory(&runs, &t, memory));
         Ok(findings
             .into_iter()
             .map(|f| Finding {
@@ -239,7 +251,7 @@ impl Backend for CardStack {
         let v = Stack.version(stage)?;
         Some(match stage {
             Stage::Order | Stage::Verify => {
-                format!("{v}+fetch:{}+{:?}", !self.node_fed, self.binds)
+                format!("{v}+fetch:{}+{:?}+composition:{}", !self.node_fed, self.binds, self.compositional)
             }
             Stage::Passes if self.no_passes => format!("{v}+none"),
             Stage::Passes | Stage::Lower => format!("{v}{}", self.settings()),
@@ -349,11 +361,11 @@ impl Backend for CardStack {
     }
 
     fn order(&self, p: &Programs, m: &Machine) -> Result<BTreeMap<u32, PackageOut>, Refusal> {
-        order(p, m, self.fetch(m))
+        self.proof(|| order(p, m, self.fetch(m)))
     }
 
     fn check(&self, p: &Programs, m: &Machine) -> Result<Vec<Finding>, Refusal> {
-        check(p, m, self.fetch(m))
+        self.proof(|| check(p, m, self.fetch(m)))
     }
 
     fn refuses(&self, f: &Finding) -> bool {
@@ -710,7 +722,8 @@ fn first(
     fetch: Option<ktpu_l0::Coord>,
 ) -> Result<std::sync::Arc<First>, Refusal> {
     let mut made = p.first.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((_, got)) = made.iter().find(|(f, _)| *f == fetch) {
+    let compositional = ktpu_verify::composition::active();
+    if let Some((_, _, got)) = made.iter().find(|(f, mode, _)| *f == fetch && *mode == compositional) {
         return got.clone();
     }
     let got = (|| {
@@ -720,7 +733,7 @@ fn first(
         let found = scheduled(&bound(&run)?, &target(m)?);
         Ok(std::sync::Arc::new(First { run, cores, found }))
     })();
-    made.push((fetch, got.clone()));
+    made.push((fetch, compositional, got.clone()));
     got
 }
 
@@ -825,6 +838,7 @@ impl Programs {
 
 type FirstBy = (
     Option<ktpu_l0::Coord>,
+    bool,
     Result<std::sync::Arc<First>, Refusal>,
 );
 

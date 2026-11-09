@@ -701,10 +701,12 @@ fn package_admit(
 
 /// Whole-card preparation proof over exact bound packages and owned input bytes.
 #[pyfunction]
+#[pyo3(signature = (runs, machine_json, initial, *, compositional=false))]
 fn package_check_memory(
     runs: Vec<BTreeMap<u32, Vec<u8>>>,
     machine_json: &str,
     initial: BTreeMap<u64, Vec<u8>>,
+    compositional: bool,
 ) -> PyResult<String> {
     let m = machine(machine_json)?;
     let target = ktpu_verify::Target::from_machine(&m, None).map_err(PyValueError::new_err)?;
@@ -726,7 +728,12 @@ fn package_check_memory(
         initial,
         ..ktpu_verify::MemoryContext::default()
     };
-    let found = ktpu_verify::check_with_memory(&runs, &target, &memory);
+    let check = || ktpu_verify::check_with_memory(&runs, &target, &memory);
+    let found = if compositional {
+        ktpu_verify::composition::prove(check).0
+    } else {
+        check()
+    };
     let findings: Vec<_> = found
         .iter()
         .map(|f| {

@@ -1,5 +1,8 @@
 //! Card-wide physical accesses and the releases that order them.
 
+#[path = "retained_composition.rs"]
+mod retained_composition;
+
 use std::collections::BTreeMap;
 
 use ktpu::{Backend, CardStack};

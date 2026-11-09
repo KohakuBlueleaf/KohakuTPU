@@ -610,6 +610,7 @@ def compile(
     passes: bool = True,
     exp2_ranges: str | None = None,
     zero_sign: str | None = None,
+    compositional: bool = False,
 ) -> Compiled:
     """`source` (L2 text, or the tracer's graph as JSON text) for the machine
     file `machine_json` (its text). `name`: the fn compiled (the first when
@@ -825,7 +826,11 @@ def graph_cycles(source: str, machine_json: str) -> int:
     """Complete graph price through scheduled L1, without packages or simulation."""
 
 def package_check_memory(
-    runs: list[dict[int, bytes]], machine_json: str, initial: dict[int, bytes]
+    runs: list[dict[int, bytes]],
+    machine_json: str,
+    initial: dict[int, bytes],
+    *,
+    compositional: bool = False,
 ) -> str:
     """Whole-card preparation proof over exact bound packages and owned input
     bytes, as verdict JSON."""

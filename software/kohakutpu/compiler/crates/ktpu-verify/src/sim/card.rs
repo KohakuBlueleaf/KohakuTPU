@@ -10,13 +10,13 @@ use crate::adapter::isa::Fields;
 use crate::model::clock::Clock;
 use crate::model::finding::Kind;
 
-use super::dram::{Footprint, GlobalDram};
+use super::dram::{Footprint, Proof};
 use super::memory::What;
 use super::{pair, Group, Kinded, Sender, Sim, Sink, Window};
 
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct Card {
-    pub dram: GlobalDram,
+    pub dram: Proof,
     pub packages: super::package_memory::Packages,
     pub context: crate::check::memory::MemoryContext,
     pub values: super::values::Values,

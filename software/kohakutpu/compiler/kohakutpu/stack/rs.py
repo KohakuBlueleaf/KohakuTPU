@@ -74,7 +74,7 @@ def zero_sign(value):
         _ZERO_SIGN.reset(token)
 
 
-def compile(source, name, spec, l1=False, binds=None, passes=True):
+def compile(source, name, spec, l1=False, binds=None, passes=True, compositional=False):
     owner = _COMPILER_OWNER.get()
     if owner is not None:
         owner.counters["compile_calls"] += 1
@@ -91,6 +91,7 @@ def compile(source, name, spec, l1=False, binds=None, passes=True):
             l1=l1,
             binds=None if binds is None else dict(binds),
             passes=passes,
+            compositional=compositional,
             zero_sign=_ZERO_SIGN.get(),
         )
     except _rs.Refused as exc:

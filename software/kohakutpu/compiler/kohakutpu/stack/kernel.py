@@ -39,6 +39,7 @@ class Compiled:
     stack: str = "rust"
     level: str = "l2"
     bound: str | None = None
+    compositional: bool = False
     scratch: list | None = None
     #: F-001 (L1.MOV.019): the parameters whose binding must start on a DRAM
     #: write line, and the mover commands the split made of unproven ones.
@@ -92,7 +93,12 @@ class Compiled:
         apart = any(arena_name(a) not in binds for a in self.scratch or ())
         if self.bound is not None or apart:
             got = rs.compile(
-                self.l1.source, self.name, self.machine, l1=True, binds=binds
+                self.l1.source,
+                self.name,
+                self.machine,
+                l1=True,
+                binds=binds,
+                compositional=self.compositional,
             )
             packages, verdict = got["packages"], got["verdict"]
             if self.bound is not None:
@@ -158,12 +164,18 @@ class Compiled:
         if owner is not None and any(f.kind == "model" for f in found):
             physical = self.bound is not None or apart
             out = self._initialized(
-                out, owner, physical, binds.values() if physical else None
+                out,
+                owner,
+                physical,
+                binds.values() if physical else None,
+                compositional=self.compositional,
             )
         return {None: out[0]} if not moved and list(out) == [0] else out
 
     @staticmethod
-    def _initialized(programs, owner, physical, physical_addresses=None):
+    def _initialized(
+        programs, owner, physical, physical_addresses=None, *, compositional=False
+    ):
         """Prove bound packages using the runtime's owned constant-table bytes."""
         if not owner.tables:
             return programs
@@ -200,7 +212,11 @@ class Compiled:
             {n: p.bound(True, cores=cores[n]) for n, p in bound.items()}
             for _ in range(2)
         ]
-        verdict = json.loads(rs._rs.package_check_memory(runs, machine, initial))
+        verdict = json.loads(
+            rs._rs.package_check_memory(
+                runs, machine, initial, compositional=compositional
+            )
+        )
         found = tuple(
             build.Finding(f["kind"], f["at"], f["text"], f["clause"])
             for f in verdict["findings"]

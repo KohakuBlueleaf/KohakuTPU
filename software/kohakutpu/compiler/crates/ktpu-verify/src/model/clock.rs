@@ -90,6 +90,13 @@ impl Clock {
         }
     }
 
+    /// Every event in this proof summary is included in `other`.
+    pub(crate) fn covered_by(&self, other: &Clock) -> bool {
+        (0..self.base.len())
+            .chain(self.own)
+            .all(|k| self.at(k) <= other.at(k))
+    }
+
     /// Process `owner`'s count set to `n` (its own event).
     pub fn tick(&mut self, owner: usize, n: u32) {
         if self.own != Some(owner) {

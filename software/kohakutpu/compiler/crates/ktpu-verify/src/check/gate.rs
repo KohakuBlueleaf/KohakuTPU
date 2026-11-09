@@ -78,6 +78,7 @@ pub fn gate_with_memory(
     let path = cache.map(|(dir, namespace)| {
         let mut h = Sha256::new();
         h.update(SOURCE_DIGEST.as_bytes());
+        h.update([u8::from(crate::composition::active())]);
         h.update(t.digest_text().as_bytes());
         h.update(format!("{runs:?}{memory:?}").as_bytes());
         let digest: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
