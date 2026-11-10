@@ -5,7 +5,9 @@ Every number comes from `data/`; each section's figures carry the same numbers. 
 run has all four dies at one clock, because idle dies change node 0's cycles. Runs that
 did not are kept in `data/old/` and used nowhere.
 
-The first section is the output statistics of every model. Round `i1` runs ViT-B
+The first section is the output statistics of every model. Round `r2` measures ViT-B
+eager and as a retained replayed graph on one, two and four sysnodes of both boards,
+with per-kernel scaling. Round `i1` runs ViT-B
 across one, two and four sysnodes, and reruns the round `h1` correctness probes. Round `h1`
 measures the multi-sysnode primitives on the card with hand-written L1
 (`software/tests/perf/h/`). The next six are rounds `g1`, at commit 9da806c4, `f1`, at commit 97a4b0a7, `e1`, at commit de2c9b1e with the
@@ -48,6 +50,77 @@ reads 1 for MLP, GRU and wide (against f32) and ViT-B (against MXFP7); the liste
 value is inside both, since the card's largest error against the other is under the
 footprint's largest. Top-1 agrees with f32 on every image except ViT's 6 of 9; the MXFP7 run also
 agrees on 6 of 9: the nine images' f32 top-1 to top-2 gaps are 0.0001 to 0.079.
+
+## Round r2
+
+ViT-B, width 768 and 12 blocks, 12 inputs, at mid on both boards, at commits
+11bcbbe0 to bee059e4 (each trace's `provenance.json`). Runner:
+`measurements/tools/card_round.py`; traces under `data/r2/vitb.<round>.<path>.b<batch>.i12.k12.<board>.<n>n`,
+where `<round>` is the sub-round (`r2` to `r4c`) that produced the point. Two paths:
+
+- **eager** (`--measure`): host-submitted launches with per-sysnode unit counters.
+  `launch_max_sum` is the sum over launches of the slowest sysnode's package cycles; the
+  global bound is the representative input from upload through all-sysnode drain on one
+  reference clock, host time included.
+- **firmware retained**: the first four inputs record the TinyJit graph, and every later
+  input replays it as one bound graph (one firmware list per sysnode); eight replayed
+  inputs are scored. `launch_max_sum` is the graph's cycles.
+
+Cycles, millions. Eager:
+
+| board | batch | P1 launch / global | P2 launch / global | P4 launch / global |
+|---|---|---|---|---|
+| v9t6 | 1 | 41.20 / 94.96 | 27.50 / 90.74 | 19.38 / 113.38 |
+| v9t8 | 1 | 39.85 / 94.26 | 26.98 / 92.73 | 19.74 / 115.94 |
+| v9t6 | 4 | 312.73 / 396.72 | 112.46 / 229.93 | card fault |
+| v9t8 | 4 | 299.08 / 393.48 | 111.64 / 225.12 | card fault |
+| v9t6 | 16 | 781.95 / 1,064.44 | 404.77 / 747.19 | card fault |
+| v9t8 | 16 | 731.11 / 936.06 | 389.61 / 659.43 | card fault |
+
+Firmware retained:
+
+| board | batch | P1 graph / global | P2 graph / global | P4 graph / global |
+|---|---|---|---|---|
+| v9t6 | 1 | 40.82 / 43.74 | 28.66 / 30.97 | 21.43 / 23.78 |
+| v9t8 | 1 | 38.88 / 41.64 | 27.72 / 30.06 | 22.34 / 24.76 |
+| v9t6 | 4 | 309.36 / 312.33 | 110.79 / 113.82 | 74.7-75.1 graph, 4 of 8 replays (hang) |
+| v9t8 | 4 | 297.68 / 300.74 | 107.73 / 110.84 | first replay hung |
+| both | 16 | compile wall | compile wall | not run |
+
+Retained replay removes the host from between launches: at batch 1 the global bound is
+within 3.0 M of the graph cycles on every point, against 54 M to 96 M of host time for
+eager. Batch 1 on four sysnodes is 1.84x one sysnode retained on v9t6 and 1.68x on v9t8
+(global), and 3.99x / 3.81x one sysnode eager. Graph and eager launch sums agree within
+5% at P1 and P2 (v9t6 P2 graph 28.66 M against eager 27.50 M is the widest).
+
+Where the multi-sysnode time goes (`rounds/r2/analysis/`, eager, per launch and per
+kernel class; the class mapping is checked against signatures and shapes):
+
+- Of b1 P4's 9.78 M local gap to P1/4, matmul is 6.46 M (66%); MLP down-projection alone
+  2.38 M. Imbalance across sysnodes is small (max/mean 1.02-1.07): the split itself adds
+  work. MLP down at P4 issues 3.5x P1's fill commands and 3x its GEMMs for the same MACs,
+  because the split keeps the producer's packed layout and one K block per step
+  (`ktpu-machine/src/pairing.rs` unpaired K on mover-preferred machines), and its local
+  rectangle uses three of four matrix groups. One K block per step caps useful matmul at
+  half the MAC peak (`commands.csv`, `counters.csv`).
+- Batch 4 on one sysnode: QKV is 155.6 M of 299.1 M cycles. M = 788 is tiled by an exact
+  divisor, four rows, into 42,552 GEMMs (`ktpu-kernels/src/gen/matmul.rs` exact-divisor
+  `tm`, `pad_m` off; one-sysnode plans skip the priced search, `runtime/generated.py`). The
+  two-sysnode plan replans to 208-row tiles; its 2.7x at batch 4 is that, not scaling.
+- Form work (quant, convert, move) is 28.6% of b1 P4: the score chain materializes f16
+  three times, and MLP-up stores an f16 tensor beside the quantized q0 it feeds forward
+  (`gen/vector.rs` `band_store`).
+- Retained graphs join every sysnode after every launch (`ktpu/src/stack/retained.rs`,
+  259 joins at P4 batch 1); the graph is 1.11x (v9t6) and 1.13x (v9t8) eager's launch
+  sum at P4 batch 1.
+
+Card faults on two or more sysnodes: every eager point past batch 1 on four sysnodes, and
+some retained points, stop with `BAD_STEP` at step 0 (fp16 values in an ENGINE code word),
+`NONFINITE_FP16`, or a queue that never completes. Where the package read-back ran
+(`raw/package-check.json.gz`, one fault on each board), the package in DRAM was byte-identical
+to the upload: the firmware's read returned other data (ISSUES 31, 92). Retained replays on
+four sysnodes also stopped after a few replays (ISSUES 93). Retained batch 16 does not
+compile within the 3,600 s bound (ISSUES 94).
 
 ## Round i1
 

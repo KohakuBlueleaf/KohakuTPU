@@ -1,0 +1,15 @@
+{
+  "point": {
+    "workload": "vitb",
+    "board": "multimesh_v9t6",
+    "sysnodes": 4,
+    "batch": 4,
+    "path": "eager",
+    "inputs": 12,
+    "blocks": 12
+  },
+  "ended": 1794284142.6046226,
+  "status": "card_failure",
+  "returncode": 1,
+  "timed_out": false
+}

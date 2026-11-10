@@ -1,0 +1,11 @@
+{
+ "schema": 1,
+ "path": "eager",
+ "selected_inputs": [],
+ "replay_inputs": 0,
+ "replay_calls": 0,
+ "retained_launches": 0,
+ "groups": {},
+ "samples": [],
+ "attribution": "measured launch kinds; combined retained regions are graph, not capture-derived kernel kinds"
+}

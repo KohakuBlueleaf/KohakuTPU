@@ -1,0 +1,121 @@
+{
+ "inputs_completed": 0,
+ "input_intervals": 1,
+ "schema": 2,
+ "round": "r2d",
+ "path": "eager",
+ "batch": 16,
+ "blocks": 12,
+ "workload": "vitb",
+ "board": "multimesh_v9t8",
+ "nodes": 4,
+ "args": [
+  "--batch",
+  "16",
+  "--inputs",
+  "10",
+  "--width",
+  "768",
+  "--board",
+  "multimesh_v9t8",
+  "--nodes",
+  "4",
+  "--no-jit",
+  "--inputs",
+  "12",
+  "--blocks",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma",
+  "--report",
+  "/home/kblueleaf/kt/build/perf/traces/r2d/vitb.r2d.eager.b16.i12.k12.multimesh_v9t8.4n/report.json",
+  "--references",
+  "/home/kblueleaf/kt/build/perf/references"
+ ],
+ "seconds": 3572.06,
+ "done": "measurement failure:  recent call last):\n  File \"/home/kblueleaf/kt/software/tests/perf/record.py\", line 603, in main\n    card_meta = write() if write is not None else {}\n                ~~~~~^^\n  File \"/home/kblueleaf/kt/software/tests/perf/retirement.py\", line 292, in write\n    flush(dev)\n    ~~~~~^^^^^\n  File \"/home/kblueleaf/kt/software/tests/perf/retirement.py\", line 221, in flush\n    slots.extend(ring.rows())\n                 ~~~~~~~~~^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/card/measure.py\", line 102, in rows\n    raw = card.mem.read_block(at + i % RING_SLOTS * RING_BYTES, RING_BYTES)\n  File \"/home/kblueleaf/kt/software/kohakuaccel/driver/kohakuaccel/driver/transport/rebase.py\", line 117, in read_block\n    return self.inner.read_block(self._map(addr, nbytes), nbytes)\n           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/kblueleaf/kt/software/kohakuaccel/driver/kohakuaccel/driver/transport/xdma_linux.py\", line 240, in read_block\n    return self._c2h_lines(lo, hi - lo)[addr - lo : addr - lo + nbytes]\n           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^\n  File \"/home/kblueleaf/kt/software/kohakuaccel/driver/kohakuaccel/driver/transport/xdma_linux.py\", line 261, in _c2h_lines\n    self._retry(\"c2h\", at + off, n, self._c2h_once)\n    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/kblueleaf/kt/software/kohakuaccel/driver/kohakuaccel/driver/transport/xdma_linux.py\", line 297, in _retry\n    xfer(at, n)\n    ~~~~^^^^^^^\n  File \"/home/kblueleaf/kt/software/kohakuaccel/driver/kohakuaccel/driver/transport/xdma_linux.py\", line 271, in _c2h_once\n    raise OSError(\n        err, f\"C2H read at {at:#x}: {got} of {n} ({os.strerror(err)})\"\n    )\nTimeoutError: [Errno 110] C2H read at 0x10000100000: -1 of 256 (Connection timed out)\n",
+ "spans": {
+  "copyin": {
+   "calls": 153,
+   "seconds": 0.15799465641612187
+  },
+  "compile_graph": {
+   "calls": 34,
+   "seconds": 397.86675803590333
+  },
+  "bind_admit": {
+   "calls": 109,
+   "seconds": 3.0471920441486873
+  },
+  "submit": {
+   "calls": 110,
+   "seconds": 398.58188982796855
+  },
+  "generate_launch": {
+   "calls": 87,
+   "seconds": 2335.944369748875
+  },
+  "collect": {
+   "calls": 110,
+   "seconds": 600.0398448370397
+  },
+  "rows": {
+   "calls": 8,
+   "seconds": 294.08319787698565
+  }
+ },
+ "graphs": [],
+ "profile": "mid",
+ "knobs": {
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "clocks": {
+  "0": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "1": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "2": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "3": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  }
+ },
+ "check": null,
+ "profiled": null,
+ "jit": false,
+ "commit": "f23df834",
+ "backend": "firmware",
+ "firmware": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+ "os_flags": null,
+ "os_command": null,
+ "when": 1794265582.68406,
+ "launches": 110,
+ "kernels": 34,
+ "compiles": [],
+ "replay_counts": {
+  "replay_inputs": 0,
+  "replay_calls": 0,
+  "retained_launches": 0
+ }
+}

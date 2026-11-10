@@ -1,0 +1,1970 @@
+{
+ "host_ms": {
+  "between": 1956.3000000000002,
+  "submit": 148.87,
+  "replays": 0,
+  "replay_between": 0.0,
+  "replay_publish": 0.0
+ },
+ "mfu": {
+  "mg": 0.09855789205871285,
+  "vc": 0.1060502837635065,
+  "read_bus": 0.6900566902893586,
+  "write_bus": 0.15860495208677067
+ },
+ "selection": {
+  "group": "input",
+  "input": 10
+ },
+ "dataflow_unavailable": [],
+ "detector_scope": "inter-launch dataflow where L2 is retained; combined graph internals are opaque",
+ "evidence": "timed model of actual selected launched programs, not measured savings",
+ "trace": "vitb.r3.eager.b4.i12.k12.multimesh_v9t6.1n",
+ "machine": "multimesh_v9t6",
+ "launches": 3531,
+ "step_launches": 321,
+ "step_cycles": 352985993.35793203,
+ "step_with_seams": 354050429.357932,
+ "floors": {
+  "math": 50075520.0,
+  "compute": 245558112.10702318,
+  "with_form": 267440614.11371216
+ },
+ "kinds": {
+  "move": {
+   "launches": 97,
+   "cycles": 19714951.84,
+   "stalled": 0.0,
+   "image_words": 2724.0,
+   "lone_moves": 0.0,
+   "lone_words": 0.0,
+   "macs": 0.0,
+   "math_beats": 0.0,
+   "mover_bytes": 94408704.0,
+   "mover_statements": 252.0,
+   "pack_words": 0.0,
+   "read_bytes": 102875136.0,
+   "unpack_words": 0.0,
+   "words": 1776.0,
+   "write_bytes": 102875136.0
+  },
+  "quant": {
+   "launches": 98,
+   "cycles": 42779403.80000001,
+   "stalled": 0.0,
+   "image_words": 719445.0,
+   "lone_moves": 0.0,
+   "lone_words": 0.0,
+   "macs": 0.0,
+   "math_beats": 19157272.0,
+   "mover_bytes": 0.0,
+   "mover_statements": 0.0,
+   "pack_words": 13853368.0,
+   "read_bytes": 193658880.0,
+   "unpack_words": 6494208.0,
+   "words": 55340.0,
+   "write_bytes": 101997056.0
+  },
+  "matmul": {
+   "launches": 74,
+   "cycles": 260437461.47793195,
+   "stalled": 211796614.25350794,
+   "image_words": 32283.0,
+   "lone_moves": 0.0,
+   "lone_words": 0.0,
+   "macs": 71463862272.0,
+   "math_beats": 27418113.0,
+   "mover_bytes": 0.0,
+   "mover_statements": 0.0,
+   "pack_words": 6238144.0,
+   "read_bytes": 5100319712.0,
+   "unpack_words": 8118271.0,
+   "words": 896605.0,
+   "write_bytes": 399241216.0
+  },
+  "dsl": {
+   "launches": 51,
+   "cycles": 30051926.24,
+   "stalled": 0.0,
+   "image_words": 46222.0,
+   "lone_moves": 0.0,
+   "lone_words": 0.0,
+   "macs": 0.0,
+   "math_beats": 28518912.0,
+   "mover_bytes": 1204224.0,
+   "mover_statements": 3.0,
+   "pack_words": 3933696.0,
+   "read_bytes": 126769152.0,
+   "unpack_words": 4016640.0,
+   "words": 5389.0,
+   "write_bytes": 125884416.0
+  },
+  "convert": {
+   "launches": 1,
+   "cycles": 2250.0,
+   "stalled": 0.0,
+   "image_words": 10.0,
+   "lone_moves": 0.0,
+   "lone_words": 0.0,
+   "macs": 0.0,
+   "math_beats": 0.0,
+   "mover_bytes": 0.0,
+   "mover_statements": 0.0,
+   "pack_words": 0.0,
+   "read_bytes": 6144.0,
+   "unpack_words": 0.0,
+   "words": 12.0,
+   "write_bytes": 6144.0
+  }
+ },
+ "labels": {
+  "seam.front": 390336.0,
+  "seam.gap": 674100.0,
+  "move.run": 19714951.84,
+  "quant.run": 42779403.80000001,
+  "matmul.run": 260437461.47793195,
+  "dsl.run": 30051926.24,
+  "convert.run": 2250.0
+ },
+ "recoverable": {
+  "written_unread": 4095.6000000000004,
+  "launch_seam": 43108.0,
+  "form_held": 25349801.040000025
+ },
+ "findings": [
+  {
+   "detector": "written_unread",
+   "launch": 2892,
+   "name": "rows_9ee6978b7a",
+   "kernel_kind": "dsl",
+   "cycles": 4095.6000000000004,
+   "why": "its f16 output at 0xebfdb00 is overwritten by launch 2893 before anything reads it"
+  },
+  {
+   "detector": "launch_seam",
+   "launch": 2894,
+   "name": "rows_2d4d7c2d92",
+   "kernel_kind": "dsl",
+   "cycles": 3316.0,
+   "why": "reads what launch 2893 just wrote: one launch would drop this launch's front and gap"
+  },
+  {
+   "detector": "launch_seam",
+   "launch": 2897,
+   "name": "rows_58249cc240",
+   "kernel_kind": "dsl",
+   "cycles": 3316.0,
+   "why": "reads what launch 2896 just wrote: one launch would drop this launch's front and gap"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2901,
+   "name": "walk_895218144c",
+   "kernel_kind": "move",
+   "cycles": 409342.48,
+   "why": "makes f16 of a value already live as f16 at 0x33443000"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2904,
+   "name": "quant_afa7043eb7",
+   "kernel_kind": "quant",
+   "cycles": 493873.1000000006,
+   "why": "makes mx7b of a value already live as mx7b at 0xba5bf00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2906,
+   "name": "walk_f25e635065",
+   "kernel_kind": "move",
+   "cycles": 119189.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x102b3b00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2907,
+   "name": "walk_5bae3cf1c4",
+   "kernel_kind": "move",
+   "cycles": 159034.0,
+   "why": "makes f16 of a value already live as f16 at 0xbb03f00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2909,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0xebfdb00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2911,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x107c6b00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2915,
+   "name": "walk_35e27f5901",
+   "kernel_kind": "move",
+   "cycles": 461506.0,
+   "why": "makes f16 of a value already live as f16 at 0x1c6d3a00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2917,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x110da300"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2919,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0xc0ed700"
+  },
+  {
+   "detector": "launch_seam",
+   "launch": 2923,
+   "name": "rows_58249cc240",
+   "kernel_kind": "dsl",
+   "cycles": 3316.0,
+   "why": "reads what launch 2922 just wrote: one launch would drop this launch's front and gap"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2927,
+   "name": "walk_895218144c",
+   "kernel_kind": "move",
+   "cycles": 409342.48,
+   "why": "makes f16 of a value already live as f16 at 0xcd32400"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2930,
+   "name": "quant_afa7043eb7",
+   "kernel_kind": "quant",
+   "cycles": 493873.1000000006,
+   "why": "makes mx7b of a value already live as mx7b at 0xcbe4500"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2932,
+   "name": "walk_f25e635065",
+   "kernel_kind": "move",
+   "cycles": 119189.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x11743300"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2933,
+   "name": "walk_5bae3cf1c4",
+   "kernel_kind": "move",
+   "cycles": 159034.0,
+   "why": "makes f16 of a value already live as f16 at 0xf6e8300"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2935,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x14466700"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2937,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x1603b400"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2941,
+   "name": "walk_35e27f5901",
+   "kernel_kind": "move",
+   "cycles": 461506.0,
+   "why": "makes f16 of a value already live as f16 at 0x1d784000"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2943,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x1e5a3600"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2945,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x1cd90a00"
+  },
+  {
+   "detector": "launch_seam",
+   "launch": 2949,
+   "name": "rows_58249cc240",
+   "kernel_kind": "dsl",
+   "cycles": 3316.0,
+   "why": "reads what launch 2948 just wrote: one launch would drop this launch's front and gap"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2953,
+   "name": "walk_895218144c",
+   "kernel_kind": "move",
+   "cycles": 409342.48,
+   "why": "makes f16 of a value already live as f16 at 0x1dc34000"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2956,
+   "name": "quant_afa7043eb7",
+   "kernel_kind": "quant",
+   "cycles": 493873.1000000006,
+   "why": "makes mx7b of a value already live as mx7b at 0xed25300"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2958,
+   "name": "walk_f25e635065",
+   "kernel_kind": "move",
+   "cycles": 119189.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x1f4a4e00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2959,
+   "name": "walk_5bae3cf1c4",
+   "kernel_kind": "move",
+   "cycles": 159034.0,
+   "why": "makes f16 of a value already live as f16 at 0x125aa300"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2961,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x1edb7e00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2963,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x1f6fce00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2967,
+   "name": "walk_35e27f5901",
+   "kernel_kind": "move",
+   "cycles": 461506.0,
+   "why": "makes f16 of a value already live as f16 at 0x1f828e00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2969,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x203ebc00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2971,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x12c62b00"
+  },
+  {
+   "detector": "launch_seam",
+   "launch": 2975,
+   "name": "rows_58249cc240",
+   "kernel_kind": "dsl",
+   "cycles": 3316.0,
+   "why": "reads what launch 2974 just wrote: one launch would drop this launch's front and gap"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2979,
+   "name": "walk_895218144c",
+   "kernel_kind": "move",
+   "cycles": 409342.48,
+   "why": "makes f16 of a value already live as f16 at 0x1339cf00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2982,
+   "name": "quant_afa7043eb7",
+   "kernel_kind": "quant",
+   "cycles": 493873.1000000006,
+   "why": "makes mx7b of a value already live as mx7b at 0x10eb6b00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2984,
+   "name": "walk_f25e635065",
+   "kernel_kind": "move",
+   "cycles": 119189.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x200e3200"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2985,
+   "name": "walk_5bae3cf1c4",
+   "kernel_kind": "move",
+   "cycles": 159034.0,
+   "why": "makes f16 of a value already live as f16 at 0x1e6cae00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2987,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x20c00400"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2989,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x21626400"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2993,
+   "name": "walk_35e27f5901",
+   "kernel_kind": "move",
+   "cycles": 461506.0,
+   "why": "makes f16 of a value already live as f16 at 0x21752400"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2995,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x22234200"
+  },
+  {
+   "detector": "form_held",
+   "launch": 2997,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x13b3af00"
+  },
+  {
+   "detector": "launch_seam",
+   "launch": 3001,
+   "name": "rows_58249cc240",
+   "kernel_kind": "dsl",
+   "cycles": 3316.0,
+   "why": "reads what launch 3000 just wrote: one launch would drop this launch's front and gap"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3005,
+   "name": "walk_895218144c",
+   "kernel_kind": "move",
+   "cycles": 409342.48,
+   "why": "makes f16 of a value already live as f16 at 0x21c02400"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3008,
+   "name": "quant_afa7043eb7",
+   "kernel_kind": "quant",
+   "cycles": 493873.1000000006,
+   "why": "makes mx7b of a value already live as mx7b at 0x14073700"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3010,
+   "name": "walk_f25e635065",
+   "kernel_kind": "move",
+   "cycles": 119189.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x23135a00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3011,
+   "name": "walk_5bae3cf1c4",
+   "kernel_kind": "move",
+   "cycles": 159034.0,
+   "why": "makes f16 of a value already live as f16 at 0x1411b700"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3013,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x22a48a00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3015,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x2338da00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3019,
+   "name": "walk_35e27f5901",
+   "kernel_kind": "move",
+   "cycles": 461506.0,
+   "why": "makes f16 of a value already live as f16 at 0x234b9a00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3021,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x2407c800"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3023,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x23969a00"
+  },
+  {
+   "detector": "launch_seam",
+   "launch": 3027,
+   "name": "rows_58249cc240",
+   "kernel_kind": "dsl",
+   "cycles": 3316.0,
+   "why": "reads what launch 3026 just wrote: one launch would drop this launch's front and gap"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3031,
+   "name": "walk_895218144c",
+   "kernel_kind": "move",
+   "cycles": 409342.48,
+   "why": "makes f16 of a value already live as f16 at 0x150b5f00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3034,
+   "name": "quant_afa7043eb7",
+   "kernel_kind": "quant",
+   "cycles": 493873.1000000006,
+   "why": "makes mx7b of a value already live as mx7b at 0x1500df00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3036,
+   "name": "walk_f25e635065",
+   "kernel_kind": "move",
+   "cycles": 119189.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x252f4800"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3037,
+   "name": "walk_5bae3cf1c4",
+   "kernel_kind": "move",
+   "cycles": 159034.0,
+   "why": "makes f16 of a value already live as f16 at 0x1eedf600"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3039,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x24891000"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3041,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x25420800"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3045,
+   "name": "walk_35e27f5901",
+   "kernel_kind": "move",
+   "cycles": 461506.0,
+   "why": "makes f16 of a value already live as f16 at 0x2554c800"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3047,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x25ec4e00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3049,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x168acc00"
+  },
+  {
+   "detector": "launch_seam",
+   "launch": 3053,
+   "name": "rows_58249cc240",
+   "kernel_kind": "dsl",
+   "cycles": 3316.0,
+   "why": "reads what launch 3052 just wrote: one launch would drop this launch's front and gap"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3057,
+   "name": "walk_895218144c",
+   "kernel_kind": "move",
+   "cycles": 409342.48,
+   "why": "makes f16 of a value already live as f16 at 0x35cb9400"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3060,
+   "name": "quant_afa7043eb7",
+   "kernel_kind": "quant",
+   "cycles": 493873.1000000006,
+   "why": "makes mx7b of a value already live as mx7b at 0x17342600"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3062,
+   "name": "walk_f25e635065",
+   "kernel_kind": "move",
+   "cycles": 119189.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x175b9e00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3063,
+   "name": "walk_5bae3cf1c4",
+   "kernel_kind": "move",
+   "cycles": 159034.0,
+   "why": "makes f16 of a value already live as f16 at 0x173ea600"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3065,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x266d9600"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3067,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x26dc6600"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3071,
+   "name": "walk_35e27f5901",
+   "kernel_kind": "move",
+   "cycles": 461506.0,
+   "why": "makes f16 of a value already live as f16 at 0x26ef2600"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3073,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x27d0d400"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3075,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x17a69e00"
+  },
+  {
+   "detector": "launch_seam",
+   "launch": 3079,
+   "name": "rows_58249cc240",
+   "kernel_kind": "dsl",
+   "cycles": 3316.0,
+   "why": "reads what launch 3078 just wrote: one launch would drop this launch's front and gap"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3083,
+   "name": "walk_895218144c",
+   "kernel_kind": "move",
+   "cycles": 409342.48,
+   "why": "makes f16 of a value already live as f16 at 0x273a2600"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3086,
+   "name": "quant_afa7043eb7",
+   "kernel_kind": "quant",
+   "cycles": 493873.1000000006,
+   "why": "makes mx7b of a value already live as mx7b at 0x17c2be00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3088,
+   "name": "walk_f25e635065",
+   "kernel_kind": "move",
+   "cycles": 119189.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x28f85400"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3089,
+   "name": "walk_5bae3cf1c4",
+   "kernel_kind": "move",
+   "cycles": 159034.0,
+   "why": "makes f16 of a value already live as f16 at 0x17cd3e00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3091,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x28521c00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3093,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x290b1400"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3097,
+   "name": "walk_35e27f5901",
+   "kernel_kind": "move",
+   "cycles": 461506.0,
+   "why": "makes f16 of a value already live as f16 at 0x291dd400"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3099,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x29b55a00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3101,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x189de600"
+  },
+  {
+   "detector": "launch_seam",
+   "launch": 3105,
+   "name": "rows_58249cc240",
+   "kernel_kind": "dsl",
+   "cycles": 3316.0,
+   "why": "reads what launch 3104 just wrote: one launch would drop this launch's front and gap"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3109,
+   "name": "walk_895218144c",
+   "kernel_kind": "move",
+   "cycles": 409342.48,
+   "why": "makes f16 of a value already live as f16 at 0x36cf2000"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3112,
+   "name": "quant_afa7043eb7",
+   "kernel_kind": "quant",
+   "cycles": 493873.1000000006,
+   "why": "makes mx7b of a value already live as mx7b at 0x18faaa00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3114,
+   "name": "walk_f25e635065",
+   "kernel_kind": "move",
+   "cycles": 119189.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x2989a400"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3115,
+   "name": "walk_5bae3cf1c4",
+   "kernel_kind": "move",
+   "cycles": 159034.0,
+   "why": "makes f16 of a value already live as f16 at 0x19052a00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3117,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x2a36a200"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3119,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x2ab83200"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3123,
+   "name": "walk_35e27f5901",
+   "kernel_kind": "move",
+   "cycles": 461506.0,
+   "why": "makes f16 of a value already live as f16 at 0x2acaf200"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3125,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x2b99e000"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3127,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x1963c200"
+  },
+  {
+   "detector": "launch_seam",
+   "launch": 3131,
+   "name": "rows_58249cc240",
+   "kernel_kind": "dsl",
+   "cycles": 3316.0,
+   "why": "reads what launch 3130 just wrote: one launch would drop this launch's front and gap"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3135,
+   "name": "walk_895218144c",
+   "kernel_kind": "move",
+   "cycles": 409342.48,
+   "why": "makes f16 of a value already live as f16 at 0x2b15f200"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3138,
+   "name": "quant_afa7043eb7",
+   "kernel_kind": "quant",
+   "cycles": 493873.1000000006,
+   "why": "makes mx7b of a value already live as mx7b at 0x19b74a00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3140,
+   "name": "walk_f25e635065",
+   "kernel_kind": "move",
+   "cycles": 119189.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x2b579200"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3141,
+   "name": "walk_5bae3cf1c4",
+   "kernel_kind": "move",
+   "cycles": 159034.0,
+   "why": "makes f16 of a value already live as f16 at 0x19c1ca00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3143,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x2c1b2800"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3145,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x2c2da000"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3149,
+   "name": "walk_35e27f5901",
+   "kernel_kind": "move",
+   "cycles": 461506.0,
+   "why": "makes f16 of a value already live as f16 at 0x2d363500"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3151,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x2de0c300"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3153,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x1a2d5200"
+  },
+  {
+   "detector": "launch_seam",
+   "launch": 3157,
+   "name": "rows_58249cc240",
+   "kernel_kind": "dsl",
+   "cycles": 3316.0,
+   "why": "reads what launch 3156 just wrote: one launch would drop this launch's front and gap"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3161,
+   "name": "walk_895218144c",
+   "kernel_kind": "move",
+   "cycles": 409342.48,
+   "why": "makes f16 of a value already live as f16 at 0x2d813500"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3164,
+   "name": "quant_afa7043eb7",
+   "kernel_kind": "quant",
+   "cycles": 493873.1000000006,
+   "why": "makes mx7b of a value already live as mx7b at 0x1a8a1600"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3166,
+   "name": "walk_f25e635065",
+   "kernel_kind": "move",
+   "cycles": 119189.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x2ce3cd00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3167,
+   "name": "walk_5bae3cf1c4",
+   "kernel_kind": "move",
+   "cycles": 159034.0,
+   "why": "makes f16 of a value already live as f16 at 0x1a949600"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3169,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x2eaffc00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3171,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x2e25e400"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3175,
+   "name": "walk_35e27f5901",
+   "kernel_kind": "move",
+   "cycles": 461506.0,
+   "why": "makes f16 of a value already live as f16 at 0x2f1ecc00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3177,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x30133a00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3179,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x1af32e00"
+  },
+  {
+   "detector": "launch_seam",
+   "launch": 3183,
+   "name": "rows_58249cc240",
+   "kernel_kind": "dsl",
+   "cycles": 3316.0,
+   "why": "reads what launch 3182 just wrote: one launch would drop this launch's front and gap"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3187,
+   "name": "walk_895218144c",
+   "kernel_kind": "move",
+   "cycles": 409342.48,
+   "why": "makes f16 of a value already live as f16 at 0x2f69cc00"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3190,
+   "name": "quant_afa7043eb7",
+   "kernel_kind": "quant",
+   "cycles": 493873.1000000006,
+   "why": "makes mx7b of a value already live as mx7b at 0x1b46b600"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3192,
+   "name": "walk_f25e635065",
+   "kernel_kind": "move",
+   "cycles": 119189.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x2fec1000"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3193,
+   "name": "walk_5bae3cf1c4",
+   "kernel_kind": "move",
+   "cycles": 159034.0,
+   "why": "makes f16 of a value already live as f16 at 0x1b513600"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3195,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x30948200"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3197,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x31161200"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3201,
+   "name": "walk_35e27f5901",
+   "kernel_kind": "move",
+   "cycles": 461506.0,
+   "why": "makes f16 of a value already live as f16 at 0x3128d200"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3203,
+   "name": "walk_3a3b9229d4",
+   "kernel_kind": "move",
+   "cycles": 118143.28000000001,
+   "why": "makes f16 of a value already live as f16 at 0x31f7c000"
+  },
+  {
+   "detector": "form_held",
+   "launch": 3205,
+   "name": "walk_628b136886",
+   "kernel_kind": "move",
+   "cycles": 116626.0,
+   "why": "makes f16 of a value already live as f16 at 0x3173d200"
+  }
+ ],
+ "chains": [
+  {
+   "before": 2891,
+   "kinds": [
+    "move",
+    "quant"
+   ],
+   "cycles": 532151.7
+  },
+  {
+   "before": 2896,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 180091.90000000005
+  },
+  {
+   "before": 2900,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 548845.0000000001
+  },
+  {
+   "before": 2902,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 409342.48
+  },
+  {
+   "before": 2905,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 1428693.9000000006
+  },
+  {
+   "before": 2910,
+   "kinds": [
+    "move",
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 637433.76
+  },
+  {
+   "before": 2912,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 2914,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 241067.20000000004
+  },
+  {
+   "before": 2918,
+   "kinds": [
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 1484466.0799999998
+  },
+  {
+   "before": 2920,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 2922,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 180091.90000000005
+  },
+  {
+   "before": 2926,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 548845.0000000001
+  },
+  {
+   "before": 2928,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 409342.48
+  },
+  {
+   "before": 2931,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 1428693.9000000006
+  },
+  {
+   "before": 2936,
+   "kinds": [
+    "move",
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 637433.76
+  },
+  {
+   "before": 2938,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 2940,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 241067.20000000004
+  },
+  {
+   "before": 2944,
+   "kinds": [
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 1484466.0799999998
+  },
+  {
+   "before": 2946,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 2948,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 180091.90000000005
+  },
+  {
+   "before": 2952,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 548845.0000000001
+  },
+  {
+   "before": 2954,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 409342.48
+  },
+  {
+   "before": 2957,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 1428693.9000000006
+  },
+  {
+   "before": 2962,
+   "kinds": [
+    "move",
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 637433.76
+  },
+  {
+   "before": 2964,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 2966,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 241067.20000000004
+  },
+  {
+   "before": 2970,
+   "kinds": [
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 1484466.0799999998
+  },
+  {
+   "before": 2972,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 2974,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 180091.90000000005
+  },
+  {
+   "before": 2978,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 548845.0000000001
+  },
+  {
+   "before": 2980,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 409342.48
+  },
+  {
+   "before": 2983,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 1428693.9000000006
+  },
+  {
+   "before": 2988,
+   "kinds": [
+    "move",
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 637433.76
+  },
+  {
+   "before": 2990,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 2992,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 241067.20000000004
+  },
+  {
+   "before": 2996,
+   "kinds": [
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 1484466.0799999998
+  },
+  {
+   "before": 2998,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 3000,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 180091.90000000005
+  },
+  {
+   "before": 3004,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 548845.0000000001
+  },
+  {
+   "before": 3006,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 409342.48
+  },
+  {
+   "before": 3009,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 1428693.9000000006
+  },
+  {
+   "before": 3014,
+   "kinds": [
+    "move",
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 637433.76
+  },
+  {
+   "before": 3016,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 3018,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 241067.20000000004
+  },
+  {
+   "before": 3022,
+   "kinds": [
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 1484466.0799999998
+  },
+  {
+   "before": 3024,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 3026,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 180091.90000000005
+  },
+  {
+   "before": 3030,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 548845.0000000001
+  },
+  {
+   "before": 3032,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 409342.48
+  },
+  {
+   "before": 3035,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 1428693.9000000006
+  },
+  {
+   "before": 3040,
+   "kinds": [
+    "move",
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 637433.76
+  },
+  {
+   "before": 3042,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 3044,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 241067.20000000004
+  },
+  {
+   "before": 3048,
+   "kinds": [
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 1484466.0799999998
+  },
+  {
+   "before": 3050,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 3052,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 180091.90000000005
+  },
+  {
+   "before": 3056,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 548845.0000000001
+  },
+  {
+   "before": 3058,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 409342.48
+  },
+  {
+   "before": 3061,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 1428693.9000000006
+  },
+  {
+   "before": 3066,
+   "kinds": [
+    "move",
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 637433.76
+  },
+  {
+   "before": 3068,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 3070,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 241067.20000000004
+  },
+  {
+   "before": 3074,
+   "kinds": [
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 1484466.0799999998
+  },
+  {
+   "before": 3076,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 3078,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 180091.90000000005
+  },
+  {
+   "before": 3082,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 548845.0000000001
+  },
+  {
+   "before": 3084,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 409342.48
+  },
+  {
+   "before": 3087,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 1428693.9000000006
+  },
+  {
+   "before": 3092,
+   "kinds": [
+    "move",
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 637433.76
+  },
+  {
+   "before": 3094,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 3096,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 241067.20000000004
+  },
+  {
+   "before": 3100,
+   "kinds": [
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 1484466.0799999998
+  },
+  {
+   "before": 3102,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 3104,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 180091.90000000005
+  },
+  {
+   "before": 3108,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 548845.0000000001
+  },
+  {
+   "before": 3110,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 409342.48
+  },
+  {
+   "before": 3113,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 1428693.9000000006
+  },
+  {
+   "before": 3118,
+   "kinds": [
+    "move",
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 637433.76
+  },
+  {
+   "before": 3120,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 3122,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 241067.20000000004
+  },
+  {
+   "before": 3126,
+   "kinds": [
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 1484466.0799999998
+  },
+  {
+   "before": 3128,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 3130,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 180091.90000000005
+  },
+  {
+   "before": 3134,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 548845.0000000001
+  },
+  {
+   "before": 3136,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 409342.48
+  },
+  {
+   "before": 3139,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 1428693.9000000006
+  },
+  {
+   "before": 3144,
+   "kinds": [
+    "move",
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 637433.76
+  },
+  {
+   "before": 3146,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 3148,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 241067.20000000004
+  },
+  {
+   "before": 3152,
+   "kinds": [
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 1484466.0799999998
+  },
+  {
+   "before": 3154,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 3156,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 180091.90000000005
+  },
+  {
+   "before": 3160,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 548845.0000000001
+  },
+  {
+   "before": 3162,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 409342.48
+  },
+  {
+   "before": 3165,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 1428693.9000000006
+  },
+  {
+   "before": 3170,
+   "kinds": [
+    "move",
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 637433.76
+  },
+  {
+   "before": 3172,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 3174,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 241067.20000000004
+  },
+  {
+   "before": 3178,
+   "kinds": [
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 1484466.0799999998
+  },
+  {
+   "before": 3180,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 3182,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 180091.90000000005
+  },
+  {
+   "before": 3186,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 548845.0000000001
+  },
+  {
+   "before": 3188,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 409342.48
+  },
+  {
+   "before": 3191,
+   "kinds": [
+    "quant",
+    "quant"
+   ],
+   "cycles": 1428693.9000000006
+  },
+  {
+   "before": 3196,
+   "kinds": [
+    "move",
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 637433.76
+  },
+  {
+   "before": 3198,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 3200,
+   "kinds": [
+    "quant"
+   ],
+   "cycles": 241067.20000000004
+  },
+  {
+   "before": 3204,
+   "kinds": [
+    "move",
+    "quant",
+    "move"
+   ],
+   "cycles": 1484466.0799999998
+  },
+  {
+   "before": 3206,
+   "kinds": [
+    "move"
+   ],
+   "cycles": 116626.0
+  },
+  {
+   "before": 3209,
+   "kinds": [
+    "convert",
+    "quant"
+   ],
+   "cycles": 6146.1
+  }
+ ]
+}

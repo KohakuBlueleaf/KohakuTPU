@@ -1,0 +1,163 @@
+{
+ "inputs_completed": 8,
+ "input_intervals": 9,
+ "schema": 2,
+ "round": "r3f",
+ "path": "firmware",
+ "batch": 4,
+ "blocks": 12,
+ "workload": "vitb",
+ "board": "multimesh_v9t6",
+ "nodes": 4,
+ "args": [
+  "--batch",
+  "4",
+  "--inputs",
+  "10",
+  "--width",
+  "768",
+  "--board",
+  "multimesh_v9t6",
+  "--nodes",
+  "4",
+  "--inputs",
+  "12",
+  "--blocks",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma",
+  "--report",
+  "/home/kblueleaf/kt/build/perf/traces/r3f/vitb.r3f.firmware.b4.i12.k12.multimesh_v9t6.4n/report.json",
+  "--references",
+  "/home/kblueleaf/kt/build/perf/references"
+ ],
+ "seconds": 2250.91,
+ "done": "teardown failure: Traceback (most recent call last):\n  File \"/home/kblueleaf/kt/software/tests/perf/record.py\", line 635, in main\n    raise RuntimeError(\n        \"boot teardown skipped after transport failure; reset required\"\n    )\nRuntimeError: boot teardown skipped after transport failure; reset required\n",
+ "spans": {
+  "copyin": {
+   "calls": 169,
+   "seconds": 0.16422826767666265
+  },
+  "compile_graph": {
+   "calls": 38,
+   "seconds": 2.511167437012773
+  },
+  "bind_admit": {
+   "calls": 1338,
+   "seconds": 1.2281111684278585
+  },
+  "submit": {
+   "calls": 1338,
+   "seconds": 98.31076323636808
+  },
+  "generate_launch": {
+   "calls": 1221,
+   "seconds": 380.6449782589334
+  },
+  "collect": {
+   "calls": 1349,
+   "seconds": 0.13359125790884718
+  },
+  "rows": {
+   "calls": 161,
+   "seconds": 49.15790077543352
+  },
+  "copyout": {
+   "calls": 8,
+   "seconds": 0.007429634977597743
+  },
+  "graph_fill": {
+   "calls": 8,
+   "seconds": 0.010008087032474577
+  },
+  "graph_storages": {
+   "calls": 8,
+   "seconds": 0.0007110729929991066
+  },
+  "graph_call": {
+   "calls": 8,
+   "seconds": 1791.1845614679623
+  },
+  "replay": {
+   "calls": 5,
+   "seconds": 302.1809558341047
+  },
+  "graph_restore": {
+   "calls": 4,
+   "seconds": 0.0028646200080402195
+  }
+ },
+ "graphs": [
+  {
+   "kernels": 309,
+   "counts": {
+    "planned": 0,
+    "recorded": 3,
+    "replayed": 5
+   },
+   "history": [
+    "recorded: first",
+    "recorded: entry item 0: ((frozenset({('flat',)}), False, None, ((('flat',), 5578653952, 1204224),)), (frozenset({('flat',)}), True, None, ((('flat',), 5577449728, 1204224),)), (frozenset({('flat',)}), False, None, ((('flat', vs ((frozenset({('flat',)}), False, <class 'numpy.float16'>, ((('flat',), 5578653952, 1204224),)), (frozenset({('flat',)}), True, None, ((('flat',), 5577449728, 1204224),)), (frozenset({('flat',)}), Fals",
+    "recorded: verified",
+    "replayed",
+    "replayed",
+    "replayed",
+    "replayed",
+    "replayed"
+   ]
+  }
+ ],
+ "profile": "mid",
+ "knobs": {
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "clocks": {
+  "0": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "1": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "2": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "3": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  }
+ },
+ "check": null,
+ "profiled": null,
+ "jit": true,
+ "commit": "cc5a9c27",
+ "backend": "firmware",
+ "firmware": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+ "os_flags": null,
+ "os_command": null,
+ "when": 1794305446.1333096,
+ "launches": 1348,
+ "kernels": 39,
+ "compiles": [],
+ "replay_counts": {
+  "replay_inputs": 0,
+  "replay_calls": 5,
+  "retained_launches": 5
+ }
+}

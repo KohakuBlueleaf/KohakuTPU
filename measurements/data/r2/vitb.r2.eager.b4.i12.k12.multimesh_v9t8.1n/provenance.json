@@ -1,0 +1,57 @@
+{
+  "schema": 2,
+  "round": "r2",
+  "workload": "vitb",
+  "board": "multimesh_v9t8",
+  "nodes": 1,
+  "batch": 4,
+  "blocks": 12,
+  "path": "eager",
+  "args": [
+    "vitb",
+    "--board",
+    "multimesh_v9t8",
+    "--nodes",
+    "1",
+    "--batch",
+    "4",
+    "--steps",
+    "12",
+    "--blocks",
+    "12"
+  ],
+  "done": "started",
+  "commit": "f23df834",
+  "clocks": {
+    "0": {
+      "noc": 200.0,
+      "mat2x": 400.0,
+      "vec": 200.0,
+      "sys": 200.0,
+      "locked": true
+    },
+    "1": {
+      "noc": 200.0,
+      "mat2x": 400.0,
+      "vec": 200.0,
+      "sys": 200.0,
+      "locked": true
+    },
+    "2": {
+      "noc": 200.0,
+      "mat2x": 400.0,
+      "vec": 200.0,
+      "sys": 200.0,
+      "locked": true
+    },
+    "3": {
+      "noc": 200.0,
+      "mat2x": 400.0,
+      "vec": 200.0,
+      "sys": 200.0,
+      "locked": true
+    }
+  },
+  "profile": "mid",
+  "matrix_sha256": "7bdf87f2478193ca2eb94bfa37d92679ed503d5e2f0d8f58c868f869eaa3af52"
+}

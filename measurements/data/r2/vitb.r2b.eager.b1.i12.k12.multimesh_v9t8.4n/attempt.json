@@ -1,0 +1,15 @@
+{
+  "point": {
+    "workload": "vitb",
+    "board": "multimesh_v9t8",
+    "sysnodes": 4,
+    "batch": 1,
+    "path": "eager",
+    "inputs": 12,
+    "blocks": 12
+  },
+  "ended": 1794259468.842886,
+  "status": "complete",
+  "returncode": 0,
+  "timed_out": false
+}

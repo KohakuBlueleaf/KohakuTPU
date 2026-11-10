@@ -1,0 +1,62 @@
+{
+ "host_ms": {
+  "between": 0.0,
+  "submit": 139.987,
+  "replays": 8,
+  "replay_between": 86.858,
+  "replay_publish": 0.454
+ },
+ "mfu": {
+  "mg": 0.1029193741359022,
+  "vc": 0.21102970868501575,
+  "read_bus": 0.36789713924160866,
+  "write_bus": 0.32176000562530405
+ },
+ "selection": {
+  "group": "input",
+  "input": 6
+ },
+ "dataflow_unavailable": [
+  "captured_split__27d3d5fb3f17f11fb61e"
+ ],
+ "detector_scope": "inter-launch dataflow where L2 is retained; combined graph internals are opaque",
+ "evidence": "timed model of actual selected launched programs, not measured savings",
+ "trace": "vitb.h3smoke3.firmware.b1.i12.k12.multimesh_v9t8.2n",
+ "machine": "multimesh_v9t8",
+ "launches": 8,
+ "step_launches": 1,
+ "step_cycles": 21280606.666566823,
+ "step_with_seams": 21283922.666566823,
+ "floors": {
+  "math": 4491540.0,
+  "compute": 7830294.260869565,
+  "with_form": 7830294.260869565
+ },
+ "kinds": {
+  "graph": {
+   "launches": 1,
+   "cycles": 21280606.666566823,
+   "stalled": 21795807.7577176,
+   "image_words": 528013.0,
+   "lone_moves": 0.0,
+   "lone_words": 0.0,
+   "macs": 17944805376.0,
+   "math_beats": 17951312.0,
+   "mover_bytes": 4525440.0,
+   "mover_statements": 139.0,
+   "pack_words": 6057012.0,
+   "read_bytes": 355003264.0,
+   "unpack_words": 4745160.0,
+   "words": 80228.0,
+   "write_bytes": 178007040.0
+  }
+ },
+ "labels": {
+  "seam.front": 1216.0,
+  "seam.gap": 2100.0,
+  "graph.run": 21280606.666566823
+ },
+ "recoverable": {},
+ "findings": [],
+ "chains": []
+}

@@ -1,0 +1,23 @@
+[
+  "/home/kblueleaf/kt/.venv/bin/python",
+  "/home/kblueleaf/kt/software/tests/perf/record.py",
+  "vitb",
+  "--board",
+  "multimesh_v9t8",
+  "--nodes",
+  "4",
+  "--batch",
+  "4",
+  "--steps",
+  "12",
+  "--blocks",
+  "12",
+  "--card",
+  "--measure",
+  "--out",
+  "/home/kblueleaf/kt/build/perf/traces/r2c/vitb.r2c.eager.b4.i12.k12.multimesh_v9t8.4n",
+  "--round",
+  "r2c",
+  "--min-replays",
+  "8"
+]

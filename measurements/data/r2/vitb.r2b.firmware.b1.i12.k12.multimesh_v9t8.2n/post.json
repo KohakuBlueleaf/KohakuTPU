@@ -1,0 +1,8 @@
+{
+ "schema": 2,
+ "machine": "multimesh_v9t8",
+ "complete": false,
+ "errors": [
+  "Traceback (most recent call last):\n  File \"/home/kblueleaf/kt/measurements/tools/host_round.py\", line 110, in post\n    raise ValueError(\n        f\"driver attempt is {attempt.get('status')}; not a scored run\"\n    )\nValueError: driver attempt is software_failure; not a scored run\n"
+ ]
+}

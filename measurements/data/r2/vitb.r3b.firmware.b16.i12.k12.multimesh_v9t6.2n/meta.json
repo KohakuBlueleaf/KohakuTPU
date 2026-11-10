@@ -1,0 +1,237 @@
+{
+ "counters": {
+  "runs": 1338,
+  "cycles": 1652977313,
+  "bytes_in": 206854720,
+  "bytes_out": 98304,
+  "library_hits": 0,
+  "class_hits": 0,
+  "exact_hits": 0,
+  "library_misses": 0,
+  "compile_calls": 39,
+  "compile_seconds": 396.17103905417025,
+  "kernel_reuses": 1183,
+  "f001_split": 0
+ },
+ "runs": 1338,
+ "retirement_rows": 1338,
+ "ring_lost": [],
+ "clock_checks": [
+  {
+   "when": "after_boot",
+   "clocks": {
+    "0": {
+     "noc": 200.0,
+     "mat2x": 400.0,
+     "vec": 200.0,
+     "sys": 200.0,
+     "locked": true
+    },
+    "1": {
+     "noc": 200.0,
+     "mat2x": 400.0,
+     "vec": 200.0,
+     "sys": 200.0,
+     "locked": true
+    },
+    "2": {
+     "noc": 200.0,
+     "mat2x": 400.0,
+     "vec": 200.0,
+     "sys": 200.0,
+     "locked": true
+    },
+    "3": {
+     "noc": 200.0,
+     "mat2x": 400.0,
+     "vec": 200.0,
+     "sys": 200.0,
+     "locked": true
+    }
+   },
+   "matches": true
+  },
+  {
+   "when": "before_close",
+   "clocks": {
+    "0": {
+     "noc": 200.0,
+     "mat2x": 400.0,
+     "vec": 200.0,
+     "sys": 200.0,
+     "locked": true
+    },
+    "1": {
+     "noc": 200.0,
+     "mat2x": 400.0,
+     "vec": 200.0,
+     "sys": 200.0,
+     "locked": true
+    },
+    "2": {
+     "noc": 200.0,
+     "mat2x": 400.0,
+     "vec": 200.0,
+     "sys": 200.0,
+     "locked": true
+    },
+    "3": {
+     "noc": 200.0,
+     "mat2x": 400.0,
+     "vec": 200.0,
+     "sys": 200.0,
+     "locked": true
+    }
+   },
+   "matches": true
+  }
+ ],
+ "inputs_completed": 3,
+ "input_intervals": 4,
+ "schema": 2,
+ "round": "r3b",
+ "path": "firmware",
+ "batch": 16,
+ "blocks": 12,
+ "workload": "vitb",
+ "board": "multimesh_v9t6",
+ "nodes": 2,
+ "args": [
+  "--batch",
+  "16",
+  "--inputs",
+  "10",
+  "--width",
+  "768",
+  "--board",
+  "multimesh_v9t6",
+  "--nodes",
+  "2",
+  "--inputs",
+  "12",
+  "--blocks",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma",
+  "--report",
+  "/home/kblueleaf/kt/build/perf/traces/r3b/vitb.r3b.firmware.b16.i12.k12.multimesh_v9t6.2n/report.json",
+  "--references",
+  "/home/kblueleaf/kt/build/perf/references"
+ ],
+ "seconds": 2720.41,
+ "done": "^^^^^^^^^^^^^^^\n  File \"/home/kblueleaf/kt/software/tests/perf/record.py\", line 240, in call\n    return fn(*args, **kw)\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/device.py\", line 502, in __call__\n    rt.prepare_recorded(log)\n    ~~~~~~~~~~~~~~~~~~~^^^^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/device/replay.py\", line 137, in prepare_recorded\n    log.split = split_recorded.prepare(log)\n                ~~~~~~~~~~~~~~~~~~~~~~^^^^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/graph/split_recorded.py\", line 219, in prepare\n    prepared.bind_artifact()\n    ~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/graph/split.py\", line 68, in bind_artifact\n    self.artifact = bind(self)\n                    ~~~~^^^^^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/graph/bound.py\", line 63, in bind\n    programs = compiled.programs(\n        physical if compiled.bound is not None else full, dev.home\n    )\n  File \"/home/kblueleaf/kt/software/kohakutpu/compiler/kohakutpu/stack/kernel.py\", line 82, in programs\n    got = self._prebuilt(binds, node)\n  File \"/home/kblueleaf/kt/software/kohakutpu/compiler/kohakutpu/stack/kernel.py\", line 95, in _prebuilt\n    got = rs.compile(\n        self.l1.source,\n    ...<4 lines>...\n        compositional=self.compositional,\n    )\n  File \"/home/kblueleaf/kt/software/kohakutpu/compiler/kohakutpu/stack/rs.py\", line 98, in compile\n    raise TextError(str(exc), name=f\"<{name}.l2>\") from exc\nkohakutpu.language.text.syntax.TextError: <captured_split.l2>: order: L0.PKG.011: L0.PKG.011: a count does not fit its 16-bit header field\n",
+ "spans": {
+  "copyin": {
+   "calls": 159,
+   "seconds": 0.17559191555483267
+  },
+  "compile_graph": {
+   "calls": 38,
+   "seconds": 1.4571211769944057
+  },
+  "bind_admit": {
+   "calls": 1338,
+   "seconds": 6.926453618973028
+  },
+  "submit": {
+   "calls": 1338,
+   "seconds": 15.73989162093494
+  },
+  "generate_launch": {
+   "calls": 1221,
+   "seconds": 825.9474284232128
+  },
+  "collect": {
+   "calls": 1341,
+   "seconds": 0.16203492024214938
+  },
+  "rows": {
+   "calls": 161,
+   "seconds": 183.13971584604587
+  },
+  "copyout": {
+   "calls": 3,
+   "seconds": 0.0029998350655660033
+  },
+  "graph_fill": {
+   "calls": 3,
+   "seconds": 0.017217234068084508
+  },
+  "graph_storages": {
+   "calls": 3,
+   "seconds": 0.0005051280022598803
+  },
+  "graph_call": {
+   "calls": 3,
+   "seconds": 1655.6003513120231
+  }
+ },
+ "graphs": [
+  {
+   "kernels": 309,
+   "counts": {
+    "planned": 0,
+    "recorded": 3,
+    "replayed": 0
+   },
+   "history": [
+    "recorded: first",
+    "recorded: entry item 0: ((frozenset({('flat',)}), False, None, ((('flat',), 8133218816, 4816896),)), (frozenset({('flat',)}), True, None, ((('flat',), 8128401920, 4816896),)), (frozenset({('flat',)}), False, None, ((('flat', vs ((frozenset({('flat',)}), False, <class 'numpy.float16'>, ((('flat',), 8133218816, 4816896),)), (frozenset({('flat',)}), True, None, ((('flat',), 8128401920, 4816896),)), (frozenset({('flat',)}), Fals",
+    "recorded: verified"
+   ]
+  }
+ ],
+ "profile": "mid",
+ "knobs": {
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "clocks": {
+  "0": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "1": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "2": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "3": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  }
+ },
+ "check": null,
+ "profiled": null,
+ "jit": true,
+ "commit": "31007418",
+ "backend": "firmware",
+ "firmware": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+ "os_flags": null,
+ "os_command": null,
+ "when": 1794282687.5010562,
+ "launches": 1338,
+ "kernels": 38,
+ "compiles": [],
+ "replay_counts": {
+  "replay_inputs": 0,
+  "replay_calls": 0,
+  "retained_launches": 0
+ }
+}

@@ -1,0 +1,237 @@
+{
+ "counters": {
+  "runs": 1334,
+  "cycles": 3233653930,
+  "bytes_in": 206854336,
+  "bytes_out": 98304,
+  "library_hits": 0,
+  "class_hits": 0,
+  "exact_hits": 0,
+  "library_misses": 0,
+  "compile_calls": 44,
+  "compile_seconds": 1667.6793955997564,
+  "kernel_reuses": 1180,
+  "f001_split": 0
+ },
+ "runs": 1334,
+ "retirement_rows": 1334,
+ "ring_lost": [],
+ "clock_checks": [
+  {
+   "when": "after_boot",
+   "clocks": {
+    "0": {
+     "noc": 200.0,
+     "mat2x": 400.0,
+     "vec": 200.0,
+     "sys": 200.0,
+     "locked": true
+    },
+    "1": {
+     "noc": 200.0,
+     "mat2x": 400.0,
+     "vec": 200.0,
+     "sys": 200.0,
+     "locked": true
+    },
+    "2": {
+     "noc": 200.0,
+     "mat2x": 400.0,
+     "vec": 200.0,
+     "sys": 200.0,
+     "locked": true
+    },
+    "3": {
+     "noc": 200.0,
+     "mat2x": 400.0,
+     "vec": 200.0,
+     "sys": 200.0,
+     "locked": true
+    }
+   },
+   "matches": true
+  },
+  {
+   "when": "before_close",
+   "clocks": {
+    "0": {
+     "noc": 200.0,
+     "mat2x": 400.0,
+     "vec": 200.0,
+     "sys": 200.0,
+     "locked": true
+    },
+    "1": {
+     "noc": 200.0,
+     "mat2x": 400.0,
+     "vec": 200.0,
+     "sys": 200.0,
+     "locked": true
+    },
+    "2": {
+     "noc": 200.0,
+     "mat2x": 400.0,
+     "vec": 200.0,
+     "sys": 200.0,
+     "locked": true
+    },
+    "3": {
+     "noc": 200.0,
+     "mat2x": 400.0,
+     "vec": 200.0,
+     "sys": 200.0,
+     "locked": true
+    }
+   },
+   "matches": true
+  }
+ ],
+ "inputs_completed": 3,
+ "input_intervals": 4,
+ "schema": 2,
+ "round": "r3d",
+ "path": "firmware",
+ "batch": 16,
+ "blocks": 12,
+ "workload": "vitb",
+ "board": "multimesh_v9t6",
+ "nodes": 1,
+ "args": [
+  "--batch",
+  "16",
+  "--inputs",
+  "10",
+  "--width",
+  "768",
+  "--board",
+  "multimesh_v9t6",
+  "--nodes",
+  "1",
+  "--inputs",
+  "12",
+  "--blocks",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma",
+  "--report",
+  "/home/kblueleaf/kt/build/perf/traces/r3d/vitb.r3d.firmware.b16.i12.k12.multimesh_v9t6.1n/report.json",
+  "--references",
+  "/home/kblueleaf/kt/build/perf/references"
+ ],
+ "seconds": 3439.43,
+ "done": " in compiled_match\n  File \"/home/kblueleaf/kt/.venv/lib/python3.13/site-packages/tinygrad/engine/realize.py\", line 210, in exec_graph\n    return [get_graph_runtime(ast, ctx.input_uops)(ctx.input_uops, ctx.var_vals, wait=ctx.wait)]\n            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/kblueleaf/kt/software/tests/perf/record.py\", line 259, in call\n    return fn(*args, **kw)\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/ktpugrad/device.py\", line 502, in __call__\n    rt.prepare_recorded(log)\n    ~~~~~~~~~~~~~~~~~~~^^^^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/device/replay.py\", line 137, in prepare_recorded\n    log.split = split_recorded.prepare(log)\n                ~~~~~~~~~~~~~~~~~~~~~~^^^^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/graph/split_recorded.py\", line 219, in prepare\n    prepared.bind_artifact()\n    ~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/graph/split.py\", line 97, in bind_artifact\n    artifact = bind_parts(self, bind, error)\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/graph/parts.py\", line 287, in bind_parts\n    _prove_sequence(prepared, stages)\n    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^\n  File \"/home/kblueleaf/kt/software/kohakutpu/application/kohakutpu/application/runtime/graph/parts.py\", line 238, in _prove_sequence\n    raise ValueError(\n        \"retained part sequence proof refused: \" + json.dumps(verdict[\"findings\"])\n    )\nValueError: retained part sequence proof refused: [{\"at\": \"machine\", \"clause\": \"L1.VER.013\", \"kind\": \"model\", \"text\": \"over 200000000 events\"}]\n",
+ "spans": {
+  "copyin": {
+   "calls": 159,
+   "seconds": 0.17500276118516922
+  },
+  "compile_graph": {
+   "calls": 37,
+   "seconds": 0.6702541290433146
+  },
+  "bind_admit": {
+   "calls": 1334,
+   "seconds": 15.303727437043563
+  },
+  "submit": {
+   "calls": 1334,
+   "seconds": 21.573246145329904
+  },
+  "generate_launch": {
+   "calls": 1217,
+   "seconds": 21.87892255024053
+  },
+  "rows": {
+   "calls": 161,
+   "seconds": 3.012793482048437
+  },
+  "collect": {
+   "calls": 1337,
+   "seconds": 6.28674122603843
+  },
+  "copyout": {
+   "calls": 3,
+   "seconds": 1.4477496370091103
+  },
+  "graph_fill": {
+   "calls": 3,
+   "seconds": 0.012523447920102626
+  },
+  "graph_storages": {
+   "calls": 3,
+   "seconds": 0.00041385297663509846
+  },
+  "graph_call": {
+   "calls": 3,
+   "seconds": 3410.331143275951
+  }
+ },
+ "graphs": [
+  {
+   "kernels": 309,
+   "counts": {
+    "planned": 0,
+    "recorded": 3,
+    "replayed": 0
+   },
+   "history": [
+    "recorded: first",
+    "recorded: entry item 0: ((frozenset({('flat',)}), False, None, ((('flat',), 8090135040, 4816896),)), (frozenset({('flat',)}), True, None, ((('flat',), 8085318144, 4816896),)), (frozenset({('flat',)}), False, None, ((('flat', vs ((frozenset({('flat',)}), False, <class 'numpy.float16'>, ((('flat',), 8090135040, 4816896),)), (frozenset({('flat',)}), True, None, ((('flat',), 8085318144, 4816896),)), (frozenset({('flat',)}), Fals",
+    "recorded: verified"
+   ]
+  }
+ ],
+ "profile": "mid",
+ "knobs": {
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "clocks": {
+  "0": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "1": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "2": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "3": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  }
+ },
+ "check": null,
+ "profiled": null,
+ "jit": true,
+ "commit": "f180a620",
+ "backend": "firmware",
+ "firmware": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+ "os_flags": null,
+ "os_command": null,
+ "when": 1794295946.8782775,
+ "launches": 1334,
+ "kernels": 37,
+ "compiles": [],
+ "replay_counts": {
+  "replay_inputs": 0,
+  "replay_calls": 0,
+  "retained_launches": 0
+ }
+}

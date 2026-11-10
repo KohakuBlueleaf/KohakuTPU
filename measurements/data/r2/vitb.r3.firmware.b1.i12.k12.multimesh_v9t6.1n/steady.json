@@ -1,0 +1,192 @@
+{
+ "schema": 1,
+ "path": "firmware",
+ "selected_inputs": [
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  11
+ ],
+ "replay_inputs": 8,
+ "replay_calls": 8,
+ "retained_launches": 8,
+ "groups": {
+  "input": {
+   "samples": 8,
+   "representative_input": 11,
+   "launch_max_sum": 40822594,
+   "kinds": {
+    "graph": 40822594
+   },
+   "global_host_bound_ns": 218697860.5,
+   "global_cycles_bound": 43743260.5
+  }
+ },
+ "samples": [
+  {
+   "input": 4,
+   "index": 4,
+   "group": "input",
+   "first_seq": 1053,
+   "complete": true,
+   "end_seq": 1055,
+   "host_start_ns": 376586609039818,
+   "host_end_ns": 376586954288287,
+   "global_host_bound_ns": 345248469,
+   "global_scope": "input upload through all-node drain; includes host and output readback when requested",
+   "global_cycles_bound": 69052942,
+   "reference_node": 0,
+   "global_clock": "reference HR_CYCLES, enclosing bound, not busy makespan",
+   "launch_max_sum": 40834440,
+   "kinds": {
+    "graph": 40834440
+   },
+   "launches": 1
+  },
+  {
+   "input": 5,
+   "index": 5,
+   "group": "input",
+   "first_seq": 1055,
+   "complete": true,
+   "end_seq": 1057,
+   "host_start_ns": 376586999252371,
+   "host_end_ns": 376587214846739,
+   "global_host_bound_ns": 215594368,
+   "global_scope": "input upload through all-node drain; includes host and output readback when requested",
+   "global_cycles_bound": 43122880,
+   "reference_node": 0,
+   "global_clock": "reference HR_CYCLES, enclosing bound, not busy makespan",
+   "launch_max_sum": 40842310,
+   "kinds": {
+    "graph": 40842310
+   },
+   "launches": 1
+  },
+  {
+   "input": 6,
+   "index": 6,
+   "group": "input",
+   "first_seq": 1057,
+   "complete": true,
+   "end_seq": 1059,
+   "host_start_ns": 376587274148418,
+   "host_end_ns": 376587494555147,
+   "global_host_bound_ns": 220406729,
+   "global_scope": "input upload through all-node drain; includes host and output readback when requested",
+   "global_cycles_bound": 44086917,
+   "reference_node": 0,
+   "global_clock": "reference HR_CYCLES, enclosing bound, not busy makespan",
+   "launch_max_sum": 40817997,
+   "kinds": {
+    "graph": 40817997
+   },
+   "launches": 1
+  },
+  {
+   "input": 7,
+   "index": 7,
+   "group": "input",
+   "first_seq": 1059,
+   "complete": true,
+   "end_seq": 1061,
+   "host_start_ns": 376587550906136,
+   "host_end_ns": 376587769993443,
+   "global_host_bound_ns": 219087307,
+   "global_scope": "input upload through all-node drain; includes host and output readback when requested",
+   "global_cycles_bound": 43823121,
+   "reference_node": 0,
+   "global_clock": "reference HR_CYCLES, enclosing bound, not busy makespan",
+   "launch_max_sum": 40827879,
+   "kinds": {
+    "graph": 40827879
+   },
+   "launches": 1
+  },
+  {
+   "input": 8,
+   "index": 8,
+   "group": "input",
+   "first_seq": 1061,
+   "complete": true,
+   "end_seq": 1063,
+   "host_start_ns": 376587826529390,
+   "host_end_ns": 376588045265407,
+   "global_host_bound_ns": 218736017,
+   "global_scope": "input upload through all-node drain; includes host and output readback when requested",
+   "global_cycles_bound": 43751011,
+   "reference_node": 0,
+   "global_clock": "reference HR_CYCLES, enclosing bound, not busy makespan",
+   "launch_max_sum": 40788915,
+   "kinds": {
+    "graph": 40788915
+   },
+   "launches": 1
+  },
+  {
+   "input": 9,
+   "index": 9,
+   "group": "input",
+   "first_seq": 1063,
+   "complete": true,
+   "end_seq": 1065,
+   "host_start_ns": 376588102741593,
+   "host_end_ns": 376588321063731,
+   "global_host_bound_ns": 218322138,
+   "global_scope": "input upload through all-node drain; includes host and output readback when requested",
+   "global_cycles_bound": 43670063,
+   "reference_node": 0,
+   "global_clock": "reference HR_CYCLES, enclosing bound, not busy makespan",
+   "launch_max_sum": 40777399,
+   "kinds": {
+    "graph": 40777399
+   },
+   "launches": 1
+  },
+  {
+   "input": 10,
+   "index": 10,
+   "group": "input",
+   "first_seq": 1065,
+   "complete": true,
+   "end_seq": 1067,
+   "host_start_ns": 376588381497219,
+   "host_end_ns": 376588600156923,
+   "global_host_bound_ns": 218659704,
+   "global_scope": "input upload through all-node drain; includes host and output readback when requested",
+   "global_cycles_bound": 43735510,
+   "reference_node": 0,
+   "global_clock": "reference HR_CYCLES, enclosing bound, not busy makespan",
+   "launch_max_sum": 40781313,
+   "kinds": {
+    "graph": 40781313
+   },
+   "launches": 1
+  },
+  {
+   "input": 11,
+   "index": 11,
+   "group": "input",
+   "first_seq": 1067,
+   "complete": true,
+   "end_seq": 1069,
+   "host_start_ns": 376588656390863,
+   "host_end_ns": 376588874790727,
+   "global_host_bound_ns": 218399864,
+   "global_scope": "input upload through all-node drain; includes host and output readback when requested",
+   "global_cycles_bound": 43683478,
+   "reference_node": 0,
+   "global_clock": "reference HR_CYCLES, enclosing bound, not busy makespan",
+   "launch_max_sum": 40822594,
+   "kinds": {
+    "graph": 40822594
+   },
+   "launches": 1
+  }
+ ],
+ "attribution": "measured launch kinds; combined retained regions are graph, not capture-derived kernel kinds"
+}

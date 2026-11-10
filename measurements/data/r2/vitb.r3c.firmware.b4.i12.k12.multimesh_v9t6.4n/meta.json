@@ -1,0 +1,120 @@
+{
+ "inputs_completed": 0,
+ "input_intervals": 1,
+ "schema": 2,
+ "round": "r3c",
+ "path": "firmware",
+ "batch": 4,
+ "blocks": 12,
+ "workload": "vitb",
+ "board": "multimesh_v9t6",
+ "nodes": 4,
+ "args": [
+  "--batch",
+  "4",
+  "--inputs",
+  "10",
+  "--width",
+  "768",
+  "--board",
+  "multimesh_v9t6",
+  "--nodes",
+  "4",
+  "--inputs",
+  "12",
+  "--blocks",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma",
+  "--report",
+  "/home/kblueleaf/kt/build/perf/traces/r3c/vitb.r3c.firmware.b4.i12.k12.multimesh_v9t6.4n/report.json",
+  "--references",
+  "/home/kblueleaf/kt/build/perf/references"
+ ],
+ "seconds": 82.4,
+ "done": "teardown failure: Traceback (most recent call last):\n  File \"/home/kblueleaf/kt/software/tests/perf/record.py\", line 635, in main\n    raise RuntimeError(\n        \"boot teardown skipped after transport failure; reset required\"\n    )\nRuntimeError: boot teardown skipped after transport failure; reset required\n",
+ "spans": {
+  "copyin": {
+   "calls": 153,
+   "seconds": 0.14633372105890885
+  },
+  "compile_graph": {
+   "calls": 9,
+   "seconds": 21.544734161056112
+  },
+  "bind_admit": {
+   "calls": 8,
+   "seconds": 0.12634774600155652
+  },
+  "submit": {
+   "calls": 9,
+   "seconds": 8.109612073923927
+  },
+  "generate_launch": {
+   "calls": 9,
+   "seconds": 38.71604080288671
+  },
+  "collect": {
+   "calls": 7,
+   "seconds": 0.0008317730389535427
+  },
+  "rows": {
+   "calls": 3,
+   "seconds": 27.206852892995812
+  }
+ },
+ "graphs": [],
+ "profile": "mid",
+ "knobs": {
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "clocks": {
+  "0": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "1": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "2": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "3": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  }
+ },
+ "check": null,
+ "profiled": null,
+ "jit": true,
+ "commit": "16526032",
+ "backend": "firmware",
+ "firmware": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+ "os_flags": null,
+ "os_command": null,
+ "when": 1794290886.3521106,
+ "launches": 9,
+ "kernels": 9,
+ "compiles": [],
+ "replay_counts": {
+  "replay_inputs": 0,
+  "replay_calls": 0,
+  "retained_launches": 0
+ }
+}

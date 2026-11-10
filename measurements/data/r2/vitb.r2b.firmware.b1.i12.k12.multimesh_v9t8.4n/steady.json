@@ -1,0 +1,11 @@
+{
+ "schema": 1,
+ "path": "firmware",
+ "selected_inputs": [],
+ "replay_inputs": 0,
+ "replay_calls": 2,
+ "retained_launches": 2,
+ "groups": {},
+ "samples": [],
+ "attribution": "measured launch kinds; combined retained regions are graph, not capture-derived kernel kinds"
+}

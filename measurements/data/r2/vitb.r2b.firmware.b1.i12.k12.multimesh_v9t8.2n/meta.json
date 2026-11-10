@@ -1,0 +1,146 @@
+{
+ "inputs_completed": 1,
+ "input_intervals": 2,
+ "schema": 2,
+ "round": "r2b",
+ "path": "firmware",
+ "batch": 1,
+ "blocks": 12,
+ "workload": "vitb",
+ "board": "multimesh_v9t8",
+ "nodes": 2,
+ "args": [
+  "--batch",
+  "1",
+  "--inputs",
+  "10",
+  "--width",
+  "768",
+  "--board",
+  "multimesh_v9t8",
+  "--nodes",
+  "2",
+  "--inputs",
+  "12",
+  "--blocks",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma",
+  "--report",
+  "/home/kblueleaf/kt/build/perf/traces/r2b/vitb.r2b.firmware.b1.i12.k12.multimesh_v9t8.2n/report.json",
+  "--references",
+  "/home/kblueleaf/kt/build/perf/references"
+ ],
+ "seconds": 156.02,
+ "done": "measurement failure: Traceback (most recent call last):\n  File \"/home/kblueleaf/kt/software/tests/perf/record.py\", line 603, in main\n    card_meta = write() if write is not None else {}\n                ~~~~~^^\n  File \"/home/kblueleaf/kt/software/tests/perf/retirement.py\", line 297, in write\n    rows = card_rows(entries, slots if measure and backend != \"kaos\" else None)\n  File \"/home/kblueleaf/kt/software/tests/perf/retirement.py\", line 148, in card_rows\n    raise ValueError(\n        f\"unmatched measure records: { {n: len(s) for n, s in streams.items() if s} }\"\n    )\nValueError: unmatched measure records: {'0': 1, '1': 1}\n",
+ "spans": {
+  "copyin": {
+   "calls": 155,
+   "seconds": 0.14754213363630697
+  },
+  "compile_graph": {
+   "calls": 33,
+   "seconds": 0.11850445135496557
+  },
+  "bind_admit": {
+   "calls": 332,
+   "seconds": 0.030031337577383965
+  },
+  "submit": {
+   "calls": 333,
+   "seconds": 0.7121448304387741
+  },
+  "generate_launch": {
+   "calls": 195,
+   "seconds": 121.58005003037397
+  },
+  "collect": {
+   "calls": 333,
+   "seconds": 0.024809484486468136
+  },
+  "rows": {
+   "calls": 12,
+   "seconds": 36.7946637510322
+  },
+  "copyout": {
+   "calls": 1,
+   "seconds": 0.000653857016004622
+  },
+  "graph_fill": {
+   "calls": 1,
+   "seconds": 0.0004180139512754977
+  },
+  "graph_storages": {
+   "calls": 1,
+   "seconds": 0.0005358660127967596
+  },
+  "graph_call": {
+   "calls": 1,
+   "seconds": 0.04623284802073613
+  }
+ },
+ "graphs": [
+  {
+   "kernels": 309,
+   "counts": {
+    "planned": 0,
+    "recorded": 1,
+    "replayed": 0
+   },
+   "history": []
+  }
+ ],
+ "profile": "mid",
+ "knobs": {
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "clocks": {
+  "0": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "1": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "2": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "3": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  }
+ },
+ "check": null,
+ "profiled": null,
+ "jit": true,
+ "commit": "f23df834",
+ "backend": "firmware",
+ "firmware": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+ "os_flags": null,
+ "os_command": null,
+ "when": 1794255579.319978,
+ "launches": 333,
+ "kernels": 33,
+ "compiles": [],
+ "replay_counts": {
+  "replay_inputs": 0,
+  "replay_calls": 0,
+  "retained_launches": 0
+ }
+}

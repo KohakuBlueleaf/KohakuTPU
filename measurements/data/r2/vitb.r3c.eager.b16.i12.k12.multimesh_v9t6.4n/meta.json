@@ -1,0 +1,121 @@
+{
+ "inputs_completed": 0,
+ "input_intervals": 1,
+ "schema": 2,
+ "round": "r3c",
+ "path": "eager",
+ "batch": 16,
+ "blocks": 12,
+ "workload": "vitb",
+ "board": "multimesh_v9t6",
+ "nodes": 4,
+ "args": [
+  "--batch",
+  "16",
+  "--inputs",
+  "10",
+  "--width",
+  "768",
+  "--board",
+  "multimesh_v9t6",
+  "--nodes",
+  "4",
+  "--no-jit",
+  "--inputs",
+  "12",
+  "--blocks",
+  "12",
+  "--device",
+  "card",
+  "--transport",
+  "xdma",
+  "--report",
+  "/home/kblueleaf/kt/build/perf/traces/r3c/vitb.r3c.eager.b16.i12.k12.multimesh_v9t6.4n/report.json",
+  "--references",
+  "/home/kblueleaf/kt/build/perf/references"
+ ],
+ "seconds": 167.71,
+ "done": "measurement failure: Traceback (most recent call last):\n  File \"/home/kblueleaf/kt/software/tests/perf/record.py\", line 625, in main\n    card_meta = write() if write is not None else {}\n                ~~~~~^^\n  File \"/home/kblueleaf/kt/software/tests/perf/retirement.py\", line 316, in write\n    check_clocks(dev, \"after_workload\")\n    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/kblueleaf/kt/software/tests/perf/retirement.py\", line 187, in check_clocks\n    raise RuntimeError(\"clock read skipped: transport is dead\")\nRuntimeError: clock read skipped: transport is dead\n",
+ "spans": {
+  "copyin": {
+   "calls": 153,
+   "seconds": 0.15334764862200245
+  },
+  "compile_graph": {
+   "calls": 7,
+   "seconds": 0.9825194489094429
+  },
+  "bind_admit": {
+   "calls": 6,
+   "seconds": 0.26006770599633455
+  },
+  "submit": {
+   "calls": 7,
+   "seconds": 8.388160570000764
+  },
+  "generate_launch": {
+   "calls": 7,
+   "seconds": 17.62033064989373
+  },
+  "collect": {
+   "calls": 5,
+   "seconds": 0.0006674619507975876
+  },
+  "rows": {
+   "calls": 3,
+   "seconds": 134.34284425491933
+  }
+ },
+ "graphs": [],
+ "profile": "mid",
+ "knobs": {
+  "KOHAKUTPU_PROFILE": "mid"
+ },
+ "clocks": {
+  "0": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "1": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "2": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  },
+  "3": {
+   "noc": 200.0,
+   "mat2x": 400.0,
+   "vec": 200.0,
+   "sys": 200.0,
+   "locked": true
+  }
+ },
+ "check": null,
+ "profiled": null,
+ "jit": false,
+ "commit": "16526032",
+ "backend": "firmware",
+ "firmware": "/home/kblueleaf/kt/build/fw/kohakutpu_measure.elf",
+ "os_flags": null,
+ "os_command": null,
+ "when": 1794291314.302151,
+ "launches": 7,
+ "kernels": 7,
+ "compiles": [],
+ "replay_counts": {
+  "replay_inputs": 0,
+  "replay_calls": 0,
+  "retained_launches": 0
+ }
+}
