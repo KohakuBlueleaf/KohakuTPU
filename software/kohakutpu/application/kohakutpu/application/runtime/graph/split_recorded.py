@@ -8,6 +8,8 @@ from typing import Any
 from kohakutpu.application.runtime.graph.access import bind_contracts, contracts
 from kohakutpu.application.runtime.graph.dependencies import access_dependencies
 from kohakutpu.application.runtime.graph.native import NativeLaunch, fuse, port_bytes
+from kohakutpu.application.runtime.graph.part_plan import recorded_usage
+from kohakutpu.application.runtime.graph.parts import reserve_part_scratch
 from kohakutpu.application.runtime.graph.split import PreparedSplitGraph, SplitRunner
 from kohakutpu.application.runtime.graph.storage import borrow_scratch
 from kohakutpu.language.config import ENV
@@ -97,7 +99,14 @@ def regions(log):
         graph = compiled.traced.graph
         ports = {p["name"] for p in graph["ports"]}
         bound = {name: at for name, at in bindings if name in ports}
-        current.append(NativeLaunch(graph, bound, metadata[1]))
+        current.append(
+            NativeLaunch(
+                graph,
+                bound,
+                metadata[1],
+                package_usage=recorded_usage(metadata[2].get("retained_package_usage")),
+            )
+        )
     if current:
         groups.append(("graph", current))
     return groups
@@ -209,12 +218,15 @@ def prepare(log):
             # proof must see the tables at that region's host-effect boundary,
             # not the final table bytes left behind by the capture.
             if has_writes:
-                borrow_scratch(
-                    dev,
-                    prepared.compiled,
-                    dict(prepared.bindings),
-                    prepared.scratch_limits,
-                )
+                if prepared.planned_parts:
+                    reserve_part_scratch(prepared)
+                else:
+                    borrow_scratch(
+                        dev,
+                        prepared.compiled,
+                        dict(prepared.bindings),
+                        prepared.scratch_limits,
+                    )
             else:
                 prepared.bind_artifact()
         return result

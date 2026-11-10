@@ -701,7 +701,7 @@ fn package_admit(
 
 /// Whole-card preparation proof over exact bound packages and owned input bytes.
 #[pyfunction]
-#[pyo3(signature = (runs, machine_json, initial, *, compositional=false, independent_packages=false, host_join_every=0))]
+#[pyo3(signature = (runs, machine_json, initial, *, compositional=false, independent_packages=false, host_join_every=0, retained_parts=false))]
 fn package_check_memory(
     runs: Vec<BTreeMap<u32, Vec<u8>>>,
     machine_json: &str,
@@ -709,6 +709,7 @@ fn package_check_memory(
     compositional: bool,
     independent_packages: bool,
     host_join_every: usize,
+    retained_parts: bool,
 ) -> PyResult<String> {
     if host_join_every > 0 && !independent_packages {
         return Err(PyValueError::new_err(
@@ -755,7 +756,22 @@ fn package_check_memory(
         ..ktpu_verify::MemoryContext::default()
     };
     let check = || ktpu_verify::check_with_memory(&runs, &target, &memory);
-    let found = if compositional {
+    let mut part_report = None;
+    let found = if retained_parts {
+        if !compositional || !independent_packages || host_join_every == 0 {
+            return Err(PyValueError::new_err("retained_parts requires compositional independent epochs"));
+        }
+        let report = ktpu_verify::composition::parts::check(&runs, &target, &memory);
+        let found = report.findings.clone();
+        part_report = Some(serde_json::json!({
+            "checked_parts": report.checked_parts,
+            "events": report.events,
+            "peak_package_steps": report.peak_package_steps,
+            "history_visits": report.history_visits,
+            "retirement_visits": report.retirement_visits,
+        }));
+        found
+    } else if compositional {
         ktpu_verify::composition::prove(check).0
     } else {
         check()
@@ -774,6 +790,7 @@ fn package_check_memory(
     Ok(serde_json::json!({
         "findings": findings,
         "refused": found.iter().any(|f| f.kind.refuses()),
+        "part_proof": part_report,
     })
     .to_string())
 }

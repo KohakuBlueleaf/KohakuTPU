@@ -115,6 +115,33 @@ pub fn compose(
     zero_sign: Option<ZeroSign>,
     default_node: i128,
 ) -> Result<(Compiled, Vec<serde_json::Value>), Refusal> {
+    compose_part(launches, bindings, machine, zero_sign, default_node, None)
+}
+
+/// Original-graph context for a preplanned part. A part's last launch still
+/// joins its successor, and inactive sysnodes remain in the participant set.
+#[derive(Clone, Debug)]
+pub struct PartContext {
+    pub participants: BTreeSet<i128>,
+    pub first: usize,
+    pub total: usize,
+}
+
+pub fn compose_part(
+    launches: &[String],
+    bindings: &BTreeMap<String, i64>,
+    machine: &Machine,
+    zero_sign: Option<ZeroSign>,
+    default_node: i128,
+    context: Option<&PartContext>,
+) -> Result<(Compiled, Vec<serde_json::Value>), Refusal> {
+    let first = context.map_or(0, |c| c.first);
+    let total = context.map_or(launches.len(), |c| c.total);
+    if first.checked_add(launches.len()).is_none_or(|end| end > total)
+        || context.is_some_and(|c| c.participants.is_empty())
+    {
+        return Err(Refusal::new("GRAPH.LIFETIME", "invalid retained part interval or participants"));
+    }
     if launches.is_empty() {
         return Err(Refusal::new("GRAPH.LIFETIME", "a retained graph needs a launch"));
     }
@@ -125,7 +152,7 @@ pub fn compose(
     // Keep the join channel disjoint from all intra-launch events. Reusing it
     // is safe: gather consumes all arrivals before any release is sent, and a
     // participant cannot arrive again before consuming its previous release.
-    if launches.len() > 1 {
+    if total > 1 {
         if let Some(slot) = join_slot {
             sync.available_slots.remove(&slot);
             sync.reserved_slots.insert(slot);
@@ -140,11 +167,12 @@ pub fn compose(
     let mut param_names = BTreeSet::new();
     let mut definitions = String::new();
     let mut bodies = Vec::<BTreeMap<i128, Vec<Stmt>>>::new();
-    let mut nodes = BTreeSet::new();
+    let mut nodes = context.map_or_else(BTreeSet::new, |c| c.participants.clone());
     let mut events = Vec::new();
     let mut header = String::new();
 
-    for (index, source) in launches.iter().enumerate() {
+    for (local_index, source) in launches.iter().enumerate() {
+        let index = first + local_index;
         let graph = backend.graph_to_l2(source, machine)?;
         let caller: BTreeSet<_> = backend.caller(&graph, &graph.name)?.into_iter().collect();
         if caller.iter().any(|p| !bindings.contains_key(p)) {
@@ -235,6 +263,9 @@ pub fn compose(
         } else {
             by_node.insert(default_node, body.stmts.iter().map(|s| statement(s, &map)).collect());
         }
+        if context.is_some_and(|c| by_node.keys().any(|n| !c.participants.contains(n))) {
+            return Err(Refusal::new("GRAPH.LIFETIME", "part launch is outside its original participant set"));
+        }
         nodes.extend(by_node.keys().copied());
         bodies.push(by_node);
     }
@@ -262,7 +293,8 @@ pub fn compose(
     let coordinator = *nodes.first().ok_or_else(|| Refusal::new("GRAPH.LIFETIME", "empty launch"))?;
     for &node in &nodes {
         text.push_str(&format!("    node {node}\n"));
-        for (index, launch) in bodies.iter().enumerate() {
+        for (local_index, launch) in bodies.iter().enumerate() {
+            let index = first + local_index;
             if let Some(stmts) = launch.get(&node) {
                 text.push_str(&emit_at(stmts, 2, 48));
                 // Preserve the lowerer's terminal close; do not add a second
@@ -270,11 +302,15 @@ pub fn compose(
                 if stmts.last().is_none_or(|st| st.op != "barrier") {
                     text.push_str("        barrier\n");
                 }
+            } else if context.is_some() {
+                // An inactive participant still owns a complete local package,
+                // including when this is the globally final one-launch part.
+                text.push_str("        barrier\n");
             }
-            if index + 1 < bodies.len() {
+            if index + 1 < total {
                 if nodes.len() == 1 {
                     events.push(join_event(index, node, node, None, "local"));
-                    text.push_str(&format!("        # retained-cut {index}\n"));
+                    text.push_str(&format!("        # retained-cut {local_index}\n"));
                     continue;
                 }
                 let slot = join_slot.ok_or_else(|| Refusal::new("GRAPH.LIFETIME", "no common slot for a scratch lifetime join"))?;
@@ -294,7 +330,7 @@ pub fn compose(
             // Source provenance only: a capacity cut keeps the actual join
             // above and is independently rebuilt and verified. Comments do
             // not change the fitting program's package bytes.
-            text.push_str(&format!("        # retained-cut {index}\n"));
+            text.push_str(&format!("        # retained-cut {local_index}\n"));
         }
     }
     // Parse now; package construction must wait for the real pooled bindings.

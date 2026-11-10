@@ -44,6 +44,7 @@ impl Sim<'_> {
         for counter in &self.counters {
             for (owner, marks) in counter.histories() {
                 stats.add(format!("counter/{}/{owner}", counter.name), marks.len());
+                marks.summary_clocks(|clock| stats.clock(clock));
                 for (_, clock) in marks {
                     stats.clock(clock);
                 }

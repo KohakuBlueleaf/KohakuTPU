@@ -18,6 +18,7 @@
 //! the packages in the order it sent.
 
 mod engine;
+mod parts;
 mod poll;
 
 use crate::sim::fx::{FxHashMap as HashMap, FxHashSet as HashSet};
@@ -121,6 +122,8 @@ pub(crate) struct Node {
     log: Option<Vec<(usize, i64, i64)>>,
     /// The run whose end every node must reach before this one goes on.
     host: usize,
+    // Ordinary scheduling forks clone only None, not retained-only containers.
+    part: Option<Box<parts::PartState>>,
 }
 
 impl Node {
@@ -302,6 +305,7 @@ impl Sim<'_> {
             ends: Vec::new(),
             log: None,
             host: 0,
+            part: None,
         };
         for (i, p) in pkgs.iter().enumerate() {
             node.load(p, i);
@@ -465,8 +469,10 @@ impl Sim<'_> {
                     nd.engine.end(&nd.sent);
                     let k = nd.ends.len();
                     nd.host = k;
-                    let c = self.counter(&format!("host:{k}"));
-                    self.counters[c].add(1, &clock, p);
+                    if !self.part_proof {
+                        let c = self.counter(&format!("host:{k}"));
+                        self.counters[c].add(1, &clock, p);
+                    }
                 }
                 true
             }
@@ -571,9 +577,19 @@ impl Sim<'_> {
                 true
             }
             op::ENGINE => return self.node_engine(i, s),
-            op::RING | op::WAIT_BELL | op::WAIT_SLOT | op::FETCH | op::SEND => {
+            op::RING | op::WAIT_SLOT => {
+                // Only these opcodes can enter a composer join. Keep retained
+                // protocol inspection off the ordinary dispatch/ALU hot path.
+                if self.nodes[i].part.as_ref().is_some_and(|part|
+                    part.join_entries.contains(&self.nodes[i].at)) {
+                    if let Err(why) = self.part_join_drain(i) {
+                        self.find(Kind::Model, self.nodes[i].name.clone(), why);
+                        return StepOutcome::Terminal;
+                    }
+                }
                 self.node_other(i, s)
             }
+            op::WAIT_BELL | op::FETCH | op::SEND => self.node_other(i, s),
             op::LOAD | op::ALU | op::JUMP => return self.node_register(i, s),
             op::ASSERT_ZERO => return self.node_assert_zero(i, s),
             op::MOVER | op::MWAIT => self.node_mover(i, s),
@@ -1236,7 +1252,7 @@ impl Sim<'_> {
             Some(storage) => Location::Physical(storage.steps + raw as u64 * 16),
             None => Location::Private {
                 mesh: nd.mesh,
-                run,
+                run: nd.part.as_ref().map_or(run, |part| part.identity),
                 section: Section::Steps,
                 offset: raw as u64 * 16,
             },

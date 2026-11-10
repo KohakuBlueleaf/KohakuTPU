@@ -45,6 +45,7 @@ lib/
 !sim/**/lib/
 lib64/
 parts/
+!software/*/compiler/crates/**/parts/
 sdist/
 var/
 wheels/

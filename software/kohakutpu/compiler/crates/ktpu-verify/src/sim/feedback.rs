@@ -159,8 +159,25 @@ impl Sim<'_> {
             }
         }
         for (counter, waiter, owner, gate, slack) in proved {
+            // Ordinary checks start at zero and need no retained-prefix lookup.
+            let consumed = if self.part_proof {
+                match gate {
+                    Key::Slot(mesh, slot) => self.taken.get(&(mesh, super::Take::Slot(i64::from(slot)))),
+                    Key::Bell(mesh, source) => self.taken.get(&(mesh, super::Take::Bell(i64::from(source)))),
+                }.copied().unwrap_or(0)
+            } else { 0 };
             let counter = self.counter(&counter.name());
             let gate = self.counter(&gate.name());
+            // A part's CFG prefix starts at its incoming counter state, not
+            // hardware zero. Include old gate contributions by other owners;
+            // excluding them would strengthen the cap unsoundly.
+            let slack = if self.part_proof {
+                slack.checked_add(self.counters[counter].total(owner))
+                    .and_then(|v| v.checked_add(self.counters[gate].value))
+                    .and_then(|v| v.checked_sub(self.counters[gate].total(waiter)))
+                    .and_then(|v| v.checked_sub(consumed))
+            } else { Some(slack) };
+            let Some(slack) = slack else { continue; };
             self.feedback
                 .rules
                 .entry((counter, waiter))

@@ -23,6 +23,7 @@ from kohakutpu.application.runtime.device.common import (
 from kohakutpu.application.runtime.eager_batch import Deferred
 from kohakutpu.application.runtime.graph.access import bound_accesses, conflicts
 from kohakutpu.application.runtime.graph.leases import launch_slots
+from kohakutpu.application.runtime.graph.part_plan import capture_usage
 from kohakutpu.application.runtime.memory.arena import OutOfMemory
 from kohakutpu.application.runtime.packages import Prebuilt, placed
 from kohakutpu.stack import rs
@@ -327,6 +328,9 @@ class Submission(Parts):
                 except Exception as error:
                     error.add_note(f"kernel {compiled.name}; bindings {full}")
                     raise
+            retained_usage = None
+            if self.recording:
+                retained_usage = capture_usage(progs, self.card.nodes)
             single = list(progs) == [None]
             nodes = (
                 tuple(placed(progs, self.card.nodes))
@@ -399,7 +403,7 @@ class Submission(Parts):
                 (
                     s.name,
                     s.kind,
-                    dict(s.info),
+                    {**s.info, "retained_package_usage": retained_usage},
                     list(s.references),
                     list(s.writes),
                     s.nodes,

@@ -211,6 +211,9 @@ pub(crate) struct Sim<'t> {
     /// Secondary initialization diagnostics, after routing/counter failures.
     pub sequence_findings: Vec<Finding>,
     pub events: u64,
+    /// Full-state retained transitions; never enabled for ordinary checks.
+    pub(crate) part_proof: bool,
+    pub(crate) part_channel: Option<u16>,
     next_retirement: u64,
     pub(crate) stats_enabled: bool,
     next_stats: u64,
@@ -260,6 +263,8 @@ impl<'t> Sim<'t> {
             memory_findings: Vec::new(),
             sequence_findings: Vec::new(),
             events: 0,
+            part_proof: false,
+            part_channel: None,
             next_retirement: 1024,
             stats_enabled: std::env::var_os("KTPU_VERIFY_STATS").is_some(),
             next_stats: 1024,

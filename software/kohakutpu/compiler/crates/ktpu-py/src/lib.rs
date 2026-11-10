@@ -321,7 +321,7 @@ fn l2_of(
 
 /// Compose access ordering and slot leases before building any node package.
 #[pyfunction]
-#[pyo3(signature = (graph_json, machine_json, bindings, zero_sign=None, launches=None, default_node=0))]
+#[pyo3(signature = (graph_json, machine_json, bindings, zero_sign=None, launches=None, default_node=0, *, part_nodes=None, part_first=0, launch_count=None))]
 fn compile_split_graph<'py>(
     py: Python<'py>,
     graph_json: &str,
@@ -330,15 +330,33 @@ fn compile_split_graph<'py>(
     zero_sign: Option<&str>,
     launches: Option<Vec<String>>,
     default_node: i64,
+    part_nodes: Option<Vec<i64>>,
+    part_first: usize,
+    launch_count: Option<usize>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let m = machine(machine_json)?;
     let zero_sign = zero_sign.map(signed).transpose()?;
     if let Some(launches) = launches {
-        let (result, events) = ktpu::stack::retained::compose(&launches, &bindings, &m, zero_sign, i128::from(default_node))
-            .map_err(|refusal| raise(py, &StageRefused { stage: Stage::Lower, refusal }))?;
+        let context = match (part_nodes, launch_count) {
+            (Some(nodes), Some(total)) => {
+                let participants: std::collections::BTreeSet<_> = nodes.iter().copied().map(i128::from).collect();
+                if participants.len() != nodes.len() {
+                    return Err(PyValueError::new_err("duplicate retained participant"));
+                }
+                Some(ktpu::stack::retained::PartContext { participants, first: part_first, total })
+            }
+            (None, None) if part_first == 0 => None,
+            _ => return Err(PyValueError::new_err("retained part requires nodes, first and total together")),
+        };
+        let (result, events) = ktpu::stack::retained::compose_part(
+            &launches, &bindings, &m, zero_sign, i128::from(default_node), context.as_ref(),
+        ).map_err(|refusal| raise(py, &StageRefused { stage: Stage::Lower, refusal }))?;
         let output = compiled(py, &result)?;
         output.set_item("events", py_value(py, &serde_json::Value::Array(events))?)?;
         return Ok(output);
+    }
+    if part_nodes.is_some() || launch_count.is_some() || part_first != 0 {
+        return Err(PyValueError::new_err("retained part context requires launches"));
     }
     let backend = CardStack {
         zero_sign,

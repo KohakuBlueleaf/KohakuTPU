@@ -9,6 +9,8 @@
 //! is thread-local and unwind-safe; it is not an option for `check_many`'s worker
 //! threads. No certificate, program name, or join annotation is trusted here.
 
+pub mod parts;
+
 use std::cell::Cell;
 
 thread_local! {

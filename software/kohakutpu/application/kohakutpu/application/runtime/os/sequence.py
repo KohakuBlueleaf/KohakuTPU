@@ -6,7 +6,11 @@ host upload. A warm replay reinstalls every part; it is not host-free retention.
 
 from dataclasses import dataclass
 
-from kohakutpu.application.runtime.os.graph import Graph, PreparedMultiGraph
+from kohakutpu.application.runtime.os.graph import (
+    Graph,
+    MultiCompletion,
+    PreparedMultiGraph,
+)
 from kohakutpu.application.runtime.split import NodePart, RetainedArtifact
 
 
@@ -63,7 +67,6 @@ class PreparedMultiSequence(PreparedMultiGraph):
                 }
             )
         first = artifact.stages[0]
-
         super().__init__(
             _StageGrant(
                 first.parts, first.digest, first.manifest, artifact.slot_leases
@@ -80,6 +83,8 @@ class PreparedMultiSequence(PreparedMultiGraph):
         self._encoded_parts = tuple(encoded)
         self._installed_part = 0
         self._timeout_cycles = 1 << 26
+        self._sequence_token: MultiCompletion | None = None
+        self._first_token: MultiCompletion | None = None
 
     def _install_part(self, index):
         stage = self.sequence.stages[index]
@@ -90,7 +95,12 @@ class PreparedMultiSequence(PreparedMultiGraph):
 
     def submit(self, timeout_cycles=1 << 26):
         with self._lock:
-            if self.closed or self.poisoned or self.pending is not None:
+            if (
+                self.closed
+                or self.poisoned
+                or self.pending is not None
+                or self._sequence_token is not None
+            ):
                 raise RuntimeError(
                     "resident sequence is closed, failed or already in flight"
                 )
@@ -100,7 +110,13 @@ class PreparedMultiSequence(PreparedMultiGraph):
                 # This is a per-part device bound, as in a HOSTL RUN descriptor;
                 # do not call it a whole-sequence wall-clock deadline.
                 self._timeout_cycles = timeout_cycles
-                return super().submit(timeout_cycles)
+                first = super().submit(timeout_cycles)
+                self._first_token = first
+                # The base collector caches a part result on its token. Never
+                # expose that internal token as the whole-sequence completion:
+                # later uploads/collections can still fail after part zero.
+                self._sequence_token = MultiCompletion(self, first.tickets)
+                return self._sequence_token
             except BaseException:
                 if not self.poisoned:
                     self._cancel_all()
@@ -112,8 +128,14 @@ class PreparedMultiSequence(PreparedMultiGraph):
                 raise ValueError("completion belongs to another resident sequence")
             if token.results is not None:
                 return token.results
+            if (
+                self.poisoned
+                or token is not self._sequence_token
+                or self._first_token is None
+            ):
+                raise RuntimeError("no collectable resident sequence epoch")
             try:
-                all_results = [super().collect(token)]
+                all_results = [super().collect(self._first_token)]
                 for index in range(1, len(self._encoded_parts)):
                     self._install_part(index)
                     next_token = super().submit(self._timeout_cycles)
@@ -136,9 +158,11 @@ class PreparedMultiSequence(PreparedMultiGraph):
                         cycle_scope="sum_of_node_local_part_durations_excludes_host_transitions",
                     )
                 token.results = total
+                self._sequence_token = self._first_token = None
                 return total
             except BaseException:
-                token.results = None
+                # Public completion has remained unset throughout every part.
+                # Keep uncertain ownership quarantined until card reset.
                 if not self.poisoned:
                     self._cancel_all()
                 raise

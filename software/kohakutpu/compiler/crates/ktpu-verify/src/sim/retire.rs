@@ -28,6 +28,11 @@ impl Sim<'_> {
             }
         }
         for node in &self.nodes {
+            // A completed retained part is not the end of this process. Its
+            // next package may access memory at this still-low causal floor.
+            if self.part_proof {
+                include(&self.procs[node.proc].clock);
+            }
             if let Some(p) = node.pending_engine() {
                 include(&self.procs[p].clock);
             }

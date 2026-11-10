@@ -10,12 +10,15 @@
 
 use super::clock::Clock;
 
+mod history;
+use history::History;
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Counter {
     pub name: String,
     pub value: i64,
     /// owner -> [(owner's running total after the increment, its clock)]
-    owners: Vec<(usize, Vec<(i64, Clock)>)>,
+    owners: Vec<(usize, History)>,
     totals: Option<Vec<(String, i64)>>,
 }
 
@@ -27,6 +30,10 @@ impl Counter {
             owners: Vec::new(),
             totals,
         }
+    }
+
+    pub(crate) fn replace_totals(&mut self, totals: Option<Vec<(String, i64)>>) {
+        self.totals = totals;
     }
 
     pub fn set_totals(&mut self, totals: Vec<(String, i64)>) {
@@ -41,7 +48,7 @@ impl Counter {
         let at = match self.owners.iter().position(|(o, _)| *o == owner) {
             Some(i) => i,
             None => {
-                self.owners.push((owner, Vec::new()));
+                self.owners.push((owner, History::default()));
                 self.owners.len() - 1
             }
         };
@@ -65,10 +72,14 @@ impl Counter {
         marks.push((last + n, prefix));
     }
 
-    pub(crate) fn histories(&self) -> impl Iterator<Item = (usize, &[(i64, Clock)])> {
-        self.owners
-            .iter()
-            .map(|(owner, marks)| (*owner, marks.as_slice()))
+    pub(crate) fn histories(&self) -> impl Iterator<Item = (usize, &History)> {
+        self.owners.iter().map(|(owner, marks)| (*owner, marks))
+    }
+
+    /// Freeze the completed prefix before forking a retained transition. The
+    /// exact marks remain queryable; this changes storage, never causal edges.
+    pub(crate) fn share_history(&mut self) {
+        for (_, marks) in &mut self.owners { marks.freeze(); }
     }
 
     pub fn reached(&self, target: i64) -> bool {
@@ -139,10 +150,6 @@ impl Counter {
 /// Join the first owner-prefix mark reaching `k`. In compositional mode the
 /// mark explicitly includes every earlier increment, even if individual
 /// publication clocks are not monotone. Legacy checks retain their old marks.
-fn join_upto(out: &mut Clock, marks: &[(i64, Clock)], k: i64) {
-    if marks.is_empty() {
-        return;
-    }
-    let i = marks.partition_point(|m| m.0 < k);
-    out.join(&marks[i.min(marks.len() - 1)].1);
+fn join_upto(out: &mut Clock, marks: &History, k: i64) {
+    if let Some((_, clock)) = marks.reaching(k) { out.join(clock); }
 }

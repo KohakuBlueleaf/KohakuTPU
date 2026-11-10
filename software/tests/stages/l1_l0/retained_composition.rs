@@ -170,3 +170,6 @@ mod multi_sysnode_composition;
 
 #[path = "component_diagnostic.rs"]
 mod component_diagnostic;
+
+#[path = "retained_part_transitions.rs"]
+mod retained_part_transitions;

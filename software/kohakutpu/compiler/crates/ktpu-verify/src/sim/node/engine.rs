@@ -66,6 +66,19 @@ impl Engine {
         }
     }
 
+    pub(super) fn rebind(&mut self, sent: &[i64]) {
+        // END does not clear mailbox/REL/mover configuration. Preserve those
+        // fields across parts; only the stage-local base index table changes.
+        self.base.resize(sent.len(), 0);
+        if self.relative.is_some() {
+            // Keep the fact that this mailbox names an old package. A new REL
+            // descriptor replaces it; using it first is conservatively refused
+            // rather than silently retargeted at the replacement package.
+            self.relative = Some(usize::MAX);
+        }
+        self.end(sent);
+    }
+
     pub(super) fn end(&mut self, sent: &[i64]) {
         self.base.copy_from_slice(sent);
         self.slots.clear();
@@ -169,6 +182,14 @@ impl Sim<'_> {
             )?;
             let issued = self.tick(p, &released);
             let code = (self.nodes[i].engine.codes >> (slot * 8)) & 255;
+            if let Some(part) = &self.nodes[i].part {
+                if code == 26 && self.part_channel == Some(((value_word.0[0] >> 8) & 255) as u16) {
+                    return Err("ENGINE ring aliases the retained join channel".into());
+                }
+                if self.nodes[i].at >= part.tail && code != WAIT {
+                    return Err("retained protocol suffix contains an ENGINE data operation".into());
+                }
+            }
             self.nodes[i].engine.queue.push_back(Entry {
                 code,
                 value: value_word.0[0],
@@ -337,7 +358,10 @@ impl Sim<'_> {
                 let (word, source) = if let Some(run) = relative {
                     let nd = &self.nodes[i];
                     let offset = (first / 32 + k) as usize;
-                    if offset >= nd.pkgs[run].payloads.len() {
+                    let package = nd.pkgs.get(run).ok_or(
+                        "retained ENGINE relative descriptor requires reinitialization in this part"
+                    )?;
+                    if offset >= package.payloads.len() {
                         return Err("ENGINE relative fetch outside package".into());
                     }
                     let index = nd.payload_bases[run] + offset;

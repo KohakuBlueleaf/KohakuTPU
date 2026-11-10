@@ -26,6 +26,8 @@ class NativeLaunch:
     bindings: dict
     kind: str
     members: tuple = ()
+    # Exact eager-instance pre-ENGINE package accounting, when captured.
+    package_usage: dict | None = None
 
 
 def statements(body):

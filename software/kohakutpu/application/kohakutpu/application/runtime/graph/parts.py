@@ -13,9 +13,11 @@ from functools import cached_property
 from types import SimpleNamespace
 
 from kohakutpu.application.runtime.graph.limits import CapacityExceeded
+from kohakutpu.application.runtime.graph.storage import borrow_scratch
 from kohakutpu.application.runtime.split import BoundGraphArtifact, NodePart
 from kohakutpu.language.text import module as M
 from kohakutpu.stack import rs
+from kohakutpu.stack.kernel import arena_name
 
 _CUT = re.compile(r"        # retained-cut ([0-9]+)\n?$")
 _NODE = re.compile(r"    node ([0-9]+)\n?$")
@@ -31,9 +33,10 @@ class JoinedSource:
     prefix: str
     nodes: tuple
     bodies: tuple
+    trailing_join: bool = False
 
     @classmethod
-    def read(cls, source):
+    def read(cls, source, *, trailing_join=False):
         lines = source.splitlines(keepends=True)
         function = next(
             (
@@ -70,7 +73,9 @@ class JoinedSource:
         count = len(bodies[0])
         if not count or any(len(body) != count for body in bodies):
             raise ValueError("retained nodes disagree on launch boundaries")
-        result = cls(prefix, tuple(nodes), tuple(tuple(body) for body in bodies))
+        result = cls(
+            prefix, tuple(nodes), tuple(tuple(body) for body in bodies), trailing_join
+        )
         result._check_joins()
         return result
 
@@ -85,9 +90,9 @@ class JoinedSource:
             for node, body in zip(self.nodes, self.bodies, strict=True):
                 lines = body[index].splitlines()
                 current = None
-                # The last launch needs only its local close. An inactive node
-                # has no body, but must still participate in every intermediate join.
-                if index + 1 == self.count or len(self.nodes) == 1:
+                if (index + 1 == self.count and not self.trailing_join) or len(
+                    self.nodes
+                ) == 1:
                     work = lines
                 elif node == coordinator:
                     tail = lines[-len(self.nodes) :]
@@ -133,11 +138,7 @@ class JoinedSource:
     def interval(self, first, end):
         if not 0 <= first < end <= self.count:
             raise ValueError("invalid retained launch interval")
-        # Keep the trailing handshake on a nonfinal part. Merely composing the
-        # subset afresh would delete that edge and permit early scratch reuse.
-        # Definitions are namespaced per launch by retained.rs. Omit only
-        # definitions belonging to excluded launches; otherwise every part
-        # reparses all of a large graph's image bodies.
+        # Keep a nonfinal part's trailing handshake and only its definitions.
         prefix, keep = [], True
         for line in self.prefix.splitlines(keepends=True):
             definition = re.match(r"^(?:image|macro) retained([0-9]+)_", line)
@@ -157,6 +158,9 @@ class JoinedSource:
 class BoundGraphSequence:
     stages: tuple[BoundGraphArtifact, ...]
     intervals: tuple[tuple[int, int], ...]
+    # The outer graph's public dependency/event schema, stored once, not once
+    # per part. Stage-local provenance remains available in manifest['parts'].
+    provenance: bytes = b""
 
     def __post_init__(self):
         if not self.stages or len(self.stages) != len(self.intervals):
@@ -174,7 +178,6 @@ class BoundGraphSequence:
 
     @property
     def parts(self) -> tuple[NodePart, ...]:
-        # The successful terminal CQ's step index is relative to the last package.
         return self.stages[-1].parts
 
     @property
@@ -190,8 +193,9 @@ class BoundGraphSequence:
         return self._digest
 
     @cached_property
-    def _digest(self):
+    def _digest(self) -> bytes:
         value = hashlib.blake2b(digest_size=32)
+        value.update(self.provenance)
         for stage, interval in zip(self.stages, self.intervals, strict=True):
             value.update(stage.digest)
             value.update(json.dumps(interval).encode())
@@ -209,8 +213,34 @@ class BoundGraphSequence:
 
     @property
     def manifest(self) -> bytes:
-        # All intervals retain the original composition provenance.
-        return self.stages[0].manifest
+        return self._manifest
+
+    @cached_property
+    def _manifest(self) -> bytes:
+        # Graph.package_parts expects an object with .get('dependencies'), not
+        # a list. The public property above separately supplies GraphArtifact's
+        # read-only bytes interface; only its private backing value is cached.
+        source = self.provenance or self.stages[0].manifest
+        manifest = json.loads(source) if source else {}
+        manifest["parts"] = [
+            {
+                "interval": interval,
+                "manifest": json.loads(stage.manifest) if stage.manifest else {},
+            }
+            for stage, interval in zip(self.stages, self.intervals, strict=True)
+        ]
+        return json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+
+
+def sequence_artifact(prepared, accepted):
+    return BoundGraphSequence(
+        tuple(artifact for artifact, _, _ in accepted),
+        tuple(interval for _, interval, _ in accepted),
+        json.dumps(
+            {"dependencies": prepared.dependencies, "events": prepared.events},
+            sort_keys=True,
+        ).encode(),
+    )
 
 
 def _prove_sequence(prepared, stages):
@@ -221,8 +251,7 @@ def _prove_sequence(prepared, stages):
             _, address = dev.mmu.resolve(table.addr)
             initial[address] = table.host
     runs = [{part.node: part.package for part in stage.parts} for stage in stages]
-    # No invented all-node host fence between capacity parts. Two epochs also
-    # check reuse of slot counters and package-local fetch/patch state.
+    # Only epoch boundaries import a real host join.
     with rs.compiler_owner(dev):
         verdict = json.loads(
             rs._rs.package_check_memory(
@@ -232,8 +261,13 @@ def _prove_sequence(prepared, stages):
                 compositional=True,
                 independent_packages=True,
                 host_join_every=len(runs),
+                retained_parts=True,
             )
         )
+    # Preserve the checker's non-event work census for production-path
+    # witnesses. This is evidence only; it neither relaxes admission nor changes
+    # the proof budget. Rebinding clears the old epoch's census.
+    prepared.proof_work = verdict.get("part_proof")
     if verdict["refused"]:
         raise ValueError(
             "retained part sequence proof refused: " + json.dumps(verdict["findings"])
@@ -285,22 +319,117 @@ def bind_parts(prepared, bind_one, original_error):
         visit(middle, source.count)
         stages = tuple(item[0] for item in accepted)
         _prove_sequence(prepared, stages)
-        result = BoundGraphSequence(stages, tuple(item[1] for item in accepted))
+        result = sequence_artifact(prepared, accepted)
         references = [
             ref for _, _, candidate in accepted for ref in candidate.bound_references
         ]
         prepared.references.extend(references)
         prepared.bound_references = references
         prepared.bound_bindings = accepted[0][2].bound_bindings
-        prepared.part_compiled = tuple(
-            candidate.compiled for _, _, candidate in accepted
-        )
-        prepared.resource_usage = tuple(
-            candidate.resource_usage for _, _, candidate in accepted
-        )
+        prepared.part_bindings = tuple(c.bound_bindings for _, _, c in accepted)
+        prepared.part_compiled = tuple(c.compiled for _, _, c in accepted)
+        prepared.resource_usage = tuple(c.resource_usage for _, _, c in accepted)
         return result
     except BaseException:
         for _, _, candidate in accepted:
             for arena, address in candidate.bound_references:
                 arena.unretain(address)
         raise
+
+
+def reserve_part_scratch(prepared):
+    """Reserve the shared peak envelope before binding a smaller first part."""
+    peak = {}
+    for candidate in prepared.planned_parts or (prepared,):
+        for arena in candidate.compiled.scratch or ():
+            name = arena_name(arena)
+            if name not in peak or peak[name]["bytes"] < arena["bytes"]:
+                peak[name] = arena
+    combined = replace(prepared.compiled, scratch=list(peak.values()))
+    return borrow_scratch(
+        prepared.device,
+        combined,
+        dict(prepared.bindings),
+        prepared.scratch_limits,
+    )
+
+
+def bind_planned_parts(prepared, bind_one, original_error: Exception | None = None):
+    """Admit a pre-composition plan; refine only an underestimated interval."""
+    accepted = []
+    total = prepared.part_plan.launches
+    reserved = reserve_part_scratch(prepared)
+    reservation_refs = []
+    completed = False
+
+    def visit(candidate, first, end, error: Exception | None = None):
+        candidate.scratch_limits = prepared.scratch_limits
+        candidate.admission = prepared.admission
+        source = JoinedSource.read(
+            candidate.compiled.l1.source, trailing_join=end < total
+        )
+        if (
+            source.nodes != prepared.part_plan.participants
+            or source.count != end - first
+        ):
+            raise ValueError(
+                "retained part changed its planned participants or interval"
+            )
+        try:
+            if error is not None:
+                raise error
+            artifact = bind_one(candidate)
+        except Exception as failure:
+            if not capacity_error(failure) or end - first == 1:
+                if capacity_error(failure):
+                    failure.add_note(
+                        f"retained launch {first} cannot fit with its complete join"
+                    )
+                raise
+            middle = first + (end - first) // 2
+            visit(prepared.launch_factory(first, middle), first, middle)
+            visit(prepared.launch_factory(middle, end), middle, end)
+        else:
+            accepted.append((artifact, (first, end), candidate))
+
+    try:
+        # bind_one releases unpinned windows on exceptions. Hold the peak while
+        # refining so a smaller first child cannot strand subsequent children.
+        for address in set(reserved.values()):
+            entry, _ = prepared.device.mmu.resolve(address)
+            reservation_refs.extend(
+                prepared.device._retain(
+                    [address],
+                    pinned=entry.physical in entry.arena.released,
+                )
+            )
+        candidates = prepared.planned_parts or (prepared,)
+        for candidate, (first, end) in zip(
+            candidates, prepared.part_intervals, strict=True
+        ):
+            visit(candidate, first, end, original_error)
+        stages = tuple(artifact for artifact, _, _ in accepted)
+        _prove_sequence(prepared, stages)
+        result = sequence_artifact(prepared, accepted)
+        references = [ref for _, _, c in accepted for ref in c.bound_references]
+        prepared.references.extend(references)
+        prepared.bound_references = references
+        prepared.bound_bindings = accepted[0][2].bound_bindings
+        prepared.part_bindings = tuple(c.bound_bindings for _, _, c in accepted)
+        prepared.part_compiled = tuple(c.compiled for _, _, c in accepted)
+        prepared.resource_usage = tuple(c.resource_usage for _, _, c in accepted)
+        completed = True
+        return result
+    except BaseException:
+        for _, _, candidate in accepted:
+            for arena, address in candidate.bound_references:
+                arena.unretain(address)
+            candidate.references.clear()
+            candidate.bound_references = []
+            candidate.bound_bindings = None
+        raise
+    finally:
+        for arena, address in reservation_refs:
+            arena.unretain(address)
+        if not completed:
+            prepared.device._release_windows()

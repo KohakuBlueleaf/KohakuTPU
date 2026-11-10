@@ -13,6 +13,10 @@ def compile_split_graph(
     zero_sign: str | None = None,
     launches: list[str] | None = None,
     default_node: int = 0,
+    *,
+    part_nodes: list[int] | None = None,
+    part_first: int = 0,
+    launch_count: int | None = None,
 ) -> dict: ...
 def affected_roots(roots: list, changed: dict) -> list[int]: ...
 def graph_nodes(roots: list, op: object) -> list: ...
@@ -833,11 +837,14 @@ def package_check_memory(
     compositional: bool = False,
     independent_packages: bool = False,
     host_join_every: int = 0,
+    retained_parts: bool = False,
 ) -> str:
     """Bound-package proof; independent lists join only at explicit epoch ends.
 
     host_join_every=0 adds no host boundary in independent mode. Neither option
-    changes ordinary package checking or any card/firmware ABI.
+    changes ordinary package checking or any card/firmware ABI. retained_parts
+    checks isolated all-participant join contracts and carries full proof state
+    one package at a time, with no concatenated final replay.
     """
 
 def f014_reach(
