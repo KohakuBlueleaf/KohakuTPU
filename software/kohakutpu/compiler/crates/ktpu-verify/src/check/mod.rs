@@ -228,8 +228,18 @@ fn run<'t>(
     choices: Vec<Decision>,
     context: &MemoryContext,
 ) -> Vec<Sim<'t>> {
-    let mut sim = Sim::new(t, package_totals.first().cloned());
-    sim.package_totals = package_totals;
+    // A node-local list can receive events from a later package on a peer.
+    // Use the whole sequence's counter bounds; a global package frontier would
+    // silently restore the host-stage ordering this mode is meant to remove.
+    let totals = if context.independent_packages {
+        package_totals.last().cloned()
+    } else {
+        package_totals.first().cloned()
+    };
+    let mut sim = Sim::new(t, totals);
+    if !context.independent_packages {
+        sim.package_totals = package_totals;
+    }
     sim.choices = choices;
     sim.initialize_memory(context);
     for (&mesh, ps) in pkgs {

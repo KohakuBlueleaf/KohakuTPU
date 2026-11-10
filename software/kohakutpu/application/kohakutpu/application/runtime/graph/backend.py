@@ -51,7 +51,7 @@ def submit(prepared):
             if dev.graph_backend == "kaos"
             else backend.submit()
         )
-        if dev.graph_backend == "firmware":
+        if dev.graph_backend != "kaos":
             for node, ticket in token.tickets:
                 card._order.setdefault(node, []).append(ticket)
         results = token.wait()

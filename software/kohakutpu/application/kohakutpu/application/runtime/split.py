@@ -5,6 +5,7 @@ import struct
 import threading
 from dataclasses import dataclass
 from functools import cached_property
+from typing import Protocol
 
 from kohakuaccel.driver.node.queue.group import PreparedQueueGroup
 from kohakutpu.application.runtime.os import abi as A
@@ -14,6 +15,32 @@ from kohakutpu.application.runtime.os import abi as A
 class NodePart:
     node: int
     package: bytes
+
+
+class GraphArtifact(Protocol):
+    """Read-only transport view, shared by a complete stage and a sequence."""
+
+    @property
+    def parts(self) -> tuple[NodePart, ...]: ...
+
+    @property
+    def digest(self) -> bytes: ...
+
+    @property
+    def manifest(self) -> bytes: ...
+
+    @property
+    def slot_leases(self) -> frozenset[tuple[int, int]]: ...
+
+
+class RetainedArtifact(GraphArtifact, Protocol):
+    """An ordered, nonempty collection of independently admitted stages."""
+
+    @property
+    def stages(self) -> tuple[GraphArtifact, ...]: ...
+
+    @property
+    def package_lists(self) -> dict[int, tuple[bytes, ...]]: ...
 
 
 @dataclass(frozen=True)
@@ -43,8 +70,12 @@ class BoundGraphArtifact:
         # Events are already coloured by the whole-graph compiler.
         _ = self.slot_leases
 
-    @cached_property
+    @property
     def slot_leases(self) -> frozenset[tuple[int, int]]:
+        return self._slot_leases
+
+    @cached_property
+    def _slot_leases(self) -> frozenset[tuple[int, int]]:
         resources = set()
         balance: dict[tuple[int, int], int] = {}
         nodes = {part.node for part in self.parts}
@@ -105,8 +136,12 @@ class BoundGraphArtifact:
             raise ValueError("graph completion must consume every released event token")
         return frozenset(resources)
 
-    @cached_property
+    @property
     def digest(self) -> bytes:
+        return self._digest
+
+    @cached_property
+    def _digest(self) -> bytes:
         digest = hashlib.blake2b(digest_size=32)
         fields = [self.machine_digest.encode(), self.binding_key, self.manifest]
         for part in self.parts:
@@ -115,6 +150,14 @@ class BoundGraphArtifact:
             digest.update(struct.pack("<Q", len(data)))
             digest.update(data)
         return digest.digest()
+
+    @property
+    def stages(self) -> tuple["BoundGraphArtifact", ...]:
+        return (self,)
+
+    @property
+    def package_lists(self) -> dict[int, tuple[bytes, ...]]:
+        return {part.node: (part.package,) for part in self.parts}
 
 
 class SlotLeases:
@@ -146,7 +189,7 @@ class PreparedFirmwareGraph:
 
     def __init__(
         self,
-        artifact: BoundGraphArtifact,
+        artifact: RetainedArtifact,
         queues,
         leases: SlotLeases,
         references=(),
@@ -164,7 +207,7 @@ class PreparedFirmwareGraph:
                 arena.retain_pinned(address)
                 self.references.append((arena, address))
             self.group = PreparedQueueGroup(
-                {part.node: part.package for part in artifact.parts},
+                artifact.package_lists,
                 queues,
                 timeout_cycles,
             )

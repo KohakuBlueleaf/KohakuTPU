@@ -153,8 +153,44 @@ fn ceil_div(a: u128, b: u128) -> u128 {
 impl Package {
     /// The writer's checks (L0.PKG.011, L0.PKG.032, RUL.005, RUL.100).
     pub fn check(&self, f: &Facts) -> Result<()> {
-        if self.units.len() > 0xFFFF || self.buffers.len() > 0xFFFF || self.steps.len() > 0xFFFF {
-            return refuse!("L0.PKG.011", "a count does not fit its 16-bit header field");
+        for (name, count) in [
+            ("units", self.units.len()),
+            ("buffers", self.buffers.len()),
+            ("steps", self.steps.len()),
+        ] {
+            if count > 0xFFFF {
+                return refuse!(
+                    "L0.PKG.011",
+                    "{name}={count} exceeds its 16-bit header limit 65535 \
+                     (units={}, buffers={}, steps={}, relocations={}, payloads={})",
+                    self.units.len(), self.buffers.len(), self.steps.len(),
+                    self.relocs.len(), self.payloads.len()
+                );
+            }
+        }
+        if self.ack_reserve > u64::from(u16::MAX) {
+            return refuse!("L0.PKG.011", "ack_reserve={} exceeds its 16-bit header field", self.ack_reserve);
+        }
+        for (name, count) in [
+            ("payloads", self.payloads.len() as u128),
+            ("relocations", self.relocs.len() as u128),
+        ] {
+            if count > u128::from(u32::MAX) {
+                return refuse!("L0.PKG.011", "{name}={count} exceeds its 32-bit header field");
+            }
+        }
+        // Check in a wide type before allocating serialized copies or narrowing
+        // total bytes into the header. This is also the partitioner's real limit.
+        let alignment = align() as u128;
+        let bytes = header_bytes(f) as u128 + [
+            (self.units.len(), UNIT_BYTES), (self.buffers.len(), BUFFER_BYTES),
+            (self.steps.len(), STEP_BYTES), (self.relocs.len(), RELOC_BYTES),
+            (self.payloads.len(), PAYLOAD_BYTES),
+        ].into_iter().map(|(n, size)| {
+            (n as u128 * size as u128).div_ceil(alignment) * alignment
+        }).sum::<u128>();
+        if bytes > u128::from(u32::MAX) {
+            return refuse!("L0.PKG.011", "bytes={bytes} exceeds its 32-bit header field");
         }
         if self.units.len() > f.unit_bound() && !mutant::on("l0.pkg/unlimited_units") {
             return refuse!(

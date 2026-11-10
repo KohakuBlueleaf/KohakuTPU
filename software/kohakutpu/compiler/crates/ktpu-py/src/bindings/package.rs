@@ -701,13 +701,37 @@ fn package_admit(
 
 /// Whole-card preparation proof over exact bound packages and owned input bytes.
 #[pyfunction]
-#[pyo3(signature = (runs, machine_json, initial, *, compositional=false))]
+#[pyo3(signature = (runs, machine_json, initial, *, compositional=false, independent_packages=false, host_join_every=0))]
 fn package_check_memory(
     runs: Vec<BTreeMap<u32, Vec<u8>>>,
     machine_json: &str,
     initial: BTreeMap<u64, Vec<u8>>,
     compositional: bool,
+    independent_packages: bool,
+    host_join_every: usize,
 ) -> PyResult<String> {
+    if host_join_every > 0 && !independent_packages {
+        return Err(PyValueError::new_err(
+            "host_join_every requires independent_packages",
+        ));
+    }
+    if independent_packages {
+        // Node host indices count local packages, not entries in `runs`.
+        // Missing participants would move an epoch fence to the wrong place.
+        let first = runs.first().filter(|nodes| !nodes.is_empty()).ok_or_else(|| {
+            PyValueError::new_err("independent package runs need participants")
+        })?;
+        if runs.iter().any(|nodes| !nodes.keys().eq(first.keys())) {
+            return Err(PyValueError::new_err(
+                "independent package runs must have identical participants",
+            ));
+        }
+        if host_join_every > 0 && runs.len() % host_join_every != 0 {
+            return Err(PyValueError::new_err(
+                "host_join_every must divide the number of package runs",
+            ));
+        }
+    }
     let m = machine(machine_json)?;
     let target = ktpu_verify::Target::from_machine(&m, None).map_err(PyValueError::new_err)?;
     let runs = runs
@@ -726,6 +750,8 @@ fn package_check_memory(
         .collect::<PyResult<Vec<_>>>()?;
     let memory = ktpu_verify::MemoryContext {
         initial,
+        independent_packages,
+        host_join_every,
         ..ktpu_verify::MemoryContext::default()
     };
     let check = || ktpu_verify::check_with_memory(&runs, &target, &memory);

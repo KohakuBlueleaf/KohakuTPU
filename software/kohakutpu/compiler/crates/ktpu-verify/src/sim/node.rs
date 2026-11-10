@@ -371,7 +371,15 @@ impl Sim<'_> {
             return StepOutcome::Blocked;
         }
         let host = self.nodes[i].host;
-        if host > 0 {
+        if host > 0 && self.card.context.independent_packages
+            && (self.card.context.host_join_every == 0
+                || host % self.card.context.host_join_every != 0)
+        {
+            // HOSTL advances this node after its own END, without importing
+            // another node's completion clock. Local END still closes register,
+            // dispatch, fetch and mover state in the ordinary way below.
+            self.nodes[i].host = 0;
+        } else if host > 0 {
             // The host submits the next run once every node ended this one.
             let c = self.counter(&format!("host:{host}"));
             let need = self.node_of.len() as i64;

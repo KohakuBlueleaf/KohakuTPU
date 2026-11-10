@@ -831,9 +831,14 @@ def package_check_memory(
     initial: dict[int, bytes],
     *,
     compositional: bool = False,
+    independent_packages: bool = False,
+    host_join_every: int = 0,
 ) -> str:
-    """Whole-card preparation proof over exact bound packages and owned input
-    bytes, as verdict JSON."""
+    """Bound-package proof; independent lists join only at explicit epoch ends.
+
+    host_join_every=0 adds no host boundary in independent mode. Neither option
+    changes ordinary package checking or any card/firmware ABI.
+    """
 
 def f014_reach(
     package: bytes, bindings: list[int], machine_json: str, memory: bytes, mesh: int

@@ -30,6 +30,7 @@ import zoo
 from examples.tinygrad import mnist_models, perf_inputs
 from h import meta
 from intervals import Inputs
+from package_check import PackageRecorder
 from retirement import (
     card_rows as joined_card_rows,  # noqa: F401 -- public witness seam
 )
@@ -93,6 +94,8 @@ class Trace:
         self.program_names = {}
         self.launches = (out / "launches.jsonl").open("w", encoding="utf-8")
         self.count = 0
+        self.rows = []
+        self.packages = PackageRecorder(self)
         self.current_input = None
         self.compiles: list[tuple] = []
         self.ended: float | None = None
@@ -167,6 +170,7 @@ class Trace:
         if self.open:
             row["parent"] = self.open[-1][0]["seq"]
         self.open.append([row, 0.0])
+        self.rows.append(row)
         return row["seq"]
 
     def submitted(self, seconds: float) -> None:
@@ -182,6 +186,7 @@ class Trace:
     def launch(
         self, dev, compiled, binds: dict, kind: str, info, gap: float, unique=False
     ) -> int:
+        self.packages.attach(dev)
         name = self.kernel(compiled, unique)
         phys = {p: int(dev.mmu.resolve(a)[1]) for p, a in binds.items()}
         keep = {
@@ -214,8 +219,22 @@ class Trace:
             }
         )
 
+    def persist_launches(self):
+        # Deferred eager lists acquire placement after the logical submit row
+        # was written. Preserve that row's identity, not the later flushing call.
+        self.launches.seek(0)
+        self.launches.truncate()
+        self.launches.write("".join(json.dumps(row) + "\n" for row in self.rows))
+        self.launches.flush()
+
     def save(self, meta: dict) -> None:
-        self.launches.close()
+        try:
+            self.persist_launches()
+        finally:
+            try:
+                self.packages.close()
+            finally:
+                self.launches.close()
         meta = dict(
             meta,
             launches=self.count,
@@ -285,6 +304,8 @@ def recording(trace: Trace, library: pathlib.Path | None, card: bool, prof: Prof
     submit = D.Device.submit
     replay = D.Device.replay
     compile_graph = D.Device.compile_graph
+    if card:
+        trace.packages.install()
 
     # Only a top-level event charges the gap since the last ended (a nested one
     # is inside its parent's time); an event closes even when its submit raises.
@@ -302,6 +323,7 @@ def recording(trace: Trace, library: pathlib.Path | None, card: bool, prof: Prof
         return got
 
     def on_replay(self, log, *args, **kw):
+        trace.packages.attach(self)
         t0 = time.perf_counter()
         gap = 0.0 if trace.open else t0 - (trace.ended or t0)
         seq = trace.replayed(gap)
@@ -609,6 +631,10 @@ def main() -> int:
     finally:
         try:
             if close_boot is not None:
+                if trace.packages.transport_failed():
+                    raise RuntimeError(
+                        "boot teardown skipped after transport failure; reset required"
+                    )
                 close_boot()
         except BaseException:  # noqa: BLE001
             failure = traceback.format_exc()

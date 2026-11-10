@@ -73,6 +73,8 @@ class MultiOSCard(OfflineCard):
         if self.profile_sys:
             for node, result in results.items():
                 session = self.sessions[node]
+                if "part_results" in result:
+                    result["syscall_profile_scope"] = "terminal_part_only"
                 result["syscall_profile"] = struct.unpack(
                     f"<{A.OSTPU_PROF_WORDS}Q",
                     session.io.read(

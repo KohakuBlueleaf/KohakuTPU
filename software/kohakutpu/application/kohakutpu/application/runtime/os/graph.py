@@ -15,7 +15,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from kohakutpu.application.runtime.os import abi as A
-from kohakutpu.application.runtime.split import BoundGraphArtifact, SlotLeases
+from kohakutpu.application.runtime.split import GraphArtifact, SlotLeases
 
 C_ABI = A.C_ABI
 MAGIC = A.OSTPU_MAGIC
@@ -1465,7 +1465,7 @@ class PreparedMultiGraph:
 
     def __init__(
         self,
-        artifact: BoundGraphArtifact,
+        artifact: GraphArtifact,
         residents: dict[int, ResidentGraph],
         units,
         leases: SlotLeases,

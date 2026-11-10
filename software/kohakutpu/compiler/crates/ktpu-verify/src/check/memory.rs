@@ -19,4 +19,10 @@ pub struct MemoryContext {
     /// Initialized bytes, before the first package is submitted. Subsequent
     /// writes replace or invalidate these values in the simulated memory.
     pub initial: BTreeMap<u64, Vec<u8>>,
+    /// Node-local lists advance independently. END drains only its own node;
+    /// cross-node ordering must come from the packages, not a host-stage fence.
+    pub independent_packages: bool,
+    /// A real host collection between list replays, every this many packages.
+    /// Zero means no intermediate host boundary in the supplied sequence.
+    pub host_join_every: usize,
 }

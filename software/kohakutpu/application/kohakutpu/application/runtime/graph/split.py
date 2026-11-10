@@ -7,10 +7,21 @@ from types import MappingProxyType
 from typing import Any
 
 from kohakutpu.application.runtime import generated
+from kohakutpu.application.runtime.device.common import Submitted
 from kohakutpu.application.runtime.graph import backend as graph_backend
 from kohakutpu.application.runtime.graph.bound import bind
+from kohakutpu.application.runtime.graph.limits import (
+    CapacityExceeded,
+    inspect_artifact,
+)
 from kohakutpu.application.runtime.graph.native import names, renamed
+from kohakutpu.application.runtime.graph.parts import (
+    BoundGraphSequence,
+    bind_parts,
+    capacity_error,
+)
 from kohakutpu.application.runtime.os.graph import PreparedMultiGraph
+from kohakutpu.application.runtime.os.sequence import PreparedMultiSequence
 from kohakutpu.application.runtime.split import (
     BoundGraphArtifact,
     PreparedFirmwareGraph,
@@ -27,7 +38,7 @@ class PreparedSplitGraph:
     events: tuple
     references: list
     closed: bool = False
-    artifact: BoundGraphArtifact | None = None
+    artifact: BoundGraphArtifact | BoundGraphSequence | None = None
     scratch: list[int] = field(default_factory=list)
     backends: list[Any] = field(default_factory=list)
     environment: dict | None = None
@@ -35,39 +46,71 @@ class PreparedSplitGraph:
     bound_bindings: dict | None = None
     bound_references: list = field(default_factory=list)
     proof_epoch: int | None = None
+    resource_usage: Any = None
+    part_compiled: tuple = ()
+    admission: dict | None = None
 
-    def submit(self):
+    def submit(self) -> Submitted:
         if self.closed:
             raise RuntimeError("prepared split graph is closed")
         self.bind_artifact()
-        if self.device.graph_backend is not None:
+        if self.device.graph_backend is not None or (
+            isinstance(self.artifact, BoundGraphSequence)
+            and getattr(self.device.card, "queues", None)
+        ):
             return graph_backend.submit(self)
+        if isinstance(self.artifact, BoundGraphSequence):
+            # Software/offline cards have no firmware queue. The real hardware
+            # backends above submit the retained list through their adapters.
+            submitted = None
+            for compiled in self.part_compiled:
+                submitted = self.device._submitted(
+                    compiled, self.bound_bindings, "graph", None, pinned=True
+                )
+                self.device.collect_through(submitted)
+            if submitted is None:
+                raise RuntimeError("bound sequence has no compiled parts")
+            return submitted
         return self.device._submitted(
             self.compiled, self.bound_bindings, "graph", None, pinned=True
         )
 
-    def bind_artifact(self) -> BoundGraphArtifact:
+    def bind_artifact(self) -> BoundGraphArtifact | BoundGraphSequence:
         if self.closed:
             raise RuntimeError("prepared split graph is closed")
         if self.artifact is not None and self.proof_epoch != self.device.table_epoch:
             # A constant/address-table write invalidates the memory proof, not
             # the pinned alias layout. Retire adapters before replacing bytes.
-            self.device.drain()
-            for backend in self.backends:
-                backend.close()
-            self.backends.clear()
-            for arena, address in self.bound_references:
-                self.references.remove((arena, address))
-                arena.unretain(address)
-            self.bound_references.clear()
-            self.artifact = self.bound_bindings = None
-        if self.artifact is None:
+            self._discard_bound()
+        artifact = self.artifact
+        if artifact is None:
             # This cache owns both the artifact and its validity stamp. Do not
             # depend on bind() mutating the stamp as an undocumented side effect.
             epoch = self.device.table_epoch
-            self.artifact = bind(self)
+            try:
+                artifact = bind(self)
+            except Exception as error:
+                if not getattr(
+                    self.compiled, "compositional", False
+                ) or not capacity_error(error):
+                    raise
+                artifact = bind_parts(self, bind, error)
+            self.artifact = artifact
             self.proof_epoch = epoch
-        return self.artifact
+        return artifact
+
+    def _discard_bound(self):
+        self.device.drain()
+        for backend in self.backends:
+            backend.close()
+        self.backends.clear()
+        for arena, address in self.bound_references:
+            self.references.remove((arena, address))
+            arena.unretain(address)
+        self.bound_references.clear()
+        self.artifact = self.bound_bindings = None
+        self.part_compiled = ()
+        self.resource_usage = None
 
     def prepare_firmware(self, queues, leases, **options):
         artifact = self.bind_artifact()
@@ -78,10 +121,41 @@ class PreparedSplitGraph:
         return backend
 
     def prepare_kaos(self, residents, units, leases, **options):
+        admission = dict(residents=residents, units=units, **options)
+        if self.artifact is not None:
+            stages = (
+                self.artifact.stages
+                if isinstance(self.artifact, BoundGraphSequence)
+                else (self.artifact,)
+            )
+            try:
+                for stage in stages:
+                    inspect_artifact(stage, self.device.card.machine_json, **admission)
+            except CapacityExceeded:
+                # A direct adapter caller may provide a smaller resident than
+                # the card default. Repartition before creating its transport.
+                self._discard_bound()
+        self.admission = admission
         artifact = self.bind_artifact()
-        backend = PreparedMultiGraph(
-            artifact, residents, units, leases, references=self.references, **options
-        )
+
+        if isinstance(artifact, BoundGraphSequence):
+            backend = PreparedMultiSequence(
+                artifact,
+                residents,
+                units,
+                leases,
+                references=self.references,
+                **options,
+            )
+        else:
+            backend = PreparedMultiGraph(
+                artifact,
+                residents,
+                units,
+                leases,
+                references=self.references,
+                **options,
+            )
         self.backends.append(backend)
         return backend
 

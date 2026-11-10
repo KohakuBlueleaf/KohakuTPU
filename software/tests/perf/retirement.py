@@ -110,6 +110,18 @@ def card_rows(entries, ring=None):
         row["cycle_scope"] = (
             "kds_submit_to_reply" if entry["backend"] == "kaos" else "firmware_package"
         )
+        if any("part_results" in values for values in nodes.values()):
+            parts = [values["part_results"] for values in nodes.values()]
+            if len({len(values) for values in parts}) != 1:
+                raise ValueError("resident sequence has incomplete per-node parts")
+            row["sum_part_max_node_cycles"] = sum(
+                max(part["cycles"] for part in stage)
+                for stage in zip(*parts, strict=True)
+            )
+            row["cycle_scope"] = (
+                "sum_of_node_local_part_durations_excludes_host_transitions"
+            )
+            row["cycle_aggregation"] = "maximum_node_sum_not_sequence_makespan"
         row["list_index"] = 0
         # Firmware completion records also have a numeric `kind`. Never let
         # hardware fields overwrite the host launch kind, identity or cycles.
@@ -166,7 +178,13 @@ def observe(out, backend, measure=False, outputs=False):
     )
     output = (out / "outputs.jsonl").open("w", encoding="utf-8") if outputs else None
 
+    def transport_failed(dev):
+        failed = getattr(dev, "_perf_package_transport_failed", None)
+        return failed is not None and failed()
+
     def check_clocks(dev, when):
+        if transport_failed(dev):
+            raise RuntimeError("clock read skipped: transport is dead")
         expected = json.loads(os.environ.get("PERF_CLOCKS", "null"))
         if expected is None:
             return
@@ -217,6 +235,8 @@ def observe(out, backend, measure=False, outputs=False):
     def flush(dev):
         ring = getattr(dev, "_perf_ring", None)
         try:
+            if transport_failed(dev):
+                raise RuntimeError("measurement read skipped: transport is dead")
             if ring is not None:
                 slots.extend(ring.rows())
                 if any(ring.lost.values()):
@@ -253,6 +273,11 @@ def observe(out, backend, measure=False, outputs=False):
         return run
 
     def on_close(self, *args, **kwargs):
+        if transport_failed(self):
+            # Do not turn a diagnostic C2H timeout into more ring reads, STOP,
+            # or reset traffic. Ownership is intentionally not reclaimed.
+            persist()
+            raise RuntimeError("teardown skipped: transport is dead; reset required")
         # Healthy close would drain anyway. Do it before the final ring read;
         # never add a new drain/replay on an already-failed device.
         try:

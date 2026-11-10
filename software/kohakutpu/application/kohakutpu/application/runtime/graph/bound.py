@@ -11,6 +11,7 @@ from kohakutpu.application.runtime.binding import (
     cluster_burst,
     unaligned,
 )
+from kohakutpu.application.runtime.graph.limits import inspect_artifact
 from kohakutpu.application.runtime.graph.storage import borrow_scratch
 from kohakutpu.application.runtime.split import BoundGraphArtifact, NodePart
 from kohakutpu.stack import rs
@@ -100,6 +101,17 @@ def bind(prepared):
                 {"dependencies": prepared.dependencies, "events": prepared.events},
                 sort_keys=True,
             ).encode(),
+        )
+        options = getattr(prepared, "admission", None) or {}
+        if not options and dev.graph_backend == "kaos":
+            options = dict(
+                residents=dev.card.sessions,
+                units=dev.card.units,
+                unit_types=dev.card.unit_types,
+                wait_window=dev.card.wait_window,
+            )
+        prepared.resource_usage = inspect_artifact(
+            artifact, dev.card.machine_json, **options
         )
         prepared.references.extend(references)
         prepared.bound_references = references

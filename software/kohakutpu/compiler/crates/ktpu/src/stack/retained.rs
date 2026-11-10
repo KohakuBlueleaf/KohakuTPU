@@ -274,6 +274,7 @@ pub fn compose(
             if index + 1 < bodies.len() {
                 if nodes.len() == 1 {
                     events.push(join_event(index, node, node, None, "local"));
+                    text.push_str(&format!("        # retained-cut {index}\n"));
                     continue;
                 }
                 let slot = join_slot.ok_or_else(|| Refusal::new("GRAPH.LIFETIME", "no common slot for a scratch lifetime join"))?;
@@ -290,6 +291,10 @@ pub fn compose(
                     events.push(join_event(index, node, coordinator, Some(slot), "gather"));
                 }
             }
+            // Source provenance only: a capacity cut keeps the actual join
+            // above and is independently rebuilt and verified. Comments do
+            // not change the fitting program's package bytes.
+            text.push_str(&format!("        # retained-cut {index}\n"));
         }
     }
     // Parse now; package construction must wait for the real pooled bindings.

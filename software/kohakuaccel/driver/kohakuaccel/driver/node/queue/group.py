@@ -5,6 +5,8 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import Any
 
+from kohakuaccel.driver.node.queue.layout import LIST_F_CHAIN
+
 
 @dataclass
 class GroupCompletion:
@@ -17,7 +19,7 @@ class GroupCompletion:
 
 
 class PreparedQueueGroup:
-    """One immutable package per node, retained through every terminal CQ.
+    """An immutable package or ordered package tuple per node, through terminal CQ.
 
     The caller owns allocation and user-slot leases. Preparation does not publish
     any RUN. A failed epoch quarantines every participating queue and its uploads.
@@ -35,13 +37,28 @@ class PreparedQueueGroup:
         self.poisoned = self.closed = False
         try:
             for node, queue in self.queues.items():
-                package = queue.prepare(packages[node])
-                try:
-                    self.lists[node] = queue.prepare_list(
-                        [(package, (), timeout_cycles, 0, node)]
+                raw = packages[node]
+                sequence = (raw,) if isinstance(raw, bytes) else tuple(raw)
+                if not sequence or any(
+                    not isinstance(item, bytes) for item in sequence
+                ):
+                    raise ValueError(
+                        "node list requires complete immutable package bytes"
                     )
+                uploads = []
+                try:
+                    for item in sequence:
+                        uploads.append(queue.prepare(item))
+                    self.lists[node] = queue.prepare_list(
+                        [(package, (), timeout_cycles, 0, node) for package in uploads]
+                    )
+                    if len(sequence) > 1:
+                        # Capacity parts are one retained program. Select the
+                        # firmware chain explicitly, never via a user's knob.
+                        self.lists[node].flags |= LIST_F_CHAIN
                 finally:
-                    package.close()
+                    for package in uploads:
+                        package.close()
         except BaseException:
             for prepared in self.lists.values():
                 prepared.close()
@@ -110,16 +127,15 @@ class PreparedQueueGroup:
             if self.pending is not token or self.poisoned:
                 raise RuntimeError("no collectable queue-group epoch")
             results = {}
-            failure = None
-            for node, ticket in token.tickets:
-                try:
+            try:
+                for node, ticket in token.tickets:
                     results[node] = self.queues[node].wait(ticket)
-                except Exception as error:  # noqa: BLE001
-                    if failure is None:
-                        failure = error
-            if failure is not None:
+            except BaseException:
+                # A middle-item failure, a transport timeout or an interruption
+                # invalidates the whole epoch. Do not poll peers through a dead
+                # shared transport. Their uploads/leases remain owned until reset.
                 self._poison()
-                raise failure
+                raise
             token.results = results
             self.pending = None
             return results
