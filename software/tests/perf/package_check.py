@@ -233,13 +233,6 @@ class PackageRecorder:
         index = record.get("list_index", 0)
         readback_failure = None
         unavailable = self.unavailable(queue)
-        # The diagnostic read alone also skips a link that has already needed a
-        # C2H recovery: a further reset would destroy the evidence.
-        recovered = any(
-            f.get("kind") == "c2h"
-            for t in transport_chain(queue.mem)
-            for f in getattr(t, "faults", ())
-        )
         check = dict(
             node=self.nodes[queue],
             queue_base=queue.base,
@@ -266,8 +259,6 @@ class PackageRecorder:
             check.update(span, seq=seq)
             if unavailable is not None:
                 check.update(outcome="skipped", reason=unavailable)
-            elif recovered:
-                check.update(outcome="skipped", reason="prior C2H recovery")
             else:
                 # The padding was uploaded too; read whole painted 64-byte lines.
                 expected = raw + bytes(span["uploaded_nbytes"] - len(raw))
