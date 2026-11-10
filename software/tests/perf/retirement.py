@@ -178,13 +178,13 @@ def observe(out, backend, measure=False, outputs=False):
     )
     output = (out / "outputs.jsonl").open("w", encoding="utf-8") if outputs else None
 
-    def transport_failed(dev):
+    def transport_failed(dev) -> str | None:
         failed = getattr(dev, "_perf_package_transport_failed", None)
-        return failed is not None and failed()
+        return failed() if failed is not None else None
 
     def check_clocks(dev, when):
-        if transport_failed(dev):
-            raise RuntimeError("clock read skipped: transport is dead")
+        if reason := transport_failed(dev):
+            raise RuntimeError(f"clock read skipped: transport is dead ({reason})")
         expected = json.loads(os.environ.get("PERF_CLOCKS", "null"))
         if expected is None:
             return
@@ -235,8 +235,10 @@ def observe(out, backend, measure=False, outputs=False):
     def flush(dev):
         ring = getattr(dev, "_perf_ring", None)
         try:
-            if transport_failed(dev):
-                raise RuntimeError("measurement read skipped: transport is dead")
+            if reason := transport_failed(dev):
+                raise RuntimeError(
+                    f"measurement read skipped: transport is dead ({reason})"
+                )
             if ring is not None:
                 slots.extend(ring.rows())
                 if any(ring.lost.values()):
@@ -273,11 +275,13 @@ def observe(out, backend, measure=False, outputs=False):
         return run
 
     def on_close(self, *args, **kwargs):
-        if transport_failed(self):
+        if reason := transport_failed(self):
             # Do not turn a diagnostic C2H timeout into more ring reads, STOP,
             # or reset traffic. Ownership is intentionally not reclaimed.
             persist()
-            raise RuntimeError("teardown skipped: transport is dead; reset required")
+            raise RuntimeError(
+                f"teardown skipped: transport is dead ({reason}); reset required"
+            )
         # Healthy close would drain anyway. Do it before the final ring read;
         # never add a new drain/replay on an already-failed device.
         try:

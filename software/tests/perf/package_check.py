@@ -168,19 +168,34 @@ class PackageRecorder:
 
     def unavailable(self, queue):
         # Inspect Python state only. Never probe health by reading a dead link.
+        # A fault the driver recovered from leaves a working link; one it did
+        # not (no recovery, or the recovery itself failed) leaves it dead.
         for transport in transport_chain(queue.mem):
             if id(transport) in self.dead:
                 return "prior transport error"
-            if any(f.get("kind") == "c2h" for f in getattr(transport, "faults", ())):
-                return "prior C2H failure (including a recovered link)"
+            faults = getattr(transport, "faults", ())
+            if len(faults) > getattr(transport, "counts", {}).get("recovered", 0):
+                return "prior unrecovered C2H/H2C fault"
             if hasattr(transport, "_fds") and not transport._fds:
                 return "closed transport"
         if queue._broken:
             return "queue transport publication/exchange failed"
         return None
 
-    def transport_failed(self):
-        return bool(self.dead) or any(self.unavailable(queue) for queue in self.nodes)
+    def transport_failed(self) -> str | None:
+        """Why the run's transport is unusable, or None. A queue whose link was
+        closed (a device already shut) is not part of the run."""
+        if self.dead:
+            return "prior transport error"
+        for queue, node in self.nodes.items():
+            if any(
+                hasattr(t, "_fds") and not t._fds for t in transport_chain(queue.mem)
+            ):
+                continue
+            reason = self.unavailable(queue)
+            if reason is not None:
+                return f"node {node}: {reason}"
+        return None
 
     def mark_dead(self, queue):
         self.dead.update(id(t) for t in transport_chain(queue.mem))
@@ -218,6 +233,13 @@ class PackageRecorder:
         index = record.get("list_index", 0)
         readback_failure = None
         unavailable = self.unavailable(queue)
+        # The diagnostic read alone also skips a link that has already needed a
+        # C2H recovery: a further reset would destroy the evidence.
+        recovered = any(
+            f.get("kind") == "c2h"
+            for t in transport_chain(queue.mem)
+            for f in getattr(t, "faults", ())
+        )
         check = dict(
             node=self.nodes[queue],
             queue_base=queue.base,
@@ -244,6 +266,8 @@ class PackageRecorder:
             check.update(span, seq=seq)
             if unavailable is not None:
                 check.update(outcome="skipped", reason=unavailable)
+            elif recovered:
+                check.update(outcome="skipped", reason="prior C2H recovery")
             else:
                 # The padding was uploaded too; read whole painted 64-byte lines.
                 expected = raw + bytes(span["uploaded_nbytes"] - len(raw))
