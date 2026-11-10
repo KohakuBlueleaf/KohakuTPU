@@ -156,6 +156,7 @@ class Graph:
         self.prune = prune
         self.ancestors = []
         self._persistent = False
+        self._composed_payloads = False
         self._node_ids = {}
 
     def de_break(self, frontier):
@@ -282,6 +283,10 @@ class Graph:
         """
         nodes = {part.node for part in artifact.parts}
         node_ids = {node: node for node in nodes} if node_ids is None else node_ids
+        # A composed (multi-launch) artifact attaches each ENGINE fetch range;
+        # a single launch keeps the whole-payload upload.
+        manifest = json.loads(artifact.manifest) if artifact.manifest else {}
+        composed = len(manifest.get("dependencies", ())) > 1
         result = {}
         for part in artifact.parts:
             h = struct.unpack_from(A.PKG_HDR_FMT, part.package)
@@ -293,6 +298,7 @@ class Graph:
                     raise ValueError("a node part must use its own CPU's units")
             graph = cls(**{"de_stream": True, "movers": True, **options})
             graph._persistent = True
+            graph._composed_payloads = composed
             graph._node_ids = node_ids
             local_units = {
                 coord: index
@@ -379,7 +385,7 @@ class Graph:
                 exp_cnt = state["exp"]
                 waited = state["waited"]
                 mv_base = state["mv_gos"]
-                pkg_pay_off = None
+                fetch_blobs = {}
                 split_sent = {}
                 split_seen = {}
                 split_mv = 0
@@ -422,7 +428,6 @@ class Graph:
                         exp_cnt, \
                         waited, \
                         mv_base, \
-                        pkg_pay_off, \
                         split_mv
                     if (
                         not allow_split
@@ -450,11 +455,10 @@ class Graph:
                     exp_cnt = state["exp"]
                     waited = state["waited"]
                     mv_base = state["mv_gos"]
-                    pkg_pay_off = None
+                    fetch_blobs.clear()
 
                 def resume(frontier):
                     nonlocal state, entries, blobs, mb, sent_cnt, exp_cnt, waited
-                    nonlocal pkg_pay_off
                     previous = state
                     self._de = None
                     state, _ = self._open_de(frontier)
@@ -467,7 +471,7 @@ class Graph:
                         state["exp"],
                         state["waited"],
                     )
-                    pkg_pay_off = None
+                    fetch_blobs.clear()
 
                 def release(destination, slot, amount, fence):
                     frontier = self._sync_de(state)
@@ -663,17 +667,50 @@ class Graph:
                             j = k % A.KOS_DE_GROUP_ENTRIES
                             c = (c_word >> (8 * j)) & 0xFF
                             v = (v1, v2, v3)[j]
-                            if c & A.KOS_DE_RELOC_FETCH:
-                                if pkg_pay_off is None:
-                                    pkg_pay_off = len(blobs)
+                            if c & A.KOS_DE_RELOC_FETCH and not self._composed_payloads:
+                                # Preserve the base byte layout and validation
+                                # policy for ordinary and single-launch callers.
+                                if None not in fetch_blobs:
+                                    fetch_blobs[None] = len(blobs)
                                     blobs.extend(
                                         raw[
                                             h[A.KA_PH_OFF_PAY] : h[A.KA_PH_OFF_PAY]
                                             + 32 * arg
                                         ]
                                     )
-                                v = (v + (pkg_pay_off << A.KOS_DE_FETCH_SHIFT)) & (
-                                    (1 << 64) - 1
+                                v = (
+                                    v + (fetch_blobs[None] << A.KOS_DE_FETCH_SHIFT)
+                                ) & ((1 << 64) - 1)
+                            elif c & A.KOS_DE_RELOC_FETCH:
+                                # ENGINE fetch addresses are byte offsets into
+                                # the package payload, not a request to embed its
+                                # entire prefix at every join/capacity split.
+                                offset = v >> A.KOS_DE_FETCH_SHIFT
+                                size = (v & 255) * 32
+                                pay = h[A.KA_PH_OFF_PAY]
+                                # Only INST|STREAM descriptors justify n * 32.
+                                # Match the resident's ARG3 contract before copying.
+                                if (v ^ A.KOS_DE_FETCH_TAG) & 0xFFFF00:
+                                    raise ValueError("invalid ENGINE fetch descriptor")
+                                if (
+                                    c != A.KOS_DE_FETCH_CODE
+                                    or offset % 32
+                                    or not size
+                                    or offset + size
+                                    > (h[A.KA_PH_COUNTS] & 0xFFFFFFFF) * 32
+                                    or pay + offset + size > len(raw)
+                                ):
+                                    raise ValueError(
+                                        "ENGINE fetch is outside package payload"
+                                    )
+                                key = (offset, size)
+                                if key not in fetch_blobs:
+                                    fetch_blobs[key] = len(blobs)
+                                    blobs.extend(
+                                        raw[pay + offset : pay + offset + size]
+                                    )
+                                v = (fetch_blobs[key] << A.KOS_DE_FETCH_SHIFT) | (
+                                    v & ((1 << A.KOS_DE_FETCH_SHIFT) - 1)
                                 )
                             if (
                                 self._persistent

@@ -1,14 +1,15 @@
 //! Unit-local completion relations at control-flow block boundaries.
-
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
-
 use crate::build::PackageBuilder;
 use crate::error::Result;
 use crate::format::{Op, F_IMM};
 use crate::refuse;
+use state::Frontiers;
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
+mod segments;
 mod slots;
 mod specialize;
+mod state;
 
 #[derive(Clone, Copy)]
 pub(super) enum Event {
@@ -16,113 +17,49 @@ pub(super) enum Event {
     Wait(usize, Option<usize>),
 }
 
-#[derive(Clone)]
-struct Frontiers {
-    /// Finite upper bounds on x - y. Missing pairs have no known bound.
-    upper: HashMap<(usize, usize), i128>,
-    defined: HashSet<usize>,
+/// Analysis owns only a step graph, never the accumulated package payloads.
+struct Graph {
+    steps: Vec<crate::Step>,
+    units: usize,
+    first_slot: usize,
+    terminal: bool,
 }
-
-impl Frontiers {
-    fn new(units: usize) -> Self {
-        let mut upper = HashMap::new();
-        let mut defined = HashSet::new();
-        for u in 0..units {
-            upper.insert((2 * u, 2 * u + 1), 0);
-            upper.insert((2 * u + 1, 2 * u), 0);
-            defined.extend([2 * u, 2 * u + 1]);
-        }
-        Self { upper, defined }
-    }
-
-    fn bound(&self, x: usize, y: usize) -> Option<i128> {
-        if x == y {
-            Some(0)
-        } else {
-            self.upper.get(&(x, y)).copied()
+impl Graph {
+    fn empty(&self) -> Self {
+        Self {
+            steps: Vec::new(),
+            units: self.units,
+            first_slot: self.first_slot,
+            terminal: self.terminal,
         }
     }
-
-    fn difference(&self, x: usize, y: usize) -> Option<i128> {
-        let hi = self.bound(x, y)?;
-        (self.bound(y, x)? == -hi).then_some(hi)
-    }
-
-    fn covered(&self, x: usize, y: usize) -> bool {
-        self.bound(x, y).is_some_and(|d| d <= 0)
-    }
-
-    fn assign(&mut self, to: usize, from: usize) {
-        if to == from {
-            return;
-        }
-        self.upper.retain(|&(x, y), _| x != to && y != to);
-        let mut copied = Vec::new();
-        for (&(x, y), &bound) in &self.upper {
-            if x == from {
-                copied.push(((to, y), bound));
-            }
-            if y == from {
-                copied.push(((x, to), bound));
-            }
-        }
-        self.upper.extend(copied);
-        self.upper.insert((to, from), 0);
-        self.upper.insert((from, to), 0);
-        if self.defined.contains(&from) {
-            self.defined.insert(to);
-        } else {
-            self.defined.remove(&to);
-        }
-    }
-
-    fn add(&mut self, to: usize, n: i128) {
-        for (&(x, y), bound) in &mut self.upper {
-            if x == to {
-                *bound += n;
-            }
-            if y == to {
-                *bound -= n;
-            }
-        }
-    }
-
-    fn join(&mut self, other: &Self) -> bool {
-        let mut changed = false;
-        self.upper.retain(|pair, bound| {
-            let Some(&incoming) = other.upper.get(pair) else {
-                changed = true;
-                return false;
-            };
-            if incoming > *bound {
-                changed = true;
-                if incoming <= 0 {
-                    *bound = 0;
-                } else {
-                    return false;
-                }
-            }
-            true
-        });
-        self.defined.retain(|v| {
-            let keep = other.defined.contains(v);
-            changed |= !keep;
-            keep
-        });
-        changed
+    fn initial(&self) -> Frontiers {
+        // Keep the base DBM, including its arithmetic, widening and absence of
+        // closure. Retained scale is bounded by segmentation, not a shortcut
+        // that expands the whole historical matrix when it misses.
+        Frontiers::new(self.units)
     }
 }
 
 pub(super) fn lower(b: &mut PackageBuilder, events: &HashMap<usize, Event>) -> Result<()> {
-    lower_graph(b, events, true)
+    if crate::composition::active() {
+        return segments::lower(b, events);
+    }
+    let mut graph = Graph {
+        steps: std::mem::take(&mut b.steps),
+        units: b.units.len(),
+        first_slot: b.payloads.len(),
+        terminal: true,
+    };
+    let slots = lower_graph(&mut graph, events, true)?;
+    b.payloads
+        .resize(graph.first_slot + slots, crate::word::Word::ZERO);
+    b.steps = graph.steps;
+    Ok(())
 }
 
-fn lower_graph(
-    b: &mut PackageBuilder,
-    events: &HashMap<usize, Event>,
-    specialize: bool,
-) -> Result<()> {
-    let units = b.units.len();
+fn lower_graph(b: &mut Graph, events: &HashMap<usize, Event>, specialize: bool) -> Result<usize> {
+    let units = b.units;
     let mut marks = HashMap::new();
     for event in events.values() {
         if let Event::Mark(_, token) = event {
@@ -158,7 +95,7 @@ fn lower_graph(
                         let mut advanced = state.clone();
                         advanced.assign(a, t);
                         state.join(&advanced);
-                        state.upper.insert((t, a), 0);
+                        state.insert(t, a, 0);
                     }
                 }
             }
@@ -192,7 +129,7 @@ fn lower_graph(
     }
     let heads: Vec<_> = heads.into_iter().collect();
     let ends: HashMap<_, _> = heads.windows(2).map(|w| (w[0], w[1])).collect();
-    let mut incoming = HashMap::from([(0, Frontiers::new(units))]);
+    let mut incoming = HashMap::from([(0, b.initial())]);
     let mut todo = VecDeque::from([0]);
     while let Some(start) = todo.pop_front() {
         let Some(&end) = ends.get(&start) else {
@@ -239,7 +176,7 @@ fn lower_graph(
             if let Some(Event::Wait(u, token)) = event(pc) {
                 let t = target(u, token)?;
                 let a = 2 * u + 1;
-                if !state.defined.contains(&t) {
+                if !state.is_defined(t) {
                     return refuse!("L0.STEP.021", "mark is not defined on every incoming path");
                 }
                 if !state.covered(t, a) {
@@ -255,9 +192,9 @@ fn lower_graph(
                             if let Some((mut expanded, mapped)) =
                                 specialize::expand(b, events, &marks, &transfer)?
                             {
-                                lower_graph(&mut expanded, &mapped, false)?;
+                                let slots = lower_graph(&mut expanded, &mapped, false)?;
                                 *b = expanded;
-                                return Ok(());
+                                return Ok(slots);
                             }
                         }
                         if let Some(token) = token {
@@ -274,7 +211,7 @@ fn lower_graph(
     }
     let slots = slots::allocate(b, events, &needed, &ends);
     let slot_count = slots.values().max().map_or(0, |n| n + 1);
-    let first_slot = b.payloads.len();
+    let first_slot = b.first_slot;
     let clear = crate::Step::new(Op::Frontier, 0, slot_count as u64, first_slot as u64, 2);
     let mut entered = false;
     let mut lowered: Vec<crate::Step> = Vec::new();
@@ -329,8 +266,6 @@ fn lower_graph(
             step.count = offsets[step.count as usize];
         }
     }
-    b.payloads
-        .resize(first_slot + slot_count, crate::word::Word::ZERO);
     b.steps = lowered;
-    Ok(())
+    Ok(slot_count)
 }

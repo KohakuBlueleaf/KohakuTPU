@@ -1,18 +1,18 @@
 //! Reusable storage for live runtime completion frontiers.
 
+use super::{Event, Graph};
+use crate::format::Op;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use crate::build::PackageBuilder;
-use crate::format::Op;
-
-use super::Event;
-
 pub(super) fn allocate(
-    b: &PackageBuilder,
+    b: &Graph,
     events: &HashMap<usize, Event>,
     needed: &HashSet<usize>,
     ends: &HashMap<usize, usize>,
 ) -> BTreeMap<usize, usize> {
+    if needed.is_empty() {
+        return BTreeMap::new();
+    }
     let mut starts: Vec<_> = ends.keys().copied().collect();
     starts.sort_unstable();
     let successors = |end: usize| {

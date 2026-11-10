@@ -1,4 +1,4 @@
-//! The stage crates as the pipeline's [`Backend`].
+//! The KohakuTPU stack's backend for the compiler pipeline.
 //!
 //! graph -> L2 (`ktpu_graph`, the tracer's text), the passes and the
 //! lowering (`ktpu_l2`), the image scheduler and the node programs
@@ -51,7 +51,9 @@ pub struct CardStack {
 impl CardStack {
     fn proof<T>(&self, f: impl FnOnce() -> T) -> T {
         if self.compositional {
-            ktpu_verify::composition::prove(f).0
+            // Both scopes request decomposition, never certify a join. The
+            // frontier pass checks actual drains/control/token containment.
+            ktpu_l0::composition::build(|| ktpu_verify::composition::prove(f).0)
         } else {
             f()
         }
@@ -67,9 +69,21 @@ impl CardStack {
     ) -> Result<Vec<Finding>, Refusal> {
         let builder = ktpu_l1::build::Builder::new(m).map_err(refusal)?;
         let mut residents = cores(p, m)?;
-        let runs = (0..CHECKED_RUNS)
-            .map(|_| bound(&run(&builder, &p.programs, &mut residents, self.fetch(m), p.relocate)?))
-            .collect::<Result<Vec<_>, Refusal>>()?;
+        // These rebuilds used to be outside the compositional scope: leaving
+        // them there would merely move the historical frontier cost later.
+        let runs = self.proof(|| {
+            (0..CHECKED_RUNS)
+                .map(|_| {
+                    bound(&run(
+                        &builder,
+                        &p.programs,
+                        &mut residents,
+                        self.fetch(m),
+                        p.relocate,
+                    )?)
+                })
+                .collect::<Result<Vec<_>, Refusal>>()
+        })?;
         let t = target(m)?;
         let findings = self.proof(|| ktpu_verify::check_with_memory(&runs, &t, memory));
         Ok(findings
@@ -136,10 +150,19 @@ impl Backend for Stack {
             Stage::Order => env!("KTPU_STAGE_ORDER"),
             Stage::Verify => env!("KTPU_STAGE_VERIFY"),
         };
-        Some(match crate::mutant::active() {
+        let mut version = match crate::mutant::active() {
             Some(m) => format!("{v}+mutant:{m}"),
             None => v.to_string(),
-        })
+        };
+        if matches!(stage, Stage::Order | Stage::Verify) {
+            if ktpu_l0::composition::active() {
+                version.push_str("+frontier-composition");
+            }
+            if ktpu_verify::composition::active() {
+                version.push_str("+proof-composition");
+            }
+        }
+        Some(version)
     }
 
     fn graph_to_l2(&self, graph_json: &str, m: &Machine) -> Result<Program, Refusal> {
@@ -251,7 +274,10 @@ impl Backend for CardStack {
         let v = Stack.version(stage)?;
         Some(match stage {
             Stage::Order | Stage::Verify => {
-                format!("{v}+fetch:{}+{:?}+composition:{}", !self.node_fed, self.binds, self.compositional)
+                format!(
+                    "{v}+fetch:{}+{:?}+composition:{}",
+                    !self.node_fed, self.binds, self.compositional
+                )
             }
             Stage::Passes if self.no_passes => format!("{v}+none"),
             Stage::Passes | Stage::Lower => format!("{v}{}", self.settings()),
@@ -379,7 +405,7 @@ impl Backend for CardStack {
 ///
 /// With `caller` (and no `binds`) the parameters outside it are scratch:
 /// each arena (`ktpu_l1::layout::scratch`) is placed after the caller's
-/// parameters as one buffer, its members at their offsets in it.
+/// parameters, as one buffer, its members at their offsets in it.
 fn programs(
     l1: &L1,
     name: &str,
@@ -652,6 +678,12 @@ fn order(
         .as_ref()
         .map_err(|e| Refusal::new("L1.VER.001", format!("{e:?}")))?;
     let mut out = BTreeMap::new();
+    // Preserve OR semantics and package iteration order without rescanning all
+    // node programs for each output node.
+    let mut long_remote = BTreeMap::new();
+    for np in &p.programs {
+        *long_remote.entry(np.mesh).or_insert(false) |= np.long_remote;
+    }
     for (&mesh, (pkg, bindings)) in &first.run {
         let mut pkg = pkg.clone();
         pkg.steps = ordered_steps(&pkg.steps, &found.packages[&mesh].steps);
@@ -675,10 +707,7 @@ fn order(
                 params,
                 images,
                 f015: crate::output::F015 {
-                    long_remote: p
-                        .programs
-                        .iter()
-                        .any(|np| np.mesh == mesh && np.long_remote),
+                    long_remote: long_remote.get(&mesh).copied().unwrap_or(false),
                 },
             },
         );
@@ -723,7 +752,11 @@ fn first(
 ) -> Result<std::sync::Arc<First>, Refusal> {
     let mut made = p.first.lock().unwrap_or_else(|e| e.into_inner());
     let compositional = ktpu_verify::composition::active();
-    if let Some((_, _, got)) = made.iter().find(|(f, mode, _)| *f == fetch && *mode == compositional) {
+    let frontiers = ktpu_l0::composition::active();
+    if let Some((_, _, _, got)) = made
+        .iter()
+        .find(|(f, proof, lower, _)| *f == fetch && *proof == compositional && *lower == frontiers)
+    {
         return got.clone();
     }
     let got = (|| {
@@ -733,7 +766,7 @@ fn first(
         let found = scheduled(&bound(&run)?, &target(m)?);
         Ok(std::sync::Arc::new(First { run, cores, found }))
     })();
-    made.push((fetch, compositional, got.clone()));
+    made.push((fetch, compositional, frontiers, got.clone()));
     got
 }
 
@@ -802,7 +835,7 @@ pub struct Programs {
     /// The same body built `SHIFT` higher (relocatable builds only).
     shifted: Option<Vec<ktpu_l1::lower::node::NodeProgram>>,
     name: String,
-    /// The first run, by the fetch port it was built with.
+    /// The first run, by fetch port, verifier mode and frontier lowering mode.
     first: std::sync::Mutex<Vec<FirstBy>>,
     scratch: Vec<Scratch>,
     burst_ports: std::collections::BTreeSet<String>,
@@ -838,6 +871,7 @@ impl Programs {
 
 type FirstBy = (
     Option<ktpu_l0::Coord>,
+    bool,
     bool,
     Result<std::sync::Arc<First>, Refusal>,
 );
@@ -944,7 +978,7 @@ fn run(
 
 /// Refuses (STACK.RELOC) a build whose packages are not relocatable: bound
 /// at the shifted build's addresses, each must equal the shifted build's
-/// own, else a word holds an address outside the program's spans (the
+/// own, else a word holds an address outside its spans (the
 /// compile then says so in `Compiled::bound`, and the card's packages are
 /// built at each binding, `CardStack::binds`).
 fn relocatable(
@@ -996,7 +1030,12 @@ fn first_difference(
     if got.payloads.len() != want.payloads.len() {
         return format!("{} payloads vs {}", got.payloads.len(), want.payloads.len());
     }
-    let Some(i) = (0..got.payloads.len()).find(|&i| got.payloads[i] != want.payloads[i]) else {
+    let Some(i) = got
+        .payloads
+        .iter()
+        .zip(&want.payloads)
+        .position(|(a, b)| a != b)
+    else {
         return "units or header".into();
     };
     let relocs: Vec<_> = pkg
@@ -1014,7 +1053,7 @@ fn first_difference(
     )
 }
 
-fn bound(run: &BTreeMap<u32, (ktpu_l0::Package, Vec<u64>)>) -> Result<ktpu_verify::Nodes, Refusal> {
+fn bound(run: &Run) -> Result<ktpu_verify::Nodes, Refusal> {
     run.iter()
         .map(|(mesh, (pkg, b))| Ok((*mesh, pkg.bind(b).map_err(l0)?)))
         .collect()

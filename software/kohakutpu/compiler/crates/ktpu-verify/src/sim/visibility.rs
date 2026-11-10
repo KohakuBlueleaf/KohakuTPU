@@ -56,6 +56,14 @@ impl Visibility {
         }
     }
 
+    /// Diagnostic provenance: a response process belongs to its issuer, not
+    /// to the destination whose memory it reaches.
+    pub(crate) fn issuer(&self, port: usize) -> Option<usize> {
+        self.streams
+            .iter()
+            .find_map(|(&(issuer, _), responses)| (responses.port == port).then_some(issuer))
+    }
+
     pub fn publication(&self, issuer: usize, destination: u32) -> Option<(Clock, usize)> {
         let responses = self.streams.get(&(issuer, destination))?;
         Some((responses.last()?.clone(), responses.port))

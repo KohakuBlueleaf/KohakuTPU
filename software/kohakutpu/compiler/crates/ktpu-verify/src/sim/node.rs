@@ -150,6 +150,10 @@ impl Node {
         );
     }
 
+    pub(crate) fn owns_process(&self, process: usize) -> bool {
+        [self.proc, self.mover_proc, self.engine.proc].contains(&process)
+    }
+
     pub(crate) fn pending_engine(&self) -> Option<usize> {
         self.engine.pending().then_some(self.engine.proc)
     }
@@ -585,7 +589,8 @@ impl Sim<'_> {
             }
             _ => self.node_other(i, s),
         };
-        if progress && crate::composition::active()
+        if progress
+            && crate::composition::active()
             && matches!(s.op, op::END | op::BARRIER | op::WAIT_SLOT | op::WAIT_BELL)
         {
             // Only retire against the existing future-access lower bound. A

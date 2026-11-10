@@ -77,7 +77,7 @@ impl Sim<'_> {
                 self.card.values.invalidate(ranges);
             }
         }
-        self.card.dram.access(
+        if let Some(failure) = self.card.dram.access(
             &mut self.memory_findings,
             footprint,
             write,
@@ -87,7 +87,16 @@ impl Sim<'_> {
             what,
             special,
             byte_strobes,
-        );
+        ) {
+            let text = self.dram_failure_text(&failure);
+            if let Some(finding) = self.memory_findings.iter_mut().rev().find(|f| {
+                f.kind == Kind::Model
+                    && f.at == "shared physical memory"
+                    && f.text == "global DRAM proof budget exhausted in an unordered component"
+            }) {
+                finding.text = text;
+            }
+        }
     }
 
     pub fn ports(&self, mesh: u32) -> Vec<(u8, u8)> {

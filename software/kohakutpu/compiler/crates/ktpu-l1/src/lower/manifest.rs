@@ -10,9 +10,18 @@ use serde_json::{json, Value};
 use super::residency::Image;
 use crate::error::{Error, Result};
 
+#[derive(Default)]
+struct Memory {
+    words: BTreeMap<u32, u64>,
+    sites: BTreeMap<u32, usize>,
+    /// A write changes both the instruction and its source site, even when
+    /// the bits are identical. Cached failures are also invalidated by writes.
+    runs: BTreeMap<u32, Option<Vec<usize>>>,
+}
+
 /// Each RUN's source payload sites; bound values are read only after relocation.
 pub fn describe(pkg: &Package, isa: &VecIsa) -> Value {
-    let mut memory: BTreeMap<u64, BTreeMap<u32, (u64, usize)>> = BTreeMap::new();
+    let mut memory: BTreeMap<u64, Memory> = BTreeMap::new();
     let mut entries = Vec::new();
     for (step, s) in pkg.steps.iter().enumerate() {
         if matches!(s.op, Op::Jump | Op::Fetch | Op::Engine) {
@@ -41,22 +50,28 @@ pub fn describe(pkg: &Package, isa: &VecIsa) -> Value {
             let index = first as usize + offset;
             match word.get(isa.cfg.payload_bits - 4, 4) {
                 OP_IMEM => {
-                    source.insert(isa.imem_addr(word), (isa.imem_word(word), index));
+                    let address = isa.imem_addr(word);
+                    source.words.insert(address, isa.imem_word(word));
+                    source.sites.insert(address, index);
+                    source.runs.clear();
                 }
                 OP_RUN => {
                     let Ok(fields) = isa.run.decode(word) else {
                         continue;
                     };
                     let pc = value(&fields, "pc") as u32;
-                    let values = source.iter().map(|(&a, &(w, _))| (a, w)).collect();
-                    let Ok(image) = Image::at(&values, pc) else {
+                    let sites = source.runs.entry(pc).or_insert_with(|| {
+                        Image::at(&source.words, pc).ok().map(|image| {
+                            image
+                                .words
+                                .iter()
+                                .map(|&(a, _)| source.sites[&(pc + a)])
+                                .collect()
+                        })
+                    });
+                    let Some(sites) = sites else {
                         continue;
                     };
-                    let sites: Vec<_> = image
-                        .words
-                        .iter()
-                        .map(|&(a, _)| source[&(pc + a)].1)
-                        .collect();
                     entries.push(json!({"step": step, "run": index, "unit": s.unit,
                                         "source_base": pc, "sites": sites}));
                 }

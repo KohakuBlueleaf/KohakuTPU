@@ -1,13 +1,9 @@
 //! Specialize control flow by relative completion state without extra path steps.
-
-use std::collections::{HashMap, HashSet};
-
-use crate::build::PackageBuilder;
+use super::{Event, Frontiers, Graph};
 use crate::error::Result;
 use crate::format::Op;
 use crate::Step;
-
-use super::{Event, Frontiers};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Hash, PartialEq, Eq)]
 struct Key {
@@ -15,30 +11,21 @@ struct Key {
     upper: Vec<((usize, usize), i128)>,
     defined: Vec<usize>,
 }
-
 fn key(pc: usize, state: &Frontiers, live: &HashSet<usize>, units: usize) -> Key {
     let keep = |v: usize| v < 2 * units || live.contains(&v);
-    let mut upper: Vec<_> = state
-        .upper
-        .iter()
-        .filter(|&(&(x, y), _)| keep(x) && keep(y))
-        .map(|(&p, &v)| (p, v))
-        .collect();
+    let mut upper: Vec<_> = state.projected_upper(keep).collect();
     upper.sort_unstable();
-    let mut defined: Vec<_> = state.defined.iter().copied().filter(|&v| keep(v)).collect();
+    let mut defined: Vec<_> = state.defined_vars().filter(|&v| keep(v)).collect();
     defined.sort_unstable();
     Key { pc, upper, defined }
 }
 
-/// Equivalent relative states share jump targets, including backedges. Layout
-/// duplicates fallthrough tails rather than inserting an executed join step.
-/// The wire step limit bounds construction for unbounded relative states.
 pub(super) fn expand(
-    b: &PackageBuilder,
+    b: &Graph,
     events: &HashMap<usize, Event>,
     marks: &HashMap<usize, usize>,
     transfer: impl Fn(usize, &mut Frontiers) -> Result<()>,
-) -> Result<Option<(PackageBuilder, HashMap<usize, Event>)>> {
+) -> Result<Option<(Graph, HashMap<usize, Event>)>> {
     let n = b.steps.len();
     if b.steps.last().is_none_or(|s| s.op != Op::Barrier)
         || b.steps.iter().any(|s| {
@@ -47,7 +34,6 @@ pub(super) fn expand(
     {
         return Ok(None);
     }
-    // Only marks used before their next definition distinguish continuations.
     let mut live = vec![HashSet::new(); n + 1];
     loop {
         let mut changed = false;
@@ -89,20 +75,22 @@ pub(super) fn expand(
     owners.sort_unstable();
     owners.dedup();
     let normalize = |state: &mut Frontiers| {
-        // A completed mark remains dominated until its next definition. Its
-        // distance behind the awaited frontier cannot affect a future wait.
         for &(mark, awaited) in &owners {
-            if state.defined.contains(&mark) && state.covered(mark, awaited) {
+            if state.is_defined(mark) && state.covered(mark, awaited) {
                 state.assign(mark, awaited);
             }
         }
     };
-    let mut out = b.clone();
-    out.steps.clear();
+    // Only the local step graph is copied. Payloads/relocations belong to the
+    // composed package and must not be recopied at each launch specialization.
+    let mut out = Graph {
+        steps: Vec::new(),
+        ..b.empty()
+    };
     let mut mapped = HashMap::new();
     let mut seen = HashMap::new();
     let mut exits = Vec::new();
-    let mut todo = vec![(0usize, Frontiers::new(b.units.len()), None::<usize>)];
+    let mut todo = vec![(0usize, b.initial(), None::<usize>)];
     while let Some((mut pc, mut state, branch)) = todo.pop() {
         normalize(&mut state);
         if pc == n {
@@ -112,7 +100,7 @@ pub(super) fn expand(
             continue;
         }
         if let Some(branch) = branch {
-            if let Some(&target) = seen.get(&key(pc, &state, &live[pc], b.units.len())) {
+            if let Some(&target) = seen.get(&key(pc, &state, &live[pc], b.units)) {
                 out.steps[branch].unit = target;
                 continue;
             }
@@ -125,13 +113,12 @@ pub(super) fn expand(
             normalize(&mut state);
             let mut s = b.steps[pc];
             let at = out.steps.len();
-            seen.entry(key(pc, &state, &live[pc], b.units.len()))
+            seen.entry(key(pc, &state, &live[pc], b.units))
                 .or_insert(at as u64);
             if let Some(event) = events.get(&pc) {
                 mapped.insert(at, *event);
             }
             if pc + 1 == n {
-                // Package termination performs the final barrier.
                 out.steps.push(Step::new(Op::Jump, 0, 0, 0, 0));
                 exits.push(at);
                 break;
@@ -146,7 +133,6 @@ pub(super) fn expand(
                     break;
                 }
                 todo.push((target, state.clone(), Some(at)));
-                // The taken edge is relocated when its state is laid out.
                 s.unit = 0;
             }
             out.steps.push(s);
@@ -159,6 +145,15 @@ pub(super) fn expand(
     let end = out.steps.len() as u64;
     for at in exits {
         out.steps[at].unit = end;
+    }
+    // The original expansion relies on package termination for the last drain.
+    // An internal segment is NOT package termination: its exits must execute
+    // the actual barrier before the next launch's unchanged gather/release.
+    if !b.terminal {
+        if out.steps.len() == u16::MAX as usize {
+            return Ok(None);
+        }
+        out.steps.push(Step::bare(Op::Barrier));
     }
     Ok(Some((out, mapped)))
 }

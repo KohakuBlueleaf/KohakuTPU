@@ -8,10 +8,13 @@
 pub mod boot;
 pub mod build;
 pub mod calls;
+pub mod composition;
 pub mod engine;
 pub mod error;
 pub mod facts;
 pub mod format;
+#[doc(hidden)]
+pub mod frontier_profile;
 pub mod link;
 pub mod mover;
 pub mod mutant;

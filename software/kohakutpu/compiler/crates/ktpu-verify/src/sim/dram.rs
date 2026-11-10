@@ -11,6 +11,7 @@ use crate::model::finding::{Finding, Kind};
 use super::fx::FxHashSet;
 
 mod components;
+mod diagnostic;
 pub(crate) use components::Proof;
 mod history;
 use history::History;
@@ -119,11 +120,36 @@ impl Intervals {
         reported: &mut FxHashSet<(String, String)>,
         out: &mut Vec<Finding>,
     ) -> Result<(), ()> {
+        // Secondary component shards are queried, not updated. Both ranges
+        // and spans are normalized, sorted, disjoint half-open intervals.
+        // Prove an empty intersection from their hulls before walking every
+        // query interval. An empty/disjoint shard contributes no interval or
+        // history visits, rather than charging the whole footprint again.
+        // Bytes and expanded writer lines each pass here independently, AFTER
+        // normalization/validation. Overlapping hulls keep the full proof.
+        // Legacy and the recording shard use visit(), never this fast path.
+        let (Some(&(lo, _)), Some(&(_, hi))) = (ranges.first(), ranges.last()) else {
+            return Ok(());
+        };
+        if self
+            .spans
+            .first_key_value()
+            .is_none_or(|(&first, _)| hi <= first)
+            || self
+                .spans
+                .last_key_value()
+                .is_some_and(|(_, last)| lo >= last.end)
+        {
+            return Ok(());
+        }
         for (lo, hi) in ranges {
             if lo == hi {
                 continue;
             }
-            let first = self.spans.range(..=lo).next_back()
+            let first = self
+                .spans
+                .range(..=lo)
+                .next_back()
                 .filter(|(_, span)| span.end > lo)
                 .map_or(lo, |(&at, _)| at);
             for (&at, span) in self.spans.range(first..hi) {
@@ -304,7 +330,16 @@ impl GlobalDram {
         byte_strobes: bool,
     ) {
         self.access_inner(
-            out, footprint, write, start, done, owner, what, special, byte_strobes, true,
+            out,
+            footprint,
+            write,
+            start,
+            done,
+            owner,
+            what,
+            special,
+            byte_strobes,
+            true,
         );
     }
 

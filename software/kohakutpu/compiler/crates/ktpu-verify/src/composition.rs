@@ -1,7 +1,9 @@
 //! Causal decomposition for retained compositions. Ordinary checks deliberately
-//! keep their original (including resource-limit) verdicts. This scope changes
-//! only the organization of the physical-memory proof, never execution clocks,
-//! visibility, symbolic state, dispatch ordering, or the refusing policy.
+//! keep their original (including resource-limit) verdicts. The retained scope
+//! partitions physical-memory obligations and preserves all publications in a
+//! counter owner's required prefix, so real waits acquire complete causal edges.
+//! It never acquires a ring's arrival into its sender or resets visibility,
+//! symbolic state, dispatch ordering, or the refusing policy.
 //!
 //! Run the synchronous scheduling/checking operation inside `prove`. The scope
 //! is thread-local and unwind-safe; it is not an option for `check_many`'s worker

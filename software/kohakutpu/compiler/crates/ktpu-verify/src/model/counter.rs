@@ -47,7 +47,22 @@ impl Counter {
         };
         let marks = &mut self.owners[at].1;
         let last = marks.last().map(|m| m.0).unwrap_or(0);
-        marks.push((last + n, clock.clone()));
+        let mut prefix = clock.clone();
+        if crate::composition::active() {
+            // The last increment need not carry earlier publications: a plain
+            // ring can follow a fenced one without acquiring its arrival into
+            // the sending CPU. A wait for this owner's first k increments,
+            // however, necessarily observes ALL k. Summarize that prefix here,
+            // not in the sender clock, and never join another owner's prefix.
+            // clock_to still proves how many increments each owner must supply;
+            // numerical readiness or simulation visitation order proves no edge.
+            if let Some((_, previous)) = marks.last() {
+                prefix.join(previous);
+            }
+        }
+        // Keep ordinary single-launch checks byte-for-byte on the legacy path,
+        // including their conservative diagnostics and resource-limit verdicts.
+        marks.push((last + n, prefix));
     }
 
     pub(crate) fn histories(&self) -> impl Iterator<Item = (usize, &[(i64, Clock)])> {
@@ -121,8 +136,9 @@ impl Counter {
     }
 }
 
-/// Join the clock of the first mark reaching `k`: one owner's clocks only
-/// grow, so it holds every earlier one.
+/// Join the first owner-prefix mark reaching `k`. In compositional mode the
+/// mark explicitly includes every earlier increment, even if individual
+/// publication clocks are not monotone. Legacy checks retain their old marks.
 fn join_upto(out: &mut Clock, marks: &[(i64, Clock)], k: i64) {
     if marks.is_empty() {
         return;

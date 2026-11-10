@@ -164,3 +164,9 @@ fn cached_verdicts_do_not_cross_proof_decompositions() {
     assert_eq!(std::fs::read_dir(&directory).expect("cache").count(), 2);
     std::fs::remove_dir_all(directory).expect("remove proof cache");
 }
+
+#[path = "multi_sysnode_composition.rs"]
+mod multi_sysnode_composition;
+
+#[path = "component_diagnostic.rs"]
+mod component_diagnostic;
